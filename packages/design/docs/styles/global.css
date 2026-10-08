@@ -1,0 +1,3 @@
+/* 文档站全局样式入口,由 rspress `globalStyles` 引入 */
+@import '../../src/styles/index.css';
+@import './demo.css';

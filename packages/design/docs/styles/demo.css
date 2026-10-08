@@ -1,0 +1,21 @@
+/* 文档站演示区块样式,与组件库自身样式无关 */
+
+.bd-demo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  margin: 16px 0;
+  border: 1px solid rgba(120, 110, 115, 0.16);
+  border-radius: 10px;
+}
+
+.bd-demo--vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.bd-demo--block {
+  padding-right: 120px;
+}

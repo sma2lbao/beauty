@@ -4,6 +4,10 @@
 dist
 tmp
 out-tsc
+# TypeScript 增量构建信息（root/packages 的 composite 工程均会产出）
+*.tsbuildinfo
+# Rspress 文档站构建产物（packages/design/rspress.config.ts 的 outDir）
+doc_build
 
 # dependencies
 node_modules
@@ -61,3 +65,6 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+
+# Playwright MCP 运行时产物（控制台日志、页面快照），非源码
+.playwright-mcp/

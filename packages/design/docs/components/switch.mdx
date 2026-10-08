@@ -1,0 +1,73 @@
+import { Space, Switch } from '@beauty/design';
+
+# Switch 开关
+
+在两个互斥状态之间即时切换,切换立即生效,无需提交。
+
+## 何时使用
+
+- 状态切换即时生效(设置项、过滤器);
+- 需要用户确认才生效的操作请改用 Button,不要用 Switch。
+
+## 基础用法
+
+非受控用法,自带内部状态:
+
+<div className="bd-demo">
+  <Switch />
+</div>
+
+```tsx
+import { Switch } from '@beauty/design';
+
+<Switch />
+```
+
+## 受控用法
+
+通过 `checked` 控制状态,`onCheckedChange` 监听变化:
+
+<div className="bd-demo">
+  <Switch defaultChecked />
+</div>
+
+```tsx
+import { useState } from 'react';
+
+const [enabled, setEnabled] = useState(true);
+
+<Switch
+  checked={enabled}
+  onCheckedChange={setEnabled}
+/>;
+```
+
+## 禁用
+
+<div className="bd-demo">
+  <Space>
+    <Switch disabled />
+    <Switch disabled defaultChecked />
+  </Space>
+</div>
+
+```tsx
+<Switch disabled />
+<Switch disabled defaultChecked />
+```
+
+## 可访问性
+
+组件渲染为 `<button role="switch">`,`aria-checked` 随状态同步,键盘(Tab、空格 / 回车)可直接操作,无需额外配置。
+
+## API
+
+### SwitchProps
+
+继承 `React.ComponentPropsWithRef<'button'>`(排除与开关语义冲突的 `onChange`)。
+
+| 属性 | 说明 | 类型 | 默认值 |
+| --- | --- | --- | --- |
+| checked | 受控开关状态 | `boolean` | — |
+| defaultChecked | 非受控初始状态 | `boolean` | `false` |
+| onCheckedChange | 状态变化回调,受控与非受控均触发 | `(checked: boolean) => void` | — |

@@ -1,0 +1,103 @@
+/**
+ * Beauty Design 设计令牌
+ *
+ * 所有令牌以 `--bd-` 为前缀,基于 CSS 自定义属性实现:
+ * - 亮色主题定义在 `:root`,全站生效
+ * - 暗色主题通过 `[data-bd-theme='dark']` 显式启用,不与系统偏好耦合,
+ *   由接入方决定何时切换,保证行为可预期
+ * - 任何令牌都可以在业务侧被局部覆盖,实现品牌定制
+ */
+:root {
+  color-scheme: light;
+
+  /* 品牌色 · 胭脂玫瑰 */
+  --bd-primary: #a03a5b;
+  --bd-primary-hover: #b44868;
+  --bd-primary-active: #8b2f4d;
+  --bd-primary-muted: #f7e8ee;
+  --bd-on-primary: #fffaf7;
+
+  /* 暖中性色 */
+  --bd-bg: #ffffff;
+  --bd-bg-muted: #f8f3f1;
+  --bd-surface: #ffffff;
+  --bd-border: #e7dcd8;
+  --bd-border-strong: #d0bfb9;
+  --bd-text: #2b2124;
+  --bd-text-muted: #77676c;
+  --bd-text-faint: #a5949a;
+
+  /* 语义色 */
+  --bd-success: #2e7d54;
+  --bd-success-muted: #e4f3ea;
+  --bd-danger: #bf3b2b;
+  --bd-danger-muted: #fae7e3;
+  --bd-warning: #9a6a1c;
+  --bd-warning-muted: #f8eeda;
+  --bd-info: #38678f;
+  --bd-info-muted: #e5eef5;
+
+  /* 字体 */
+  --bd-font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --bd-font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* 字号与行高 */
+  --bd-font-size-xs: 0.75rem;
+  --bd-font-size-sm: 0.8125rem;
+  --bd-font-size-md: 0.875rem;
+  --bd-font-size-lg: 1rem;
+
+  /* 圆角 */
+  --bd-radius-sm: 4px;
+  --bd-radius-md: 6px;
+  --bd-radius-lg: 10px;
+
+  /* 阴影 */
+  --bd-shadow-xs: 0 1px 2px rgba(43, 33, 36, 0.06);
+  --bd-shadow-sm: 0 2px 8px rgba(43, 33, 36, 0.08);
+  --bd-shadow-md: 0 6px 20px rgba(43, 33, 36, 0.1);
+  --bd-shadow-focus: 0 0 0 3px rgba(160, 58, 91, 0.22);
+  --bd-shadow-focus-danger: 0 0 0 3px rgba(191, 59, 43, 0.2);
+
+  /* 动效 */
+  --bd-duration-fast: 120ms;
+  --bd-duration: 180ms;
+  --bd-ease: cubic-bezier(0.25, 0, 0.35, 1);
+}
+
+[data-bd-theme='dark'] {
+  color-scheme: dark;
+
+  --bd-primary: #d9739a;
+  --bd-primary-hover: #e38aad;
+  --bd-primary-active: #c65d84;
+  --bd-primary-muted: #3a2630;
+  --bd-on-primary: #2b121c;
+
+  --bd-bg: #1b1518;
+  --bd-bg-muted: #272023;
+  --bd-surface: #241d20;
+  --bd-border: #3d3236;
+  --bd-border-strong: #524549;
+  --bd-text: #f2e9eb;
+  --bd-text-muted: #b3a3a8;
+  --bd-text-faint: #857578;
+
+  --bd-success: #5dbd8c;
+  --bd-success-muted: #1d3329;
+  --bd-danger: #e56a55;
+  --bd-danger-muted: #3d221d;
+  --bd-warning: #d9a256;
+  --bd-warning-muted: #372a18;
+  --bd-info: #74a8d4;
+  --bd-info-muted: #1c2b39;
+
+  --bd-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --bd-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --bd-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --bd-shadow-focus: 0 0 0 3px rgba(217, 115, 154, 0.35);
+  --bd-shadow-focus-danger: 0 0 0 3px rgba(229, 106, 85, 0.32);
+}

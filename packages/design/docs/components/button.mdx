@@ -1,0 +1,88 @@
+import { Button } from '@beauty/design';
+
+# Button 按钮
+
+按钮用于触发一个操作:提交表单、打开页面、执行命令。
+
+## 何时使用
+
+- 同一操作区域内,`primary` 按钮最多一个;
+- 次级动作用 `secondary` 或 `outline`,弱化为 `ghost`,危险动作用 `danger`。
+
+## 基础用法
+
+五种视觉类型,按强调程度递减:
+
+<div className="bd-demo">
+  <Button variant="primary">主要按钮</Button>
+  <Button variant="secondary">次要按钮</Button>
+  <Button variant="outline">描边按钮</Button>
+  <Button variant="ghost">幽灵按钮</Button>
+  <Button variant="danger">危险操作</Button>
+</div>
+
+```tsx
+import { Button } from '@beauty/design';
+
+<Button variant="primary">主要按钮</Button>
+<Button variant="secondary">次要按钮</Button>
+<Button variant="outline">描边按钮</Button>
+<Button variant="ghost">幽灵按钮</Button>
+<Button variant="danger">危险操作</Button>
+```
+
+## 尺寸
+
+三档尺寸,与同尺寸的 Input 保持一致高度:
+
+<div className="bd-demo">
+  <Button size="sm">小型</Button>
+  <Button size="md">默认</Button>
+  <Button size="lg">大型</Button>
+</div>
+
+```tsx
+<Button size="sm">小型</Button>
+<Button size="md">默认</Button>
+<Button size="lg">大型</Button>
+```
+
+## 加载与禁用
+
+`loading` 会禁用交互并展示旋转指示,`aria-busy` 同步标记忙碌状态;`disabled` 用于权限或前置条件不满足的场景:
+
+<div className="bd-demo">
+  <Button loading>保存中</Button>
+  <Button disabled>不可用</Button>
+</div>
+
+```tsx
+<Button loading>保存中</Button>
+<Button disabled>不可用</Button>
+```
+
+## 撑满宽度
+
+表单底部常见布局:
+
+<div className="bd-demo bd-demo--block">
+  <Button block>提交</Button>
+</div>
+
+```tsx
+<Button block>提交</Button>
+```
+
+## API
+
+### ButtonProps
+
+继承 `React.ComponentPropsWithRef<'button'>`,即全部原生 button 属性(`onClick`、`form`、`ref` 等)均可透传。
+
+| 属性 | 说明 | 类型 | 默认值 |
+| --- | --- | --- | --- |
+| variant | 视觉类型,决定强调程度 | `'primary' \| 'secondary' \| 'outline' \| 'ghost' \| 'danger'` | `'primary'` |
+| size | 尺寸 | `'sm' \| 'md' \| 'lg'` | `'md'` |
+| block | 撑满父容器宽度 | `boolean` | `false` |
+| loading | 加载态:禁用交互并展示旋转指示 | `boolean` | `false` |
+| type | 原生按钮类型 | `'button' \| 'submit' \| 'reset'` | `'button'` |

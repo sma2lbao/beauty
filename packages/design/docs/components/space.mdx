@@ -1,0 +1,97 @@
+import { Button, Input, Space } from '@beauty/design';
+
+# Space 间距
+
+统一子元素的间距与对齐,避免手写重复的 margin。
+
+## 何时使用
+
+- 相邻元素需要一致间距时,用 `Space` 替代逐个设置 margin;
+- 只做布局间距,不承载视觉样式。
+
+## 基础用法
+
+默认水平排列、中等间距:
+
+<div className="bd-demo">
+  <Space>
+    <Button variant="secondary">取消</Button>
+    <Button variant="primary">保存</Button>
+  </Space>
+</div>
+
+```tsx
+import { Button, Space } from '@beauty/design';
+
+<Space>
+  <Button variant="secondary">取消</Button>
+  <Button variant="primary">保存</Button>
+</Space>
+```
+
+## 垂直排列
+
+<div className="bd-demo">
+  <Space direction="vertical">
+    <Button block>新建草稿</Button>
+    <Button block>导入文章</Button>
+  </Space>
+</div>
+
+```tsx
+<Space direction="vertical">
+  <Button block>新建草稿</Button>
+  <Button block>导入文章</Button>
+</Space>
+```
+
+## 间距档位与自定义
+
+预设五档(`xs` / `sm` / `md` / `lg` / `xl`),也可传入任意像素值:
+
+<div className="bd-demo bd-demo--vertical">
+  <Space size="xs">
+    <Button size="sm" variant="ghost">xs</Button>
+    <Button size="sm" variant="ghost">4px</Button>
+  </Space>
+  <Space size="xl">
+    <Button size="sm" variant="ghost">xl</Button>
+    <Button size="sm" variant="ghost">24px</Button>
+  </Space>
+</div>
+
+```tsx
+<Space size="xs">…</Space>
+<Space size={32}>…</Space>
+```
+
+## 对齐与换行
+
+`align` 控制交叉轴对齐,`wrap` 允许在空间不足时换行:
+
+<div className="bd-demo bd-demo--block">
+  <Space align="center" wrap>
+    <Button variant="outline">按钮</Button>
+    <Input placeholder="较长的输入内容会触发换行" />
+  </Space>
+</div>
+
+```tsx
+<Space align="center" wrap>
+  <Button variant="outline">按钮</Button>
+  <Input placeholder="较长的输入内容会触发换行" />
+</Space>
+```
+
+## API
+
+### SpaceProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性 | 说明 | 类型 | 默认值 |
+| --- | --- | --- | --- |
+| direction | 排列方向 | `'horizontal' \| 'vertical'` | `'horizontal'` |
+| size | 间距,预设档位或像素值 | `'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl' \| number` | `'md'` |
+| align | 交叉轴对齐 | `'start' \| 'center' \| 'end' \| 'baseline'` | — |
+| wrap | 是否换行 | `boolean` | `false` |

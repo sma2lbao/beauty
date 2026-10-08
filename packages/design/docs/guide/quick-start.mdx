@@ -1,0 +1,54 @@
+# 快速开始
+
+本组件库随 monorepo 一起开发,业务应用(apps 下的 workspace 包)通过 workspace 协议引用。
+
+## 1. 安装依赖
+
+在业务应用的 `package.json` 中声明:
+
+```json
+{
+  "dependencies": {
+    "@beauty/design": "*"
+  }
+}
+```
+
+然后在仓库根目录执行 `npm install`。
+
+## 2. 引入样式
+
+在应用入口(如 `main.tsx`)引入一次即可:
+
+```tsx
+import '@beauty/design/styles.css';
+```
+
+样式是一份普通 CSS,所有设计令牌与组件样式都在其中。
+
+## 3. 使用组件
+
+```tsx
+import { Button, Input, Space } from '@beauty/design';
+
+export function ProfileForm() {
+  return (
+    <Space direction="vertical" size="lg">
+      <Input placeholder="请输入昵称" />
+      <Button variant="primary">保存</Button>
+    </Space>
+  );
+}
+```
+
+## 在本仓库中直接消费源码
+
+`@beauty/design` 的 `exports` 字段内置了 `@beauty/source` 条件,指向 `src/index.ts`。支持该条件的打包器(Vite 等)可以直接吃到源码,享受改动即时生效的开发体验;消费构建产物则走 `dist`,无需任何配置。
+
+## 类型
+
+组件类型全部通过包入口导出,按需引用:
+
+```tsx
+import type { ButtonProps, SpaceSize } from '@beauty/design';
+```

@@ -1,0 +1,61 @@
+# 主题定制
+
+Beauty Design 的视觉系统完全由设计令牌驱动。业务方不需要覆写组件样式,覆盖令牌即可。
+
+## 亮色与暗色
+
+令牌在 `:root` 上定义亮色主题;在任意祖先节点(通常是 `html` 或 `body`)设置 `data-bd-theme="dark"` 即切换为暗色:
+
+```tsx
+// 跟随用户偏好切换
+function syncTheme() {
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.bdTheme = dark ? 'dark' : 'light';
+}
+```
+
+组件库不主动监听系统偏好,何时切换、如何持久化,由业务方决定。
+
+## 覆盖品牌色
+
+在业务侧的全局样式里声明同名变量,优先级高于库内默认值:
+
+```css
+:root {
+  /* 全站替换品牌色 */
+  --bd-primary: #7c4dbe;
+  --bd-primary-hover: #8f61d1;
+  --bd-primary-active: #6b3fc4;
+  --bd-primary-muted: #f1e8fa;
+}
+```
+
+组件、焦点环、语义色板中的主色引用会一并生效。
+
+## 令牌总览
+
+| 令牌 | 说明 | 亮色默认值 |
+| --- | --- | --- |
+| `--bd-primary` | 品牌色 | `#a03a5b` |
+| `--bd-primary-hover` | 品牌色(悬停) | `#b44868` |
+| `--bd-primary-active` | 品牌色(按下) | `#8b2f4d` |
+| `--bd-primary-muted` | 品牌浅底 | `#f7e8ee` |
+| `--bd-bg` | 页面背景 | `#ffffff` |
+| `--bd-bg-muted` | 弱化背景 | `#f8f3f1` |
+| `--bd-border` | 边框 | `#e7dcd8` |
+| `--bd-border-strong` | 边框(强调) | `#d0bfb9` |
+| `--bd-text` | 正文文字 | `#2b2124` |
+| `--bd-text-muted` | 次要文字 | `#77676c` |
+| `--bd-text-faint` | 占位文字 | `#a5949a` |
+| `--bd-success` / `--bd-success-muted` | 成功语义色 | `#2e7d54` / `#e4f3ea` |
+| `--bd-danger` / `--bd-danger-muted` | 危险语义色 | `#bf3b2b` / `#fae7e3` |
+| `--bd-warning` / `--bd-warning-muted` | 警告语义色 | `#9a6a1c` / `#f8eeda` |
+| `--bd-info` / `--bd-info-muted` | 信息语义色 | `#38678f` / `#e5eef5` |
+| `--bd-font-sans` | 正文字体栈 | 系统字体栈 |
+| `--bd-font-size-xs` ~ `--bd-font-size-lg` | 字号档位 | `0.75rem` ~ `1rem` |
+| `--bd-radius-sm` / `--bd-radius-md` / `--bd-radius-lg` | 圆角档位 | `4px` / `6px` / `10px` |
+| `--bd-shadow-xs` / `--bd-shadow-sm` / `--bd-shadow-md` | 阴影档位 | — |
+| `--bd-shadow-focus` | 焦点环 | 品牌色 22% 透明 |
+| `--bd-duration-fast` / `--bd-duration` | 过渡时长 | `120ms` / `180ms` |
+
+暗色主题下的同名令牌定义在 `[data-bd-theme='dark']` 中,取值随主题整体适配,无需逐个覆盖。

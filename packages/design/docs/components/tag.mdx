@@ -1,0 +1,67 @@
+import { Space, Tag } from '@beauty/design';
+
+# Tag 标签
+
+用于标记与分类内容:状态、属性、筛选条件。
+
+## 何时使用
+
+- 标记对象的状态或属性;
+- 不是操作入口,可交互的筛选条件请配合受控状态实现。
+
+## 基础用法
+
+六种语义颜色,默认为中性:
+
+<div className="bd-demo">
+  <Space wrap>
+    <Tag>默认</Tag>
+    <Tag color="primary">主打</Tag>
+    <Tag color="success">已上架</Tag>
+    <Tag color="danger">已下架</Tag>
+    <Tag color="warning">待审核</Tag>
+    <Tag color="info">草稿</Tag>
+  </Space>
+</div>
+
+```tsx
+import { Tag } from '@beauty/design';
+
+<Tag>默认</Tag>
+<Tag color="primary">主打</Tag>
+<Tag color="success">已上架</Tag>
+<Tag color="danger">已下架</Tag>
+<Tag color="warning">待审核</Tag>
+<Tag color="info">草稿</Tag>
+```
+
+## 可关闭
+
+设置 `closable` 后出现关闭按钮,`onClose` 交由业务方决定移除逻辑:
+
+<div className="bd-demo">
+  <Space wrap>
+    <Tag closable>口红</Tag>
+    <Tag closable color="primary">
+      香水
+    </Tag>
+  </Space>
+</div>
+
+```tsx
+<Tag closable onClose={() => remove('口红')}>
+  口红
+</Tag>
+```
+
+## API
+
+### TagProps
+
+继承 `React.ComponentPropsWithoutRef<'span'>`。
+
+| 属性 | 说明 | 类型 | 默认值 |
+| --- | --- | --- | --- |
+| color | 语义颜色 | `'neutral' \| 'primary' \| 'success' \| 'danger' \| 'warning' \| 'info'` | `'neutral'` |
+| closable | 是否可关闭,渲染关闭按钮 | `boolean` | `false` |
+| onClose | 点击关闭按钮时触发 | `(event: MouseEvent<HTMLButtonElement>) => void` | — |

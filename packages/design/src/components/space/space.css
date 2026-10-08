@@ -1,0 +1,31 @@
+.bd-space {
+  display: inline-flex;
+}
+
+.bd-space--horizontal {
+  flex-direction: row;
+}
+
+.bd-space--vertical {
+  flex-direction: column;
+}
+
+.bd-space--wrap {
+  flex-wrap: wrap;
+}
+
+.bd-space--align-start {
+  align-items: flex-start;
+}
+
+.bd-space--align-center {
+  align-items: center;
+}
+
+.bd-space--align-end {
+  align-items: flex-end;
+}
+
+.bd-space--align-baseline {
+  align-items: baseline;
+}

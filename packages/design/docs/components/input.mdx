@@ -1,0 +1,96 @@
+import { Input, Space } from '@beauty/design';
+
+# Input 输入框
+
+用于文本录入,是表单中最基础的控件。
+
+## 何时使用
+
+- 单行文本录入;
+- 需要前置或后置内容(货币符号、单位、状态图标)时,优先用 `prefix` / `suffix` 而不是自由拼装;
+- 校验失败时用 `invalid` 呈现危险色,配合表单提示文字使用。
+
+## 基础用法
+
+<div className="bd-demo">
+  <Input placeholder="请输入昵称" />
+</div>
+
+```tsx
+import { Input } from '@beauty/design';
+
+<Input placeholder="请输入昵称" />
+```
+
+## 三种尺寸
+
+与同尺寸的 Button 等高:
+
+<div className="bd-demo">
+  <Input size="sm" placeholder="小型" />
+  <Input size="md" placeholder="默认" />
+  <Input size="lg" placeholder="大型" />
+</div>
+
+```tsx
+<Input size="sm" placeholder="小型" />
+<Input size="md" placeholder="默认" />
+<Input size="lg" placeholder="大型" />
+```
+
+## 前后置内容
+
+<div className="bd-demo">
+  <Input prefix="¥" suffix="元" placeholder="0.00" />
+  <Input suffix="kg" placeholder="请输入重量" />
+</div>
+
+```tsx
+<Input prefix="¥" suffix="元" placeholder="0.00" />
+<Input suffix="kg" placeholder="请输入重量" />
+```
+
+## 校验与禁用
+
+`invalid` 会为输入框添加危险色边框,并标记 `aria-invalid="true"`;`disabled` 用于不可编辑场景:
+
+<div className="bd-demo">
+  <Input invalid defaultValue="昵称已被占用" />
+  <Input disabled placeholder="不可编辑" />
+</div>
+
+```tsx
+<Input invalid defaultValue="昵称已被占用" />
+<Input disabled placeholder="不可编辑" />
+```
+
+## 配合表单
+
+<div className="bd-demo bd-demo--vertical">
+  <Space direction="vertical" size="md">
+    <Input placeholder="邮箱" />
+    <Input invalid placeholder="密码" />
+  </Space>
+</div>
+
+```tsx
+import { Input, Space } from '@beauty/design';
+
+<Space direction="vertical" size="md">
+  <Input placeholder="邮箱" />
+  <Input invalid placeholder="密码" />
+</Space>
+```
+
+## API
+
+### InputProps
+
+继承 `React.ComponentPropsWithRef<'input'>`,即全部原生 input 属性(`value`、`onChange`、`maxLength`、`ref` 等)均可透传。
+
+| 属性 | 说明 | 类型 | 默认值 |
+| --- | --- | --- | --- |
+| size | 尺寸,与同尺寸 Button 等高 | `'sm' \| 'md' \| 'lg'` | `'md'` |
+| invalid | 校验失败态,危险色边框并标记 `aria-invalid` | `boolean` | `false` |
+| prefix | 前置内容,常用于图标或单位 | `ReactNode` | — |
+| suffix | 后置内容,常用于图标或单位 | `ReactNode` | — |

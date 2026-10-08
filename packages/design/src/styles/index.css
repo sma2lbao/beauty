@@ -1,0 +1,13 @@
+/**
+ * Beauty Design 样式总入口
+ *
+ * 业务侧按需引入其中一种形式:
+ * - `import '@beauty/design/styles.css'`(推荐,经打包器处理)
+ * - 全量引入令牌后按需引入组件样式
+ */
+@import './tokens.css';
+@import '../components/button/button.css';
+@import '../components/input/input.css';
+@import '../components/tag/tag.css';
+@import '../components/switch/switch.css';
+@import '../components/space/space.css';
