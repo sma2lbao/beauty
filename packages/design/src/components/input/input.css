@@ -29,7 +29,9 @@
 
 .bd-input-group:focus-within {
   border-color: var(--bd-ring);
-  box-shadow: 0 0 0 3px var(--bd-input-ring), var(--bd-input-shadow);
+  box-shadow:
+    0 0 0 3px var(--bd-input-ring),
+    var(--bd-input-shadow);
 }
 
 .bd-input-group[data-invalid='true'] {

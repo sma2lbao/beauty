@@ -46,7 +46,7 @@ export function Space({
   ...rest
 }: SpaceProps) {
   const gap =
-    typeof size === 'number' ? size : SPACE_SIZE[size] ?? SPACE_SIZE.md;
+    typeof size === 'number' ? size : (SPACE_SIZE[size] ?? SPACE_SIZE.md);
   const spaceStyle = { gap, ...style } as CSSProperties;
 
   return (

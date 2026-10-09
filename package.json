@@ -2,15 +2,19 @@
   "name": "@beauty/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "lint": "eslint ."
+  },
   "private": true,
   "devDependencies": {
+    "@nx/eslint": "23.2.1",
     "@nx/js": "23.2.1",
     "@nx/vitest": "23.2.1",
     "@nxlv/python": "^23.1.0",
     "@swc/helpers": "~0.5.18",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "~4.1.0",
+    "eslint": "^9.0.0",
     "nx": "23.2.1",
     "prettier": "~3.6.2",
     "tslib": "^2.3.0",
@@ -20,7 +24,8 @@
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "tools/*"
   ],
   "dependencies": {}
 }

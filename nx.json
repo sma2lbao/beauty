@@ -12,6 +12,12 @@
   },
   "plugins": [
     {
+      "plugin": "@nx/eslint/plugin",
+      "options": {
+        "targetName": "lint"
+      }
+    },
+    {
       "plugin": "@nx/js/typescript",
       "options": {
         "typecheck": {

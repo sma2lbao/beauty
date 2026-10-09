@@ -20,7 +20,7 @@ import { Space, Switch } from '@beauty/design';
 ```tsx
 import { Switch } from '@beauty/design';
 
-<Switch />
+<Switch />;
 ```
 
 ## 受控用法
@@ -36,10 +36,7 @@ import { useState } from 'react';
 
 const [enabled, setEnabled] = useState(true);
 
-<Switch
-  checked={enabled}
-  onCheckedChange={setEnabled}
-/>;
+<Switch checked={enabled} onCheckedChange={setEnabled} />;
 ```
 
 ## 禁用
@@ -66,8 +63,8 @@ const [enabled, setEnabled] = useState(true);
 
 继承 `React.ComponentPropsWithRef<'button'>`(排除与开关语义冲突的 `onChange`)。
 
-| 属性 | 说明 | 类型 | 默认值 |
-| --- | --- | --- | --- |
-| checked | 受控开关状态 | `boolean` | — |
-| defaultChecked | 非受控初始状态 | `boolean` | `false` |
-| onCheckedChange | 状态变化回调,受控与非受控均触发 | `(checked: boolean) => void` | — |
+| 属性            | 说明                            | 类型                         | 默认值  |
+| --------------- | ------------------------------- | ---------------------------- | ------- |
+| checked         | 受控开关状态                    | `boolean`                    | —       |
+| defaultChecked  | 非受控初始状态                  | `boolean`                    | `false` |
+| onCheckedChange | 状态变化回调,受控与非受控均触发 | `(checked: boolean) => void` | —       |

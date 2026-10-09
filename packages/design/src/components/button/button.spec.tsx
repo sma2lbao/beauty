@@ -10,19 +10,31 @@ describe('Button', () => {
     const button = screen.getByRole('button', { name: '保存' });
     expect(button).toBeInTheDocument();
     expect(button).toHaveAttribute('data-slot', 'button');
-    expect(button).toHaveClass('bd-button', 'bd-button--primary', 'bd-button--md');
+    expect(button).toHaveClass(
+      'bd-button',
+      'bd-button--primary',
+      'bd-button--md',
+    );
     expect(button).toHaveAttribute('data-variant', 'primary');
     expect(button).toHaveAttribute('data-size', 'md');
     expect(button).toHaveAttribute('type', 'button');
   });
 
   it('不携带任何 Tailwind 工具类(样式由 button.css 提供)', () => {
-    render(<Button variant="outline" size="lg" block>覆写</Button>);
+    render(
+      <Button variant="outline" size="lg" block>
+        覆写
+      </Button>,
+    );
 
     const button = screen.getByRole('button');
     const classes = button.className.split(/\s+/);
     expect(classes.every((name) => name.startsWith('bd-'))).toBe(true);
-    expect(button).toHaveClass('bd-button--outline', 'bd-button--lg', 'bd-button--block');
+    expect(button).toHaveClass(
+      'bd-button--outline',
+      'bd-button--lg',
+      'bd-button--block',
+    );
   });
 
   it('支持 variant 与 size', () => {

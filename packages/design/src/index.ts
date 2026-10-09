@@ -4,7 +4,11 @@ export { cn, cx };
 export type { ClassValue };
 
 export { Button, buttonVariants } from './components/button/index.js';
-export type { ButtonProps, ButtonSize, ButtonVariant } from './components/button/index.js';
+export type {
+  ButtonProps,
+  ButtonSize,
+  ButtonVariant,
+} from './components/button/index.js';
 
 export { Input } from './components/input/index.js';
 export type { InputProps, InputSize } from './components/input/index.js';

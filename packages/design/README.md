@@ -4,10 +4,10 @@ beauty monorepo 的 Web 端 React UI 组件库,沿用 shadcn/ui 的令牌与设�
 
 ## 消费形态
 
-| 场景 | 解析到 | 说明 |
-| --- | --- | --- |
+| 场景                 | 解析到                                            | 说明                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 仓库内(workspace 包) | `exports["."]["@beauty/source"]` → `src/index.ts` | 消费方打包器直接编译源码,改组件即时生效,**不需要先构建**。工具链需声明同名条件:TS `customConditions: ["@beauty/source"]`、Vite `resolve.conditions`、Rspress `conditionNames`(见 `apps/web` 与文档站配置) |
-| 仓库外 / 发布 | `main` / `module` / `types` → `dist` | 由 `nx build @beauty/design` 产出:`tsc` 原样 emit 合法 ESM(相对导入带真实 `.js` 后缀),`node` 也能直接 `import` |
+| 仓库外 / 发布        | `main` / `module` / `types` → `dist`              | 由 `nx build @beauty/design` 产出:`tsc` 原样 emit 合法 ESM(相对导入带真实 `.js` 后缀),`node` 也能直接 `import`                                                                                            |
 
 两条路径共用同一份源码:条件命中就用源码,否则落到 `dist`,所以"仓库内开发"与"打包发布"互不影响。
 
@@ -41,7 +41,9 @@ import '@beauty/design/styles.css';
 组件样式是未分层、单类(0,1,0)选择器,宿主在库之后引入、或提高特异性即可覆盖:
 
 ```css
-.page .my-btn { padding: 0 24px; }
+.page .my-btn {
+  padding: 0 24px;
+}
 ```
 
 需要绝对优先级(含盖过 Tailwind 工具类)时用 `@layer` 让位:

@@ -28,9 +28,7 @@ describe('Switch', () => {
 
   it('受控模式下状态完全由 checked 决定', () => {
     const handleCheckedChange = vi.fn();
-    render(
-      <Switch checked={false} onCheckedChange={handleCheckedChange} />,
-    );
+    render(<Switch checked={false} onCheckedChange={handleCheckedChange} />);
 
     const toggle = screen.getByRole('switch');
     fireEvent.click(toggle);
@@ -54,7 +52,11 @@ describe('Switch', () => {
   it('disabled 时不响应点击', () => {
     const handleCheckedChange = vi.fn();
     render(
-      <Switch disabled defaultChecked={false} onCheckedChange={handleCheckedChange} />,
+      <Switch
+        disabled
+        defaultChecked={false}
+        onCheckedChange={handleCheckedChange}
+      />,
     );
 
     const toggle = screen.getByRole('switch');

@@ -6,13 +6,13 @@
 
 ## 类名契约
 
-| 组件 | 根类名 | 修饰类 | 状态与内部元素 |
-| --- | --- | --- | --- |
-| Button | `.bd-button` | `.bd-button--primary` / `--secondary` / `--outline` / `--ghost` / `--danger`;`.bd-button--sm` / `--md` / `--lg`;`.bd-button--block` | `:disabled`、`:focus-visible`;加载图标 `.bd-button__spinner` |
-| Input | `.bd-input-group` | `.bd-input-group--sm` / `--md` / `--lg` | `[data-invalid="true"]`、`[data-disabled="true"]`、`:focus-within`;内部 `.bd-input`、`.bd-input__prefix`、`.bd-input__suffix` |
-| Switch | `.bd-switch` | — | `[data-state="checked"]`、`:disabled`、`:focus-visible`;滑块 `.bd-switch__thumb` |
-| Tag | `.bd-tag` | `.bd-tag--neutral` / `--primary` / `--success` / `--danger` / `--warning` / `--info` | 关闭按钮 `.bd-tag__close` |
-| Space | `.bd-space` | `.bd-space--vertical`;`.bd-space--align-start` / `--align-center` / `--align-end` / `--align-baseline`;`.bd-space--wrap` | 间距由行内 `gap` 提供,支持任意像素值 |
+| 组件   | 根类名            | 修饰类                                                                                                                              | 状态与内部元素                                                                                                                |
+| ------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Button | `.bd-button`      | `.bd-button--primary` / `--secondary` / `--outline` / `--ghost` / `--danger`;`.bd-button--sm` / `--md` / `--lg`;`.bd-button--block` | `:disabled`、`:focus-visible`;加载图标 `.bd-button__spinner`                                                                  |
+| Input  | `.bd-input-group` | `.bd-input-group--sm` / `--md` / `--lg`                                                                                             | `[data-invalid="true"]`、`[data-disabled="true"]`、`:focus-within`;内部 `.bd-input`、`.bd-input__prefix`、`.bd-input__suffix` |
+| Switch | `.bd-switch`      | —                                                                                                                                   | `[data-state="checked"]`、`:disabled`、`:focus-visible`;滑块 `.bd-switch__thumb`                                              |
+| Tag    | `.bd-tag`         | `.bd-tag--neutral` / `--primary` / `--success` / `--danger` / `--warning` / `--info`                                                | 关闭按钮 `.bd-tag__close`                                                                                                     |
+| Space  | `.bd-space`       | `.bd-space--vertical`;`.bd-space--align-start` / `--align-center` / `--align-end` / `--align-baseline`;`.bd-space--wrap`            | 间距由行内 `gap` 提供,支持任意像素值                                                                                          |
 
 这些类名是**公开 API**:升级保持兼容,宿主可以放心依赖。
 

@@ -51,10 +51,7 @@ export function Input({
       className={cn(inputGroupVariants({ size }), className)}
     >
       {prefix != null ? (
-        <span
-          data-slot="input-prefix"
-          className="bd-input__prefix"
-        >
+        <span data-slot="input-prefix" className="bd-input__prefix">
           {prefix}
         </span>
       ) : null}
@@ -66,10 +63,7 @@ export function Input({
         {...rest}
       />
       {suffix != null ? (
-        <span
-          data-slot="input-suffix"
-          className="bd-input__suffix"
-        >
+        <span data-slot="input-suffix" className="bd-input__suffix">
           {suffix}
         </span>
       ) : null}

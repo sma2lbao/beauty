@@ -26,7 +26,7 @@ import { Button, Space } from '@beauty/design';
 <Space>
   <Button variant="secondary">取消</Button>
   <Button variant="primary">保存</Button>
-</Space>
+</Space>;
 ```
 
 ## 垂直排列
@@ -51,12 +51,20 @@ import { Button, Space } from '@beauty/design';
 
 <div className="bd-demo bd-demo--vertical">
   <Space size="xs">
-    <Button size="sm" variant="ghost">xs</Button>
-    <Button size="sm" variant="ghost">4px</Button>
+    <Button size="sm" variant="ghost">
+      xs
+    </Button>
+    <Button size="sm" variant="ghost">
+      4px
+    </Button>
   </Space>
   <Space size="xl">
-    <Button size="sm" variant="ghost">xl</Button>
-    <Button size="sm" variant="ghost">24px</Button>
+    <Button size="sm" variant="ghost">
+      xl
+    </Button>
+    <Button size="sm" variant="ghost">
+      24px
+    </Button>
   </Space>
 </div>
 
@@ -89,9 +97,9 @@ import { Button, Space } from '@beauty/design';
 
 继承 `React.ComponentPropsWithoutRef<'div'>`。
 
-| 属性 | 说明 | 类型 | 默认值 |
-| --- | --- | --- | --- |
-| direction | 排列方向 | `'horizontal' \| 'vertical'` | `'horizontal'` |
-| size | 间距,预设档位或像素值 | `'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl' \| number` | `'md'` |
-| align | 交叉轴对齐 | `'start' \| 'center' \| 'end' \| 'baseline'` | — |
-| wrap | 是否换行 | `boolean` | `false` |
+| 属性      | 说明                  | 类型                                             | 默认值         |
+| --------- | --------------------- | ------------------------------------------------ | -------------- |
+| direction | 排列方向              | `'horizontal' \| 'vertical'`                     | `'horizontal'` |
+| size      | 间距,预设档位或像素值 | `'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl' \| number` | `'md'`         |
+| align     | 交叉轴对齐            | `'start' \| 'center' \| 'end' \| 'baseline'`     | —              |
+| wrap      | 是否换行              | `boolean`                                        | `false`        |

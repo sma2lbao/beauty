@@ -4,13 +4,14 @@
 
 ## 项目结构
 
-| 路径                | Nx 项目名        | 类型         | 技术栈                                                        |
-| ------------------- | ---------------- | ------------ | ------------------------------------------------------------- |
-| `apps/web`          | `@beauty/web`    | React 应用   | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + shadcn/ui,Vite 8 |
-| `apps/ink`          | `ink`            | Python 应用  | LlamaIndex + DeepSeek + bge-m3 + ChromaDB 的 RAG 问答,Streamlit UI |
-| `packages/ts-utils` | `@beauty/ts-utils` | TS 库      | tsc 构建 + vitest                                             |
-| `packages/design`   | `@beauty/design` | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站 |
-| `packages/py-utils` | `py-utils`       | Python 库    | hatchling + pytest + ruff                                      |
+| 路径                  | Nx 项目名               | 类型         | 技术栈                                                                                  |
+| --------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------- |
+| `apps/web`            | `@beauty/web`           | React 应用   | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + shadcn/ui,Vite 8 |
+| `apps/ink`            | `ink`                   | Python 应用  | LlamaIndex + DeepSeek + bge-m3 + ChromaDB 的 RAG 问答,Streamlit UI                      |
+| `packages/ts-utils`   | `@beauty/ts-utils`      | TS 库        | tsc 构建 + vitest                                                                       |
+| `packages/design`     | `@beauty/design`        | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                         |
+| `packages/py-utils`   | `py-utils`              | Python 库    | hatchling + pytest + ruff                                                               |
+| `tools/eslint-config` | `@beauty/eslint-config` | 共享工具包   | ESLint 9 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                       |
 
 环境要求:Node.js >= 20.19;Python 3.12(根 `.python-version` 锁定);uv >= 0.5。
 
@@ -20,6 +21,7 @@
 
 ```sh
 npx nx show projects        # 列出所有项目
+npx nx run-many -t lint     # 全仓库 lint(JS/TS 用 ESLint,Python 用 ruff)
 npx nx run-many -t build    # 构建所有可构建项目
 npx nx graph                # 打开项目依赖关系图
 ```
@@ -36,6 +38,8 @@ npx nx test @beauty/ts-utils -- --run
 npx nx dev @beauty/web                 # Vite dev server(5173 端口,交互开发用)
 npx nx build @beauty/web               # tsc --noEmit + vite 生产构建
 npx nx typecheck @beauty/web           # 仅类型检查(web/design/ts-utils 同名)
+npx nx lint @beauty/web                # ESLint(共享配置 tools/eslint-config)
+npx nx lint @beauty/web -- --fix       # ESLint 自动修复
 npx nx build @beauty/design            # tsc emit ESM 到 dist
 npx nx run @beauty/design:docs:dev     # rspress 文档站
 ```
@@ -71,7 +75,7 @@ npx nx sync py-utils                                  # 变更后同步 .venv
 
 ## 代码风格
 
-- **TypeScript**:`strict: true`、ESM、`nodenext` 模块解析、target es2022(根 `tsconfig.base.json`);Prettier 单引号(根 `.prettierrc`)。
+- **TypeScript**:`strict: true`、ESM、`nodenext` 模块解析、target es2022(根 `tsconfig.base.json`);Prettier 单引号(根 `.prettierrc`);ESLint 9 flat config 统一于 `tools/eslint-config`,格式交给 Prettier、ESLint 只管质量。
 - **包命名**:JS 包统一 `@beauty/<目录名>` 作用域(根包 `@beauty/source`);应用目录名不带 `beauty-` 前缀。
 - **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
@@ -92,6 +96,6 @@ npx nx sync py-utils                                  # 变更后同步 .venv
 
 ## 修改后的验证清单
 
-- **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run`;改动包公共 API 时再 `npx nx build <项目>`。
+- **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
 - **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils` 另跑 `npx nx test py-utils`。
 - **依赖变更**:Python 先 `nx run <项目>:add/remove` 再 `nx sync`;JS 改 `package.json` 后根目录 `npm install`。

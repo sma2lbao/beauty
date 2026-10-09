@@ -31,12 +31,17 @@ beauty-moon/
 │       ├── tests/              # pytest 测试
 │       ├── pyproject.toml      # 依赖 / 构建 / ruff / pytest 配置
 │       └── project.json        # Nx 目标定义
+├── tools/
+│   └── eslint-config/          # 共享 ESLint flat config(@beauty/eslint-config)
+│       ├── configs/            # base.js / react.js 配置工厂
+│       ├── index.js            # 导出 base / react
+│       └── package.json         # eslint 插件依赖全部收敛于此
 ├── pyproject.toml              # uv workspace 容器（共享 venv）
 ├── .python-version             # 锁定 Python 3.12（整个 workspace）
 ├── uv.lock                     # uv 锁文件（所有 Python 项目共享，提交到 git）
 ├── nx.json                     # Nx 配置
 ├── tsconfig.base.json          # TS 基础配置（customConditions: @beauty/source）
-└── package.json                # JS 依赖 + npm workspaces（packages/* 与 apps/*）
+└── package.json                # JS 依赖 + npm workspaces(packages/*、apps/* 与 tools/*)
 ```
 
 ## 常用命令
@@ -45,6 +50,7 @@ beauty-moon/
 npx nx graph                     # 打开项目依赖关系图
 npx nx run-many -t build         # 构建所有可构建项目
 npx nx run-many -t test          # 运行所有测试
+npx nx run-many -t lint          # 全仓库 lint(JS/TS 用 ESLint,Python 用 ruff)
 npx nx show projects             # 列出所有项目
 ```
 
@@ -63,6 +69,7 @@ npx nx dev @beauty/web        # 启动 dev server（默认 5173 端口）
 npx nx build @beauty/web      # tsc 类型检查 + vite 生产构建
 npx nx preview @beauty/web    # 预览生产构建
 npx nx typecheck @beauty/web  # 仅类型检查
+npx nx lint @beauty/web        # ESLint(共享配置 tools/eslint-config)
 npx nx test @beauty/web       # vitest + Testing Library 单测
 ```
 
@@ -102,6 +109,26 @@ npx nx g @nx/js:lib packages/<名称> --unitTestRunner=vitest --bundler=tsc
 ```
 
 生成器沿用根 package.json 的 npm 作用域，新包命名为 `@beauty/<名称>`。
+
+新项目接入共享 ESLint 配置(`tools/eslint-config`)只需三步:
+
+1. 项目 `package.json` 的 `devDependencies` 加上 `"@beauty/eslint-config": "*"`(或 `npm install -D @beauty/eslint-config -w <项目名>`);
+2. 项目根创建 `eslint.config.mjs`:React 项目用 `react()`,纯 TS 包用 `base()`;
+3. 运行 `npx nx lint <项目名>` 验证(`nx.json` 已注册 `@nx/eslint` 插件,含该文件的项目自动获得 lint target)。
+
+```js
+// eslint.config.mjs —— React 项目
+import { react } from '@beauty/eslint-config';
+
+export default react();
+```
+
+```js
+// eslint.config.mjs —— 纯 TS 包
+import { base } from '@beauty/eslint-config';
+
+export default base();
+```
 
 ### Python（uv）
 

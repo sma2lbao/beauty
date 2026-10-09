@@ -19,7 +19,7 @@ import { Input, Space } from '@beauty/design';
 ```tsx
 import { Input } from '@beauty/design';
 
-<Input placeholder="请输入昵称" />
+<Input placeholder="请输入昵称" />;
 ```
 
 ## 三种尺寸
@@ -79,7 +79,7 @@ import { Input, Space } from '@beauty/design';
 <Space direction="vertical" size="md">
   <Input placeholder="邮箱" />
   <Input invalid placeholder="密码" />
-</Space>
+</Space>;
 ```
 
 ## API
@@ -88,9 +88,9 @@ import { Input, Space } from '@beauty/design';
 
 继承 `React.ComponentPropsWithRef<'input'>`,即全部原生 input 属性(`value`、`onChange`、`maxLength`、`ref` 等)均可透传。
 
-| 属性 | 说明 | 类型 | 默认值 |
-| --- | --- | --- | --- |
-| size | 尺寸,与同尺寸 Button 等高 | `'sm' \| 'md' \| 'lg'` | `'md'` |
-| invalid | 校验失败态,危险色边框并标记 `aria-invalid` | `boolean` | `false` |
-| prefix | 前置内容,常用于图标或单位 | `ReactNode` | — |
-| suffix | 后置内容,常用于图标或单位 | `ReactNode` | — |
+| 属性    | 说明                                       | 类型                   | 默认值  |
+| ------- | ------------------------------------------ | ---------------------- | ------- |
+| size    | 尺寸,与同尺寸 Button 等高                  | `'sm' \| 'md' \| 'lg'` | `'md'`  |
+| invalid | 校验失败态,危险色边框并标记 `aria-invalid` | `boolean`              | `false` |
+| prefix  | 前置内容,常用于图标或单位                  | `ReactNode`            | —       |
+| suffix  | 后置内容,常用于图标或单位                  | `ReactNode`            | —       |

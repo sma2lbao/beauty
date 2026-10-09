@@ -42,7 +42,9 @@
 
 .bd-button:focus-visible {
   border-color: var(--bd-ring);
-  box-shadow: 0 0 0 3px var(--bd-button-ring), var(--bd-button-shadow);
+  box-shadow:
+    0 0 0 3px var(--bd-button-ring),
+    var(--bd-button-shadow);
 }
 
 .bd-button:disabled {
@@ -112,12 +114,20 @@
   }
 
   .bd-button--danger:hover {
-    background-color: color-mix(in oklab, var(--bd-destructive) 90%, transparent);
+    background-color: color-mix(
+      in oklab,
+      var(--bd-destructive) 90%,
+      transparent
+    );
   }
 }
 
 .bd-button--outline:active {
-  border-color: color-mix(in oklab, var(--bd-muted-foreground) 40%, transparent);
+  border-color: color-mix(
+    in oklab,
+    var(--bd-muted-foreground) 40%,
+    transparent
+  );
 }
 
 /* ---------- 尺寸 ---------- */

@@ -17,7 +17,9 @@
   background-color: var(--bd-input);
   cursor: pointer;
   outline: none;
-  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke;
+  transition-property:
+    color, background-color, border-color, outline-color, text-decoration-color,
+    fill, stroke;
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -28,7 +30,11 @@
 
 @media (hover: hover) {
   .bd-switch[data-state='unchecked']:hover {
-    background-color: color-mix(in oklab, var(--bd-muted-foreground) 40%, transparent);
+    background-color: color-mix(
+      in oklab,
+      var(--bd-muted-foreground) 40%,
+      transparent
+    );
   }
 
   .bd-switch[data-state='checked']:hover {

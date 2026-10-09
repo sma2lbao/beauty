@@ -6,9 +6,9 @@ Beauty Design 的视觉系统由 shadcn 语义 CSS 变量驱动。业务方不�
 
 组件库可以在**不使用 Tailwind 的宿主**里工作,两条路径的令牌完全一致:
 
-| 宿主 | 引入方式 | 说明 |
-| --- | --- | --- |
-| 不使用 Tailwind | `import '@beauty/design/styles.css'` | 样式入口:`--bd-*` 令牌 + 全部组件 CSS,**零 Tailwind**(没有 preflight、没有工具类);链内 `@import` 由宿主打包器内联。宿主可以是纯 CSS、CSS Modules、CSS-in-JS 或任何技术栈 |
+| 宿主             | 引入方式                                                                | 说明                                                                                                                                                                                   |
+| ---------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 不使用 Tailwind  | `import '@beauty/design/styles.css'`                                    | 样式入口:`--bd-*` 令牌 + 全部组件 CSS,**零 Tailwind**(没有 preflight、没有工具类);链内 `@import` 由宿主打包器内联。宿主可以是纯 CSS、CSS Modules、CSS-in-JS 或任何技术栈               |
 | 使用 Tailwind v4 | 在 `@import 'tailwindcss'` 之后 `@import '@beauty/design/tailwind.css'` | 在上一行的内容之外多一层 `@theme` 映射:把 `--bd-*` 暴露成 Tailwind 主题变量,于是你可以直接用 `bg-primary`、`text-muted-foreground`、`rounded-md` 等工具类写业务样式,并自动跟随令牌换肤 |
 
 两种方式下覆盖 `--bd-*` 的写法完全相同。
@@ -67,17 +67,17 @@ function syncTheme() {
 
 ## 变量总览
 
-| 变量 | 说明 | 亮色默认值 |
-| --- | --- | --- |
-| `--bd-primary` / `--bd-primary-foreground` | 品牌色 / 品牌色上的文字 | `oklch(0.55 0.115 10)` |
-| `--bd-ring` | 焦点环颜色 | 与品牌色一致 |
-| `--bd-background` / `--bd-foreground` | 页面背景 / 正文文字 | `oklch(0.984 0.007 25)` / `oklch(0.25 0.035 350)` |
-| `--bd-card` / `--bd-popover` | 卡片 / 浮层背景 | 近白色 |
-| `--bd-secondary` / `--bd-muted` / `--bd-accent` | 次级、弱化、强调底色 | 浅暖灰系 |
-| `--bd-destructive` | 危险语义色 | `oklch(0.577 0.245 27.325)` |
-| `--bd-success` / `--bd-warning` / `--bd-info` | 扩展语义色(Tag 等) | `#2e7d54` / `#9a6a1c` / `#38678f` |
-| `--bd-border` / `--bd-input` | 边框 / 输入框边框 | `oklch(0.905 0.012 345)` |
-| `--bd-radius` | 圆角基准(sm/md/lg/xl 由此派生) | `0.75rem` |
-| `--bd-font-sans` | 正文字体栈 | 系统字体栈 |
+| 变量                                            | 说明                           | 亮色默认值                                        |
+| ----------------------------------------------- | ------------------------------ | ------------------------------------------------- |
+| `--bd-primary` / `--bd-primary-foreground`      | 品牌色 / 品牌色上的文字        | `oklch(0.55 0.115 10)`                            |
+| `--bd-ring`                                     | 焦点环颜色                     | 与品牌色一致                                      |
+| `--bd-background` / `--bd-foreground`           | 页面背景 / 正文文字            | `oklch(0.984 0.007 25)` / `oklch(0.25 0.035 350)` |
+| `--bd-card` / `--bd-popover`                    | 卡片 / 浮层背景                | 近白色                                            |
+| `--bd-secondary` / `--bd-muted` / `--bd-accent` | 次级、弱化、强调底色           | 浅暖灰系                                          |
+| `--bd-destructive`                              | 危险语义色                     | `oklch(0.577 0.245 27.325)`                       |
+| `--bd-success` / `--bd-warning` / `--bd-info`   | 扩展语义色(Tag 等)             | `#2e7d54` / `#9a6a1c` / `#38678f`                 |
+| `--bd-border` / `--bd-input`                    | 边框 / 输入框边框              | `oklch(0.905 0.012 345)`                          |
+| `--bd-radius`                                   | 圆角基准(sm/md/lg/xl 由此派生) | `0.75rem`                                         |
+| `--bd-font-sans`                                | 正文字体栈                     | 系统字体栈                                        |
 
 暗色主题下的同名变量定义在 `.dark` 中,取值随主题整体适配,无需逐个覆盖。
