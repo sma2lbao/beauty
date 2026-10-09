@@ -6,6 +6,7 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
+    "customConditions": ["@beauty/source"],
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -19,5 +20,10 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "references": [
+    {
+      "path": "../../packages/design"
+    }
+  ]
 }

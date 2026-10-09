@@ -1,24 +1,24 @@
-import { cx } from './utils/class-name';
+import { cn, cx, type ClassValue } from './lib/utils.js';
 
-export { cx };
-export type { ClassValue } from './utils/class-name';
+export { cn, cx };
+export type { ClassValue };
 
-export { Button } from './components/button';
-export type { ButtonProps, ButtonSize, ButtonVariant } from './components/button';
+export { Button, buttonVariants } from './components/button/index.js';
+export type { ButtonProps, ButtonSize, ButtonVariant } from './components/button/index.js';
 
-export { Input } from './components/input';
-export type { InputProps, InputSize } from './components/input';
+export { Input } from './components/input/index.js';
+export type { InputProps, InputSize } from './components/input/index.js';
 
-export { Tag } from './components/tag';
-export type { TagColor, TagProps } from './components/tag';
+export { Tag, tagVariants } from './components/tag/index.js';
+export type { TagColor, TagProps } from './components/tag/index.js';
 
-export { Switch } from './components/switch';
-export type { SwitchProps } from './components/switch';
+export { Switch } from './components/switch/index.js';
+export type { SwitchProps } from './components/switch/index.js';
 
-export { Space } from './components/space';
+export { Space } from './components/space/index.js';
 export type {
   SpaceAlign,
   SpaceDirection,
   SpaceProps,
   SpaceSize,
-} from './components/space';
+} from './components/space/index.js';

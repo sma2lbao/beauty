@@ -1,65 +1,82 @@
+/**
+ * Tag 样式(普通 CSS + BEM 语义类名)
+ * 语义色 = 令牌 10% 底色 + 令牌文字色,暗色自动跟随令牌。
+ */
+
 .bd-tag {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  gap: 0.25rem;
+  padding: 1px 0.5rem;
   border: 1px solid transparent;
+  border-radius: 9999px;
   font-family: var(--bd-font-sans);
-  font-size: var(--bd-font-size-xs);
-  line-height: 18px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.125rem;
   white-space: nowrap;
-  background: var(--bd-bg-muted);
-  color: var(--bd-text-muted);
+}
+
+.bd-tag--neutral {
+  background-color: var(--bd-muted);
+  color: var(--bd-muted-foreground);
 }
 
 .bd-tag--primary {
-  background: var(--bd-primary-muted);
+  background-color: color-mix(in oklab, var(--bd-primary) 10%, transparent);
   color: var(--bd-primary);
 }
 
 .bd-tag--success {
-  background: var(--bd-success-muted);
+  background-color: color-mix(in oklab, var(--bd-success) 10%, transparent);
   color: var(--bd-success);
 }
 
 .bd-tag--danger {
-  background: var(--bd-danger-muted);
-  color: var(--bd-danger);
+  background-color: color-mix(in oklab, var(--bd-destructive) 10%, transparent);
+  color: var(--bd-destructive);
 }
 
 .bd-tag--warning {
-  background: var(--bd-warning-muted);
+  background-color: color-mix(in oklab, var(--bd-warning) 10%, transparent);
   color: var(--bd-warning);
 }
 
 .bd-tag--info {
-  background: var(--bd-info-muted);
+  background-color: color-mix(in oklab, var(--bd-info) 10%, transparent);
   color: var(--bd-info);
 }
 
 .bd-tag__close {
-  display: inline-flex;
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  margin: 0 -3px 0 1px;
+  width: 1rem;
+  height: 1rem;
+  margin-inline-start: 0.0625rem;
+  margin-inline-end: -0.1875rem;
   padding: 0;
   border: none;
-  border-radius: 50%;
-  background: none;
+  border-radius: 9999px;
+  background-color: transparent;
   color: inherit;
   cursor: pointer;
-  opacity: 0.6;
-  transition: opacity var(--bd-duration-fast) var(--bd-ease);
+  opacity: 60%;
+  outline: none;
+  transition-property: opacity;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.bd-tag__close:hover {
-  opacity: 1;
+@media (hover: hover) {
+  .bd-tag__close:hover {
+    opacity: 100%;
+  }
 }
 
 .bd-tag__close:focus-visible {
-  outline: none;
-  box-shadow: var(--bd-shadow-focus);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bd-ring) 50%, transparent);
 }

@@ -1,90 +1,18 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-
-@custom-variant dark (&:is(.dark *));
-
 /*
-  美月 Beauty Moon · 月白瓷韵
-  --------------------------------------------------
-  底色：瓷白（比奶油色更冷、更透一点粉调）
-  墨色：墨梅（带梅子调的深色，代替纯黑）
-  主色：豆沙玫瑰（muted dusty rose，而不是 terracotta）
-  辅色：月霜 / 月光银
-  深色模式：月夜（蓝紫夜色，月亮换成月夜里的光）
+  美月 Beauty Moon 主题与 shadcn 语义变量统一由 @beauty/design 提供:
+  - 本应用自带 Tailwind v4,引 @beauty/design/tailwind.css:
+    该入口带来令牌(亮色 :root / 暗色 .dark)、组件自带的普通 CSS 与 @theme inline 映射,
+    因此本应用可以直接用 bg-primary / text-muted-foreground / rounded-md 等工具类
+  - 不用 Tailwind 的宿主则改引 @beauty/design/styles.css(见组件库 README)
 */
-:root {
-  --radius: 0.75rem;
-  --background: oklch(0.984 0.007 25);
-  --foreground: oklch(0.25 0.035 350);
-  --card: oklch(0.995 0.004 25);
-  --card-foreground: oklch(0.25 0.035 350);
-  --popover: oklch(0.995 0.004 25);
-  --popover-foreground: oklch(0.25 0.035 350);
-  --primary: oklch(0.55 0.115 10);
-  --primary-foreground: oklch(0.985 0.006 25);
-  --secondary: oklch(0.94 0.015 340);
-  --secondary-foreground: oklch(0.35 0.04 350);
-  --muted: oklch(0.955 0.01 340);
-  --muted-foreground: oklch(0.5 0.025 350);
-  --accent: oklch(0.93 0.018 300);
-  --accent-foreground: oklch(0.32 0.04 340);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.905 0.012 345);
-  --input: oklch(0.905 0.012 345);
-  --ring: oklch(0.55 0.115 10);
-}
+@import '@beauty/design/tailwind.css';
 
-.dark {
-  --background: oklch(0.17 0.022 300);
-  --foreground: oklch(0.93 0.01 310);
-  --card: oklch(0.21 0.024 300);
-  --card-foreground: oklch(0.93 0.01 310);
-  --popover: oklch(0.21 0.024 300);
-  --popover-foreground: oklch(0.93 0.01 310);
-  --primary: oklch(0.7 0.115 10);
-  --primary-foreground: oklch(0.18 0.03 350);
-  --secondary: oklch(0.27 0.025 300);
-  --secondary-foreground: oklch(0.88 0.012 310);
-  --muted: oklch(0.25 0.025 300);
-  --muted-foreground: oklch(0.68 0.02 310);
-  --accent: oklch(0.28 0.03 300);
-  --accent-foreground: oklch(0.9 0.012 310);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.7 0.115 10);
-}
-
+/* 应用自有字体:衬线展示字 */
 @theme inline {
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'HarmonyOS Sans SC',
-    'Microsoft YaHei', sans-serif;
   --font-display:
     Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
-
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
 }
 
 @layer base {
@@ -93,7 +21,8 @@
   }
 
   html {
-    font-family: var(--font-sans);
+    /* 字栈由主题的 @theme 映射提供,避免依赖库内部的变量名 */
+    @apply font-sans;
   }
 
   body {

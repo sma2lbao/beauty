@@ -1,98 +1,103 @@
-.bd-input {
+/**
+ * Input 样式(普通 CSS + BEM 语义类名)
+ * 边框、焦点环与状态色挂在外层 `.bd-input-group`,内部 `.bd-input` 保持透明。
+ * 尺寸、盒模型与字体在组件内显式声明,不依赖宿主重置。
+ */
+
+.bd-input-group {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: var(--bd-bg);
-  border: 1px solid var(--bd-border);
-  border-radius: var(--bd-radius-md);
-  padding: 0 12px;
-  transition:
-    border-color var(--bd-duration-fast) var(--bd-ease),
-    box-shadow var(--bd-duration-fast) var(--bd-ease);
-}
-
-.bd-input:hover:not(.is-disabled) {
-  border-color: var(--bd-border-strong);
-}
-
-.bd-input:focus-within {
-  border-color: var(--bd-primary);
-  box-shadow: var(--bd-shadow-focus);
-}
-
-.bd-input.is-disabled {
-  background: var(--bd-bg-muted);
-  border-color: var(--bd-border);
-  cursor: not-allowed;
-}
-
-.bd-input.is-invalid {
-  border-color: var(--bd-danger);
-}
-
-.bd-input.is-invalid:focus-within {
-  border-color: var(--bd-danger);
-  box-shadow: var(--bd-shadow-focus-danger);
-}
-
-/* 尺寸 */
-.bd-input--sm {
-  height: 28px;
-  padding: 0 10px;
-}
-
-.bd-input--md {
-  height: 34px;
-}
-
-.bd-input--lg {
-  height: 40px;
-  padding: 0 14px;
-}
-
-.bd-input__control {
-  flex: 1 1 auto;
-  min-width: 0;
+  gap: 0.375rem;
   width: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--bd-text);
+  padding-block: 0;
+  border: 1px solid var(--bd-input);
+  border-radius: calc(var(--bd-radius) - 2px);
+  background-color: var(--bd-background);
   font-family: var(--bd-font-sans);
-  font-size: var(--bd-font-size-md);
-  line-height: 1.5;
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+  outline: none;
+  /* 焦点环与状态色通过变量组合,便于各状态覆盖 */
+  --bd-input-ring: color-mix(in oklab, var(--bd-ring) 50%, transparent);
+  --bd-input-shadow: 0 0 #0000;
+  box-shadow: var(--bd-input-shadow);
+  transition-property: border-color, box-shadow;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.bd-input--sm .bd-input__control {
-  font-size: var(--bd-font-size-sm);
+.bd-input-group:focus-within {
+  border-color: var(--bd-ring);
+  box-shadow: 0 0 0 3px var(--bd-input-ring), var(--bd-input-shadow);
 }
 
-.bd-input--lg .bd-input__control {
-  font-size: var(--bd-font-size-lg);
+.bd-input-group[data-invalid='true'] {
+  border-color: var(--bd-destructive);
 }
 
-.bd-input__control::placeholder {
-  color: var(--bd-text-faint);
+.bd-input-group[data-invalid='true']:focus-within {
+  --bd-input-ring: color-mix(in oklab, var(--bd-destructive) 25%, transparent);
+  border-color: var(--bd-destructive);
 }
 
-.bd-input__control:disabled {
+.bd-input-group[data-disabled='true'] {
+  border-color: var(--bd-input);
+  background-color: color-mix(in oklab, var(--bd-muted) 60%, transparent);
   cursor: not-allowed;
-  color: var(--bd-text-faint);
 }
+
+/* ---------- 尺寸 ---------- */
+
+.bd-input-group--sm {
+  height: 1.75rem;
+  padding-inline: 0.625rem;
+  font-size: 0.75rem;
+  line-height: calc(1 / 0.75);
+}
+
+.bd-input-group--md {
+  height: 2.125rem;
+  padding-inline: 0.75rem;
+}
+
+.bd-input-group--lg {
+  height: 2.5rem;
+  padding-inline: 0.875rem;
+  font-size: 1rem;
+  line-height: calc(1.5 / 1);
+}
+
+/* ---------- 前后缀 ---------- */
 
 .bd-input__prefix,
 .bd-input__suffix {
-  display: inline-flex;
-  align-items: center;
-  color: var(--bd-text-muted);
-  font-size: var(--bd-font-size-md);
+  display: flex;
   flex-shrink: 0;
+  align-items: center;
+  color: var(--bd-muted-foreground);
 }
 
-.bd-input__prefix {
-  margin-left: -2px;
+/* ---------- 内部输入框 ---------- */
+
+.bd-input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 0%;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
 }
 
-.bd-input__suffix {
-  margin-right: -2px;
+.bd-input::placeholder {
+  color: var(--bd-muted-foreground);
+}
+
+.bd-input:disabled {
+  color: color-mix(in oklab, var(--bd-muted-foreground) 70%, transparent);
+  cursor: not-allowed;
 }

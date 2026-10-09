@@ -1,6 +1,7 @@
 import type { ComponentPropsWithoutRef, MouseEvent } from 'react';
+import { cva } from 'class-variance-authority';
 
-import { cx } from '../../utils/class-name';
+import { cn } from '../../lib/utils.js';
 
 export type TagColor =
   | 'neutral'
@@ -9,6 +10,26 @@ export type TagColor =
   | 'danger'
   | 'warning'
   | 'info';
+
+const tagVariants = cva(
+  // 语义类名,样式见 tag.css
+  'bd-tag',
+  {
+    variants: {
+      color: {
+        neutral: 'bd-tag--neutral',
+        primary: 'bd-tag--primary',
+        success: 'bd-tag--success',
+        danger: 'bd-tag--danger',
+        warning: 'bd-tag--warning',
+        info: 'bd-tag--info',
+      },
+    },
+    defaultVariants: {
+      color: 'neutral',
+    },
+  },
+);
 
 export interface TagProps extends ComponentPropsWithoutRef<'span'> {
   /** 语义颜色 */
@@ -29,17 +50,15 @@ export function Tag({
 }: TagProps) {
   return (
     <span
-      className={cx(
-        'bd-tag',
-        color !== 'neutral' && `bd-tag--${color}`,
-        className,
-      )}
+      data-slot="tag"
+      className={cn(tagVariants({ color }), className)}
       {...rest}
     >
       {children}
       {closable ? (
         <button
           type="button"
+          data-slot="tag-close"
           className="bd-tag__close"
           aria-label="移除"
           onClick={onClose}
@@ -58,3 +77,5 @@ export function Tag({
     </span>
   );
 }
+
+export { tagVariants };

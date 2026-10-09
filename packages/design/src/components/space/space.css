@@ -1,17 +1,16 @@
-.bd-space {
-  display: inline-flex;
-}
+/**
+ * Space 样式(普通 CSS + BEM 语义类名)
+ * 间距由组件以行内 `gap` 提供(支持任意像素值),这里只负责排列方式。
+ */
 
-.bd-space--horizontal {
+.bd-space {
+  box-sizing: border-box;
+  display: inline-flex;
   flex-direction: row;
 }
 
 .bd-space--vertical {
   flex-direction: column;
-}
-
-.bd-space--wrap {
-  flex-wrap: wrap;
 }
 
 .bd-space--align-start {
@@ -28,4 +27,8 @@
 
 .bd-space--align-baseline {
   align-items: baseline;
+}
+
+.bd-space--wrap {
+  flex-wrap: wrap;
 }

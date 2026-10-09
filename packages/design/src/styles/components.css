@@ -1,0 +1,12 @@
+/**
+ * 组件样式汇总入口。
+ *
+ * 每个组件一份普通 CSS(语义类名 + BEM 修饰符 + --bd-* 令牌),
+ * 不依赖宿主重置,也不依赖 Tailwind。新增组件时在此登记。
+ */
+
+@import '../components/button/button.css';
+@import '../components/input/input.css';
+@import '../components/space/space.css';
+@import '../components/switch/switch.css';
+@import '../components/tag/tag.css';

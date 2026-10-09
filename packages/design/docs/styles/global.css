@@ -1,3 +1,5 @@
-/* 文档站全局样式入口,由 rspress `globalStyles` 引入 */
-@import '../../src/styles/index.css';
+/* 文档站全局样式入口,由 rspress globalStyles 引入。
+   文档站像"不使用 Tailwind 的宿主"一样直接消费组件库的纯 CSS 入口:
+   令牌 + 组件 CSS 一次引入,文档站自身不再需要 Tailwind。 */
+@import '../../src/styles/prebuilt.css';
 @import './demo.css';

@@ -1,6 +1,7 @@
 import type { ComponentPropsWithRef, ReactNode } from 'react';
+import { cva } from 'class-variance-authority';
 
-import { cx } from '../../utils/class-name';
+import { cn } from '../../lib/utils.js';
 
 export type InputSize = 'sm' | 'md' | 'lg';
 
@@ -16,6 +17,23 @@ export interface InputProps
   suffix?: ReactNode;
 }
 
+const inputGroupVariants = cva(
+  // 语义类名,样式见 input.css;invalid / disabled 由 data-* 属性表达
+  'bd-input-group',
+  {
+    variants: {
+      size: {
+        sm: 'bd-input-group--sm',
+        md: 'bd-input-group--md',
+        lg: 'bd-input-group--lg',
+      },
+    },
+    defaultVariants: {
+      size: 'md',
+    },
+  },
+);
+
 export function Input({
   size = 'md',
   invalid = false,
@@ -27,25 +45,33 @@ export function Input({
 }: InputProps) {
   return (
     <span
-      className={cx(
-        'bd-input',
-        `bd-input--${size}`,
-        disabled && 'is-disabled',
-        invalid && 'is-invalid',
-        className,
-      )}
+      data-slot="input-group"
+      data-invalid={invalid || undefined}
+      data-disabled={disabled || undefined}
+      className={cn(inputGroupVariants({ size }), className)}
     >
       {prefix != null ? (
-        <span className="bd-input__prefix">{prefix}</span>
+        <span
+          data-slot="input-prefix"
+          className="bd-input__prefix"
+        >
+          {prefix}
+        </span>
       ) : null}
       <input
-        className="bd-input__control"
+        data-slot="input"
+        className="bd-input"
         disabled={disabled}
         aria-invalid={invalid || undefined}
         {...rest}
       />
       {suffix != null ? (
-        <span className="bd-input__suffix">{suffix}</span>
+        <span
+          data-slot="input-suffix"
+          className="bd-input__suffix"
+        >
+          {suffix}
+        </span>
       ) : null}
     </span>
   );

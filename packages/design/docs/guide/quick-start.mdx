@@ -14,17 +14,50 @@
 }
 ```
 
-然后在仓库根目录执行 `npm install`。
+然后在仓库根目录执行 `npm install`。仓库内消费走源码,**不需要先构建**;只有要 `dist`(发布或仓库外消费)时才执行 `nx build @beauty/design`。
 
 ## 2. 引入样式
 
-在应用入口(如 `main.tsx`)引入一次即可:
+组件库提供两条消费路径,按宿主是否使用 Tailwind 选一条即可。
+
+### A. 宿主不引入 Tailwind
+
+在应用入口引入样式入口(`@import` 链由你的打包器内联):
 
 ```tsx
+// src/main.tsx
 import '@beauty/design/styles.css';
 ```
 
-样式是一份普通 CSS,所有设计令牌与组件样式都在其中。
+`styles.css` 是一个 CSS 入口:主题令牌 + 全部组件 CSS,**不含 Tailwind 产物**(没有 preflight,也没有工具类)。链内的 `@import` 由你的打包器内联(Vite / webpack / Next / Rspack 都支持)。宿主不需要安装 Tailwind,也不会被组件库重置掉自己的全局样式(标题边距、原生按钮内边距都保持宿主/浏览器默认值);宿主可以是纯 CSS、CSS Modules、CSS-in-JS 或任何技术栈。
+
+### B. 宿主使用 Tailwind CSS v4
+
+在 CSS 入口追加一行主题引入:
+
+```css
+/* src/index.css */
+@import 'tailwindcss';
+@import '@beauty/design/tailwind.css';
+```
+
+这个入口在"美月"主题令牌(亮色 `:root`、暗色 `.dark`)与组件 CSS 之外,多提供一层 `@theme` 映射:把 `--bd-*` 暴露成 Tailwind 主题变量,因此你可以直接用 `bg-primary`、`rounded-md` 这类工具类写业务样式,并自动跟随令牌换肤。
+
+:::tip 令牌命名空间
+令牌统一带 `--bd-` 前缀(如 `--bd-primary`),不会与宿主自己的 shadcn 主题同名变量互相覆盖;定制令牌见[主题定制](./theming),用 class 覆写组件样式见[样式与覆写](./styling)。
+:::
+
+### 暗色模式
+
+在任意祖先节点(通常是 `html`)添加 `dark` class 即切换:
+
+```tsx
+// 跟随用户偏好切换
+function syncTheme() {
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.classList.toggle('dark', dark);
+}
+```
 
 ## 3. 使用组件
 
@@ -43,7 +76,23 @@ export function ProfileForm() {
 
 ## 在本仓库中直接消费源码
 
-`@beauty/design` 的 `exports` 字段内置了 `@beauty/source` 条件,指向 `src/index.ts`。支持该条件的打包器(Vite 等)可以直接吃到源码,享受改动即时生效的开发体验;消费构建产物则走 `dist`,无需任何配置。
+`exports` 里内置了 `@beauty/source` 条件,指向 `src/index.ts`:声明了该条件的工具链直接编译组件源码,改组件即时生效,也不需要先 `nx build`;没声明的(仓库外消费、发布产物)自然落到 `dist`。
+
+以 `apps/web` 为例,两处各加一行:
+
+```json
+// tsconfig.json
+"customConditions": ["@beauty/source"]
+```
+
+```ts
+// vite.config.ts
+resolve: {
+  conditions: ['@beauty/source', 'module', 'browser', 'development|production'],
+}
+```
+
+文档站(Rspress)通过 `rspress.config.ts` 的 `conditionNames` 使用同一条件。
 
 ## 类型
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ComponentPropsWithRef, MouseEvent } from 'react';
 
-import { cx } from '../../utils/class-name';
+import { cn } from '../../lib/utils.js';
 
 export interface SwitchProps
   extends Omit<ComponentPropsWithRef<'button'>, 'onChange'> {
@@ -41,18 +41,23 @@ export function Switch({
     <button
       type={type}
       role="switch"
+      data-slot="switch"
+      data-state={isChecked ? 'checked' : 'unchecked'}
       aria-checked={isChecked}
-      className={cx(
+      className={cn(
+        // 语义类名,样式见 switch.css;选中态由 data-state 表达
         'bd-switch',
-        isChecked && 'is-checked',
-        disabled && 'is-disabled',
         className,
       )}
       disabled={disabled}
       onClick={handleClick}
       {...rest}
     >
-      <span className="bd-switch__thumb" aria-hidden="true" />
+      <span
+        data-slot="switch-thumb"
+        aria-hidden="true"
+        className="bd-switch__thumb"
+      />
     </button>
   );
 }

@@ -1,6 +1,6 @@
 import type { ComponentPropsWithoutRef, CSSProperties } from 'react';
 
-import { cx } from '../../utils/class-name';
+import { cn } from '../../lib/utils.js';
 
 export type SpaceDirection = 'horizontal' | 'vertical';
 
@@ -14,6 +14,14 @@ const SPACE_SIZE: Record<string, number> = {
   md: 12,
   lg: 16,
   xl: 24,
+};
+
+/** 交叉轴对齐 → BEM 修饰类(样式见 space.css) */
+const SPACE_ALIGN: Record<SpaceAlign, string> = {
+  start: 'bd-space--align-start',
+  center: 'bd-space--align-center',
+  end: 'bd-space--align-end',
+  baseline: 'bd-space--align-baseline',
 };
 
 export interface SpaceProps extends ComponentPropsWithoutRef<'div'> {
@@ -43,10 +51,11 @@ export function Space({
 
   return (
     <div
-      className={cx(
+      data-slot="space"
+      className={cn(
         'bd-space',
-        `bd-space--${direction}`,
-        align && `bd-space--align-${align}`,
+        direction === 'vertical' && 'bd-space--vertical',
+        align && SPACE_ALIGN[align],
         wrap && 'bd-space--wrap',
         className,
       )}

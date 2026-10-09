@@ -1,51 +1,67 @@
+/**
+ * Switch 样式(普通 CSS + BEM 语义类名)
+ * 状态通过 `data-state` 属性表达,颜色全部来自 `--bd-*` 令牌(暗色零分支)。
+ */
+
 .bd-switch {
+  box-sizing: border-box;
   position: relative;
   display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  width: 40px;
-  height: 22px;
+  width: 2.5rem;
+  height: 1.375rem;
   padding: 0;
   border: none;
-  border-radius: 999px;
-  background: var(--bd-border-strong);
+  border-radius: 9999px;
+  background-color: var(--bd-input);
   cursor: pointer;
-  transition: background-color var(--bd-duration) var(--bd-ease);
+  outline: none;
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.bd-switch:hover:not(:disabled) {
-  background: var(--bd-text-faint);
+.bd-switch[data-state='checked'] {
+  background-color: var(--bd-primary);
+}
+
+@media (hover: hover) {
+  .bd-switch[data-state='unchecked']:hover {
+    background-color: color-mix(in oklab, var(--bd-muted-foreground) 40%, transparent);
+  }
+
+  .bd-switch[data-state='checked']:hover {
+    background-color: color-mix(in oklab, var(--bd-primary) 90%, transparent);
+  }
 }
 
 .bd-switch:focus-visible {
-  outline: none;
-  box-shadow: var(--bd-shadow-focus);
-}
-
-.bd-switch.is-checked {
-  background: var(--bd-primary);
-}
-
-.bd-switch.is-checked:hover:not(:disabled) {
-  background: var(--bd-primary-hover);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bd-ring) 50%, transparent);
 }
 
 .bd-switch:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 50%;
 }
 
 .bd-switch__thumb {
+  box-sizing: border-box;
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: var(--bd-shadow-xs);
-  transition: transform var(--bd-duration) var(--bd-ease);
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 9999px;
+  background-color: var(--bd-background);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  pointer-events: none;
+  translate: 0;
+  transition-property: translate;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.bd-switch.is-checked .bd-switch__thumb {
-  transform: translateX(18px);
+.bd-switch[data-state='checked'] .bd-switch__thumb {
+  translate: 1.125rem;
 }

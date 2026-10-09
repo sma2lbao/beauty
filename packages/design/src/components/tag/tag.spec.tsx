@@ -1,21 +1,21 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Tag } from './tag';
+import { Tag } from './tag.js';
 
 describe('Tag', () => {
   it('渲染默认标签', () => {
     render(<Tag>新品</Tag>);
 
     const tag = screen.getByText('新品');
-    expect(tag).toHaveClass('bd-tag');
-    expect(tag).not.toHaveClass('bd-tag--primary');
+    expect(tag).toHaveAttribute('data-slot', 'tag');
+    expect(tag).toHaveClass('bd-tag', 'bd-tag--neutral');
   });
 
   it('支持语义颜色', () => {
     render(<Tag color="success">已上架</Tag>);
 
-    expect(screen.getByText('已上架')).toHaveClass('bd-tag--success');
+    expect(screen.getByText('已上架')).toHaveClass('bd-tag', 'bd-tag--success');
   });
 
   it('closable 时渲染关闭按钮并触发 onClose', () => {
@@ -27,7 +27,7 @@ describe('Tag', () => {
     );
 
     const close = screen.getByRole('button', { name: '移除' });
-    expect(close).toHaveClass('bd-tag__close');
+    expect(close).toHaveAttribute('data-slot', 'tag-close');
     fireEvent.click(close);
     expect(handleClose).toHaveBeenCalledTimes(1);
   });

@@ -4,9 +4,9 @@ Beauty Design 是 beauty monorepo 的 Web 端 React UI 组件库,为内部产品
 
 ## 它是什么
 
-- 一个以 **设计令牌** 为核心的样式系统:颜色、字号、圆角、阴影、动效全部是 `--bd-` 前缀的 CSS 自定义属性,亮色定义在 `:root`,暗色通过 `data-bd-theme="dark"` 显式启用;
+- 一个以 **设计令牌** 为核心的样式系统:颜色、圆角、字体以 shadcn 语义 CSS 变量定义,统一使用 `--bd-` 命名空间(`--bd-primary`、`--bd-background` 等),因此不会与宿主主题的同名变量互相覆盖;亮色定义在 `:root`,暗色通过 `.dark` class 显式启用;
 - 一组 **行为可预期** 的 React 组件:原生元素语义、受控/非受控双模式、ARIA 属性齐备,`peerDependencies` 仅依赖 React 19;
-- 一份 **零运行时依赖** 的产物:不引入样式引擎,样式即普通 CSS,业务方引入一个 `styles.css` 即可。
+- 一套 **语义类名 + 普通 CSS 的实现**:每个组件自带一份同目录 CSS,类名是 `bd-` 前缀的 BEM 语义类名(`.bd-button`、`.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌。组件源码里不出现 Tailwind 工具类,因此宿主不装 Tailwind 也能正确渲染、也不会被库的全局重置影响,并可以用普通 CSS 类名覆写(见[样式与覆写](./styling))。
 
 ## 设计原则
 
@@ -27,8 +27,8 @@ packages/design
 │   │   ├── tag/          # Tag:标签
 │   │   ├── switch/       # Switch:开关
 │   │   └── space/        # Space:间距布局
-│   ├── styles/           # 设计令牌与样式入口
-│   └── utils/            # 内部工具
+│   ├── styles/           # tokens.css(令牌)与 styles/tailwind 两个入口
+│   └── lib/              # cn 类名拼接工具
 ├── docs/                 # Rspress 文档源(本站)
 ├── rspress.config.ts     # 文档站配置
 └── vitest.config.mts     # 单元测试配置

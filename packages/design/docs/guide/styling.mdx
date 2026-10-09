@@ -1,0 +1,53 @@
+# 样式与覆写
+
+组件的样式是**普通 CSS**:每个组件在同目录带一份 `.css`,类名是 `bd-` 前缀的语义类名(BEM),颜色、圆角、字体只读 `--bd-*` 令牌。组件源码里不出现 Tailwind 工具类。
+
+这样做换来两件事:宿主**不需要安装 Tailwind**,并且可以用任何普通 CSS 覆盖组件样式。
+
+## 类名契约
+
+| 组件 | 根类名 | 修饰类 | 状态与内部元素 |
+| --- | --- | --- | --- |
+| Button | `.bd-button` | `.bd-button--primary` / `--secondary` / `--outline` / `--ghost` / `--danger`;`.bd-button--sm` / `--md` / `--lg`;`.bd-button--block` | `:disabled`、`:focus-visible`;加载图标 `.bd-button__spinner` |
+| Input | `.bd-input-group` | `.bd-input-group--sm` / `--md` / `--lg` | `[data-invalid="true"]`、`[data-disabled="true"]`、`:focus-within`;内部 `.bd-input`、`.bd-input__prefix`、`.bd-input__suffix` |
+| Switch | `.bd-switch` | — | `[data-state="checked"]`、`:disabled`、`:focus-visible`;滑块 `.bd-switch__thumb` |
+| Tag | `.bd-tag` | `.bd-tag--neutral` / `--primary` / `--success` / `--danger` / `--warning` / `--info` | 关闭按钮 `.bd-tag__close` |
+| Space | `.bd-space` | `.bd-space--vertical`;`.bd-space--align-start` / `--align-center` / `--align-end` / `--align-baseline`;`.bd-space--wrap` | 间距由行内 `gap` 提供,支持任意像素值 |
+
+这些类名是**公开 API**:升级保持兼容,宿主可以放心依赖。
+
+## 覆写组件样式
+
+组件样式全部是**未分层(unlayered)、单类(0,1,0)**选择器——特异性刻意压到最低,把优先级让给宿主。三种写法由弱到强:
+
+```css
+/* 1) 同特异性:在组件库之后引入即可覆盖(顺序敏感) */
+.my-btn {
+  padding: 0 24px;
+  border-radius: 0;
+}
+
+/* 2) 提高特异性:与引入顺序无关,日常最稳妥 */
+.page .my-btn {
+  padding: 0 24px;
+}
+```
+
+```css
+/* 3) 绝对让位:把组件样式收进 @layer,宿主的普通样式与 Tailwind 工具类都能盖过它 */
+@layer theme, base, bd, components, utilities;
+@import '@beauty/design/styles.css' layer(bd);
+```
+
+第 3 种是 Ant Design v5 同款做法:用 `@layer` 明确组件库样式永远排在宿主之后。日常推荐第 2 种——写法简单、不依赖引入顺序、也不改变层叠结构。
+
+:::tip 只想换颜色?
+优先覆盖令牌(`--bd-primary`、`--bd-ring` 等),而不是写类名选择器,见[主题定制](./theming)。
+:::
+
+## 与 Tailwind 的关系
+
+- 宿主**不使用** Tailwind:`import '@beauty/design/styles.css'`。组件照常渲染,你的全局样式(标题边距、原生按钮内边距等)不会被库重置。
+- 宿主**使用** Tailwind v4:在 `@import 'tailwindcss'` 之后 `@import '@beauty/design/tailwind.css'`。除了组件 CSS,还会得到 `@theme` 映射,于是可以用 `bg-primary`、`text-muted-foreground`、`rounded-md` 等工具类写自己的界面,并自动跟随令牌换肤。
+
+组件自身不依赖 Tailwind:构建产物里没有 Tailwind 的 preflight,也没有任何工具类。

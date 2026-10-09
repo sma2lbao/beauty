@@ -1,103 +1,73 @@
 /**
- * Beauty Design 设计令牌
+ * Beauty Design 设计令牌(美月 Beauty Moon)
  *
- * 所有令牌以 `--bd-` 为前缀,基于 CSS 自定义属性实现:
- * - 亮色主题定义在 `:root`,全站生效
- * - 暗色主题通过 `[data-bd-theme='dark']` 显式启用,不与系统偏好耦合,
- *   由接入方决定何时切换,保证行为可预期
- * - 任何令牌都可以在业务侧被局部覆盖,实现品牌定制
+ * 纯 CSS,不含任何 Tailwind 语法:宿主引不引 Tailwind 都能用。
+ *
+ * - 令牌统一使用 --bd- 命名空间(如 --bd-primary)。宿主的 shadcn 主题同样会定义
+ *   --primary / --background / --radius 这类全局同名变量,不做隔离时双方
+ *   :root 规则同优先级、后引入者覆盖整个文档(双向破坏)。命名空间化之后,
+ *   宿主令牌影响不到组件库,组件库也不会污染宿主。
+ * - 亮色令牌定义在 :root,暗色通过 .dark class 显式启用(与 shadcn 约定一致,应用级切换)。
+ * - 覆盖方式:在使用方 CSS 里重新定义 --bd-* 即可——挂 :root 做全局品牌定制,
+ *   挂任意容器做局部换肤。覆盖点就是这一层,不需要碰组件。
  */
+
 :root {
   color-scheme: light;
 
-  /* 品牌色 · 胭脂玫瑰 */
-  --bd-primary: #a03a5b;
-  --bd-primary-hover: #b44868;
-  --bd-primary-active: #8b2f4d;
-  --bd-primary-muted: #f7e8ee;
-  --bd-on-primary: #fffaf7;
+  --bd-radius: 0.75rem;
+  --bd-background: oklch(0.984 0.007 25);
+  --bd-foreground: oklch(0.25 0.035 350);
+  --bd-card: oklch(0.995 0.004 25);
+  --bd-card-foreground: oklch(0.25 0.035 350);
+  --bd-popover: oklch(0.995 0.004 25);
+  --bd-popover-foreground: oklch(0.25 0.035 350);
+  --bd-primary: oklch(0.55 0.115 10);
+  --bd-primary-foreground: oklch(0.985 0.006 25);
+  --bd-secondary: oklch(0.94 0.015 340);
+  --bd-secondary-foreground: oklch(0.35 0.04 350);
+  --bd-muted: oklch(0.955 0.01 340);
+  --bd-muted-foreground: oklch(0.5 0.025 350);
+  --bd-accent: oklch(0.93 0.018 300);
+  --bd-accent-foreground: oklch(0.32 0.04 340);
+  --bd-destructive: oklch(0.577 0.245 27.325);
+  --bd-border: oklch(0.905 0.012 345);
+  --bd-input: oklch(0.905 0.012 345);
+  --bd-ring: oklch(0.55 0.115 10);
 
-  /* 暖中性色 */
-  --bd-bg: #ffffff;
-  --bd-bg-muted: #f8f3f1;
-  --bd-surface: #ffffff;
-  --bd-border: #e7dcd8;
-  --bd-border-strong: #d0bfb9;
-  --bd-text: #2b2124;
-  --bd-text-muted: #77676c;
-  --bd-text-faint: #a5949a;
-
-  /* 语义色 */
+  /* 扩展语义色:成功 / 警告 / 信息(Tag 等组件消费) */
   --bd-success: #2e7d54;
-  --bd-success-muted: #e4f3ea;
-  --bd-danger: #bf3b2b;
-  --bd-danger-muted: #fae7e3;
   --bd-warning: #9a6a1c;
-  --bd-warning-muted: #f8eeda;
   --bd-info: #38678f;
-  --bd-info-muted: #e5eef5;
 
-  /* 字体 */
   --bd-font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  --bd-font-mono:
-    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-
-  /* 字号与行高 */
-  --bd-font-size-xs: 0.75rem;
-  --bd-font-size-sm: 0.8125rem;
-  --bd-font-size-md: 0.875rem;
-  --bd-font-size-lg: 1rem;
-
-  /* 圆角 */
-  --bd-radius-sm: 4px;
-  --bd-radius-md: 6px;
-  --bd-radius-lg: 10px;
-
-  /* 阴影 */
-  --bd-shadow-xs: 0 1px 2px rgba(43, 33, 36, 0.06);
-  --bd-shadow-sm: 0 2px 8px rgba(43, 33, 36, 0.08);
-  --bd-shadow-md: 0 6px 20px rgba(43, 33, 36, 0.1);
-  --bd-shadow-focus: 0 0 0 3px rgba(160, 58, 91, 0.22);
-  --bd-shadow-focus-danger: 0 0 0 3px rgba(191, 59, 43, 0.2);
-
-  /* 动效 */
-  --bd-duration-fast: 120ms;
-  --bd-duration: 180ms;
-  --bd-ease: cubic-bezier(0.25, 0, 0.35, 1);
+    ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'HarmonyOS Sans SC',
+    'Microsoft YaHei', sans-serif;
 }
 
-[data-bd-theme='dark'] {
+.dark {
   color-scheme: dark;
 
-  --bd-primary: #d9739a;
-  --bd-primary-hover: #e38aad;
-  --bd-primary-active: #c65d84;
-  --bd-primary-muted: #3a2630;
-  --bd-on-primary: #2b121c;
-
-  --bd-bg: #1b1518;
-  --bd-bg-muted: #272023;
-  --bd-surface: #241d20;
-  --bd-border: #3d3236;
-  --bd-border-strong: #524549;
-  --bd-text: #f2e9eb;
-  --bd-text-muted: #b3a3a8;
-  --bd-text-faint: #857578;
+  --bd-background: oklch(0.17 0.022 300);
+  --bd-foreground: oklch(0.93 0.01 310);
+  --bd-card: oklch(0.21 0.024 300);
+  --bd-card-foreground: oklch(0.93 0.01 310);
+  --bd-popover: oklch(0.21 0.024 300);
+  --bd-popover-foreground: oklch(0.93 0.01 310);
+  --bd-primary: oklch(0.7 0.115 10);
+  --bd-primary-foreground: oklch(0.18 0.03 350);
+  --bd-secondary: oklch(0.27 0.025 300);
+  --bd-secondary-foreground: oklch(0.88 0.012 310);
+  --bd-muted: oklch(0.25 0.025 300);
+  --bd-muted-foreground: oklch(0.68 0.02 310);
+  --bd-accent: oklch(0.28 0.03 300);
+  --bd-accent-foreground: oklch(0.9 0.012 310);
+  --bd-destructive: oklch(0.704 0.191 22.216);
+  --bd-border: oklch(1 0 0 / 12%);
+  --bd-input: oklch(1 0 0 / 16%);
+  --bd-ring: oklch(0.7 0.115 10);
 
   --bd-success: #5dbd8c;
-  --bd-success-muted: #1d3329;
-  --bd-danger: #e56a55;
-  --bd-danger-muted: #3d221d;
   --bd-warning: #d9a256;
-  --bd-warning-muted: #372a18;
   --bd-info: #74a8d4;
-  --bd-info-muted: #1c2b39;
-
-  --bd-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --bd-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --bd-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
-  --bd-shadow-focus: 0 0 0 3px rgba(217, 115, 154, 0.35);
-  --bd-shadow-focus-danger: 0 0 0 3px rgba(229, 106, 85, 0.32);
 }

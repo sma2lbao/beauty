@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Switch } from './switch';
+import { Switch } from './switch.js';
 
 describe('Switch', () => {
   it('渲染开关并暴露 aria-checked', () => {
@@ -11,6 +11,7 @@ describe('Switch', () => {
     const toggle = screen.getByRole('switch');
     expect(toggle).toBeInTheDocument();
     expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).toHaveAttribute('data-state', 'unchecked');
   });
 
   it('非受控模式下点击切换状态', () => {
@@ -19,9 +20,10 @@ describe('Switch', () => {
     const toggle = screen.getByRole('switch');
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-checked', 'true');
-    expect(toggle).toHaveClass('is-checked');
+    expect(toggle).toHaveAttribute('data-state', 'checked');
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).toHaveAttribute('data-state', 'unchecked');
   });
 
   it('受控模式下状态完全由 checked 决定', () => {
@@ -59,6 +61,6 @@ describe('Switch', () => {
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
     expect(handleCheckedChange).not.toHaveBeenCalled();
-    expect(toggle).toHaveClass('is-disabled');
+    expect(toggle).toHaveAttribute('data-state', 'unchecked');
   });
 });

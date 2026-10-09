@@ -14,13 +14,13 @@ hero:
 features:
   - icon: 🌹
     title: 令牌驱动
-    details: 全部设计决策沉淀为一组以 --bd- 为前缀的 CSS 变量,亮暗双主题开箱可用,品牌色一处覆盖、全局生效。
+    details: 全部设计决策沉淀为 shadcn 语义 CSS 变量,统一使用 `--bd-` 命名空间(--bd-primary、--bd-background 等),与宿主主题的同名变量互不覆盖;亮暗双主题开箱可用,品牌色一处覆盖、全局生效。
   - icon: 🧩
     title: 语义化与可访问性优先
     details: 组件基于原生元素构建,键盘焦点、ARIA 属性、受控/非受控模式一应俱全,行为可预期。
   - icon: 🪶
-    title: 零运行时依赖
-    details: 不引入样式引擎或 CSS-in-JS 运行时,产物轻量;TypeScript 类型完备,直接消费源码或构建产物均可。
+    title: 零 Tailwind 依赖
+    details: 组件样式是普通 CSS,产物里没有 preflight 也没有工具类:宿主不装 Tailwind 直接 `import '@beauty/design/styles.css'`;装了 Tailwind 则多一层 `@theme` 映射,还能顺手用 `bg-primary` 等工具类写自己的界面。
 ---
 
 beauty monorepo 的界面基石。当前提供 5 个核心组件,后续按业务需要逐步扩充。

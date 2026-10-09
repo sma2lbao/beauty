@@ -1,0 +1,21 @@
+/**
+ * 无 Tailwind 宿主的样式入口(exports 的 ./styles.css 直接指向本文件)。
+ *
+ * 内容 = 设计令牌 + 全部组件 CSS,不含任何 Tailwind 产物
+ * (没有 preflight,也没有工具类):宿主不需要安装 Tailwind,
+ * 也不会被组件库强加任何全局重置。
+ *
+ * 本文件是一层 @import 清单,由消费方的打包器内联
+ * (Vite / webpack / Next / Rspack 都会处理 node_modules 内的 @import);
+ * 浏览器原生 <link> 也能解析这层 @import,只是会多几个请求。
+ *
+ * 覆写契约:
+ * - 组件样式全部是未分层(unlayered)、单类(0,1,0)选择器,
+ *   宿主在组件库之后引入、或提高特异性(如 .page .bd-button),即可覆盖;
+ * - 想让组件样式绝对让位(含盖过 Tailwind 工具类):
+ *   @layer theme, base, bd, components, utilities;
+ *   @import '@beauty/design/styles.css' layer(bd);
+ */
+
+@import './tokens.css';
+@import './components.css';

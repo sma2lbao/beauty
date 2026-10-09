@@ -1,13 +1,51 @@
 /**
- * Beauty Design 样式总入口
+ * Tailwind v4 宿主入口(exports 的 ./tailwind.css)。
  *
- * 业务侧按需引入其中一种形式:
- * - `import '@beauty/design/styles.css'`(推荐,经打包器处理)
- * - 全量引入令牌后按需引入组件样式
+ * 组件样式本身是普通 CSS(src/styles/components.css),这里额外做的事只有一件:
+ * 把 --bd-* 映射成 Tailwind 主题变量,让用了 Tailwind 的宿主可以直接写
+ * bg-primary / text-muted-foreground / rounded-md 这类工具类,
+ * 并且自动跟随令牌换肤。类名保持 Tailwind 标准写法,不加 prefix() 前缀:
+ * 前缀会污染宿主的全部工具类,而 --bd-* 命名空间已经解决了令牌互相覆盖的问题。
+ *
+ * @import 'tailwindcss';
+ * @import '@beauty/design/tailwind.css';
+ *
+ * 不使用 Tailwind 的宿主改引 @beauty/design/styles.css
+ * (即 src/styles/prebuilt.css:令牌 + 组件 CSS,零 Tailwind)。
  */
+
 @import './tokens.css';
-@import '../components/button/button.css';
-@import '../components/input/input.css';
-@import '../components/tag/tag.css';
-@import '../components/switch/switch.css';
-@import '../components/space/space.css';
+@import './components.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--bd-font-sans);
+
+  --color-background: var(--bd-background);
+  --color-foreground: var(--bd-foreground);
+  --color-card: var(--bd-card);
+  --color-card-foreground: var(--bd-card-foreground);
+  --color-popover: var(--bd-popover);
+  --color-popover-foreground: var(--bd-popover-foreground);
+  --color-primary: var(--bd-primary);
+  --color-primary-foreground: var(--bd-primary-foreground);
+  --color-secondary: var(--bd-secondary);
+  --color-secondary-foreground: var(--bd-secondary-foreground);
+  --color-muted: var(--bd-muted);
+  --color-muted-foreground: var(--bd-muted-foreground);
+  --color-accent: var(--bd-accent);
+  --color-accent-foreground: var(--bd-accent-foreground);
+  --color-destructive: var(--bd-destructive);
+  --color-success: var(--bd-success);
+  --color-warning: var(--bd-warning);
+  --color-info: var(--bd-info);
+  --color-border: var(--bd-border);
+  --color-input: var(--bd-input);
+  --color-ring: var(--bd-ring);
+
+  --radius-sm: calc(var(--bd-radius) - 4px);
+  --radius-md: calc(var(--bd-radius) - 2px);
+  --radius-lg: var(--bd-radius);
+  --radius-xl: calc(var(--bd-radius) + 4px);
+}

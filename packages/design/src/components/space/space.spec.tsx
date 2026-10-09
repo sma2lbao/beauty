@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { Space } from './space';
+import { Space } from './space.js';
 
 describe('Space', () => {
   it('默认水平排列并应用中等间距', () => {
@@ -13,7 +13,9 @@ describe('Space', () => {
     );
 
     const space = screen.getByTestId('space');
-    expect(space).toHaveClass('bd-space', 'bd-space--horizontal');
+    expect(space).toHaveAttribute('data-slot', 'space');
+    expect(space).toHaveClass('bd-space');
+    expect(space).not.toHaveClass('bd-space--vertical');
     expect(space.style.gap).toBe('12px');
     expect(space).toHaveTextContent('ab');
   });
@@ -26,7 +28,7 @@ describe('Space', () => {
     );
 
     const space = screen.getByTestId('space');
-    expect(space).toHaveClass('bd-space--vertical');
+    expect(space).toHaveClass('bd-space', 'bd-space--vertical');
     expect(space.style.gap).toBe('24px');
   });
 
