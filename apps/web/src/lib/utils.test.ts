@@ -8,7 +8,8 @@ describe('cn', () => {
   });
 
   it('过滤假值', () => {
-    expect(cn('flex', false && 'hidden', undefined, null, 'gap-2')).toBe(
+    const state = { hidden: false };
+    expect(cn('flex', state.hidden && 'hidden', undefined, null, 'gap-2')).toBe(
       'flex gap-2',
     );
   });
