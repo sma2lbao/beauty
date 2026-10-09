@@ -6,11 +6,21 @@ import { defineConfig } from 'rspress/config';
 // defineConfig 仍由 rspress 元包提供,故两者都声明为 devDependencies 并锁同一版本。
 // v2 内建 React 19 支持(以 @unhead/react 管理 <head>),v1 时代因
 // react-helmet-async 多副本导致 HelmetDispatcher 报错的 rspack alias 兜底已移除。
+
+// 关闭 rspress 的持久化构建缓存(node_modules/.cache/rspack)。
 //
-// 开发态注意:rspack 持久化缓存(packages/design/node_modules/.cache/rspack)会缓存
-// search index 的文件名哈希;一旦它与 doc_build 里的实际产物不一致,dev server 会在
-// 编译页面时以 ENOENT(static/search_index.<hash>.json)崩溃。此时删除
-// packages/design/node_modules/.cache/rspack 与 doc_build 后重启即可恢复。
+// 它缓存 search index 的文件名哈希,而哈希由文档内容决定、产物却写在 doc_build:
+// 只要在 dev 未运行时改过 docs 内容、或跑过一次 docs:build,缓存里的旧哈希就与
+// doc_build 中的实际文件名不一致,dev server 随后以未捕获的
+// ENOENT(static/search_index.<hash>.json) 直接退出。
+//
+// 开关只能是环境变量:rspress 装配 rsbuild 配置时会无条件覆盖 performance.buildCache
+// (见 @rspress/core/dist/index.js — `'false' !== process.env.RSPRESS_PERSISTENT_CACHE
+// ? { buildCache: {...} } : {}`),写进 builderConfig 会被它盖掉。本模块先于 rspress
+// 装配被导入,故在这里设置;用 ??= 而非 = 以便外部按需临时打开缓存做对比实验。
+//
+// 代价:本站冷编译约 0.2s、docs:build 约 1.5s,缓存收益远小于上面这个崩溃陷阱。
+process.env.RSPRESS_PERSISTENT_CACHE ??= 'false';
 
 // @beauty/design 的 exports 里用自定义条件 @beauty/source 指向 src/index.ts，
 // import/default 则指向尚未构建的 dist/。文档站要直接消费组件源码（改源码即时热更），
@@ -34,6 +44,8 @@ export default defineConfig({
   // 与 docs:* 脚本在包根执行的约定一致，无需显式声明 root / outDir。
   globalStyles: path.join(__dirname, 'docs/styles/global.css'),
   builderConfig: {
+    // 不在这里设 performance.buildCache:rspress 会覆盖它,
+    // 改由文件顶部的 RSPRESS_PERSISTENT_CACHE=false 关闭(原因见顶部注释)。
     tools: {
       // rsbuild 的 ResolveConfig 只支持 dedupe / alias / aliasStrategy / extensions，
       // 没有 conditionNames（写在 resolve 里会被静默丢弃），因此下沉到 rspack 配置层注入。
