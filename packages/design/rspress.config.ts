@@ -20,6 +20,16 @@ const BEAUTY_SOURCE_CONDITION = '@beauty/source';
 export default defineConfig({
   title: 'Beauty Design',
   description: 'beauty monorepo 的 Web 端 React UI 组件库',
+  // 站点标识与图标：三份资源都在 docs/public（等价于站点根，Rspress 的 publicDir
+  // 固定为 `<root>/public`），dev 与构建产物统一按根路径引用。
+  //   logo.svg      渐变瓦片标识，导航栏与首页 hero 使用
+  //   logo-mono.svg 透明底单色字形，跟随系统深浅色
+  //   favicon.svg   浏览器页签用小尺寸优化版（更少留白、更粗的月牙）
+  // 注意 icon 必须是绝对路径写法：Rspress 会对绝对路径取 basename 拼到
+  // `<root>/public` 下，同时以该路径作为页面 <link rel="icon"> 的 URL。
+  logo: '/logo.svg',
+  logoText: 'Beauty Design',
+  icon: '/favicon.svg',
   // 文档内容目录默认为 <cwd>/docs、构建输出默认为 <cwd>/doc_build，
   // 与 docs:* 脚本在包根执行的约定一致，无需显式声明 root / outDir。
   globalStyles: path.join(__dirname, 'docs/styles/global.css'),

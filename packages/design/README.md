@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/public/logo-mono.svg">
+    <img src="./docs/public/logo.svg" alt="Beauty Design 标识" width="88">
+  </picture>
+</p>
+
 # @beauty/design
 
 beauty monorepo 的 Web 端 React UI 组件库,沿用 shadcn/ui 的令牌与设计语言:组件样式是**普通 CSS** + `bd-` 前缀的 BEM 语义类名(`.bd-button`、`.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌(美月 Beauty Moon,亮暗双主题),组件源码里不出现 Tailwind 工具类;TypeScript 类型完备。
@@ -62,6 +69,16 @@ import '@beauty/design/styles.css';
 ### 主题定制
 
 覆盖 `--bd-*` 变量即可(见文档站「主题定制」)。不要在宿主里依赖 `--primary`、`--background` 这类未加前缀的名字:那是宿主的命名空间,组件库既不读也不写。
+
+## 标识与品牌资源
+
+标识是「组件瓦片 + 月牙 + 星芒」:瓦片圆角取 `--bd-radius` 的比例,渐变取自品牌色相(玫瑰 → 紫),月牙与星芒用白色墨迹(对渐变两端对比度 3.93:1 / 6.61:1)。三份资源都在 `docs/public/`,由文档站以根路径提供,README 与文档站共用同一份。
+
+| 文件                        | 用途                      | 说明                                                  |
+| --------------------------- | ------------------------- | ----------------------------------------------------- |
+| `docs/public/logo.svg`      | 导航栏、首页 hero、README | 渐变瓦片版,墨迹包围盒 86×81,任意尺寸缩放都保持居中    |
+| `docs/public/logo-mono.svg` | 需要与文字同色的场景      | 透明底单色字形,墨色随 `prefers-color-scheme` 自动切换 |
+| `docs/public/favicon.svg`   | 浏览器页签(16px 起)       | 留白更少、月牙更粗的小尺寸优化版,几何与标识同源       |
 
 ## 文档站(Rspress)本地开发
 

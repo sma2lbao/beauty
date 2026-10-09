@@ -1,0 +1,31 @@
+<!--
+  Beauty Design 标识(美月 Beauty Moon)。
+  构成:满幅瓦片(圆角 26 = 画布的 20%),小尺寸下留白更少
+        + 白月牙 + 四角星芒;月牙由外圆与咬口圆相减而来,两角做了钝化处理。
+  颜色:渐变取品牌主色色相(玫瑰)→ 强调色侧色相(紫),白色墨迹对渐变两端的
+        对比度分别为 3.93:1 / 6.61:1,均高于 3:1。
+  几何:墨迹包围盒 96x91,居中于 128 画布;最细处(月牙腹部)
+        约 28 单位 ≈ 画布的 1/5,16px 下仍有约 3.5px。
+  注意:XML 注释里不能出现连续两个短横线,提及设计令牌时请写到令牌名本身。
+  修改建议:改动几何请保持"月牙厚度 = 咬口圆偏移距离"这一关系。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Beauty Design">
+  <title>Beauty Design</title>
+  <defs>
+    <linearGradient id="bd-logo-gradient" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#c85f73"/>
+      <stop offset="1" stop-color="#6b47b3"/>
+    </linearGradient>
+    <mask id="bd-logo-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <rect width="128" height="128" fill="#fff"/>
+      <circle cx="77.81" cy="50.19" r="40.77" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="0.0" y="0.0" width="128.0" height="128.0" rx="26.0" fill="url(#bd-logo-gradient)"/>
+  <g fill="#ffffff" mask="url(#bd-logo-moon)">
+    <circle cx="56.77" cy="68.60" r="40.77"/>
+    <circle cx="92.51" cy="88.22" r="4.60"/>
+    <circle cx="42.07" cy="30.58" r="4.60"/>
+  </g>
+  <path d="M97.53 18.63C99.85 30.78 99.85 30.78 112.00 33.10C99.85 35.41 99.85 35.41 97.53 47.56C95.22 35.41 95.22 35.41 83.07 33.10C95.22 30.78 95.22 30.78 97.53 18.63 Z" fill="#ffffff"/>
+</svg>

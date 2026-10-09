@@ -1,0 +1,23 @@
+<!--
+  Beauty Design 单色标识(透明底,墨色跟随系统深浅色)。
+  用于 README 等需要与文字同色的场景;渐变瓦片版本见 logo.svg。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Beauty Design">
+  <title>Beauty Design</title>
+  <defs>
+    <mask id="bd-logo-moon-mono" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <rect width="128" height="128" fill="#fff"/>
+      <circle cx="78.38" cy="49.62" r="42.47" fill="#000"/>
+    </mask>
+    <style>
+      .bd-logo-ink { fill: #2e1b24; }
+      @media (prefers-color-scheme: dark) { .bd-logo-ink { fill: #f2ecf4; } }
+    </style>
+  </defs>
+  <g class="bd-logo-ink" mask="url(#bd-logo-moon-mono)">
+    <circle cx="56.47" cy="68.79" r="42.47"/>
+    <circle cx="93.69" cy="89.23" r="4.79"/>
+    <circle cx="41.16" cy="29.18" r="4.79"/>
+  </g>
+  <path class="bd-logo-ink" d="M98.93 16.74C101.34 29.40 101.34 29.40 114.00 31.81C101.34 34.22 101.34 34.22 98.93 46.88C96.52 34.22 96.52 34.22 83.86 31.81C96.52 29.40 96.52 29.40 98.93 16.74 Z"/>
+</svg>

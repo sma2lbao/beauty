@@ -1,9 +1,16 @@
 ---
+# pageType: home 是 Rspress 启用首页布局的开关(缺省为 doc)。只有首页布局才会渲染
+# hero / features;此时正文内容不参与渲染,故介绍性文案放在 hero 里。
+pageType: home
 title: Beauty Design
 description: 面向 Web 的 React UI 组件库,令牌驱动,克制可预期
 hero:
-  text: Beauty Design
-  tagline: 一套令牌驱动的 React 组件,为 beauty 系列产品提供统一的界面语言
+  name: Beauty Design
+  text: 美月 · 令牌驱动的 React 组件库
+  tagline: beauty monorepo 的界面基石,为 beauty 系列产品提供统一的界面语言;当前提供 5 个核心组件,按业务需要逐步扩充。
+  image:
+    src: /logo.svg
+    alt: Beauty Design 标识
   actions:
     - text: 快速开始
       link: /guide/quick-start
@@ -22,5 +29,3 @@ features:
     title: 零 Tailwind 依赖
     details: 组件样式是普通 CSS,产物里没有 preflight 也没有工具类:宿主不装 Tailwind 直接 `import '@beauty/design/styles.css'`;装了 Tailwind 则多一层 `@theme` 映射,还能顺手用 `bg-primary` 等工具类写自己的界面。
 ---
-
-beauty monorepo 的界面基石。当前提供 5 个核心组件,后续按业务需要逐步扩充。
