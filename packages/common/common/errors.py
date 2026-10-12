@@ -59,3 +59,9 @@ class UnauthorizedError(AppError):
     """未认证或凭证不可信(缺失/过期/签名不符/缺租户 claim)。"""
 
     status = 401
+
+
+class StorageError(AppError):
+    """存储故障(对象键非法、读写失败)——内部基础设施问题。"""
+
+    status = 500

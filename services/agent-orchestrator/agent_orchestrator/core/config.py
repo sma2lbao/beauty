@@ -17,6 +17,9 @@ class Settings(BaseAppSettings):
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
+    # 交付物存储(§7 阶段 B):database = 内容留在 DB 列;filesystem = 落本地目录
+    artifact_store: str = "database"
+    artifact_root: str = "./.artifacts"
     # 模型网关(架构 §5 唯一出口):enabled=false 时 plan/execute 走确定性桩
     llm_enabled: bool = False
     llm_gateway_url: str = "http://127.0.0.1:8003"

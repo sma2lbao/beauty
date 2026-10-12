@@ -50,9 +50,14 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `extra_instructions` 并入 plan/execute/verify/deliver 的提示词(模型必须遵循)。
 
 - 交付物(§7):deliver 由 LLM 合成最终成品,落 `run_artifacts`(每 run 一件);
-  取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`(artifact_id/chars);
-  未交付取件 404 `artifact.not_found`,failed 终态不产交付物。
+  取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`
+  (artifact_id/kind/title/chars/size_bytes/storage);
+  未交付取件 404 `artifact.not_found`,failed 终态不产交付物;
+- 交付物存储后端(§7 阶段 B):`ARTIFACT_STORE=database`(默认,正文存 DB 列)或
+  `filesystem`(正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;
+  键按 `<租户>/<run>/<交付物>.md` 分层,拒绝目录穿越);对象丢失 → 500
+  `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`。
 
-后续补齐:更多工具与技能、交付物转对象存储、Redis Streams 直播(替代 SSE 轮询)。
+后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

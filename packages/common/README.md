@@ -12,7 +12,10 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
 - `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与租户提取:
   OIDC 发现 + JWKS 拉取(TTL 缓存、未知 kid 触发刷新以支持密钥轮换)、
   RS256 签名 + `iss`/`aud`/`exp` 校验;租户来自可配置 claim,缺失即拒绝
-  (绝不回退请求头);JWKS 不可达是 502(上游问题);fetcher 可注入,测试零网络。
+  (绝不回退请求头);JWKS 不可达是 502(上游问题);fetcher 可注入,测试零网络;
+- `common.artifacts`:交付物内容存储抽象(§7 阶段 B)——`ArtifactStore` 协议
+  (put/get/delete)与 `FilesystemArtifactStore`(本地目录,键只允许安全字符、
+  落盘前校验不越出存储根以防目录穿越,IO 走 `to_thread`);换 S3/MinIO 只需实现协议。
 
 随实现逐步补齐:FastAPI 公共依赖(分页/DB session 复用)、OTel 装配、SSE 工具。
 

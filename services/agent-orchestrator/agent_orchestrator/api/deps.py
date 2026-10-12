@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.errors import UnauthorizedError
 from database.session import session_scope
@@ -30,6 +31,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_run_graph(request: Request) -> CompiledStateGraph:
     """lifespan 装配的 run 执行图(app.state.run_graph)。"""
     return request.app.state.run_graph
+
+
+def get_artifact_store(request: Request) -> ArtifactStore | None:
+    """lifespan 按配置装配的交付物存储;database 模式为 None(内容在行里)。"""
+    return request.app.state.artifact_store
 
 
 async def get_tenant_id(

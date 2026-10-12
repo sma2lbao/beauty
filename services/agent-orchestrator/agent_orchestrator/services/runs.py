@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from common.artifacts import ArtifactStore
 from common.errors import ConflictError, NotFoundError
 from events.envelope import EventEnvelope
 from langgraph.graph.state import CompiledStateGraph
@@ -28,6 +29,7 @@ from agent_orchestrator.models.runs import (
     RunEvent,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.services import artifacts
 
 
 async def append_event(
@@ -95,18 +97,13 @@ async def _fail_run(
 
 
 async def _persist_artifact(
-    session: AsyncSession, run: Run, artifact: dict[str, Any]
+    session: AsyncSession,
+    run: Run,
+    artifact: dict[str, Any],
+    store: ArtifactStore | None = None,
 ) -> RunArtifact:
-    """交付物落库 + run.delivered.v1(§7):交付是事实,必须能取件与回放。"""
-    record = RunArtifact(
-        tenant_id=run.tenant_id,
-        run_id=run.id,
-        kind=str(artifact.get("kind") or "markdown"),
-        title=str(artifact.get("title") or run.title),
-        content=str(artifact.get("content") or ""),
-    )
-    session.add(record)
-    await session.flush()
+    """交付物落库/落对象存储 + run.delivered.v1(§7)。"""
+    record = await artifacts.persist_artifact(session, run, artifact, store)
     await append_event(
         session,
         run,
@@ -115,26 +112,31 @@ async def _persist_artifact(
             "artifact_id": record.id,
             "kind": record.kind,
             "title": record.title,
-            "chars": len(record.content),
+            "chars": len(str(artifact.get("content") or "")),  # 字符数(文本)
+            "size_bytes": record.size_bytes,  # 存储字节数(UTF-8)
+            "storage": record.storage,
         },
     )
     return record
 
 
 async def get_artifact(
-    session: AsyncSession, tenant_id: str, run_id: str
-) -> RunArtifact:
-    """取件:未交付(未 completed)→ 404 artifact.not_found。"""
-    artifact = await session.scalar(
+    session: AsyncSession,
+    tenant_id: str,
+    run_id: str,
+    store: ArtifactStore | None = None,
+) -> artifacts.ArtifactView:
+    """取件:未交付(未 completed)→ 404;内容按存储后端装载(§7 阶段 B)。"""
+    row = await session.scalar(
         select(RunArtifact).where(
             RunArtifact.run_id == run_id, RunArtifact.tenant_id == tenant_id
         )
     )
-    if artifact is None:
+    if row is None:
         raise NotFoundError(
             "artifact.not_found", "交付物不存在", details={"run_id": run_id}
         )
-    return artifact
+    return await artifacts.read_artifact(row, store)
 
 
 async def queue_instruction(
@@ -285,7 +287,10 @@ async def update_plan(
 
 
 async def _apply_graph_result(
-    session: AsyncSession, run: Run, values: dict[str, Any]
+    session: AsyncSession,
+    run: Run,
+    values: dict[str, Any],
+    store: ArtifactStore | None = None,
 ) -> Run:
     """图调用结果的统一后处理(§6.2/§6.3/§7)。
 
@@ -315,7 +320,7 @@ async def _apply_graph_result(
         return run
     artifact = values.get("artifact")
     if artifact:
-        await _persist_artifact(session, run, artifact)
+        await _persist_artifact(session, run, artifact, store)
     run.rounds = values.get("rounds", 0)
     if values.get("final_status") == "failed":
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
@@ -347,6 +352,7 @@ async def approve_run(
     graph: CompiledStateGraph,
     tenant_id: str,
     run_id: str,
+    store: ArtifactStore | None = None,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_APPROVAL)
@@ -362,7 +368,7 @@ async def approve_run(
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
-    return await _apply_graph_result(session, run, values)
+    return await _apply_graph_result(session, run, values, store)
 
 
 async def confirm_run(
@@ -372,6 +378,7 @@ async def confirm_run(
     run_id: str,
     action: str,
     reason: str | None,
+    store: ArtifactStore | None = None,
 ) -> Run:
     """写操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
     run = await require_run(session, tenant_id, run_id)
@@ -398,7 +405,7 @@ async def confirm_run(
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run
-    return await _apply_graph_result(session, run, values)
+    return await _apply_graph_result(session, run, values, store)
 
 
 async def reject_run(

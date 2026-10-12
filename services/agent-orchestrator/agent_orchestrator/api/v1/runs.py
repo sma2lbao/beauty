@@ -7,6 +7,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from common.artifacts import ArtifactStore
 from common.errors import AppError
 from database.session import session_scope
 from fastapi import APIRouter, Depends, Header, Query, Request, status
@@ -14,7 +15,12 @@ from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_orchestrator.api.deps import get_run_graph, get_session, get_tenant_id
+from agent_orchestrator.api.deps import (
+    get_artifact_store,
+    get_run_graph,
+    get_session,
+    get_tenant_id,
+)
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import RunEvent
 from agent_orchestrator.schemas.runs import (
@@ -37,6 +43,7 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
+ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -88,12 +95,24 @@ async def get_run_plan(
 
 @router.get("/{run_id}/artifact", response_model=ArtifactRead)
 async def get_run_artifact(
-    run_id: str, session: DBSession, tenant_id: TenantId
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    store: ArtifactStoreDep,
 ) -> ArtifactRead:
     """取交付物(§7):completed 后取件;未交付 → 404 artifact.not_found。"""
     await runs_service.require_run(session, tenant_id, run_id)
-    artifact = await runs_service.get_artifact(session, tenant_id, run_id)
-    return ArtifactRead.model_validate(artifact)
+    view = await runs_service.get_artifact(session, tenant_id, run_id, store)
+    return ArtifactRead(
+        id=view.id,
+        run_id=view.run_id,
+        kind=view.kind,
+        title=view.title,
+        content=view.content,
+        storage=view.storage,
+        size_bytes=view.size_bytes,
+        created_at=view.created_at,
+    )
 
 
 @router.post("/{run_id}/plan", response_model=PlanRead)
@@ -122,10 +141,14 @@ async def update_run_plan(
 
 @router.post("/{run_id}/approve", response_model=RunRead)
 async def approve_run(
-    run_id: str, session: DBSession, tenant_id: TenantId, graph: RunGraph
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+    store: ArtifactStoreDep,
 ) -> RunRead:
     """放行审批闸,执行到完成(§6.2 awaiting_approval → completed)。"""
-    run = await runs_service.approve_run(session, graph, tenant_id, run_id)
+    run = await runs_service.approve_run(session, graph, tenant_id, run_id, store)
     return RunRead.model_validate(run)
 
 
@@ -158,10 +181,11 @@ async def confirm_run(
     session: DBSession,
     tenant_id: TenantId,
     graph: RunGraph,
+    store: ArtifactStoreDep,
 ) -> RunRead:
     """确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。"""
     run = await runs_service.confirm_run(
-        session, graph, tenant_id, run_id, body.action, body.reason
+        session, graph, tenant_id, run_id, body.action, body.reason, store
     )
     return RunRead.model_validate(run)
 

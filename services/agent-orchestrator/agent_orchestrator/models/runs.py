@@ -56,7 +56,8 @@ class PendingInstruction(UUIDMixin, TenantMixin, TimestampMixin, Base):
 class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """run 交付物:completed 时的成品(§7),阶段 A 每个 run 一件。
 
-    内容先直接落库(读端可即时取件);阶段 B 转对象存储后这里只留引用。
+    内容位置由 storage 决定:`database` 存本表 content 列;
+    `filesystem`(阶段 B)存对象存储,本表只留 object_key 引用 + 元数据。
     """
 
     __tablename__ = "run_artifacts"
@@ -65,4 +66,7 @@ class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     kind: Mapped[str] = mapped_column(String(32), default="markdown")
     title: Mapped[str] = mapped_column(String(200))
-    content: Mapped[str] = mapped_column(Text)
+    storage: Mapped[str] = mapped_column(String(16), default="database")
+    object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -93,13 +93,13 @@ class PlanRead(BaseModel):
 
 
 class ArtifactRead(BaseModel):
-    """交付物读取契约(§7):completed 后取件。"""
-
-    model_config = ConfigDict(from_attributes=True)
+    """交付物读取契约(§7):内容已装载,附存储后端与体量。"""
 
     id: str
     run_id: str
     kind: str
     title: str
     content: str
+    storage: str
+    size_bytes: int
     created_at: datetime
