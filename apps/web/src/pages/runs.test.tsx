@@ -24,6 +24,8 @@ vi.mock('@/lib/runs-api', async () => {
       reject: vi.fn(),
       confirm: vi.fn(),
       artifact: vi.fn(),
+      instructions: vi.fn(),
+      queueInstruction: vi.fn(),
     },
     streamRunEvents: vi.fn(),
   };
@@ -69,6 +71,7 @@ describe('RunsPage', () => {
       status: 'pending',
       plan_markdown: '',
     });
+    vi.mocked(runsApi.instructions).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -164,5 +167,45 @@ describe('RunsPage', () => {
 
     expect(await screen.findByText(/已汇总。/)).toBeInTheDocument();
     expect(runsApi.artifact).toHaveBeenCalledWith('run-1');
+  });
+
+  it('追加指令:提交后调用排队接口并展示队列状态', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ status: 'awaiting_approval' }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_approval' }),
+    );
+    vi.mocked(runsApi.queueInstruction).mockResolvedValue({
+      id: 'i1',
+      run_id: 'run-1',
+      content: '也看看日历',
+      status: 'queued',
+      created_at: '2026-10-12T10:05:00+00:00',
+    });
+    // 首次加载为空;排队成功后的刷新(失效重取)才带回队列项
+    vi.mocked(runsApi.instructions)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        {
+          id: 'i1',
+          run_id: 'run-1',
+          content: '也看看日历',
+          status: 'queued',
+          created_at: '2026-10-12T10:05:00+00:00',
+        },
+      ]);
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    fireEvent.change(await screen.findByLabelText('追加指令'), {
+      target: { value: '也看看日历' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交指令' }));
+
+    await waitFor(() =>
+      expect(runsApi.queueInstruction).toHaveBeenCalledWith('run-1', '也看看日历'),
+    );
+    expect(await screen.findByText('待消费')).toBeInTheDocument();
   });
 });

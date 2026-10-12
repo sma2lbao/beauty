@@ -21,7 +21,12 @@ from langgraph.types import Command
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_orchestrator.models.runs import Run, RunArtifact, RunEvent
+from agent_orchestrator.models.runs import (
+    PendingInstruction,
+    Run,
+    RunArtifact,
+    RunEvent,
+)
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 
 
@@ -132,6 +137,72 @@ async def get_artifact(
     return artifact
 
 
+async def queue_instruction(
+    session: AsyncSession, tenant_id: str, run_id: str, content: str
+) -> PendingInstruction:
+    """追加指令(§6.5):排队等下一个图边界消费;终态 run 拒绝。"""
+    run = await require_run(session, tenant_id, run_id)
+    if run.status in (RunStatus.COMPLETED.value, RunStatus.FAILED.value):
+        raise ConflictError(
+            "run.invalid_state",
+            f"run 已 {run.status},不能再追加指令",
+            details={"run_id": run.id, "status": run.status},
+        )
+    instruction = PendingInstruction(
+        tenant_id=tenant_id, run_id=run.id, content=content, status="queued"
+    )
+    session.add(instruction)
+    await session.flush()
+    await append_event(
+        session,
+        run,
+        "run.instruction.queued.v1",
+        {"instruction_id": instruction.id, "chars": len(content)},
+    )
+    return instruction
+
+
+async def list_instructions(
+    session: AsyncSession, tenant_id: str, run_id: str
+) -> list[PendingInstruction]:
+    """该 run 的指令队列(queued/consumed 都返回,控制台据此展示)。"""
+    await require_run(session, tenant_id, run_id)  # 404 校验 + 租户隔离
+    rows = await session.scalars(
+        select(PendingInstruction)
+        .where(
+            PendingInstruction.run_id == run_id,
+            PendingInstruction.tenant_id == tenant_id,
+        )
+        .order_by(PendingInstruction.created_at)
+    )
+    return list(rows)
+
+
+async def _consume_instructions(session: AsyncSession, run: Run) -> list[str]:
+    """消费排队指令(§6.5):标记 consumed + 落事件,返回内容供并入图状态。"""
+    rows = await session.scalars(
+        select(PendingInstruction)
+        .where(
+            PendingInstruction.run_id == run.id,
+            PendingInstruction.status == "queued",
+        )
+        .order_by(PendingInstruction.created_at)
+    )
+    contents: list[str] = []
+    for instruction in list(rows):
+        instruction.status = "consumed"
+        contents.append(instruction.content)
+        await append_event(
+            session,
+            run,
+            "run.instruction.consumed.v1",
+            {"instruction_id": instruction.id, "chars": len(instruction.content)},
+        )
+    if contents:
+        await session.flush()
+    return contents
+
+
 async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
     run = Run(
         tenant_id=tenant_id,
@@ -172,6 +243,10 @@ async def _invoke_plan(
     }
     if run.plan_markdown:
         state["plan_markdown"] = run.plan_markdown
+    # §6.5:规划边界消费排队指令,并入图状态供各节点遵循
+    instructions = await _consume_instructions(session, run)
+    if instructions:
+        state["extra_instructions"] = instructions
     try:
         values = await graph.ainvoke(state, config=_config(run))
     except Exception as exc:
@@ -277,9 +352,12 @@ async def approve_run(
     _require_status(run, RunStatus.AWAITING_APPROVAL)
     # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
     await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
+    # §6.5:放行边界消费排队指令,经 resume 载荷由审批闸并入状态
+    instructions = await _consume_instructions(session, run)
     try:
         values = await graph.ainvoke(
-            Command(resume={"action": "approve"}), config=_config(run)
+            Command(resume={"action": "approve", "instructions": instructions}),
+            config=_config(run),
         )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
@@ -304,9 +382,18 @@ async def confirm_run(
         "run.confirmation.received.v1",
         {"action": action, "reason": reason},
     )
+    # §6.5:确认边界消费排队指令,经 resume 载荷由确认闸并入状态
+    instructions = await _consume_instructions(session, run)
     try:
         values = await graph.ainvoke(
-            Command(resume={"action": action, "reason": reason}), config=_config(run)
+            Command(
+                resume={
+                    "action": action,
+                    "reason": reason,
+                    "instructions": instructions,
+                }
+            ),
+            config=_config(run),
         )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")

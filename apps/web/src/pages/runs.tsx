@@ -182,6 +182,7 @@ function RunDetail({ runId }: { runId: string }) {
   const queryClient = useQueryClient();
   const [planDraft, setPlanDraft] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('先别发,我要改一下');
+  const [instruction, setInstruction] = useState('');
   const [showArtifact, setShowArtifact] = useState(false);
 
   const runQuery = useQuery({
@@ -196,6 +197,10 @@ function RunDetail({ runId }: { runId: string }) {
     queryKey: ['plan', runId],
     queryFn: () => runsApi.getPlan(runId),
   });
+  const instructionsQuery = useQuery({
+    queryKey: ['instructions', runId],
+    queryFn: () => runsApi.instructions(runId),
+  });
   const artifactQuery = useQuery({
     queryKey: ['artifact', runId],
     queryFn: () => runsApi.artifact(runId),
@@ -208,6 +213,7 @@ function RunDetail({ runId }: { runId: string }) {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['run', runId] }),
       queryClient.invalidateQueries({ queryKey: ['plan', runId] }),
+      queryClient.invalidateQueries({ queryKey: ['instructions', runId] }),
       queryClient.invalidateQueries({ queryKey: ['runs'] }),
     ]);
   };
@@ -219,6 +225,13 @@ function RunDetail({ runId }: { runId: string }) {
   const savePlan = useMutation({
     mutationFn: () => runsApi.updatePlan(runId, planDraft ?? ''),
     onSuccess: refresh,
+  });
+  const queueInstruction = useMutation({
+    mutationFn: () => runsApi.queueInstruction(runId, instruction.trim()),
+    onSuccess: async () => {
+      setInstruction('');
+      await refresh();
+    },
   });
 
   const run = runQuery.data;
@@ -341,6 +354,55 @@ function RunDetail({ runId }: { runId: string }) {
               保存计划
             </Button>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>追加指令(§6.5)</CardTitle>
+          <CardDescription>
+            排队后在下一个人工边界(规划/放行/确认)并入执行,模型必须遵循。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <textarea
+            aria-label="追加指令"
+            className={FIELD_CLASS}
+            rows={2}
+            placeholder="例如:顺便把日历也汇总一下"
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => queueInstruction.mutate()}
+            disabled={
+              queueInstruction.isPending ||
+              !instruction.trim() ||
+              !run ||
+              isTerminal(status)
+            }
+          >
+            提交指令
+          </Button>
+          {queueInstruction.isError ? (
+            <p className="text-sm text-destructive">
+              {queueInstruction.error.message}
+            </p>
+          ) : null}
+          <ul className="space-y-2 text-sm">
+            {(instructionsQuery.data ?? []).map((item) => (
+              <li key={item.id} className="rounded-lg border p-3">
+                <span className="flex items-center justify-between gap-2">
+                  <span>{item.content}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.status === 'queued' ? '待消费' : '已消费'}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
         </CardContent>
       </Card>
 

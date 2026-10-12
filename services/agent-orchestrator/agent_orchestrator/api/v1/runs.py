@@ -20,6 +20,8 @@ from agent_orchestrator.models.runs import RunEvent
 from agent_orchestrator.schemas.runs import (
     ArtifactRead,
     ConfirmRequest,
+    InstructionCreate,
+    InstructionRead,
     PlanRead,
     PlanUpdate,
     RejectRequest,
@@ -162,6 +164,33 @@ async def confirm_run(
         session, graph, tenant_id, run_id, body.action, body.reason
     )
     return RunRead.model_validate(run)
+
+
+@router.post(
+    "/{run_id}/instructions",
+    response_model=InstructionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def queue_instruction(
+    body: InstructionCreate,
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+) -> InstructionRead:
+    """追加指令(§6.5):排队,在下一个图边界(规划/放行/确认)被消费。"""
+    instruction = await runs_service.queue_instruction(
+        session, tenant_id, run_id, body.content
+    )
+    return InstructionRead.model_validate(instruction)
+
+
+@router.get("/{run_id}/instructions", response_model=list[InstructionRead])
+async def list_instructions(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> list[InstructionRead]:
+    """指令队列:queued/consumed 都返回(控制台展示用)。"""
+    instructions = await runs_service.list_instructions(session, tenant_id, run_id)
+    return [InstructionRead.model_validate(item) for item in instructions]
 
 
 TERMINAL_STATUSES = (RunStatus.COMPLETED.value, RunStatus.FAILED.value)

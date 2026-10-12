@@ -60,9 +60,23 @@ def _criteria_block(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
 
 
+def _instructions_block(state: RunGraphState) -> str:
+    """用户追加指令(§6.5):消费后并入各节点提示词,模型必须遵循。"""
+    instructions = state.get("extra_instructions") or []
+    if not instructions:
+        return ""
+    lines = "\n".join(f"- {item}" for item in instructions)
+    return f"\n\n用户追加指令(必须遵循):\n{lines}"
+
+
 def _stub_plan(state: RunGraphState) -> dict:
     criteria = state.get("acceptance_criteria") or []
     checklist = "\n".join(f"- [ ] {c}" for c in criteria) or "- [ ] (无显式验收标准)"
+    instructions = state.get("extra_instructions") or []
+    extra = ""
+    if instructions:
+        lines = "\n".join(f"- {item}" for item in instructions)
+        extra = f"\n## 用户追加指令\n\n{lines}\n"
     plan = f"""# 执行计划:{state["title"]}
 
 ## 目标
@@ -79,7 +93,7 @@ def _stub_plan(state: RunGraphState) -> dict:
 ## 验收标准
 
 {checklist}
-"""
+{extra}"""
     return {"plan_markdown": plan}
 
 
@@ -104,6 +118,7 @@ def make_plan_node(llm: LLMClient | None):
                         f"目标:{state.get('goal', '')}\n"
                         f"标题:{state.get('title', '')}\n"
                         f"验收标准:\n{_criteria_block(criteria)}"
+                        f"{_instructions_block(state)}"
                     ),
                 },
             ]
@@ -114,14 +129,23 @@ def make_plan_node(llm: LLMClient | None):
 
 
 def approval_gate_node(state: RunGraphState) -> dict:
-    """审批闸门:plan 之后中断,等待 approve/reject(§6.2 人工确认)。"""
+    """审批闸门:plan 之后中断,等待 approve/reject(§6.2 人工确认)。
+
+    放行时把 resume 载荷里携带的追加指令(§6.5)并入 state,后续节点遵循。
+    """
     answer = interrupt({"plan_markdown": state.get("plan_markdown", "")})
     if answer.get("action") != "approve":
         return {
             "final_status": "blocked",
             "blocked_reason": answer.get("reason") or "用户拒绝",
         }
-    return {}
+    return _gate_update(answer)
+
+
+def _gate_update(answer: dict[str, Any]) -> dict[str, Any]:
+    """闸门共用:把人工操作时消费掉的追加指令并入 state(§6.5)。"""
+    instructions = answer.get("instructions") or []
+    return {"extra_instructions": instructions} if instructions else {}
 
 
 def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
@@ -134,6 +158,7 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
                 f"目标:{state.get('goal', '')}\n\n"
                 f"计划:\n{state.get('plan_markdown', '')}\n\n"
                 f"已完成的结果:\n{done}\n\n请执行下一步并输出结果小结。"
+                f"{_instructions_block(state)}"
             ),
         },
     ]
@@ -249,14 +274,16 @@ def confirm_gate_node(state: RunGraphState) -> dict:
     """
     pending = state.get("pending_writes") or []
     answer = interrupt({"pending_writes": pending})
+    gate = _gate_update(answer)
     if answer.get("action") != "approve":
         reason = answer.get("reason") or "用户拒绝写操作"
         return {
+            **gate,
             "writes_approved": False,
             "pending_writes": [],
             "results": [f"写操作被拒绝:{reason}"],
         }
-    return {"writes_approved": True}
+    return {**gate, "writes_approved": True}
 
 
 def make_tool_exec_node(toolkit_factory: ToolkitFactory | None):
@@ -327,6 +354,7 @@ def make_verify_node(llm: LLMClient | None):
                         f"计划:\n{state.get('plan_markdown', '')}\n\n"
                         f"执行结果:\n{done}\n\n"
                         f"验收标准:\n{_criteria_block(criteria)}"
+                        f"{_instructions_block(state)}"
                     ),
                 },
             ]
@@ -394,6 +422,7 @@ def make_deliver_node(llm: LLMClient | None):
                         f"执行结果:\n{results}\n\n"
                         f"验收标准:\n"
                         f"{_criteria_block(state.get('acceptance_criteria') or [])}"
+                        f"{_instructions_block(state)}"
                     ),
                 },
             ]

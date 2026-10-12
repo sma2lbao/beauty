@@ -54,6 +54,15 @@ export type Artifact = {
   created_at: string;
 };
 
+/** 运行中追加指令(§6.5):queued 表示等下一个边界消费。 */
+export type Instruction = {
+  id: string;
+  run_id: string;
+  content: string;
+  status: 'queued' | 'consumed';
+  created_at: string;
+};
+
 /** 后端统一错误契约(§11):{"code","message","details"}。 */
 export class ApiError extends Error {
   readonly status: number;
@@ -126,6 +135,13 @@ export const runsApi = {
     }),
   artifact: (runId: string) =>
     request<Artifact>(`/api/v1/runs/${runId}/artifact`),
+  instructions: (runId: string) =>
+    request<Instruction[]>(`/api/v1/runs/${runId}/instructions`),
+  queueInstruction: (runId: string, content: string) =>
+    request<Instruction>(`/api/v1/runs/${runId}/instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
 };
 
 /**

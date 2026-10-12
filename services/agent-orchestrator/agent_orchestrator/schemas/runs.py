@@ -70,6 +70,22 @@ class ConfirmRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
 
 
+class InstructionCreate(BaseModel):
+    """运行中追加指令(§6.5):在下一个图边界(规划/放行/确认)被消费。"""
+
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class InstructionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    content: str
+    status: str
+    created_at: datetime
+
+
 class PlanRead(BaseModel):
     run_id: str
     status: RunStatus

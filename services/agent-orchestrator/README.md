@@ -15,7 +15,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(审批前编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、
-  `POST /runs/{id}/confirm`(写操作放行/拒绝,§6.2);
+  `POST /runs/{id}/confirm`(写操作放行/拒绝,§6.2)、
+  `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
 - `/healthz` `/readyz`:存活/就绪探针;
 - schema 管理:alembic(async env,DB URL 与运行服务同源,见 `migrations/env.py`);
@@ -36,6 +37,12 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
+
+- 追加指令(§6.5):`POST /runs/{id}/instructions` 排队(终态 run 追加 409),
+  在**下一个人工边界**消费——规划(plan/resume)、放行(approve)、
+  写操作确认(confirm);消费即标记 `consumed` 并落
+  `run.instruction.queued.v1` / `run.instruction.consumed.v1`;内容经
+  `extra_instructions` 并入 plan/execute/verify/deliver 的提示词(模型必须遵循)。
 
 - 交付物(§7):deliver 由 LLM 合成最终成品,落 `run_artifacts`(每 run 一件);
   取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`(artifact_id/chars);
