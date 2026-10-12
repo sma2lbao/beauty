@@ -109,6 +109,9 @@ export const runsApi = {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
     }),
+  /** blocked → 新 attempt 重回审批闸(计划保留,§6.2);返回更新后的计划。 */
+  resume: (runId: string) =>
+    request<Plan>(`/api/v1/runs/${runId}/resume`, { method: 'POST' }),
   artifact: (runId: string) =>
     request<Artifact>(`/api/v1/runs/${runId}/artifact`),
   instructions: (runId: string) =>

@@ -23,6 +23,7 @@ vi.mock('@/lib/runs-api', async () => {
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),
+      resume: vi.fn(),
       artifact: vi.fn(),
       instructions: vi.fn(),
       queueInstruction: vi.fn(),
@@ -178,6 +179,47 @@ describe('RunsPage', () => {
 
     expect(await screen.findByText(/已汇总。/)).toBeInTheDocument();
     expect(runsApi.artifact).toHaveBeenCalledWith('run-1');
+  });
+
+  it('blocked run:展示中断原因,可重新进闸(resume)', async () => {
+    const blocked = makeRun({
+      status: 'blocked',
+      blocked_reason: '计划与目标不符,先别发',
+    });
+    vi.mocked(runsApi.list).mockResolvedValue([blocked]);
+    vi.mocked(runsApi.get).mockResolvedValue(blocked);
+    vi.mocked(runsApi.resume).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 计划',
+    });
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    expect(await screen.findByTestId('run-status')).toHaveTextContent('已阻塞');
+    expect(screen.getByText(/中断原因:计划与目标不符/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新规划并进闸' }));
+    await waitFor(() => expect(runsApi.resume).toHaveBeenCalledWith('run-1'));
+  });
+
+  it('blocked run:追加指令仍可用(后端只拒绝 completed/failed)', async () => {
+    const blocked = makeRun({ status: 'blocked' });
+    vi.mocked(runsApi.list).mockResolvedValue([blocked]);
+    vi.mocked(runsApi.get).mockResolvedValue(blocked);
+    vi.mocked(runsApi.instructions).mockResolvedValue([]);
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    await screen.findByTestId('run-status');
+
+    const submit = screen.getByRole('button', { name: '提交指令' });
+    expect(submit).toBeDisabled(); // 没填内容时不可提交
+
+    fireEvent.change(await screen.findByLabelText('追加指令'), {
+      target: { value: '换个更短的计划' },
+    });
+    expect(submit).toBeEnabled(); // blocked 不是终态:仍可排队
   });
 
   it('追加指令:提交后调用排队接口并展示队列状态', async () => {

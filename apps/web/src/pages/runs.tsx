@@ -33,6 +33,14 @@ function isTerminal(status: RunStatus): boolean {
   return TERMINAL.includes(status);
 }
 
+/**
+ * 不会自变的终态:轮询可以停。
+ * `blocked` 只能由人工 resume 改变(追加指令也不改状态),所以同样停下。
+ */
+function isQuiescent(status: RunStatus): boolean {
+  return isTerminal(status) || status === 'blocked';
+}
+
 const FIELD_CLASS =
   'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
 
@@ -205,7 +213,7 @@ function RunDetail({ runId }: { runId: string }) {
     queryFn: () => runsApi.get(runId),
     refetchInterval: (query) => {
       const data = query.state.data as Run | undefined;
-      return data && isTerminal(data.status) ? false : 2000;
+      return data && isQuiescent(data.status) ? false : 2000;
     },
   });
   const planQuery = useQuery({
@@ -307,6 +315,21 @@ function RunDetail({ runId }: { runId: string }) {
                   value={rejectReason}
                   onChange={(event) => setRejectReason(event.target.value)}
                 />
+              </>
+            ) : null}
+
+            {status === 'blocked' ? (
+              <>
+                <p className="max-w-xl text-sm text-muted-foreground">
+                  计划被拒后 run 停在 blocked:改完计划或调整目标后可重新进闸
+                  (会记为新的一次尝试,原计划保留)。也可以在下方先追加指令。
+                </p>
+                <Button
+                  onClick={() => action.mutate(() => runsApi.resume(runId))}
+                  disabled={action.isPending}
+                >
+                  重新规划并进闸
+                </Button>
               </>
             ) : null}
 
