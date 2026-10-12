@@ -6,7 +6,12 @@
  * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
  */
 
-import { authHeaders } from '@/lib/auth';
+import {
+  ApiError,
+  isUnauthorized,
+  jsonHeaders,
+  requestJson,
+} from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -63,46 +68,12 @@ export type Instruction = {
   created_at: string;
 };
 
-/** 后端统一错误契约(§11):{"code","message","details"}。 */
-export class ApiError extends Error {
-  readonly status: number;
-  readonly code: string;
 
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.code = code;
-  }
-}
+/** 统一错误契约与请求封装见 @/lib/http;这里保留同名再导出,老的引用不用改。 */
+export { ApiError, isUnauthorized };
 
-async function jsonHeaders(): Promise<Record<string, string>> {
-  return { 'Content-Type': 'application/json', ...(await authHeaders()) };
-}
-
-/** 401 判定:控制台据此提示"未登录/令牌失效"。 */
-export function isUnauthorized(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 401;
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { ...(await jsonHeaders()), ...init?.headers },
-  });
-  if (!response.ok) {
-    let code = 'request_failed';
-    let message = `请求失败(${response.status})`;
-    try {
-      const body = (await response.json()) as { code?: string; message?: string };
-      code = body.code ?? code;
-      message = body.message ?? message;
-    } catch {
-      // 非 JSON 错误体:保留兜底文案
-    }
-    throw new ApiError(response.status, code, message);
-  }
-  return (await response.json()) as T;
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJson<T>(BASE, path, init);
 }
 
 export const runsApi = {

@@ -8,8 +8,7 @@
  *   与运行控制台共用同一套。
  */
 
-import { ApiError } from '@/lib/runs-api';
-import { authHeaders } from '@/lib/auth';
+import { requestJson } from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_KNOWLEDGE_API_URL as string | undefined) ?? '';
 
@@ -41,31 +40,8 @@ export type SearchResult = {
   hits: SearchHit[];
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${PREFIX}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(await authHeaders()),
-      ...init?.headers,
-    },
-  });
-  if (!response.ok) {
-    let code = 'request_failed';
-    let message = `请求失败(${response.status})`;
-    try {
-      const body = (await response.json()) as { code?: string; message?: string };
-      code = body.code ?? code;
-      message = body.message ?? message;
-    } catch {
-      // 非 JSON 错误体:保留兜底文案
-    }
-    throw new ApiError(response.status, code, message);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestJson<T>(BASE, `${PREFIX}${path}`, init);
 }
 
 export const knowledgeApi = {

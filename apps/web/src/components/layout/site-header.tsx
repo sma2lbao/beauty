@@ -10,6 +10,7 @@ const navItems = [
   { to: '/products', label: '产品' },
   { to: '/runs', label: '控制台' },
   { to: '/knowledge', label: '知识库' },
+  { to: '/settings', label: '账号' },
   { to: '/about', label: '关于' },
 ];
 
