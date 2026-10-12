@@ -13,7 +13,7 @@
 | `packages/py-utils`   | `py-utils`              | Python 库    | hatchling + pytest + ruff                                                               |
 | `packages/common`     | `common`                | Python 库    | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS)、交付物存储抽象;hatchling + pytest + ruff |
 | `packages/database`   | `database`              | Python 库    | 数据库基座:命名约定、Base/mixin、session_scope、Repository(租户隔离+统一 404)、UnitOfWork、Postgres 集成夹具;hatchling + pytest + ruff |
-| `packages/events`     | `events`                | Python 库    | 事件信封与命名/版本约定;后续补事件总线与 outbox;hatchling + pytest + ruff             |
+| `packages/events`     | `events`                | Python 库    | 事件信封(含租户)、进程内总线、事务性 outbox(仓储/dispatcher)、消费幂等;hatchling + pytest + ruff |
 | `services/agent-orchestrator` | `agent-orchestrator` | Python 服务 | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A)                                 |
 | `services/llm-gateway` | `llm-gateway` | Python 服务 | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                   |
 | `services/connector-service` | `connector-service` | Python 服务 | FastAPI + uvicorn(:8004):外部系统连接器(邮件优先,IMAP 授权码)与凭证管理           |
@@ -109,6 +109,10 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
   跨租户一律 404 不泄漏存在性、404 的 details 键名由 `id_detail_key` 声明以保持各服务既有契约);
   **仓储不提交**——事务边界只由 `session_scope`(HTTP 一请求一事务)或 `UnitOfWork`(脚本/worker/测试)负责。
   已收敛:account-service、workspace-service;其余服务逐步迁移(见 `packages/database/README.md`)。
+- **跨服务事件走 outbox**:`events.outbox` 保证"状态改了事件一定发、事务回滚事件一定不发"——
+  投递是**至少一次**,消费方必须用 `events.outbox.mark_processed` 按事件 id 去重;
+  失败按 `backoff_seconds` 退避,超 `max_attempts` 落 `failed` 留痕(不静默丢)。
+  orchestrator 侧开关:`OUTBOX_ENABLED`(记录+dispatcher)与 `KNOWLEDGE_INGEST_ENABLED`(交付物自动入库)。
 - **Postgres 集成测试需要 Docker 或现成实例**:`packages/database/tests/test_postgres_integration.py`
   优先读 `TEST_POSTGRES_URL`,否则用 testcontainers 起 `postgres:16-alpine`;两者都不可用时**整体 skip 并打印原因**
   (沙箱里即如此)。

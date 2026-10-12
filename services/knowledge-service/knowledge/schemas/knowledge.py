@@ -12,7 +12,7 @@ class DocumentCreate(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=1_000_000)
-    source: str = Field(default="manual", max_length=32)
+    source: str = Field(default="manual", max_length=64)
 
 
 class DocumentRead(BaseModel):

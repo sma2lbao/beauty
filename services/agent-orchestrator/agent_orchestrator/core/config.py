@@ -39,6 +39,14 @@ class Settings(BaseAppSettings):
     knowledge_enabled: bool = False
     knowledge_service_url: str = "http://127.0.0.1:8006"
     knowledge_timeout_seconds: float = 30.0
+    # 事务性 outbox(§6.3/§8):run 事件与业务同事务入发件箱,再由 dispatcher
+    # 至少一次投递(失败退避重试);阶段 A 用进程内总线
+    outbox_enabled: bool = False
+    outbox_dispatch_interval_seconds: float = 1.0
+    outbox_batch_size: int = 50
+    outbox_max_attempts: int = 5
+    # 交付物自动入库(§8 摄取):消费者把 run.delivered.v1 推进 knowledge-service
+    knowledge_ingest_enabled: bool = False
     # 交付物镜像到 workspace-service(§7:artifacts 归属 workspace)
     workspace_enabled: bool = False
     workspace_service_url: str = "http://127.0.0.1:8005"

@@ -98,3 +98,19 @@ def test_validation_and_missing_document(client: TestClient) -> None:
         client.get("/v1/knowledge/documents/nope", headers=TENANT).json()["code"]
         == "knowledge.document_not_found"
     )
+
+
+def test_accepts_run_scoped_source(client: TestClient) -> None:
+    """溯源来源 `run:<32 位 id>` 必须被接受(orchestrator 的自动入库消费者发它)。
+
+    这是真链路冒烟抓到的集成 bug:`source` 原上限 32,放不下 36 字符的溯源串,
+    消费者一直拿 422、outbox 反复重试。
+    """
+    source = f"run:{'a' * 32}"
+    created = client.post(
+        "/v1/knowledge/documents",
+        json={"title": "自动入库的交付物", "content": "正文", "source": source},
+        headers=TENANT,
+    )
+    assert created.status_code == 201
+    assert created.json()["source"] == source

@@ -6,8 +6,9 @@ Nx(仓库根):npx nx run agent-orchestrator:serve
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from functools import partial
 
 from common.artifacts import ArtifactStore
@@ -16,6 +17,9 @@ from common.errors import AppError
 from common.logging import setup_logging
 from database.base import Base
 from database.session import create_session_factory
+from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
+from events.bus import EventBus, InMemoryEventBus
+from events.outbox import OutboxDispatcher
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -31,6 +35,10 @@ from agent_orchestrator.services.connectors import ConnectorClient
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
+from agent_orchestrator.services.outbox import (
+    record_run_event,
+    register_consumers,
+)
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
 
@@ -121,6 +129,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = build_store(settings)
     app.state.artifact_store = store
 
+    # 事务性 outbox(§6.3/§8):测试注入优先 —— recorder 挂在 session.info,
+    # dispatcher 后台投递;首个消费者是"交付物自动入知识库"
+    bus: EventBus = app.state.event_bus or InMemoryEventBus()
+    app.state.event_bus = bus
+    recorder = None
+    dispatcher: OutboxDispatcher | None = None
+    outbox_stop: asyncio.Event | None = None
+    outbox_task: asyncio.Task[None] | None = None
+    ingest_knowledge: KnowledgeClient | None = None
+    if settings.outbox_enabled:
+        recorder = record_run_event
+        if settings.knowledge_ingest_enabled:
+            ingest_knowledge = KnowledgeClient(
+                settings.knowledge_service_url, settings.knowledge_timeout_seconds
+            )
+            consumers = register_consumers(
+                bus,
+                knowledge=ingest_knowledge,
+                session_factory=factory,
+                store=store,
+            )
+            app.state.outbox_consumers = consumers
+        dispatcher = OutboxDispatcher(
+            factory,
+            bus,
+            batch_size=settings.outbox_batch_size,
+            max_attempts=settings.outbox_max_attempts,
+        )
+        outbox_stop = asyncio.Event()
+        outbox_task = asyncio.create_task(
+            dispatcher.run_forever(
+                interval_seconds=settings.outbox_dispatch_interval_seconds,
+                stop=outbox_stop,
+            )
+        )
+    app.state.outbox_recorder = recorder
+    app.state.outbox_dispatcher = dispatcher
+
     try:
         if settings.database_url.startswith("postgres"):
             # postgres:图线程跨进程可恢复(架构 §6.4;setup 幂等建 checkpoint 表)。
@@ -143,6 +189,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             yield
     finally:
+        if outbox_stop is not None:
+            outbox_stop.set()
+        if outbox_task is not None:
+            outbox_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await outbox_task
+        if ingest_knowledge is not None:
+            await ingest_knowledge.aclose()
         if owns_llm:
             await llm.aclose()
         if owns_verifier:
@@ -161,6 +215,7 @@ def create_app(
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
+    event_bus: EventBus | None = None,
 ) -> FastAPI:
     """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
@@ -170,6 +225,7 @@ def create_app(
     app.state.token_verifier = token_verifier
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client
+    app.state.event_bus = event_bus
 
     if app.state.settings.cors_allow_origins:
         # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配

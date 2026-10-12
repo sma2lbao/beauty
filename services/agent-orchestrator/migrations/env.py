@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
+from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 
 config = context.config
 if config.config_file_name is not None:

@@ -1424,6 +1424,30 @@ wheels = [
 name = "events"
 version = "0.1.0"
 source = { editable = "packages/events" }
+dependencies = [
+    { name = "common" },
+    { name = "database" },
+    { name = "sqlalchemy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "aiosqlite" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "common", editable = "packages/common" },
+    { name = "database", editable = "packages/database" },
+    { name = "sqlalchemy", specifier = ">=2.0.54" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+]
 
 [[package]]
 name = "fastapi"

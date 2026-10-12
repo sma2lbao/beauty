@@ -25,8 +25,16 @@ from agent_orchestrator.services.workspace import Workspace
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """一请求一事务;顺带把 outbox recorder 挂到 session.info。
+
+    `session.info` 是 SQLAlchemy 官方的用户数据挂点:业务层(append_event)据此
+    在不改函数签名的前提下,把事件写进**同一事务**的发件箱。
+    """
     factory = request.app.state.session_factory
     async with session_scope(factory) as session:
+        recorder = getattr(request.app.state, "outbox_recorder", None)
+        if recorder is not None:
+            session.info["outbox"] = recorder
         yield session
 
 

@@ -13,11 +13,24 @@ from common.errors import UpstreamError
 
 
 class Knowledge(Protocol):
-    """知识库接口:向量检索。"""
+    """知识库接口:向量检索 + 文档摄取(§8)。"""
 
     async def search(
         self, tenant_id: str, query: str, limit: int
     ) -> dict[str, Any]: ...
+
+    async def ingest_document(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        source: str = "manual",
+    ) -> dict[str, Any]: ...
+
+    async def list_documents(
+        self, tenant_id: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]: ...
 
 
 class KnowledgeClient:
@@ -34,23 +47,64 @@ class KnowledgeClient:
         )
 
     async def search(self, tenant_id: str, query: str, limit: int) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/knowledge/search",
+            tenant_id,
+            json={"query": query, "limit": limit},
+            expected=200,
+        )
+
+    async def ingest_document(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        source: str = "manual",
+    ) -> dict[str, Any]:
+        """登记文档(摄取):失败同样映射 502,交由 outbox 退避重试。"""
+        return await self._request(
+            "POST",
+            "/v1/knowledge/documents",
+            tenant_id,
+            json={"title": title, "content": content, "source": source},
+            expected=201,
+        )
+
+    async def list_documents(
+        self, tenant_id: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        payload = await self._request(
+            "GET", "/v1/knowledge/documents", tenant_id, expected=200
+        )
+        documents = payload if isinstance(payload, list) else []
+        return documents[:limit]
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        tenant_id: str,
+        *,
+        json: dict[str, Any] | None = None,
+        expected: int = 200,
+    ) -> Any:
         try:
-            response = await self._client.post(
-                "/v1/knowledge/search",
-                json={"query": query, "limit": limit},
-                headers={"X-Tenant-Id": tenant_id},
+            response = await self._client.request(
+                method, path, json=json, headers={"X-Tenant-Id": tenant_id}
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
                 "knowledge.upstream_error", f"知识库服务不可达:{exc}"
             ) from exc
-        if response.status_code != 200:
+        if response.status_code != expected:
             raise UpstreamError(
                 "knowledge.upstream_error",
                 f"知识库服务返回 {response.status_code}",
                 details={"body": response.text[:200]},
             )
-        return dict(response.json())
+        return response.json()
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -27,3 +27,14 @@ def test_json_roundtrip() -> None:
 def test_bad_type_rejected(bad: str) -> None:
     with pytest.raises(EventTypeError):
         EventEnvelope.create(bad, {})
+
+
+def test_envelope_carries_tenant_and_round_trips() -> None:
+    """租户随信封走:跨服务消费者不依赖外部上下文。"""
+    event = EventEnvelope.create("run.delivered.v1", {"a": 1}, tenant_id="t-1")
+    assert event.tenant_id == "t-1"
+    assert EventEnvelope.from_json(event.to_json()) == event
+
+    # 旧构造方式(无租户)仍然可用
+    legacy = EventEnvelope.create("run.delivered.v1", {})
+    assert legacy.tenant_id is None

@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "事件共享库:事件信封、命名与版本约定、事件总线抽象、outbox"
 readme = "README.md"
 requires-python = ">=3.11,<4"
-dependencies = []
+dependencies = [
+    "common",
+    "database",
+    "sqlalchemy>=2.0.54",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -29,6 +33,7 @@ addopts = """
  --html='../../reports/packages/events/unittests/html/index.html'
  --junitxml='../../reports/packages/events/unittests/junit.xml'
 """
+asyncio_mode = "auto"
 
 [tool.ruff]
 exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
@@ -40,3 +45,13 @@ select = ["E", "F", "UP", "B", "SIM", "I"]
 ignore = []
 fixable = ["ALL"]
 unfixable = []
+
+[tool.uv.sources]
+common = { workspace = true }
+database = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "pytest-asyncio>=1.4.0",
+]

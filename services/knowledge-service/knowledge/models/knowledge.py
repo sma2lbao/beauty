@@ -17,7 +17,8 @@ class KnowledgeDocument(UUIDMixin, TenantMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_documents"
 
     title: Mapped[str] = mapped_column(String(200))
-    source: Mapped[str] = mapped_column(String(32), default="manual")
+    # 来源标识:允许 run:<32 位 id> 这类溯源串(64 足够)
+    source: Mapped[str] = mapped_column(String(64), default="manual")
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     embedding_model: Mapped[str] = mapped_column(String(64))

@@ -70,6 +70,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `filesystem`(正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;
   键按 `<租户>/<run>/<交付物>.md` 分层,拒绝目录穿越);对象丢失 → 500
   `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`;
+- 事务性 outbox(`OUTBOX_ENABLED=true`):run 事件与业务状态**同一事务**写入
+  `outbox_events`,再由后台 dispatcher 至少一次投递(失败退避、超限落 `failed`
+  留痕);`KNOWLEDGE_INGEST_ENABLED=true` 时挂上首个真实消费者
+  **交付物自动入库**:`run.delivered.v1` → knowledge-service(§8 摄取),
+  之后 agent 的 `search_knowledge` 就能查到刚交付的成品;
 - 交付物镜像(`WORKSPACE_ENABLED=true`):交付时**同时**推给 workspace-service
   (§7 里 artifacts 归属 workspace);镜像成败如实记进 `run.delivered.v1` 事件
   (`workspace_artifact_id` / `workspace_error`)——镜像失败不丢交付物。

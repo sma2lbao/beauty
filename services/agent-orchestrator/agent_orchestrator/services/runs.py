@@ -52,6 +52,11 @@ async def append_event(
     )
     session.add(event)
     await session.flush()
+    # 事务性 outbox(§6.3):与 run_events 同事务登记待投递事件;
+    # recorder 由 API 层挂在 session.info 上(见 api/deps.get_session)
+    recorder = session.info.get("outbox")
+    if recorder is not None:
+        await recorder(session, run, env)
     return event
 
 

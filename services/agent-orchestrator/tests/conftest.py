@@ -134,6 +134,8 @@ class FakeKnowledge:
         self.fail = fail
         self.provider = provider
         self.queries: list[tuple[str, str, int]] = []
+        self.ingested: list[dict] = []
+        self.documents: list[dict] = []
 
     async def search(self, tenant_id: str, query: str, limit: int) -> dict:
         self.queries.append((tenant_id, query, limit))
@@ -145,6 +147,64 @@ class FakeKnowledge:
             "model": "hashing-256",
             "hits": self.hits[:limit],
         }
+
+    # ---- 摄取(§8):outbox 消费者用 ----
+
+    async def ingest_document(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        content: str,
+        source: str = "manual",
+    ) -> dict:
+        if self.fail:
+            raise RuntimeError("知识库挂了")
+        self.ingested.append(
+            {
+                "tenant_id": tenant_id,
+                "title": title,
+                "content": content,
+                "source": source,
+            }
+        )
+        document = {
+            "id": f"doc-{len(self.ingested)}",
+            "title": title,
+            "source": source,
+        }
+        self.documents.append(document)
+        return document
+
+    async def list_documents(self, tenant_id: str, *, limit: int = 50) -> list[dict]:
+        if self.fail:
+            raise RuntimeError("知识库挂了")
+        return [
+            doc for doc in self.documents if doc.get("tenant_id") in (None, tenant_id)
+        ][:limit]
+
+
+class RecordingBus:
+    """记录投递事件的进程内总线替身(可注入失败以验证 outbox 重试)。"""
+
+    def __init__(self, fail_times: int = 0) -> None:
+        self.received: list[Any] = []
+        self.fail_times = fail_times
+        self.calls = 0
+
+    async def publish(self, envelope: Any) -> int:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise RuntimeError("消费者不可用")
+        self.received.append(envelope)
+        return 1
+
+    def subscribe(self, pattern: str, handler: Any) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    @property
+    def types(self) -> list[str]:
+        return [envelope.type for envelope in self.received]
 
 
 class FakeWorkspace:
