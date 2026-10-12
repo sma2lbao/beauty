@@ -26,7 +26,9 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.services.artifacts import build_store
+from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import ConnectorClient
+from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
 
@@ -56,14 +58,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owns_llm = True
 
     # 工具装配(架构 §8):测试注入 toolkit_factory 优先;
-    # 否则 tools_enabled 时起 connector 客户端,按租户绑定工具集
+    # 否则 tools_enabled 时按子开关装配各能力提供方(未开启的不暴露)
     toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
     connector: ConnectorClient | None = None
     if toolkit_factory is None and settings.tools_enabled:
         connector = ConnectorClient(
             settings.connector_service_url, settings.tool_timeout_seconds
         )
-        toolkit_factory = partial(build_tools, connector)
+        documents = (
+            DocumentLibrary(settings.documents_root, settings.documents_max_bytes)
+            if settings.documents_enabled
+            else None
+        )
+        calendar = (
+            CalendarFeed(settings.calendar_ics_path)
+            if settings.calendar_enabled
+            else None
+        )
+        toolkit_factory = partial(
+            build_tools,
+            connector=connector,
+            documents=documents,
+            calendar=calendar,
+        )
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier

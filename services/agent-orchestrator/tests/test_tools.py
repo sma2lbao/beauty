@@ -68,7 +68,7 @@ async def test_handler_exception_becomes_error_text() -> None:
 
 async def test_build_tools_list_and_fetch() -> None:
     connector = FakeConnector()
-    registry = build_tools(connector, "t-1")
+    registry = build_tools("t-1", connector=connector)
     names = {schema["function"]["name"] for schema in registry.schemas()}
     assert names == {"list_connections", "fetch_emails", "send_email"}
     # 写操作必须在执行前被标记为需确认(§6.2)
@@ -90,7 +90,7 @@ async def test_build_tools_list_and_fetch() -> None:
 
 async def test_fetch_emails_requires_id_and_clamps_limit() -> None:
     connector = FakeConnector()
-    registry = build_tools(connector, "t-1")
+    registry = build_tools("t-1", connector=connector)
     missing = json.loads(await registry.execute("fetch_emails", "{}"))
     assert "缺少 connection_id" in missing["error"]
 

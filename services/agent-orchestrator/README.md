@@ -30,9 +30,13 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
 - 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——
   模型请求工具 → 工具注册表(`services/tools.py`)执行 → 结果回喂模型,≤3 轮;
-  工具经 `connector-service` 出去(`list_connections`/`fetch_emails` 只读,
-  `send_email` 为写操作);**工具执行失败不炸图**:错误文本回喂让模型决策,
-  每次调用落 `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
+  **能力按提供方分组,未开启的不暴露**(能力即权限边界):
+  - 连接器:`list_connections`/`fetch_emails`(只读)、`send_email`(写操作);
+  - 本地文档库(`DOCUMENTS_ENABLED`):`list_documents`/`read_document`
+    (受限目录只读,后缀白名单、越界/绝对路径拒绝、超限拒读);
+  - 日历(`CALENDAR_ENABLED`,ICS):`list_calendar_events`(不展开 RRULE);
+  **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
+  `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
 - 写操作确认闸(§6.2):写工具(requires_confirmation)**绝不直接执行**——
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由

@@ -29,6 +29,12 @@ class Settings(BaseAppSettings):
     tools_enabled: bool = False
     connector_service_url: str = "http://127.0.0.1:8004"
     tool_timeout_seconds: float = 30.0
+    # 技能提供方:未开启的能力不暴露给模型(能力即权限边界)
+    documents_enabled: bool = False
+    documents_root: str = "./.documents"
+    documents_max_bytes: int = 200_000
+    calendar_enabled: bool = False
+    calendar_ics_path: str = "./.calendar.ics"
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

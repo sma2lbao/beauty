@@ -132,7 +132,7 @@ def _tool_client(tmp_path: Path, fake: FakeLLM, connector: FakeConnector) -> Tes
     app = create_app(
         _settings(tmp_path, "tools.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(connector, tenant),
+        toolkit_factory=lambda tenant: build_tools(tenant, connector=connector),
     )
     return TestClient(app)
 
