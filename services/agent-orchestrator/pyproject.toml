@@ -1,0 +1,59 @@
+[project]
+name = "agent-orchestrator"
+version = "0.1.0"
+description = "Agent 编排服务:会话与运行编排、graph 状态机、事件溯源、SSE(架构见 docs/architecture.md §6)"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = [
+    # 共享库(uv workspace,本地 editable)
+    "common",
+    "database",
+    "events",
+    "fastapi>=0.143.0",
+    "uvicorn>=0.53.0",
+]
+
+[tool.uv.sources]
+common = { workspace = true }
+database = { workspace = true }
+events = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_orchestrator"]
+
+[tool.coverage.run]
+branch = true
+source = ["agent_orchestrator"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/services/agent-orchestrator/html'
+ --cov-report xml:'../../coverage/services/agent-orchestrator/coverage.xml'
+ --html='../../reports/services/agent-orchestrator/unittests/html/index.html'
+ --junitxml='../../reports/services/agent-orchestrator/unittests/junit.xml'
+"""
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
