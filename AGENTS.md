@@ -96,7 +96,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 
 - **TypeScript**:`strict: true`、ESM、`nodenext` 模块解析、target es2022(根 `tsconfig.base.json`);Prettier 单引号(根 `.prettierrc`);ESLint 9 flat config 统一于 `tools/eslint-config`,格式交给 Prettier、ESLint 只管质量。
 - **包命名**:JS 包统一 `@beauty/<目录名>` 作用域(根包 `@beauty/source`);应用目录名不带 `beauty-` 前缀;Python 共享库实名命名(`common`/`database`/`events`/`agent-kit`…),不用 `py-` 前缀,并避开 stdlib 与主流库的顶层名(如 `agents`、`platform`)。
-- **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。Vite dev 把 `/api` 代理到 agent-orchestrator(`:8002`),所以本地联调先起 `npx nx run agent-orchestrator:serve`;运行控制台在 `/runs`(`src/pages/runs.tsx`,数据层 `src/lib/runs-api.ts`)。鉴权统一走 `src/lib/auth.ts`(`VITE_AUTH_MODE=dev|token|logto`,配置见 `apps/web/.env.example`):后端 `AUTH_ENABLED=true` 时用 `token`(粘贴 token)或 `logto`(SDK 登录)。
+- **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。Vite dev 把 `/api` 代理到 agent-orchestrator(`:8002`)、`/knowledge-api` 代理到 knowledge-service(`:8006`),所以本地联调先起对应服务;运行控制台在 `/runs`(`src/pages/runs.tsx`,数据层 `src/lib/runs-api.ts`),知识库管理台在 `/knowledge`(`src/pages/knowledge.tsx`,数据层 `src/lib/knowledge-api.ts`,入库/清单/检索预览)。鉴权统一走 `src/lib/auth.ts`(`VITE_AUTH_MODE=dev|token|logto`,配置见 `apps/web/.env.example`):后端 `AUTH_ENABLED=true` 时用 `token`(粘贴 token)或 `logto`(SDK 登录)。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
 - **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
 
