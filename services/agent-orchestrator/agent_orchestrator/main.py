@@ -29,13 +29,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging(settings)
     factory = create_session_factory(settings.database_url)
     app.state.session_factory = factory
-    # 执行图:阶段 A 用进程内 checkpointer;接 postgres 后切 checkpoint-postgres
-    app.state.run_graph = build_run_graph()
     if settings.auto_create_tables:
         # dev/test 直建表;生产一律 alembic 迁移
         async with factory.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    yield
+    if settings.database_url.startswith("postgres"):
+        # postgres:图线程跨进程可恢复(架构 §6.4;setup 幂等建 checkpoint 表)。
+        # 惰性导入:sqlite/dev 环境不需要 psycopg,模块加载零成本
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        pg_url = settings.database_url.replace(
+            "postgresql+asyncpg://", "postgresql://", 1
+        )
+        async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
+            await saver.setup()
+            app.state.run_graph = build_run_graph(checkpointer=saver)
+            yield
+    else:
+        # sqlite/dev:进程内 checkpointer
+        app.state.run_graph = build_run_graph()
+        yield
     await factory.engine.dispose()
 
 
