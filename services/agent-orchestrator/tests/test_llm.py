@@ -50,7 +50,10 @@ def _create_run(client: TestClient, goal: str = "汇总本周邮件") -> str:
 
 
 def test_llm_plan_and_execute_flow(tmp_path) -> None:
-    fake = FakeLLM(["# 执行计划(LLM)\n- [x] 由模型生成", "执行结果:邮件已汇总"])
+    verify_pass = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
+    fake = FakeLLM(
+        ["# 执行计划(LLM)\n- [x] 由模型生成", "执行结果:邮件已汇总", verify_pass]
+    )
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
         plan = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
@@ -63,9 +66,12 @@ def test_llm_plan_and_execute_flow(tmp_path) -> None:
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         completed = next(e for e in events if e["type"] == "run.completed.v1")
-        assert completed["payload"]["results"] == ["执行结果:邮件已汇总"]
+        assert completed["payload"]["results"] == [
+            "执行结果:邮件已汇总",
+            "验收小结:验收通过",
+        ]
 
-        assert len(fake.calls) == 2  # plan 一次,execute 一次
+        assert len(fake.calls) == 3  # plan / execute / verify 各一次
         assert "汇总本周邮件" in fake.calls[0][1]["content"]  # 目标进了 plan 提示词
         assert "周报" in fake.calls[0][1]["content"]
 
@@ -162,3 +168,65 @@ async def test_gateway_client_unreachable() -> None:
         assert exc_info.value.code == "llm.upstream_error"
     finally:
         await client.aclose()
+
+
+def test_rework_loop_passes_on_second_round(tmp_path) -> None:
+    """验收首轮不过 → 返工 → 第二轮通过:rounds=2,验收小结入 results(§6.1)。"""
+    fail_json = '{"summary": "首轮未达标", "verdicts": {"邮件已汇总": false}}'
+    pass_json = '{"summary": "已达标", "verdicts": {"邮件已汇总": true}}'
+    fake = FakeLLM(
+        [
+            "# 执行计划(LLM)",
+            "执行第 1 轮:汇总了部分邮件",
+            fail_json,
+            "执行第 2 轮:补齐汇总",
+            pass_json,
+        ]
+    )
+    with _client(tmp_path, fake) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        assert run["status"] == "completed"
+        assert run["rounds"] == 2
+
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        completed = next(e for e in events if e["type"] == "run.completed.v1")
+        assert "验收小结:已达标" in completed["payload"]["results"]
+        assert len(fake.calls) == 5  # plan + (execute, verify) × 2
+
+
+def test_rework_exhausted_marks_run_failed(tmp_path) -> None:
+    """返工 3 轮仍不过:诚实进 failed,不伪装 completed;rounds 如实为 3。"""
+    fail_json = '{"summary": "仍未达标", "verdicts": {"邮件已汇总": false}}'
+    fake = FakeLLM(["# 计划", "执行", fail_json, "执行", fail_json, "执行", fail_json])
+    with _client(tmp_path, fake) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        assert run["status"] == "failed"
+        assert run["rounds"] == 3
+        assert "验收未通过" in run["blocked_reason"]
+        assert "已返工 3 轮" in run["blocked_reason"]
+        assert "邮件已汇总" in run["blocked_reason"]
+
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        failed = next(e for e in events if e["type"] == "run.failed.v1")
+        assert failed["payload"]["stage"] == "verify"
+        assert failed["payload"]["rounds"] == 3
+        assert len(fake.calls) == 7  # plan + (execute, verify) × 3
+
+
+def test_verify_parse_error_marks_run_failed(tmp_path) -> None:
+    """验收输出非 JSON:节点抛错,图调用边界统一兜底为 failed(§6.2)。"""
+    fake = FakeLLM(["# 计划", "执行", "我觉得都完成了!"])
+    with _client(tmp_path, fake) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        assert run["status"] == "failed"
+        assert "验收输出无法解析" in run["blocked_reason"]
+
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        failed = next(e for e in events if e["type"] == "run.failed.v1")
+        assert failed["payload"]["stage"] == "execute"  # 图调用边界兜底

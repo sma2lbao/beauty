@@ -18,9 +18,10 @@ from langgraph.graph.state import CompiledStateGraph
 from agent_orchestrator.graph.nodes import (
     approval_gate_node,
     deliver_node,
+    fail_node,
     make_execute_node,
     make_plan_node,
-    verify_node,
+    make_verify_node,
 )
 from agent_orchestrator.graph.state import RunGraphState
 
@@ -38,12 +39,14 @@ def route_after_gate(state: RunGraphState) -> str:
 
 
 def route_after_verify(state: RunGraphState) -> str:
-    """验收有未通过项且未达返工上限 → 回 execute(§6.1);否则交付。"""
+    """验收全过 → deliver;有未过且未达返工上限 → execute;耗尽 → fail(§6.1)。"""
     verified = state.get("verified") or {}
     rounds = state.get("rounds", 0)
-    if verified and not all(verified.values()) and rounds < MAX_REWORK_ROUNDS:
+    if not verified or all(verified.values()):
+        return "deliver"
+    if rounds < MAX_REWORK_ROUNDS:
         return "execute"
-    return "deliver"
+    return "fail"
 
 
 def build_run_graph(
@@ -55,8 +58,9 @@ def build_run_graph(
     builder.add_node("plan", make_plan_node(llm))
     builder.add_node("approval_gate", approval_gate_node)
     builder.add_node("execute", make_execute_node(llm))
-    builder.add_node("verify", verify_node)
+    builder.add_node("verify", make_verify_node(llm))
     builder.add_node("deliver", deliver_node)
+    builder.add_node("fail", fail_node)
 
     builder.add_edge(START, "plan")
     builder.add_edge("plan", "approval_gate")
@@ -65,7 +69,10 @@ def build_run_graph(
     )
     builder.add_edge("execute", "verify")
     builder.add_conditional_edges(
-        "verify", route_after_verify, {"execute": "execute", "deliver": "deliver"}
+        "verify",
+        route_after_verify,
+        {"execute": "execute", "deliver": "deliver", "fail": "fail"},
     )
     builder.add_edge("deliver", END)
+    builder.add_edge("fail", END)
     return builder.compile(checkpointer=checkpointer)

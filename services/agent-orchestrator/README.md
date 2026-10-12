@@ -20,11 +20,13 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `uv run alembic upgrade head` / `uv run alembic downgrade base`,命名约定保证回滚无损;
 - 生命周期含 failed 终态:图执行(plan/execute)异常在调用边界统一收敛为
   `run.failed.v1` 事件 + 状态落库,不向调用方裸奔(§6.2);
-- LLM 接入(架构 §5 唯一出口):`LLM_ENABLED=true` 时 plan/execute 经
-  `llm-gateway` 生成计划与执行结果(节点工厂注入,见 `graph/nodes.py`);
+- LLM 接入(架构 §5 唯一出口):`LLM_ENABLED=true` 时 plan/execute/verify 经
+  `llm-gateway` 生成计划、执行结果与逐条验收判定(节点工厂注入,见 `graph/nodes.py`);
   false 或网关未起时回退确定性桩。测试注入 FakeLLM,零网络零 token。
+- 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
+  耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed)。
 
-节点 verify/deliver 仍是确定性桩:返工判定与交付物落存储为阶段 B。
+节点 deliver 仍是确定性桩:交付物落对象存储为阶段 B。
 后续补齐:技能注册表、指令队列消费、IdP JWT 租户、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

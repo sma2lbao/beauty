@@ -171,6 +171,22 @@ async def approve_run(
         await _fail_run(session, run, exc, stage="execute")
         return run
     run.rounds = values.get("rounds", 0)
+    final_status = values.get("final_status")
+    if final_status == "failed":
+        # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
+        run.status = RunStatus.FAILED.value
+        run.blocked_reason = (values.get("blocked_reason") or "验收未通过")[:500]
+        await append_event(
+            session,
+            run,
+            "run.failed.v1",
+            {
+                "stage": "verify",
+                "reason": run.blocked_reason,
+                "rounds": run.rounds,
+            },
+        )
+        return run
     run.status = RunStatus.COMPLETED.value
     await append_event(
         session,
