@@ -10,6 +10,7 @@ dependencies = [
     "events",
     "agent-orchestrator",
     "llm-gateway",
+    "connector-service",
 ]
 
 [tool.uv.workspace]
@@ -23,6 +24,7 @@ members = [
     "packages/events",
     "services/agent-orchestrator",
     "services/llm-gateway",
+    "services/connector-service",
 ]
 
 [tool.uv.sources.ink]
@@ -44,6 +46,9 @@ workspace = true
 workspace = true
 
 [tool.uv.sources.llm-gateway]
+workspace = true
+
+[tool.uv.sources.connector-service]
 workspace = true
 
 [dependency-groups]

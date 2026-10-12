@@ -16,6 +16,7 @@
 | `packages/events`     | `events`                | Python 库    | 事件信封与命名/版本约定;后续补事件总线与 outbox;hatchling + pytest + ruff             |
 | `services/agent-orchestrator` | `agent-orchestrator` | Python 服务 | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A)                                 |
 | `services/llm-gateway` | `llm-gateway` | Python 服务 | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                   |
+| `services/connector-service` | `connector-service` | Python 服务 | FastAPI + uvicorn(:8004):外部系统连接器(邮件优先,IMAP 授权码)与凭证管理           |
 | `tools/eslint-config` | `@beauty/eslint-config` | 共享工具包   | ESLint 9 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                       |
 
 微服务架构设计(定稿)见 `docs/architecture.md`:微服务放 `services/`(部署单元),共享库实名命名(不用 `py-` 前缀),新 Python 项目必须在根 `pyproject.toml` 登记 uv workspace members。
@@ -53,7 +54,7 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
-### Python(ink / py-utils / common / database / events / agent-orchestrator / llm-gateway)
+### Python(ink / py-utils / common / database / events / agent-orchestrator / llm-gateway / connector-service)
 
 ```sh
 npx nx run py-utils:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -64,9 +65,10 @@ npx nx build py-utils      # hatchling 构建 wheel/sdist
 npx nx serve ink           # Streamlit UI(8501 端口)
 npx nx run agent-orchestrator:serve  # uvicorn :8002(run 编排 API)
 npx nx run llm-gateway:serve         # uvicorn :8003(模型网关)
+npx nx run connector-service:serve   # uvicorn :8004(连接器服务)
 ```
 
-`ink` 未定义 test target;可 lint/format/sync/serve。`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求。
+`ink` 未定义 test target;可 lint/format/sync/serve。`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway`/`connector-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -90,7 +92,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 - **包命名**:JS 包统一 `@beauty/<目录名>` 作用域(根包 `@beauty/source`);应用目录名不带 `beauty-` 前缀;Python 共享库实名命名(`common`/`database`/`events`/`agent-kit`…),不用 `py-` 前缀,并避开 stdlib 与主流库的顶层名(如 `agents`、`platform`)。
 - **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
@@ -109,5 +111,5 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 ## 修改后的验证清单
 
 - **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
-- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils`/`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway` 另跑 `npx nx test <项目>`。
+- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils`/`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service` 另跑 `npx nx test <项目>`。
 - **依赖变更**:Python 先 `nx run <项目>:add/remove` 再 `nx run <项目>:sync`;JS 改 `package.json` 后根目录 `npm install`。
