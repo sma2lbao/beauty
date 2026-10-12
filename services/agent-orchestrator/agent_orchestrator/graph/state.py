@@ -21,6 +21,10 @@ class RunGraphState(TypedDict, total=False):
     results: Annotated[list[str], add]
     rounds: Annotated[int, add]
     tool_calls: Annotated[list[dict[str, Any]], add]  # 工具调用审计(services 层落事件)
+    tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
+    pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
+    writes_approved: bool  # 确认闸的判定结果
+    confirm_cycles: Annotated[int, add]  # 确认轮次(上限见 nodes.MAX_CONFIRM_CYCLES)
     artifact: dict[str, Any]  # 交付物(title/kind/content),services 层落库
     verified: dict[str, bool]
     final_status: str

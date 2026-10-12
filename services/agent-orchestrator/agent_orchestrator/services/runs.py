@@ -196,33 +196,40 @@ async def update_plan(
     return run
 
 
-async def approve_run(
-    session: AsyncSession,
-    graph: CompiledStateGraph,
-    tenant_id: str,
-    run_id: str,
+async def _apply_graph_result(
+    session: AsyncSession, run: Run, values: dict[str, Any]
 ) -> Run:
-    run = await require_run(session, tenant_id, run_id)
-    _require_status(run, RunStatus.AWAITING_APPROVAL)
-    # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
-    await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
-    try:
-        values = await graph.ainvoke(
-            Command(resume={"action": "approve"}), config=_config(run)
-        )
-    except Exception as exc:
-        await _fail_run(session, run, exc, stage="execute")
-        return run
-    # 工具调用审计:每次调用一条事件,SSE 可观(§6.3)
-    for record in values.get("tool_calls") or []:
+    """图调用结果的统一后处理(§6.2/§6.3/§7)。
+
+    顺序即语义:工具审计 → 写操作确认中断 → 交付物 → 终态。
+
+    注意:state.tool_calls 是 add reducer,恢复执行(如确认闸放行)后会带上
+    历史累积记录——按已落库条数只发增量,避免事件重复。
+    """
+    records = values.get("tool_calls") or []
+    emitted = await session.scalar(
+        select(func.count())
+        .select_from(RunEvent)
+        .where(RunEvent.run_id == run.id, RunEvent.type == "run.tool.called.v1")
+    )
+    for record in records[emitted or 0 :]:
         await append_event(session, run, "run.tool.called.v1", record)
-    # 交付物落库 + run.delivered.v1(§7)
+    if values.get("__interrupt__"):
+        # 写操作待人工确认:停在 awaiting_confirmation,等 POST /confirm
+        run.status = RunStatus.AWAITING_CONFIRMATION.value
+        run.rounds = values.get("rounds", 0)
+        await append_event(
+            session,
+            run,
+            "run.confirmation.required.v1",
+            {"pending_writes": values.get("pending_writes") or []},
+        )
+        return run
     artifact = values.get("artifact")
     if artifact:
         await _persist_artifact(session, run, artifact)
     run.rounds = values.get("rounds", 0)
-    final_status = values.get("final_status")
-    if final_status == "failed":
+    if values.get("final_status") == "failed":
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
         run.status = RunStatus.FAILED.value
         run.blocked_reason = (values.get("blocked_reason") or "验收未通过")[:500]
@@ -245,6 +252,53 @@ async def approve_run(
         {"rounds": run.rounds, "results": values.get("results") or []},
     )
     return run
+
+
+async def approve_run(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    tenant_id: str,
+    run_id: str,
+) -> Run:
+    run = await require_run(session, tenant_id, run_id)
+    _require_status(run, RunStatus.AWAITING_APPROVAL)
+    # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
+    await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
+    try:
+        values = await graph.ainvoke(
+            Command(resume={"action": "approve"}), config=_config(run)
+        )
+    except Exception as exc:
+        await _fail_run(session, run, exc, stage="execute")
+        return run
+    return await _apply_graph_result(session, run, values)
+
+
+async def confirm_run(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    tenant_id: str,
+    run_id: str,
+    action: str,
+    reason: str | None,
+) -> Run:
+    """写操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
+    run = await require_run(session, tenant_id, run_id)
+    _require_status(run, RunStatus.AWAITING_CONFIRMATION)
+    await append_event(
+        session,
+        run,
+        "run.confirmation.received.v1",
+        {"action": action, "reason": reason},
+    )
+    try:
+        values = await graph.ainvoke(
+            Command(resume={"action": action, "reason": reason}), config=_config(run)
+        )
+    except Exception as exc:
+        await _fail_run(session, run, exc, stage="confirm")
+        return run
+    return await _apply_graph_result(session, run, values)
 
 
 async def reject_run(

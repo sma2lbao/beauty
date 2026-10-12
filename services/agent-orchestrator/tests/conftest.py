@@ -80,6 +80,7 @@ class FakeConnector:
         )
         self.fail = fail
         self.calls: list[tuple] = []
+        self.sent: list[tuple[str, str, str]] = []
 
     async def list_connections(self, tenant_id: str) -> list[dict]:
         self.calls.append(("list_connections", tenant_id))
@@ -94,6 +95,20 @@ class FakeConnector:
         if self.fail:
             raise RuntimeError("连接器挂了")
         return self.emails[:limit]
+
+    async def send_email(
+        self,
+        tenant_id: str,
+        connection_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> str:
+        self.calls.append(("send_email", tenant_id, connection_id, to))
+        if self.fail:
+            raise RuntimeError("连接器挂了")
+        self.sent.append((to, subject, body))
+        return f"已发送至 {to}"
 
 
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:

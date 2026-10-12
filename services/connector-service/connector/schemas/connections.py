@@ -23,6 +23,9 @@ class ImapCredentials(BaseModel):
     password: str = Field(
         min_length=1, max_length=200, pattern=r"^[ -~]+$"
     )  # QQ/163 授权码
+    # 发信(SMTP):不填按 imap.<域> → smtp.<域> 推导,端口默认 465(QQ/163 惯例)
+    smtp_host: str | None = Field(default=None, max_length=253)
+    smtp_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class ConnectionCreate(BaseModel):
@@ -53,5 +56,18 @@ class EmailRead(BaseModel):
 
 
 class TestResultRead(BaseModel):
+    ok: bool
+    detail: str
+
+
+class SendEmailRequest(BaseModel):
+    """发信请求(写操作):只允许 ASCII 收件地址,防头注入。"""
+
+    to: str = Field(min_length=3, max_length=320, pattern=r"^[ -~]+$")
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20000)
+
+
+class SendEmailResult(BaseModel):
     ok: bool
     detail: str

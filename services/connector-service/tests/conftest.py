@@ -16,7 +16,7 @@ TENANT = {"X-Tenant-Id": "t-1"}
 
 
 class FakeTransport:
-    """假传输:固定探活结果与邮件列表,记录 fetch 调用的 limit。"""
+    """假传输:固定探活结果与邮件列表,记录 fetch 的 limit 与 send 调用。"""
 
     def __init__(
         self,
@@ -26,6 +26,7 @@ class FakeTransport:
         self.test_result = test_result or TestResult(ok=True, detail="假连接正常")
         self.emails = emails or []
         self.fetch_limits: list[int] = []
+        self.sent: list[tuple[str, str, str]] = []
 
     async def test(self) -> TestResult:
         return self.test_result
@@ -33,6 +34,10 @@ class FakeTransport:
     async def fetch(self, limit: int) -> list[EmailSummary]:
         self.fetch_limits.append(limit)
         return self.emails[:limit]
+
+    async def send(self, to: str, subject: str, body: str) -> str:
+        self.sent.append((to, subject, body))
+        return f"已发送至 {to}"
 
 
 def _settings(tmp_path: Path) -> Settings:

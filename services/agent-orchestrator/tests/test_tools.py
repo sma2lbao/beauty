@@ -70,7 +70,10 @@ async def test_build_tools_list_and_fetch() -> None:
     connector = FakeConnector()
     registry = build_tools(connector, "t-1")
     names = {schema["function"]["name"] for schema in registry.schemas()}
-    assert names == {"list_connections", "fetch_emails"}
+    assert names == {"list_connections", "fetch_emails", "send_email"}
+    # 写操作必须在执行前被标记为需确认(§6.2)
+    assert registry.requires_confirmation("send_email") is True
+    assert registry.requires_confirmation("fetch_emails") is False
 
     listed = json.loads(await registry.execute("list_connections", "{}"))
     assert listed["connections"][0]["id"] == "conn-1"

@@ -14,6 +14,8 @@ from connector.schemas.connections import (
     ConnectionCreate,
     ConnectionRead,
     EmailRead,
+    SendEmailRequest,
+    SendEmailResult,
     TestResultRead,
 )
 from connector.services import connections as connections_service
@@ -100,3 +102,19 @@ async def fetch_emails(
         )
         for e in emails
     ]
+
+
+@router.post("/{connection_id}/emails", response_model=SendEmailResult)
+async def send_email(
+    body: SendEmailRequest,
+    connection_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    transport_factory: TransportFactory,
+) -> SendEmailResult:
+    """发信(写操作):调用方必须先经人工确认闸(§6.2),服务端不做二次判断。"""
+    conn = await connections_service.require_active_connection(
+        session, tenant_id, connection_id
+    )
+    detail = await transport_factory(conn).send(body.to, body.subject, body.body)
+    return SendEmailResult(ok=True, detail=detail)

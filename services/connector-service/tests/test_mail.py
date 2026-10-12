@@ -1,6 +1,7 @@
 """ImapTransport 单元:monkeypatch imaplib,零网络;验证探活/解析/错误映射。"""
 
 import imaplib
+import smtplib
 
 import pytest
 from common.errors import AppError, UpstreamError
@@ -98,3 +99,70 @@ def test_build_transport_rejects_unsupported_provider() -> None:
     with pytest.raises(AppError) as exc_info:
         mail.build_transport(FakeConn())  # type: ignore[arg-type]
     assert exc_info.value.code == "connector.provider_unsupported"
+
+
+SENT: list = []
+
+
+class FakeSMTP:
+    """假 SMTP_SSL:密码 "bad" 表示认证失败;发信记入 SENT。"""
+
+    def __init__(self, host: str, port: int, timeout: float | None = None):
+        self.host = host
+        self.port = port
+
+    def login(self, username: str, password: str) -> None:
+        if password == "bad":
+            raise smtplib.SMTPAuthenticationError(535, b"auth fail")
+
+    def send_message(self, message) -> None:
+        SENT.append(message)
+
+    def quit(self) -> None:
+        pass
+
+
+async def test_smtp_send_ok(monkeypatch) -> None:
+    SENT.clear()
+    monkeypatch.setattr(mail.smtplib, "SMTP_SSL", FakeSMTP)
+    transport = mail.ImapTransport("imap.qq.com", 993, "me@qq.com", "auth-code")
+    detail = await transport.send("boss@example.com", "周报", "本周汇总")
+    assert "已发送至 boss@example.com" in detail
+    assert SENT[0]["To"] == "boss@example.com"
+    assert SENT[0]["Subject"] == "周报"
+    assert SENT[0]["From"] == "me@qq.com"
+    assert SENT[0].get_content().strip() == "本周汇总"
+
+
+async def test_smtp_host_derivation_and_override() -> None:
+    derived = mail.ImapTransport("imap.qq.com", 993, "u", "p")
+    assert (derived.smtp_host, derived.smtp_port) == ("smtp.qq.com", 465)
+    explicit = mail.ImapTransport(
+        "imap.qq.com", 993, "u", "p", smtp_host="smtp.other.com", smtp_port=587
+    )
+    assert (explicit.smtp_host, explicit.smtp_port) == ("smtp.other.com", 587)
+
+
+async def test_smtp_auth_failure_maps_502(monkeypatch) -> None:
+    monkeypatch.setattr(mail.smtplib, "SMTP_SSL", FakeSMTP)
+    transport = mail.ImapTransport("imap.qq.com", 993, "me@qq.com", "bad")
+    with pytest.raises(UpstreamError) as exc_info:
+        await transport.send("a@b.c", "s", "b")
+    assert exc_info.value.code == "connector.send_failed"
+
+
+def test_build_transport_carries_smtp_settings() -> None:
+    class FakeConn:
+        provider = "imap"
+        credentials = {
+            "host": "imap.qq.com",
+            "port": 993,
+            "username": "u",
+            "password": "p",
+            "smtp_host": "smtp.qq.com",
+            "smtp_port": 465,
+        }
+
+    transport = mail.build_transport(FakeConn())  # type: ignore[arg-type]
+    assert isinstance(transport, mail.ImapTransport)
+    assert (transport.smtp_host, transport.smtp_port) == ("smtp.qq.com", 465)

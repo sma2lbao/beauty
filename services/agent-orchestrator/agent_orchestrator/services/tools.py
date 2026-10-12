@@ -26,6 +26,7 @@ class ToolSpec:
     description: str
     parameters: dict[str, Any]  # JSON Schema
     handler: Callable[[dict[str, Any]], Awaitable[str]]
+    requires_confirmation: bool = False  # 写操作:执行前必须人工放行(§6.2)
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,11 @@ class ToolRegistry:
 
     def __len__(self) -> int:
         return len(self._specs)
+
+    def requires_confirmation(self, name: str) -> bool:
+        """写操作工具:execute 不得直接执行,必须交确认闸(§6.2)。"""
+        spec = self._specs.get(name)
+        return bool(spec and spec.requires_confirmation)
 
     def schemas(self) -> list[dict[str, Any]]:
         """OpenAI tools 格式(网关原样透传给 litellm)。"""
@@ -82,7 +88,7 @@ class ToolRegistry:
 
 
 def build_tools(connector: Connector, tenant_id: str) -> ToolRegistry:
-    """装配该租户可见的工具集(阶段 A:邮件连接器两个只读工具)。"""
+    """装配该租户可见的工具集(阶段 A:邮件只读工具 + 一封发信写操作)。"""
 
     async def list_connections(args: dict[str, Any]) -> str:
         conns = await connector.list_connections(tenant_id)
@@ -106,6 +112,16 @@ def build_tools(connector: Connector, tenant_id: str) -> ToolRegistry:
             tenant_id, connection_id, max(1, min(limit, MAX_FETCH_LIMIT))
         )
         return json.dumps({"emails": emails}, ensure_ascii=False)
+
+    async def send_email(args: dict[str, Any]) -> str:
+        connection_id = str(args.get("connection_id") or "")
+        to = str(args.get("to") or "")
+        subject = str(args.get("subject") or "")
+        body = str(args.get("body") or "")
+        if not connection_id or not to or not subject or not body:
+            return _error("send_email 需要 connection_id/to/subject/body")
+        detail = await connector.send_email(tenant_id, connection_id, to, subject, body)
+        return json.dumps({"sent": True, "detail": detail}, ensure_ascii=False)
 
     return ToolRegistry(
         [
@@ -140,6 +156,26 @@ def build_tools(connector: Connector, tenant_id: str) -> ToolRegistry:
                     "additionalProperties": False,
                 },
                 handler=fetch_emails,
+            ),
+            ToolSpec(
+                name="send_email",
+                description="通过已有连接发送邮件(写操作,需用户确认后才会执行)",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "connection_id": {
+                            "type": "string",
+                            "description": "list_connections 返回的连接 id",
+                        },
+                        "to": {"type": "string", "description": "收件人邮箱"},
+                        "subject": {"type": "string", "description": "主题"},
+                        "body": {"type": "string", "description": "正文"},
+                    },
+                    "required": ["connection_id", "to", "subject", "body"],
+                    "additionalProperties": False,
+                },
+                handler=send_email,
+                requires_confirmation=True,
             ),
         ]
     )

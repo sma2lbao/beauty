@@ -19,6 +19,7 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import RunEvent
 from agent_orchestrator.schemas.runs import (
     ArtifactRead,
+    ConfirmRequest,
     PlanRead,
     PlanUpdate,
     RejectRequest,
@@ -135,6 +136,21 @@ async def resume_run(
     """blocked → 重新进审批闸,保留已编辑计划(§6.2 goal 语义)。"""
     run = await runs_service.resume_run(session, graph, tenant_id, run_id)
     return _plan_read(run.id, run.status, run.plan_markdown or "")
+
+
+@router.post("/{run_id}/confirm", response_model=RunRead)
+async def confirm_run(
+    body: ConfirmRequest,
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+) -> RunRead:
+    """确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。"""
+    run = await runs_service.confirm_run(
+        session, graph, tenant_id, run_id, body.action, body.reason
+    )
+    return RunRead.model_validate(run)
 
 
 TERMINAL_STATUSES = (RunStatus.COMPLETED.value, RunStatus.FAILED.value)

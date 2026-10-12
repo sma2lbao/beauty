@@ -13,13 +13,22 @@ from common.errors import UpstreamError
 
 
 class Connector(Protocol):
-    """连接器服务接口:列连接 + 读邮件(阶段 A 两个只读能力)。"""
+    """连接器服务接口:列连接 + 读邮件(只读)+ 发信(写操作)。"""
 
     async def list_connections(self, tenant_id: str) -> list[dict[str, Any]]: ...
 
     async def fetch_emails(
         self, tenant_id: str, connection_id: str, limit: int
     ) -> list[dict[str, Any]]: ...
+
+    async def send_email(
+        self,
+        tenant_id: str,
+        connection_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> str: ...
 
 
 class ConnectorClient:
@@ -67,6 +76,34 @@ class ConnectorClient:
                 params={"limit": limit},
             )
         )
+
+    async def send_email(
+        self,
+        tenant_id: str,
+        connection_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> str:
+        """发信(写操作):调用方必须先拿到人工放行(§6.2)。"""
+        payload = {"to": to, "subject": subject, "body": body}
+        try:
+            resp = await self._client.post(
+                f"/v1/connections/{connection_id}/emails",
+                json=payload,
+                headers={"X-Tenant-Id": tenant_id},
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                "connector.upstream_error", f"连接器服务不可达:{exc}"
+            ) from exc
+        if resp.status_code != 200:
+            raise UpstreamError(
+                "connector.send_failed",
+                f"连接器发信失败 {resp.status_code}",
+                details={"body": resp.text[:200]},
+            )
+        return str(resp.json().get("detail") or f"已发送至 {to}")
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -9,6 +9,9 @@
 - `DELETE /v1/connections/{id}`:撤销(留痕不物理删,状态守卫:仅 active 可撤);
 - `POST /v1/connections/{id}/test`:连通性测试(IMAP 登录探活),更新 last_checked_at;
 - `GET /v1/connections/{id}/emails?limit=10`:收件箱最近 N 封(只读);
+- `POST /v1/connections/{id}/emails`:发信(写操作,SMTP_SSL;`smtp_host` 缺省由
+  `imap.<域>` 推导、端口 465);调用方(agent-orchestrator 的确认闸)必须先拿到
+  人工放行,本服务不做二次判断;失败统一 502 `connector.send_failed`;
 - `/healthz` `/readyz`:存活/就绪探针(数据库可用即就绪)。
 
 安全与凭证:阶段 A 凭证明文存 JSON 列(读端绝不外泄,测试覆盖);

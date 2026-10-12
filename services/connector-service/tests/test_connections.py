@@ -134,3 +134,40 @@ def test_emails_endpoint_and_limit(tmp_path: Path) -> None:
         assert [e["subject"] for e in got] == ["邮件0", "邮件1"]
         assert transport.fetch_limits == [2]
         assert got[0]["sender"] == "a@b.c"
+
+
+def test_send_email_endpoint(tmp_path: Path) -> None:
+    """发信(写操作):服务端执行,人工确认由 orchestrator 的确认闸负责。"""
+    transport = FakeTransport()
+    app = create_app(_settings(tmp_path), transport_factory=lambda conn: transport)
+    with TestClient(app) as client:
+        conn_id = _create(client).json()["id"]
+        resp = client.post(
+            f"/v1/connections/{conn_id}/emails",
+            json={"to": "boss@example.com", "subject": "周报", "body": "本周汇总"},
+            headers=TENANT,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert transport.sent == [("boss@example.com", "周报", "本周汇总")]
+
+
+def test_send_email_requires_active_connection(client: TestClient) -> None:
+    conn_id = _create(client).json()["id"]
+    client.delete(f"/v1/connections/{conn_id}", headers=TENANT)
+    resp = client.post(
+        f"/v1/connections/{conn_id}/emails",
+        json={"to": "a@b.c", "subject": "s", "body": "b"},
+        headers=TENANT,
+    )
+    assert resp.status_code == 409
+
+
+def test_send_email_rejects_non_ascii_recipient(client: TestClient) -> None:
+    conn_id = _create(client).json()["id"]
+    resp = client.post(
+        f"/v1/connections/{conn_id}/emails",
+        json={"to": "张三@example.com", "subject": "s", "body": "b"},
+        headers=TENANT,
+    )
+    assert resp.status_code == 422

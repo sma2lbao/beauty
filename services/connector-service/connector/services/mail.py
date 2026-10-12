@@ -1,19 +1,20 @@
-"""邮件传输抽象与 IMAP 实装(架构 §8)。
+"""邮件传输抽象与 IMAP/SMTP 实装(架构 §8)。
 
-MailTransport 是唯一出口约定:任何提供商(QQ/163 授权码 IMAP、Gmail OAuth、
-M365 Graph)都实现同一协议,API 层零感知。传输工厂可注入——
+MailTransport 是唯一出口约定:任何提供商(QQ/163 授权码 IMAP+SMTP、Gmail
+OAuth、M365 Graph)都实现同一协议,API 层零感知。传输工厂可注入——
 生产 build_transport,测试 FakeTransport,零网络零真实账号。
-IMAP 用 stdlib imaplib(授权码即密码),同步调用包 asyncio.to_thread。
+IMAP/SMTP 用 stdlib(授权码即密码),同步调用包 asyncio.to_thread。
 """
 
 from __future__ import annotations
 
 import email
 import imaplib
+import smtplib
 from asyncio import to_thread
 from dataclasses import dataclass
 from email.header import decode_header, make_header
-from email.message import Message
+from email.message import EmailMessage, Message
 from email.utils import parseaddr
 from typing import Protocol
 
@@ -37,11 +38,13 @@ class EmailSummary:
 
 
 class MailTransport(Protocol):
-    """传输协议:连通性探活 + 收件箱拉取(只读)。"""
+    """传输协议:探活 + 收件箱拉取(只读)+ 发信(写操作,调用方须先过确认闸)。"""
 
     async def test(self) -> TestResult: ...
 
     async def fetch(self, limit: int) -> list[EmailSummary]: ...
+
+    async def send(self, to: str, subject: str, body: str) -> str: ...
 
 
 def _decode(value: str | None) -> str:
@@ -79,15 +82,26 @@ def _to_summary(msg: Message) -> EmailSummary:
 
 
 class ImapTransport:
-    """stdlib imaplib 实装:IMAPS 登录 + INBOX 最近 N 封(只读)。"""
+    """stdlib imaplib + smtplib 实装:收(IMAPS)与发(SMTPS)共用同一凭证。"""
 
     connect_timeout_seconds = 10.0  # 防真网黑洞挂死端点
 
-    def __init__(self, host: str, port: int, username: str, password: str) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        smtp_host: str | None = None,
+        smtp_port: int | None = None,
+    ) -> None:
         self.host = host
         self.port = port
         self.username = username
         self.password = password
+        # 不填则按 imap.<域> → smtp.<域> 推导(QQ/163 惯例),端口默认 465
+        self.smtp_host = smtp_host or host.replace("imap.", "smtp.", 1)
+        self.smtp_port = smtp_port or 465
 
     def _login(self) -> imaplib.IMAP4_SSL:
         client = imaplib.IMAP4_SSL(
@@ -141,6 +155,30 @@ class ImapTransport:
                 "connector.mail_unavailable", f"邮件收取失败:{exc}"
             ) from exc
 
+    async def send(self, to: str, subject: str, body: str) -> str:
+        """SMTP_SSL 发信(授权码同 IMAP);失败统一映射 502 connector.send_failed。"""
+        message = EmailMessage()
+        message["From"] = self.username
+        message["To"] = to
+        message["Subject"] = subject
+        message.set_content(body)
+
+        def push() -> None:
+            client = smtplib.SMTP_SSL(
+                self.smtp_host, self.smtp_port, timeout=self.connect_timeout_seconds
+            )
+            try:
+                client.login(self.username, self.password)
+                client.send_message(message)
+            finally:
+                client.quit()
+
+        try:
+            await to_thread(push)
+        except Exception as exc:
+            raise UpstreamError("connector.send_failed", f"邮件发送失败:{exc}") from exc
+        return f"已发送至 {to}"
+
 
 def build_transport(connection: Connection) -> MailTransport:
     """按 provider 装配传输;阶段 A 仅 imap(gmail/outlook 见 §8 阶段 B)。"""
@@ -151,9 +189,12 @@ def build_transport(connection: Connection) -> MailTransport:
             details={"provider": connection.provider},
         )
     cred = connection.credentials or {}
+    smtp_port = cred.get("smtp_port")
     return ImapTransport(
         host=str(cred.get("host", "")),
         port=int(cred.get("port", 993)),
         username=str(cred.get("username", "")),
         password=str(cred.get("password", "")),
+        smtp_host=cred.get("smtp_host"),
+        smtp_port=int(smtp_port) if smtp_port else None,
     )

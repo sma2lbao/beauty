@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     ToolkitFactory = Callable[[str], ToolRegistry]
 
 MAX_TOOL_ROUNDS = 3  # execute 内 function-calling 轮次上限
+MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
 
 PLAN_SYSTEM_PROMPT = (
     "你是任务规划助手。依据目标与验收标准产出 Markdown 执行计划:"
@@ -154,15 +155,33 @@ def _assistant_tool_message(reply: LLMReply) -> dict[str, Any]:
     }
 
 
+def _tool_message(call_id: str, output: str) -> dict[str, Any]:
+    return {"role": "tool", "tool_call_id": call_id, "content": output}
+
+
+def _record(name: str, arguments: str, output: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "arguments": arguments,
+        "ok": not output.startswith('{"error"'),
+        "detail": output[:200],
+    }
+
+
+def _tool_error(message: str) -> str:
+    return json.dumps({"error": message}, ensure_ascii=False)
+
+
 def make_execute_node(
     llm: LLMClient | None, toolkit_factory: ToolkitFactory | None = None
 ):
     """execute 节点工厂:LLM 执行;有工具时跑 function-calling 循环(§6.1)。
 
     - llm=None:确定性桩(dev/测试零外部依赖);
-    - 无工具:单轮结果小结(阶段 A 行为不变);
-    - 有工具:≤MAX_TOOL_ROUNDS 轮——模型请求工具 → 注册表执行 → 结果回喂,
-      工具失败以错误文本回喂让模型决策;每轮记 tool_calls 供 service 层落事件。
+    - 无工具:单轮结果小结;
+    - 有工具:≤MAX_TOOL_ROUNDS 轮。只读工具直接执行并回喂;**写操作工具
+      (requires_confirmation)一律不执行**,收集进 pending_writes 交确认闸
+      中断等人工放行(§6.2)——放行后由 tool_exec 执行并回喂同一消息流。
     """
 
     async def execute_node(state: RunGraphState) -> dict:
@@ -171,7 +190,8 @@ def make_execute_node(
                 "results": ["目标已拆解(桩)", "子任务已执行(桩)", "结果已汇总(桩)"],
                 "rounds": 1,
             }
-        messages = _execute_messages(state)
+        base = _execute_messages(state)
+        messages = base + list(state.get("tool_history") or [])
         toolkit = (
             toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
         )
@@ -187,23 +207,87 @@ def make_execute_node(
             if not reply.tool_calls:
                 break
             messages.append(_assistant_tool_message(reply))
+            pending: list[dict[str, Any]] = []
             for call in reply.tool_calls:
+                if toolkit.requires_confirmation(call.name):
+                    if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
+                        # 确认次数达上限:不再打断,如实告知模型未执行
+                        output = _tool_error("写操作确认次数已达上限,本次未执行")
+                        records.append(_record(call.name, call.arguments, output))
+                        messages.append(_tool_message(call.id, output))
+                        continue
+                    pending.append(
+                        {"id": call.id, "name": call.name, "arguments": call.arguments}
+                    )
+                    continue
                 output = await toolkit.execute(call.name, call.arguments)
-                records.append(
-                    {
-                        "name": call.name,
-                        "arguments": call.arguments,
-                        "ok": not output.startswith('{"error"'),
-                        "detail": output[:200],
-                    }
-                )
-                messages.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": output}
-                )
+                records.append(_record(call.name, call.arguments, output))
+                messages.append(_tool_message(call.id, output))
+            if pending:
+                return {
+                    "tool_history": messages[len(base) :],
+                    "pending_writes": pending,
+                    "tool_calls": records,
+                }
         text = reply.content or f"(调用工具 {len(records)} 次后模型未给出结论)"
-        return {"results": [text], "rounds": 1, "tool_calls": records}
+        return {
+            "results": [text],
+            "rounds": 1,
+            "tool_calls": records,
+            "tool_history": messages[len(base) :],
+            "pending_writes": [],
+        }
 
     return execute_node
+
+
+def confirm_gate_node(state: RunGraphState) -> dict:
+    """写操作确认闸(§6.2):execute 收集到写操作后中断,等人工放行/拒绝。
+
+    注意:interrupt 之前不得有任何副作用——LangGraph 恢复时会重放本节点,
+    副作用逻辑必须留在 tool_exec 里。
+    """
+    pending = state.get("pending_writes") or []
+    answer = interrupt({"pending_writes": pending})
+    if answer.get("action") != "approve":
+        reason = answer.get("reason") or "用户拒绝写操作"
+        return {
+            "writes_approved": False,
+            "pending_writes": [],
+            "results": [f"写操作被拒绝:{reason}"],
+        }
+    return {"writes_approved": True}
+
+
+def make_tool_exec_node(toolkit_factory: ToolkitFactory | None):
+    """执行已确认的写操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
+
+    async def tool_exec_node(state: RunGraphState) -> dict:
+        pending = state.get("pending_writes") or []
+        base = _execute_messages(state)
+        messages = base + list(state.get("tool_history") or [])
+        toolkit = (
+            toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
+        )
+        records: list[dict[str, Any]] = []
+        for call in pending:
+            name = str(call.get("name") or "")
+            arguments = str(call.get("arguments") or "{}")
+            if toolkit is None:
+                output = _tool_error("工具未配置,写操作未执行")
+            else:
+                output = await toolkit.execute(name, arguments)
+            records.append(_record(name, arguments, output))
+            messages.append(_tool_message(str(call.get("id") or ""), output))
+        return {
+            "tool_history": messages[len(base) :],
+            "pending_writes": [],
+            "writes_approved": False,
+            "tool_calls": records,
+            "confirm_cycles": 1,
+        }
+
+    return tool_exec_node
 
 
 def _parse_verdicts(text: str, criteria: list[str]) -> tuple[dict[str, bool], str]:

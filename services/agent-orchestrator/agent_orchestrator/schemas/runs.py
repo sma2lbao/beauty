@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,6 +61,13 @@ class PlanUpdate(BaseModel):
 
 class RejectRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class ConfirmRequest(BaseModel):
+    """写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。"""
+
+    action: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class PlanRead(BaseModel):
