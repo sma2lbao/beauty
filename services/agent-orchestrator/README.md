@@ -2,13 +2,20 @@
 
 Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构与执行模型见 `docs/architecture.md` §6。
 
-当前骨架实现了 run 生命周期的第一条垂直切片:
+当前实现(阶段 A):
 
-- `POST /api/v1/runs`:创建 run(pending 状态)+ 追加 `run.created.v1` 事件;
-- `GET /api/v1/runs/{id}` / `GET /api/v1/runs/{id}/events`:查询与事件回放(§6.3 事件溯源的读端);
+- run 垂直切片:`POST /api/v1/runs` 创建,`GET /runs/{id}` 查询,
+  `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端);
+- LangGraph 执行图(`agent_orchestrator/graph/`):plan → 审批闸(interrupt 人工确认)
+  → execute → verify(返工 ≤3 轮)→ deliver;checkpointer 先用 InMemorySaver,
+  接 postgres 后切 `langgraph-checkpoint-postgres`;
+- 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(审批前编辑计划)、
+  `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
+  (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义);
+- 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
 - `/healthz` `/readyz`:存活/就绪探针。
 
-后续补齐:LangGraph 状态机与 checkpointer(plan→confirm→execute→verify→deliver)、SSE 出口、
-技能注册表、指令队列消费、alembic 迁移、接入 IdP JWT 租户。
+节点是确定性桩:LLM 规划/执行经 llm-gateway 接入(阶段 B),接入点见 `graph/nodes.py` 各 docstring。
+后续补齐:SSE 出口、技能注册表、指令队列消费、alembic 迁移、IdP JWT 租户。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

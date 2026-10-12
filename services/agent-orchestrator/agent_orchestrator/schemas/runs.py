@@ -36,6 +36,7 @@ class RunRead(BaseModel):
     goal: str
     status: RunStatus
     rounds: int
+    attempts: int
     acceptance_criteria: list[str]
     blocked_reason: str | None
     created_at: datetime
@@ -50,3 +51,19 @@ class RunEventRead(BaseModel):
     type: str
     payload: dict[str, Any]
     occurred_at: str
+
+
+class PlanUpdate(BaseModel):
+    """审批前编辑计划(§6.1:plan 是可编辑工件)。"""
+
+    plan_markdown: str = Field(min_length=1, max_length=20000)
+
+
+class RejectRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class PlanRead(BaseModel):
+    run_id: str
+    status: RunStatus
+    plan_markdown: str

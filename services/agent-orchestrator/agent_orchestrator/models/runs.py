@@ -18,7 +18,9 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     goal: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     rounds: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
     acceptance_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
+    plan_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

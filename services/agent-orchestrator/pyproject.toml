@@ -10,6 +10,7 @@ dependencies = [
     "database",
     "events",
     "fastapi>=0.143.0",
+    "langgraph>=1.2.14",
     "uvicorn>=0.53.0",
 ]
 
