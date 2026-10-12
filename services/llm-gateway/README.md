@@ -9,6 +9,9 @@
 - 支持 function-calling:`tools` 原样透传给 litellm,响应的 `tool_calls`
   归一化为 OpenAI 嵌套形状(`function.name/arguments`);消息支持
   `assistant.tool_calls` 与 `tool` 角色(`tool_call_id`),历史回传无需转换;
+- `POST /v1/embeddings`:文本批量向量化(litellm `aembedding`,默认
+  `EMBEDDING_MODEL`);条数与输入不一致按 502 `llm.embedding_error` 处理——
+  knowledge-service 等经此向量化,不直连模型提供商(§5);
 - `/healthz` `/readyz`:存活/就绪探针(默认模型已配置即就绪,提供商连通性在调用时校验);
 - 密钥由 litellm 直接读进程环境变量,网关不落盘(密钥库方案见架构 §10)。
 
