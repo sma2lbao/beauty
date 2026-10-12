@@ -32,6 +32,7 @@ from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
+from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
 
 ToolkitFactory = Callable[[str], ToolRegistry]
 
@@ -105,6 +106,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owns_verifier = True
     app.state.token_verifier = verifier
 
+    # 交付物镜像到工作区(§7):测试注入优先;独立于工具箱开关
+    workspace: WorkspaceClient | None = app.state.workspace_client
+    if workspace is None and settings.workspace_enabled:
+        workspace = WorkspaceClient(
+            settings.workspace_service_url, settings.workspace_timeout_seconds
+        )
+    app.state.workspace_client = workspace
+
     # 交付物存储装配(§7 阶段 B):测试注入优先;否则按配置选后端
     # (database 模式为 None——内容留在 run_artifacts.content 列)
     store: ArtifactStore | None = app.state.artifact_store
@@ -151,6 +160,7 @@ def create_app(
     toolkit_factory: ToolkitFactory | None = None,
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
+    workspace_client: Workspace | None = None,
 ) -> FastAPI:
     """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
@@ -159,6 +169,7 @@ def create_app(
     app.state.toolkit_factory = toolkit_factory
     app.state.token_verifier = token_verifier
     app.state.artifact_store = artifact_store
+    app.state.workspace_client = workspace_client
 
     if app.state.settings.cors_allow_origins:
         # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配

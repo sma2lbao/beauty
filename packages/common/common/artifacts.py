@@ -59,6 +59,28 @@ class ArtifactStore(Protocol):
         ...
 
 
+DATABASE_BACKEND = "database"
+FILESYSTEM_BACKEND = "filesystem"
+
+
+def build_artifact_store(
+    backend: str, *, root: str = "./.artifacts"
+) -> ArtifactStore | None:
+    """按配置选后端:``database`` → None(内容随行存 DB 列);``filesystem`` → 本地目录。
+
+    未知后端直接报错(启动即失败,不带病上线)。
+    """
+    if backend == DATABASE_BACKEND:
+        return None
+    if backend == FILESYSTEM_BACKEND:
+        return FilesystemArtifactStore(root)
+    raise StorageError(
+        "artifact.unknown_store",
+        f"未知的交付物存储后端:{backend}",
+        details={"supported": [DATABASE_BACKEND, FILESYSTEM_BACKEND]},
+    )
+
+
 class FilesystemArtifactStore:
     """本地目录实现:单机部署与开发用;换 S3 兼容存储时调用方不动。"""
 

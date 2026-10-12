@@ -62,7 +62,10 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 交付物存储后端(§7 阶段 B):`ARTIFACT_STORE=database`(默认,正文存 DB 列)或
   `filesystem`(正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;
   键按 `<租户>/<run>/<交付物>.md` 分层,拒绝目录穿越);对象丢失 → 500
-  `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`。
+  `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`;
+- 交付物镜像(`WORKSPACE_ENABLED=true`):交付时**同时**推给 workspace-service
+  (§7 里 artifacts 归属 workspace);镜像成败如实记进 `run.delivered.v1` 事件
+  (`workspace_artifact_id` / `workspace_error`)——镜像失败不丢交付物。
 
 后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 

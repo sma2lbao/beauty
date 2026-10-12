@@ -30,6 +30,7 @@ from agent_orchestrator.models.runs import (
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.services import artifacts
+from agent_orchestrator.services.workspace import Workspace
 
 
 async def append_event(
@@ -101,22 +102,36 @@ async def _persist_artifact(
     run: Run,
     artifact: dict[str, Any],
     store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
 ) -> RunArtifact:
-    """交付物落库/落对象存储 + run.delivered.v1(§7)。"""
+    """交付物落库/落对象存储 + run.delivered.v1(§7)。
+
+    workspace 启用时**同时**把交付物镜像到工作区(§7 归属方向):
+    镜像失败不丢交付物,但会把原因如实记进事件 payload。
+    """
     record = await artifacts.persist_artifact(session, run, artifact, store)
-    await append_event(
-        session,
-        run,
-        "run.delivered.v1",
-        {
-            "artifact_id": record.id,
-            "kind": record.kind,
-            "title": record.title,
-            "chars": len(str(artifact.get("content") or "")),  # 字符数(文本)
-            "size_bytes": record.size_bytes,  # 存储字节数(UTF-8)
-            "storage": record.storage,
-        },
-    )
+    payload: dict[str, Any] = {
+        "artifact_id": record.id,
+        "kind": record.kind,
+        "title": record.title,
+        "chars": len(str(artifact.get("content") or "")),  # 字符数(文本)
+        "size_bytes": record.size_bytes,  # 存储字节数(UTF-8)
+        "storage": record.storage,
+    }
+    if workspace is not None:
+        try:
+            mirrored = await workspace.create_artifact(
+                run.tenant_id,
+                title=record.title,
+                kind=record.kind,
+                content=str(artifact.get("content") or ""),
+                run_id=run.id,
+            )
+        except Exception as exc:  # 镜像失败:run 照常交付,但如实记账
+            payload["workspace_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            payload["workspace_artifact_id"] = mirrored.get("id")
+    await append_event(session, run, "run.delivered.v1", payload)
     return record
 
 
@@ -291,6 +306,7 @@ async def _apply_graph_result(
     run: Run,
     values: dict[str, Any],
     store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
 ) -> Run:
     """图调用结果的统一后处理(§6.2/§6.3/§7)。
 
@@ -320,7 +336,7 @@ async def _apply_graph_result(
         return run
     artifact = values.get("artifact")
     if artifact:
-        await _persist_artifact(session, run, artifact, store)
+        await _persist_artifact(session, run, artifact, store, workspace)
     run.rounds = values.get("rounds", 0)
     if values.get("final_status") == "failed":
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
@@ -353,6 +369,7 @@ async def approve_run(
     tenant_id: str,
     run_id: str,
     store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_APPROVAL)
@@ -368,7 +385,7 @@ async def approve_run(
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
-    return await _apply_graph_result(session, run, values, store)
+    return await _apply_graph_result(session, run, values, store, workspace)
 
 
 async def confirm_run(
@@ -379,6 +396,7 @@ async def confirm_run(
     action: str,
     reason: str | None,
     store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
 ) -> Run:
     """写操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
     run = await require_run(session, tenant_id, run_id)
@@ -405,7 +423,7 @@ async def confirm_run(
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run
-    return await _apply_graph_result(session, run, values, store)
+    return await _apply_graph_result(session, run, values, store, workspace)
 
 
 async def reject_run(

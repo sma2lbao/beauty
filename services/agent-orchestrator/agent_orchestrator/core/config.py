@@ -39,6 +39,10 @@ class Settings(BaseAppSettings):
     knowledge_enabled: bool = False
     knowledge_service_url: str = "http://127.0.0.1:8006"
     knowledge_timeout_seconds: float = 30.0
+    # 交付物镜像到 workspace-service(§7:artifacts 归属 workspace)
+    workspace_enabled: bool = False
+    workspace_service_url: str = "http://127.0.0.1:8005"
+    workspace_timeout_seconds: float = 30.0
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

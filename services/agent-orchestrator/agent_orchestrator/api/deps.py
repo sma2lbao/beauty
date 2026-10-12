@@ -21,6 +21,8 @@ from fastapi import Header, Request
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.services.workspace import Workspace
+
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     factory = request.app.state.session_factory
@@ -31,6 +33,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_run_graph(request: Request) -> CompiledStateGraph:
     """lifespan 装配的 run 执行图(app.state.run_graph)。"""
     return request.app.state.run_graph
+
+
+def get_workspace_client(request: Request) -> Workspace | None:
+    """lifespan 按配置装配的工作区客户端;未开启为 None(不镜像)。"""
+    return request.app.state.workspace_client
 
 
 def get_artifact_store(request: Request) -> ArtifactStore | None:

@@ -147,6 +147,36 @@ class FakeKnowledge:
         }
 
 
+class FakeWorkspace:
+    """假工作区:记录交付物镜像调用,可注入失败(零网络)。"""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.created: list[dict] = []
+
+    async def create_artifact(
+        self,
+        tenant_id: str,
+        *,
+        title: str,
+        kind: str,
+        content: str,
+        run_id: str | None = None,
+    ) -> dict:
+        if self.fail:
+            raise RuntimeError("工作区镜像失败")
+        record = {
+            "id": f"ws-art-{len(self.created) + 1}",
+            "tenant_id": tenant_id,
+            "title": title,
+            "kind": kind,
+            "content": content,
+            "run_id": run_id,
+        }
+        self.created.append(record)
+        return record
+
+
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:
     return Settings(
         env="dev",

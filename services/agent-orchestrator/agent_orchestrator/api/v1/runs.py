@@ -20,6 +20,7 @@ from agent_orchestrator.api.deps import (
     get_run_graph,
     get_session,
     get_tenant_id,
+    get_workspace_client,
 )
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import RunEvent
@@ -37,6 +38,7 @@ from agent_orchestrator.schemas.runs import (
     RunStatus,
 )
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -44,6 +46,7 @@ DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
+WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -146,9 +149,12 @@ async def approve_run(
     tenant_id: TenantId,
     graph: RunGraph,
     store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
 ) -> RunRead:
     """放行审批闸,执行到完成(§6.2 awaiting_approval → completed)。"""
-    run = await runs_service.approve_run(session, graph, tenant_id, run_id, store)
+    run = await runs_service.approve_run(
+        session, graph, tenant_id, run_id, store, workspace
+    )
     return RunRead.model_validate(run)
 
 
@@ -182,10 +188,11 @@ async def confirm_run(
     tenant_id: TenantId,
     graph: RunGraph,
     store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
 ) -> RunRead:
     """确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。"""
     run = await runs_service.confirm_run(
-        session, graph, tenant_id, run_id, body.action, body.reason, store
+        session, graph, tenant_id, run_id, body.action, body.reason, store, workspace
     )
     return RunRead.model_validate(run)
 
