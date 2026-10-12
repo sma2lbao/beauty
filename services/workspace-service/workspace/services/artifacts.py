@@ -1,18 +1,18 @@
-"""交付物业务逻辑:内容经 common.artifacts 落存储,DB 只留元数据(§7)。"""
+"""交付物业务逻辑:内容经 common.artifacts 落存储,DB 只留元数据(§7)。
+
+数据访问经 `workspace.repositories`;本层负责存储与元数据的编排。
+"""
 
 from __future__ import annotations
 
 from uuid import uuid4
 
-from common.artifacts import (
-    ArtifactStore,
-    build_artifact_key,
-)
-from common.errors import NotFoundError, StorageError
-from sqlalchemy import select
+from common.artifacts import ArtifactStore, build_artifact_key
+from common.errors import StorageError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workspace.models.workspace import WorkspaceArtifact
+from workspace.repositories import ArtifactRepository
 from workspace.schemas.workspace import ArtifactCreate
 from workspace.services import workspaces as workspaces_service
 
@@ -54,27 +54,13 @@ async def create_artifact(
         key = build_artifact_key(tenant_id, workspace.id, object_id, suffix=SUFFIX)
         await store.put(key, payload, content_type=CONTENT_TYPE)
         record.object_key = key
-    session.add(record)
-    await session.flush()
-    return record
+    return await ArtifactRepository(session).add(record)
 
 
 async def require_artifact(
     session: AsyncSession, tenant_id: str, artifact_id: str
 ) -> WorkspaceArtifact:
-    record = await session.scalar(
-        select(WorkspaceArtifact).where(
-            WorkspaceArtifact.id == artifact_id,
-            WorkspaceArtifact.tenant_id == tenant_id,
-        )
-    )
-    if record is None:
-        raise NotFoundError(
-            "artifact.not_found",
-            "交付物不存在",
-            details={"artifact_id": artifact_id},
-        )
-    return record
+    return await ArtifactRepository(session).require_for_tenant(tenant_id, artifact_id)
 
 
 async def load_content(record: WorkspaceArtifact, store: ArtifactStore | None) -> str:
@@ -101,15 +87,11 @@ async def list_artifacts(
     session: AsyncSession, tenant_id: str, workspace_id: str
 ) -> list[WorkspaceArtifact]:
     await workspaces_service.require_workspace(session, tenant_id, workspace_id)
-    rows = await session.scalars(
-        select(WorkspaceArtifact)
-        .where(
-            WorkspaceArtifact.tenant_id == tenant_id,
-            WorkspaceArtifact.workspace_id == workspace_id,
-        )
-        .order_by(WorkspaceArtifact.created_at.desc(), WorkspaceArtifact.id.desc())
+    return await ArtifactRepository(session).list_scoped(
+        tenant_id,
+        WorkspaceArtifact.workspace_id == workspace_id,
+        order_by=[WorkspaceArtifact.created_at.desc(), WorkspaceArtifact.id.desc()],
     )
-    return list(rows)
 
 
 async def delete_artifact(
@@ -119,8 +101,8 @@ async def delete_artifact(
     store: ArtifactStore | None,
 ) -> None:
     """删除交付物:先删对象再删元数据(对象缺失不阻塞删除)。"""
-    record = await require_artifact(session, tenant_id, artifact_id)
+    artifacts = ArtifactRepository(session)
+    record = await artifacts.require_for_tenant(tenant_id, artifact_id)
     if record.object_key and store is not None:
         await store.delete(record.object_key)
-    await session.delete(record)
-    await session.flush()
+    await artifacts.delete(record)

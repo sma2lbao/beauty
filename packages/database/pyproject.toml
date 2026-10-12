@@ -47,5 +47,7 @@ unfixable = []
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    "asyncpg>=0.32.0",
     "pytest-asyncio>=1.4.0",
+    "testcontainers[postgres]>=4.15.0",
 ]
