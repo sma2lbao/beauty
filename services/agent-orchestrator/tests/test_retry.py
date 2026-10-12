@@ -41,7 +41,7 @@ def test_retry_creates_child_run_with_inherited_context(tmp_path: Path) -> None:
         assert child["rounds"] == 0
         # 计划节点检测到已有计划会短路 → 直接进审批闸,不重复调用模型
         assert child["status"] == "awaiting_approval"
-        assert child["blocked_reason"] is None
+        assert child["status_reason"] is None
 
         plan = client.get(f"/api/v1/runs/{child['id']}/plan", headers=TENANT).json()
         parent_plan = client.get(
@@ -57,7 +57,7 @@ def test_retry_keeps_parent_history_intact(tmp_path: Path) -> None:
 
         parent = client.get(f"/api/v1/runs/{parent_id}", headers=TENANT).json()
         assert parent["status"] == "failed"  # 旧 run 仍是 failed,不被"重试"改写
-        assert parent["blocked_reason"]  # 失败原因保留
+        assert parent["status_reason"]  # 失败原因保留
         runs = client.get("/api/v1/runs", headers=TENANT).json()
         assert {run["id"] for run in runs} == {parent_id, child["id"]}
 

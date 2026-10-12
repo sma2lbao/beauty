@@ -88,12 +88,12 @@ async def _fail_run(
     failed 是终态,重试语义是新起 run。
     """
     run.status = RunStatus.FAILED.value
-    run.blocked_reason = f"{type(exc).__name__}: {exc}"[:500]
+    run.status_reason = f"{type(exc).__name__}: {exc}"[:500]
     await append_event(
         session,
         run,
         "run.failed.v1",
-        {"stage": stage, "reason": run.blocked_reason},
+        {"stage": stage, "reason": run.status_reason},
     )
 
 
@@ -341,14 +341,14 @@ async def _apply_graph_result(
     if values.get("final_status") == "failed":
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
         run.status = RunStatus.FAILED.value
-        run.blocked_reason = (values.get("blocked_reason") or "验收未通过")[:500]
+        run.status_reason = (values.get("status_reason") or "验收未通过")[:500]
         await append_event(
             session,
             run,
             "run.failed.v1",
             {
                 "stage": "verify",
-                "reason": run.blocked_reason,
+                "reason": run.status_reason,
                 "rounds": run.rounds,
             },
         )
@@ -440,7 +440,7 @@ async def reject_run(
         config=_config(run),
     )
     run.status = RunStatus.BLOCKED.value
-    run.blocked_reason = reason
+    run.status_reason = reason
     await append_event(session, run, "run.rejected.v1", {"reason": reason})
     await append_event(
         session,
@@ -498,7 +498,7 @@ async def retry_run(
         session,
         parent,
         "run.retry.requested.v1",
-        {"new_run_id": child.id, "failures": 1, "reason": parent.blocked_reason},
+        {"new_run_id": child.id, "failures": 1, "reason": parent.status_reason},
     )
     # 继承计划 → 直接进审批闸(人工再确认后才执行;副作用如已发邮件不会被自动撤销)
     await _invoke_plan(session, graph, child)
@@ -515,7 +515,7 @@ async def resume_run(
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.BLOCKED)
     run.attempts += 1
-    run.blocked_reason = None
+    run.status_reason = None
     await append_event(session, run, "run.resumed.v1", {"attempt": run.attempts})
     await _invoke_plan(session, graph, run)
     return run

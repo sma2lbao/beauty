@@ -137,7 +137,7 @@ def approval_gate_node(state: RunGraphState) -> dict:
     if answer.get("action") != "approve":
         return {
             "final_status": "blocked",
-            "blocked_reason": answer.get("reason") or "用户拒绝",
+            "status_reason": answer.get("reason") or "用户拒绝",
         }
     return _gate_update(answer)
 
@@ -375,7 +375,7 @@ def fail_node(state: RunGraphState) -> dict:
     reason = f"验收未通过(已返工 {state.get('rounds', 0)} 轮): " + "; ".join(
         failed_items
     )
-    return {"final_status": "failed", "blocked_reason": reason}
+    return {"final_status": "failed", "status_reason": reason}
 
 
 def _artifact(state: RunGraphState, content: str) -> dict[str, Any]:

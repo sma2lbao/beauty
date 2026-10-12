@@ -21,7 +21,9 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     acceptance_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
     plan_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
-    blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 状态原因:blocked(拒绝计划/验收未通过)与 failed(异常收敛)共用一列;
+    # 具体含义由 status 决定,故不叫 blocked_reason
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 重试血缘:本 run 由哪个 failed run 派生(§6.2 failed 的重试语义是新起 run)
     parent_run_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True

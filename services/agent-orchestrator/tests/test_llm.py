@@ -57,7 +57,7 @@ def test_plan_llm_failure_marks_run_failed(tmp_path) -> None:
         assert plan["status"] == "failed"
 
         run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
-        assert "模型挂了" in run["blocked_reason"]
+        assert "模型挂了" in run["status_reason"]
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
@@ -84,7 +84,7 @@ def test_execute_llm_failure_marks_run_failed(tmp_path) -> None:
         )
         run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
         assert run["status"] == "failed"
-        assert "模型挂了" in run["blocked_reason"]
+        assert "模型挂了" in run["status_reason"]
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
@@ -218,9 +218,9 @@ def test_rework_exhausted_marks_run_failed(tmp_path) -> None:
         run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
         assert run["status"] == "failed"
         assert run["rounds"] == 3
-        assert "验收未通过" in run["blocked_reason"]
-        assert "已返工 3 轮" in run["blocked_reason"]
-        assert "邮件已汇总" in run["blocked_reason"]
+        assert "验收未通过" in run["status_reason"]
+        assert "已返工 3 轮" in run["status_reason"]
+        assert "邮件已汇总" in run["status_reason"]
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
@@ -237,7 +237,7 @@ def test_verify_parse_error_marks_run_failed(tmp_path) -> None:
         client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
         run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
         assert run["status"] == "failed"
-        assert "验收输出无法解析" in run["blocked_reason"]
+        assert "验收输出无法解析" in run["status_reason"]
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")

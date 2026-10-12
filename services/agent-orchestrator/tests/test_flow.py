@@ -74,7 +74,7 @@ def test_reject_blocks_then_resume_allows_new_approval(client: TestClient) -> No
     assert resp.status_code == 200
     blocked = resp.json()
     assert blocked["status"] == "blocked"
-    assert blocked["blocked_reason"] == "方向不对"
+    assert blocked["status_reason"] == "方向不对"
     types = _event_types(client, run_id)
     assert "run.rejected.v1" in types
     assert "run.blocked.v1" in types

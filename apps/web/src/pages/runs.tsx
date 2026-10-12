@@ -290,9 +290,9 @@ function RunDetail({
           <CardDescription>{run?.goal}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {run?.blocked_reason ? (
+          {run?.status_reason ? (
             <p className="rounded-lg border border-dashed p-3 text-sm">
-              {status === 'failed' ? '失败原因' : '中断原因'}:{run.blocked_reason}
+              {status === 'failed' ? '失败原因' : '中断原因'}:{run.status_reason}
             </p>
           ) : null}
 

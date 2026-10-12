@@ -33,7 +33,7 @@ export type Run = {
   rounds: number;
   attempts: number;
   acceptance_criteria: string[];
-  blocked_reason: string | null;
+  status_reason: string | null;
   /** 重试血缘:本 run 由哪个 failed run 派生(§6.2)。 */
   parent_run_id: string | null;
   created_at: string;

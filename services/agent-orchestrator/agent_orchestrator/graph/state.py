@@ -29,4 +29,4 @@ class RunGraphState(TypedDict, total=False):
     artifact: dict[str, Any]  # 交付物(title/kind/content),services 层落库
     verified: dict[str, bool]
     final_status: str
-    blocked_reason: str
+    status_reason: str  # blocked/failed 的原因(由 status 决定含义)

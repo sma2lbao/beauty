@@ -42,7 +42,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     rounds: 0,
     attempts: 1,
     acceptance_criteria: ['覆盖 5 个工作日'],
-    blocked_reason: null,
+    status_reason: null,
     parent_run_id: null,
     created_at: '2026-10-12T10:00:00+00:00',
     ...overrides,
@@ -186,7 +186,7 @@ describe('RunsPage', () => {
   it('blocked run:展示中断原因,可重新进闸(resume)', async () => {
     const blocked = makeRun({
       status: 'blocked',
-      blocked_reason: '计划与目标不符,先别发',
+      status_reason: '计划与目标不符,先别发',
     });
     vi.mocked(runsApi.list).mockResolvedValue([blocked]);
     vi.mocked(runsApi.get).mockResolvedValue(blocked);
@@ -227,7 +227,7 @@ describe('RunsPage', () => {
   it('failed run:展示失败原因,重试后切到新 run', async () => {
     const failed = makeRun({
       status: 'failed',
-      blocked_reason: 'RuntimeError: 模型挂了',
+      status_reason: 'RuntimeError: 模型挂了',
     });
     const retried = makeRun({
       id: 'run-2',
