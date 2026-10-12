@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { to: '/', label: '首页', end: true },
   { to: '/products', label: '产品' },
+  { to: '/runs', label: '控制台' },
   { to: '/about', label: '关于' },
 ];
 

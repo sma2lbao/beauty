@@ -26,3 +26,8 @@ class Settings(BaseAppSettings):
     tools_enabled: bool = False
     connector_service_url: str = "http://127.0.0.1:8004"
     tool_timeout_seconds: float = 30.0
+    # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
+    cors_allow_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]

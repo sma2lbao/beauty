@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import DateTime, MetaData, String, func
@@ -31,13 +31,23 @@ class UUIDMixin:
 
 
 class TimestampMixin:
-    """created_at/updated_at,数据库侧生成。"""
+    """created_at/updated_at:Python 侧生成(微秒精度),DB 侧兜底。
+
+    只用 server_default 时,sqlite 的 CURRENT_TIMESTAMP 仅秒级精度——
+    同秒写入的行排序不稳定("最新在前"的列表会闪)。Python 侧默认保证微秒级,
+    server_default 留给绕过 ORM 的裸 SQL 插入。
+    """
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        server_default=func.now(),
     )
 
 

@@ -146,6 +146,19 @@ async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> 
     return run
 
 
+async def list_runs(
+    session: AsyncSession, tenant_id: str, limit: int = 50
+) -> list[Run]:
+    """租户内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。"""
+    rows = await session.scalars(
+        select(Run)
+        .where(Run.tenant_id == tenant_id)
+        .order_by(Run.created_at.desc(), Run.id.desc())
+        .limit(limit)
+    )
+    return list(rows)
+
+
 async def _invoke_plan(
     session: AsyncSession, graph: CompiledStateGraph, run: Run
 ) -> None:

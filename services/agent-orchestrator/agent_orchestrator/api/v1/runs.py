@@ -9,7 +9,7 @@ from typing import Annotated
 
 from common.errors import AppError
 from database.session import session_scope
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,6 +47,17 @@ async def create_run(
 ) -> RunRead:
     run = await runs_service.create_run(session, tenant_id, body)
     return RunRead.model_validate(run)
+
+
+@router.get("", response_model=list[RunRead])
+async def list_runs(
+    session: DBSession,
+    tenant_id: TenantId,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[RunRead]:
+    """租户内 run 列表,最新在前(控制台首页)。"""
+    runs = await runs_service.list_runs(session, tenant_id, limit)
+    return [RunRead.model_validate(run) for run in runs]
 
 
 @router.get("/{run_id}", response_model=RunRead)

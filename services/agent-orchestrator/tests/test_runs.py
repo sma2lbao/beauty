@@ -53,3 +53,24 @@ def test_validation_error_shape(client: TestClient) -> None:
         "/api/v1/runs", json={"title": "", "goal": "g"}, headers=TENANT_HEADERS
     )
     assert resp.status_code == 422
+
+
+def test_list_runs_newest_first_and_tenant_scoped(client: TestClient) -> None:
+    """控制台首页:最新在前、租户隔离、limit 生效。"""
+    first = _create_run(client)
+    second = _create_run(client, tenant="t-2")
+    third = _create_run(client)
+
+    listed = client.get("/api/v1/runs", headers=TENANT_HEADERS).json()
+    ids = [run["id"] for run in listed]
+    assert ids == [third["id"], first["id"]]  # 最新在前;t-2 的不可见
+    assert second["id"] not in ids
+
+    limited = client.get("/api/v1/runs?limit=1", headers=TENANT_HEADERS).json()
+    assert [run["id"] for run in limited] == [third["id"]]
+
+
+def test_cors_allows_web_origin(client: TestClient) -> None:
+    """浏览器直连(Vite 5173)需要跨域头;白名单来自配置。"""
+    resp = client.get("/healthz", headers={"Origin": "http://localhost:5173"})
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:5173"

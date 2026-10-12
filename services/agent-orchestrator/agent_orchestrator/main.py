@@ -15,6 +15,7 @@ from common.logging import setup_logging
 from database.base import Base
 from database.session import create_session_factory
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agent_orchestrator.api.health import health_router
@@ -100,6 +101,15 @@ def create_app(
     app.state.settings = settings or Settings()
     app.state.llm_client = llm_client
     app.state.toolkit_factory = toolkit_factory
+
+    if app.state.settings.cors_allow_origins:
+        # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=app.state.settings.cors_allow_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

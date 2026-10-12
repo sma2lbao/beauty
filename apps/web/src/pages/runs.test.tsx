@@ -1,0 +1,168 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { Run } from '@/lib/runs-api';
+import { runsApi, streamRunEvents } from '@/lib/runs-api';
+
+import { RunsPage } from './runs';
+
+vi.mock('@/lib/runs-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/runs-api')>('@/lib/runs-api');
+  return {
+    ...actual, // 保留 ApiError / parseEventFrame / mergeEvents 等纯函数
+    runsApi: {
+      list: vi.fn(),
+      create: vi.fn(),
+      get: vi.fn(),
+      getPlan: vi.fn(),
+      events: vi.fn(),
+      generatePlan: vi.fn(),
+      updatePlan: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      confirm: vi.fn(),
+      artifact: vi.fn(),
+    },
+    streamRunEvents: vi.fn(),
+  };
+});
+
+function makeRun(overrides: Partial<Run> = {}): Run {
+  return {
+    id: 'run-1',
+    title: '整理本周邮件成周报',
+    goal: '汇总本周邮件,生成周报草稿',
+    status: 'pending',
+    rounds: 0,
+    attempts: 1,
+    acceptance_criteria: ['覆盖 5 个工作日'],
+    blocked_reason: null,
+    created_at: '2026-10-12T10:00:00+00:00',
+    ...overrides,
+  };
+}
+
+function renderPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <RunsPage />
+    </QueryClientProvider>,
+  );
+}
+
+async function selectRun(title: string) {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(title) }));
+}
+
+describe('RunsPage', () => {
+  beforeEach(() => {
+    vi.mocked(streamRunEvents).mockImplementation(
+      () => new Promise<void>(() => {}), // 事件流挂起:测试不依赖 SSE
+    );
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'pending',
+      plan_markdown: '',
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('没有 run 时给出空态', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText('还没有 run。')).toBeInTheDocument();
+  });
+
+  it('创建 run 时把验收标准按行解析', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([]);
+    vi.mocked(runsApi.create).mockResolvedValue(makeRun({ id: 'run-2' }));
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ id: 'run-2' }));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '创建' }));
+
+    await waitFor(() =>
+      expect(runsApi.create).toHaveBeenCalledWith({
+        title: '整理本周邮件成周报',
+        goal: '汇总本周邮件,生成周报草稿',
+        acceptance_criteria: ['覆盖 5 个工作日', '不超过 300 字'],
+      }),
+    );
+  });
+
+  it('待审批 run:显示计划与放行按钮,放行调用审批 API', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ status: 'awaiting_approval' }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_approval' }),
+    );
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 执行计划\n- [ ] 覆盖 5 个工作日',
+    });
+    vi.mocked(runsApi.approve).mockResolvedValue(makeRun({ status: 'running' }));
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    expect(await screen.findByTestId('run-status')).toHaveTextContent('待审批');
+    expect(await screen.findByLabelText('计划内容')).toHaveValue(
+      '# 执行计划\n- [ ] 覆盖 5 个工作日',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '放行执行' }));
+    await waitFor(() => expect(runsApi.approve).toHaveBeenCalledWith('run-1'));
+  });
+
+  it('待确认写操作 run:确认按钮调用 confirm(approve)', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ status: 'awaiting_confirmation' }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_confirmation' }),
+    );
+    vi.mocked(runsApi.confirm).mockResolvedValue(makeRun({ status: 'running' }));
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    expect(await screen.findByTestId('run-status')).toHaveTextContent(
+      '待确认写操作',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '确认执行写操作' }));
+    await waitFor(() =>
+      expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
+    );
+  });
+
+  it('已完成 run:按需取交付物并展示正文', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([makeRun({ status: 'completed' })]);
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
+    vi.mocked(runsApi.artifact).mockResolvedValue({
+      id: 'a1',
+      run_id: 'run-1',
+      kind: 'markdown',
+      title: '周报',
+      content: '# 本周周报\n\n已汇总。',
+      created_at: '2026-10-12T11:00:00+00:00',
+    });
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    fireEvent.click(await screen.findByRole('button', { name: '查看交付物' }));
+
+    expect(await screen.findByText(/已汇总。/)).toBeInTheDocument();
+    expect(runsApi.artifact).toHaveBeenCalledWith('run-1');
+  });
+});
