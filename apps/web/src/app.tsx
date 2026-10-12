@@ -8,6 +8,7 @@ import { KnowledgePage } from '@/pages/knowledge';
 import { NotFoundPage } from '@/pages/not-found';
 import { ProductsPage } from '@/pages/products';
 import { SettingsPage } from '@/pages/settings';
+import { WorkspacePage } from '@/pages/workspace';
 import { RunsPage } from '@/pages/runs';
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
         <Route path="runs" element={<RunsPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="workspace" element={<WorkspacePage />} />
         <Route path="callback" element={<CallbackPage />} />
         <Route path="about" element={<AboutPage />} />
         <Route path="*" element={<NotFoundPage />} />

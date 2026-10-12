@@ -27,6 +27,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/account-api/, ''),
       },
+      // 工作区控制台:workspace-service(:8005)
+      '/workspace-api': {
+        target: 'http://127.0.0.1:8005',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/workspace-api/, ''),
+      },
     },
   },
   resolve: {
