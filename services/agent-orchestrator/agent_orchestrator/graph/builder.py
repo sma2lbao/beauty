@@ -2,9 +2,13 @@
 
 checkpointer:阶段 A 用 InMemorySaver(进程内,测试即隔离);
 接 compose 的 postgres 后切 langgraph-checkpoint-postgres,图线程跨进程可恢复。
+llm:plan/execute 的模型客户端(架构 §5 唯一出口经 llm-gateway);
+None 回退确定性桩——dev/测试零外部依赖。
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
@@ -14,11 +18,14 @@ from langgraph.graph.state import CompiledStateGraph
 from agent_orchestrator.graph.nodes import (
     approval_gate_node,
     deliver_node,
-    execute_node,
-    plan_node,
+    make_execute_node,
+    make_plan_node,
     verify_node,
 )
 from agent_orchestrator.graph.state import RunGraphState
+
+if TYPE_CHECKING:
+    from agent_orchestrator.services.llm import LLMClient
 
 MAX_REWORK_ROUNDS = 3
 
@@ -41,12 +48,13 @@ def route_after_verify(state: RunGraphState) -> str:
 
 def build_run_graph(
     checkpointer: BaseCheckpointSaver | None = None,
+    llm: LLMClient | None = None,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
-    builder.add_node("plan", plan_node)
+    builder.add_node("plan", make_plan_node(llm))
     builder.add_node("approval_gate", approval_gate_node)
-    builder.add_node("execute", execute_node)
+    builder.add_node("execute", make_execute_node(llm))
     builder.add_node("verify", verify_node)
     builder.add_node("deliver", deliver_node)
 

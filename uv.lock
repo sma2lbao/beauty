@@ -58,6 +58,7 @@ dependencies = [
     { name = "database" },
     { name = "events" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "psycopg", extra = ["binary"] },
@@ -67,7 +68,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite" },
-    { name = "httpx" },
     { name = "pytest-asyncio" },
 ]
 
@@ -79,6 +79,7 @@ requires-dist = [
     { name = "database", editable = "packages/database" },
     { name = "events", editable = "packages/events" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langgraph", specifier = ">=1.2.14" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
@@ -88,7 +89,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]
 

@@ -17,3 +17,8 @@ class Settings(BaseAppSettings):
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
+    # 模型网关(架构 §5 唯一出口):enabled=false 时 plan/execute 走确定性桩
+    llm_enabled: bool = False
+    llm_gateway_url: str = "http://127.0.0.1:8003"
+    llm_model: str | None = None  # None:走网关默认路由
+    llm_timeout_seconds: float = 60.0

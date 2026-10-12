@@ -12,6 +12,7 @@ dependencies = [
     "database",
     "events",
     "fastapi>=0.143.0",
+    "httpx>=0.28.1",
     "langgraph>=1.2.14",
     "langgraph-checkpoint-postgres>=3.1.2",
     "psycopg[binary]>=3.3.6",
@@ -30,7 +31,6 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
-    "httpx>=0.28.1",
     "pytest-asyncio>=1.4.0",
 ]
 

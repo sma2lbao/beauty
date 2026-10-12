@@ -71,6 +71,24 @@ def _require_status(run: Run, *allowed: RunStatus) -> None:
         )
 
 
+async def _fail_run(
+    session: AsyncSession, run: Run, exc: Exception, stage: str
+) -> None:
+    """图执行异常 → failed 终态(§6.2):状态落库 + run.failed.v1,不向调用方裸奔。
+
+    这是图调用边界的统一兜底——节点/LLM/图本身的异常都在这里收敛;
+    failed 是终态,重试语义是新起 run。
+    """
+    run.status = RunStatus.FAILED.value
+    run.blocked_reason = f"{type(exc).__name__}: {exc}"[:500]
+    await append_event(
+        session,
+        run,
+        "run.failed.v1",
+        {"stage": stage, "reason": run.blocked_reason},
+    )
+
+
 async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
     run = Run(
         tenant_id=tenant_id,
@@ -98,7 +116,11 @@ async def _invoke_plan(
     }
     if run.plan_markdown:
         state["plan_markdown"] = run.plan_markdown
-    values = await graph.ainvoke(state, config=_config(run))
+    try:
+        values = await graph.ainvoke(state, config=_config(run))
+    except Exception as exc:
+        await _fail_run(session, run, exc, stage="plan")
+        return
     run.plan_markdown = values.get("plan_markdown", "")
     run.status = RunStatus.AWAITING_APPROVAL.value
     await append_event(session, run, "run.planned.v1", {"attempt": run.attempts})
@@ -139,12 +161,17 @@ async def approve_run(
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_APPROVAL)
-    values = await graph.ainvoke(
-        Command(resume={"action": "approve"}), config=_config(run)
-    )
+    # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
+    await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
+    try:
+        values = await graph.ainvoke(
+            Command(resume={"action": "approve"}), config=_config(run)
+        )
+    except Exception as exc:
+        await _fail_run(session, run, exc, stage="execute")
+        return run
     run.rounds = values.get("rounds", 0)
     run.status = RunStatus.COMPLETED.value
-    await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
     await append_event(
         session,
         run,
