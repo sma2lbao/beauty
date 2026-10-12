@@ -53,3 +53,9 @@ class UpstreamError(AppError):
     """外部依赖失败(模型/邮件/三方 API),幂等可重试。"""
 
     status = 502
+
+
+class UnauthorizedError(AppError):
+    """未认证或凭证不可信(缺失/过期/签名不符/缺租户 claim)。"""
+
+    status = 401

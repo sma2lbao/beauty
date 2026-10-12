@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 
+from common.auth import JwtVerifier
 from common.errors import AppError
 from common.logging import setup_logging
 from database.base import Base
@@ -62,6 +63,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         toolkit_factory = partial(build_tools, connector)
 
+    # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
+    verifier: JwtVerifier | None = app.state.token_verifier
+    owns_verifier = False
+    if verifier is None and settings.auth_enabled:
+        verifier = JwtVerifier(
+            issuer=settings.auth_issuer,
+            audience=settings.auth_audience,
+            jwks_url=settings.auth_jwks_url,
+            tenant_claim=settings.auth_tenant_claim,
+        )
+        owns_verifier = True
+    app.state.token_verifier = verifier
+
     try:
         if settings.database_url.startswith("postgres"):
             # postgres:图线程跨进程可恢复(架构 §6.4;setup 幂等建 checkpoint 表)。
@@ -86,6 +100,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if owns_llm:
             await llm.aclose()
+        if owns_verifier:
+            await verifier.aclose()
         if connector is not None:
             await connector.aclose()
         await factory.engine.dispose()
@@ -95,12 +111,14 @@ def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    token_verifier: JwtVerifier | None = None,
 ) -> FastAPI:
-    """测试注入:llm_client(FakeLLM)与 toolkit_factory(租户 → 假工具集)。"""
+    """测试注入:llm_client(FakeLLM)、toolkit_factory、token_verifier(假 JWKS)。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.llm_client = llm_client
     app.state.toolkit_factory = toolkit_factory
+    app.state.token_verifier = token_verifier
 
     if app.state.settings.cors_allow_origins:
         # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配

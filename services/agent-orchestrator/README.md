@@ -38,6 +38,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
 
+- 鉴权(架构 §10):`AUTH_ENABLED=true` 时校验 `Authorization: Bearer <IdP access
+  token>`(OIDC 发现 + JWKS,RS256),租户取自 token claim(默认 `tenant_id`)——
+  **鉴权开启时伪造 `X-Tenant-Id` 无效**;关闭时(dev/test)沿用临时头,缺失即
+  401 `auth.header_missing`;
+
 - 追加指令(§6.5):`POST /runs/{id}/instructions` 排队(终态 run 追加 409),
   在**下一个人工边界**消费——规划(plan/resume)、放行(approve)、
   写操作确认(confirm);消费即标记 `consumed` 并落
@@ -48,7 +53,6 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`(artifact_id/chars);
   未交付取件 404 `artifact.not_found`,failed 终态不产交付物。
 
-后续补齐:更多工具与技能、交付物转对象存储、指令队列消费、
-IdP JWT 租户、Redis Streams 直播(替代 SSE 轮询)。
+后续补齐:更多工具与技能、交付物转对象存储、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

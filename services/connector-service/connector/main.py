@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from common.auth import JwtVerifier
 from common.errors import AppError
 from common.logging import setup_logging
 from database.base import Base
@@ -38,15 +39,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if app.state.transport_factory is None:
         # 生产装配真实传输工厂;测试注入 FakeTransport 走同一属性
         app.state.transport_factory = build_transport
-    yield
-    await factory.engine.dispose()
+
+    # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
+    verifier: JwtVerifier | None = app.state.token_verifier
+    owns_verifier = False
+    if verifier is None and settings.auth_enabled:
+        verifier = JwtVerifier(
+            issuer=settings.auth_issuer,
+            audience=settings.auth_audience,
+            jwks_url=settings.auth_jwks_url,
+            tenant_claim=settings.auth_tenant_claim,
+        )
+        owns_verifier = True
+    app.state.token_verifier = verifier
+    try:
+        yield
+    finally:
+        if owns_verifier:
+            await verifier.aclose()
+        await factory.engine.dispose()
 
 
-def create_app(settings: Settings | None = None, transport_factory=None) -> FastAPI:
-    """transport_factory:测试注入假传输;生产留空,由 lifespan 装配真实工厂。"""
+def create_app(
+    settings: Settings | None = None,
+    transport_factory=None,
+    token_verifier: JwtVerifier | None = None,
+) -> FastAPI:
+    """注入点:transport_factory(假传输)、token_verifier(假 JWKS)供测试使用。"""
     app = FastAPI(title="connector-service", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.transport_factory = transport_factory
+    app.state.token_verifier = token_verifier
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

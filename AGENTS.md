@@ -11,7 +11,7 @@
 | `packages/ts-utils`   | `@beauty/ts-utils`      | TS 库        | tsc 构建 + vitest                                                                       |
 | `packages/design`     | `@beauty/design`        | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                         |
 | `packages/py-utils`   | `py-utils`              | Python 库    | hatchling + pytest + ruff                                                               |
-| `packages/common`     | `common`                | Python 库    | 服务基础设施:统一错误模型;后续补配置/日志/观测;hatchling + pytest + ruff               |
+| `packages/common`     | `common`                | Python 库    | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS);hatchling + pytest + ruff |
 | `packages/database`   | `database`              | Python 库    | 数据库基座:表命名约定;后续补 Repository/UoW/testcontainers;hatchling + pytest + ruff   |
 | `packages/events`     | `events`                | Python 库    | 事件信封与命名/版本约定;后续补事件总线与 outbox;hatchling + pytest + ruff             |
 | `services/agent-orchestrator` | `agent-orchestrator` | Python 服务 | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A)                                 |

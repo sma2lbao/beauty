@@ -44,8 +44,10 @@ def test_tenant_isolation(client: TestClient) -> None:
 
 
 def test_missing_tenant_header_rejected(client: TestClient) -> None:
+    """鉴权关闭(dev/test 默认)时,临时租户头缺失即 401。"""
     resp = client.post("/api/v1/runs", json={"title": "t", "goal": "g"})
-    assert resp.status_code == 422
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "auth.header_missing"
 
 
 def test_validation_error_shape(client: TestClient) -> None:

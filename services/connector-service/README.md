@@ -16,6 +16,8 @@
 
 安全与凭证:阶段 A 凭证明文存 JSON 列(读端绝不外泄,测试覆盖);
 密文存储(信封加密 + 密钥库)与 OAuth 双轨(Gmail/M365)为阶段 B(§10)。
+鉴权与 agent-orchestrator 同一套约定:`AUTH_ENABLED=true` 时租户来自 IdP
+token claim(伪造 `X-Tenant-Id` 无效),关闭时用临时头(仅 dev/test)。
 连接生命周期事件(created/revoked)在事件总线/outbox 落地时接入。
 
 命令(仓库根):`npx nx run connector-service:serve`(:8004)/ `npx nx test connector-service`
