@@ -18,8 +18,8 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agent_orchestrator.graph.nodes import (
     approval_gate_node,
-    deliver_node,
     fail_node,
+    make_deliver_node,
     make_execute_node,
     make_plan_node,
     make_verify_node,
@@ -66,7 +66,7 @@ def build_run_graph(
     builder.add_node("approval_gate", approval_gate_node)
     builder.add_node("execute", make_execute_node(llm, toolkit_factory))
     builder.add_node("verify", make_verify_node(llm))
-    builder.add_node("deliver", deliver_node)
+    builder.add_node("deliver", make_deliver_node(llm))
     builder.add_node("fail", fail_node)
 
     builder.add_edge(START, "plan")

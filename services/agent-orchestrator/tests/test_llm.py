@@ -1,90 +1,31 @@
 """LLM 接入:FakeLLM 全生命周期、失败 → failed 终态、工具循环、GatewayClient 契约。"""
 
 import json
-from typing import Any
 
 import httpx
 import pytest
 from common.errors import UpstreamError
-from fastapi.testclient import TestClient
 
-from agent_orchestrator.core.config import Settings
-from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import GatewayClient, LLMReply, ToolCall
-from agent_orchestrator.services.tools import build_tools
-from tests.conftest import FakeConnector
-
-TENANT = {"X-Tenant-Id": "t-1"}
-
-
-class FakeLLM:
-    """按调用次序吐回复:字符串自动包成 LLMReply(content=...)。"""
-
-    def __init__(
-        self, responses: list[str | LLMReply], fail_on_call: int | None = None
-    ):
-        self.responses = list(responses)
-        self.fail_on_call = fail_on_call
-        self.calls: list[list[dict[str, Any]]] = []
-        self.tools_seen: list[list[dict[str, Any]] | None] = []
-
-    async def complete(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        model: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> LLMReply:
-        self.calls.append(messages)
-        self.tools_seen.append(tools)
-        if self.fail_on_call == len(self.calls):
-            raise RuntimeError("模型挂了")
-        response = self.responses[len(self.calls) - 1]
-        return (
-            response if isinstance(response, LLMReply) else LLMReply(content=response)
-        )
-
-
-def _client(tmp_path, fake: FakeLLM) -> TestClient:
-    settings = Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/llm.db",
-        auto_create_tables=True,
-        llm_enabled=True,
-    )
-    app = create_app(settings, llm_client=fake)
-    return TestClient(app)
-
-
-def _tool_client(tmp_path, fake: FakeLLM, connector: FakeConnector) -> TestClient:
-    settings = Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/tools.db",
-        auto_create_tables=True,
-        llm_enabled=True,
-        tools_enabled=True,
-    )
-    app = create_app(
-        settings,
-        llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(connector, tenant),
-    )
-    return TestClient(app)
-
-
-def _create_run(client: TestClient, goal: str = "汇总本周邮件") -> str:
-    resp = client.post(
-        "/api/v1/runs",
-        json={"title": "周报", "goal": goal, "acceptance_criteria": ["邮件已汇总"]},
-        headers=TENANT,
-    )
-    return resp.json()["id"]
+from tests.conftest import (
+    TENANT,
+    FakeConnector,
+    FakeLLM,
+    _client,
+    _create_run,
+    _tool_client,
+)
 
 
 def test_llm_plan_and_execute_flow(tmp_path) -> None:
     verify_pass = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
     fake = FakeLLM(
-        ["# 执行计划(LLM)\n- [x] 由模型生成", "执行结果:邮件已汇总", verify_pass]
+        [
+            "# 执行计划(LLM)\n- [x] 由模型生成",
+            "执行结果:邮件已汇总",
+            verify_pass,
+            "# 周报\n\n本周邮件已汇总",
+        ]
     )
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
@@ -103,7 +44,7 @@ def test_llm_plan_and_execute_flow(tmp_path) -> None:
             "验收小结:验收通过",
         ]
 
-        assert len(fake.calls) == 3  # plan / execute / verify 各一次
+        assert len(fake.calls) == 4  # plan / execute / verify / deliver 各一次
         assert "汇总本周邮件" in fake.calls[0][1]["content"]  # 目标进了 plan 提示词
         assert "周报" in fake.calls[0][1]["content"]
 
@@ -251,6 +192,7 @@ def test_rework_loop_passes_on_second_round(tmp_path) -> None:
             fail_json,
             "执行第 2 轮:补齐汇总",
             pass_json,
+            "# 周报\n\n第二轮补齐后交付",
         ]
     )
     with _client(tmp_path, fake) as client:
@@ -263,7 +205,7 @@ def test_rework_loop_passes_on_second_round(tmp_path) -> None:
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         completed = next(e for e in events if e["type"] == "run.completed.v1")
         assert "验收小结:已达标" in completed["payload"]["results"]
-        assert len(fake.calls) == 5  # plan + (execute, verify) × 2
+        assert len(fake.calls) == 6  # plan + (execute, verify) × 2 + deliver
 
 
 def test_rework_exhausted_marks_run_failed(tmp_path) -> None:
@@ -310,7 +252,9 @@ def test_execute_tool_loop_feeds_result_back(tmp_path) -> None:
     )
     final = "已发现 1 个连接:me@qq.com"
     verify_pass = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
-    fake = FakeLLM(["# 执行计划(LLM)", tool_reply, final, verify_pass])
+    fake = FakeLLM(
+        ["# 执行计划(LLM)", tool_reply, final, verify_pass, "# 连接清单交付物"]
+    )
     connector = FakeConnector()
     with _tool_client(tmp_path, fake, connector) as client:
         run_id = _create_run(client)
@@ -350,7 +294,7 @@ def test_tool_error_fed_back_to_model(tmp_path) -> None:
     )
     final = "读取失败:连接器异常,已如实报告"
     verify_pass = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
-    fake = FakeLLM(["# 计划", tool_reply, final, verify_pass])
+    fake = FakeLLM(["# 计划", tool_reply, final, verify_pass, "# 失败说明交付物"])
     connector = FakeConnector(fail=True)
     with _tool_client(tmp_path, fake, connector) as client:
         run_id = _create_run(client)

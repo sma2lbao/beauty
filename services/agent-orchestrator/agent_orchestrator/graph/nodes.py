@@ -49,6 +49,11 @@ VERIFY_SYSTEM_PROMPT = (
     "每项标准都要出现在 verdicts 里,不要输出 JSON 以外的任何文字。"
 )
 
+DELIVER_SYSTEM_PROMPT = (
+    "你是交付助手。依据目标、计划与执行结果,产出**最终交付物正文**(Markdown):"
+    "直接给成品,不要解释过程、不要寒暄、不要重复计划本身。"
+)
+
 
 def _criteria_block(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
@@ -261,6 +266,57 @@ def fail_node(state: RunGraphState) -> dict:
     return {"final_status": "failed", "blocked_reason": reason}
 
 
-def deliver_node(state: RunGraphState) -> dict:
-    """交付。桩:状态置 completed(交付物入对象存储为阶段 B)。"""
-    return {"final_status": "completed"}
+def _artifact(state: RunGraphState, content: str) -> dict[str, Any]:
+    return {
+        "title": state.get("title") or "交付物",
+        "kind": "markdown",
+        "content": content,
+    }
+
+
+def _stub_deliver(state: RunGraphState) -> dict:
+    """桩:把目标/执行结果/验收标准拼成交付物,并标注桩来源。"""
+    results = "\n".join(f"- {r}" for r in state.get("results") or []) or "- (无)"
+    criteria = state.get("acceptance_criteria") or []
+    checklist = "\n".join(f"- [x] {c}" for c in criteria) or "- (无显式验收标准)"
+    content = (
+        f"# {state.get('title', '交付物')}\n\n"
+        f"## 目标\n\n{state.get('goal', '')}\n\n"
+        f"## 执行结果\n\n{results}\n\n"
+        f"## 验收标准\n\n{checklist}\n\n"
+        "---\n\n(阶段 A 桩:交付物由 LLM 合成,见 LLM_ENABLED=true)\n"
+    )
+    return {"final_status": "completed", "artifact": _artifact(state, content)}
+
+
+def make_deliver_node(llm: LLMClient | None):
+    """deliver 节点工厂:LLM 合成最终交付物(§7);llm=None 回退拼装桩。
+
+    交付物只进 state(nodes 是纯函数);落库 + run.delivered.v1 在 services 层。
+    """
+
+    async def deliver_node(state: RunGraphState) -> dict:
+        if llm is None:
+            return _stub_deliver(state)
+        results = "\n\n".join(state.get("results") or []) or "(无执行结果)"
+        reply = await llm.complete(
+            [
+                {"role": "system", "content": DELIVER_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"目标:{state.get('goal', '')}\n\n"
+                        f"计划:\n{state.get('plan_markdown', '')}\n\n"
+                        f"执行结果:\n{results}\n\n"
+                        f"验收标准:\n"
+                        f"{_criteria_block(state.get('acceptance_criteria') or [])}"
+                    ),
+                },
+            ]
+        )
+        return {
+            "final_status": "completed",
+            "artifact": _artifact(state, reply.content),
+        }
+
+    return deliver_node

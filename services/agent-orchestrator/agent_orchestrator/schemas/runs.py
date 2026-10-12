@@ -67,3 +67,16 @@ class PlanRead(BaseModel):
     run_id: str
     status: RunStatus
     plan_markdown: str
+
+
+class ArtifactRead(BaseModel):
+    """交付物读取契约(§7):completed 后取件。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    kind: str
+    title: str
+    content: str
+    created_at: datetime

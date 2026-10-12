@@ -18,6 +18,7 @@ from agent_orchestrator.api.deps import get_run_graph, get_session, get_tenant_i
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import RunEvent
 from agent_orchestrator.schemas.runs import (
+    ArtifactRead,
     PlanRead,
     PlanUpdate,
     RejectRequest,
@@ -69,6 +70,16 @@ async def get_run_plan(
 ) -> PlanRead:
     run = await runs_service.require_run(session, tenant_id, run_id)
     return _plan_read(run.id, run.status, run.plan_markdown or "")
+
+
+@router.get("/{run_id}/artifact", response_model=ArtifactRead)
+async def get_run_artifact(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> ArtifactRead:
+    """取交付物(§7):completed 后取件;未交付 → 404 artifact.not_found。"""
+    await runs_service.require_run(session, tenant_id, run_id)
+    artifact = await runs_service.get_artifact(session, tenant_id, run_id)
+    return ArtifactRead.model_validate(artifact)
 
 
 @router.post("/{run_id}/plan", response_model=PlanRead)

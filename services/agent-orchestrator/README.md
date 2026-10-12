@@ -5,7 +5,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 当前实现(阶段 A):
 
 - run 垂直切片:`POST /api/v1/runs` 创建,`GET /runs/{id}` 查询,
-  `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端);
+  `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端),
+  `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
   断线续传,run 终态(completed/failed)自动 `stream.end` 收线;
 - LangGraph 执行图(`agent_orchestrator/graph/`):plan → 审批闸(interrupt 人工确认)
@@ -31,8 +32,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
   `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 可实时看到工具活动。
 
-节点 deliver 仍是确定性桩:交付物落对象存储为阶段 B。
-后续补齐:更多工具(写操作需审批闸)、指令队列消费、IdP JWT 租户、
-Redis Streams 直播(替代 SSE 轮询)。
+- 交付物(§7):deliver 由 LLM 合成最终成品,落 `run_artifacts`(每 run 一件);
+  取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`(artifact_id/chars);
+  未交付取件 404 `artifact.not_found`,failed 终态不产交付物。
+
+后续补齐:更多工具(写操作需审批闸)、交付物转对象存储、指令队列消费、
+IdP JWT 租户、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

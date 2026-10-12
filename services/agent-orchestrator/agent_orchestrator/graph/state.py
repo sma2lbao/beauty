@@ -21,6 +21,7 @@ class RunGraphState(TypedDict, total=False):
     results: Annotated[list[str], add]
     rounds: Annotated[int, add]
     tool_calls: Annotated[list[dict[str, Any]], add]  # 工具调用审计(services 层落事件)
+    artifact: dict[str, Any]  # 交付物(title/kind/content),services 层落库
     verified: dict[str, bool]
     final_status: str
     blocked_reason: str

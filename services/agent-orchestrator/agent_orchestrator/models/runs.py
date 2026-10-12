@@ -51,3 +51,18 @@ class PendingInstruction(UUIDMixin, TenantMixin, TimestampMixin, Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     content: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="queued")
+
+
+class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """run 交付物:completed 时的成品(§7),阶段 A 每个 run 一件。
+
+    内容先直接落库(读端可即时取件);阶段 B 转对象存储后这里只留引用。
+    """
+
+    __tablename__ = "run_artifacts"
+    __table_args__ = (UniqueConstraint("run_id"),)
+
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="markdown")
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)

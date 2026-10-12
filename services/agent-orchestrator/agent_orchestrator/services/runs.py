@@ -21,7 +21,7 @@ from langgraph.types import Command
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_orchestrator.models.runs import Run, RunEvent
+from agent_orchestrator.models.runs import Run, RunArtifact, RunEvent
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 
 
@@ -87,6 +87,49 @@ async def _fail_run(
         "run.failed.v1",
         {"stage": stage, "reason": run.blocked_reason},
     )
+
+
+async def _persist_artifact(
+    session: AsyncSession, run: Run, artifact: dict[str, Any]
+) -> RunArtifact:
+    """交付物落库 + run.delivered.v1(§7):交付是事实,必须能取件与回放。"""
+    record = RunArtifact(
+        tenant_id=run.tenant_id,
+        run_id=run.id,
+        kind=str(artifact.get("kind") or "markdown"),
+        title=str(artifact.get("title") or run.title),
+        content=str(artifact.get("content") or ""),
+    )
+    session.add(record)
+    await session.flush()
+    await append_event(
+        session,
+        run,
+        "run.delivered.v1",
+        {
+            "artifact_id": record.id,
+            "kind": record.kind,
+            "title": record.title,
+            "chars": len(record.content),
+        },
+    )
+    return record
+
+
+async def get_artifact(
+    session: AsyncSession, tenant_id: str, run_id: str
+) -> RunArtifact:
+    """取件:未交付(未 completed)→ 404 artifact.not_found。"""
+    artifact = await session.scalar(
+        select(RunArtifact).where(
+            RunArtifact.run_id == run_id, RunArtifact.tenant_id == tenant_id
+        )
+    )
+    if artifact is None:
+        raise NotFoundError(
+            "artifact.not_found", "交付物不存在", details={"run_id": run_id}
+        )
+    return artifact
 
 
 async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
@@ -173,6 +216,10 @@ async def approve_run(
     # 工具调用审计:每次调用一条事件,SSE 可观(§6.3)
     for record in values.get("tool_calls") or []:
         await append_event(session, run, "run.tool.called.v1", record)
+    # 交付物落库 + run.delivered.v1(§7)
+    artifact = values.get("artifact")
+    if artifact:
+        await _persist_artifact(session, run, artifact)
     run.rounds = values.get("rounds", 0)
     final_status = values.get("final_status")
     if final_status == "failed":

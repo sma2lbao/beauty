@@ -59,10 +59,11 @@ def test_stream_replays_and_closes_on_terminal(client: TestClient) -> None:
         "run.created.v1",
         "run.planned.v1",
         "run.approved.v1",
+        "run.delivered.v1",
         "run.completed.v1",
         "stream.end",
     ]
-    assert [e[0] for e in events[:4]] == ["1", "2", "3", "4"]  # id 即 seq 游标
+    assert [e[0] for e in events[:5]] == ["1", "2", "3", "4", "5"]  # id 即 seq 游标
     assert events[-1][2] == {"status": "completed"}
 
 
@@ -71,10 +72,11 @@ def test_stream_resumes_from_last_event_id(client: TestClient) -> None:
     events = _parse_sse(_read_stream(client, run_id, {"Last-Event-ID": "2"}))
     assert [e[1] for e in events] == [
         "run.approved.v1",
+        "run.delivered.v1",
         "run.completed.v1",
         "stream.end",
     ]
-    assert [e[0] for e in events[:2]] == ["3", "4"]
+    assert [e[0] for e in events[:3]] == ["3", "4", "5"]
 
 
 def test_stream_unknown_run_404(client: TestClient) -> None:
