@@ -1,0 +1,42 @@
+[project]
+name = "events"
+version = "0.1.0"
+description = "事件共享库:事件信封、命名与版本约定、事件总线抽象、outbox"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["events"]
+
+[tool.coverage.run]
+branch = true
+source = ["events"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/packages/events/html'
+ --cov-report xml:'../../coverage/packages/events/coverage.xml'
+ --html='../../reports/packages/events/unittests/html/index.html'
+ --junitxml='../../reports/packages/events/unittests/junit.xml'
+"""
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []

@@ -1,0 +1,45 @@
+[project]
+name = "common"
+version = "0.1.0"
+description = "服务基础设施共享库:统一错误模型、配置基类、日志、认证依赖、观测装配"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = [
+    "pydantic-settings>=2.15.0",
+    "structlog>=26.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["common"]
+
+[tool.coverage.run]
+branch = true
+source = ["common"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/packages/common/html'
+ --cov-report xml:'../../coverage/packages/common/coverage.xml'
+ --html='../../reports/packages/common/unittests/html/index.html'
+ --junitxml='../../reports/packages/common/unittests/junit.xml'
+"""
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
