@@ -39,6 +39,7 @@ class RunRead(BaseModel):
     attempts: int
     acceptance_criteria: list[str]
     blocked_reason: str | None
+    parent_run_id: str | None = None
     created_at: datetime
 
 

@@ -189,7 +189,7 @@ export function RunsPage() {
 
         <div>
           {selectedRunId ? (
-            <RunDetail runId={selectedRunId} />
+            <RunDetail runId={selectedRunId} onSelectRun={setSelectedRunId} />
           ) : (
             <div className="rounded-xl border border-dashed p-10 text-sm text-muted-foreground">
               左侧选一个 run,或先新建一个。
@@ -201,7 +201,13 @@ export function RunsPage() {
   );
 }
 
-function RunDetail({ runId }: { runId: string }) {
+function RunDetail({
+  runId,
+  onSelectRun,
+}: {
+  runId: string;
+  onSelectRun?: (nextRunId: string) => void;
+}) {
   const queryClient = useQueryClient();
   const [planDraft, setPlanDraft] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('先别发,我要改一下');
@@ -241,6 +247,14 @@ function RunDetail({ runId }: { runId: string }) {
     ]);
   };
 
+  const retryMutation = useMutation({
+    mutationFn: () => runsApi.retry(runId),
+    onSuccess: async (created) => {
+      await refresh();
+      onSelectRun?.(created.id);
+    },
+  });
+
   const action = useMutation({
     mutationFn: (task: () => Promise<unknown>) => task(),
     onSuccess: refresh,
@@ -278,7 +292,13 @@ function RunDetail({ runId }: { runId: string }) {
         <CardContent className="space-y-4">
           {run?.blocked_reason ? (
             <p className="rounded-lg border border-dashed p-3 text-sm">
-              中断原因:{run.blocked_reason}
+              {status === 'failed' ? '失败原因' : '中断原因'}:{run.blocked_reason}
+            </p>
+          ) : null}
+
+          {run?.parent_run_id ? (
+            <p className="text-xs text-muted-foreground">
+              由 run {run.parent_run_id.slice(0, 8)}… 重试而来(来源 run 的历史与失败原因原样保留)
             </p>
           ) : null}
 
@@ -315,6 +335,28 @@ function RunDetail({ runId }: { runId: string }) {
                   value={rejectReason}
                   onChange={(event) => setRejectReason(event.target.value)}
                 />
+              </>
+            ) : null}
+
+            {status === 'failed' ? (
+              <>
+                <p className="max-w-xl text-sm text-muted-foreground">
+                  失败即终态:重试会另起一跑,继承目标、验收标准与已批准的计划,
+                  原 run 的历史(含失败原因)原样保留。重试后仍需人工放行才执行;
+                  若上次已产生副作用(例如邮件已发出),系统不会自动撤销,
+                  请先在计划里确认再放行。
+                </p>
+                <Button
+                  onClick={() => retryMutation.mutate()}
+                  disabled={retryMutation.isPending}
+                >
+                  {retryMutation.isPending ? '重试中…' : '重试(另起一跑)'}
+                </Button>
+                {retryMutation.isError ? (
+                  <span className="text-sm text-destructive">
+                    {retryMutation.error.message}
+                  </span>
+                ) : null}
               </>
             ) : null}
 

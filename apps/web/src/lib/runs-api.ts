@@ -34,6 +34,8 @@ export type Run = {
   attempts: number;
   acceptance_criteria: string[];
   blocked_reason: string | null;
+  /** 重试血缘:本 run 由哪个 failed run 派生(§6.2)。 */
+  parent_run_id: string | null;
   created_at: string;
 };
 
@@ -112,6 +114,9 @@ export const runsApi = {
   /** blocked → 新 attempt 重回审批闸(计划保留,§6.2);返回更新后的计划。 */
   resume: (runId: string) =>
     request<Plan>(`/api/v1/runs/${runId}/resume`, { method: 'POST' }),
+  /** failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。 */
+  retry: (runId: string) =>
+    request<Run>(`/api/v1/runs/${runId}/retry`, { method: 'POST' }),
   artifact: (runId: string) =>
     request<Artifact>(`/api/v1/runs/${runId}/artifact`),
   instructions: (runId: string) =>

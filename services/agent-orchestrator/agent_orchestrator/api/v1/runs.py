@@ -180,6 +180,15 @@ async def resume_run(
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
 
+@router.post("/{run_id}/retry", response_model=RunRead, status_code=201)
+async def retry_run(
+    run_id: str, session: DBSession, tenant_id: TenantId, graph: RunGraph
+) -> RunRead:
+    """failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。"""
+    run = await runs_service.retry_run(session, graph, tenant_id, run_id)
+    return RunRead.model_validate(run)
+
+
 @router.post("/{run_id}/confirm", response_model=RunRead)
 async def confirm_run(
     body: ConfirmRequest,

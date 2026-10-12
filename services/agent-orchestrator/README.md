@@ -15,9 +15,16 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(审批前编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、
+  `POST /runs/{id}/retry`(failed → **另起一跑**并继承目标/验收标准/已批准计划,
+  返回新 run;血缘见 `parent_run_id` 与 `run.retry.requested.v1`)、
   `POST /runs/{id}/confirm`(写操作放行/拒绝,§6.2)、
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
+- 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
+  `blocked_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是
+  审计凭据,不能被"重试"改写。重试派生新 run 继承已批准计划(计划节点检测到
+  已有计划会短路,所以只重走审批闸、不重复调用模型);重试后仍需人工放行,
+  已产生的副作用(如已发邮件)不会被自动撤销;
 - `/healthz` `/readyz`:存活/就绪探针;
 - schema 管理:alembic(async env,DB URL 与运行服务同源,见 `migrations/env.py`);
   `uv run alembic upgrade head` / `uv run alembic downgrade base`,命名约定保证回滚无损;

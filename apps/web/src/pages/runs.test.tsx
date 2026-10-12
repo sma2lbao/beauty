@@ -24,6 +24,7 @@ vi.mock('@/lib/runs-api', async () => {
       reject: vi.fn(),
       confirm: vi.fn(),
       resume: vi.fn(),
+      retry: vi.fn(),
       artifact: vi.fn(),
       instructions: vi.fn(),
       queueInstruction: vi.fn(),
@@ -42,6 +43,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     attempts: 1,
     acceptance_criteria: ['覆盖 5 个工作日'],
     blocked_reason: null,
+    parent_run_id: null,
     created_at: '2026-10-12T10:00:00+00:00',
     ...overrides,
   };
@@ -220,6 +222,35 @@ describe('RunsPage', () => {
       target: { value: '换个更短的计划' },
     });
     expect(submit).toBeEnabled(); // blocked 不是终态:仍可排队
+  });
+
+  it('failed run:展示失败原因,重试后切到新 run', async () => {
+    const failed = makeRun({
+      status: 'failed',
+      blocked_reason: 'RuntimeError: 模型挂了',
+    });
+    const retried = makeRun({
+      id: 'run-2',
+      title: '整理本周邮件成周报(重试)',
+      status: 'awaiting_approval',
+      parent_run_id: 'run-1',
+    });
+    vi.mocked(runsApi.list).mockResolvedValue([failed]);
+    vi.mocked(runsApi.get).mockImplementation(async (id) =>
+      id === 'run-2' ? retried : failed,
+    );
+    vi.mocked(runsApi.retry).mockResolvedValue(retried);
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    expect(await screen.findByText(/失败原因:RuntimeError: 模型挂了/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '重试(另起一跑)' }));
+    await waitFor(() =>
+      expect(runsApi.retry).toHaveBeenCalledWith('run-1'),
+    );
+    // 成功后切到新 run,并显示血缘
+    expect(await screen.findByText(/由 run run-1… 重试而来/)).toBeTruthy();
   });
 
   it('追加指令:提交后调用排队接口并展示队列状态', async () => {

@@ -22,6 +22,10 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     acceptance_criteria: Mapped[list[str]] = mapped_column(JSON, default=list)
     plan_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 重试血缘:本 run 由哪个 failed run 派生(§6.2 failed 的重试语义是新起 run)
+    parent_run_id: Mapped[str | None] = mapped_column(
+        String(32), index=True, nullable=True
+    )
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

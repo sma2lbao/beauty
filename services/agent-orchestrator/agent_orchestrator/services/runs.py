@@ -451,6 +451,60 @@ async def reject_run(
     return run
 
 
+MAX_TITLE = 200
+RETRY_SUFFIX = "(重试)"
+
+
+def _retry_title(title: str) -> str:
+    """派生 run 的标题:带 (重试) 标记便于在列表里区分,并守住列宽。"""
+    return f"{title}{RETRY_SUFFIX}"[:MAX_TITLE]
+
+
+async def retry_run(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    tenant_id: str,
+    run_id: str,
+) -> Run:
+    """failed → **另起一跑**并继承上下文(§6.2:failed 是终态,不重放旧图)。
+
+    为什么不原地恢复:失败可能来自节点/模型/图本身,失败点的检查点不可信,
+    原地重放会把同一处再炸一次;同时旧 run 的历史(failed + 原因)必须原样保留
+    ——审计不能被"重试"篡改。
+
+    继承的东西:目标/验收标准/**已批准的计划**(计划节点检测到已有计划会短路,
+    所以只重走审批闸,不重复调用模型);不继承:轮次、失败原因、终止状态。
+    """
+    parent = await require_run(session, tenant_id, run_id)
+    _require_status(parent, RunStatus.FAILED)
+    child = Run(
+        tenant_id=tenant_id,
+        title=_retry_title(parent.title),
+        goal=parent.goal,
+        status=RunStatus.PENDING.value,
+        acceptance_criteria=list(parent.acceptance_criteria or []),
+        plan_markdown=parent.plan_markdown,
+        parent_run_id=parent.id,
+    )
+    session.add(child)
+    await session.flush()
+    await append_event(
+        session,
+        child,
+        "run.created.v1",
+        {"title": child.title, "parent_run_id": parent.id},
+    )
+    await append_event(
+        session,
+        parent,
+        "run.retry.requested.v1",
+        {"new_run_id": child.id, "failures": 1, "reason": parent.blocked_reason},
+    )
+    # 继承计划 → 直接进审批闸(人工再确认后才执行;副作用如已发邮件不会被自动撤销)
+    await _invoke_plan(session, graph, child)
+    return child
+
+
 async def resume_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
