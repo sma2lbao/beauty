@@ -1,0 +1,62 @@
+[project]
+name = "account-service"
+version = "0.1.0"
+description = "账号服务:用户/组织/配额/套餐 + sessions/devices;认证交给 IdP(架构 §3)"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = [
+    "alembic>=1.20.0",
+    # 共享库(uv workspace,本地 editable)
+    "asyncpg>=0.32.0",
+    "common",
+    "database",
+    "fastapi>=0.143.0",
+    "uvicorn>=0.53.0",
+]
+
+[tool.uv.sources]
+common = { workspace = true }
+database = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "httpx>=0.28.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["account"]
+
+[tool.coverage.run]
+branch = true
+source = ["account"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/services/account-service/html'
+ --cov-report xml:'../../coverage/services/account-service/coverage.xml'
+ --html='../../reports/services/account-service/unittests/html/index.html'
+ --junitxml='../../reports/services/account-service/unittests/junit.xml'
+"""
+asyncio_mode = "auto"
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []

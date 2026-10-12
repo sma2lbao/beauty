@@ -12,6 +12,7 @@ dependencies = [
     "llm-gateway",
     "connector-service",
     "knowledge-service",
+    "account-service",
 ]
 
 [tool.uv.workspace]
@@ -27,6 +28,7 @@ members = [
     "services/llm-gateway",
     "services/connector-service",
     "services/knowledge-service",
+    "services/account-service",
 ]
 
 [tool.uv.sources.ink]
@@ -54,6 +56,9 @@ workspace = true
 workspace = true
 
 [tool.uv.sources.knowledge-service]
+workspace = true
+
+[tool.uv.sources.account-service]
 workspace = true
 
 [dependency-groups]
