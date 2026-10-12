@@ -111,6 +111,42 @@ class FakeConnector:
         return f"已发送至 {to}"
 
 
+class FakeKnowledge:
+    """假知识库:内存命中,记录检索调用(零网络)。"""
+
+    def __init__(
+        self,
+        hits: list[dict] | None = None,
+        fail: bool = False,
+        provider: str = "local",
+    ):
+        self.hits = (
+            hits
+            if hits is not None
+            else [
+                {
+                    "title": "客户 A 合同",
+                    "score": 0.93,
+                    "content": "合同评审安排在周四,需要准备报价单。",
+                }
+            ]
+        )
+        self.fail = fail
+        self.provider = provider
+        self.queries: list[tuple[str, str, int]] = []
+
+    async def search(self, tenant_id: str, query: str, limit: int) -> dict:
+        self.queries.append((tenant_id, query, limit))
+        if self.fail:
+            raise RuntimeError("知识库挂了")
+        return {
+            "query": query,
+            "provider": self.provider,
+            "model": "hashing-256",
+            "hits": self.hits[:limit],
+        }
+
+
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:
     return Settings(
         env="dev",

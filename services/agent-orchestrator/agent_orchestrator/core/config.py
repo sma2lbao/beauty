@@ -35,6 +35,10 @@ class Settings(BaseAppSettings):
     documents_max_bytes: int = 200_000
     calendar_enabled: bool = False
     calendar_ics_path: str = "./.calendar.ics"
+    # 企业知识库(§9):search_knowledge 工具经 knowledge-service 检索
+    knowledge_enabled: bool = False
+    knowledge_service_url: str = "http://127.0.0.1:8006"
+    knowledge_timeout_seconds: float = 30.0
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

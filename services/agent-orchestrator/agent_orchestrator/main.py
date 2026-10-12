@@ -29,6 +29,7 @@ from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import ConnectorClient
 from agent_orchestrator.services.documents import DocumentLibrary
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
 
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 否则 tools_enabled 时按子开关装配各能力提供方(未开启的不暴露)
     toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
     connector: ConnectorClient | None = None
+    knowledge: KnowledgeClient | None = None
     if toolkit_factory is None and settings.tools_enabled:
         connector = ConnectorClient(
             settings.connector_service_url, settings.tool_timeout_seconds
@@ -75,11 +77,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if settings.calendar_enabled
             else None
         )
+        knowledge = (
+            KnowledgeClient(
+                settings.knowledge_service_url, settings.knowledge_timeout_seconds
+            )
+            if settings.knowledge_enabled
+            else None
+        )
         toolkit_factory = partial(
             build_tools,
             connector=connector,
             documents=documents,
             calendar=calendar,
+            knowledge=knowledge,
         )
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
@@ -130,6 +140,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await verifier.aclose()
         if connector is not None:
             await connector.aclose()
+        if knowledge is not None:
+            await knowledge.aclose()
         await factory.engine.dispose()
 
 

@@ -35,6 +35,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   - 本地文档库(`DOCUMENTS_ENABLED`):`list_documents`/`read_document`
     (受限目录只读,后缀白名单、越界/绝对路径拒绝、超限拒读);
   - 日历(`CALENDAR_ENABLED`,ICS):`list_calendar_events`(不展开 RRULE);
+  - 企业知识库(`KNOWLEDGE_ENABLED`):`search_knowledge`——经 knowledge-service
+    向量检索,让模型"先查资料再回答"(`docs/architecture.md` §9);
   **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
   `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
 - 写操作确认闸(§6.2):写工具(requires_confirmation)**绝不直接执行**——

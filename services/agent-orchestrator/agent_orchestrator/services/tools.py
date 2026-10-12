@@ -3,7 +3,7 @@
 约定:
 
 - 工具是模型接触外部世界的**唯一**通道;能力按**提供方(provider)**分组——
-  连接器(邮件)、本地文档库、日历各产出一组 `ToolSpec`,`build_tools` 汇总;
+  连接器(邮件)、本地文档库、日历、知识库各产出一组 `ToolSpec`,`build_tools` 汇总;
   **没有配置的提供方不暴露工具**(能力即权限边界);
 - 执行失败不抛给图,而是以 ``{"error": ...}`` 回喂模型让它决策(§6.1)——
   工具坏了不该把整条 run 炸掉;
@@ -20,10 +20,12 @@ from typing import Any
 from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import Connector
 from agent_orchestrator.services.documents import DocumentLibrary
+from agent_orchestrator.services.knowledge import Knowledge
 
 MAX_FETCH_LIMIT = 20
 MAX_DOC_LIMIT = 50
 MAX_EVENT_LIMIT = 50
+MAX_KNOWLEDGE_LIMIT = 10
 MAX_DOC_CHARS = 20_000  # 回喂给模型的正文上限(防提示词爆炸)
 
 
@@ -294,12 +296,64 @@ def calendar_specs(calendar: CalendarFeed) -> list[ToolSpec]:
     ]
 
 
+def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
+    """企业知识库检索(只读):让模型先查资料再回答。"""
+
+    async def search_knowledge(args: dict[str, Any]) -> str:
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return _error("缺少 query")
+        result = await knowledge.search(
+            tenant_id, query, _int_arg(args, "limit", 5, maximum=MAX_KNOWLEDGE_LIMIT)
+        )
+        hits = [
+            {
+                "title": hit.get("title"),
+                "score": hit.get("score"),
+                "content": hit.get("content"),
+            }
+            for hit in result.get("hits") or []
+        ]
+        return json.dumps(
+            {
+                "query": query,
+                "provider": result.get("provider"),
+                "model": result.get("model"),
+                "hits": hits,
+            },
+            ensure_ascii=False,
+        )
+
+    return [
+        ToolSpec(
+            name="search_knowledge",
+            description="在团队知识库中做向量检索,返回最相关的资料片段(只读)",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索问题/关键词"},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_KNOWLEDGE_LIMIT,
+                        "description": "返回片段数,默认 5",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=search_knowledge,
+        )
+    ]
+
+
 def build_tools(
     tenant_id: str,
     *,
     connector: Connector | None = None,
     documents: DocumentLibrary | None = None,
     calendar: CalendarFeed | None = None,
+    knowledge: Knowledge | None = None,
 ) -> ToolRegistry:
     """汇总已配置提供方的工具;未配置的能力不暴露(能力即权限边界)。"""
     specs: list[ToolSpec] = []
@@ -309,4 +363,6 @@ def build_tools(
         specs += document_specs(documents)
     if calendar is not None:
         specs += calendar_specs(calendar)
+    if knowledge is not None:
+        specs += knowledge_specs(tenant_id, knowledge)
     return ToolRegistry(specs)
