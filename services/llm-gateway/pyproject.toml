@@ -1,0 +1,56 @@
+[project]
+name = "llm-gateway"
+version = "0.1.0"
+description = "模型网关:全平台唯一的 LLM/embedding 调用出口(架构 §5,litellm 统一路由)"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = [
+    # 共享库(uv workspace,本地 editable)
+    "common",
+    "fastapi>=0.143.0",
+    "litellm>=1.105.0",
+    "uvicorn>=0.53.0",
+]
+
+[tool.uv.sources]
+common = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_gateway"]
+
+[tool.coverage.run]
+branch = true
+source = ["llm_gateway"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/services/llm-gateway/html'
+ --cov-report xml:'../../coverage/services/llm-gateway/coverage.xml'
+ --html='../../reports/services/llm-gateway/unittests/html/index.html'
+ --junitxml='../../reports/services/llm-gateway/unittests/junit.xml'
+"""
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []

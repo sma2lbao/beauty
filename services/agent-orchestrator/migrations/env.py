@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 
-from agent_orchestrator.core.config import Settings
-from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
 from alembic import context
 from database.base import Base
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
 
 config = context.config
 if config.config_file_name is not None:

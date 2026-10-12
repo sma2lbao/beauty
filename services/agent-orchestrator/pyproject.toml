@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11,<4"
 dependencies = [
     "alembic>=1.20.0",
-    # 共享库(uv workspace,本地 editable)
     "asyncpg>=0.32.0",
+    # 共享库(uv workspace,本地 editable)
     "common",
     "database",
     "events",
@@ -29,7 +29,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "httpx>=0.28.1",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -51,6 +53,7 @@ addopts = """
  --html='../../reports/services/agent-orchestrator/unittests/html/index.html'
  --junitxml='../../reports/services/agent-orchestrator/unittests/junit.xml'
 """
+asyncio_mode = "auto"
 
 [tool.ruff]
 exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]

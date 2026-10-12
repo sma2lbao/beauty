@@ -14,7 +14,8 @@
 | `packages/common`     | `common`                | Python 库    | 服务基础设施:统一错误模型;后续补配置/日志/观测;hatchling + pytest + ruff               |
 | `packages/database`   | `database`              | Python 库    | 数据库基座:表命名约定;后续补 Repository/UoW/testcontainers;hatchling + pytest + ruff   |
 | `packages/events`     | `events`                | Python 库    | 事件信封与命名/版本约定;后续补事件总线与 outbox;hatchling + pytest + ruff             |
-| `services/agent-orchestrator` | `agent-orchestrator` | Python 服务 | FastAPI + uvicorn(:8002):run 编排/事件溯源骨架(阶段 A)                                  |
+| `services/agent-orchestrator` | `agent-orchestrator` | Python 服务 | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A)                                 |
+| `services/llm-gateway` | `llm-gateway` | Python 服务 | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                   |
 | `tools/eslint-config` | `@beauty/eslint-config` | 共享工具包   | ESLint 9 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                       |
 
 微服务架构设计(定稿)见 `docs/architecture.md`:微服务放 `services/`(部署单元),共享库实名命名(不用 `py-` 前缀),新 Python 项目必须在根 `pyproject.toml` 登记 uv workspace members。
@@ -52,7 +53,7 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
-### Python(ink / py-utils / common / database / events / agent-orchestrator)
+### Python(ink / py-utils / common / database / events / agent-orchestrator / llm-gateway)
 
 ```sh
 npx nx run py-utils:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -62,9 +63,10 @@ npx nx test py-utils       # uv run pytest(含覆盖率,报告写入根 reports/
 npx nx build py-utils      # hatchling 构建 wheel/sdist
 npx nx serve ink           # Streamlit UI(8501 端口)
 npx nx run agent-orchestrator:serve  # uvicorn :8002(run 编排 API)
+npx nx run llm-gateway:serve         # uvicorn :8003(模型网关)
 ```
 
-`ink` 未定义 test target;可 lint/format/sync/serve。`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator` 是应用(无 build target),测试走 aiosqlite 文件库,不依赖外部 DB。
+`ink` 未定义 test target;可 lint/format/sync/serve。`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -88,12 +90,12 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 - **包命名**:JS 包统一 `@beauty/<目录名>` 作用域(根包 `@beauty/source`);应用目录名不带 `beauty-` 前缀;Python 共享库实名命名(`common`/`database`/`events`/`agent-kit`…),不用 `py-` 前缀,并避开 stdlib 与主流库的顶层名(如 `agents`、`platform`)。
 - **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
 - **`@beauty/source` 源码直连条件**:包 `exports` 中的 `@beauty/source` 条件指向 `src/`,由 `tsconfig.base.json` 的 `customConditions` 与 `apps/web/vite.config.ts` 的 `resolve.conditions` 启用——workspace 内包间引用直接消费源码,改组件即时生效、无需先构建;仓库外/发布走 `dist/`。两条路径共用同一份源码。
-- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。
+- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。**注意**:`uv run` 按当前项目的 dev group 精确同步共享 venv,其他项目 dev group 的包会被剪掉——测试需要的依赖(`pytest-asyncio`、`aiosqlite` 等)必须写进**本项目**的 `[dependency-groups].dev`,不能指望兄弟项目替你装。
 - **uv workspace members 是显式清单**:根 `pyproject.toml` 的 `members` 不能用 glob(`apps/`、`packages/` 下混有 npm 项目,glob 会命中无 `pyproject.toml` 的目录导致 uv 报错);新 Python 项目需登记 members + dependencies + `[tool.uv.sources]` 后 `npx nx run <项目>:sync`。
 - **测试编排**:`nx.json` 中 `test` 目标 `dependsOn: ["^build"]`,跑测试前会自动构建上游依赖。
 - **vitest workspace 模式**:根 `vitest.config.mts` 收集各项目的 vitest/vite 配置;`apps/*` 以各自的 `vitest.config.mts` 为准。
@@ -107,5 +109,5 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 ## 修改后的验证清单
 
 - **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
-- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils`/`common`/`database`/`events`/`agent-orchestrator` 另跑 `npx nx test <项目>`。
+- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils`/`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway` 另跑 `npx nx test <项目>`。
 - **依赖变更**:Python 先 `nx run <项目>:add/remove` 再 `nx run <项目>:sync`;JS 改 `package.json` 后根目录 `npm install`。

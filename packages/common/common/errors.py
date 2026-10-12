@@ -47,3 +47,9 @@ class ConflictError(AppError):
     """状态冲突(如重复连接、乐观锁冲突)。"""
 
     status = 409
+
+
+class UpstreamError(AppError):
+    """外部依赖失败(模型/邮件/三方 API),幂等可重试。"""
+
+    status = 502

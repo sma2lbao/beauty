@@ -15,3 +15,5 @@ class Settings(BaseAppSettings):
     service_name: str = "agent-orchestrator"
     database_url: str = "sqlite+aiosqlite:///./agent_orchestrator.db"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
+    sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
+    sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释

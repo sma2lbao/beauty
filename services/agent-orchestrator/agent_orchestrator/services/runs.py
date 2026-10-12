@@ -196,12 +196,16 @@ async def resume_run(
 
 
 async def list_events(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, tenant_id: str, run_id: str, after: int = 0
 ) -> list[RunEvent]:
-    """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用)。"""
+    """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。"""
     rows = await session.scalars(
         select(RunEvent)
-        .where(RunEvent.run_id == run_id, RunEvent.tenant_id == tenant_id)
+        .where(
+            RunEvent.run_id == run_id,
+            RunEvent.tenant_id == tenant_id,
+            RunEvent.seq > after,
+        )
         .order_by(RunEvent.seq)
     )
     return list(rows)

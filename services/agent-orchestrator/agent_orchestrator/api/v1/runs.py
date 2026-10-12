@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from common.errors import AppError
+from database.session import session_scope
+from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.api.deps import get_run_graph, get_session, get_tenant_id
+from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models.runs import RunEvent
 from agent_orchestrator.schemas.runs import (
     PlanRead,
     PlanUpdate,
@@ -116,3 +124,70 @@ async def resume_run(
     """blocked → 重新进审批闸,保留已编辑计划(§6.2 goal 语义)。"""
     run = await runs_service.resume_run(session, graph, tenant_id, run_id)
     return _plan_read(run.id, run.status, run.plan_markdown or "")
+
+
+TERMINAL_STATUSES = (RunStatus.COMPLETED.value, RunStatus.FAILED.value)
+
+
+def _sse_chunk(event: RunEvent) -> str:
+    data = RunEventRead.model_validate(event).model_dump_json()
+    return f"id: {event.seq}\nevent: {event.type}\ndata: {data}\n\n"
+
+
+async def _event_stream(
+    factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    tenant_id: str,
+    run_id: str,
+    after: int,
+) -> AsyncIterator[str]:
+    """先重放 after 之后的事件,再轮询增量;run 终态后发 stream.end 收尾。
+
+    读端契约:重放与增量一律读 run_events(§6.3);Redis Streams 直播是
+    阶段 B 的传输优化,换传输不改读端。
+    """
+    last_seq = after
+    idle_polls = 0
+    while True:
+        async with session_scope(factory) as session:
+            events = await runs_service.list_events(
+                session, tenant_id, run_id, after=last_seq
+            )
+            run = await runs_service.require_run(session, tenant_id, run_id)
+        for event in events:
+            last_seq = event.seq
+            yield _sse_chunk(event)
+        if run.status in TERMINAL_STATUSES:
+            yield f"event: stream.end\ndata: {json.dumps({'status': run.status})}\n\n"
+            return
+        if not events:
+            idle_polls += 1
+            if idle_polls % settings.sse_keepalive_polls == 0:
+                yield ": keep-alive\n\n"
+            await asyncio.sleep(settings.sse_poll_interval_seconds)
+
+
+@router.get("/{run_id}/events/stream")
+async def stream_run_events(
+    run_id: str,
+    request: Request,
+    tenant_id: TenantId,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+) -> StreamingResponse:
+    """SSE 事件流:浏览器断线重连自动带 Last-Event-ID,从 seq 游标续传。"""
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    settings: Settings = request.app.state.settings
+    if last_event_id:
+        try:
+            after = int(last_event_id)
+        except ValueError:
+            raise AppError("sse.bad_cursor", "Last-Event-ID 必须是整数") from None
+    else:
+        after = 0
+    async with session_scope(factory) as session:
+        await runs_service.require_run(session, tenant_id, run_id)  # 404 校验
+    return StreamingResponse(
+        _event_stream(factory, settings, tenant_id, run_id, after),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

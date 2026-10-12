@@ -18,6 +18,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         env="dev",
         database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
         auto_create_tables=True,
+        sse_poll_interval_seconds=0.05,
     )
     app = create_app(settings)
     with TestClient(app) as test_client:
