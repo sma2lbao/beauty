@@ -170,6 +170,9 @@ async def approve_run(
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
+    # 工具调用审计:每次调用一条事件,SSE 可观(§6.3)
+    for record in values.get("tool_calls") or []:
+        await append_event(session, run, "run.tool.called.v1", record)
     run.rounds = values.get("rounds", 0)
     final_status = values.get("final_status")
     if final_status == "failed":

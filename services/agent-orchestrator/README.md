@@ -24,9 +24,15 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `llm-gateway` 生成计划、执行结果与逐条验收判定(节点工厂注入,见 `graph/nodes.py`);
   false 或网关未起时回退确定性桩。测试注入 FakeLLM,零网络零 token。
 - 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
-  耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed)。
+  耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
+- 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——
+  模型请求工具 → 工具注册表(`services/tools.py`)执行 → 结果回喂模型,≤3 轮;
+  工具经 `connector-service` 出去(email 只读工具:`list_connections`/`fetch_emails`);
+  **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
+  `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 可实时看到工具活动。
 
 节点 deliver 仍是确定性桩:交付物落对象存储为阶段 B。
-后续补齐:技能注册表、指令队列消费、IdP JWT 租户、Redis Streams 直播(替代 SSE 轮询)。
+后续补齐:更多工具(写操作需审批闸)、指令队列消费、IdP JWT 租户、
+Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

@@ -6,19 +6,30 @@
 LLM 注入:builder 用 make_*_node(llm) 工厂装配;llm 为 None 时回退
 确定性桩(dev/测试零外部依赖)。节点内 LLM 异常不捕获,由 services 层的
 图调用边界统一转 failed 终态(§6.2)。
+
+工具注入:execute 拿 toolkit_factory(租户 → 工具注册表);工具执行失败
+不抛错,以错误文本回喂模型(§6.1),每次调用记入 state["tool_calls"]。
 """
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langgraph.types import interrupt
 
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.services.llm import LLMReply
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agent_orchestrator.services.llm import LLMClient
+    from agent_orchestrator.services.tools import ToolRegistry
+
+    ToolkitFactory = Callable[[str], ToolRegistry]
+
+MAX_TOOL_ROUNDS = 3  # execute 内 function-calling 轮次上限
 
 PLAN_SYSTEM_PROMPT = (
     "你是任务规划助手。依据目标与验收标准产出 Markdown 执行计划:"
@@ -78,7 +89,7 @@ def make_plan_node(llm: LLMClient | None):
         if llm is None:
             return _stub_plan(state)
         criteria = state.get("acceptance_criteria") or []
-        plan = await llm.complete(
+        reply = await llm.complete(
             [
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                 {
@@ -91,7 +102,7 @@ def make_plan_node(llm: LLMClient | None):
                 },
             ]
         )
-        return {"plan_markdown": plan}
+        return {"plan_markdown": reply.content}
 
     return plan_node
 
@@ -107,8 +118,47 @@ def approval_gate_node(state: RunGraphState) -> dict:
     return {}
 
 
-def make_execute_node(llm: LLMClient | None):
-    """execute 节点工厂:LLM 执行一轮;llm=None 回退确定性桩(工具/MCP 阶段 B)。"""
+def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
+    done = "\n".join(state.get("results") or []) or "(尚无)"
+    return [
+        {"role": "system", "content": EXECUTE_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"目标:{state.get('goal', '')}\n\n"
+                f"计划:\n{state.get('plan_markdown', '')}\n\n"
+                f"已完成的结果:\n{done}\n\n请执行下一步并输出结果小结。"
+            ),
+        },
+    ]
+
+
+def _assistant_tool_message(reply: LLMReply) -> dict[str, Any]:
+    """把模型的工具请求回填进消息历史(OpenAI 嵌套形状)。"""
+    return {
+        "role": "assistant",
+        "content": reply.content or None,
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": call.arguments},
+            }
+            for call in reply.tool_calls
+        ],
+    }
+
+
+def make_execute_node(
+    llm: LLMClient | None, toolkit_factory: ToolkitFactory | None = None
+):
+    """execute 节点工厂:LLM 执行;有工具时跑 function-calling 循环(§6.1)。
+
+    - llm=None:确定性桩(dev/测试零外部依赖);
+    - 无工具:单轮结果小结(阶段 A 行为不变);
+    - 有工具:≤MAX_TOOL_ROUNDS 轮——模型请求工具 → 注册表执行 → 结果回喂,
+      工具失败以错误文本回喂让模型决策;每轮记 tool_calls 供 service 层落事件。
+    """
 
     async def execute_node(state: RunGraphState) -> dict:
         if llm is None:
@@ -116,21 +166,37 @@ def make_execute_node(llm: LLMClient | None):
                 "results": ["目标已拆解(桩)", "子任务已执行(桩)", "结果已汇总(桩)"],
                 "rounds": 1,
             }
-        done = "\n".join(state.get("results") or []) or "(尚无)"
-        result = await llm.complete(
-            [
-                {"role": "system", "content": EXECUTE_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"目标:{state.get('goal', '')}\n\n"
-                        f"计划:\n{state.get('plan_markdown', '')}\n\n"
-                        f"已完成的结果:\n{done}\n\n请执行下一步并输出结果小结。"
-                    ),
-                },
-            ]
+        messages = _execute_messages(state)
+        toolkit = (
+            toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
         )
-        return {"results": [result], "rounds": 1}
+        if toolkit is None or len(toolkit) == 0:
+            reply = await llm.complete(messages)
+            return {"results": [reply.content], "rounds": 1}
+
+        schemas = toolkit.schemas()
+        records: list[dict[str, Any]] = []
+        reply = LLMReply(content="")
+        for _ in range(MAX_TOOL_ROUNDS):
+            reply = await llm.complete(messages, tools=schemas)
+            if not reply.tool_calls:
+                break
+            messages.append(_assistant_tool_message(reply))
+            for call in reply.tool_calls:
+                output = await toolkit.execute(call.name, call.arguments)
+                records.append(
+                    {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "ok": not output.startswith('{"error"'),
+                        "detail": output[:200],
+                    }
+                )
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.id, "content": output}
+                )
+        text = reply.content or f"(调用工具 {len(records)} 次后模型未给出结论)"
+        return {"results": [text], "rounds": 1, "tool_calls": records}
 
     return execute_node
 
@@ -162,7 +228,7 @@ def make_verify_node(llm: LLMClient | None):
         if llm is None or not criteria:
             return {"verified": {c: True for c in criteria}}
         done = "\n".join(state.get("results") or []) or "(尚无)"
-        raw = await llm.complete(
+        reply = await llm.complete(
             [
                 {"role": "system", "content": VERIFY_SYSTEM_PROMPT},
                 {
@@ -176,7 +242,7 @@ def make_verify_node(llm: LLMClient | None):
                 },
             ]
         )
-        verdicts, summary = _parse_verdicts(raw, criteria)
+        verdicts, summary = _parse_verdicts(reply.content, criteria)
         update: dict = {"verified": verdicts}
         if summary:
             update["results"] = [f"验收小结:{summary}"]

@@ -1,9 +1,10 @@
-"""run 执行图组装:plan → 审批闸 → execute → verify(返工≤3)→ deliver(§6)。
+"""run 执行图组装:plan → 审批闸 → execute → verify(返工≤3)→ deliver/fail(§6)。
 
 checkpointer:阶段 A 用 InMemorySaver(进程内,测试即隔离);
 接 compose 的 postgres 后切 langgraph-checkpoint-postgres,图线程跨进程可恢复。
-llm:plan/execute 的模型客户端(架构 §5 唯一出口经 llm-gateway);
-None 回退确定性桩——dev/测试零外部依赖。
+llm:模型客户端(架构 §5 唯一出口经 llm-gateway);
+toolkit_factory:租户 → 工具注册表(§8,execute 的 function-calling 用);
+两者为 None 时回退确定性桩——dev/测试零外部依赖。
 """
 
 from __future__ import annotations
@@ -26,7 +27,12 @@ from agent_orchestrator.graph.nodes import (
 from agent_orchestrator.graph.state import RunGraphState
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agent_orchestrator.services.llm import LLMClient
+    from agent_orchestrator.services.tools import ToolRegistry
+
+    ToolkitFactory = Callable[[str], ToolRegistry]
 
 MAX_REWORK_ROUNDS = 3
 
@@ -52,12 +58,13 @@ def route_after_verify(state: RunGraphState) -> str:
 def build_run_graph(
     checkpointer: BaseCheckpointSaver | None = None,
     llm: LLMClient | None = None,
+    toolkit_factory: ToolkitFactory | None = None,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
     builder.add_node("plan", make_plan_node(llm))
     builder.add_node("approval_gate", approval_gate_node)
-    builder.add_node("execute", make_execute_node(llm))
+    builder.add_node("execute", make_execute_node(llm, toolkit_factory))
     builder.add_node("verify", make_verify_node(llm))
     builder.add_node("deliver", deliver_node)
     builder.add_node("fail", fail_node)

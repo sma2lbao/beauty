@@ -6,6 +6,9 @@
 - `POST /v1/completions`:OpenAI 风格消息 → litellm 统一路由(DeepSeek/OpenAI/…,
   `model` 用 litellm 的 `provider/model` 格式如 `deepseek/deepseek-chat`),
   不传 `model` 走默认路由;失败统一映射 502 `llm.upstream_error`;
+- 支持 function-calling:`tools` 原样透传给 litellm,响应的 `tool_calls`
+  归一化为 OpenAI 嵌套形状(`function.name/arguments`);消息支持
+  `assistant.tool_calls` 与 `tool` 角色(`tool_call_id`),历史回传无需转换;
 - `/healthz` `/readyz`:存活/就绪探针(默认模型已配置即就绪,提供商连通性在调用时校验);
 - 密钥由 litellm 直接读进程环境变量,网关不落盘(密钥库方案见架构 §10)。
 

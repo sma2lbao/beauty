@@ -6,8 +6,9 @@ Nx(仓库根):npx nx run agent-orchestrator:serve
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from functools import partial
 
 from common.errors import AppError
 from common.logging import setup_logging
@@ -21,7 +22,11 @@ from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
+from agent_orchestrator.services.connectors import ConnectorClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
+from agent_orchestrator.services.tools import ToolRegistry, build_tools
+
+ToolkitFactory = Callable[[str], ToolRegistry]
 
 
 @asynccontextmanager
@@ -46,6 +51,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         owns_llm = True
 
+    # 工具装配(架构 §8):测试注入 toolkit_factory 优先;
+    # 否则 tools_enabled 时起 connector 客户端,按租户绑定工具集
+    toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
+    connector: ConnectorClient | None = None
+    if toolkit_factory is None and settings.tools_enabled:
+        connector = ConnectorClient(
+            settings.connector_service_url, settings.tool_timeout_seconds
+        )
+        toolkit_factory = partial(build_tools, connector)
+
     try:
         if settings.database_url.startswith("postgres"):
             # postgres:图线程跨进程可恢复(架构 §6.4;setup 幂等建 checkpoint 表)。
@@ -57,25 +72,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
                 await saver.setup()
-                app.state.run_graph = build_run_graph(checkpointer=saver, llm=llm)
+                app.state.run_graph = build_run_graph(
+                    checkpointer=saver, llm=llm, toolkit_factory=toolkit_factory
+                )
                 yield
         else:
             # sqlite/dev:进程内 checkpointer
-            app.state.run_graph = build_run_graph(llm=llm)
+            app.state.run_graph = build_run_graph(
+                llm=llm, toolkit_factory=toolkit_factory
+            )
             yield
     finally:
         if owns_llm:
             await llm.aclose()
+        if connector is not None:
+            await connector.aclose()
         await factory.engine.dispose()
 
 
 def create_app(
-    settings: Settings | None = None, llm_client: LLMClient | None = None
+    settings: Settings | None = None,
+    llm_client: LLMClient | None = None,
+    toolkit_factory: ToolkitFactory | None = None,
 ) -> FastAPI:
-    """llm_client:测试注入 FakeLLM;生产留空,由 lifespan 按 llm_enabled 装配。"""
+    """测试注入:llm_client(FakeLLM)与 toolkit_factory(租户 → 假工具集)。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.llm_client = llm_client
+    app.state.toolkit_factory = toolkit_factory
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

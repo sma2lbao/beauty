@@ -72,3 +72,95 @@ def test_completion_validation(client: TestClient) -> None:
         "/v1/completions", json={"messages": [{"role": "hacker", "content": "x"}]}
     )
     assert resp.status_code == 422
+
+
+def test_tools_passthrough_and_tool_calls_normalized(
+    client: TestClient, monkeypatch
+) -> None:
+    """tools 原样透传给 litellm;响应的 tool_calls 归一化为嵌套形状。"""
+    captured: dict = {}
+
+    def fn(name: str, arguments: str):
+        return type("F", (), {"name": name, "arguments": arguments})()
+
+    def call(call_id: str, name: str, arguments: str):
+        return type("TC", (), {"id": call_id, "function": fn(name, arguments)})()
+
+    message = type(
+        "M",
+        (),
+        {"content": None, "tool_calls": [call("call_1", "list_connections", "{}")]},
+    )()
+    fake_message = type(
+        "R", (), {"choices": [type("C", (), {"message": message})()], "usage": None}
+    )()
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return fake_message
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_connections",
+                "description": "列连接",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    resp = client.post("/v1/completions", json={**BODY, "tools": tools})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert captured["tools"] == tools
+    assert data["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "list_connections", "arguments": "{}"},
+        }
+    ]
+    assert data["content"] == ""
+
+
+def test_tool_role_message_shape_passthrough(client: TestClient, monkeypatch) -> None:
+    """assistant(tool_calls)+ tool(tool_call_id)历史原样进 litellm。"""
+    captured: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        message = type("M", (), {"content": "ok", "tool_calls": None})()
+        return type(
+            "R", (), {"choices": [type("C", (), {"message": message})()], "usage": None}
+        )()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    resp = client.post(
+        "/v1/completions",
+        json={
+            "messages": [
+                {"role": "user", "content": "看邮件"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "fetch_emails", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": '{"emails":[]}'},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    sent = captured["messages"]
+    assert sent[1]["tool_calls"][0]["function"]["name"] == "fetch_emails"
+    assert "content" not in sent[1]  # None 字段不落进请求
+    assert sent[2] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": '{"emails":[]}',
+    }

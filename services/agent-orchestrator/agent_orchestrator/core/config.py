@@ -22,3 +22,7 @@ class Settings(BaseAppSettings):
     llm_gateway_url: str = "http://127.0.0.1:8003"
     llm_model: str | None = None  # None:走网关默认路由
     llm_timeout_seconds: float = 60.0
+    # 工具(架构 §8):execute 走 function-calling 调 connector-service
+    tools_enabled: bool = False
+    connector_service_url: str = "http://127.0.0.1:8004"
+    tool_timeout_seconds: float = 30.0
