@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { AuthBar } from '@/components/runs/auth-bar';
 import { RunEvents } from '@/components/runs/run-events';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import type { Run, RunStatus } from '@/lib/runs-api';
-import { runsApi } from '@/lib/runs-api';
+import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
 const STATUS_LABELS: Record<RunStatus, string> = {
@@ -68,6 +69,20 @@ export function RunsPage() {
         建 run → 审批计划 → 看 Agent 调工具 → 确认写操作 → 取交付物。
         事件流走 SSE,实时推送。
       </p>
+
+      <div className="mt-6">
+        <AuthBar
+          onChange={() => {
+            void queryClient.invalidateQueries();
+          }}
+        />
+      </div>
+
+      {isUnauthorized(runsQuery.error) ? (
+        <p className="mt-4 rounded-lg border border-dashed p-3 text-sm text-destructive">
+          未登录或令牌已失效:请先在上方面板完成鉴权,再重新加载。
+        </p>
+      ) : null}
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(280px,340px)_1fr]">
         <div className="space-y-6">

@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router';
 
 import { SiteLayout } from '@/components/layout/site-layout';
 import { AboutPage } from '@/pages/about';
+import { CallbackPage } from '@/pages/callback';
 import { HomePage } from '@/pages/home';
 import { NotFoundPage } from '@/pages/not-found';
 import { ProductsPage } from '@/pages/products';
@@ -14,6 +15,7 @@ export function App() {
         <Route index element={<HomePage />} />
         <Route path="products" element={<ProductsPage />} />
         <Route path="runs" element={<RunsPage />} />
+        <Route path="callback" element={<CallbackPage />} />
         <Route path="about" element={<AboutPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

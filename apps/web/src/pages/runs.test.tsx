@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Run } from '@/lib/runs-api';
-import { runsApi, streamRunEvents } from '@/lib/runs-api';
+import { ApiError, runsApi, streamRunEvents } from '@/lib/runs-api';
 
 import { RunsPage } from './runs';
 
@@ -84,6 +84,17 @@ describe('RunsPage', () => {
     renderPage();
 
     expect(await screen.findByText('还没有 run。')).toBeInTheDocument();
+  });
+
+  it('接口返回 401:提示先完成鉴权', async () => {
+    vi.mocked(runsApi.list).mockRejectedValue(
+      new ApiError(401, 'auth.token_missing', '缺少 Bearer token'),
+    );
+    renderPage();
+
+    expect(
+      await screen.findByText(/未登录或令牌已失效/),
+    ).toBeInTheDocument();
   });
 
   it('创建 run 时把验收标准按行解析', async () => {

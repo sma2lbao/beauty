@@ -1,14 +1,14 @@
 /**
  * 运行控制台的数据层:agent-orchestrator 的 API 契约(架构 §6)。
  *
- * 环境变量(可选):
- * - `VITE_RUNS_API_URL`:后端基址;留空走同源(Vite dev 由 vite.config.ts 代理到 :8002)。
- * - `VITE_TENANT_ID`:临时租户(X-Tenant-Id 头);接入 IdP 后由 JWT 取代。
+ * 环境变量(见 apps/web/.env.example):
+ * - `VITE_RUNS_API_URL`:后端基址;留空走同源(Vite dev 由 vite.config.ts 代理到 :8002);
+ * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
  */
 
+import { authHeaders } from '@/lib/auth';
+
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
-const TENANT =
-  (import.meta.env.VITE_TENANT_ID as string | undefined) ?? 'demo-tenant';
 
 export type RunStatus =
   | 'pending'
@@ -76,14 +76,19 @@ export class ApiError extends Error {
   }
 }
 
-function jsonHeaders(): Record<string, string> {
-  return { 'Content-Type': 'application/json', 'X-Tenant-Id': TENANT };
+async function jsonHeaders(): Promise<Record<string, string>> {
+  return { 'Content-Type': 'application/json', ...(await authHeaders()) };
+}
+
+/** 401 判定:控制台据此提示"未登录/令牌失效"。 */
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { ...jsonHeaders(), ...init?.headers },
+    headers: { ...(await jsonHeaders()), ...init?.headers },
   });
   if (!response.ok) {
     let code = 'request_failed';
@@ -195,7 +200,7 @@ export async function streamRunEvents(
   },
 ): Promise<void> {
   const response = await fetch(`${BASE}/api/v1/runs/${runId}/events/stream`, {
-    headers: jsonHeaders(),
+    headers: await jsonHeaders(),
     signal: handlers.signal,
   });
   if (!response.ok || !response.body) {
