@@ -37,7 +37,7 @@ describe('App 路由', () => {
   it('/about 渲染关于页', () => {
     renderApp('/about');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '关于美月',
+      '关于 beauty moon',
     );
   });
 

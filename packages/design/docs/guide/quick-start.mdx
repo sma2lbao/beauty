@@ -41,7 +41,7 @@ import '@beauty/design/styles.css';
 @import '@beauty/design/tailwind.css';
 ```
 
-这个入口在"美月"主题令牌(亮色 `:root`、暗色 `.dark`)与组件 CSS 之外,多提供一层 `@theme` 映射:把 `--bd-*` 暴露成 Tailwind 主题变量,因此你可以直接用 `bg-primary`、`rounded-md` 这类工具类写业务样式,并自动跟随令牌换肤。
+这个入口在 beauty moon 主题令牌(亮色 `:root`、暗色 `.dark`)与组件 CSS 之外,多提供一层 `@theme` 映射:把 `--bd-*` 暴露成 Tailwind 主题变量,因此你可以直接用 `bg-primary`、`rounded-md` 这类工具类写业务样式,并自动跟随令牌换肤。
 
 :::tip 令牌命名空间
 令牌统一带 `--bd-` 前缀(如 `--bd-primary`),不会与宿主自己的 shadcn 主题同名变量互相覆盖;定制令牌见[主题定制](./theming),用 class 覆写组件样式见[样式与覆写](./styling)。

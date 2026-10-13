@@ -34,10 +34,16 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-6">
-        <Link to="/" className="flex items-baseline gap-2">
-          <span className="font-display text-xl font-semibold">美月</span>
-          <span className="hidden text-sm text-muted-foreground sm:inline">
-            Beauty Moon
+        <Link to="/" className="flex items-center gap-2">
+          {/* 官方图标(自带夜空底):深浅主题下对比都成立 */}
+          <img
+            src="/logo-icon.svg"
+            alt=""
+            aria-hidden="true"
+            className="h-7 w-7"
+          />
+          <span className="font-display text-lg font-semibold tracking-tight">
+            beauty moon
           </span>
         </Link>
 

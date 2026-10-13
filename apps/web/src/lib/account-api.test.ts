@@ -22,7 +22,7 @@ describe('accountApi', () => {
   it('组织档案走 /account-api 前缀并带鉴权头', async () => {
     const fetchMock = mockFetch(200, {
       id: 'org-1',
-      name: '美月科技',
+      name: '示例科技',
       plan: 'free',
       quota: {},
       created_at: '2026-10-13T00:00:00+00:00',

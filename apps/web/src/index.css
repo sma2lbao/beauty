@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 /*
-  美月 Beauty Moon 主题与 shadcn 语义变量统一由 @beauty/design 提供:
+  beauty moon 主题与 shadcn 语义变量统一由 @beauty/design 提供:
   - 本应用自带 Tailwind v4,引 @beauty/design/tailwind.css:
     该入口带来令牌(亮色 :root / 暗色 .dark)、组件自带的普通 CSS 与 @theme inline 映射,
     因此本应用可以直接用 bg-primary / text-muted-foreground / rounded-md 等工具类
@@ -27,57 +27,5 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-  }
-}
-
-/*
-  满月光盘：品牌视觉母题（404 等装饰位使用），纯 CSS 绘制。
-  月海用几处稍深的径向渐变模拟，球体感靠内侧阴影，光晕靠外阴影。
-*/
-@layer components {
-  .moon-disc {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 1;
-    border-radius: 9999px;
-    background-color: oklch(0.935 0.028 85);
-    background-image:
-      radial-gradient(
-        circle at 68% 30%,
-        oklch(0.885 0.032 85) 0 13%,
-        transparent 14%
-      ),
-      radial-gradient(
-        circle at 30% 62%,
-        oklch(0.9 0.028 85) 0 10%,
-        transparent 11%
-      ),
-      radial-gradient(
-        circle at 56% 72%,
-        oklch(0.9 0.028 85) 0 6%,
-        transparent 7%
-      ),
-      radial-gradient(
-        circle at 78% 58%,
-        oklch(0.885 0.032 85) 0 5%,
-        transparent 6%
-      ),
-      radial-gradient(
-        circle at 42% 22%,
-        oklch(0.905 0.026 85) 0 4%,
-        transparent 5%
-      );
-    box-shadow:
-      0 0 50px oklch(0.85 0.07 70 / 0.45),
-      0 0 120px oklch(0.85 0.06 70 / 0.3),
-      inset -16px -22px 48px oklch(0.76 0.06 60 / 0.35);
-  }
-
-  .dark .moon-disc {
-    background-color: oklch(0.9 0.026 85);
-    box-shadow:
-      0 0 60px oklch(0.75 0.08 60 / 0.5),
-      0 0 160px oklch(0.75 0.07 60 / 0.35),
-      inset -16px -22px 48px oklch(0.7 0.07 60 / 0.45);
   }
 }

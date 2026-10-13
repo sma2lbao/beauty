@@ -7,7 +7,7 @@
 
 # @beauty/design
 
-beauty monorepo 的 Web 端 React UI 组件库,沿用 shadcn/ui 的令牌与设计语言:组件样式是**普通 CSS** + `bd-` 前缀的 BEM 语义类名(`.bd-button`、`.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌(美月 Beauty Moon,亮暗双主题),组件源码里不出现 Tailwind 工具类;TypeScript 类型完备。
+beauty monorepo 的 Web 端 React UI 组件库,沿用 shadcn/ui 的令牌与设计语言:组件样式是**普通 CSS** + `bd-` 前缀的 BEM 语义类名(`.bd-button`、`.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌(beauty moon,亮暗双主题),组件源码里不出现 Tailwind 工具类;TypeScript 类型完备。
 
 ## 消费形态
 

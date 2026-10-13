@@ -1,6 +1,6 @@
 # web
 
-美月 Beauty Moon 品牌前台站点（包名 `@beauty/web`）。React + TypeScript SPA，位于
+beauty moon 的 Web 端（包名 `@beauty/web`）：对话页 + 运行控制台 + 知识库 / 工作区 / 事件队列 / 账号。React + TypeScript SPA，位于
 monorepo 的 `apps/web` 目录下，由 npm workspaces 管理、Nx 识别。
 
 ## 技术栈

@@ -1,11 +1,11 @@
 export function AboutPage() {
   return (
     <section className="mx-auto max-w-2xl px-6 py-16">
-      <h1 className="font-display text-3xl">关于美月</h1>
+      <h1 className="font-display text-3xl">关于 beauty moon</h1>
 
       <div className="mt-8 space-y-5 leading-relaxed">
         <p>
-          美月 Beauty Moon 是一个 AI 办公助手:把邮件、日程、文档、周报这类重复活
+          beauty moon 是一个 AI 办公助手:把邮件、日程、文档、周报这类重复活
           交给 Agent,你只需要在关键的地方点个头。
         </p>
         <p>

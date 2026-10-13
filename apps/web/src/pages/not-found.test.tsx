@@ -29,8 +29,8 @@ describe('NotFoundPage', () => {
     );
   });
 
-  it('渲染月相装饰元素(品牌视觉母题,与业务文案无关)', () => {
+  it('使用官方 mark 作为品牌装饰(不再用 CSS 画的圆盘)', () => {
     renderPage();
-    expect(document.querySelector('.moon-disc')).not.toBeNull();
+    expect(document.querySelector('img[src="/logo-mark.svg"]')).not.toBeNull();
   });
 });

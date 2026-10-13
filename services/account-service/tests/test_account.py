@@ -24,12 +24,12 @@ def test_organization_is_created_idempotently(client: TestClient) -> None:
 def test_organization_update_plan_and_quota(client: TestClient) -> None:
     patched = client.patch(
         "/v1/organization",
-        json={"name": "美月科技", "plan": "team", "quota": {"seats": 20}},
+        json={"name": "示例科技", "plan": "team", "quota": {"seats": 20}},
         headers=TENANT,
     )
     assert patched.status_code == 200
     body = patched.json()
-    assert body["name"] == "美月科技"
+    assert body["name"] == "示例科技"
     assert body["plan"] == "team"
     assert body["quota"] == {"seats": 20}
 

@@ -8,7 +8,7 @@ describe('AboutPage', () => {
     const { container } = render(<AboutPage />);
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '关于美月',
+      '关于 beauty moon',
     );
     const text = container.textContent ?? '';
     expect(text).toContain('AI 办公助手');

@@ -32,7 +32,7 @@ vi.mock('@/components/runs/auth-bar', () => ({
 
 const organization: Organization = {
   id: 'org-1',
-  name: '美月科技',
+  name: '示例科技',
   plan: 'team',
   quota: { seats: 20 },
   created_at: '2026-10-13T00:00:00+00:00',
@@ -81,7 +81,7 @@ describe('SettingsPage', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '美月科技');
+      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '示例科技');
     });
     expect(screen.getByLabelText('套餐')).toHaveProperty('value', 'team');
     expect(screen.getByLabelText('配额(JSON)')).toHaveProperty(
@@ -96,22 +96,22 @@ describe('SettingsPage', () => {
   it('保存组织档案时带上编辑后的值', async () => {
     vi.mocked(accountApi.updateOrganization).mockResolvedValue({
       ...organization,
-      name: '美月科技(新)',
+      name: '示例科技(新)',
     });
 
     renderPage();
     await waitFor(() => {
-      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '美月科技');
+      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '示例科技');
     });
 
     fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: '美月科技(新)' },
+      target: { value: '示例科技(新)' },
     });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() => {
       expect(accountApi.updateOrganization).toHaveBeenCalledWith({
-        name: '美月科技(新)',
+        name: '示例科技(新)',
         plan: 'team',
         quota: { seats: 20 },
       });

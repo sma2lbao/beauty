@@ -15,7 +15,9 @@ function renderHeader(initialEntry = '/') {
 describe('SiteHeader', () => {
   it('渲染品牌与导航链接', () => {
     renderHeader();
-    expect(screen.getByText('美月')).toBeInTheDocument();
+    expect(screen.getByText('beauty moon')).toBeInTheDocument();
+    // 品牌图标用官方 mark(自带夜空底,深浅主题都有对比)
+    expect(document.querySelector('img[src="/logo-icon.svg"]')).not.toBeNull();
     expect(screen.getByRole('link', { name: '对话' })).toHaveAttribute(
       'href',
       '/',
