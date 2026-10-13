@@ -37,11 +37,11 @@ describe('Button', () => {
   it('asChild 时渲染为子元素并保留按钮样式', () => {
     render(
       <Button asChild>
-        <a href="/products">链接按钮</a>
+        <a href="/runs">链接按钮</a>
       </Button>,
     );
     const link = screen.getByRole('link', { name: '链接按钮' });
-    expect(link).toHaveAttribute('href', '/products');
+    expect(link).toHaveAttribute('href', '/runs');
     expect(link).toHaveClass('bg-primary');
   });
 });

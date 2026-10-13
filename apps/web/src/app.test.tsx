@@ -20,17 +20,17 @@ function renderApp(path: string) {
 }
 
 describe('App 路由', () => {
-  it('/ 渲染首页', () => {
+  it('/ 渲染对话页', () => {
     renderApp('/');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '月光落在肌肤上',
+      '对话',
     );
   });
 
-  it('/products 渲染产品页', () => {
+  it('/products 已下线(渲染 404)', () => {
     renderApp('/products');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '全部产品',
+      '这一页还在夜色里',
     );
   });
 

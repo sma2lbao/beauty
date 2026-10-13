@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const navItems = [
-  { to: '/', label: '首页', end: true },
-  { to: '/products', label: '产品' },
+  { to: '/', label: '对话', end: true },
   { to: '/runs', label: '控制台' },
   { to: '/knowledge', label: '知识库' },
   { to: '/workspace', label: '工作区' },

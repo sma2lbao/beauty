@@ -16,13 +16,9 @@ describe('SiteHeader', () => {
   it('渲染品牌与导航链接', () => {
     renderHeader();
     expect(screen.getByText('美月')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '首页' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '对话' })).toHaveAttribute(
       'href',
       '/',
-    );
-    expect(screen.getByRole('link', { name: '产品' })).toHaveAttribute(
-      'href',
-      '/products',
     );
     expect(screen.getByRole('link', { name: '关于' })).toHaveAttribute(
       'href',
@@ -31,9 +27,11 @@ describe('SiteHeader', () => {
   });
 
   it('当前路由的导航项带激活下划线', () => {
-    renderHeader('/products');
-    expect(screen.getByRole('link', { name: '产品' })).toHaveClass('underline');
-    expect(screen.getByRole('link', { name: '首页' })).not.toHaveClass(
+    renderHeader('/runs');
+    expect(screen.getByRole('link', { name: '控制台' })).toHaveClass(
+      'underline',
+    );
+    expect(screen.getByRole('link', { name: '对话' })).not.toHaveClass(
       'underline',
     );
   });

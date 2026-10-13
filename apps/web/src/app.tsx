@@ -3,11 +3,10 @@ import { Route, Routes } from 'react-router';
 import { SiteLayout } from '@/components/layout/site-layout';
 import { AboutPage } from '@/pages/about';
 import { CallbackPage } from '@/pages/callback';
-import { HomePage } from '@/pages/home';
+import { ChatPage } from '@/pages/chat';
 import { KnowledgePage } from '@/pages/knowledge';
 import { NotFoundPage } from '@/pages/not-found';
 import { OutboxPage } from '@/pages/outbox';
-import { ProductsPage } from '@/pages/products';
 import { SettingsPage } from '@/pages/settings';
 import { WorkspacePage } from '@/pages/workspace';
 import { RunsPage } from '@/pages/runs';
@@ -16,8 +15,7 @@ export function App() {
   return (
     <Routes>
       <Route element={<SiteLayout />}>
-        <Route index element={<HomePage />} />
-        <Route path="products" element={<ProductsPage />} />
+        <Route index element={<ChatPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="settings" element={<SettingsPage />} />
