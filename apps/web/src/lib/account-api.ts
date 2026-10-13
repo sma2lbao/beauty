@@ -42,6 +42,18 @@ export type Session = {
   created_at: string;
 };
 
+export type DevLoginResult = {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  tenant_id: string;
+  organization_id: string;
+  user_id: string;
+  subject: string;
+  role: Role;
+  session_id: string;
+};
+
 function request<T>(path: string, init?: RequestInit): Promise<T> {
   return requestJson<T>(BASE, `${PREFIX}${path}`, init);
 }
@@ -84,4 +96,18 @@ export const accountApi = {
     }),
   revokeSession: (sessionId: string) =>
     request<Session>(`/v1/sessions/${sessionId}/revoke`, { method: 'POST' }),
+  /**
+   * dev 账号登录(后端 DEV_AUTH_ENABLED=true 时可用):声明 email 即签发
+   * access token(凭证校验归 IdP,桩不设密码,见 account-service 文档)。
+   */
+  devLogin: (input: {
+    email: string;
+    organization_id?: string;
+    organization_name?: string;
+    display_name?: string;
+  }) =>
+    request<DevLoginResult>('/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
 };

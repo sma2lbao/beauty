@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { accountApi } from '@/lib/account-api';
 import {
   accountLabel,
   authMode,
@@ -14,7 +15,7 @@ import {
 
 const MODE_LABEL: Record<string, string> = {
   dev: '开发模式',
-  token: '手动令牌',
+  token: '账号登录',
   logto: 'Logto 登录',
 };
 
@@ -25,6 +26,8 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
   const queryClient = useQueryClient();
   const mode = authMode();
   const [token, setToken] = useState('');
+  const [email, setEmail] = useState('');
+  const [orgId, setOrgId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,10 +70,43 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
       {mode === 'token' ? (
         <>
           <input
+            aria-label="登录邮箱"
+            type="email"
+            placeholder="登录邮箱(dev 桩:声明 email 即登录)"
+            className="min-w-44 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <input
+            aria-label="组织 ID"
+            placeholder="组织 ID(留空新开)"
+            className="w-44 rounded-md border bg-transparent px-3 py-2 text-sm"
+            value={orgId}
+            onChange={(event) => setOrgId(event.target.value)}
+          />
+          <Button
+            size="sm"
+            disabled={busy || !email.trim()}
+            onClick={() =>
+              run(async () => {
+                const result = await accountApi.devLogin({
+                  email: email.trim(),
+                  organization_id: orgId.trim() || undefined,
+                });
+                setStoredToken(result.access_token);
+                setEmail('');
+                setOrgId('');
+              })
+            }
+          >
+            登录
+          </Button>
+          <span className="text-xs text-muted-foreground">或粘贴令牌:</span>
+          <input
             aria-label="access token"
             type="password"
             placeholder="粘贴 IdP access token"
-            className="min-w-64 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm"
+            className="min-w-48 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm"
             value={token}
             onChange={(event) => setToken(event.target.value)}
           />
