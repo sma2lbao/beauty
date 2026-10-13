@@ -1,14 +1,17 @@
-"""连接业务逻辑:凭证只进不出;状态守卫与租户隔离同 orchestrator 约定。"""
+"""连接业务逻辑:凭证只进不出;状态守卫与租户隔离同 orchestrator 约定。
+
+数据访问经 `connector.repositories`(租户过滤/404 键名由仓储声明)。
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from common.errors import ConflictError, NotFoundError
-from sqlalchemy import select
+from common.errors import ConflictError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from connector.models.connections import Connection
+from connector.repositories import ConnectionRepository
 from connector.schemas.connections import ConnectionCreate, ConnectionStatus
 
 
@@ -16,18 +19,9 @@ async def require_connection(
     session: AsyncSession, tenant_id: str, connection_id: str
 ) -> Connection:
     """取租户内连接;不存在 → 404。"""
-    conn = await session.scalar(
-        select(Connection).where(
-            Connection.id == connection_id, Connection.tenant_id == tenant_id
-        )
+    return await ConnectionRepository(session).require_for_tenant(
+        tenant_id, connection_id
     )
-    if conn is None:
-        raise NotFoundError(
-            "connector.connection_not_found",
-            "连接不存在",
-            details={"connection_id": connection_id},
-        )
-    return conn
 
 
 def _require_active(conn: Connection) -> None:
@@ -52,18 +46,15 @@ async def require_active_connection(
 async def create_connection(
     session: AsyncSession, tenant_id: str, data: ConnectionCreate
 ) -> Connection:
-    dup = await session.scalar(
-        select(Connection).where(
-            Connection.tenant_id == tenant_id,
-            Connection.provider == data.provider,
-            Connection.account == data.account,
-        )
+    connections = ConnectionRepository(session)
+    duplicate = await connections.find_by_account(
+        tenant_id, provider=data.provider, account=data.account
     )
-    if dup is not None:
+    if duplicate is not None:
         raise ConflictError(
             "connector.connection_exists",
             "该账号连接已存在",
-            details={"connection_id": dup.id, "account": dup.account},
+            details={"connection_id": duplicate.id, "account": duplicate.account},
         )
     conn = Connection(
         tenant_id=tenant_id,
@@ -73,29 +64,24 @@ async def create_connection(
         status=ConnectionStatus.ACTIVE.value,
         credentials=data.credentials.model_dump(),
     )
-    session.add(conn)
-    await session.flush()
-    return conn
+    return await connections.add(conn)
 
 
 async def list_connections(session: AsyncSession, tenant_id: str) -> list[Connection]:
-    rows = await session.scalars(
-        select(Connection)
-        .where(Connection.tenant_id == tenant_id)
-        .order_by(Connection.created_at)
+    return await ConnectionRepository(session).list_scoped(
+        tenant_id, order_by=[Connection.created_at]
     )
-    return list(rows)
 
 
 async def revoke_connection(
     session: AsyncSession, tenant_id: str, connection_id: str
 ) -> Connection:
     """撤销而非物理删除:凭证与审计需要留痕(§8)。"""
-    conn = await require_connection(session, tenant_id, connection_id)
+    connections = ConnectionRepository(session)
+    conn = await connections.require_for_tenant(tenant_id, connection_id)
     _require_active(conn)
     conn.status = ConnectionStatus.REVOKED.value
-    await session.flush()
-    return conn
+    return await connections.add(conn)
 
 
 def mark_checked(conn: Connection) -> None:

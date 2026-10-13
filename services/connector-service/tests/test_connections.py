@@ -171,3 +171,12 @@ def test_send_email_rejects_non_ascii_recipient(client: TestClient) -> None:
         headers=TENANT,
     )
     assert resp.status_code == 422
+
+
+def test_connection_not_found_details_key(client) -> None:
+    """404 的 details 键名是 connection_id(由仓储 id_detail_key 声明,别改名)。"""
+    response = client.get("/v1/connections/nope", headers=TENANT)
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "connector.connection_not_found"
+    assert body["details"] == {"connection_id": "nope"}
