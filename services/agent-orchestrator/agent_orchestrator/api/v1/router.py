@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter
 
-from agent_orchestrator.api.v1 import runs
+from agent_orchestrator.api.v1 import outbox, runs
 
 api_router = APIRouter()
 api_router.include_router(runs.router)
+api_router.include_router(outbox.router)

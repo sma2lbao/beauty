@@ -274,3 +274,43 @@ async def test_is_processed_matches_mark_processed(factory) -> None:
         assert not await is_processed(
             session, tenant_id="t-1", consumer="other", event_id="e9"
         )
+
+
+async def test_ops_list_stats_and_requeue(factory) -> None:
+    """运维面:按状态列事件、计数、单个/批量重放(重放后 attempts 清零)。"""
+    async with session_scope(factory) as session:
+        repository = OutboxRepository(session)
+        ok = await repository.record("t-1", _envelope("run.completed.v1"))
+        await repository.mark_dispatched(ok)
+        broken = await repository.record("t-1", _envelope("run.delivered.v1"))
+        await repository.mark_failed(broken, "消费者挂了", max_attempts=1)
+        await repository.record("t-2", _envelope("run.delivered.v1"))
+
+    async with session_scope(factory) as session:
+        repository = OutboxRepository(session)
+        # 计数(可全局也可按租户)
+        assert await repository.stats() == {PENDING: 1, DISPATCHED: 1, FAILED: 1}
+        tenant_stats = await repository.stats(tenant_id="t-1")
+        assert tenant_stats[FAILED] == 1
+        assert tenant_stats[PENDING] == 0
+
+        # 列事件:按状态 + 按租户
+        failed = await repository.list_events(status=FAILED)
+        assert [event.id for event in failed] == [broken.id]
+        assert await repository.list_events(tenant_id="t-2") != []
+
+        # 单个重放:回 pending、attempts 清零、保留上次原因
+        await repository.requeue(failed[0])
+        assert failed[0].status == PENDING
+        assert failed[0].attempts == 0
+        assert failed[0].last_error == "消费者挂了"  # 原样保留上次失败原因
+
+    async with session_scope(factory) as session:
+        repository = OutboxRepository(session)
+        # 批量重放只影响 failed
+        assert await repository.requeue_failed() == 0  # 已无 failed
+        second = await repository.get_by_id(broken.id)
+        assert second is not None
+        await repository.mark_failed(second, "又挂了", max_attempts=1)
+        assert await repository.requeue_failed() == 1
+        assert await repository.stats() == {PENDING: 2, DISPATCHED: 1, FAILED: 0}

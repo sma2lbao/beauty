@@ -70,6 +70,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `filesystem`(正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;
   键按 `<租户>/<run>/<交付物>.md` 分层,拒绝目录穿越);对象丢失 → 500
   `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`;
+- outbox 运维面:`GET /outbox/events`(可按 `status` 过滤)、`GET /outbox/stats`、
+  `POST /outbox/events/{id}/retry`、`POST /outbox/retry-failed`——失败事件可见、
+  可人工重放(重放回 pending 并清零尝试数;下次投递成功才清 `last_error`);
+  端点**租户隔离**(平台级运维需要 admin scope,阶段 A 不做);未启用 outbox 时
+  返回 409 `outbox.disabled`,而不是空列表(免得把"没开"误读成"没事件");控制台页 `/outbox`;
 - 事务性 outbox(`OUTBOX_ENABLED=true`):run 事件与业务状态**同一事务**写入
   `outbox_events`,再由后台 dispatcher 至少一次投递(失败退避、超限落 `failed`
   留痕);`KNOWLEDGE_INGEST_ENABLED=true` 时挂上首个真实消费者

@@ -11,6 +11,7 @@ const navItems = [
   { to: '/runs', label: '控制台' },
   { to: '/knowledge', label: '知识库' },
   { to: '/workspace', label: '工作区' },
+  { to: '/outbox', label: '事件队列' },
   { to: '/settings', label: '账号' },
   { to: '/about', label: '关于' },
 ];

@@ -175,6 +175,66 @@ class OutboxRepository:
             or 0
         )
 
+    # ---- 运维面:可见 + 可人工重放 ----
+
+    async def list_events(
+        self,
+        *,
+        tenant_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[OutboxEvent]:
+        """按租户/状态列出事件(运维排查用);最新在前。"""
+        statement = select(OutboxEvent)
+        if tenant_id is not None:
+            statement = statement.where(OutboxEvent.tenant_id == tenant_id)
+        if status is not None:
+            statement = statement.where(OutboxEvent.status == status)
+        statement = (
+            statement.order_by(OutboxEvent.created_at.desc(), OutboxEvent.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
+
+    async def stats(self, *, tenant_id: str | None = None) -> dict[str, int]:
+        """各状态计数(控制台徽标/告警用)。"""
+        from sqlalchemy import func
+
+        statement = select(OutboxEvent.status, func.count()).group_by(
+            OutboxEvent.status
+        )
+        if tenant_id is not None:
+            statement = statement.where(OutboxEvent.tenant_id == tenant_id)
+        rows = await self.session.execute(statement)
+        counts = {PENDING: 0, DISPATCHED: 0, FAILED: 0}
+        for status_value, count in rows.all():
+            counts[str(status_value)] = int(count)
+        return counts
+
+    async def requeue(self, event: OutboxEvent) -> OutboxEvent:
+        """人工重放:回到 pending 并清零退避/尝试数,立即可被下一轮领取。
+
+        保留 `last_error`(重放成功时由 `mark_dispatched` 清掉),
+        这样运维能看到"上次为什么失败",而不是重放后线索被抹掉。
+        """
+        event.status = PENDING
+        event.attempts = 0
+        event.available_at = datetime.now(UTC)
+        event.dispatched_at = None
+        await self.session.flush()
+        return event
+
+    async def requeue_failed(
+        self, *, tenant_id: str | None = None, limit: int = 100
+    ) -> int:
+        """批量重放 failed 事件,返回重放条数。"""
+        events = await self.list_events(tenant_id=tenant_id, status=FAILED, limit=limit)
+        for event in events:
+            await self.requeue(event)
+        return len(events)
+
 
 @dataclass(frozen=True, slots=True)
 class DispatchStats:

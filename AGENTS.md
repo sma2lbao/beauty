@@ -96,7 +96,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 
 - **TypeScript**:`strict: true`、ESM、`nodenext` 模块解析、target es2022(根 `tsconfig.base.json`);Prettier 单引号(根 `.prettierrc`);ESLint 9 flat config 统一于 `tools/eslint-config`,格式交给 Prettier、ESLint 只管质量。
 - **包命名**:JS 包统一 `@beauty/<目录名>` 作用域(根包 `@beauty/source`);应用目录名不带 `beauty-` 前缀;Python 共享库实名命名(`common`/`database`/`events`/`agent-kit`…),不用 `py-` 前缀,并避开 stdlib 与主流库的顶层名(如 `agents`、`platform`)。
-- **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。Vite dev 把 `/api`→agent-orchestrator(`:8002`)、`/knowledge-api`→knowledge-service(`:8006`)、`/account-api`→account-service(`:8001`)、`/workspace-api`→workspace-service(`:8005`),所以本地联调先起对应服务;控制台:`/runs`(run 编排,`src/lib/runs-api.ts`)、`/knowledge`(知识库入库/清单/检索预览,`src/lib/knowledge-api.ts`)、`/settings`(组织/成员/会话,`src/lib/account-api.ts`)、`/workspace`(工作区/交付物浏览,`src/lib/workspace-api.ts`);各控制台共用 `src/lib/http.ts`(统一错误契约 + 请求封装)。鉴权统一走 `src/lib/auth.ts`(`VITE_AUTH_MODE=dev|token|logto`,配置见 `apps/web/.env.example`):后端 `AUTH_ENABLED=true` 时用 `token`(粘贴 token)或 `logto`(SDK 登录)。
+- **`apps/web`**:路径别名 `@` → `src/`(`vite.config.ts`);shadcn/ui 组件源码直接放在 `src/components/ui`。Vite dev 把 `/api`→agent-orchestrator(`:8002`)、`/knowledge-api`→knowledge-service(`:8006`)、`/account-api`→account-service(`:8001`)、`/workspace-api`→workspace-service(`:8005`),所以本地联调先起对应服务;控制台:`/runs`(run 编排,`src/lib/runs-api.ts`)、`/knowledge`(知识库入库/清单/检索预览,`src/lib/knowledge-api.ts`)、`/settings`(组织/成员/会话,`src/lib/account-api.ts`)、`/workspace`(工作区/交付物浏览,`src/lib/workspace-api.ts`)、`/outbox`(事件队列运维:计数/过滤/人工重放,`src/lib/outbox-api.ts`,同源走 `/api`);各控制台共用 `src/lib/http.ts`(统一错误契约 + 请求封装)。鉴权统一走 `src/lib/auth.ts`(`VITE_AUTH_MODE=dev|token|logto`,配置见 `apps/web/.env.example`):后端 `AUTH_ENABLED=true` 时用 `token`(粘贴 token)或 `logto`(SDK 登录)。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
 - **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
 
@@ -113,7 +113,8 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 - **跨服务事件走 outbox**:`events.outbox` 保证"状态改了事件一定发、事务回滚事件一定不发"——
   投递是**至少一次**,消费方必须用 `events.outbox.mark_processed` 按事件 id 去重;
   失败按 `backoff_seconds` 退避,超 `max_attempts` 落 `failed` 留痕(不静默丢)。
-  orchestrator 侧开关:`OUTBOX_ENABLED`(记录+dispatcher)与 `KNOWLEDGE_INGEST_ENABLED`(交付物自动入库)。
+  orchestrator 侧开关:`OUTBOX_ENABLED`(记录+dispatcher)与 `KNOWLEDGE_INGEST_ENABLED`(交付物自动入库);
+  运维面 `/api/v1/outbox/*`(列表/计数/单条重放/批量重放,租户隔离;未启用时 409 `outbox.disabled`)。
 - **Postgres 集成测试需要 Docker 或现成实例**:`packages/database/tests/test_postgres_integration.py`
   优先读 `TEST_POSTGRES_URL`,否则用 testcontainers 起 `postgres:16-alpine`;两者都不可用时**整体 skip 并打印原因**
   (沙箱里即如此)。
