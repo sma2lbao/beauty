@@ -22,3 +22,11 @@ class Settings(BaseAppSettings):
     auth_audience: str | None = None
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"
+    # dev IdP 桩(core/dev_idp.py):开桩后本服务兼作签发方,登录端点 +
+    # OIDC 发现/JWKS 端点可用;阶段 B 换 Logto 时各服务只改 AUTH_ISSUER
+    dev_auth_enabled: bool = False
+    dev_token_ttl_seconds: int = 3600
+    dev_token_audience: str = "beauty-api"
+    # 内部服务签发密钥(POST /v1/auth/issue 的 X-Internal-Secret):
+    # 与服务间调用方(orchestrator)的 INTERNAL_AUTH_SECRET 一致;留空即关闭该端点
+    dev_internal_secret: str = ""
