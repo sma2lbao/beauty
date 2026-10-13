@@ -18,7 +18,7 @@
 | `services/llm-gateway` | `llm-gateway` | Python 服务 | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                   |
 | `services/connector-service` | `connector-service` | Python 服务 | FastAPI + uvicorn(:8004):外部系统连接器(邮件优先,IMAP 授权码)与凭证管理           |
 | `services/knowledge-service` | `knowledge-service` | Python 服务 | FastAPI + uvicorn(:8006):文档知识库(分块/嵌入/检索;嵌入提供方可插拔)             |
-| `services/account-service` | `account-service` | Python 服务 | FastAPI + uvicorn(:8001):用户/组织/配额/套餐 + sessions/devices(认证交给 IdP)      |
+| `services/account-service` | `account-service` | Python 服务 | FastAPI + uvicorn(:8001):用户/组织/配额/套餐 + sessions/devices(认证交给 IdP;阶段 A 内置 dev IdP 桩,`DEV_AUTH_ENABLED=true` 时提供 dev 登录与内部签发/OIDC 发现/JWKS,见其 README)      |
 | `services/workspace-service` | `workspace-service` | Python 服务 | FastAPI + uvicorn(:8005):工作区/交付物元数据/对象存储(沙箱生命周期阶段 B)       |
 | `tools/eslint-config` | `@beauty/eslint-config` | 共享工具包   | ESLint 9 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                       |
 

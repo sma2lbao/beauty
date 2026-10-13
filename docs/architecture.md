@@ -201,7 +201,13 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - `/api/v1` 是产品公共契约(未来 app 同套):版本化、分页/错误约定统一(错误统一渲染 `{"code","message","details"}`,见 `packages/common`);
 - SSE:网关透传(禁缓冲)+ Last-Event-ID 重放;durable run 天然支持换设备续看进度;
 - 信息架构:**画布 + 过程时间线 + artifacts 面板**,计划是画布上可编辑的文档(反聊天刷屏);
-- IdP:**Logto** 自托管(同时支持国内短信/社交登录与 Google/Apple,覆盖将来 iOS app)。
+- IdP:**Logto** 自托管(同时支持国内短信/社交登录与 Google/Apple,覆盖将来 iOS app);
+- **阶段 A 的登录替身(dev IdP 桩,`DEV_AUTH_ENABLED`)**:Logto 接入前,
+  account-service 内置 dev 签发——`POST /v1/auth/login`(声明 email 即登录,
+  幂等建档 + 会话登记)+ 内部签发 `POST /v1/auth/issue`(共享密钥换目标租户
+  token,供 orchestrator 的服务间调用)+ OIDC 发现/JWKS 端点;各服务用**同一个**
+  `JwtVerifier` 验签,不设后门;**换 Logto 时各服务只改 `AUTH_ISSUER`**,
+  服务代码零改动(桩不落任何生产依赖)。
 
 ## 12. 工程约定
 
