@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
@@ -35,10 +36,12 @@ class WorkspaceClient:
         base_url: str,
         timeout_seconds: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        token_provider: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url, timeout=timeout_seconds, transport=transport
         )
+        self._token_provider = token_provider
 
     async def create_artifact(
         self,
@@ -50,11 +53,14 @@ class WorkspaceClient:
         run_id: str | None = None,
     ) -> dict[str, Any]:
         payload = {"title": title, "kind": kind, "content": content, "run_id": run_id}
+        headers = {"X-Tenant-Id": tenant_id}
+        if self._token_provider is not None:
+            headers["Authorization"] = f"Bearer {await self._token_provider(tenant_id)}"
         try:
             response = await self._client.post(
                 "/v1/artifacts",
                 json=payload,
-                headers={"X-Tenant-Id": tenant_id},
+                headers=headers,
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(

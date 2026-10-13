@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
@@ -39,17 +40,26 @@ class ConnectorClient:
         base_url: str,
         timeout_seconds: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        token_provider: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url, timeout=timeout_seconds, transport=transport
         )
+        self._token_provider = token_provider
+
+    async def _headers(self, tenant_id: str) -> dict[str, str]:
+        """租户头 + 可选服务间 token(下游开鉴权时由 TokenBroker 注入)。"""
+        headers = {"X-Tenant-Id": tenant_id}
+        if self._token_provider is not None:
+            headers["Authorization"] = f"Bearer {await self._token_provider(tenant_id)}"
+        return headers
 
     async def _get(
         self, path: str, tenant_id: str, params: dict[str, Any] | None = None
     ) -> Any:
         try:
             resp = await self._client.get(
-                path, params=params, headers={"X-Tenant-Id": tenant_id}
+                path, params=params, headers=await self._headers(tenant_id)
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
@@ -91,7 +101,7 @@ class ConnectorClient:
             resp = await self._client.post(
                 f"/v1/connections/{connection_id}/emails",
                 json=payload,
-                headers={"X-Tenant-Id": tenant_id},
+                headers=await self._headers(tenant_id),
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(

@@ -7,7 +7,7 @@ Nx(仓库根):npx nx run agent-orchestrator:serve
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from functools import partial
 
@@ -39,6 +39,7 @@ from agent_orchestrator.services.outbox import (
     record_run_event,
     register_consumers,
 )
+from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
 
@@ -72,9 +73,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
     connector: ConnectorClient | None = None
     knowledge: KnowledgeClient | None = None
+    # 服务间 token(§5):下游开鉴权后,内部调用经 TokenBroker 换标准 JWT
+    # (与用户面同一 JwtVerifier,无后门);secret 留空即内部裸调(旧模式)
+    token_provider: Callable[[str], Awaitable[str]] | None = None
+    broker: TokenBroker | None = None
+    if settings.internal_auth_secret:
+        broker = TokenBroker(
+            base_url=settings.auth_issuer,  # dev 桩:签发方即 account-service
+            internal_secret=settings.internal_auth_secret,
+        )
+        token_provider = broker.token
     if toolkit_factory is None and settings.tools_enabled:
         connector = ConnectorClient(
-            settings.connector_service_url, settings.tool_timeout_seconds
+            settings.connector_service_url,
+            settings.tool_timeout_seconds,
+            token_provider=token_provider,
         )
         documents = (
             DocumentLibrary(settings.documents_root, settings.documents_max_bytes)
@@ -88,7 +101,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         knowledge = (
             KnowledgeClient(
-                settings.knowledge_service_url, settings.knowledge_timeout_seconds
+                settings.knowledge_service_url,
+                settings.knowledge_timeout_seconds,
+                token_provider=token_provider,
             )
             if settings.knowledge_enabled
             else None
@@ -118,7 +133,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     workspace: WorkspaceClient | None = app.state.workspace_client
     if workspace is None and settings.workspace_enabled:
         workspace = WorkspaceClient(
-            settings.workspace_service_url, settings.workspace_timeout_seconds
+            settings.workspace_service_url,
+            settings.workspace_timeout_seconds,
+            token_provider=token_provider,
         )
     app.state.workspace_client = workspace
 
@@ -142,7 +159,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         recorder = record_run_event
         if settings.knowledge_ingest_enabled:
             ingest_knowledge = KnowledgeClient(
-                settings.knowledge_service_url, settings.knowledge_timeout_seconds
+                settings.knowledge_service_url,
+                settings.knowledge_timeout_seconds,
+                token_provider=token_provider,
             )
             consumers = register_consumers(
                 bus,
@@ -205,6 +224,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await connector.aclose()
         if knowledge is not None:
             await knowledge.aclose()
+        if broker is not None:
+            await broker.aclose()
         await factory.engine.dispose()
 
 

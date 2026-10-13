@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
@@ -41,10 +42,12 @@ class KnowledgeClient:
         base_url: str,
         timeout_seconds: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        token_provider: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url, timeout=timeout_seconds, transport=transport
         )
+        self._token_provider = token_provider
 
     async def search(self, tenant_id: str, query: str, limit: int) -> dict[str, Any]:
         return await self._request(
@@ -91,8 +94,13 @@ class KnowledgeClient:
         expected: int = 200,
     ) -> Any:
         try:
+            headers = {"X-Tenant-Id": tenant_id}
+            if self._token_provider is not None:
+                headers["Authorization"] = (
+                    f"Bearer {await self._token_provider(tenant_id)}"
+                )
             response = await self._client.request(
-                method, path, json=json, headers={"X-Tenant-Id": tenant_id}
+                method, path, json=json, headers=headers
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
