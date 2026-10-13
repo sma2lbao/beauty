@@ -186,7 +186,11 @@ class TenantRepository(Repository[EntityT]):
 
     async def delete_all_for_tenant(self, tenant_id: str) -> int:
         """清空该租户的数据(如删除文档时连带清分块),返回删除行数。"""
+        return await self.delete_where(tenant_id)
+
+    async def delete_where(self, tenant_id: str, *criteria: ColumnElement[bool]) -> int:
+        """按条件批量删除(连带子表等),返回删除行数;条件之外恒定带租户过滤。"""
         result = await self.session.execute(
-            delete(self.model).where(self.model.tenant_id == tenant_id)
+            delete(self.model).where(self.model.tenant_id == tenant_id, *criteria)
         )
         return int(result.rowcount or 0)

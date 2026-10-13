@@ -114,3 +114,12 @@ def test_accepts_run_scoped_source(client: TestClient) -> None:
     )
     assert created.status_code == 201
     assert created.json()["source"] == source
+
+
+def test_document_not_found_details_key(client: TestClient) -> None:
+    """404 的 details 键名是 document_id(由仓储 id_detail_key 声明,别改名)。"""
+    response = client.get("/v1/knowledge/documents/nope", headers=TENANT)
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "knowledge.document_not_found"
+    assert body["details"] == {"document_id": "nope"}

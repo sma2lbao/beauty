@@ -59,5 +59,9 @@ TEST_POSTGRES_URL=postgresql+asyncpg://beauty:beauty@localhost:5432/beauty npx n
 
 ## 迁移进度
 
-已收敛:account-service、workspace-service。待收敛:agent-orchestrator
-(事件溯源查询较多)、knowledge-service(分块 join)、connector-service。
+**全部服务已收敛**(account / workspace / knowledge / connector /
+agent-orchestrator):业务层不再出现裸 `select`,租户过滤与 404 语义统一由仓储声明。
+
+例外与边界:复杂查询(如知识库的"分块 join 文档"、orchestrator 的 seq 取号与
+事件回放)以**显式命名方法**留在各自仓储里(`searchable_rows`/`next_seq`/
+`list_for_run`),而不是把 SQL 藏进通用抽象——可读、可审计、可单独测。
