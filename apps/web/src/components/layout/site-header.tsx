@@ -2,6 +2,7 @@ import { Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink } from 'react-router';
 
+import { BrandLogo } from '@/components/brand/logo';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -34,17 +35,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-6">
-        <Link to="/" className="flex items-center gap-2">
-          {/* 官方图标(自带夜空底):深浅主题下对比都成立 */}
-          <img
-            src="/logo-icon.svg"
-            alt=""
-            aria-hidden="true"
-            className="h-7 w-7"
-          />
-          <span className="font-display text-lg font-semibold tracking-tight">
-            beauty moon
-          </span>
+        <Link to="/" aria-label="beauty moon 首页">
+          <BrandLogo />
         </Link>
 
         <nav className="flex items-center gap-1 sm:gap-2">

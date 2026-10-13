@@ -29,8 +29,9 @@ describe('NotFoundPage', () => {
     );
   });
 
-  it('使用官方 mark 作为品牌装饰(不再用 CSS 画的圆盘)', () => {
+  it('使用内联的品牌 mark(官方几何,不再用 CSS 画的圆盘)', () => {
     renderPage();
-    expect(document.querySelector('img[src="/logo-mark.svg"]')).not.toBeNull();
+    // 装饰性:不给可访问名,避免与正文重复播报
+    expect(document.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
   });
 });

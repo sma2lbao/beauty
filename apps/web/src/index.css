@@ -15,6 +15,19 @@
     Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
 }
 
+/*
+  品牌变量(logo 用):官方 mark 允许单色场景把月面改成当前主题色平涂——
+  亮色下取品牌暖玫瑰(米色月面在浅底对比不足),暗色下取官方月光米 #FFEFC6。
+  字标里的月相圆盘与标识共用同一个颜色,让"月"在标识与文字间形成呼应。
+*/
+:root {
+  --logo-moon: oklch(0.62 0.14 15);
+}
+
+.dark {
+  --logo-moon: #ffefc6;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

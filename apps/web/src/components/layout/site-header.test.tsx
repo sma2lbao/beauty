@@ -15,9 +15,15 @@ function renderHeader(initialEntry = '/') {
 describe('SiteHeader', () => {
   it('渲染品牌与导航链接', () => {
     renderHeader();
-    expect(screen.getByText('beauty moon')).toBeInTheDocument();
-    // 品牌图标用官方 mark(自带夜空底,深浅主题都有对比)
-    expect(document.querySelector('img[src="/logo-icon.svg"]')).not.toBeNull();
+    // 字标按一个图形对象播报 beauty moon;可见字母里 moon 的两个 o 是月相圆盘
+    expect(screen.getByRole('img', { name: 'beauty moon' })).toBeInTheDocument();
+    expect(screen.getByText('beauty m')).toBeInTheDocument();
+    expect(screen.getByText('n')).toBeInTheDocument();
+    // 小尺寸用官方 favicon 几何的夜空底 chip(内联 SVG,非外部图片)
+    expect(document.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(
+      screen.getByRole('link', { name: 'beauty moon 首页' }),
+    ).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: '对话' })).toHaveAttribute(
       'href',
       '/',

@@ -1,16 +1,12 @@
 import { Link } from 'react-router';
 
+import { BrandMark } from '@/components/brand/logo';
 import { Button } from '@/components/ui/button';
 
 export function NotFoundPage() {
   return (
     <section className="mx-auto flex max-w-2xl flex-col items-center gap-6 px-6 py-24 text-center">
-      <img
-        src="/logo-mark.svg"
-        alt=""
-        aria-hidden="true"
-        className="w-24"
-      />
+      <BrandMark decorative className="w-24" />
       <h1 className="font-display text-3xl">这个页面不在清单里</h1>
       <p className="text-muted-foreground">
         地址可能拼错了,或者这个页面还没做。
