@@ -22,7 +22,7 @@ from common.logging import get_logger
 from database.session import session_scope
 from events.bus import EventBus
 from events.envelope import EventEnvelope
-from events.outbox import OutboxRepository, mark_processed
+from events.outbox import OutboxRepository, is_processed, mark_processed
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.models.runs import Run
@@ -106,18 +106,13 @@ class KnowledgeIngestConsumer:
         )
 
     async def _already_processed(self, tenant_id: str, event_id: str) -> bool:
-        from events.outbox import ProcessedEvent
-        from sqlalchemy import select
-
         async with session_scope(self._factory) as session:
-            found = await session.scalar(
-                select(ProcessedEvent.id).where(
-                    ProcessedEvent.tenant_id == tenant_id,
-                    ProcessedEvent.consumer == self.name,
-                    ProcessedEvent.event_id == event_id,
-                )
+            return await is_processed(
+                session,
+                tenant_id=tenant_id,
+                consumer=self.name,
+                event_id=event_id,
             )
-        return found is not None
 
     async def _already_ingested(self, tenant_id: str, run_id: str) -> bool:
         documents = await self._knowledge.list_documents(

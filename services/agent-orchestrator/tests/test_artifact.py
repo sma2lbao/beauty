@@ -78,3 +78,22 @@ def test_failed_run_has_no_artifact(tmp_path) -> None:
         )
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
         assert "run.delivered.v1" not in [e["type"] for e in events]
+
+
+def test_artifact_not_found_details_uses_run_id(client: TestClient) -> None:
+    """未交付时取件的 404 details 用 run_id(入口是 run;由仓储声明)。"""
+    run_id = _create_run(client)
+    response = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT)
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "artifact.not_found"
+    assert body["details"] == {"run_id": run_id}
+
+
+def test_run_not_found_details_key(client: TestClient) -> None:
+    """run 404 的 details 键名是 run_id(由仓储 id_detail_key 声明,别改名)。"""
+    response = client.get("/api/v1/runs/nope", headers=TENANT)
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "run.not_found"
+    assert body["details"] == {"run_id": "nope"}

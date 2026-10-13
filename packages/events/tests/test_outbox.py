@@ -20,6 +20,7 @@ from events.outbox import (
     OutboxDispatcher,
     OutboxRepository,
     ProcessedEvent,
+    is_processed,
     mark_processed,
 )
 
@@ -260,3 +261,16 @@ async def test_handler_runs_outside_outbox_transaction(factory) -> None:
             )
         )
         assert len(rows) == 1  # 处理器的写入确实落库了
+
+
+async def test_is_processed_matches_mark_processed(factory) -> None:
+    """查与标记配对:未处理 → False;标记后 → True;别的消费者不受影响。"""
+    async with session_scope(factory) as session:
+        assert not await is_processed(
+            session, tenant_id="t-1", consumer="c", event_id="e9"
+        )
+        await mark_processed(session, tenant_id="t-1", consumer="c", event_id="e9")
+        assert await is_processed(session, tenant_id="t-1", consumer="c", event_id="e9")
+        assert not await is_processed(
+            session, tenant_id="t-1", consumer="other", event_id="e9"
+        )

@@ -20,6 +20,7 @@ from events.outbox import (
     OutboxEvent,
     OutboxRepository,
     ProcessedEvent,
+    is_processed,
     mark_processed,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "OutboxEvent",
     "OutboxRepository",
     "ProcessedEvent",
+    "is_processed",
     "mark_processed",
 ]

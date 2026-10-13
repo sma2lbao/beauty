@@ -108,7 +108,8 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 - **数据访问走仓储**:业务查询经 `database.repository`(`TenantRepository` 自动带 tenant_id、
   跨租户一律 404 不泄漏存在性、404 的 details 键名由 `id_detail_key` 声明以保持各服务既有契约);
   **仓储不提交**——事务边界只由 `session_scope`(HTTP 一请求一事务)或 `UnitOfWork`(脚本/worker/测试)负责。
-  已收敛:account-service、workspace-service;其余服务逐步迁移(见 `packages/database/README.md`)。
+  **全部服务已收敛**;复杂查询以显式命名方法留在各自仓储(如知识库 `searchable_rows`、
+  orchestrator `next_seq`/`list_for_run`),不藏进通用抽象。
 - **跨服务事件走 outbox**:`events.outbox` 保证"状态改了事件一定发、事务回滚事件一定不发"——
   投递是**至少一次**,消费方必须用 `events.outbox.mark_processed` 按事件 id 去重;
   失败按 `backoff_seconds` 退避,超 `max_attempts` 落 `failed` 留痕(不静默丢)。

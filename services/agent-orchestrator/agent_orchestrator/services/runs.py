@@ -15,11 +15,10 @@ from __future__ import annotations
 from typing import Any
 
 from common.artifacts import ArtifactStore
-from common.errors import ConflictError, NotFoundError
+from common.errors import ConflictError
 from events.envelope import EventEnvelope
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.models.runs import (
@@ -27,6 +26,13 @@ from agent_orchestrator.models.runs import (
     Run,
     RunArtifact,
     RunEvent,
+)
+from agent_orchestrator.repositories import (
+    TOOL_CALLED_EVENT,
+    ArtifactRepository,
+    InstructionRepository,
+    RunEventRepository,
+    RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.services import artifacts
@@ -38,20 +44,17 @@ async def append_event(
 ) -> RunEvent:
     """追加 run 事件:seq 每 run 单调递增;信封负责命名/版本校验(§6.3)。"""
     env = EventEnvelope.create(type_, payload)
-    current_max = await session.scalar(
-        select(func.max(RunEvent.seq)).where(RunEvent.run_id == run.id)
-    )
+    events = RunEventRepository(session)
     event = RunEvent(
         id=env.id,
         tenant_id=run.tenant_id,
         run_id=run.id,
-        seq=(current_max or 0) + 1,
+        seq=await events.next_seq(run.id),
         type=env.type,
         payload=env.payload,
         occurred_at=env.occurred_at,
     )
-    session.add(event)
-    await session.flush()
+    await events.add(event)
     # 事务性 outbox(§6.3):与 run_events 同事务登记待投递事件;
     # recorder 由 API 层挂在 session.info 上(见 api/deps.get_session)
     recorder = session.info.get("outbox")
@@ -67,12 +70,7 @@ def _config(run: Run) -> dict[str, Any]:
 
 async def require_run(session: AsyncSession, tenant_id: str, run_id: str) -> Run:
     """取租户内 run;不存在 → NotFoundError(404)。"""
-    run = await session.scalar(
-        select(Run).where(Run.id == run_id, Run.tenant_id == tenant_id)
-    )
-    if run is None:
-        raise NotFoundError("run.not_found", "run 不存在", details={"run_id": run_id})
-    return run
+    return await RunRepository(session).require_for_tenant(tenant_id, run_id)
 
 
 def _require_status(run: Run, *allowed: RunStatus) -> None:
@@ -147,15 +145,7 @@ async def get_artifact(
     store: ArtifactStore | None = None,
 ) -> artifacts.ArtifactView:
     """取件:未交付(未 completed)→ 404;内容按存储后端装载(§7 阶段 B)。"""
-    row = await session.scalar(
-        select(RunArtifact).where(
-            RunArtifact.run_id == run_id, RunArtifact.tenant_id == tenant_id
-        )
-    )
-    if row is None:
-        raise NotFoundError(
-            "artifact.not_found", "交付物不存在", details={"run_id": run_id}
-        )
+    row = await ArtifactRepository(session).require_for_run(tenant_id, run_id)
     return await artifacts.read_artifact(row, store)
 
 
@@ -173,8 +163,7 @@ async def queue_instruction(
     instruction = PendingInstruction(
         tenant_id=tenant_id, run_id=run.id, content=content, status="queued"
     )
-    session.add(instruction)
-    await session.flush()
+    await InstructionRepository(session).add(instruction)
     await append_event(
         session,
         run,
@@ -189,29 +178,14 @@ async def list_instructions(
 ) -> list[PendingInstruction]:
     """该 run 的指令队列(queued/consumed 都返回,控制台据此展示)。"""
     await require_run(session, tenant_id, run_id)  # 404 校验 + 租户隔离
-    rows = await session.scalars(
-        select(PendingInstruction)
-        .where(
-            PendingInstruction.run_id == run_id,
-            PendingInstruction.tenant_id == tenant_id,
-        )
-        .order_by(PendingInstruction.created_at)
-    )
-    return list(rows)
+    return await InstructionRepository(session).list_for_run(tenant_id, run_id)
 
 
 async def _consume_instructions(session: AsyncSession, run: Run) -> list[str]:
     """消费排队指令(§6.5):标记 consumed + 落事件,返回内容供并入图状态。"""
-    rows = await session.scalars(
-        select(PendingInstruction)
-        .where(
-            PendingInstruction.run_id == run.id,
-            PendingInstruction.status == "queued",
-        )
-        .order_by(PendingInstruction.created_at)
-    )
+    queued = await InstructionRepository(session).list_queued(run.tenant_id, run.id)
     contents: list[str] = []
-    for instruction in list(rows):
+    for instruction in queued:
         instruction.status = "consumed"
         contents.append(instruction.content)
         await append_event(
@@ -233,8 +207,7 @@ async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> 
         status=RunStatus.PENDING.value,
         acceptance_criteria=data.acceptance_criteria,
     )
-    session.add(run)
-    await session.flush()
+    await RunRepository(session).add(run)
     await append_event(session, run, "run.created.v1", {"title": run.title})
     return run
 
@@ -243,13 +216,7 @@ async def list_runs(
     session: AsyncSession, tenant_id: str, limit: int = 50
 ) -> list[Run]:
     """租户内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。"""
-    rows = await session.scalars(
-        select(Run)
-        .where(Run.tenant_id == tenant_id)
-        .order_by(Run.created_at.desc(), Run.id.desc())
-        .limit(limit)
-    )
-    return list(rows)
+    return await RunRepository(session).list_recent(tenant_id, limit)
 
 
 async def _invoke_plan(
@@ -321,11 +288,7 @@ async def _apply_graph_result(
     历史累积记录——按已落库条数只发增量,避免事件重复。
     """
     records = values.get("tool_calls") or []
-    emitted = await session.scalar(
-        select(func.count())
-        .select_from(RunEvent)
-        .where(RunEvent.run_id == run.id, RunEvent.type == "run.tool.called.v1")
-    )
+    emitted = await RunEventRepository(session).count_of_type(run.id, TOOL_CALLED_EVENT)
     for record in records[emitted or 0 :]:
         await append_event(session, run, "run.tool.called.v1", record)
     if values.get("__interrupt__"):
@@ -491,8 +454,7 @@ async def retry_run(
         plan_markdown=parent.plan_markdown,
         parent_run_id=parent.id,
     )
-    session.add(child)
-    await session.flush()
+    await RunRepository(session).add(child)
     await append_event(
         session,
         child,
@@ -530,13 +492,6 @@ async def list_events(
     session: AsyncSession, tenant_id: str, run_id: str, after: int = 0
 ) -> list[RunEvent]:
     """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。"""
-    rows = await session.scalars(
-        select(RunEvent)
-        .where(
-            RunEvent.run_id == run_id,
-            RunEvent.tenant_id == tenant_id,
-            RunEvent.seq > after,
-        )
-        .order_by(RunEvent.seq)
+    return await RunEventRepository(session).list_for_run(
+        tenant_id, run_id, after=after
     )
-    return list(rows)

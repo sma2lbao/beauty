@@ -275,6 +275,24 @@ class OutboxDispatcher:
                 continue
 
 
+async def is_processed(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    consumer: str,
+    event_id: str,
+) -> bool:
+    """该事件是否已被这个消费者处理过(与 `mark_processed` 配对,消费方先查后做)。"""
+    found = await session.scalar(
+        select(ProcessedEvent.id).where(
+            ProcessedEvent.tenant_id == tenant_id,
+            ProcessedEvent.consumer == consumer,
+            ProcessedEvent.event_id == event_id,
+        )
+    )
+    return found is not None
+
+
 async def mark_processed(
     session: AsyncSession,
     *,
