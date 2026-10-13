@@ -30,7 +30,7 @@ describe('App 路由', () => {
   it('/products 已下线(渲染 404)', () => {
     renderApp('/products');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '这一页还在夜色里',
+      '这个页面不在清单里',
     );
   });
 
@@ -44,7 +44,7 @@ describe('App 路由', () => {
   it('未知路由渲染 404', () => {
     renderApp('/no-such-page');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '这一页还在夜色里',
+      '这个页面不在清单里',
     );
   });
 
