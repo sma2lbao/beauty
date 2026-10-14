@@ -7,7 +7,7 @@ Nx(仓库根):npx nx run agent-orchestrator:serve
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from functools import partial
 
@@ -73,16 +73,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
     connector: ConnectorClient | None = None
     knowledge: KnowledgeClient | None = None
-    # 服务间 token(§5):下游开鉴权后,内部调用经 TokenBroker 换标准 JWT
-    # (与用户面同一 JwtVerifier,无后门);secret 留空即内部裸调(旧模式)
-    token_provider: Callable[[str], Awaitable[str]] | None = None
-    broker: TokenBroker | None = None
-    if settings.internal_auth_secret:
-        broker = TokenBroker(
-            base_url=settings.auth_issuer,  # dev 桩:签发方即 account-service
-            internal_secret=settings.internal_auth_secret,
-        )
-        token_provider = broker.token
+    # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
+    # 签名 claim,不再有 X-Tenant-Id 裸调路径;密钥未配置时在换发处明确报错
+    broker = TokenBroker(
+        base_url=settings.auth_issuer,  # 签发方即 account-service
+        internal_secret=settings.internal_auth_secret,
+    )
+    token_provider = broker.token
     if toolkit_factory is None and settings.tools_enabled:
         connector = ConnectorClient(
             settings.connector_service_url,
@@ -224,8 +221,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await connector.aclose()
         if knowledge is not None:
             await knowledge.aclose()
-        if broker is not None:
-            await broker.aclose()
+        await broker.aclose()
         await factory.engine.dispose()
 
 

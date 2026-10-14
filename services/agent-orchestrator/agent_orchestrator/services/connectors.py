@@ -33,14 +33,15 @@ class Connector(Protocol):
 
 
 class ConnectorClient:
-    """connector-service HTTP 客户端:租户经 X-Tenant-Id 头传递。"""
+    """connector-service HTTP 客户端:服务间 Bearer,租户在 token claim 里。"""
 
     def __init__(
         self,
         base_url: str,
         timeout_seconds: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
-        token_provider: Callable[[str], Awaitable[str]] | None = None,
+        *,
+        token_provider: Callable[[str], Awaitable[str]],
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url, timeout=timeout_seconds, transport=transport
@@ -48,11 +49,8 @@ class ConnectorClient:
         self._token_provider = token_provider
 
     async def _headers(self, tenant_id: str) -> dict[str, str]:
-        """租户头 + 可选服务间 token(下游开鉴权时由 TokenBroker 注入)。"""
-        headers = {"X-Tenant-Id": tenant_id}
-        if self._token_provider is not None:
-            headers["Authorization"] = f"Bearer {await self._token_provider(tenant_id)}"
-        return headers
+        """服务间 Bearer token(租户在 claim 里,由 TokenBroker 签发)。"""
+        return {"Authorization": f"Bearer {await self._token_provider(tenant_id)}"}
 
     async def _get(
         self, path: str, tenant_id: str, params: dict[str, Any] | None = None

@@ -29,14 +29,15 @@ class Workspace(Protocol):
 
 
 class WorkspaceClient:
-    """workspace-service HTTP 客户端(租户经 X-Tenant-Id 头传递)。"""
+    """workspace-service HTTP 客户端:服务间 Bearer,租户在 token claim 里。"""
 
     def __init__(
         self,
         base_url: str,
         timeout_seconds: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
-        token_provider: Callable[[str], Awaitable[str]] | None = None,
+        *,
+        token_provider: Callable[[str], Awaitable[str]],
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url, timeout=timeout_seconds, transport=transport
@@ -53,9 +54,7 @@ class WorkspaceClient:
         run_id: str | None = None,
     ) -> dict[str, Any]:
         payload = {"title": title, "kind": kind, "content": content, "run_id": run_id}
-        headers = {"X-Tenant-Id": tenant_id}
-        if self._token_provider is not None:
-            headers["Authorization"] = f"Bearer {await self._token_provider(tenant_id)}"
+        headers = {"Authorization": f"Bearer {await self._token_provider(tenant_id)}"}
         try:
             response = await self._client.post(
                 "/v1/artifacts",

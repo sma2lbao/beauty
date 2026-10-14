@@ -62,6 +62,7 @@ class Settings(BaseAppSettings):
     auth_audience: str | None = None
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
     auth_tenant_claim: str = "tenant_id"
-    # 服务间调用(§5):下游开鉴权后,经 account 的内部 issue 端点换租户
-    # token(与 ACCOUNT__INTERNAL_SECRET 一致);留空即裸调(旧模式)
+    # 服务间调用(§5):一律经 account 的内部 issue 端点换租户 token——
+    # 租户来自签名 claim,不再有 X-Tenant-Id 裸调路径;
+    # 必须与 account 的 ACCOUNT__INTERNAL_SECRET 一致,未配置时调用下游即报错
     internal_auth_secret: str = ""

@@ -64,8 +64,21 @@ async def test_broker_maps_upstream_error() -> None:
     await broker.aclose()
 
 
-async def test_connector_client_injects_bearer() -> None:
-    """注入:装配 token_provider 后,下游请求同时带租户头与 Bearer。"""
+async def test_broker_requires_internal_secret() -> None:
+    """未配置内部密钥:换发处即报错,不做无鉴权裸调。"""
+    broker = TokenBroker(
+        base_url="http://account.local",
+        internal_secret="",
+        transport=httpx.MockTransport(lambda _: httpx.Response(500)),
+    )
+    with pytest.raises(UpstreamError) as excinfo:
+        await broker.token("t-a")
+    assert excinfo.value.code == "auth.internal_secret_missing"
+    await broker.aclose()
+
+
+async def test_connector_client_injects_bearer_only() -> None:
+    """注入:下游请求只带 Bearer——租户在 token claim 里,不再发租户头。"""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -78,7 +91,7 @@ async def test_connector_client_injects_bearer() -> None:
         token_provider=_stub_token,
     )
     await client.list_connections("t-a")
-    assert seen[0].headers["X-Tenant-Id"] == "t-a"
+    assert "X-Tenant-Id" not in seen[0].headers
     assert seen[0].headers["Authorization"] == "Bearer tok-for-t-a"
     await client.aclose()
 

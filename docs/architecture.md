@@ -205,7 +205,9 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - **实施现状:自建认证(account-service,由 dev 桩转正)**:Logto 接入前
   account-service 即 IdP——注册 + 邮箱密码登录(argon2id)+ **旋转式刷新令牌**
   (旧令牌一次性,重用即吊销该用户全部)+ 内部签发 `POST /v1/auth/issue`
-  (共享密钥换目标租户 token,供 orchestrator 的服务间调用)+ OIDC 发现/JWKS
+  (共享密钥换目标租户 token,供 orchestrator 的服务间调用;orchestrator 对
+  下游的内部调用**一律**经 TokenBroker 走该端点——租户来自签名 claim,不再
+  有 `X-Tenant-Id` 裸调路径,密钥未配置时在换发处即报错)+ OIDC 发现/JWKS
   端点(签名密钥经 `SIGNING_KEY_PATH` 持久化,跨重启不轮换);各服务用**同一个**
   `JwtVerifier` 验签,不设后门;**换 Logto 时各服务只改 `AUTH_ISSUER`**,
   服务代码零改动(自建签发不落任何服务专有依赖)。

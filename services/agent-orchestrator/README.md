@@ -55,13 +55,14 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   token>`(OIDC 发现 + JWKS,RS256),租户取自 token claim(默认 `tenant_id`)——
   **鉴权开启时伪造 `X-Tenant-Id` 无效**;关闭时(dev/test)沿用临时头,缺失即
   401 `auth.header_missing`;
-- 服务间调用 token(§5):下游服务(connector/knowledge/workspace)开了鉴权后,
-  本服务对它们的内部调用经 `TokenBroker`(`services/token_broker.py`)用共享
-  内部密钥(`INTERNAL_AUTH_SECRET`,配置 `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`)
-  向 account 的 `POST /v1/auth/issue` 换"以目标租户为 claim"的标准 token,
-  进程内按租户缓存到过期前 60s——**与用户面走同一个 JwtVerifier,不设后门**;
-  密钥留空即内部裸调(下游鉴权关闭的旧模式);阶段 B 换 mTLS/OBO 时只换
-  TokenBroker 实现,三个下游客户端的注入点不变;
+- 服务间调用 token(§5):本服务对下游(connector/knowledge/workspace)的内部
+  调用**一律**经 `TokenBroker`(`services/token_broker.py`)用共享内部密钥
+  (`INTERNAL_AUTH_SECRET`,配置 `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,
+  与 account 的 `ACCOUNT__INTERNAL_SECRET` 一致)向 account 的
+  `POST /v1/auth/issue` 换"以目标租户为 claim"的标准 token,进程内按租户
+  缓存到过期前 60s——**与用户面走同一个 JwtVerifier,不设后门**;不再有
+  `X-Tenant-Id` 裸调路径,密钥未配置时在换发处即报错;阶段 B 换 mTLS/OBO 时
+  只换 TokenBroker 实现,三个下游客户端的注入点不变;
 
 - 追加指令(§6.5):`POST /runs/{id}/instructions` 排队(终态 run 追加 409),
   在**下一个人工边界**消费——规划(plan/resume)、放行(approve)、
