@@ -16,17 +16,19 @@ class Settings(BaseAppSettings):
     database_url: str = "sqlite+aiosqlite:///./account.db"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     default_plan: str = "free"
-    # 鉴权(架构 §10):认证交给 IdP;这里只解析"当前租户"
+    # 鉴权(架构 §10):本服务兼作自建 IdP 时,这里只解析"当前租户"
     auth_enabled: bool = False
-    auth_issuer: str = "http://127.0.0.1:3301/oidc"
+    auth_issuer: str = "http://127.0.0.1:8001"
     auth_audience: str | None = None
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"
-    # dev IdP 桩(core/dev_idp.py):开桩后本服务兼作签发方,登录端点 +
-    # OIDC 发现/JWKS 端点可用;阶段 B 换 Logto 时各服务只改 AUTH_ISSUER
-    dev_auth_enabled: bool = False
-    dev_token_ttl_seconds: int = 3600
-    dev_token_audience: str = "beauty-api"
+    # 自建认证(自 IdP 桩转正):注册/登录/刷新/内部签发 + OIDC 发现/JWKS
+    token_ttl_seconds: int = 3600
+    token_audience: str = "beauty-api"
+    refresh_ttl_seconds: int = 2_592_000  # 刷新令牌 30 天,旋转式
+    # 签名密钥持久化(PEM):设置后跨重启不轮换 kid;留空 = 进程内生成
+    # (dev/test);生产(多实例/频繁重启)必须设置并挂持久卷
+    signing_key_path: str = ""
     # 内部服务签发密钥(POST /v1/auth/issue 的 X-Internal-Secret):
     # 与服务间调用方(orchestrator)的 INTERNAL_AUTH_SECRET 一致;留空即关闭该端点
-    dev_internal_secret: str = ""
+    internal_secret: str = ""

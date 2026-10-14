@@ -49,6 +49,9 @@ Thumbs.db
 .uv-cache/
 .uv-python/
 .cache/
+
+# 本地运行时的 sqlite 库(服务目录直写,dev 起法生成)
+services/*/*.db
 .claude/worktrees
 .claude/settings.local.json
 

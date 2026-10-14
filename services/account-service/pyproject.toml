@@ -7,10 +7,12 @@ requires-python = ">=3.11,<4"
 dependencies = [
     "alembic>=1.20.0",
     # 共享库(uv workspace,本地 editable)
+    "argon2-cffi>=25.1.0",
     "asyncpg>=0.32.0",
     "common",
     "database",
     "fastapi>=0.143.0",
+    "pydantic[email]>=2.13.5",
     "uvicorn>=0.53.0",
 ]
 

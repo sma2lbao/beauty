@@ -91,3 +91,137 @@ describe('authHeaders', () => {
     );
   });
 });
+
+describe('双令牌存储(token 模式)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    window.localStorage.clear();
+  });
+
+  it('setStoredTokens 保存双令牌与账号标签', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('access-1', 'refresh-1', 'a@b.c');
+
+    expect(auth.getStoredToken()).toBe('access-1');
+    expect(auth.getStoredRefreshToken()).toBe('refresh-1');
+    expect(await auth.accountLabel()).toBe('a@b.c');
+  });
+
+  it('setStoredToken 粘贴场景清掉旧 refresh 与标签(避免错配)', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('access-1', 'refresh-1', 'a@b.c');
+    auth.setStoredToken('pasted-access');
+
+    expect(auth.getStoredToken()).toBe('pasted-access');
+    expect(auth.getStoredRefreshToken()).toBeNull();
+    expect(await auth.accountLabel()).toBe('手动令牌');
+  });
+});
+
+describe('refreshAccessToken(token 模式)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    window.localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('没存 refresh token:不发请求,直接 false', async () => {
+    const auth = await loadAuth('token');
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await auth.refreshAccessToken()).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('刷新成功:存新令牌对,返回 true', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
+    const fetchSpy = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await auth.refreshAccessToken()).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/account-api/v1/auth/refresh',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    // 旋转:新旧 access/refresh 都更新,标签保留
+    expect(auth.getStoredToken()).toBe('new-access');
+    expect(auth.getStoredRefreshToken()).toBe('new-refresh');
+    expect(await auth.accountLabel()).toBe('a@b.c');
+  });
+
+  it('刷新被拒(过期/吊销):清空本地令牌,返回 false', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ code: 'auth.refresh_reused', message: '失效' }),
+          { status: 401 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await auth.refreshAccessToken()).toBe(false);
+    expect(auth.getStoredToken()).toBeNull();
+    expect(auth.getStoredRefreshToken()).toBeNull();
+  });
+
+  it('网络错误:令牌保留,返回 false(下次再试)', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))));
+
+    expect(await auth.refreshAccessToken()).toBe(false);
+    expect(auth.getStoredToken()).toBe('old-access');
+    expect(auth.getStoredRefreshToken()).toBe('old-refresh');
+  });
+
+  it('并发刷新只发一次请求(单飞)', async () => {
+    const auth = await loadAuth('token');
+    auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
+    const fetchSpy = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(
+        JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const [a, b, c] = await Promise.all([
+      auth.refreshAccessToken(),
+      auth.refreshAccessToken(),
+      auth.refreshAccessToken(),
+    ]);
+    expect([a, b, c]).toEqual([true, true, true]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('登录来路记忆', () => {
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it('记住并取出登录来路,取出即清掉', async () => {
+    const auth = await loadAuth('dev');
+    auth.rememberLoginRedirect('/runs');
+    expect(auth.takeLoginRedirect()).toBe('/runs');
+    // 已被消费,第二次取回默认值
+    expect(auth.takeLoginRedirect()).toBe('/');
+  });
+
+  it('非站内路径一律回对话页(防开放重定向)', async () => {
+    const auth = await loadAuth('dev');
+    auth.rememberLoginRedirect('//evil.example');
+    expect(auth.takeLoginRedirect()).toBe('/');
+    expect(auth.takeLoginRedirect()).toBe('/');
+  });
+});

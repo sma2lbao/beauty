@@ -1,12 +1,15 @@
 """账号域仓储:租户过滤与 404 语义在这里声明一次,业务层不再手写。
 
 - `Organization` 的 id 本身就是租户标识,所以用无租户语义的 `Repository`;
-- 成员与会话是租户业务表,用 `TenantRepository`(读取自动带 tenant_id)。
+- 成员、会话与刷新令牌是租户业务表,用 `TenantRepository`(读取自动带 tenant_id);
+- `find_active_by_email` 是唯一的跨租户读:登录入口没有租户上下文,
+  方法名显式声明这个例外(当前约定 email 全局唯一,注册时查重保证)。
 """
 
 from database.repository import Repository, TenantRepository
+from sqlalchemy import select
 
-from account.models.account import Organization, Session, User
+from account.models.account import Organization, RefreshToken, Session, User
 
 
 class OrganizationRepository(Repository[Organization]):
@@ -21,9 +24,32 @@ class UserRepository(TenantRepository[User]):
     not_found_message = "成员不存在"
     id_detail_key = "user_id"
 
+    async def find_active_by_email(self, email: str) -> User | None:
+        """按 email 跨租户找可登录成员(登录入口的协议例外,见模块说明)。"""
+        statement = (
+            select(User)
+            .where(User.email == email, User.status == "active")
+            .order_by(User.created_at, User.id)
+            .limit(1)
+        )
+        return await self.session.scalar(statement)
+
 
 class SessionRepository(TenantRepository[Session]):
     model = Session
     not_found_code = "account.session_not_found"
     not_found_message = "会话不存在"
     id_detail_key = "session_id"
+
+
+class RefreshTokenRepository(TenantRepository[RefreshToken]):
+    model = RefreshToken
+    not_found_code = "account.refresh_not_found"
+    not_found_message = "刷新令牌不存在"
+    id_detail_key = "refresh_token_id"
+
+    async def find_by_hash(self, token_hash: str) -> RefreshToken | None:
+        """按哈希取令牌(刷新入口无租户上下文,哈希即 256 位随机凭据)。"""
+        return await self.session.scalar(
+            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        )

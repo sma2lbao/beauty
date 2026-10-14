@@ -1,13 +1,14 @@
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { handleSignInCallback } from '@/lib/auth';
+import { handleSignInCallback, takeLoginRedirect } from '@/lib/auth';
 
 import { CallbackPage } from './callback';
 
 vi.mock('@/lib/auth', () => ({
   handleSignInCallback: vi.fn(),
+  takeLoginRedirect: vi.fn(() => '/'),
 }));
 
 describe('CallbackPage', () => {
@@ -34,5 +35,21 @@ describe('CallbackPage', () => {
     );
 
     expect(await screen.findByText('回调无效')).toBeInTheDocument();
+  });
+
+  it('回调成功后回到登录来路', async () => {
+    vi.mocked(handleSignInCallback).mockResolvedValue();
+    vi.mocked(takeLoginRedirect).mockReturnValue('/knowledge');
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<CallbackPage />} />
+          <Route path="/knowledge" element={<div>知识库占位</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('知识库占位')).toBeInTheDocument();
+    expect(takeLoginRedirect).toHaveBeenCalled();
   });
 });

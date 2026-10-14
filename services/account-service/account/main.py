@@ -18,9 +18,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from account.api.health import health_router
+from account.api.v1 import auth as auth_api
+from account.api.v1 import oidc as oidc_api
 from account.api.v1.router import api_router
 from account.core.config import Settings
-from account.core.dev_idp import DevIdP
+from account.core.idp import IdPSigner, load_or_create_signer
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
 
 
@@ -73,19 +75,23 @@ def create_app(
 
     app.include_router(health_router)
     app.include_router(api_router, prefix="/v1")
-    if settings.dev_auth_enabled:
-        # dev IdP 桩(core/dev_idp.py):登录 + OIDC 发现/JWKS;
-        # 关桩时端点不存在(404),生产部署不受影响
-        from account.api.v1 import auth as auth_api
-        from account.api.v1 import oidc as oidc_api
-
-        app.state.dev_idp = DevIdP(
+    # 自建认证(由 dev 桩转正):注册/登录/刷新/登出/内部签发 + OIDC 发现/JWKS
+    # 始终挂载——本服务就是签发方,兄弟服务的 JwtVerifier 靠这些端点验签
+    if settings.signing_key_path:
+        app.state.signer = load_or_create_signer(
+            settings.signing_key_path,
             issuer=settings.auth_issuer,
-            audience=settings.dev_token_audience,
-            ttl_seconds=settings.dev_token_ttl_seconds,
+            audience=settings.token_audience,
+            ttl_seconds=settings.token_ttl_seconds,
         )
-        app.include_router(auth_api.router, prefix="/v1")
-        app.include_router(oidc_api.router)
+    else:
+        app.state.signer = IdPSigner(
+            issuer=settings.auth_issuer,
+            audience=settings.token_audience,
+            ttl_seconds=settings.token_ttl_seconds,
+        )
+    app.include_router(auth_api.router, prefix="/v1")
+    app.include_router(oidc_api.router)
     return app
 
 

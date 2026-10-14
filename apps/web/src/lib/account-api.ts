@@ -42,8 +42,9 @@ export type Session = {
   created_at: string;
 };
 
-export type DevLoginResult = {
+export type AuthResult = {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   expires_in: number;
   tenant_id: string;
@@ -96,17 +97,19 @@ export const accountApi = {
     }),
   revokeSession: (sessionId: string) =>
     request<Session>(`/v1/sessions/${sessionId}/revoke`, { method: 'POST' }),
-  /**
-   * dev 账号登录(后端 DEV_AUTH_ENABLED=true 时可用):声明 email 即签发
-   * access token(凭证校验归 IdP,桩不设密码,见 account-service 文档)。
-   */
-  devLogin: (input: {
+  /** 注册:新组织 + owner 成员,返回双令牌(409 = 邮箱已注册)。 */
+  register: (input: {
     email: string;
-    organization_id?: string;
-    organization_name?: string;
+    password: string;
     display_name?: string;
   }) =>
-    request<DevLoginResult>('/v1/auth/login', {
+    request<AuthResult>('/v1/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** 登录:邮箱 + 密码换双令牌(access 过期由 http 层用 refresh 自动续)。 */
+  login: (input: { email: string; password: string }) =>
+    request<AuthResult>('/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

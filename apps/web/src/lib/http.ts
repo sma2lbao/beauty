@@ -3,10 +3,12 @@
  *
  * - 后端错误体统一是 `{"code","message","details"}`,这里映射成 `ApiError`;
  * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer);
+ * - access token 过期(401)且存有 refresh token 时自动续期并重试一次
+ *   (单飞:`@/lib/auth` 保证并发 401 只发一次刷新请求);
  * - 各服务只提供 base 与路径(dev 由 vite.config.ts 代理到对应端口)。
  */
 
-import { authHeaders } from '@/lib/auth';
+import { authHeaders, refreshAccessToken } from '@/lib/auth';
 
 /** 后端统一错误契约(§11)。 */
 export class ApiError extends Error {
@@ -40,10 +42,16 @@ export async function requestJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${base}${path}`, {
-    ...init,
-    headers: { ...(await jsonHeaders()), ...init?.headers },
-  });
+  const send = async () =>
+    fetch(`${base}${path}`, {
+      ...init,
+      headers: { ...(await jsonHeaders()), ...init?.headers },
+    });
+  let response = await send();
+  if (response.status === 401 && (await refreshAccessToken())) {
+    // 续期成功:换新 access token 重试一次;仍 401 则按错误契约抛出
+    response = await send();
+  }
   if (!response.ok) {
     let code = 'request_failed';
     let message = `请求失败(${response.status})`;

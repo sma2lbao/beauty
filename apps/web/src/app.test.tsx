@@ -1,9 +1,27 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { accessToken, authMode } from '@/lib/auth';
 
 import { App } from './app';
+
+vi.mock('@/lib/auth', () => ({
+  authMode: vi.fn(() => 'dev'),
+  tenantId: vi.fn(() => 'demo-tenant'),
+  accessToken: vi.fn(async () => null),
+  authHeaders: vi.fn(async () => ({})),
+  accountLabel: vi.fn(async () => null),
+  getStoredToken: vi.fn(() => null),
+  setStoredToken: vi.fn(),
+  rememberLoginRedirect: vi.fn(),
+  takeLoginRedirect: vi.fn(() => '/'),
+  callbackUri: vi.fn(() => 'http://localhost:3000/callback'),
+  signIn: vi.fn(async () => {}),
+  signOut: vi.fn(async () => {}),
+  handleSignInCallback: vi.fn(async () => {}),
+}));
 
 function renderApp(path: string) {
   const queryClient = new QueryClient({
@@ -52,5 +70,43 @@ describe('App 路由', () => {
     renderApp('/');
     expect(screen.getByRole('banner')).toBeInTheDocument();
     expect(screen.getByRole('contentinfo')).toBeInTheDocument();
+  });
+});
+
+describe('登录门（§10）', () => {
+  beforeEach(() => {
+    vi.mocked(authMode).mockReturnValue('dev');
+    vi.mocked(accessToken).mockResolvedValue(null);
+  });
+
+  it('/login 是独立整页（不带站点导航）', () => {
+    renderApp('/login');
+    expect(screen.queryByRole('banner')).toBeNull();
+    expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
+  });
+
+  it('token 模式未登录：受保护页被送回 /login', async () => {
+    vi.mocked(authMode).mockReturnValue('token');
+    renderApp('/runs');
+    expect(
+      await screen.findByRole('heading', { name: '登录' }),
+    ).toBeInTheDocument();
+  });
+
+  it('token 模式已登录：受保护页正常渲染', async () => {
+    vi.mocked(authMode).mockReturnValue('token');
+    vi.mocked(accessToken).mockResolvedValue('access-jwt');
+    renderApp('/');
+    expect(
+      await screen.findByRole('heading', { name: '对话' }),
+    ).toBeInTheDocument();
+  });
+
+  it('公开页（/about）不受守卫影响', async () => {
+    vi.mocked(authMode).mockReturnValue('token');
+    renderApp('/about');
+    expect(
+      await screen.findByRole('heading', { name: '关于 beauty moon' }),
+    ).toBeInTheDocument();
   });
 });

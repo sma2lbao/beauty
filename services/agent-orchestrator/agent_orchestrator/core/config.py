@@ -63,5 +63,5 @@ class Settings(BaseAppSettings):
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
     auth_tenant_claim: str = "tenant_id"
     # 服务间调用(§5):下游开鉴权后,经 account 的内部 issue 端点换租户
-    # token(dev 桩配套,与 ACCOUNT__DEV_INTERNAL_SECRET 一致);留空即裸调(旧模式)
+    # token(与 ACCOUNT__INTERNAL_SECRET 一致);留空即裸调(旧模式)
     internal_auth_secret: str = ""

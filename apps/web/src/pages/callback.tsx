@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import { handleSignInCallback } from '@/lib/auth';
+import { handleSignInCallback, takeLoginRedirect } from '@/lib/auth';
 
 /** OIDC 回调页:处理授权码换取令牌,然后回控制台(§10)。 */
 export function CallbackPage() {
@@ -13,7 +13,7 @@ export function CallbackPage() {
     handleSignInCallback(window.location.href)
       .then(() => {
         if (!cancelled) {
-          navigate('/runs', { replace: true });
+          navigate(takeLoginRedirect(), { replace: true });
         }
       })
       .catch((cause: unknown) => {
@@ -33,7 +33,7 @@ export function CallbackPage() {
         <p className="mt-4 text-sm text-destructive">{error}</p>
       ) : (
         <p className="mt-4 text-sm text-muted-foreground">
-          正在处理授权回调,稍后自动跳转到运行控制台。
+          正在处理授权回调,完成后自动回到你刚才的页面。
         </p>
       )}
     </section>
