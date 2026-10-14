@@ -14,6 +14,7 @@ from tests.conftest import (
     FakeLLM,
     _create_run,
     _settings,
+    verifier,
 )
 
 VERIFY_PASS = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
@@ -75,6 +76,7 @@ def test_knowledge_tool_flows_through_graph(tmp_path: Path) -> None:
         _settings(tmp_path, "knowledge.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
         toolkit_factory=lambda tenant: build_tools(tenant, knowledge=knowledge),
+        token_verifier=verifier(),
     )
 
     with TestClient(app) as client:

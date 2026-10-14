@@ -10,8 +10,7 @@ from agent_orchestrator.api.v1.runs import _event_stream
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import RunCreate
 from agent_orchestrator.services import runs as runs_service
-
-TENANT = {"X-Tenant-Id": "t-1"}
+from tests.conftest import TENANT
 
 
 def _completed_run(client: TestClient) -> str:

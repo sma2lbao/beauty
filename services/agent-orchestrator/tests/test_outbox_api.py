@@ -11,10 +11,8 @@ from events.outbox import FAILED, PENDING, OutboxRepository
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import RecordingBus, _settings
+from tests.conftest import OTHER, TENANT, RecordingBus, _settings, verifier
 from tests.test_outbox import _outbox_client
-
-OTHER = {"X-Tenant-Id": "t-2"}
 
 
 async def _record_failed(settings, tenant_id: str, event_id: str) -> None:
@@ -38,15 +36,15 @@ async def _record_failed(settings, tenant_id: str, event_id: str) -> None:
 
 def test_endpoints_report_disabled_outbox(tmp_path: Path) -> None:
     """未启用时明确 409,而不是返回空列表让人误读成"没有事件"。"""
-    app = create_app(_settings(tmp_path, "off.db"))
+    app = create_app(_settings(tmp_path, "off.db"), token_verifier=verifier())
     with TestClient(app) as client:
         for path in ("/api/v1/outbox/events", "/api/v1/outbox/stats"):
-            response = client.get(path, headers={"X-Tenant-Id": "t-1"})
+            response = client.get(path, headers=TENANT)
             assert response.status_code == 409
             assert response.json()["code"] == "outbox.disabled"
         assert (
             client.post(
-                "/api/v1/outbox/retry-failed", headers={"X-Tenant-Id": "t-1"}
+                "/api/v1/outbox/retry-failed", headers=TENANT
             ).status_code
             == 409
         )
@@ -58,12 +56,12 @@ def test_stats_and_list_are_tenant_scoped(tmp_path: Path) -> None:
         asyncio.run(_record_failed(settings, "t-1", "e-mine"))
         asyncio.run(_record_failed(settings, "t-2", "e-other"))
 
-        stats = client.get("/api/v1/outbox/stats", headers={"X-Tenant-Id": "t-1"})
+        stats = client.get("/api/v1/outbox/stats", headers=TENANT)
         assert stats.status_code == 200
         assert stats.json() == {"pending": 0, "dispatched": 0, "failed": 1}
 
         events = client.get(
-            "/api/v1/outbox/events?status=failed", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/events?status=failed", headers=TENANT
         ).json()
         assert [event["id"] for event in events] == ["e-mine"]
         assert events[0]["last_error"] == "消费者挂了"
@@ -85,7 +83,7 @@ def test_retry_single_event_returns_to_pending(tmp_path: Path) -> None:
         asyncio.run(_record_failed(settings, "t-1", "e-retry"))
 
         response = client.post(
-            "/api/v1/outbox/events/e-retry/retry", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/events/e-retry/retry", headers=TENANT
         )
         assert response.status_code == 200
         body = response.json()
@@ -94,7 +92,7 @@ def test_retry_single_event_returns_to_pending(tmp_path: Path) -> None:
         assert body["last_error"] == "消费者挂了"  # 重放前仍能看到上次原因
 
         stats = client.get(
-            "/api/v1/outbox/stats", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/stats", headers=TENANT
         ).json()
         assert stats == {"pending": 1, "dispatched": 0, "failed": 0}
 
@@ -103,7 +101,7 @@ def test_retry_single_event_returns_to_pending(tmp_path: Path) -> None:
         assert (dispatched.claimed, dispatched.delivered) == (1, 1)
 
         events = client.get(
-            "/api/v1/outbox/events?status=dispatched", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/events?status=dispatched", headers=TENANT
         ).json()
         assert events[0]["last_error"] is None
 
@@ -116,12 +114,12 @@ def test_retry_failed_batch(tmp_path: Path) -> None:
         asyncio.run(_record_failed(settings, "t-2", "e3"))
 
         response = client.post(
-            "/api/v1/outbox/retry-failed", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/retry-failed", headers=TENANT
         )
         assert response.json() == {"requeued": 2}
         # 只动了本租户
         assert (
-            client.get("/api/v1/outbox/stats", headers={"X-Tenant-Id": "t-2"}).json()[
+            client.get("/api/v1/outbox/stats", headers=OTHER).json()[
                 FAILED
             ]
             == 1
@@ -131,6 +129,6 @@ def test_retry_failed_batch(tmp_path: Path) -> None:
 def test_invalid_status_filter_rejected(tmp_path: Path) -> None:
     with _outbox_client(tmp_path, RecordingBus()) as client:
         response = client.get(
-            "/api/v1/outbox/events?status=nope", headers={"X-Tenant-Id": "t-1"}
+            "/api/v1/outbox/events?status=nope", headers=TENANT
         )
         assert response.status_code == 422

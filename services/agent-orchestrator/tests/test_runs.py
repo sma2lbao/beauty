@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
-TENANT_HEADERS = {"X-Tenant-Id": "t-1"}
+from tests.conftest import OTHER, TENANT, bearer
+
+TENANT_HEADERS = TENANT
 
 
 def _create_run(client: TestClient, tenant: str = "t-1") -> dict:
@@ -9,7 +11,7 @@ def _create_run(client: TestClient, tenant: str = "t-1") -> dict:
         "goal": "汇总本周邮件,生成周报草稿",
         "acceptance_criteria": ["覆盖 5 个工作日", "不超过 300 字"],
     }
-    resp = client.post("/api/v1/runs", json=body, headers={"X-Tenant-Id": tenant})
+    resp = client.post("/api/v1/runs", json=body, headers=bearer(tenant))
     assert resp.status_code == 201
     return resp.json()
 
@@ -39,15 +41,15 @@ def test_events_replay_in_seq_order(client: TestClient) -> None:
 
 def test_tenant_isolation(client: TestClient) -> None:
     created = _create_run(client, tenant="t-1")
-    resp = client.get(f"/api/v1/runs/{created['id']}", headers={"X-Tenant-Id": "t-2"})
+    resp = client.get(f"/api/v1/runs/{created['id']}", headers=OTHER)
     assert resp.status_code == 404
 
 
-def test_missing_tenant_header_rejected(client: TestClient) -> None:
-    """鉴权关闭(dev/test 默认)时,临时租户头缺失即 401。"""
+def test_missing_bearer_rejected(client: TestClient) -> None:
+    """无 Bearer token 一律 401(租户只在签名 claim 里,没有临时头后门)。"""
     resp = client.post("/api/v1/runs", json={"title": "t", "goal": "g"})
     assert resp.status_code == 401
-    assert resp.json()["code"] == "auth.header_missing"
+    assert resp.json()["code"] == "auth.token_missing"
 
 
 def test_validation_error_shape(client: TestClient) -> None:

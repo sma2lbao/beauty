@@ -20,6 +20,7 @@ from tests.conftest import (
     RecordingBus,
     _create_run,
     _settings,
+    verifier,
 )
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
@@ -51,6 +52,7 @@ def _outbox_client(
             settings,
             llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
             event_bus=bus or RecordingBus(),
+            token_verifier=verifier(),
         )
     )
 
@@ -72,6 +74,7 @@ def test_outbox_disabled_by_default(tmp_path: Path) -> None:
     """默认关闭:不产生 outbox 行(既有部署零影响)。"""
     app = create_app(
         _settings(tmp_path, "off.db", llm_enabled=True),
+        token_verifier=verifier(),
         llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
     )
     with TestClient(app) as client:
@@ -164,6 +167,7 @@ def test_knowledge_ingest_consumer_ingests_delivery(tmp_path: Path) -> None:
     app = create_app(
         settings,
         llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
+        token_verifier=verifier(),
     )
     knowledge = FakeKnowledge()
     with TestClient(app) as client:
@@ -210,6 +214,7 @@ def test_knowledge_ingest_failure_propagates_for_retry(tmp_path: Path) -> None:
     app = create_app(
         settings,
         llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
+        token_verifier=verifier(),
     )
     knowledge = FakeKnowledge(fail=True)
     with TestClient(app) as client:

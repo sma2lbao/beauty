@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import TENANT, FakeLLM, FakeWorkspace, _create_run, _settings
+from tests.conftest import TENANT, FakeLLM, FakeWorkspace, _create_run, _settings, verifier
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
 DELIVERY = "# 本周周报\n\n- 邮件已汇总\n"
@@ -30,6 +30,7 @@ def test_artifact_is_mirrored_to_workspace(tmp_path: Path) -> None:
         _settings(tmp_path, "mirror.db", llm_enabled=True),
         llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
         workspace_client=workspace,
+        token_verifier=verifier(),
     )
 
     with TestClient(app) as client:
@@ -56,6 +57,7 @@ def test_mirror_failure_keeps_artifact_and_records_reason(tmp_path: Path) -> Non
         _settings(tmp_path, "mirror-fail.db", llm_enabled=True),
         llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
         workspace_client=FakeWorkspace(fail=True),
+        token_verifier=verifier(),
     )
 
     with TestClient(app) as client:

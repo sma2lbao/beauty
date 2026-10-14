@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-TENANT = {"X-Tenant-Id": "t-1"}
+from tests.conftest import TENANT
 
 
 def _create(client: TestClient) -> dict:

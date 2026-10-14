@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FakeLLM, _client, _create_run
+from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
 
 
 def test_queue_list_events_and_terminal_guard(client: TestClient) -> None:
@@ -37,7 +37,7 @@ def test_queue_list_events_and_terminal_guard(client: TestClient) -> None:
 
 def test_instruction_tenant_isolation(client: TestClient) -> None:
     run_id = _create_run(client)
-    other = {"X-Tenant-Id": "t-2"}
+    other = OTHER
     assert (
         client.get(f"/api/v1/runs/{run_id}/instructions", headers=other).status_code
         == 404

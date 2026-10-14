@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FakeLLM, _client, _create_run
+from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
 
 
 def test_llm_delivery_persisted_with_event(tmp_path) -> None:
@@ -57,7 +57,7 @@ def test_artifact_missing_and_tenant_isolation(client: TestClient) -> None:
 
     client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
     client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
-    other = {"X-Tenant-Id": "t-2"}
+    other = OTHER
     assert (
         client.get(f"/api/v1/runs/{run_id}/artifact", headers=other).status_code == 404
     )

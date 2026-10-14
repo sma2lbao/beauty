@@ -7,7 +7,7 @@ from common.artifacts import build_artifact_store
 from common.errors import StorageError
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, _create_artifact, _settings
+from tests.conftest import OTHER, TENANT, _create_artifact, _settings, verifier
 from workspace.main import create_app
 
 CONTENT = "# 周报\n\n- 本周要点\n"
@@ -70,7 +70,7 @@ def test_artifact_isolation_and_missing(client: TestClient) -> None:
 def test_database_backend_keeps_content_in_row(tmp_path) -> None:
     """ARTIFACT_STORE=database:内容留在行里,不产生对象文件。"""
     settings = _settings(tmp_path, "db.db", artifact_store="database")
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, token_verifier=verifier())) as client:
         body = _create_artifact(client).json()
         assert body["storage"] == "database"
         root = tmp_path / "objects"

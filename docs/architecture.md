@@ -210,7 +210,10 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
   有 `X-Tenant-Id` 裸调路径,密钥未配置时在换发处即报错)+ OIDC 发现/JWKS
   端点(签名密钥经 `SIGNING_KEY_PATH` 持久化,跨重启不轮换);各服务用**同一个**
   `JwtVerifier` 验签,不设后门;**换 Logto 时各服务只改 `AUTH_ISSUER`**,
-  服务代码零改动(自建签发不落任何服务专有依赖)。
+  服务代码零改动(自建签发不落任何服务专有依赖);**测试基建同步**——各服务
+  测试装配走"开鉴权 + 真签 token"(`common/testing.py` 的 TestIdP:本地密钥 +
+  JWKS MockTransport + 按租户签 Bearer),不再依赖临时租户头;`AUTH_ENABLED=false`
+  时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义,前端与测试均不再使用。
 
 ## 12. 工程约定
 

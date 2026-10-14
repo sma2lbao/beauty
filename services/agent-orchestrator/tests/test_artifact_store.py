@@ -11,7 +11,7 @@ from sqlalchemy import select
 from agent_orchestrator.main import create_app
 from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.services.artifacts import build_store
-from tests.conftest import TENANT, FakeLLM, _create_run, _settings
+from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
 DELIVERY = "# 本周周报\n\n邮件已汇总。\n"
@@ -29,7 +29,7 @@ def _filesystem_app(tmp_path: Path, fake: FakeLLM, root: Path):
         artifact_store="filesystem",
         artifact_root=str(root),
     )
-    return create_app(settings, llm_client=fake), settings
+    return create_app(settings, llm_client=fake, token_verifier=verifier()), settings
 
 
 def _complete_run(client: TestClient) -> str:
@@ -93,7 +93,9 @@ async def test_database_row_keeps_only_reference(tmp_path: Path) -> None:
 async def test_database_store_is_default_and_keeps_content(tmp_path: Path) -> None:
     """默认 database 后端:内容留在行里(零配置路径不受影响)。"""
     app = create_app(
-        _settings(tmp_path, "db.db", llm_enabled=True), llm_client=_fake_llm()
+        _settings(tmp_path, "db.db", llm_enabled=True),
+        llm_client=_fake_llm(),
+        token_verifier=verifier(),
     )
     with TestClient(app) as client:
         run_id = _complete_run(client)

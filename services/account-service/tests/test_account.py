@@ -2,9 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, _create_user
-
-OTHER = {"X-Tenant-Id": "org-2"}
+from tests.conftest import OTHER, TENANT, _create_user
 
 
 def test_organization_is_created_idempotently(client: TestClient) -> None:

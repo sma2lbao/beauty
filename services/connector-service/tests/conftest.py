@@ -1,4 +1,4 @@
-"""测试装配:每用例独立 sqlite 库;传输工厂注入 FakeTransport,零网络。"""
+"""测试装配:每用例独立 sqlite 库;传输工厂注入 FakeTransport;鉴权开 + 真 token。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,16 @@ from fastapi.testclient import TestClient
 from connector.core.config import Settings
 from connector.main import create_app
 from connector.services.mail import EmailSummary, TestResult
+from common.testing import TestIdP
 
-TENANT = {"X-Tenant-Id": "t-1"}
+_IDP = TestIdP()
+TENANT = _IDP.bearer("t-1")
+OTHER = _IDP.bearer("t-2")
+
+
+def verifier():
+    """与 _IDP 配套的校验器——自建 app 的测试用它注入 create_app。"""
+    return _IDP.verifier()
 
 
 class FakeTransport:
@@ -51,7 +59,9 @@ def _settings(tmp_path: Path) -> Settings:
 @pytest.fixture()
 def client(tmp_path: Path) -> Iterator[TestClient]:
     app = create_app(
-        _settings(tmp_path), transport_factory=lambda conn: FakeTransport()
+        _settings(tmp_path),
+        transport_factory=lambda conn: FakeTransport(),
+        token_verifier=_IDP.verifier(),
     )
     with TestClient(app) as test_client:
         yield test_client

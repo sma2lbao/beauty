@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, _ingest
+from tests.conftest import OTHER, TENANT, _ingest
 
 CONTRACT = "本周与客户 A 的合同评审安排在周四下午,需要准备报价单。"
 BUDGET = "财务预算上限说明:本季度市场费用不超过 50 万,超支需 VP 审批。"
@@ -28,7 +28,7 @@ def test_ingest_chunks_and_lists(client: TestClient) -> None:
 
 def test_tenant_isolation(client: TestClient) -> None:
     document_id = _ingest(client, "客户 A 合同", CONTRACT).json()["id"]
-    other = {"X-Tenant-Id": "t-2"}
+    other = OTHER
 
     assert client.get("/v1/knowledge/documents", headers=other).json() == []
     assert (

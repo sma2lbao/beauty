@@ -1,4 +1,4 @@
-"""测试装配:每用例独立 sqlite 库;鉴权关闭,用临时租户头。"""
+"""测试装配:每用例独立 sqlite 库;鉴权开,TestIdP 真签 token(架构 §10)。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,16 @@ from fastapi.testclient import TestClient
 
 from account.core.config import Settings
 from account.main import create_app
+from common.testing import TestIdP
 
-TENANT = {"X-Tenant-Id": "org-1"}
+_IDP = TestIdP()
+TENANT = _IDP.bearer("org-1")
+OTHER = _IDP.bearer("org-2")
+
+
+def verifier():
+    """与 _IDP 配套的校验器——自建 app 的测试用它注入 create_app。"""
+    return _IDP.verifier()
 
 
 def _settings(tmp_path: Path, name: str = "test.db", **overrides) -> Settings:
@@ -25,7 +33,7 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides) -> Settings:
 
 @pytest.fixture()
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(_settings(tmp_path))
+    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
     with TestClient(app) as test_client:
         yield test_client
 

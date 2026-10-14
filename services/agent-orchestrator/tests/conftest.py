@@ -2,6 +2,8 @@
 
 - 每个测试独立 sqlite 文件库,建表走 lifespan(auto_create_tables);
 - LLM 与工具全部注入 fake:零网络、零 token;
+- 鉴权开且验真 token(架构 §10):TestIdP 本地密钥,JWKS 走 MockTransport,
+  测试请求一律带 Bearer(租户在 claim 里),不再用 X-Tenant-Id 临时头;
 - 契约由 duck typing 满足(见 services/llm.py、services/connectors.py 的 Protocol)。
 """
 
@@ -18,8 +20,21 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply
 from agent_orchestrator.services.tools import build_tools
+from common.testing import TestIdP
 
-TENANT = {"X-Tenant-Id": "t-1"}
+_IDP = TestIdP()
+TENANT = _IDP.bearer("t-1")
+OTHER = _IDP.bearer("t-2")
+
+
+def bearer(tenant: str) -> dict[str, str]:
+    """按租户签 Bearer 头(测试显式指明调用方租户)。"""
+    return _IDP.bearer(tenant)
+
+
+def verifier():
+    """与 _IDP 配套的校验器——自建 app 的测试用它注入 create_app。"""
+    return _IDP.verifier()
 
 
 class FakeLLM:
@@ -249,7 +264,11 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
 
 def _client(tmp_path: Path, fake: FakeLLM) -> TestClient:
     """LLM 路径(无工具):plan/execute/verify/deliver 全走 fake。"""
-    app = create_app(_settings(tmp_path, "llm.db", llm_enabled=True), llm_client=fake)
+    app = create_app(
+        _settings(tmp_path, "llm.db", llm_enabled=True),
+        llm_client=fake,
+        token_verifier=_IDP.verifier(),
+    )
     return TestClient(app)
 
 
@@ -259,6 +278,7 @@ def _tool_client(tmp_path: Path, fake: FakeLLM, connector: FakeConnector) -> Tes
         _settings(tmp_path, "tools.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
         toolkit_factory=lambda tenant: build_tools(tenant, connector=connector),
+        token_verifier=_IDP.verifier(),
     )
     return TestClient(app)
 
@@ -274,6 +294,6 @@ def _create_run(client: TestClient, goal: str = "汇总本周邮件") -> str:
 
 @pytest.fixture()
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(_settings(tmp_path))
+    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
     with TestClient(app) as test_client:
         yield test_client

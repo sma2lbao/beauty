@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from connector.main import create_app
 from connector.services.mail import EmailSummary
-from tests.conftest import TENANT, FakeTransport, _settings
+from tests.conftest import OTHER, TENANT, FakeTransport, _settings, verifier
 
 BODY = {
     "provider": "imap",
@@ -71,7 +71,7 @@ def test_non_ascii_credentials_rejected_at_schema(client: TestClient) -> None:
 
 def test_tenant_isolation(client: TestClient) -> None:
     conn_id = _create(client).json()["id"]
-    other = {"X-Tenant-Id": "t-2"}
+    other = OTHER
     assert client.get("/v1/connections", headers=other).json() == []
     assert client.get(f"/v1/connections/{conn_id}", headers=other).status_code == 404
 
@@ -125,7 +125,11 @@ def test_emails_endpoint_and_limit(tmp_path: Path) -> None:
         for i in range(3)
     ]
     transport = FakeTransport(emails=emails)
-    app = create_app(_settings(tmp_path), transport_factory=lambda conn: transport)
+    app = create_app(
+        _settings(tmp_path),
+        transport_factory=lambda conn: transport,
+        token_verifier=verifier(),
+    )
     with TestClient(app) as client:
         conn_id = _create(client).json()["id"]
         got = client.get(
@@ -139,7 +143,11 @@ def test_emails_endpoint_and_limit(tmp_path: Path) -> None:
 def test_send_email_endpoint(tmp_path: Path) -> None:
     """发信(写操作):服务端执行,人工确认由 orchestrator 的确认闸负责。"""
     transport = FakeTransport()
-    app = create_app(_settings(tmp_path), transport_factory=lambda conn: transport)
+    app = create_app(
+        _settings(tmp_path),
+        transport_factory=lambda conn: transport,
+        token_verifier=verifier(),
+    )
     with TestClient(app) as client:
         conn_id = _create(client).json()["id"]
         resp = client.post(

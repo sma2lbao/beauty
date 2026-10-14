@@ -8,7 +8,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
-from tests.conftest import TENANT, FakeLLM, _create_run, _settings
+from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
 
 VERIFY_PASS = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
 
@@ -20,6 +20,7 @@ def _doc_app(tmp_path: Path, fake: FakeLLM, library: DocumentLibrary) -> TestCli
             settings,
             llm_client=fake,
             toolkit_factory=lambda tenant: build_tools(tenant, documents=library),
+            token_verifier=verifier(),
         )
     )
 
