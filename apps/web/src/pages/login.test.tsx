@@ -88,17 +88,6 @@ beforeEach(() => {
 });
 
 describe('LoginPage', () => {
-  it('dev 模式:说明无需登录,提供进入控制台链接', () => {
-    vi.mocked(authMode).mockReturnValue('dev');
-    renderLogin();
-
-    expect(screen.getByText(/不需要登录/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '进入控制台' })).toHaveAttribute(
-      'href',
-      '/',
-    );
-  });
-
   it('token 模式:密码登录成功后保存双令牌并回到来路', async () => {
     vi.mocked(accountApi.login).mockResolvedValue(authResult);
     renderLogin({ from: '/runs' });

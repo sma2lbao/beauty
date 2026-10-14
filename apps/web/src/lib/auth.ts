@@ -2,26 +2,26 @@
  * 前端鉴权接线(与后端 §10 的 token→租户约定配对)。
  *
  * 模式(`VITE_AUTH_MODE`):
- * - `dev`(默认):不带 token;后端鉴权关闭时用 `VITE_TENANT_ID` 临时租户头;
- * - `token`:自建认证登录(邮箱 + 密码,注册见登录页),双令牌存 localStorage:
- *   access 过期后由 `@/lib/http` 拿 refresh 自动续(旋转式);运维仍可粘贴
- *   纯 access token(联调用,无续期能力);
+ * - `token`(默认):自建认证登录(邮箱 + 密码,注册见登录页),双令牌存
+ *   localStorage:access 过期后由 `@/lib/http` 拿 refresh 自动续(旋转式);
+ *   运维仍可粘贴纯 access token(联调用,无续期能力);
  * - `logto`:Logto 授权码 + PKCE 登录,access token 由 SDK 自动续期。
  *
+ * 租户标识只在 token 里(`tenant_id` claim),前端不传、也不需要知道它——
+ * 守卫(auth-guard)保证未登录访问送回登录页,请求层不兜底临时租户头。
+ *
  * 构建期环境变量:`VITE_AUTH_MODE`、`VITE_LOGTO_ENDPOINT`、`VITE_LOGTO_APP_ID`、
- * `VITE_LOGTO_RESOURCE`、`VITE_TENANT_ID`、`VITE_ACCOUNT_API_URL`(见 apps/web/.env.example)。
+ * `VITE_LOGTO_RESOURCE`、`VITE_ACCOUNT_API_URL`(见 apps/web/.env.example)。
  */
 
 import LogtoClient from '@logto/browser';
 
-export type AuthMode = 'dev' | 'token' | 'logto';
+export type AuthMode = 'token' | 'logto';
 
-const MODE = (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? 'dev';
+const MODE = (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? 'token';
 const LOGTO_ENDPOINT = import.meta.env.VITE_LOGTO_ENDPOINT as string | undefined;
 const LOGTO_APP_ID = import.meta.env.VITE_LOGTO_APP_ID as string | undefined;
 const LOGTO_RESOURCE = import.meta.env.VITE_LOGTO_RESOURCE as string | undefined;
-const TENANT =
-  (import.meta.env.VITE_TENANT_ID as string | undefined) ?? 'demo-tenant';
 const ACCOUNT_BASE =
   (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
 const TOKEN_KEY = 'beauty.auth.access_token';
@@ -30,10 +30,6 @@ const LABEL_KEY = 'beauty.auth.account_label';
 
 export function authMode(): AuthMode {
   return MODE;
-}
-
-export function tenantId(): string {
-  return TENANT;
 }
 
 export function getStoredToken(): string | null {
@@ -154,13 +150,16 @@ async function doRefresh(): Promise<boolean> {
   }
 }
 
-/** 请求头:有 token 走 Bearer(后端鉴权开启);dev 模式退回临时租户头。 */
+/**
+ * 请求头:有 token 走 Bearer(租户在 claim 里);没有就空着头发——
+ * 未登录的访问由守卫拦在页面之外,这里不做兜底。
+ */
 export async function authHeaders(): Promise<Record<string, string>> {
   const token = await accessToken();
   if (token) {
     return { Authorization: `Bearer ${token}` };
   }
-  return MODE === 'dev' ? { 'X-Tenant-Id': TENANT } : {};
+  return {};
 }
 
 /** OIDC 回调地址:需在 Logto 控制台登记。 */

@@ -5,8 +5,7 @@
  * - `token`:自建认证(account-service)——邮箱 + 密码登录、注册新组织,
  *   或粘贴现成 access token(联调/运维,无续期);登录拿双令牌,
  *   access 过期由 http 层用 refresh 自动续;
- * - `logto`:跳 IdP 授权码 + PKCE 登录,回调在 `/callback`;
- * - `dev`:后端鉴权关闭,说明后放行。
+ * - `logto`:跳 IdP 授权码 + PKCE 登录,回调在 `/callback`。
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -84,9 +83,8 @@ export function LoginPage() {
   const accountQuery = useQuery({
     queryKey: ACCOUNT_QUERY_KEY,
     queryFn: accountLabel,
-    enabled: mode !== 'dev',
   });
-  const account = mode === 'dev' ? null : (accountQuery.data ?? null);
+  const account = accountQuery.data ?? null;
 
   const enter = () => navigate(target, { replace: true });
 
@@ -169,17 +167,6 @@ export function LoginPage() {
 
           <div className="p-6 pt-12">
             <h1 className="font-display text-2xl">登录</h1>
-
-            {mode === 'dev' ? (
-              <>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  当前是开发模式(后端鉴权未开启),不需要登录。
-                </p>
-                <Button className="mt-5 w-full" asChild>
-                  <Link to="/">进入控制台</Link>
-                </Button>
-              </>
-            ) : null}
 
             {mode === 'token' && account ? (
               <SignedIn

@@ -2,7 +2,7 @@
  * 前端统一 HTTP 层:各控制台共用错误契约与请求封装(架构 §11)。
  *
  * - 后端错误体统一是 `{"code","message","details"}`,这里映射成 `ApiError`;
- * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer);
+ * - 鉴权头由 `@/lib/auth` 决定(有 token 走 Bearer;未登录请求由守卫拦下);
  * - access token 过期(401)且存有 refresh token 时自动续期并重试一次
  *   (单飞:`@/lib/auth` 保证并发 401 只发一次刷新请求);
  * - 各服务只提供 base 与路径(dev 由 vite.config.ts 代理到对应端口)。

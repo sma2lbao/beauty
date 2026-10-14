@@ -9,11 +9,9 @@ import {
   setStoredToken,
   signIn,
   signOut,
-  tenantId,
 } from '@/lib/auth';
 
 const MODE_LABEL: Record<string, string> = {
-  dev: '开发模式',
   token: '账号登录',
   logto: 'Logto 登录',
 };
@@ -59,14 +57,7 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
     >
       <span className="text-muted-foreground">
         鉴权:{MODE_LABEL[mode] ?? mode}
-        {mode === 'dev' ? ` · 租户 ${tenantId()}` : ''}
       </span>
-
-      {mode === 'dev' ? (
-        <span className="text-xs text-muted-foreground">
-          后端 AUTH_ENABLED=false 时用 X-Tenant-Id 临时头
-        </span>
-      ) : null}
 
       {mode === 'token' ? (
         account ? (

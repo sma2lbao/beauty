@@ -137,7 +137,7 @@ describe('OutboxPage', () => {
 
   it('401 时提示先鉴权', async () => {
     vi.mocked(outboxApi.stats).mockRejectedValue(
-      new ApiError(401, 'auth.header_missing', '缺少 X-Tenant-Id'),
+      new ApiError(401, 'auth.token_invalid', '令牌无效或已过期'),
     );
 
     renderPage();

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { accountApi } from './account-api';
+import { setStoredToken } from './auth';
 import { ApiError } from './http';
 
 function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
@@ -16,10 +17,12 @@ function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe('accountApi', () => {
-  it('组织档案走 /account-api 前缀并带鉴权头', async () => {
+  it('组织档案走 /account-api 前缀并带 Bearer 鉴权头', async () => {
+    setStoredToken('test-jwt');
     const fetchMock = mockFetch(200, {
       id: 'org-1',
       name: '示例科技',
@@ -32,7 +35,9 @@ describe('accountApi', () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/account-api/v1/organization');
-    expect(JSON.stringify(init.headers)).toContain('X-Tenant-Id');
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer test-jwt',
+    });
   });
 
   it('更新组织只传给出的字段', async () => {

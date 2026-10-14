@@ -8,6 +8,7 @@ import {
   runsApi,
   streamRunEvents,
 } from '@/lib/runs-api';
+import { setStoredToken } from '@/lib/auth';
 
 const event: RunEvent = {
   seq: 3,
@@ -56,9 +57,11 @@ describe('mergeEvents', () => {
 describe('runsApi', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
-  it('携带租户头并返回 JSON', async () => {
+  it('携带 Bearer 鉴权头并返回 JSON', async () => {
+    setStoredToken('test-jwt');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ id: 'r1', status: 'pending' }],
@@ -70,8 +73,8 @@ describe('runsApi', () => {
     expect(runs).toHaveLength(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/v1/runs?limit=50');
-    expect((init.headers as Record<string, string>)['X-Tenant-Id']).toBe(
-      'demo-tenant',
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer test-jwt',
     );
   });
 

@@ -8,8 +8,7 @@ import { accessToken, authMode } from '@/lib/auth';
 import { App } from './app';
 
 vi.mock('@/lib/auth', () => ({
-  authMode: vi.fn(() => 'dev'),
-  tenantId: vi.fn(() => 'demo-tenant'),
+  authMode: vi.fn(() => 'token'),
   accessToken: vi.fn(async () => null),
   authHeaders: vi.fn(async () => ({})),
   accountLabel: vi.fn(async () => null),
@@ -38,9 +37,14 @@ function renderApp(path: string) {
 }
 
 describe('App 路由', () => {
-  it('/ 渲染对话页', () => {
+  beforeEach(() => {
+    // 路由用例关心页面本身;守卫要求已登录
+    vi.mocked(accessToken).mockResolvedValue('access-jwt');
+  });
+
+  it('/ 渲染对话页', async () => {
     renderApp('/');
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(
       '对话',
     );
   });
@@ -66,16 +70,15 @@ describe('App 路由', () => {
     );
   });
 
-  it('所有路由都包在站点布局里（页头 + 页脚）', () => {
+  it('所有路由都包在站点布局里（页头 + 页脚）', async () => {
     renderApp('/');
-    expect(screen.getByRole('banner')).toBeInTheDocument();
-    expect(screen.getByRole('contentinfo')).toBeInTheDocument();
+    expect(await screen.findByRole('banner')).toBeInTheDocument();
+    expect(await screen.findByRole('contentinfo')).toBeInTheDocument();
   });
 });
 
 describe('登录门（§10）', () => {
   beforeEach(() => {
-    vi.mocked(authMode).mockReturnValue('dev');
     vi.mocked(accessToken).mockResolvedValue(null);
   });
 
@@ -85,16 +88,14 @@ describe('登录门（§10）', () => {
     expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
   });
 
-  it('token 模式未登录：受保护页被送回 /login', async () => {
-    vi.mocked(authMode).mockReturnValue('token');
+  it('未登录：受保护页被送回 /login', async () => {
     renderApp('/runs');
     expect(
       await screen.findByRole('heading', { name: '登录' }),
     ).toBeInTheDocument();
   });
 
-  it('token 模式已登录：受保护页正常渲染', async () => {
-    vi.mocked(authMode).mockReturnValue('token');
+  it('已登录：受保护页正常渲染', async () => {
     vi.mocked(accessToken).mockResolvedValue('access-jwt');
     renderApp('/');
     expect(
@@ -103,7 +104,6 @@ describe('登录门（§10）', () => {
   });
 
   it('公开页（/about）不受守卫影响', async () => {
-    vi.mocked(authMode).mockReturnValue('token');
     renderApp('/about');
     expect(
       await screen.findByRole('heading', { name: '关于 beauty moon' }),

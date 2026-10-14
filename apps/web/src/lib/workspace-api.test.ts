@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from './http';
 import { workspaceApi } from './workspace-api';
+import { setStoredToken } from './auth';
 
 function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
@@ -16,17 +17,22 @@ function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe('workspaceApi', () => {
-  it('工作区列表走 /workspace-api 前缀并带鉴权头', async () => {
+  it('工作区列表走 /workspace-api 前缀并带 Bearer 鉴权头', async () => {
+    setStoredToken('test-jwt');
     const fetchMock = mockFetch(200, []);
 
     await workspaceApi.workspaces();
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/workspace-api/v1/workspaces');
-    expect(JSON.stringify(init.headers)).toContain('X-Tenant-Id');
+    expect(init.headers).toMatchObject({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer test-jwt',
+    });
   });
 
   it('默认工作区走 /workspaces/default(幂等建档)', async () => {

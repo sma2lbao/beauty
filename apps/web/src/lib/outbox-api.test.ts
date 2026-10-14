@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from './http';
 import { outboxApi } from './outbox-api';
+import { setStoredToken } from './auth';
 
 function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
@@ -16,17 +17,21 @@ function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe('outboxApi', () => {
-  it('计数与列表走 /api/v1/outbox 且带鉴权头', async () => {
+  it('计数与列表走 /api/v1/outbox 且带 Bearer 鉴权头', async () => {
+    setStoredToken('test-jwt');
     const fetchMock = mockFetch(200, { pending: 1, dispatched: 2, failed: 0 });
 
     await outboxApi.stats();
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/v1/outbox/stats');
-    expect(JSON.stringify(init.headers)).toContain('X-Tenant-Id');
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer test-jwt',
+    });
   });
 
   it('列表可按状态过滤并带 limit', async () => {

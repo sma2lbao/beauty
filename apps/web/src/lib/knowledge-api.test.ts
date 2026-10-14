@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/runs-api';
 
 import { knowledgeApi } from './knowledge-api';
+import { setStoredToken } from './auth';
 
 function mockFetch(
   status: number,
@@ -20,18 +21,22 @@ function mockFetch(
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe('knowledgeApi', () => {
-  it('列表走 /knowledge-api 前缀并带鉴权头', async () => {
+  it('列表走 /knowledge-api 前缀并带 Bearer 鉴权头', async () => {
+    setStoredToken('test-jwt');
     const fetchMock = mockFetch(200, []);
 
     await knowledgeApi.documents();
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/knowledge-api/v1/knowledge/documents');
-    expect(init.headers).toMatchObject({ 'Content-Type': 'application/json' });
-    expect(JSON.stringify(init.headers)).toContain('X-Tenant-Id');
+    expect(init.headers).toMatchObject({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer test-jwt',
+    });
   });
 
   it('入库发送标题/正文/来源', async () => {

@@ -23,7 +23,7 @@ vi.mock('@logto/browser', () => ({
 
 /** 按指定模式重新加载鉴权模块(模式是模块加载期读取的)。 */
 async function loadAuth(
-  mode: 'dev' | 'token' | 'logto',
+  mode: 'token' | 'logto',
   extra: Record<string, string> = {},
 ) {
   vi.resetModules();
@@ -45,11 +45,6 @@ describe('authHeaders', () => {
     vi.clearAllMocks();
     mocks.isAuthenticated.mockResolvedValue(true);
     window.localStorage.clear();
-  });
-
-  it('dev 模式:退回临时租户头', async () => {
-    const auth = await loadAuth('dev', { VITE_TENANT_ID: 't-demo' });
-    expect(await auth.authHeaders()).toEqual({ 'X-Tenant-Id': 't-demo' });
   });
 
   it('token 模式:有令牌走 Bearer,无令牌不带鉴权头', async () => {
@@ -211,7 +206,7 @@ describe('登录来路记忆', () => {
   });
 
   it('记住并取出登录来路,取出即清掉', async () => {
-    const auth = await loadAuth('dev');
+    const auth = await loadAuth('token');
     auth.rememberLoginRedirect('/runs');
     expect(auth.takeLoginRedirect()).toBe('/runs');
     // 已被消费,第二次取回默认值
@@ -219,7 +214,7 @@ describe('登录来路记忆', () => {
   });
 
   it('非站内路径一律回对话页(防开放重定向)', async () => {
-    const auth = await loadAuth('dev');
+    const auth = await loadAuth('token');
     auth.rememberLoginRedirect('//evil.example');
     expect(auth.takeLoginRedirect()).toBe('/');
     expect(auth.takeLoginRedirect()).toBe('/');
