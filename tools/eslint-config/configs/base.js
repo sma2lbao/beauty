@@ -4,8 +4,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 /**
- * monorepo 全局忽略:构建产物、缓存目录,以及非 JS 项目
- * (packages/py-utils 是 Python,由 ruff 统一管理)。
+ * monorepo 全局忽略:构建产物与缓存目录。
+ * Python 项目由 ruff 统一管理,不由 ESLint 覆盖。
  */
 export const ignores = [
   '**/dist/**',
@@ -23,8 +23,6 @@ export const ignores = [
   '**/.pytest_cache/**',
   '**/.ruff_cache/**',
   '**/.playwright-mcp/**',
-  // Python 项目由 ruff 统一管理
-  'packages/py-utils/**',
 ];
 
 /**
@@ -32,7 +30,7 @@ export const ignores = [
  * 末尾以 eslint-config-prettier 关闭所有与 Prettier 冲突的格式规则
  * (格式统一交给 Prettier,ESLint 只管代码质量)。
  *
- * 适用于纯 TS 包(packages/ts-utils)、Node 工具与仓库根部的配置文件。
+ * 适用于纯 TS 包、Node 工具与仓库根部的配置文件。
  */
 export function base() {
   return [

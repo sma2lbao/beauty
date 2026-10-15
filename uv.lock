@@ -27,7 +27,6 @@ members = [
     "events",
     "knowledge-service",
     "llm-gateway",
-    "py-utils",
     "workspace-service",
 ]
 
@@ -475,7 +474,6 @@ dependencies = [
     { name = "events" },
     { name = "knowledge-service" },
     { name = "llm-gateway" },
-    { name = "py-utils" },
     { name = "workspace-service" },
 ]
 
@@ -499,7 +497,6 @@ requires-dist = [
     { name = "events", editable = "packages/events" },
     { name = "knowledge-service", editable = "services/knowledge-service" },
     { name = "llm-gateway", editable = "services/llm-gateway" },
-    { name = "py-utils", editable = "packages/py-utils" },
     { name = "workspace-service", editable = "services/workspace-service" },
 ]
 
@@ -2657,11 +2654,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/74/5e/c0664b968b102ff68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/b4/452c6607a0f479465cd8a9b0d9956919fcb150050c1f83f9f11e6b8ee8dc/psycopg_pool-3.3.3-py3-none-any.whl", hash = "sha256:9b9cd6a4fcec47a410f7e82d408540e7f77b478509e91b44c1a5457a13e5ff37", size = 40304, upload-time = "2026-09-22T15:53:23.712Z" },
 ]
-
-[[package]]
-name = "py-utils"
-version = "1.0.0"
-source = { editable = "packages/py-utils" }
 
 [[package]]
 name = "pycodestyle"
