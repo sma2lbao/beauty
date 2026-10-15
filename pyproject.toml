@@ -3,7 +3,6 @@ name = "beauty-moon"
 version = "1.0.0"
 # uv workspace 容器：所有 Python 项目共享仓库根 .venv（统一 Python 3.12）
 dependencies = [
-    "ink",
     "py-utils",
     "common",
     "database",
@@ -20,7 +19,6 @@ dependencies = [
 # members 为显式清单：apps/ 与 packages/ 下混有 npm 项目（web/design/ts-utils 无 pyproject.toml），
 # glob 会命中无 pyproject 的目录导致 uv 报错。新 Python 项目必须在此登记。
 members = [
-    "apps/ink",
     "packages/py-utils",
     "packages/common",
     "packages/database",
@@ -32,9 +30,6 @@ members = [
     "services/account-service",
     "services/workspace-service",
 ]
-
-[tool.uv.sources.ink]
-workspace = true
 
 [tool.uv.sources.py-utils]
 workspace = true

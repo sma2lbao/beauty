@@ -20,7 +20,6 @@ beauty-moon/
 │   │   ├── src/                # 页面 / 组件 / 路由
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名
-│   └── ink/                    # 本地优先个人知识库（Python + LlamaIndex + ChromaDB RAG 问答）
 ├── packages/
 │   ├── ts-utils/               # TypeScript 库示例（tsc 构建 + vitest 测试）
 │   │   ├── src/                # 源码
@@ -74,17 +73,6 @@ npx nx test @beauty/web       # vitest + Testing Library 单测
 ```
 
 React 19 + TypeScript SPA：react-router v8 路由、@tanstack/react-query 数据层、Tailwind CSS v4 + shadcn/ui 组件，详见 [apps/web/README.md](apps/web/README.md)。
-
-### 知识库（ink）
-
-```sh
-npx nx sync ink           # uv sync：更新仓库根共享 .venv
-npx nx lint ink           # ruff 检查
-npx nx format ink         # ruff 格式化
-npx nx serve ink          # Streamlit 聊天 UI（8501 端口）
-```
-
-本地优先 RAG 问答应用（LlamaIndex + DeepSeek + bge-m3 + ChromaDB），详见 [apps/ink/README.md](apps/ink/README.md)。
 
 ### Python（py-utils）
 
@@ -157,7 +145,7 @@ npx nx run py-utils:sync              # 同步 .venv
 
 ## 其他
 
-- **包作用域**：JS 包统一使用 `@beauty/*` 作用域（根包为 `@beauty/source`）；应用目录名不带 `beauty-` 前缀（`apps/web`、`apps/ink`），JS 包名即 `@beauty/<目录名>`。
+- **包作用域**：JS 包统一使用 `@beauty/*` 作用域（根包为 `@beauty/source`）；应用目录名不带 `beauty-` 前缀（`apps/web`），JS 包名即 `@beauty/<目录名>`。
 - **源码解析**：`tsconfig.base.json` 通过 customConditions 让包间解析直接指向源码。
 - **共享 venv**：所有 Python 项目共用仓库根 `.venv`（uv workspace），Python 统一 3.12，依赖只装一份。
 - **发布**：Python 项目已内置 `@nxlv/python` 的 release 集成，TS 包可用 `npx nx release`。

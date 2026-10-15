@@ -7,7 +7,6 @@
 | 路径                  | Nx 项目名               | 类型         | 技术栈                                                                                  |
 | --------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------- |
 | `apps/web`            | `@beauty/web`           | React 应用   | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + shadcn/ui,Vite 8 |
-| `apps/ink`            | `ink`                   | Python 应用  | LlamaIndex + DeepSeek + bge-m3 + ChromaDB 的 RAG 问答,Streamlit UI                      |
 | `packages/ts-utils`   | `@beauty/ts-utils`      | TS 库        | tsc 构建 + vitest                                                                       |
 | `packages/design`     | `@beauty/design`        | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                         |
 | `packages/py-utils`   | `py-utils`              | Python 库    | hatchling + pytest + ruff                                                               |
@@ -57,7 +56,7 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
-### Python(ink / py-utils / common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service)
+### Python(py-utils / common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service)
 
 ```sh
 npx nx run py-utils:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -65,7 +64,6 @@ npx nx lint py-utils      # ruff check
 npx nx format py-utils     # ruff format
 npx nx test py-utils       # uv run pytest(含覆盖率,报告写入根 reports/ 与 coverage/)
 npx nx build py-utils      # hatchling 构建 wheel/sdist
-npx nx serve ink           # Streamlit UI(8501 端口)
 npx nx run agent-orchestrator:serve  # uvicorn :8002(run 编排 API)
 npx nx run llm-gateway:serve         # uvicorn :8003(模型网关)
 npx nx run connector-service:serve   # uvicorn :8004(连接器服务)
@@ -74,7 +72,7 @@ npx nx run account-service:serve     # uvicorn :8001(账号/组织)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 ```
 
-`ink` 未定义 test target;可 lint/format/sync/serve。`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
+`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -105,7 +103,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
   品牌变量 `--logo-moon` 定义在 `apps/web/src/index.css`(亮色取品牌暖玫瑰,暗色取官方月光米),
   字标月相与标识共用该色,形成呼应。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88,`ink` line-length 100(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
@@ -132,7 +130,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 
 - 不要手动编辑生成物与缓存:`node_modules/`、`dist/`、`out-tsc/`、`doc_build/`、`.venv/`、`.uv-cache/`、`.uv-python/`、`.cache/`、`.nx/`、`reports/`、`coverage/`、`.playwright-mcp/`。
 - `uv.lock`、`package-lock.json` 只能通过对应包管理命令更新,不要手改。
-- `.env` 被 git 忽略且由 ink 运行时读取(pydantic-settings),不要提交密钥或覆盖它。
+- 各服务目录下的 `.env` 被 git 忽略且由 pydantic-settings 运行时读取,不要提交密钥或覆盖它。
 
 ## 修改后的验证清单
 

@@ -4,8 +4,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 /**
- * monorepo 全局忽略:构建产物、缓存目录,以及非 JS 项目(apps/ink、
- * packages/py-utils 是 Python,由 ruff 统一管理)。
+ * monorepo 全局忽略:构建产物、缓存目录,以及非 JS 项目
+ * (packages/py-utils 是 Python,由 ruff 统一管理)。
  */
 export const ignores = [
   '**/dist/**',
@@ -24,7 +24,6 @@ export const ignores = [
   '**/.ruff_cache/**',
   '**/.playwright-mcp/**',
   // Python 项目由 ruff 统一管理
-  'apps/ink/**',
   'packages/py-utils/**',
 ];
 
