@@ -160,11 +160,18 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - 执行引擎默认 **LangGraph + Postgres checkpointer**;流程复杂/强 SLA/大量人审编排时升级 **Temporal**;**不自研状态机**;
 - graph 内设 **context 组装/压缩节点**;超长任务轮次间只传**有界结构化摘要**(借鉴 DSH ralph 与 [Manus 上下文工程](https://www.zenml.io/llmops-database/context-engineering-for-production-ai-agents-at-scale))。
 
+### 6.7 对话(conversations)
+
+- 对话(`conversations`)是消息容器:一条用户消息按上下文二选一——没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
+- user/assistant 消息都持久化(`chat_messages`):assistant 消息是 run 终态(交付物正文/失败原因/拒绝原因)在对话里的投影——历史双向完整,建 run 时作为多轮上下文注入规划提示词;
+- blocked 视为对话停点(需人工 resume):新消息另开一跑,不挂旧图;重试继承会话归属。
+
 ## 7. 数据模型要点
 
 | 表/存储 | 归属 | 说明 |
 |---|---|---|
 | runs / run_events / pending_instructions | orchestrator | §6 状态机、事件溯源、指令队列 |
+| conversations / chat_messages | orchestrator | §6.7 对话消息(user/assistant 持久化 + 多轮上下文) |
 | artifacts | workspace | 交付物元数据;实体文件在对象存储(COS/R2) |
 | connections + credentials | connector | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密 |
 | skills | orchestrator | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化 |
