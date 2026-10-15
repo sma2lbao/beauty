@@ -22,6 +22,7 @@ from fastapi import Header, Request
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.workspace import Workspace
 
 
@@ -42,6 +43,15 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_run_graph(request: Request) -> CompiledStateGraph:
     """lifespan 装配的 run 执行图(app.state.run_graph)。"""
     return request.app.state.run_graph
+
+
+def get_llm_client(request: Request) -> LLMClient | None:
+    """lifespan 装配的模型客户端;未启用(LLM_ENABLED=false)时为 None。
+
+    直接对话(§6.7)与执行图共用同一客户端;为 None 时没有"直接对话"能力,
+    消息只能走任务路径(确定性桩)。
+    """
+    return getattr(request.app.state, "llm_client", None)
 
 
 def get_workspace_client(request: Request) -> Workspace | None:

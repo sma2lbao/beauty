@@ -109,6 +109,27 @@ class MessageRepository(TenantRepository[ChatMessage]):
             order_by=[ChatMessage.created_at, ChatMessage.id],
         )
 
+    async def list_before(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        *,
+        before: datetime,
+        exclude_id: str,
+    ) -> list[ChatMessage]:
+        """直接对话的多轮上下文:这条消息之前的全部轮次(不分 run)。
+
+        与 list_history 的区别:那里按 run 排除(触发消息与追加指令不进上下文),
+        这里只排除消息自身——闲聊要看得到此前所有往来。
+        """
+        return await self.list_scoped(
+            tenant_id,
+            ChatMessage.conversation_id == conversation_id,
+            ChatMessage.created_at < before,
+            ChatMessage.id != exclude_id,
+            order_by=[ChatMessage.created_at, ChatMessage.id],
+        )
+
 
 class RunEventRepository(TenantRepository[RunEvent]):
     """run_events 是 append-only 审计流水(§6.3):只追加、按 seq 读。"""

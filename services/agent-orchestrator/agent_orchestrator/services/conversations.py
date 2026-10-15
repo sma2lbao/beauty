@@ -1,14 +1,15 @@
 """conversation 编排业务逻辑:不 import FastAPI,可独立单测。
 
-消息与任务(§6)的联动语义:
+发一条消息先**分流**(§6.7,判别见 services/triage.py),再按路径落库:
 
-- 没有进行中的 run:消息即 goal,新开一跑并**立即规划**——对话里 Agent
-  的第一响应就是计划,审批/确认按钮就地出现在消息流里;
-- 有进行中的 run:消息并入追加指令队列(§6.5),不新开一跑;
-- "进行中"口径与对话页一致:completed/failed/blocked 之外的状态;
-  blocked 需人工 resume,新消息应该另开一跑,而不是挂在旧图上;
-- 首条消息自动定题;用户与 assistant 消息都持久化,构成多轮上下文
-  (runs 服务在建图时带 conversation_history)。
+- **chat(简单对话)**:直接由模型答一条,不建 run、不进执行图——不产生副作用、
+  不需要审批;用户消息与 assistant 回复都持久化,成为后续的多轮上下文;
+- **task(复杂任务)**:消息即 goal(或并入进行中 run 的追加指令队列 §6.5),
+  新开一跑时**立即规划**——对话里 Agent 的第一响应就是计划。
+
+"进行中"口径与对话页一致:completed/failed/blocked 之外的状态;blocked 需人工
+resume,新任务消息应该另开一跑。首条消息自动定题;两条路径的消息都持久化,
+构成多轮上下文(runs 建图时带 conversation_history,chat 带此前全部轮次)。
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services.llm import LLMClient
 
 DEFAULT_TITLE = "新对话"
 MAX_TITLE = 40
@@ -102,13 +105,17 @@ async def list_messages(
 async def post_message(
     session: AsyncSession,
     graph: CompiledStateGraph,
+    llm: LLMClient | None,
     tenant_id: str,
     conversation_id: str,
     content: str,
-) -> tuple[ChatMessage, Run, str]:
-    """发消息:持久化用户消息,并按上下文并入当前 run 或新开一跑。
+    *,
+    mode: str = triage.AUTO,
+) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
+    """发消息:先分流(§6.7),再按 chat / task 路径持久化。
 
-    返回 (message, run, mode),mode ∈ {"run_created", "instruction_queued"}。
+    返回 (用户消息, run|None, assistant 直接回复|None, 处理方式);
+    处理方式 ∈ {"chat", "run_created", "instruction_queued"}。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     messages = MessageRepository(session)
@@ -116,8 +123,8 @@ async def post_message(
         # 首条消息自动定题
         conversation.title = title_from_message(content)
 
-    # 先落用户消息:created_at 必须早于随后创建的 run,
-    # 多轮历史(排除本 run 自己的消息)才不会把它重复算进上下文
+    # 先落用户消息:created_at 必须早于随后创建的 run / assistant 回复,
+    # 多轮历史(排除消息自身或本 run 的消息)才不会把它重复算进上下文
     message = ChatMessage(
         tenant_id=tenant_id,
         conversation_id=conversation.id,
@@ -126,12 +133,25 @@ async def post_message(
     )
     await messages.add(message)
 
+    decided = await triage.decide(content, llm, mode=mode)
+    # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里的判空只为收窄类型
+    if decided == triage.CHAT and llm is not None:
+        reply = ChatMessage(
+            tenant_id=tenant_id,
+            conversation_id=conversation.id,
+            role="assistant",
+            content=await chat.answer(session, llm, message),
+        )
+        await messages.add(reply)
+        conversation.updated_at = datetime.now(UTC)
+        return message, None, reply, triage.CHAT
+
     run = await active_run(session, tenant_id, conversation_id)
     if run is not None:
         # 进行中:并入追加指令(§6.5),消息挂到该 run
         await runs_service.queue_instruction(session, tenant_id, run.id, content)
         message.run_id = run.id
-        mode = "instruction_queued"
+        outcome = "instruction_queued"
     else:
         # 没有进行中的任务:消息即 goal,新开一跑(挂到本会话)并立即规划
         run = await runs_service.create_run(
@@ -145,8 +165,8 @@ async def post_message(
             ),
         )
         message.run_id = run.id
-        mode = "run_created"
+        outcome = "run_created"
         await runs_service.plan_run(session, graph, tenant_id, run.id)
 
     conversation.updated_at = datetime.now(UTC)
-    return message, run, mode
+    return message, run, None, outcome

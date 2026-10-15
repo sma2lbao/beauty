@@ -70,6 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             model=settings.llm_model,
         )
         owns_llm = True
+    # 发布解析后的客户端:直接对话(§6.7)与执行图共用同一个;
+    # create_app 里存的是"测试注入值",生产路径为 None,这里补齐
+    app.state.llm_client = llm
 
     # 工具装配(架构 §8):测试注入 toolkit_factory 优先;
     # 否则 tools_enabled 时按子开关装配各能力提供方(未开启的不暴露)

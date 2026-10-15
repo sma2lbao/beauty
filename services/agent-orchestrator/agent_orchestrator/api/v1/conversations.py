@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Query, status
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_orchestrator.api.deps import get_run_graph, get_session, get_tenant_id
+from agent_orchestrator.api.deps import (
+    get_llm_client,
+    get_run_graph,
+    get_session,
+    get_tenant_id,
+)
 from agent_orchestrator.schemas.conversations import (
     ConversationCreate,
     ConversationDetail,
@@ -19,12 +24,14 @@ from agent_orchestrator.schemas.conversations import (
 )
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import conversations as conversations_service
+from agent_orchestrator.services.llm import LLMClient
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
+LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
 
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
@@ -91,13 +98,21 @@ async def post_message(
     session: DBSession,
     tenant_id: TenantId,
     graph: RunGraph,
+    llm: LLM,
 ) -> MessagePostResult:
-    """发消息:进行中的 run → 追加指令(§6.5);否则新开一跑并立即规划。"""
-    message, run, mode = await conversations_service.post_message(
-        session, graph, tenant_id, conversation_id, body.content
+    """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
+    message, run, reply, mode = await conversations_service.post_message(
+        session,
+        graph,
+        llm,
+        tenant_id,
+        conversation_id,
+        body.content,
+        mode=body.mode,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
-        run=RunRead.model_validate(run),
+        run=RunRead.model_validate(run) if run is not None else None,
+        reply=MessageRead.model_validate(reply) if reply is not None else None,
         mode=mode,
     )

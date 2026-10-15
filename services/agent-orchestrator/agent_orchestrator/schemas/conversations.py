@@ -37,9 +37,15 @@ class ConversationDetail(ConversationRead):
 
 
 class MessageCreate(BaseModel):
-    """发消息:content 即任务目标或追加指令(§6.5)。"""
+    """发消息:content 即对话内容/任务目标;mode 是"发送方式"。
+
+    mode 只表达用户希望怎么发,实际怎么处理由分流决定、见
+    MessagePostResult.mode:auto = 自动分流(默认)/ chat = 直接对话 /
+    task = 作为任务执行(建 run 或并入当前 run 的追加指令)。
+    """
 
     content: str = Field(min_length=1, max_length=2000)
+    mode: Literal["auto", "chat", "task"] = "auto"
 
 
 class MessageRead(BaseModel):
@@ -54,8 +60,14 @@ class MessageRead(BaseModel):
 
 
 class MessagePostResult(BaseModel):
-    """发消息的结果:前端据此决定接哪个 run 的 SSE、是否刷新对话列表。"""
+    """发消息的结果:前端据此决定接哪个 run 的 SSE、是否刷新对话列表。
+
+    - mode=chat:简单对话——reply 是 assistant 的直接回复,run 为空(没建任务);
+    - mode=run_created:新开了任务——run 是新 run,reply 为空;
+    - mode=instruction_queued:并入进行中的任务——run 是该 run,reply 为空。
+    """
 
     message: MessageRead
-    run: RunRead
-    mode: Literal["run_created", "instruction_queued"]
+    run: RunRead | None = None
+    reply: MessageRead | None = None
+    mode: Literal["chat", "run_created", "instruction_queued"]

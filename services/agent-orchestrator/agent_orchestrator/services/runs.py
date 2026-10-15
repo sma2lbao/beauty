@@ -37,7 +37,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
-from agent_orchestrator.services import artifacts
+from agent_orchestrator.services import artifacts, history
 from agent_orchestrator.services.workspace import Workspace
 
 
@@ -223,18 +223,14 @@ async def _consume_instructions(session: AsyncSession, run: Run) -> list[str]:
     return contents
 
 
-#: 多轮上下文带回的近期消息上限与单条截断长度(交付物可能很长)
-HISTORY_MESSAGES_LIMIT = 20
-HISTORY_MESSAGE_CHARS = 2000
-
-
 async def _conversation_history(
     session: AsyncSession, run: Run
-) -> list[dict[str, Any]]:
+) -> list[dict[str, str]]:
     """对话多轮上下文:run 建立之前的消息(排除本 run 自己的消息)。
 
     排除口径见 MessageRepository.list_history——触发本 run 的用户消息
-    (先落库再建 run)与并发到达的追加指令都不会重复进上下文。
+    (先落库再建 run)与并发到达的追加指令都不会重复进上下文;
+    截断口径(条数/单条字数)与直接对话共用 services.history。
     """
     rows = await MessageRepository(session).list_history(
         run.tenant_id,
@@ -242,10 +238,7 @@ async def _conversation_history(
         before=run.created_at,
         exclude_run_id=run.id,
     )
-    return [
-        {"role": row.role, "content": (row.content or "")[:HISTORY_MESSAGE_CHARS]}
-        for row in rows[-HISTORY_MESSAGES_LIMIT:]
-    ]
+    return history.to_prompt(rows)
 
 
 async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
