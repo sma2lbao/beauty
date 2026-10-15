@@ -19,6 +19,12 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   返回新 run;血缘见 `parent_run_id` 与 `run.retry.requested.v1`)、
   `POST /runs/{id}/confirm`(写操作放行/拒绝,§6.2)、
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
+- 对话垂直切片(§6.7):`POST /api/v1/conversations` 建会话、`GET /conversations`(最近活跃在前)、
+  `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
+  `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息;
+  发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
+  不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
+  判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
 - 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是

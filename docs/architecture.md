@@ -162,8 +162,9 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 
 ### 6.7 对话(conversations)
 
-- 对话(`conversations`)是消息容器:一条用户消息按上下文二选一——没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
-- user/assistant 消息都持久化(`chat_messages`):assistant 消息是 run 终态(交付物正文/失败原因/拒绝原因)在对话里的投影——历史双向完整,建 run 时作为多轮上下文注入规划提示词;
+- **先分流**:消息先判 `chat`(简单对话)还是 `task`(复杂任务)——显式指定(自动/对话/任务)优先,其次由模型判别,**判别失败或无模型时退回 task**;chat 由模型直接答一条,不建 run、不需审批,只有 task 才进 §6 任务流程;
+- 对话(`conversations`)是消息容器:task 消息在没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
+- user/assistant 消息都持久化(`chat_messages`):assistant 消息既可能是 run 终态(交付物正文/失败原因/拒绝原因)的投影,也可能是 chat 的直接回复(`run_id` 为空)——历史双向完整,作为多轮上下文注入(chat 带此前全部轮次,规划排除本 run 自己的消息);
 - blocked 视为对话停点(需人工 resume):新消息另开一跑,不挂旧图;重试继承会话归属。
 
 ## 7. 数据模型要点
