@@ -25,9 +25,9 @@ class Settings(BaseAppSettings):
     chunk_overlap: int = 60
     search_default_limit: int = 5
     search_max_limit: int = 20
-    # 鉴权(架构 §10):与其他服务同一套 token→租户约定
-    auth_enabled: bool = False
-    auth_issuer: str = "http://127.0.0.1:3301/oidc"
-    auth_audience: str | None = None
+    # 鉴权(架构 §10):默认开启,与其他服务同一套 token→租户约定(自建 IdP)
+    auth_enabled: bool = True
+    auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
+    auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"

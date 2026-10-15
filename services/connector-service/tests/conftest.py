@@ -6,12 +6,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
 from connector.main import create_app
 from connector.services.mail import EmailSummary, TestResult
-from common.testing import TestIdP
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")

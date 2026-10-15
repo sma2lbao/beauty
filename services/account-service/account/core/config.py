@@ -16,10 +16,11 @@ class Settings(BaseAppSettings):
     database_url: str = "sqlite+aiosqlite:///./account.db"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     default_plan: str = "free"
-    # 鉴权(架构 §10):本服务兼作自建 IdP 时,这里只解析"当前租户"
-    auth_enabled: bool = False
+    # 鉴权(架构 §10):本服务即自建 IdP(issuer 指向自身),这里只解析"当前租户";
+    # audience 与下方 token_audience 保持一致
+    auth_enabled: bool = True
     auth_issuer: str = "http://127.0.0.1:8001"
-    auth_audience: str | None = None
+    auth_audience: str | None = "beauty-api"
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"
     # 自建认证(自 IdP 桩转正):注册/登录/刷新/内部签发 + OIDC 发现/JWKS

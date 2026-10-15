@@ -41,6 +41,7 @@
 | `TOKEN_AUDIENCE` | beauty-api | JWT `aud`(与各服务 `AUTH_AUDIENCE` 一致) |
 | `SIGNING_KEY_PATH` | 空 | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test) |
 | `INTERNAL_SECRET` | 空 | `/v1/auth/issue` 的共享密钥,留空即关闭内部签发 |
+| `AUTH_ENABLED` | true | 校验 Bearer 并从 token claim 解析租户(自建 IdP 即本服务;显式关闭走旧临时头,仅特殊部署) |
 
 ## 迁移
 

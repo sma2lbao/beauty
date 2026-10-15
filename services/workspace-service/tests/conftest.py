@@ -6,11 +6,11 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
 from workspace.core.config import Settings
 from workspace.main import create_app
-from common.testing import TestIdP
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")

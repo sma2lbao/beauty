@@ -29,7 +29,7 @@ async def get_tenant_id(
     x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    """租户解析:IdP token 优先,鉴权关闭时才认临时头(与兄弟服务同约定)。"""
+    """租户解析:IdP token 优先(默认);显式关闭鉴权才认临时头(与兄弟服务同约定)。"""
     verifier: JwtVerifier | None = request.app.state.token_verifier
     if verifier is None:
         if not x_tenant_id:

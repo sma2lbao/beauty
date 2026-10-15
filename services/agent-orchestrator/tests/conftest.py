@@ -14,13 +14,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply
 from agent_orchestrator.services.tools import build_tools
-from common.testing import TestIdP
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")

@@ -51,10 +51,10 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
 
-- 鉴权(架构 §10):`AUTH_ENABLED=true` 时校验 `Authorization: Bearer <IdP access
-  token>`(OIDC 发现 + JWKS,RS256),租户取自 token claim(默认 `tenant_id`)——
-  **鉴权开启时伪造 `X-Tenant-Id` 无效**;关闭时(dev/test)沿用临时头,缺失即
-  401 `auth.header_missing`;
+- 鉴权(架构 §10):默认开启——校验 `Authorization: Bearer <IdP access token>`
+  (OIDC 发现 + JWKS,RS256;自建 IdP 即 account-service :8001),租户取自
+  token claim(默认 `tenant_id`)——**开启时伪造 `X-Tenant-Id` 无效**;显式
+  关闭鉴权(仅特殊部署)才沿用临时头,缺失即 401 `auth.header_missing`;
 - 服务间调用 token(§5):本服务对下游(connector/knowledge/workspace)的内部
   调用**一律**经 `TokenBroker`(`services/token_broker.py`)用共享内部密钥
   (`INTERNAL_AUTH_SECRET`,配置 `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,

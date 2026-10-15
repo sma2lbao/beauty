@@ -5,7 +5,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import TENANT, FakeLLM, FakeWorkspace, _create_run, _settings, verifier
+from tests.conftest import (
+    TENANT,
+    FakeLLM,
+    FakeWorkspace,
+    _create_run,
+    _settings,
+    verifier,
+)
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
 DELIVERY = "# 本周周报\n\n- 邮件已汇总\n"

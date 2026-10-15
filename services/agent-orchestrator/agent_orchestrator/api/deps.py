@@ -3,7 +3,8 @@
 租户来源(架构 §10):
 - 鉴权开启(`AUTH_ENABLED=true`):校验 `Authorization: Bearer <access token>`,
   租户从 token claim 取——**不可信则 401,绝不回退到请求头**;
-- 鉴权关闭(dev/test):沿用 `X-Tenant-Id` 临时头,缺失即 401。
+- 鉴权显式关闭(AUTH_ENABLED=false,不推荐,仅特殊部署):沿用 `X-Tenant-Id`
+  临时头,缺失即 401。
 
 接入 IdP 后端点零改动:只换这里的实现。
 """

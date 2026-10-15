@@ -15,9 +15,10 @@ class Settings(BaseAppSettings):
     service_name: str = "connector-service"
     database_url: str = "sqlite+aiosqlite:///./connector.db"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
-    # 鉴权(架构 §10):enabled=false 时沿用 X-Tenant-Id 临时头(仅 dev/test)
-    auth_enabled: bool = False
-    auth_issuer: str = "http://127.0.0.1:3301/oidc"  # Logto 本地默认
-    auth_audience: str | None = None
+    # 鉴权(架构 §10):默认开启——调用方(orchestrator 经 TokenBroker)一律带
+    # Bearer;X-Tenant-Id 临时头仅保留为显式关闭鉴权的部署语义
+    auth_enabled: bool = True
+    auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
+    auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
     auth_tenant_claim: str = "tenant_id"

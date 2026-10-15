@@ -102,9 +102,7 @@ def test_retry_only_allowed_from_failed(tmp_path: Path) -> None:
 def test_retry_is_tenant_scoped(tmp_path: Path) -> None:
     with _client(tmp_path, _failing_llm()) as client:
         parent_id = _make_failed_run(client)
-        response = client.post(
-            f"/api/v1/runs/{parent_id}/retry", headers=OTHER
-        )
+        response = client.post(f"/api/v1/runs/{parent_id}/retry", headers=OTHER)
         assert response.status_code == 404
         assert response.json()["code"] == "run.not_found"
 

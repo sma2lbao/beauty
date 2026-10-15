@@ -213,7 +213,9 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
   服务代码零改动(自建签发不落任何服务专有依赖);**测试基建同步**——各服务
   测试装配走"开鉴权 + 真签 token"(`common/testing.py` 的 TestIdP:本地密钥 +
   JWKS MockTransport + 按租户签 Bearer),不再依赖临时租户头;`AUTH_ENABLED=false`
-  时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义,前端与测试均不再使用。
+  时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义,前端与测试均不再使用;
+  各服务 `AUTH_ENABLED` **默认即 `true`**(issuer 默认指向自建 IdP
+  account-service `:8001`),零配置启动即与前端 token 模式对齐。
 
 ## 12. 工程约定
 

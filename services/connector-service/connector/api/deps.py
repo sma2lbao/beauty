@@ -1,7 +1,8 @@
 """FastAPI 依赖:DB session、传输工厂与租户解析。
 
-租户来源(架构 §10):鉴权开启时校验 Bearer token 的 claim;关闭时(dev/test)
-沿用 X-Tenant-Id 临时头,缺失即 401。与 agent-orchestrator 同一套约定。
+租户来源(架构 §10):默认(鉴权开启)校验 Bearer token 的 claim;显式关闭
+鉴权(AUTH_ENABLED=false)才沿用 X-Tenant-Id 临时头,缺失即 401。
+与 agent-orchestrator 同一套约定。
 """
 
 from __future__ import annotations
