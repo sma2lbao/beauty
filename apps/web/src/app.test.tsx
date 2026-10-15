@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { accessToken, authMode } from '@/lib/auth';
+import { accessToken } from '@/lib/auth';
 
 import { App } from './app';
 

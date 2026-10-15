@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
 import { AuthBar } from '@/components/runs/auth-bar';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { titleFromMessage } from '@/lib/chat';
+import { conversationsApi } from '@/lib/conversations-api';
+import type { ChatMessage } from '@/lib/conversations-api';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
@@ -45,7 +46,9 @@ function asText(value: unknown, fallback = ''): string {
  *
  * 事件是审计流水(§6.3),这里只做展示映射——不改变任何状态语义。
  */
-function transcriptFrom(events: { seq: number; type: string; payload: Record<string, unknown> }[]): TranscriptItem[] {
+function transcriptFrom(
+  events: { seq: number; type: string; payload: Record<string, unknown> }[],
+): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   for (const event of events) {
     const payload = event.payload ?? {};
@@ -89,7 +92,10 @@ function transcriptFrom(events: { seq: number; type: string; payload: Record<str
         push('已另起一跑重试(原任务历史保留)。');
         break;
       case 'run.failed.v1':
-        push(`执行失败(${asText(payload.stage, '未知阶段')}):${asText(payload.reason, '未知原因')}`, 'error');
+        push(
+          `执行失败(${asText(payload.stage, '未知阶段')}):${asText(payload.reason, '未知原因')}`,
+          'error',
+        );
         break;
       case 'run.blocked.v1':
         push(`任务中断:${asText(payload.reason, '需要人工处理')}`, 'warn');
@@ -107,24 +113,67 @@ function transcriptFrom(events: { seq: number; type: string; payload: Record<str
   return items;
 }
 
+/** 持久消息气泡:用户靠右主色,Agent 靠左描边;长回复内滚不撑爆对话。 */
+function MessageBubble({ message }: { message: ChatMessage }) {
+  if (message.role === 'user') {
+    return (
+      <div className="flex justify-end">
+        <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
+          {message.content}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex justify-start">
+      <p className="max-h-72 max-w-[85%] overflow-y-auto whitespace-pre-wrap rounded-2xl rounded-bl-sm border bg-muted/50 px-3 py-2 text-sm">
+        {message.content}
+      </p>
+    </div>
+  );
+}
 /**
- * 对话页(首页):用说话的方式派活给 Agent。
+ * 对话页(首页):和 Agent 说话,消息与回复都留在对话里。
  *
- * - 没有进行中的任务时,发送 = 新建任务;有进行中的任务时,发送 = 追加指令(§6.5);
- * - Agent 的回复来自该 run 的事件流(SSE),所以"说了什么"和审计流水一致;
- * - 需要人工决策的地方(放行计划/确认写操作)就地给按钮,深链路(重试/恢复/审计)
- *   留到运行控制台。
+ * - 没有会话时,发送会先建会话再发消息;首条消息自动定题(服务端);
+ * - 发消息由后端编排:没有进行中的任务 → 新开一跑并立即给计划;
+ *   进行中 → 并入追加指令(§6.5)。页面根据返回的 run 接事件流;
+ * - Agent 的实时行动来自该 run 的 SSE;终态回复(交付物/失败原因)
+ *   由服务端落成 assistant 消息,刷新后成为对话历史的一部分;
+ * - 多轮上下文由服务端在建 run 时注入(对话历史进规划提示词)。
  */
 export function ChatPage() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [localMessages, setLocalMessages] = useState<Record<string, string[]>>({});
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  // 发消息后立即接管当前 run(不等详情刷新);切换会话时清空,
+  // 让详情里的 active_run_id 决定历史会话要不要挂事件流
+  const [manualRunId, setManualRunId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('先别发,我要改一下');
   const [showArtifact, setShowArtifact] = useState(false);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const prevStatusRef = useRef<RunStatus | null>(null);
 
-  const runsQuery = useQuery({ queryKey: ['runs'], queryFn: runsApi.list });
-  const runs = runsQuery.data ?? [];
+  const conversationsQuery = useQuery({
+    queryKey: ['conversations'],
+    queryFn: conversationsApi.list,
+  });
+  const conversations = conversationsQuery.data ?? [];
+
+  const conversationQuery = useQuery({
+    queryKey: ['conversation', activeConversationId],
+    queryFn: () => conversationsApi.get(activeConversationId as string),
+    enabled: Boolean(activeConversationId),
+  });
+
+  const messagesQuery = useQuery({
+    queryKey: ['conversation-messages', activeConversationId],
+    queryFn: () => conversationsApi.messages(activeConversationId as string),
+    enabled: Boolean(activeConversationId),
+  });
+  const messages = messagesQuery.data ?? [];
+
+  const activeRunId = manualRunId ?? conversationQuery.data?.active_run_id ?? null;
 
   const runQuery = useQuery({
     queryKey: ['run', activeRunId],
@@ -146,31 +195,24 @@ export function ChatPage() {
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
   const transcript = transcriptFrom(events);
+  /** 有进行中的任务时,发送变成"追加指令"(不新开一跑)。 */
+  const inFlight = Boolean(activeRunId) && run !== undefined && !isTerminal(status);
 
-  const sendMessage = useMutation({
-    mutationFn: (text: string) =>
-      runsApi.create({
-        title: titleFromMessage(text),
-        goal: text,
-        // 对话页不强制填验收标准:留空表示由 Agent 按目标自行判断
-        acceptance_criteria: [],
-      }),
-    onSuccess: (created, text) => {
-      setLocalMessages((previous) => ({ ...previous, [created.id]: [text] }));
-      setShowArtifact(false);
-      setActiveRunId(created.id);
-      void queryClient.invalidateQueries({ queryKey: ['runs'] });
+  const send = useMutation({
+    mutationFn: async (text: string) => {
+      // 没有会话先建一个;标题由首条消息在服务端自动定
+      const conversationId =
+        activeConversationId ?? (await conversationsApi.create()).id;
+      return conversationsApi.postMessage(conversationId, text);
     },
-  });
-
-  const sendInstruction = useMutation({
-    mutationFn: (text: string) =>
-      runsApi.queueInstruction(activeRunId as string, text),
-    onSuccess: (_instruction, text) => {
-      setLocalMessages((previous) => ({
-        ...previous,
-        [activeRunId as string]: [...(previous[activeRunId as string] ?? []), text],
-      }));
+    onSuccess: (result) => {
+      const conversationId = result.message.conversation_id;
+      setActiveConversationId(conversationId);
+      setManualRunId(result.run.id);
+      setShowArtifact(false);
+      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
+      void queryClient.invalidateQueries({ queryKey: ['conversation-messages', conversationId] });
     },
   });
 
@@ -179,22 +221,42 @@ export function ChatPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['run', activeRunId] }),
-        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['conversations'] }),
       ]);
     },
   });
 
-  const busy = sendMessage.isPending || sendInstruction.isPending;
+  // run 到终态(含 blocked):assistant 回复已由服务端落库,这里刷新消息与列表
+  useEffect(() => {
+    const previous = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (
+      activeConversationId &&
+      previous !== null &&
+      !isTerminal(previous) &&
+      isTerminal(status)
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: ['conversation-messages', activeConversationId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    }
+  }, [status, activeConversationId, queryClient]);
+
+  // 对话有新内容时滚到底部
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [messages.length, transcript.length]);
+
   const error =
-    sendMessage.error ??
-    sendInstruction.error ??
+    send.error ??
     action.error ??
     runQuery.error ??
-    runsQuery.error;
+    conversationsQuery.error ??
+    conversationQuery.error ??
+    messagesQuery.error;
   const unauthorized = isUnauthorized(error);
-  const canSend = draft.trim().length > 0 && !busy;
-  /** 有进行中的任务时,发送变成"追加指令"(不新开一跑)。 */
-  const inFlight = Boolean(activeRunId) && run !== undefined && !isTerminal(status);
+  const canSend = draft.trim().length > 0 && !send.isPending;
 
   const submit = () => {
     const text = draft.trim();
@@ -202,28 +264,31 @@ export function ChatPage() {
       return;
     }
     setDraft('');
-    if (inFlight) {
-      sendInstruction.mutate(text);
-    } else {
-      sendMessage.mutate(text);
-    }
+    send.mutate(text);
   };
 
-  const messages = activeRunId ? localMessages[activeRunId] ?? [] : [];
+  const selectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setManualRunId(null);
+    setShowArtifact(false);
+  };
 
   const newConversation = () => {
-    setActiveRunId(null);
+    setActiveConversationId(null);
+    setManualRunId(null);
     setDraft('');
     setShowArtifact(false);
   };
 
+  const conversation = conversationQuery.data;
   return (
     <section className="mx-auto max-w-6xl px-6 py-10">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl">对话</h1>
           <p className="mt-2 max-w-2xl leading-relaxed text-muted-foreground">
-            直接说要做什么:Agent 会先给计划、等你放行再执行,写操作(比如发信)会单独确认。
+            直接说要做什么:消息会留在对话里,Agent 先给计划、等你放行再执行,
+            写操作(比如发信)会单独确认。接着聊,Agent 记得上文。
             {activeRunId ? (
               <span className="ml-1 text-xs">
                 {connected ? '· 事件流已连接' : '· 事件流未连接'}
@@ -231,13 +296,13 @@ export function ChatPage() {
             ) : null}
           </p>
         </div>
-        <Button variant="outline" onClick={newConversation} disabled={!activeRunId}>
+        <Button variant="outline" onClick={newConversation} disabled={!activeConversationId}>
           新对话
         </Button>
       </div>
 
       <div className="mt-6">
-        <AuthBar onChange={() => void runsQuery.refetch()} />
+        <AuthBar onChange={() => void conversationsQuery.refetch()} />
       </div>
 
       {unauthorized ? (
@@ -250,29 +315,35 @@ export function ChatPage() {
         <Card className="flex min-h-[28rem] flex-col">
           <CardHeader>
             <CardTitle>
-              {run ? `${run.title} · ${STATUS_LABELS[status]}` : '还没开始的任务'}
+              {conversation ? (
+                <>
+                  <span className="font-medium">{conversation.title}</span>
+                  {run ? (
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      {STATUS_LABELS[status]}
+                      {run.rounds > 0 ? ` · 第 ${run.rounds} 轮` : ''}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                '还没开始的对话'
+              )}
             </CardTitle>
             <CardDescription>
-              {run
-                ? `目标:${run.goal}${run.rounds > 0 ? ` · 第 ${run.rounds} 轮` : ''}`
-                : '在下面说说你要做什么,例如「把本周邮件整理成周报」'}
+              {run?.goal ?? '在下面说说你要做什么,例如「把本周邮件整理成周报」'}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col gap-4">
-            <div className="flex-1 space-y-3">
-              {!activeRunId ? (
+            <div className="max-h-[60vh] min-h-40 flex-1 space-y-3 overflow-y-auto pr-1">
+              {!activeConversationId ? (
                 <p className="text-sm text-muted-foreground">
-                  对话从这里开始。每条消息会变成一次任务的 goal,
-                  Agent 的行动会实时出现在这里。
+                  对话从这里开始。每条消息都会留在对话里:没有进行中的任务时,
+                  Agent 会先给计划、等你放行;进行中时,发送的内容作为追加指令并入。
                 </p>
               ) : null}
 
-              {messages.map((text, index) => (
-                <div key={`user-${index}`} className="flex justify-end">
-                  <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
-                    {text}
-                  </p>
-                </div>
+              {messages.map((message) => (
+                <MessageBubble key={message.id} message={message} />
               ))}
 
               {transcript.map((item) => (
@@ -310,9 +381,7 @@ export function ChatPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() =>
-                      action.mutate(() => runsApi.reject(run.id, rejectReason))
-                    }
+                    onClick={() => action.mutate(() => runsApi.reject(run.id, rejectReason))}
                     disabled={action.isPending}
                   >
                     拒绝计划
@@ -346,7 +415,7 @@ export function ChatPage() {
                 </div>
               ) : null}
 
-              {status === 'completed' ? (
+              {status === 'completed' && activeRunId ? (
                 <div className="space-y-3">
                   <Button size="sm" variant="outline" onClick={() => setShowArtifact(true)}>
                     查看成品
@@ -372,6 +441,7 @@ export function ChatPage() {
                   。
                 </p>
               ) : null}
+              <div ref={bottomRef} />
             </div>
 
             <form
@@ -420,33 +490,29 @@ export function ChatPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>最近任务</CardTitle>
-            <CardDescription>点一条切回那段对话</CardDescription>
+            <CardTitle>最近对话</CardTitle>
+            <CardDescription>点一条回到那段对话</CardDescription>
           </CardHeader>
           <CardContent>
-            {runsQuery.isLoading ? (
+            {conversationsQuery.isLoading ? (
               <p className="text-sm text-muted-foreground">加载中…</p>
-            ) : runs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">还没有任务。</p>
+            ) : conversations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">还没有对话。</p>
             ) : (
               <ul className="space-y-2">
-                {runs.map((item) => (
+                {conversations.map((item) => (
                   <li key={item.id}>
                     <button
                       type="button"
-                      onClick={() => {
-                        setActiveRunId(item.id);
-                        setShowArtifact(false);
-                      }}
+                      onClick={() => selectConversation(item.id)}
                       className={cn(
                         'w-full rounded-md border px-3 py-2 text-left text-sm transition-colors',
-                        item.id === activeRunId ? 'border-primary bg-muted' : 'hover:bg-muted/60',
+                        item.id === activeConversationId ? 'border-primary bg-muted' : 'hover:bg-muted/60',
                       )}
                     >
-                      <span className="font-medium">{item.title}</span>
+                      <span className="block truncate font-medium">{item.title}</span>
                       <span className="mt-1 block text-xs text-muted-foreground">
-                        {STATUS_LABELS[item.status]} ·{' '}
-                        {new Date(item.created_at).toLocaleString('zh-CN')}
+                        {new Date(item.updated_at).toLocaleString('zh-CN')}
                       </span>
                     </button>
                   </li>

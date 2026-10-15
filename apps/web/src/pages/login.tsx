@@ -10,7 +10,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 
 import { BrandMark, BrandWordmark } from '@/components/brand/logo';
 import { Button } from '@/components/ui/button';

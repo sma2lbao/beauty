@@ -44,6 +44,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     acceptance_criteria: ['覆盖 5 个工作日'],
     status_reason: null,
     parent_run_id: null,
+    conversation_id: null,
     created_at: '2026-10-12T10:00:00+00:00',
     ...overrides,
   };

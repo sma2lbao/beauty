@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import {
   accountLabel,
   authMode,
-  getStoredToken,
   setStoredToken,
   signIn,
   signOut,
