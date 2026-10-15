@@ -28,6 +28,13 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     parent_run_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True
     )
+    # 对话归属:由对话消息触发的 run 记录其会话;控制台直建的 run 为空。
+    # 弱引用(同 parent_run_id 惯例):SQLite 的 ALTER TABLE 加不了外键约束,
+    # 加 FK 会让迁移与模型不一致(autogenerate 反复生成 add_fk);归属正确性
+    # 由业务层保证,强约束留给新建表的列(见 chat_messages)。
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(32), index=True, nullable=True
+    )
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

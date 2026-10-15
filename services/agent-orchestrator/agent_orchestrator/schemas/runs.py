@@ -26,6 +26,8 @@ class RunCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     goal: str = Field(min_length=1)
     acceptance_criteria: list[str] = Field(default_factory=list)
+    # 对话归属:由对话消息触发的 run 带;控制台直建为空
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class RunRead(BaseModel):
@@ -40,6 +42,7 @@ class RunRead(BaseModel):
     acceptance_criteria: list[str]
     status_reason: str | None
     parent_run_id: str | None = None
+    conversation_id: str | None = None
     created_at: datetime
 
 

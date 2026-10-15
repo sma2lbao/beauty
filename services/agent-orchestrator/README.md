@@ -28,6 +28,10 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - `/healthz` `/readyz`:存活/就绪探针;
 - schema 管理:alembic(async env,DB URL 与运行服务同源,见 `migrations/env.py`);
   `uv run alembic upgrade head` / `uv run alembic downgrade base`,命名约定保证回滚无损;
+  **dev 直建库(测试/开发期的 `create_all`)没有 alembic 版本记录,接入迁移前先对齐基线**:
+  `uv run alembic stamp <该库结构对应的 revision>` 再 `upgrade head`,否则会从头建表并撞上
+  "table already exists";另外 `create_all` 只建缺失的表,**不会给既有表加列**——
+  代码里新增列后必须跑迁移,服务默认 `AUTO_CREATE_TABLES=false`,不迁移就会 500;
 - 生命周期含 failed 终态:图执行(plan/execute)异常在调用边界统一收敛为
   `run.failed.v1` 事件 + 状态落库,不向调用方裸奔(§6.2);
 - LLM 接入(架构 §5 唯一出口):`LLM_ENABLED=true` 时 plan/execute/verify 经

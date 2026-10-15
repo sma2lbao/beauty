@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from database.repository import TenantRepository
 from sqlalchemy import func, select
 
+from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import (
     PendingInstruction,
     Run,
@@ -33,6 +36,77 @@ class RunRepository(TenantRepository[Run]):
             tenant_id,
             limit=limit,
             order_by=[Run.created_at.desc(), Run.id.desc()],
+        )
+
+    async def list_for_conversation(
+        self, tenant_id: str, conversation_id: str, limit: int = 50
+    ) -> list[Run]:
+        """会话内最新在前的 run 列表(post_message 据此找当前 run)。"""
+        return await self.list_scoped(
+            tenant_id,
+            Run.conversation_id == conversation_id,
+            limit=limit,
+            order_by=[Run.created_at.desc(), Run.id.desc()],
+        )
+
+
+class ConversationRepository(TenantRepository[Conversation]):
+    model = Conversation
+    not_found_code = "conversation.not_found"
+    not_found_message = "对话不存在"
+    id_detail_key = "conversation_id"
+
+    async def list_recent(self, tenant_id: str, limit: int = 50) -> list[Conversation]:
+        """租户内最近活跃在前的对话列表(活跃 = updated_at,消息会顶上去)。"""
+        return await self.list_scoped(
+            tenant_id,
+            limit=limit,
+            order_by=[Conversation.updated_at.desc(), Conversation.id.desc()],
+        )
+
+
+class MessageRepository(TenantRepository[ChatMessage]):
+    model = ChatMessage
+    not_found_code = "conversation.not_found"
+    not_found_message = "消息不存在"
+    id_detail_key = "message_id"
+
+    async def list_for_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> list[ChatMessage]:
+        """对话消息回放:按时间升序(id 兜底保证顺序确定)。"""
+        return await self.list_scoped(
+            tenant_id,
+            ChatMessage.conversation_id == conversation_id,
+            order_by=[ChatMessage.created_at, ChatMessage.id],
+        )
+
+    async def has_any_message(self, tenant_id: str, conversation_id: str) -> bool:
+        """对话里是否已有消息(判定首条消息 → 自动定题)。"""
+        return await self.exists_for_tenant(
+            tenant_id, ChatMessage.conversation_id == conversation_id
+        )
+
+    async def list_history(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        *,
+        before: datetime,
+        exclude_run_id: str,
+    ) -> list[ChatMessage]:
+        """多轮上下文:run 建立之前的对话消息,排除本 run 自己的消息。
+
+        触发本 run 的用户消息(先落库、再建 run)会被两个条件同时排除:
+        created_at 早于 run 是主判据,run_id 相同是兜底——并发到达的
+        追加指令(建 run 之后落库)两条都能拦住,不会重复进上下文。
+        """
+        return await self.list_scoped(
+            tenant_id,
+            ChatMessage.conversation_id == conversation_id,
+            ChatMessage.created_at < before,
+            (ChatMessage.run_id != exclude_run_id) | (ChatMessage.run_id.is_(None)),
+            order_by=[ChatMessage.created_at, ChatMessage.id],
         )
 
 

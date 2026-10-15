@@ -19,6 +19,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
+    conversations as conversations_models,
+)
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 

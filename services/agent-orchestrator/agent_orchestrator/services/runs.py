@@ -21,6 +21,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import (
     PendingInstruction,
     Run,
@@ -31,6 +32,7 @@ from agent_orchestrator.repositories import (
     TOOL_CALLED_EVENT,
     ArtifactRepository,
     InstructionRepository,
+    MessageRepository,
     RunEventRepository,
     RunRepository,
 )
@@ -82,6 +84,27 @@ def _require_status(run: Run, *allowed: RunStatus) -> None:
         )
 
 
+async def _append_assistant_message(
+    session: AsyncSession, run: Run, content: str
+) -> None:
+    """run 到达停点时把"回复"落进对话(控制台直建、无会话的 run 为空操作)。
+
+    这是 agent 在对话里的持久化投影:交付物/失败原因/拒绝原因——
+    对话历史因此双向完整,后续 run 的多轮上下文也由此而来。
+    """
+    if not run.conversation_id:
+        return
+    await MessageRepository(session).add(
+        ChatMessage(
+            tenant_id=run.tenant_id,
+            conversation_id=run.conversation_id,
+            run_id=run.id,
+            role="assistant",
+            content=content,
+        )
+    )
+
+
 async def _fail_run(
     session: AsyncSession, run: Run, exc: Exception, stage: str
 ) -> None:
@@ -98,6 +121,7 @@ async def _fail_run(
         "run.failed.v1",
         {"stage": stage, "reason": run.status_reason},
     )
+    await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
 
 
 async def _persist_artifact(
@@ -199,6 +223,31 @@ async def _consume_instructions(session: AsyncSession, run: Run) -> list[str]:
     return contents
 
 
+#: 多轮上下文带回的近期消息上限与单条截断长度(交付物可能很长)
+HISTORY_MESSAGES_LIMIT = 20
+HISTORY_MESSAGE_CHARS = 2000
+
+
+async def _conversation_history(
+    session: AsyncSession, run: Run
+) -> list[dict[str, Any]]:
+    """对话多轮上下文:run 建立之前的消息(排除本 run 自己的消息)。
+
+    排除口径见 MessageRepository.list_history——触发本 run 的用户消息
+    (先落库再建 run)与并发到达的追加指令都不会重复进上下文。
+    """
+    rows = await MessageRepository(session).list_history(
+        run.tenant_id,
+        run.conversation_id,
+        before=run.created_at,
+        exclude_run_id=run.id,
+    )
+    return [
+        {"role": row.role, "content": (row.content or "")[:HISTORY_MESSAGE_CHARS]}
+        for row in rows[-HISTORY_MESSAGES_LIMIT:]
+    ]
+
+
 async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
     run = Run(
         tenant_id=tenant_id,
@@ -206,6 +255,7 @@ async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> 
         goal=data.goal,
         status=RunStatus.PENDING.value,
         acceptance_criteria=data.acceptance_criteria,
+        conversation_id=data.conversation_id,
     )
     await RunRepository(session).add(run)
     await append_event(session, run, "run.created.v1", {"title": run.title})
@@ -232,6 +282,9 @@ async def _invoke_plan(
     }
     if run.plan_markdown:
         state["plan_markdown"] = run.plan_markdown
+    if run.conversation_id:
+        # 对话触发的 run:带上多轮上下文,模型才能理解"接着刚才的做"
+        state["conversation_history"] = await _conversation_history(session, run)
     # §6.5:规划边界消费排队指令,并入图状态供各节点遵循
     instructions = await _consume_instructions(session, run)
     if instructions:
@@ -320,6 +373,7 @@ async def _apply_graph_result(
                 "rounds": run.rounds,
             },
         )
+        await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
         return run
     run.status = RunStatus.COMPLETED.value
     await append_event(
@@ -327,6 +381,14 @@ async def _apply_graph_result(
         run,
         "run.completed.v1",
         {"rounds": run.rounds, "results": values.get("results") or []},
+    )
+    # 对话里的回复 = 交付物正文(没有时用执行结果小结兜底)
+    await _append_assistant_message(
+        session,
+        run,
+        str(artifact.get("content") or "")
+        or "\n".join(values.get("results") or [])
+        or "任务完成 ✅",
     )
     return run
 
@@ -416,6 +478,7 @@ async def reject_run(
         "run.blocked.v1",
         {"reason": reason, "attempt": run.attempts},
     )
+    await _append_assistant_message(session, run, f"计划被拒绝:{reason}")
     return run
 
 
@@ -453,6 +516,7 @@ async def retry_run(
         acceptance_criteria=list(parent.acceptance_criteria or []),
         plan_markdown=parent.plan_markdown,
         parent_run_id=parent.id,
+        conversation_id=parent.conversation_id,
     )
     await RunRepository(session).add(child)
     await append_event(

@@ -69,6 +69,19 @@ def _instructions_block(state: RunGraphState) -> str:
     return f"\n\n用户追加指令(必须遵循):\n{lines}"
 
 
+def _conversation_block(state: RunGraphState) -> str:
+    """对话多轮上下文:让模型理解"接着刚才的做"(非首条消息时才有)。"""
+    history = state.get("conversation_history") or []
+    if not history:
+        return ""
+    role_labels = {"user": "用户", "assistant": "助手"}
+    lines = "\n".join(
+        f"{role_labels.get(str(item.get('role')), '用户')}: {item.get('content') or ''}"
+        for item in history
+    )
+    return f"\n\n之前的对话(多轮上下文,理解当前目标用):\n{lines}"
+
+
 def _stub_plan(state: RunGraphState) -> dict:
     criteria = state.get("acceptance_criteria") or []
     checklist = "\n".join(f"- [ ] {c}" for c in criteria) or "- [ ] (无显式验收标准)"
@@ -118,6 +131,7 @@ def make_plan_node(llm: LLMClient | None):
                         f"目标:{state.get('goal', '')}\n"
                         f"标题:{state.get('title', '')}\n"
                         f"验收标准:\n{_criteria_block(criteria)}"
+                        f"{_conversation_block(state)}"
                         f"{_instructions_block(state)}"
                     ),
                 },

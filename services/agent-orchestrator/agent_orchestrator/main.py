@@ -28,6 +28,9 @@ from agent_orchestrator.api.health import health_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.builder import build_run_graph
+from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
+    conversations as conversations_models,
+)
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed

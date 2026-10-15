@@ -22,6 +22,7 @@ class RunGraphState(TypedDict, total=False):
     rounds: Annotated[int, add]
     tool_calls: Annotated[list[dict[str, Any]], add]  # 工具调用审计(services 层落事件)
     extra_instructions: list[str]  # 用户追加指令(§6.5),在下一个边界并入上下文
+    conversation_history: list[dict[str, str]]  # 对话多轮上下文(services 层建图时装载)
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
     writes_approved: bool  # 确认闸的判定结果
