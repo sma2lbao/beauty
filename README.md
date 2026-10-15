@@ -1,6 +1,6 @@
 # beauty-moon
 
-基于 [Nx](https://nx.dev) 管理的 monorepo，包含 **TypeScript** 工具库（`packages/*`）、**React 前端应用**（`apps/*`）与 **Python** 库三类项目；Python 侧统一使用 [uv](https://docs.astral.sh/uv/) 管理依赖与虚拟环境（通过 [nxlv/python](https://github.com/lucasvieirasilva/nx-plugins) 插件集成到 Nx）。
+基于 [Nx](https://nx.dev) 管理的 monorepo，包含 **React 前端应用**（`apps/web`）、**React 组件库**（`packages/design`）、**共享工具包**（`tools/eslint-config`）与 **Python 共享库 / 微服务**（`packages/*`、`services/*`）；Python 侧统一使用 [uv](https://docs.astral.sh/uv/) 管理依赖与虚拟环境（通过 [nxlv/python](https://github.com/lucasvieirasilva/nx-plugins) 插件集成到 Nx）。
 
 ## 环境要求
 
@@ -21,15 +21,11 @@ beauty-moon/
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名
 ├── packages/
-│   ├── ts-utils/               # TypeScript 库示例（tsc 构建 + vitest 测试）
-│   │   ├── src/                # 源码
-│   │   ├── vitest.config.mts   # 测试配置
-│   │   └── package.json
-│   └── py-utils/               # Python 库示例（uv + pytest + ruff + hatchling）
-│       ├── py_utils/           # Python 包源码
-│       ├── tests/              # pytest 测试
-│       ├── pyproject.toml      # 依赖 / 构建 / ruff / pytest 配置
-│       └── project.json        # Nx 目标定义
+│   ├── common/                 # Python 共享库：统一错误模型 / 配置 / 日志 / JWT 鉴权基座
+│   ├── database/               # Python 共享库：Base/mixin、Repository、UoW、session
+│   ├── events/                 # Python 共享库：事件信封、进程内总线、事务性 outbox
+│   └── design/                 # React 组件库：BEM 类名 + 设计令牌，rspress 文档站
+├── services/                   # Python 微服务（FastAPI）：account / orchestrator / gateway ...
 ├── tools/
 │   └── eslint-config/          # 共享 ESLint flat config(@beauty/eslint-config)
 │       ├── configs/            # base.js / react.js 配置工厂
@@ -53,14 +49,6 @@ npx nx run-many -t lint          # 全仓库 lint(JS/TS 用 ESLint,Python 用 ru
 npx nx show projects             # 列出所有项目
 ```
 
-### TypeScript（ts-utils）
-
-```sh
-npx nx build @beauty/ts-utils   # tsc 构建到 dist/
-npx nx test @beauty/ts-utils    # vitest 单测
-npx nx typecheck @beauty/ts-utils
-```
-
 ### 前端（web）
 
 ```sh
@@ -74,16 +62,16 @@ npx nx test @beauty/web       # vitest + Testing Library 单测
 
 React 19 + TypeScript SPA：react-router v8 路由、@tanstack/react-query 数据层、Tailwind CSS v4 + shadcn/ui 组件，详见 [apps/web/README.md](apps/web/README.md)。
 
-### Python（py-utils）
+### Python（common / database / events / services）
 
-所有 Python 项目共享仓库根的 `.venv`（uv workspace，根 `pyproject.toml` 统一管理，Python 3.12）。
+所有 Python 项目共享仓库根的 `.venv`（uv workspace，根 `pyproject.toml` 统一管理，Python 3.12）。下面以共享库 `common` 为例，其余项目同名替换：
 
 ```sh
-npx nx sync py-utils     # uv sync：更新仓库根共享 .venv
-npx nx lint py-utils     # ruff 检查
-npx nx format py-utils   # ruff 格式化
-npx nx test py-utils     # pytest（含覆盖率与 HTML 报告）
-npx nx build py-utils    # hatchling 构建 wheel/sdist 到 dist/
+npx nx run common:sync     # uv sync：更新仓库根共享 .venv
+npx nx lint common         # ruff 检查
+npx nx format common       # ruff 格式化
+npx nx test common         # pytest（含覆盖率与 HTML 报告）
+npx nx build common        # hatchling 构建 wheel/sdist 到 dist/
 ```
 
 测试报告输出在根目录 `reports/` 与 `coverage/`（已被 git 忽略）。
@@ -134,11 +122,11 @@ npx nx g @nxlv/python:uv-project <项目名> \
 ## Python 依赖管理（uv）
 
 ```sh
-npx nx run py-utils:add requests      # 新增依赖（uv add）
-npx nx run py-utils:add --name pytest --group dev    # 新增 dev 依赖
-npx nx run py-utils:remove requests   # 移除依赖
-npx nx run py-utils:lock --update     # 更新 uv.lock
-npx nx run py-utils:sync              # 同步 .venv
+npx nx run common:add requests      # 新增依赖（uv add）
+npx nx run common:add --name pytest --group dev    # 新增 dev 依赖
+npx nx run common:remove requests   # 移除依赖
+npx nx run common:lock --update     # 更新 uv.lock
+npx nx run common:sync              # 同步 .venv
 ```
 
 依赖统一写在各项目的 `pyproject.toml`（dev 依赖合并到根 `[dependency-groups].dev`），锁定信息提交根 `uv.lock`（全 workspace 共享一份）。

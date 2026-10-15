@@ -7,9 +7,7 @@
 | 路径                  | Nx 项目名               | 类型         | 技术栈                                                                                  |
 | --------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------- |
 | `apps/web`            | `@beauty/web`           | React 应用   | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + shadcn/ui,Vite 8 |
-| `packages/ts-utils`   | `@beauty/ts-utils`      | TS 库        | tsc 构建 + vitest                                                                       |
 | `packages/design`     | `@beauty/design`        | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                         |
-| `packages/py-utils`   | `py-utils`              | Python 库    | hatchling + pytest + ruff                                                               |
 | `packages/common`     | `common`                | Python 库    | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS)、交付物存储抽象;hatchling + pytest + ruff |
 | `packages/database`   | `database`              | Python 库    | 数据库基座:命名约定、Base/mixin、session_scope、Repository(租户隔离+统一 404)、UnitOfWork、Postgres 集成夹具;hatchling + pytest + ruff |
 | `packages/events`     | `events`                | Python 库    | 事件信封(含租户)、进程内总线、事务性 outbox(仓储/dispatcher)、消费幂等;hatchling + pytest + ruff |
@@ -43,11 +41,10 @@ npx nx graph                # 打开项目依赖关系图
 ```sh
 npx nx test @beauty/web -- --run       # 一次性运行测试(推荐)
 npx nx test @beauty/design -- --run
-npx nx test @beauty/ts-utils -- --run
 
 npx nx dev @beauty/web                 # Vite dev server(5173 端口,交互开发用)
 npx nx build @beauty/web               # tsc --noEmit + vite 生产构建
-npx nx typecheck @beauty/web           # 仅类型检查(web/design/ts-utils 同名)
+npx nx typecheck @beauty/web           # 仅类型检查(web/design 同名)
 npx nx lint @beauty/web                # ESLint(共享配置 tools/eslint-config)
 npx nx lint @beauty/web -- --fix       # ESLint 自动修复
 npx nx build @beauty/design            # tsc emit ESM 到 dist
@@ -56,14 +53,14 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
-### Python(py-utils / common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service)
+### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service)
 
 ```sh
-npx nx run py-utils:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
-npx nx lint py-utils      # ruff check
-npx nx format py-utils     # ruff format
-npx nx test py-utils       # uv run pytest(含覆盖率,报告写入根 reports/ 与 coverage/)
-npx nx build py-utils      # hatchling 构建 wheel/sdist
+npx nx run common:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
+npx nx lint common      # ruff check
+npx nx format common     # ruff format
+npx nx test common       # uv run pytest(含覆盖率,报告写入根 reports/ 与 coverage/)
+npx nx build common      # hatchling 构建 wheel/sdist
 npx nx run agent-orchestrator:serve  # uvicorn :8002(run 编排 API)
 npx nx run llm-gateway:serve         # uvicorn :8003(模型网关)
 npx nx run connector-service:serve   # uvicorn :8004(连接器服务)
@@ -72,7 +69,7 @@ npx nx run account-service:serve     # uvicorn :8001(账号/组织)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 ```
 
-`common`/`database`/`events` 的 targets 与 py-utils 相同(lint/format/test/build/sync/add/remove);`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
+`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -81,11 +78,11 @@ npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 **Python 一律走 nx target(底层是 uv),不要直接 `pip install`:**
 
 ```sh
-npx nx run py-utils:add requests                     # 新增依赖(写项目 pyproject.toml,更新根 uv.lock)
-npx nx run py-utils:add --name pytest --group dev     # dev 依赖(写入该项目 [dependency-groups].dev)
-npx nx run py-utils:remove requests
-npx nx run py-utils:lock --update                     # 更新 uv.lock
-npx nx run py-utils:sync                              # 变更后同步 .venv
+npx nx run common:add requests                     # 新增依赖(写项目 pyproject.toml,更新根 uv.lock)
+npx nx run common:add --name pytest --group dev     # dev 依赖(写入该项目 [dependency-groups].dev)
+npx nx run common:remove requests
+npx nx run common:lock --update                     # 更新 uv.lock
+npx nx run common:sync                              # 变更后同步 .venv
 ```
 
 **JS** 修改对应项目 `package.json` 后在仓库根执行 `npm install`(npm workspaces,根 `package-lock.json` 锁定)。受限环境(如 agent 沙箱)下 `~/.npm` 不可写会直接失败,用仓库本地缓存:`npm_config_cache="$PWD/.npm-cache" npm install ...`(该目录已被 gitignore)。
@@ -103,7 +100,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
   品牌变量 `--logo-moon` 定义在 `apps/web/src/index.css`(亮色取品牌暖玫瑰,暗色取官方月光米),
   字标月相与标识共用该色,形成呼应。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`py-utils`、`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
@@ -140,7 +137,7 @@ npx nx run py-utils:sync                              # 变更后同步 .venv
 ## 修改后的验证清单
 
 - **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
-- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`py-utils`/`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 另跑 `npx nx test <项目>`。
+- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 另跑 `npx nx test <项目>`。
 - **模型/迁移(易踩坑)**:改 ORM 表结构必须配 alembic 迁移——服务默认 `AUTO_CREATE_TABLES=false`,
   而测试走 `create_all` 会自动建表,**缺迁移在测试里看不出来、真实库上直接 500**;
   改完在服务目录内跑 `uv run alembic check` 确认模型与迁移一致(dev 直建库无

@@ -98,7 +98,7 @@ beauty-moon/
 - 避开 stdlib 模块名(如 `platform`)与主流库顶层名(如 `agents` 已被 openai-agents 占用,故用 `agent-kit`);
 - 逃生舱:将来可用 PEP 420 命名空间包 `beauty.*`(对应 JS 侧 `@beauty/` 作用域语义)。
 
-**uv workspace 注意**:members 为**显式清单**——`apps/` 与 `packages/` 混有 npm 项目(web/design/ts-utils 无 `pyproject.toml`),glob 会命中无 pyproject 的目录导致 uv 报错(见 [uv workspace 文档](https://docs.astral.sh/uv/concepts/projects/workspaces/))。新 Python 项目必须在根 `pyproject.toml` 登记 members + dependencies + `[tool.uv.sources]`,随后 `npx nx sync <项目>`;`services/_template` 用 `[tool.uv.workspace] exclude` 排除。
+**uv workspace 注意**:members 为**显式清单**——`apps/` 与 `packages/` 混有 npm 项目(web/design 无 `pyproject.toml`),glob 会命中无 pyproject 的目录导致 uv 报错(见 [uv workspace 文档](https://docs.astral.sh/uv/concepts/projects/workspaces/))。新 Python 项目必须在根 `pyproject.toml` 登记 members + dependencies + `[tool.uv.sources]`,随后 `npx nx sync <项目>`;`services/_template` 用 `[tool.uv.workspace] exclude` 排除。
 
 ## 5. 通信设计
 
@@ -231,7 +231,7 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - 端口:服务 HTTP `80xx`(8001 起)/ gRPC `90xx` 同号对应 / 网关 8080;web dev 5173 不变;
 - 测试:unit(无 IO)+ integration(testcontainers),报告/覆盖率落根 `reports/`、`coverage/`;
 - 部署演进:本地 compose → 前期生产**单云主机 compose**(托管 PG/COS/Redis)→ k8s(用户量驱动);
-- 代码风格:服务与共享库 ruff line-length 88(与 py-utils 一致);Python 3.12(根 `.python-version`)。
+- 代码风格:服务与共享库 ruff line-length 88;Python 3.12(根 `.python-version`)。
 
 ## 13. 竞品对比结论(为什么长这样)
 
