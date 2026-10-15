@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
@@ -10,8 +11,10 @@ from common.logging import get_logger
 
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import (
+    CompletionChunk,
     CompletionRequest,
     CompletionResponse,
+    StreamError,
     ToolCall,
     ToolFunction,
     UsageOut,
@@ -44,14 +47,39 @@ def _normalize_tool_calls(message: Any) -> list[ToolCall]:
     return calls
 
 
-async def complete(settings: Settings, data: CompletionRequest) -> CompletionResponse:
-    model = data.model or settings.default_model
-    log = get_logger("llm_gateway.completions")
+def _extra(data: CompletionRequest) -> dict[str, Any]:
+    """工具相关参数透传(OpenAI 原生形状,上层不用改)。"""
     extra: dict[str, Any] = {}
     if data.tools:
         extra["tools"] = data.tools
         if data.tool_choice:
             extra["tool_choice"] = data.tool_choice
+    return extra
+
+
+def _usage(raw: Any) -> UsageOut | None:
+    if raw is None:
+        return None
+    return UsageOut(
+        prompt_tokens=getattr(raw, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(raw, "completion_tokens", 0) or 0,
+        total_tokens=getattr(raw, "total_tokens", 0) or 0,
+    )
+
+
+def _delta_text(chunk: Any) -> str:
+    """流片里的增量正文;litellm 对象式与 dict 式都要兼容。"""
+    choices = _get(chunk, "choices") or []
+    if not choices:
+        return ""
+    delta = _get(choices[0], "delta")
+    return str(_get(delta, "content") or "")
+
+
+async def complete(settings: Settings, data: CompletionRequest) -> CompletionResponse:
+    model = data.model or settings.default_model
+    log = get_logger("llm_gateway.completions")
+    extra = _extra(data)
     try:
         resp = await litellm.acompletion(
             model=model,
@@ -66,14 +94,7 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
             f"模型调用失败:{exc}",
             details={"model": model},
         ) from exc
-    usage = getattr(resp, "usage", None)
-    usage_obj = None
-    if usage is not None:
-        usage_obj = UsageOut(
-            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            total_tokens=getattr(usage, "total_tokens", 0) or 0,
-        )
+    usage_obj = _usage(getattr(resp, "usage", None))
     message = resp.choices[0].message
     tool_calls = _normalize_tool_calls(message)
     log.info(
@@ -87,4 +108,53 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
         content=getattr(message, "content", None) or "",
         tool_calls=tool_calls or None,
         usage=usage_obj,
+    )
+
+
+async def stream(
+    settings: Settings, data: CompletionRequest
+) -> AsyncIterator[CompletionChunk]:
+    """流式补全:逐片产出增量,最后一片 done=true 带全文与用量。
+
+    失败一律以 error 片收尾——HTTP 头早已发出(200),状态码改不了;
+    调用方按 error.code 处理(与 complete 的 502 语义对齐,只是换了载体)。
+    工具调用的增量拼装暂无调用方,这里只透传正文(需要时再补)。
+    """
+    model = data.model or settings.default_model
+    log = get_logger("llm_gateway.completions")
+    extra = _extra(data)
+    try:
+        resp = await litellm.acompletion(
+            model=model,
+            messages=[m.model_dump(exclude_none=True) for m in data.messages],
+            temperature=data.temperature,
+            timeout=settings.request_timeout_seconds,
+            stream=True,
+            **extra,
+        )
+    except Exception as exc:
+        yield CompletionChunk(
+            error=StreamError(code="llm.upstream_error", message=f"模型调用失败:{exc}")
+        )
+        return
+    parts: list[str] = []
+    usage_out: UsageOut | None = None
+    resolved_model = model
+    try:
+        async for chunk in resp:
+            resolved_model = str(_get(chunk, "model") or resolved_model)
+            usage_out = _usage(_get(chunk, "usage")) or usage_out
+            delta = _delta_text(chunk)
+            if delta:
+                parts.append(delta)
+                yield CompletionChunk(delta=delta)
+    except Exception as exc:
+        yield CompletionChunk(
+            error=StreamError(code="llm.upstream_error", message=f"流式调用中断:{exc}")
+        )
+        return
+    content = "".join(parts)
+    log.info("llm_stream", model=resolved_model, chars=len(content))
+    yield CompletionChunk(
+        done=True, content=content, model=resolved_model, usage=usage_out
     )

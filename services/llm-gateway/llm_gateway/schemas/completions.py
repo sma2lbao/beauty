@@ -48,3 +48,24 @@ class CompletionResponse(BaseModel):
     content: str
     tool_calls: list[ToolCall] | None = None
     usage: UsageOut | None = None
+
+
+class StreamError(BaseModel):
+    """流内错误:HTTP 头已发出,错误只能作为一帧送达(调用方按 code 处理)。"""
+
+    code: str
+    message: str
+
+
+class CompletionChunk(BaseModel):
+    """流式分片:增量文本进 delta;最后一片 done=true 带全文(便于调用方对账)。
+
+    错误以单独一片(error 非空)送达——流一旦开始,状态码就改不了了。
+    """
+
+    delta: str = ""
+    done: bool = False
+    content: str | None = None
+    model: str | None = None
+    usage: UsageOut | None = None
+    error: StreamError | None = None

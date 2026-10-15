@@ -164,3 +164,87 @@ def test_tool_role_message_shape_passthrough(client: TestClient, monkeypatch) ->
         "tool_call_id": "call_1",
         "content": '{"emails":[]}',
     }
+
+
+def _fake_stream(pieces: list[str], captured: dict | None = None):
+    """litellm 流式:异步生成器,每片一个 choices[0].delta.content。"""
+
+    async def fake_acompletion(**kwargs):
+        if captured is not None:
+            captured.update(kwargs)
+
+        async def chunks():
+            for piece in pieces:
+                delta = type("D", (), {"content": piece})()
+                choice = type("C", (), {"delta": delta})()
+                yield type(
+                    "Chunk",
+                    (),
+                    {"choices": [choice], "model": "deepseek/deepseek-chat"},
+                )()
+
+        return chunks()
+
+    return fake_acompletion
+
+
+def _sse_frames(text: str) -> list[dict]:
+    import json
+
+    frames = []
+    for frame in text.split("\n\n"):
+        frame = frame.strip()
+        if frame.startswith("data: "):
+            frames.append(json.loads(frame[6:]))
+    return frames
+
+
+def test_completion_stream_deltas_and_done(client: TestClient, monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        litellm, "acompletion", _fake_stream(["你", "好", "!"], captured)
+    )
+    resp = client.post("/v1/completions/stream", json=BODY)
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert captured["stream"] is True  # 真的按流式请求上游
+    frames = _sse_frames(resp.text)
+    assert [frame.get("delta", "") for frame in frames] == ["你", "好", "!", ""]
+    assert frames[-1]["done"] is True
+    assert frames[-1]["content"] == "你好!"  # 结束片带全文,便于调用方对账
+    assert frames[-1]["model"] == "deepseek/deepseek-chat"
+
+
+def test_completion_stream_upstream_error_is_error_frame(
+    client: TestClient, monkeypatch
+) -> None:
+    async def boom(**kwargs):
+        raise RuntimeError("上游 500")
+
+    monkeypatch.setattr(litellm, "acompletion", boom)
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    # 流已按 200 开头,失败以 error 片送达(与 complete 的 502 同 code)
+    assert frames[-1]["error"]["code"] == "llm.upstream_error"
+    assert "上游 500" in frames[-1]["error"]["message"]
+
+
+def test_completion_stream_midway_failure_keeps_deltas(
+    client: TestClient, monkeypatch
+) -> None:
+    async def midway(**kwargs):
+        async def chunks():
+            delta = type("D", (), {"content": "前半段"})()
+            choice = type("C", (), {"delta": delta})()
+            yield type("Chunk", (), {"choices": [choice], "model": "m"})()
+            raise RuntimeError("连接断了")
+
+        return chunks()
+
+    monkeypatch.setattr(litellm, "acompletion", midway)
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert frames[0]["delta"] == "前半段"  # 已产出的增量不丢
+    assert frames[-1]["error"]["code"] == "llm.upstream_error"
+    assert "连接断了" in frames[-1]["error"]["message"]
