@@ -9,6 +9,10 @@
 - 支持 function-calling:`tools` 原样透传给 litellm,响应的 `tool_calls`
   归一化为 OpenAI 嵌套形状(`function.name/arguments`);消息支持
   `assistant.tool_calls` 与 `tool` 角色(`tool_call_id`),历史回传无需转换;
+- `POST /v1/completions/stream`:同上的 **SSE 流式**入口(litellm `stream=True`),
+  每帧 `data: {"delta": "..."}`,收尾帧 `{"done": true, "content": "<全文>"}`;
+  失败帧 `{"error": {"code", "message"}}`——HTTP 头已按 200 发出,错误只能换载体
+  (与 complete 的 502 同 code);对话据此"边输出边显示";
 - `POST /v1/embeddings`:文本批量向量化(litellm `aembedding`,默认
   `EMBEDDING_MODEL`);条数与输入不一致按 502 `llm.embedding_error` 处理——
   knowledge-service 等经此向量化,不直连模型提供商(§5);

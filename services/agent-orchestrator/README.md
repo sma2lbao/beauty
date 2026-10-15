@@ -21,7 +21,9 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
 - 对话垂直切片(§6.7):`POST /api/v1/conversations` 建会话、`GET /conversations`(最近活跃在前)、
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
-  `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息;
+  `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息、
+  `POST /conversations/{id}/messages/stream` **SSE 流式**发消息
+  (`meta` → `delta`* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发);
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
   判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;
