@@ -4,6 +4,9 @@ stub 路径(client fixture,LLM=None)覆盖编排语义——没有模型时一�
 LLM 路径(_client + FakeLLM)覆盖分流判别、直接对话、失败投影与提示词注入。
 """
 
+import json
+
+from common.errors import UpstreamError
 from fastapi.testclient import TestClient
 
 from tests.conftest import OTHER, TENANT, FakeLLM, _client
@@ -357,3 +360,119 @@ def test_invalid_send_mode_rejected(client: TestClient) -> None:
     )
 
     assert resp.status_code == 422
+
+
+def _stream_message(
+    client: TestClient, conversation_id: str, content: str, *, mode: str = "auto"
+):
+    """走流式端点,返回 (响应, [(事件名, data)])。"""
+    resp = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages/stream",
+        json={"content": content, "mode": mode},
+        headers=TENANT,
+    )
+    return resp, _sse_events(resp.text)
+
+
+def _sse_events(text: str) -> list[tuple[str, dict]]:
+    """SSE 文本 → [(event 名, data)];忽略 keep-alive 注释行。"""
+    events: list[tuple[str, dict]] = []
+    for frame in text.split("\n\n"):
+        name = data = None
+        for line in frame.split("\n"):
+            if line.startswith("event: "):
+                name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = line[len("data: ") :]
+        if name and data:
+            events.append((name, json.loads(data)))
+    return events
+
+
+def test_stream_chat_streams_deltas_and_persists_reply(tmp_path) -> None:
+    fake = FakeLLM(['{"mode": "chat"}', "你好!"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = _create_conversation(client)
+
+        resp, events = _stream_message(client, conversation_id, "你好")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        names = [name for name, _ in events]
+        assert names[0] == "meta" and names[-1] == "done"
+        assert "delta" in names  # 真的边输出边发
+
+        meta = events[0][1]
+        assert meta["mode"] == "chat" and meta["run"] is None
+        assert meta["message"]["content"] == "你好"
+        # 增量拼起来就是完整回复
+        assert "".join(p["text"] for n, p in events if n == "delta") == "你好!"
+        assert events[-1][1]["reply"]["content"] == "你好!"
+        # 落库:回放能看到这一问一答,且没有产生任何 run
+        assert [m["role"] for m in _messages(client, conversation_id)] == [
+            "user",
+            "assistant",
+        ]
+        assert client.get("/api/v1/runs?limit=50", headers=TENANT).json() == []
+
+
+def test_stream_task_sends_meta_without_deltas(tmp_path) -> None:
+    fake = FakeLLM(['{"mode": "task"}', "# 执行计划\n- [ ] 汇总"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = _create_conversation(client)
+
+        _, events = _stream_message(client, conversation_id, "把本周邮件整理成周报")
+
+        # 任务路径只发 meta + done,进展由 run 自己的事件流呈现
+        assert [name for name, _ in events] == ["meta", "done"]
+        meta = events[0][1]
+        assert meta["mode"] == "run_created"
+        assert meta["run"]["status"] == "awaiting_approval"
+        assert events[-1][1]["reply"] is None
+        # 用户消息已落库,assistant 回复要等 run 终态才投影
+        assert [m["role"] for m in _messages(client, conversation_id)] == ["user"]
+
+
+def test_stream_chat_midway_failure_keeps_partial_reply(tmp_path) -> None:
+    class _HalfThenBoom:
+        """先吐一段再失败:验证已产出的增量照样落库。"""
+
+        async def stream(self, messages, *, model=None, tools=None):
+            yield "前半段"
+            raise UpstreamError("llm.upstream_error", "上游断了")
+
+    with _client(tmp_path, _HalfThenBoom()) as client:
+        conversation_id = _create_conversation(client)
+
+        # mode=chat 跳过分流,所以这个假客户端只需要 stream
+        _, events = _stream_message(client, conversation_id, "你好", mode="chat")
+
+        assert [name for name, _ in events] == ["meta", "delta", "error"]
+        assert events[-1][1]["code"] == "llm.upstream_error"
+        assert "上游断了" in events[-1][1]["message"]
+        # 半截回复不丢:落库后回放得到"前半段"
+        messages = _messages(client, conversation_id)
+        assert [m["role"] for m in messages] == ["user", "assistant"]
+        assert messages[-1]["content"] == "前半段"
+
+
+def test_stream_forced_chat_without_llm_is_409_before_stream(
+    client: TestClient,
+) -> None:
+    conversation_id = _create_conversation(client)
+
+    resp, _ = _stream_message(client, conversation_id, "你好", mode="chat")
+
+    # 开流之前就拒绝:否则只能发一帧错误,HTTP 状态码已经是 200
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "chat.llm_disabled"
+
+
+def test_stream_unknown_conversation_is_404(client: TestClient) -> None:
+    resp = client.post(
+        "/api/v1/conversations/nope/messages/stream",
+        json={"content": "你好"},
+        headers=TENANT,
+    )
+
+    assert resp.status_code == 404

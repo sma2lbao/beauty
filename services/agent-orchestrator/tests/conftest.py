@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +63,22 @@ class FakeLLM:
         return (
             response if isinstance(response, LLMReply) else LLMReply(content=response)
         )
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[str]:
+        """流式:复用 complete 的脚本(调用序号与失败注入一致),按字切分。
+
+        与真实网关一致:内容先整段算出,再逐段吐出——测试因此能断言
+        "第几段该是什么",而不必关心切分粒度以外的实现细节。
+        """
+        reply = await self.complete(messages, model=model, tools=tools)
+        for char in reply.content:
+            yield char
 
 
 class FakeConnector:

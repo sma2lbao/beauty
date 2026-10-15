@@ -50,15 +50,24 @@ def _parse_mode(text: str) -> str | None:
     return None
 
 
+def require_available(mode: str, llm: LLMClient | None) -> None:
+    """显式 chat 但没有模型 → 409。
+
+    纯函数,不碰数据库也不调模型:流式端点据此在**开流之前**拒绝,
+    避免出现"200 已经发了、只能塞一帧错误"的尴尬。
+    """
+    if mode == CHAT and llm is None:
+        raise ConflictError(
+            "chat.llm_disabled",
+            "未启用模型,无法直接对话:请开启 LLM_ENABLED 或改用任务模式",
+            details={"mode": mode},
+        )
+
+
 async def decide(content: str, llm: LLMClient | None, *, mode: str = AUTO) -> str:
     """决定这条消息走 chat 还是 task(判别顺序见模块 docstring)。"""
     if mode == CHAT:
-        if llm is None:
-            raise ConflictError(
-                "chat.llm_disabled",
-                "未启用模型,无法直接对话:请开启 LLM_ENABLED 或改用任务模式",
-                details={"mode": mode},
-            )
+        require_available(mode, llm)
         return CHAT
     if mode == TASK:
         return TASK

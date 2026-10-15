@@ -21,8 +21,11 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-async def answer(session: AsyncSession, llm: LLMClient, message: ChatMessage) -> str:
-    """给一条用户消息生成直接回复(带上它之前的全部对话轮次)。"""
+async def prompt(session: AsyncSession, message: ChatMessage) -> list[dict[str, str]]:
+    """直接对话的完整消息序列:系统提示 + 此前全部轮次 + 本轮。
+
+    非流式与流式共用——两条路径的上下文口径因此不会漂。
+    """
     rows = await MessageRepository(session).list_before(
         message.tenant_id,
         message.conversation_id,
@@ -32,5 +35,10 @@ async def answer(session: AsyncSession, llm: LLMClient, message: ChatMessage) ->
     messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     messages.extend(history.to_prompt(rows))
     messages.append({"role": "user", "content": message.content})
-    reply = await llm.complete(messages)
+    return messages
+
+
+async def answer(session: AsyncSession, llm: LLMClient, message: ChatMessage) -> str:
+    """给一条用户消息生成直接回复(一次拿全文,非流式路径)。"""
+    reply = await llm.complete(await prompt(session, message))
     return reply.content
