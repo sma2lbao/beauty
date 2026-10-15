@@ -7,7 +7,7 @@ import { useRunEvents } from '@/components/runs/use-run-events';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { conversationsApi } from '@/lib/conversations-api';
-import type { ChatMessage } from '@/lib/conversations-api';
+import type { ChatMessage, SendMode } from '@/lib/conversations-api';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
@@ -145,6 +145,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 export function ChatPage() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
+  // 发送方式:默认让服务端分流(简单对话直接答,复杂任务才建 run)
+  const [sendMode, setSendMode] = useState<SendMode>('auto');
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   // 发消息后立即接管当前 run(不等详情刷新);切换会话时清空,
   // 让详情里的 active_run_id 决定历史会话要不要挂事件流
@@ -199,16 +201,20 @@ export function ChatPage() {
   const inFlight = Boolean(activeRunId) && run !== undefined && !isTerminal(status);
 
   const send = useMutation({
-    mutationFn: async (text: string) => {
+    mutationFn: async ({ text, mode }: { text: string; mode: SendMode }) => {
       // 没有会话先建一个;标题由首条消息在服务端自动定
       const conversationId =
         activeConversationId ?? (await conversationsApi.create()).id;
-      return conversationsApi.postMessage(conversationId, text);
+      return conversationsApi.postMessage(conversationId, text, mode);
     },
     onSuccess: (result) => {
       const conversationId = result.message.conversation_id;
       setActiveConversationId(conversationId);
-      setManualRunId(result.run.id);
+      // 只有真的建了任务才接管 SSE;直接对话(chat)不改变当前 run
+      if (result.run) {
+        setManualRunId(result.run.id);
+      }
+      setDraft('');
       setShowArtifact(false);
       void queryClient.invalidateQueries({ queryKey: ['conversations'] });
       void queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
@@ -263,8 +269,7 @@ export function ChatPage() {
     if (!text) {
       return;
     }
-    setDraft('');
-    send.mutate(text);
+    send.mutate({ text, mode: sendMode });
   };
 
   const selectConversation = (conversationId: string) => {
@@ -287,7 +292,7 @@ export function ChatPage() {
         <div>
           <h1 className="font-display text-3xl">对话</h1>
           <p className="mt-2 max-w-2xl leading-relaxed text-muted-foreground">
-            直接说要做什么:消息会留在对话里,Agent 先给计划、等你放行再执行,
+            消息都会留在对话里:简单的直接回答;复杂任务先给计划、等你放行再执行,
             写操作(比如发信)会单独确认。接着聊,Agent 记得上文。
             {activeRunId ? (
               <span className="ml-1 text-xs">
@@ -458,9 +463,13 @@ export function ChatPage() {
                 id="chat-input"
                 className="min-h-16 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring"
                 placeholder={
-                  inFlight
-                    ? '补充一句(会在下一个边界并入执行)…'
-                    : '例如:把本周邮件整理成周报'
+                  sendMode === 'chat'
+                    ? '随便聊聊,例如:你是谁?'
+                    : sendMode === 'task'
+                      ? '描述要完成的任务,例如:把本周邮件整理成周报'
+                      : inFlight
+                        ? '补充一句(会并入当前任务)…'
+                        : '例如:把本周邮件整理成周报'
                 }
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -471,14 +480,30 @@ export function ChatPage() {
                   }
                 }}
               />
+              <select
+                aria-label="发送方式"
+                className="rounded-md border bg-transparent px-2 py-2 text-sm"
+                value={sendMode}
+                onChange={(event) => setSendMode(event.target.value as SendMode)}
+              >
+                <option value="auto">自动</option>
+                <option value="chat">对话</option>
+                <option value="task">任务</option>
+              </select>
               <Button type="submit" disabled={!canSend}>
-                {inFlight ? '补充指令' : '发送'}
+                发送
               </Button>
             </form>
             <p className="text-xs text-muted-foreground">
-              {inFlight
-                ? '当前任务还没结束:这条会作为追加指令并入本次执行(想开新任务先点「新对话」)。'
-                : 'Enter 发送,Shift+Enter 换行。'}
+              {sendMode === 'chat'
+                ? '直接对话:只回答,不建任务、不需要审批。Enter 发送,Shift+Enter 换行。'
+                : sendMode === 'task'
+                  ? inFlight
+                    ? '作为任务:当前任务还没结束,这条会并入追加指令。'
+                    : '作为任务:会先给计划,等你放行再执行。'
+                  : inFlight
+                    ? '自动判断:简单的话直接回答;复杂任务会并入当前任务的追加指令。'
+                    : '自动判断:简单的话直接回答;复杂任务会先给计划、等你放行。Enter 发送。'}
             </p>
             {error && !unauthorized ? (
               <p className="text-sm text-destructive">

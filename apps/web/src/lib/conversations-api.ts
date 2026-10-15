@@ -2,8 +2,9 @@
  * 对话页的数据层:agent-orchestrator 的 conversation API 契约。
  *
  * 与 runs-api 同一服务(BASE 同源,Vite dev 由 vite.config.ts 代理到 :8002);
- * 对话语义:一条用户消息按上下文要么触发新 run(自动规划),要么并入
- * 当前 run 的追加指令队列——postMessage 的返回值告诉页面发生了哪种。
+ * 对话语义:一条用户消息先由服务端**分流**——简单对话直接答(reply,不建 run),
+ * 复杂任务才建 run(自动规划)或并入当前 run 的追加指令队列;
+ * postMessage 的 mode 告诉页面实际发生了哪种。
  */
 
 import { requestJson } from '@/lib/http';
@@ -29,11 +30,20 @@ export type ChatMessage = {
   created_at: string;
 };
 
-/** 发消息的结果:run_created = 新开一跑;instruction_queued = 并入当前 run。 */
+/** 发送方式:auto = 服务端自动分流(默认);chat = 直接对话;task = 作为任务。 */
+export type SendMode = 'auto' | 'chat' | 'task';
+
+/**
+ * 发消息的结果:
+ * - chat:reply 是直接回复,run 为空(没建任务);
+ * - run_created:run 是新任务;
+ * - instruction_queued:run 是并入的进行中任务。
+ */
 export type MessagePostResult = {
   message: ChatMessage;
-  run: Run;
-  mode: 'run_created' | 'instruction_queued';
+  run: Run | null;
+  reply: ChatMessage | null;
+  mode: 'chat' | 'run_created' | 'instruction_queued';
 };
 
 function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -51,9 +61,9 @@ export const conversationsApi = {
     request<Conversation>(`/api/v1/conversations/${conversationId}`),
   messages: (conversationId: string) =>
     request<ChatMessage[]>(`/api/v1/conversations/${conversationId}/messages`),
-  postMessage: (conversationId: string, content: string) =>
+  postMessage: (conversationId: string, content: string, mode: SendMode = 'auto') =>
     request<MessagePostResult>(`/api/v1/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, mode }),
     }),
 };

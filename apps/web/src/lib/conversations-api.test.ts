@@ -54,7 +54,7 @@ describe('conversationsApi', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/conversations/c1/messages');
   });
 
-  it('postMessage 发 JSON content 且返回 mode', async () => {
+  it('postMessage 发 JSON content + mode,默认 auto', async () => {
     const result = {
       message: {
         id: 'm1',
@@ -65,16 +65,35 @@ describe('conversationsApi', () => {
         created_at: '2026-10-15T10:00:00+00:00',
       },
       run: { id: 'r1' },
+      reply: null,
       mode: 'run_created',
     };
     const fetchMock = mockFetch(201, result);
 
-    await expect(conversationsApi.postMessage('c1', '把本周邮件整理成周报')).resolves.toEqual(result);
+    await expect(
+      conversationsApi.postMessage('c1', '把本周邮件整理成周报'),
+    ).resolves.toEqual(result);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/v1/conversations/c1/messages');
     expect(init.method).toBe('POST');
-    expect(init.body).toBe(JSON.stringify({ content: '把本周邮件整理成周报' }));
+    expect(init.body).toBe(
+      JSON.stringify({ content: '把本周邮件整理成周报', mode: 'auto' }),
+    );
+  });
+
+  it('postMessage 可指定发送方式(chat)', async () => {
+    const fetchMock = mockFetch(201, {
+      message: { id: 'm1' },
+      run: null,
+      reply: { id: 'a1', content: '你好' },
+      mode: 'chat',
+    });
+
+    await conversationsApi.postMessage('c1', '你好', 'chat');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(JSON.stringify({ content: '你好', mode: 'chat' }));
   });
 
   it('跨租户探测返回 404 conversation.not_found 映射为 ApiError', async () => {

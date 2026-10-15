@@ -124,6 +124,7 @@ beforeEach(() => {
       content: '把本周邮件整理成周报',
     }),
     run: makeRun({ id: 'run-9', status: 'awaiting_approval', conversation_id: 'c-new' }),
+    reply: null,
     mode: 'run_created',
   });
   vi.mocked(runsApi.get).mockResolvedValue(makeRun());
@@ -157,6 +158,7 @@ describe('ChatPage', () => {
       expect(conversationsApi.postMessage).toHaveBeenCalledWith(
         'c-new',
         '把本周邮件整理成周报',
+        'auto',
       ),
     );
     // 返回的 run 立即接管:状态从它读
@@ -168,15 +170,19 @@ describe('ChatPage', () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    await screen.findByRole('button', { name: '补充指令' });
+    await screen.findByText('待审批'); // 等 run 载入(在途状态)
 
     fireEvent.change(screen.getByLabelText('说点什么'), {
       target: { value: '顺便看看日历' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '补充指令' }));
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() =>
-      expect(conversationsApi.postMessage).toHaveBeenCalledWith('c1', '顺便看看日历'),
+      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+        'c1',
+        '顺便看看日历',
+        'auto',
+      ),
     );
     expect(conversationsApi.create).not.toHaveBeenCalled();
   });
@@ -322,5 +328,93 @@ describe('ChatPage', () => {
 
     expect(await screen.findByText('还没开始的对话')).toBeTruthy();
     expect(screen.getByRole('button', { name: '新对话' })).toBeDisabled();
+  });
+
+  it('简单对话:只回一条,不建任务、不查状态', async () => {
+    vi.mocked(conversationsApi.create).mockResolvedValue(
+      makeConversation({ id: 'c-new', title: '新对话', active_run_id: null }),
+    );
+    vi.mocked(conversationsApi.get).mockResolvedValue(
+      makeConversation({ id: 'c-new', title: '新对话', active_run_id: null }),
+    );
+    vi.mocked(conversationsApi.postMessage).mockResolvedValue({
+      message: makeMessage({
+        id: 'm2',
+        conversation_id: 'c-new',
+        run_id: null,
+        content: '你好',
+      }),
+      run: null,
+      reply: makeMessage({
+        id: 'a2',
+        conversation_id: 'c-new',
+        run_id: null,
+        role: 'assistant',
+        content: '你好!有什么可以帮你的?',
+      }),
+      mode: 'chat',
+    });
+    vi.mocked(conversationsApi.messages).mockResolvedValue([
+      makeMessage({
+        id: 'm2',
+        conversation_id: 'c-new',
+        run_id: null,
+        content: '你好',
+      }),
+      makeMessage({
+        id: 'a2',
+        conversation_id: 'c-new',
+        run_id: null,
+        role: 'assistant',
+        content: '你好!有什么可以帮你的?',
+      }),
+    ]);
+    renderPage();
+
+    typeAndSend('你好');
+
+    expect(await screen.findByText('你好!有什么可以帮你的?')).toBeTruthy();
+    expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+      'c-new',
+      '你好',
+      'auto',
+    );
+    // 没有 run:不查状态、不显示任务状态
+    expect(runsApi.get).not.toHaveBeenCalled();
+    expect(screen.queryByText('待审批')).toBeNull();
+  });
+
+  it('发送方式选「对话」时按 chat 发送', async () => {
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText('发送方式'), {
+      target: { value: 'chat' },
+    });
+    typeAndSend('你好');
+
+    await waitFor(() =>
+      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+        'c-new',
+        '你好',
+        'chat',
+      ),
+    );
+  });
+
+  it('发送方式选「任务」时按 task 发送', async () => {
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText('发送方式'), {
+      target: { value: 'task' },
+    });
+    typeAndSend('把本周邮件整理成周报');
+
+    await waitFor(() =>
+      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+        'c-new',
+        '把本周邮件整理成周报',
+        'task',
+      ),
+    );
   });
 });
