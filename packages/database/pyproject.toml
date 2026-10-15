@@ -5,7 +5,7 @@ description = "数据库共享基座:表命名约定、DeclarativeBase、Reposit
 readme = "README.md"
 requires-python = ">=3.11,<4"
 dependencies = [
-    "sqlalchemy>=2.0.54",
+    "sqlalchemy[asyncio]>=2.0.54",
 ]
 
 [build-system]

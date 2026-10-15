@@ -7,7 +7,7 @@ requires-python = ">=3.11,<4"
 dependencies = [
     "common",
     "database",
-    "sqlalchemy>=2.0.54",
+    "sqlalchemy[asyncio]>=2.0.54",
 ]
 
 [build-system]
