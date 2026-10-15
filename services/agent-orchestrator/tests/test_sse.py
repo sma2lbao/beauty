@@ -108,7 +108,7 @@ async def test_event_stream_stays_open_until_terminal(tmp_path) -> None:
         )
         await runs_service.append_event(session, run, "run.planned.v1", {})
 
-    settings = Settings(env="dev", sse_poll_interval_seconds=0.01)
+    settings = Settings(_env_file=None, env="dev", sse_poll_interval_seconds=0.01)
     stream = _event_stream(factory, settings, "t-1", run.id, after=0)
     assert "run.created.v1" in await anext(stream)
     assert "run.planned.v1" in await anext(stream)

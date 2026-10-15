@@ -253,13 +253,32 @@ class FakeWorkspace:
 
 
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:
-    return Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}",
-        auto_create_tables=True,
-        sse_poll_interval_seconds=0.05,
-        **overrides,
-    )
+    """测试用配置:自足、零网络。
+
+    两道防线缺一不可:
+
+    1. _env_file=None:不读本地 .env(开发机配置,可能开着 LLM_ENABLED 等);
+    2. **显式钉住所有"会连外部"的开关**:Nx 会把项目 .env 注入任务环境,
+       环境变量优先级高于 .env 与 _env_file=None——只靠第 1 条挡不住
+       (npx nx test 会因此真的调用模型网关)。显式入参才是最高优先级。
+
+    需要开这些能力的测试通过 overrides 显式传入(如 _client 的 llm_enabled=True)。
+    """
+    defaults: dict[str, Any] = {
+        "_env_file": None,
+        "env": "dev",
+        "database_url": f"sqlite+aiosqlite:///{tmp_path}/{name}",
+        "auto_create_tables": True,
+        "sse_poll_interval_seconds": 0.05,
+        # 外部副作用开关:默认全关,测试要开就显式传
+        "llm_enabled": False,
+        "tools_enabled": False,
+        "outbox_enabled": False,
+        "knowledge_ingest_enabled": False,
+        "workspace_enabled": False,
+    }
+    defaults.update(overrides)
+    return Settings(**defaults)
 
 
 def _client(tmp_path: Path, fake: FakeLLM) -> TestClient:
