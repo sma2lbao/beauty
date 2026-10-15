@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from './http';
-import { conversationsApi } from './conversations-api';
+import {
+  conversationsApi,
+  parseSseFrame,
+  streamMessage,
+} from './conversations-api';
 
 function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
@@ -17,6 +21,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+/** 假流式响应:按帧一次性给完,足够验证解析与分发(不依赖 ReadableStream 全局)。 */
+function fakeStreamResponse(frames: string) {
+  const chunks = [new TextEncoder().encode(frames)];
+  let index = 0;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () =>
+          index < chunks.length
+            ? { done: false, value: chunks[index++] }
+            : { done: true, value: undefined },
+      }),
+    },
+  };
+}
 
 describe('conversationsApi', () => {
   it('列表走 /api/v1/conversations?limit=50', async () => {
@@ -96,6 +118,76 @@ describe('conversationsApi', () => {
     expect(init.body).toBe(JSON.stringify({ content: '你好', mode: 'chat' }));
   });
 
+  it('parseSseFrame 解析具名帧,坏帧返回 null', () => {
+    expect(parseSseFrame('event: delta\ndata: {"text":"你好"}')).toEqual([
+      'delta',
+      { text: '你好' },
+    ]);
+    expect(parseSseFrame('data: {"text":"x"}')).toBeNull(); // 缺事件名
+    expect(parseSseFrame('event: delta\ndata: 不是 JSON')).toBeNull();
+    expect(parseSseFrame(': keep-alive')).toBeNull();
+  });
+
+  it('streamMessage 按事件名分发 meta/delta/done', async () => {
+    const frames =
+      'event: meta\ndata: {"mode":"chat","message":{"id":"m1"},"run":null}\n\n' +
+      'event: delta\ndata: {"text":"你"}\n\n' +
+      'event: delta\ndata: {"text":"好"}\n\n' +
+      'event: done\ndata: {"mode":"chat","reply":null}\n\n';
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      fakeStreamResponse(frames),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const deltas: string[] = [];
+    let meta: unknown;
+    let done: unknown;
+
+    await streamMessage('c1', '你好', 'auto', {
+      onMeta: (value) => {
+        meta = value;
+      },
+      onDelta: (text) => deltas.push(text),
+      onDone: (value) => {
+        done = value;
+      },
+    });
+
+    expect(meta).toEqual({ mode: 'chat', message: { id: 'm1' }, run: null });
+    expect(deltas).toEqual(['你', '好']); // 增量按到达顺序回调
+    expect(done).toEqual({ mode: 'chat', reply: null });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/conversations/c1/messages/stream');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ content: '你好', mode: 'auto' }));
+  });
+
+  it('streamMessage 把 error 帧交给 onError', async () => {
+    const frames =
+      'event: meta\ndata: {"mode":"chat","message":{"id":"m1"},"run":null}\n\n' +
+      'event: error\ndata: {"code":"llm.upstream_error","message":"上游断了"}\n\n';
+    vi.stubGlobal('fetch', vi.fn(async () => fakeStreamResponse(frames)));
+    const errors: unknown[] = [];
+
+    await streamMessage('c1', '你好', 'chat', {
+      onError: (value) => errors.push(value),
+    });
+
+    expect(errors).toEqual([
+      { code: 'llm.upstream_error', message: '上游断了' },
+    ]);
+  });
+
+  it('streamMessage 开流前的错误仍抛 ApiError(chat 未启用模型)', async () => {
+    mockFetch(409, { code: 'chat.llm_disabled', message: '未启用模型' });
+
+    const error = (await streamMessage('c1', '你好', 'chat', {}).catch(
+      (failure: unknown) => failure,
+    )) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(409);
+    expect(error.code).toBe('chat.llm_disabled');
+  });
   it('跨租户探测返回 404 conversation.not_found 映射为 ApiError', async () => {
     mockFetch(404, { code: 'conversation.not_found', message: '对话不存在' });
 

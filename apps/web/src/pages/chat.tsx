@@ -6,7 +6,7 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { conversationsApi } from '@/lib/conversations-api';
+import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { ChatMessage, SendMode } from '@/lib/conversations-api';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
@@ -135,12 +135,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 /**
  * 对话页(首页):和 Agent 说话,消息与回复都留在对话里。
  *
- * - 没有会话时,发送会先建会话再发消息;首条消息自动定题(服务端);
- * - 发消息由后端编排:没有进行中的任务 → 新开一跑并立即给计划;
- *   进行中 → 并入追加指令(§6.5)。页面根据返回的 run 接事件流;
- * - Agent 的实时行动来自该 run 的 SSE;终态回复(交付物/失败原因)
- *   由服务端落成 assistant 消息,刷新后成为对话历史的一部分;
- * - 多轮上下文由服务端在建 run 时注入(对话历史进规划提示词)。
+ * - 发送走 SSE 流:**meta** 告知分流结果,**delta** 让直接对话的正文边产出边渲染
+ *   (本轮问答暂存在 pending,收尾后由服务端落库的消息接管);
+ * - 分流:没有进行中的任务时,简单对话直接答、复杂任务才新开一跑并立即规划;
+ *   进行中 → 并入追加指令(§6.5),页面据 meta 里的 run 接事件流;
+ * - 任务的实时行动来自 run 的 SSE;终态回复(交付物/失败原因)由服务端落成
+ *   assistant 消息,刷新后成为对话历史的一部分;
+ * - 多轮上下文由服务端注入(闲聊带全部轮次,任务建图时也带)。
  */
 export function ChatPage() {
   const queryClient = useQueryClient();
@@ -153,6 +154,13 @@ export function ChatPage() {
   const [manualRunId, setManualRunId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('先别发,我要改一下');
   const [showArtifact, setShowArtifact] = useState(false);
+  // 本轮问答的临时态:用户气泡立即出现,回复边流边填;收尾后由服务端消息接管
+  const [pending, setPending] = useState<{ user: string; reply: string } | null>(
+    null,
+  );
+  const [streamError, setStreamError] = useState<Error | null>(null);
+  const [sending, setSending] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevStatusRef = useRef<RunStatus | null>(null);
 
@@ -200,27 +208,66 @@ export function ChatPage() {
   /** 有进行中的任务时,发送变成"追加指令"(不新开一跑)。 */
   const inFlight = Boolean(activeRunId) && run !== undefined && !isTerminal(status);
 
-  const send = useMutation({
-    mutationFn: async ({ text, mode }: { text: string; mode: SendMode }) => {
+  /** 流式发送:用户气泡先出现,回复边产出边填;收尾后刷新,由服务端消息接管。 */
+  const sendStreaming = async (text: string) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStreamError(null);
+    setSending(true);
+    setDraft('');
+    setShowArtifact(false);
+    setPending({ user: text, reply: '' });
+    try {
       // 没有会话先建一个;标题由首条消息在服务端自动定
       const conversationId =
         activeConversationId ?? (await conversationsApi.create()).id;
-      return conversationsApi.postMessage(conversationId, text, mode);
-    },
-    onSuccess: (result) => {
-      const conversationId = result.message.conversation_id;
       setActiveConversationId(conversationId);
-      // 只有真的建了任务才接管 SSE;直接对话(chat)不改变当前 run
-      if (result.run) {
-        setManualRunId(result.run.id);
+      await streamMessage(conversationId, text, sendMode, {
+        signal: controller.signal,
+        onMeta: (meta) => {
+          // 只有真的建了任务才接管 SSE;直接对话(chat)不改变当前 run
+          if (meta.run) {
+            setManualRunId(meta.run.id);
+          }
+          void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          void queryClient.invalidateQueries({
+            queryKey: ['conversation', conversationId],
+          });
+        },
+        onDelta: (delta) =>
+          setPending((previous) =>
+            previous ? { ...previous, reply: previous.reply + delta } : previous,
+          ),
+        onDone: () => {
+          void settle(conversationId);
+        },
+        onError: (failure) => {
+          setStreamError(new Error(failure.message));
+          void settle(conversationId);
+        },
+      });
+    } catch (failure) {
+      if ((failure as Error)?.name !== 'AbortError') {
+        setStreamError(
+          failure instanceof Error ? failure : new Error('发送失败'),
+        );
+        setPending(null);
+        setDraft(text); // 硬失败:内容还给输入框,便于重发
       }
-      setDraft('');
-      setShowArtifact(false);
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      void queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
-      void queryClient.invalidateQueries({ queryKey: ['conversation-messages', conversationId] });
-    },
-  });
+    } finally {
+      setSending(false);
+      abortRef.current = null;
+    }
+  };
+
+  /** 收尾:刷新服务端消息(含已落库的回复),再撤掉临时气泡。 */
+  const settle = async (conversationId: string) => {
+    await queryClient.invalidateQueries({
+      queryKey: ['conversation-messages', conversationId],
+    });
+    await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    setPending(null);
+  };
 
   const action = useMutation({
     mutationFn: (task: () => Promise<unknown>) => task(),
@@ -249,36 +296,45 @@ export function ChatPage() {
     }
   }, [status, activeConversationId, queryClient]);
 
-  // 对话有新内容时滚到底部
+  // 对话有新内容时滚到底部(流式增量也要跟着滚)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [messages.length, transcript.length]);
+  }, [messages.length, transcript.length, pending?.reply.length]);
+
+  // 离开页面时断开未完成的流:已产出的片段服务端仍会落库
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const error =
-    send.error ??
+    streamError ??
     action.error ??
     runQuery.error ??
     conversationsQuery.error ??
     conversationQuery.error ??
     messagesQuery.error;
   const unauthorized = isUnauthorized(error);
-  const canSend = draft.trim().length > 0 && !send.isPending;
+  const canSend = draft.trim().length > 0 && !sending;
 
   const submit = () => {
     const text = draft.trim();
-    if (!text) {
+    if (!text || sending) {
       return;
     }
-    send.mutate({ text, mode: sendMode });
+    void sendStreaming(text);
   };
 
   const selectConversation = (conversationId: string) => {
+    abortRef.current?.abort();
+    setPending(null);
+    setStreamError(null);
     setActiveConversationId(conversationId);
     setManualRunId(null);
     setShowArtifact(false);
   };
 
   const newConversation = () => {
+    abortRef.current?.abort();
+    setPending(null);
+    setStreamError(null);
     setActiveConversationId(null);
     setManualRunId(null);
     setDraft('');
@@ -350,6 +406,31 @@ export function ChatPage() {
               {messages.map((message) => (
                 <MessageBubble key={message.id} message={message} />
               ))}
+
+              {pending ? (
+                <>
+                  <MessageBubble
+                    message={{
+                      id: 'pending-user',
+                      conversation_id: activeConversationId ?? '',
+                      run_id: null,
+                      role: 'user',
+                      content: pending.user,
+                      created_at: '',
+                    }}
+                  />
+                  <div className="flex justify-start">
+                    <p className="max-h-72 max-w-[85%] overflow-y-auto whitespace-pre-wrap rounded-2xl rounded-bl-sm border bg-muted/50 px-3 py-2 text-sm">
+                      <span>{pending.reply}</span>
+                      {pending.reply ? (
+                        <span className="animate-pulse">▍</span>
+                      ) : (
+                        <span className="text-muted-foreground">正在回答…</span>
+                      )}
+                    </p>
+                  </div>
+                </>
+              ) : null}
 
               {transcript.map((item) => (
                 <div key={item.key} className="flex justify-start">

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Conversation, ChatMessage } from '@/lib/conversations-api';
-import { conversationsApi } from '@/lib/conversations-api';
+import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { Run, RunEvent } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
@@ -18,6 +18,7 @@ vi.mock('@/lib/conversations-api', () => ({
     messages: vi.fn(),
     postMessage: vi.fn(),
   },
+  streamMessage: vi.fn(),
 }));
 
 vi.mock('@/lib/runs-api', async () => {
@@ -116,17 +117,26 @@ beforeEach(() => {
   );
   vi.mocked(conversationsApi.get).mockResolvedValue(makeConversation());
   vi.mocked(conversationsApi.messages).mockResolvedValue([makeMessage()]);
-  vi.mocked(conversationsApi.postMessage).mockResolvedValue({
-    message: makeMessage({
-      id: 'm9',
-      conversation_id: 'c-new',
-      run_id: 'run-9',
-      content: '把本周邮件整理成周报',
-    }),
-    run: makeRun({ id: 'run-9', status: 'awaiting_approval', conversation_id: 'c-new' }),
-    reply: null,
-    mode: 'run_created',
-  });
+  // 默认:分流为任务(建 run),与流式端点同形状
+  vi.mocked(streamMessage).mockImplementation(
+    async (_conversationId, _content, _mode, handlers) => {
+      handlers.onMeta?.({
+        mode: 'run_created',
+        message: makeMessage({
+          id: 'm9',
+          conversation_id: 'c-new',
+          run_id: 'run-9',
+          content: '把本周邮件整理成周报',
+        }),
+        run: makeRun({
+          id: 'run-9',
+          status: 'awaiting_approval',
+          conversation_id: 'c-new',
+        }),
+      });
+      handlers.onDone?.({ mode: 'run_created', reply: null });
+    },
+  );
   vi.mocked(runsApi.get).mockResolvedValue(makeRun());
 });
 
@@ -155,10 +165,11 @@ describe('ChatPage', () => {
 
     await waitFor(() => expect(conversationsApi.create).toHaveBeenCalled());
     await waitFor(() =>
-      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+      expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
         '把本周邮件整理成周报',
         'auto',
+        expect.anything(),
       ),
     );
     // 返回的 run 立即接管:状态从它读
@@ -166,7 +177,7 @@ describe('ChatPage', () => {
     expect(await screen.findByText(/待审批/)).toBeTruthy();
   });
 
-  it('在已有会话里发送:不重复建会话,消息走 postMessage', async () => {
+  it('在已有会话里发送:不重复建会话,发送走 SSE 流', async () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
@@ -178,10 +189,11 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() =>
-      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+      expect(streamMessage).toHaveBeenCalledWith(
         'c1',
         '顺便看看日历',
         'auto',
+        expect.anything(),
       ),
     );
     expect(conversationsApi.create).not.toHaveBeenCalled();
@@ -337,23 +349,17 @@ describe('ChatPage', () => {
     vi.mocked(conversationsApi.get).mockResolvedValue(
       makeConversation({ id: 'c-new', title: '新对话', active_run_id: null }),
     );
-    vi.mocked(conversationsApi.postMessage).mockResolvedValue({
-      message: makeMessage({
-        id: 'm2',
-        conversation_id: 'c-new',
-        run_id: null,
-        content: '你好',
-      }),
-      run: null,
-      reply: makeMessage({
-        id: 'a2',
-        conversation_id: 'c-new',
-        run_id: null,
-        role: 'assistant',
-        content: '你好!有什么可以帮你的?',
-      }),
-      mode: 'chat',
-    });
+    vi.mocked(streamMessage).mockImplementation(
+      async (_conversationId, _content, _mode, handlers) => {
+        handlers.onMeta?.({
+          mode: 'chat',
+          message: makeMessage({ id: 'm2', run_id: null, content: '你好' }),
+          run: null,
+        });
+        handlers.onDelta?.('你好!有什么可以帮你的?');
+        handlers.onDone?.({ mode: 'chat', reply: null });
+      },
+    );
     vi.mocked(conversationsApi.messages).mockResolvedValue([
       makeMessage({
         id: 'm2',
@@ -374,10 +380,11 @@ describe('ChatPage', () => {
     typeAndSend('你好');
 
     expect(await screen.findByText('你好!有什么可以帮你的?')).toBeTruthy();
-    expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+    expect(streamMessage).toHaveBeenCalledWith(
       'c-new',
       '你好',
       'auto',
+      expect.anything(),
     );
     // 没有 run:不查状态、不显示任务状态
     expect(runsApi.get).not.toHaveBeenCalled();
@@ -393,10 +400,11 @@ describe('ChatPage', () => {
     typeAndSend('你好');
 
     await waitFor(() =>
-      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+      expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
         '你好',
         'chat',
+        expect.anything(),
       ),
     );
   });
@@ -410,11 +418,63 @@ describe('ChatPage', () => {
     typeAndSend('把本周邮件整理成周报');
 
     await waitFor(() =>
-      expect(conversationsApi.postMessage).toHaveBeenCalledWith(
+      expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
         '把本周邮件整理成周报',
         'task',
+        expect.anything(),
       ),
     );
+  });
+
+  it('流式:增量边到边渲染,不必等整段回复', async () => {
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    vi.mocked(streamMessage).mockImplementation(
+      async (_conversationId, _content, _mode, handlers) => {
+        handlers.onMeta?.({
+          mode: 'chat',
+          message: makeMessage({ id: 'm2', run_id: null, content: '你好' }),
+          run: null,
+        });
+        handlers.onDelta?.('前半');
+        await gate; // 卡住流:验证"此时界面上已经有内容"
+        handlers.onDelta?.('后半');
+        handlers.onDone?.({ mode: 'chat', reply: null });
+      },
+    );
+    vi.mocked(conversationsApi.messages).mockResolvedValue([
+      makeMessage({ id: 'm2', run_id: null, content: '你好' }),
+      makeMessage({
+        id: 'a2',
+        role: 'assistant',
+        run_id: null,
+        content: '前半后半',
+      }),
+    ]);
+    renderPage();
+
+    typeAndSend('你好');
+
+    // 流还没结束,界面上已经有内容了——这就是"边输出边显示"
+    expect(await screen.findByText('前半')).toBeTruthy();
+    await act(async () => {
+      releaseGate();
+    });
+    // 收尾后临时气泡撤掉,由服务端落库的消息接管
+    expect(await screen.findByText('前半后半')).toBeTruthy();
+    expect(screen.queryByText('前半')).toBeNull();
+  });
+
+  it('发送硬失败:内容还给输入框,便于重发', async () => {
+    vi.mocked(streamMessage).mockRejectedValue(new Error('网络断了'));
+    renderPage();
+
+    typeAndSend('你好');
+
+    expect(await screen.findByText('网络断了')).toBeTruthy();
+    expect(screen.getByLabelText('说点什么')).toHaveValue('你好');
   });
 });
