@@ -1,0 +1,58 @@
+/**
+ * Textarea 样式(普通 CSS + BEM 语义类名)
+ * 与 Input 的外层 .bd-input-group 同源:边框、焦点环、校验/禁用态。
+ */
+
+.bd-textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--bd-input);
+  border-radius: calc(var(--bd-radius) - 2px);
+  background-color: var(--bd-background);
+  color: var(--bd-foreground);
+  font-family: var(--bd-font-sans);
+  font-size: 0.875rem;
+  line-height: calc(1.25 / 0.875);
+  outline: none;
+  resize: vertical;
+  /* 焦点环与状态色通过变量组合,便于各状态覆盖 */
+  --bd-textarea-ring: color-mix(in oklab, var(--bd-ring) 50%, transparent);
+  transition-property: border-color, box-shadow;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bd-textarea:focus-visible {
+  border-color: var(--bd-ring);
+  box-shadow: 0 0 0 3px var(--bd-textarea-ring);
+}
+
+.bd-textarea[data-invalid='true'] {
+  border-color: var(--bd-destructive);
+}
+
+.bd-textarea[data-invalid='true']:focus-visible {
+  --bd-textarea-ring: color-mix(
+    in oklab,
+    var(--bd-destructive) 25%,
+    transparent
+  );
+  border-color: var(--bd-destructive);
+}
+
+.bd-textarea[data-disabled='true'] {
+  border-color: var(--bd-input);
+  background-color: color-mix(in oklab, var(--bd-muted) 60%, transparent);
+  cursor: not-allowed;
+}
+
+.bd-textarea::placeholder {
+  color: var(--bd-muted-foreground);
+}
+
+.bd-textarea:disabled {
+  color: color-mix(in oklab, var(--bd-muted-foreground) 70%, transparent);
+}

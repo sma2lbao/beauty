@@ -9,11 +9,14 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
+  Checkbox,
   Input,
+  Select,
   Skeleton,
   Space,
   Switch,
   Tag,
+  Textarea,
 } from '../index.js';
 
 /**
@@ -23,6 +26,10 @@ import {
 const SLOTS = [
   'button',
   'card',
+  'checkbox-root',
+  'checkbox',
+  'checkbox-box',
+  'checkbox-label',
   'card-header',
   'card-title',
   'card-description',
@@ -31,6 +38,9 @@ const SLOTS = [
   'skeleton',
   'input-group',
   'input',
+  'select',
+  'select-control',
+  'select-arrow',
   'input-prefix',
   'input-suffix',
   'switch',
@@ -38,6 +48,7 @@ const SLOTS = [
   'tag',
   'tag-close',
   'space',
+  'textarea',
 ];
 
 describe('类名契约', () => {
@@ -49,6 +60,11 @@ describe('类名契约', () => {
           大按钮
         </Button>
         <Input placeholder="昵称" prefix="¥" suffix="元" />
+        <Textarea placeholder="简介" rows={3} />
+        <Checkbox label="同意条款" />
+        <Select aria-label="城市">
+          <option value="sh">上海</option>
+        </Select>
         <Card>
           <CardHeader>
             <CardTitle>标题</CardTitle>
@@ -71,7 +87,9 @@ describe('类名契约', () => {
     for (const slot of SLOTS) {
       const element = container.querySelector(`[data-slot="${slot}"]`);
       expect(element, `缺少 data-slot=${slot}`).not.toBeNull();
-      const names = (element as Element).className.split(/\s+/).filter(Boolean);
+      const names = ((element as Element).getAttribute('class') ?? '')
+        .split(/\s+/)
+        .filter(Boolean);
       expect(names.length, `${slot} 没有类名`).toBeGreaterThan(0);
       for (const name of names) {
         expect(name.startsWith('bd-'), `${slot} 出现非语义类:${name}`).toBe(

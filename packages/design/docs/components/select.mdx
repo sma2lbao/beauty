@@ -1,0 +1,73 @@
+import { Select, Space } from '@beauty/design';
+
+# Select 选择器
+
+从一组选项中选择一个:下拉单选。
+
+## 何时使用
+
+- 选项数量适中(建议 ≤ 15)且单选;
+- 选项很多或需搜索时建议后续用自定义下拉。
+
+## 基础用法
+
+选项通过 children 传入原生 `option` / `optgroup`:
+
+<div className="bd-demo">
+  <Select defaultValue="" aria-label="城市" style={{ maxWidth: '220px' }}>
+    <option value="" disabled>
+      请选择城市
+    </option>
+    <option value="sh">上海</option>
+    <option value="hz">杭州</option>
+    <option value="cd">成都</option>
+  </Select>
+</div>
+
+```tsx
+import { Select } from '@beauty/design';
+
+<Select defaultValue="" aria-label="城市">
+  <option value="" disabled>
+    请选择城市
+  </option>
+  <option value="sh">上海</option>
+  <option value="hz">杭州</option>
+</Select>;
+```
+
+## 尺寸与校验
+
+三档尺寸与 Input / Button 对齐:
+
+<div className="bd-demo">
+  <Space direction="vertical">
+    <Select size="sm" defaultValue="sh" aria-label="小">
+      <option value="sh">上海</option>
+    </Select>
+    <Select size="md" defaultValue="sh" aria-label="中">
+      <option value="sh">上海</option>
+    </Select>
+    <Select size="lg" defaultValue="sh" aria-label="大">
+      <option value="sh">上海</option>
+    </Select>
+  </Space>
+</div>
+
+```tsx
+<Select size="sm" defaultValue="sh">
+  <option value="sh">上海</option>
+</Select>
+```
+
+## API
+
+### SelectProps
+
+继承 `React.ComponentPropsWithRef<'select'>`(除 `size`)。
+
+| 属性        | 说明                   | 类型        | 默认值  |
+| ----------- | ---------------------- | ----------- | ------- | ----- | ------ |
+| size        | 尺寸,与 Input 一致高度 | `'sm'       | 'md'    | 'lg'` | `'md'` |
+| invalid     | 校验失败态             | `boolean`   | `false` |
+| placeholder | 辅助说明(不替代空选项) | `ReactNode` | —       |

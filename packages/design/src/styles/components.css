@@ -8,7 +8,12 @@
 @import '../components/button/button.css';
 @import '../components/input/input.css';
 @import '../components/card/card.css';
+@import '../components/checkbox/checkbox.css';
+@import '../components/select/select.css';
+@import '../components/checkbox/checkbox.css';
+@import '../components/select/select.css';
 @import '../components/skeleton/skeleton.css';
 @import '../components/space/space.css';
 @import '../components/switch/switch.css';
+@import '../components/textarea/textarea.css';
 @import '../components/tag/tag.css';

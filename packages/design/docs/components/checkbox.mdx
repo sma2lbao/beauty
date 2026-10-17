@@ -1,0 +1,65 @@
+import { Checkbox, Space } from '@beauty/design';
+
+# Checkbox 多选框
+
+在两个互斥状态之间做选择:勾选 / 取消。
+
+## 何时使用
+
+- 需要批量选择或多选;
+- 两态切换需伴随说明文字(纯开关语义请用 Switch)。
+
+## 基础用法
+
+<div className="bd-demo">
+  <Space direction="vertical">
+    <Checkbox label="接收产品动态" />
+    <Checkbox defaultChecked label="接收安全通知" />
+  </Space>
+</div>
+
+```tsx
+import { Checkbox } from '@beauty/design';
+
+<Checkbox label="接收产品动态" />
+<Checkbox defaultChecked label="接收安全通知" />
+```
+
+## 受控用法
+
+<div className="bd-demo">
+  <Checkbox checked={enabled} onCheckedChange={setEnabled} label="启用功能" />
+</div>
+
+```tsx
+const [enabled, setEnabled] = useState(false);
+
+<Checkbox checked={enabled} onCheckedChange={setEnabled} label="启用功能" />;
+```
+
+## 禁用
+
+<div className="bd-demo">
+  <Space direction="vertical">
+    <Checkbox disabled label="不可选" />
+    <Checkbox disabled defaultChecked label="选中且禁用" />
+  </Space>
+</div>
+
+```tsx
+<Checkbox disabled label="不可选" />
+<Checkbox disabled defaultChecked label="选中且禁用" />
+```
+
+## API
+
+### CheckboxProps
+
+继承 `React.ComponentPropsWithRef<'input'>`(除 `type`、`onChange`)。
+
+| 属性            | 说明               | 类型                         | 默认值  |
+| --------------- | ------------------ | ---------------------------- | ------- |
+| checked         | 受控选中状态       | `boolean`                    | —       |
+| defaultChecked  | 非受控初始状态     | `boolean`                    | `false` |
+| onCheckedChange | 状态变化时触发     | `(checked: boolean) => void` | —       |
+| label           | 复选框旁的说明文字 | `ReactNode`                  | —       |

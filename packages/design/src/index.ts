@@ -13,6 +13,15 @@ export type {
 export { Input } from './components/input/index.js';
 export type { InputProps, InputSize } from './components/input/index.js';
 
+export { Checkbox } from './components/checkbox/index.js';
+export type { CheckboxProps } from './components/checkbox/index.js';
+
+export { Select } from './components/select/index.js';
+export type { SelectProps, SelectSize } from './components/select/index.js';
+
+export { Textarea } from './components/textarea/index.js';
+export type { TextareaProps } from './components/textarea/index.js';
+
 export { Tag, tagVariants } from './components/tag/index.js';
 export type { TagColor, TagProps } from './components/tag/index.js';
 

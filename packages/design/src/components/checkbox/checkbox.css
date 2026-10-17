@@ -1,0 +1,71 @@
+/**
+ * Checkbox 样式(普通 CSS + BEM 语义类名)
+ * 原生 input 视觉隐藏但保留可交互性(裁剪路径法),盒子/勾由 span 绘制。
+ */
+
+.bd-checkbox {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--bd-font-sans);
+  font-size: 0.875rem;
+  color: var(--bd-foreground);
+  cursor: pointer;
+}
+
+.bd-checkbox[data-disabled='true'] {
+  color: color-mix(in oklab, var(--bd-muted-foreground) 70%, transparent);
+  cursor: not-allowed;
+}
+
+.bd-checkbox__input {
+  /* 视觉隐藏但保留焦点与可点击区域 */
+  position: absolute;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.bd-checkbox__box {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--bd-input);
+  border-radius: calc(var(--bd-radius) - 6px);
+  background-color: var(--bd-background);
+  color: transparent;
+  transition-property: background-color, border-color, color;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bd-checkbox__box[data-state='checked'] {
+  border-color: var(--bd-primary);
+  background-color: var(--bd-primary);
+  color: var(--bd-primary-foreground);
+}
+
+.bd-checkbox__input:focus-visible + .bd-checkbox__box {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bd-ring) 50%, transparent);
+}
+
+.bd-checkbox[data-disabled='true'] .bd-checkbox__box {
+  border-color: var(--bd-input);
+  background-color: color-mix(in oklab, var(--bd-muted) 60%, transparent);
+}
+
+.bd-checkbox[data-disabled='true'] .bd-checkbox__box[data-state='checked'] {
+  border-color: color-mix(in oklab, var(--bd-primary) 50%, transparent);
+  background-color: color-mix(in oklab, var(--bd-primary) 50%, transparent);
+}
+
+.bd-checkbox__label {
+  line-height: 1.25rem;
+}

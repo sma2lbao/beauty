@@ -1,0 +1,55 @@
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Space,
+  Textarea,
+} from '@beauty/design';
+
+# Textarea 多行文本框
+
+录入多行文本:备注、描述、批注。
+
+## 何时使用
+
+- 内容长度不确定或需要换行;
+- 单行短文本请用 Input。
+
+## 基础用法
+
+高度由 `rows` 或 `style` 指定,支持纵向拖拽调整:
+
+<div className="bd-demo bd-demo--vertical">
+  <Textarea placeholder="填写备注,支持换行" rows={4} />
+</div>
+
+```tsx
+import { Textarea } from '@beauty/design';
+
+<Textarea placeholder="填写备注,支持换行" rows={4} />;
+```
+
+## 校验与禁用
+
+<div className="bd-demo bd-demo--vertical">
+  <Space direction="vertical">
+    <Textarea invalid placeholder="请说明失败原因" rows={3} />
+    <Textarea disabled placeholder="禁用态" rows={3} />
+  </Space>
+</div>
+
+```tsx
+<Textarea invalid placeholder="请说明失败原因" rows={3} />
+<Textarea disabled placeholder="禁用态" rows={3} />
+```
+
+## API
+
+### TextareaProps
+
+继承 `React.ComponentPropsWithRef<'textarea'>`(除 `size`)。
+
+| 属性    | 说明       | 类型      | 默认值  |
+| ------- | ---------- | --------- | ------- |
+| invalid | 校验失败态 | `boolean` | `false` |
