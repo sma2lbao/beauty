@@ -86,10 +86,17 @@ export default defineConfig({
       '/components/': [
         { text: '组件总览', link: '/components/overview' },
         { text: 'Button 按钮', link: '/components/button' },
+        { text: 'Card 卡片', link: '/components/card' },
+        { text: 'Checkbox 多选框', link: '/components/checkbox' },
+        { text: 'Empty 空态', link: '/components/empty' },
         { text: 'Input 输入框', link: '/components/input' },
+        { text: 'Select 选择器', link: '/components/select' },
+        { text: 'Skeleton 骨架屏', link: '/components/skeleton' },
         { text: 'Space 间距', link: '/components/space' },
+        { text: 'Spin 加载指示', link: '/components/spin' },
         { text: 'Switch 开关', link: '/components/switch' },
         { text: 'Tag 标签', link: '/components/tag' },
+        { text: 'Textarea 多行文本框', link: '/components/textarea' },
       ],
     },
     footer: {

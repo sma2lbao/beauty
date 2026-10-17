@@ -1,31 +1,28 @@
 <!--
   Beauty Design 标识(beauty moon)。
-  构成:组件瓦片(边距 4,圆角 30 = 画布的 23%,呼应 bd-radius 令牌)
-        + 白月牙 + 四角星芒;月牙由外圆与咬口圆相减而来,两角做了钝化处理。
-  颜色:渐变取品牌主色色相(玫瑰)→ 强调色侧色相(紫),白色墨迹对渐变两端的
-        对比度分别为 3.93:1 / 6.61:1,均高于 3:1。
-  几何:墨迹包围盒 86x81,居中于 128 画布;最细处(月牙腹部)
-        约 25 单位 ≈ 画布的 1/5,16px 下仍有约 3.1px。
-  注意:XML 注释里不能出现连续两个短横线,提及设计令牌时请写到令牌名本身。
-  修改建议:改动几何请保持"月牙厚度 = 咬口圆偏移距离"这一关系。
+  几何取自官方 favicon.svg(apps/web/public/favicon.svg):夜空底瓦片 + 月光米月亮 +
+  云镂空;与 apps/web 的 BrandChip 同一来源,仅放大到 128 画布(坐标 ×2),
+  保证两个项目读到的是同一份品牌几何,不会各自漂移。
+  颜色:夜空为官方径向渐变(#331E6E → #150E31),月面官方月光米 #FFEFC6,
+  深浅主题均有对比,无需跟随令牌换色。
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Beauty Design">
   <title>Beauty Design</title>
   <defs>
-    <linearGradient id="bd-logo-gradient" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#c85f73"/>
-      <stop offset="1" stop-color="#6b47b3"/>
-    </linearGradient>
-    <mask id="bd-logo-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
-      <rect width="128" height="128" fill="#fff"/>
-      <circle cx="76.37" cy="51.63" r="36.52" fill="#000"/>
+    <radialGradient id="bd-logo-sky" cx="0.5" cy="0.38" r="0.72">
+      <stop offset="0" stop-color="#331E6E"/>
+      <stop offset="1" stop-color="#150E31"/>
+    </radialGradient>
+    <mask id="bd-logo-moon-cut">
+      <circle cx="64" cy="60" r="36" fill="#FFFFFF"/>
+      <g fill="#000000">
+        <rect x="58" y="93" width="34" height="14" rx="5"/>
+        <circle cx="65" cy="91" r="4.4"/>
+        <circle cx="76" cy="88" r="8"/>
+        <circle cx="85" cy="91" r="5"/>
+      </g>
     </mask>
   </defs>
-  <rect x="4.0" y="4.0" width="120.0" height="120.0" rx="30.0" fill="url(#bd-logo-gradient)"/>
-  <g fill="#ffffff" mask="url(#bd-logo-moon)">
-    <circle cx="57.52" cy="68.12" r="36.52"/>
-    <circle cx="89.54" cy="85.69" r="4.12"/>
-    <circle cx="44.35" cy="34.06" r="4.12"/>
-  </g>
-  <path d="M94.04 23.36C96.11 34.24 96.11 34.24 107.00 36.32C96.11 38.39 96.11 38.39 94.04 49.27C91.97 38.39 91.97 38.39 81.08 36.32C91.97 34.24 91.97 34.24 94.04 23.36 Z" fill="#ffffff"/>
+  <rect width="128" height="128" rx="28" fill="url(#bd-logo-sky)"/>
+  <circle cx="64" cy="60" r="36" fill="#FFEFC6" mask="url(#bd-logo-moon-cut)"/>
 </svg>
