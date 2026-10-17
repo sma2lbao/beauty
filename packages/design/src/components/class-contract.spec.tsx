@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import {
+  Alert,
   Button,
   Card,
   CardContent,
@@ -11,12 +12,14 @@ import {
   CardTitle,
   Checkbox,
   Empty,
+  Field,
   Input,
   Select,
   Skeleton,
   Space,
   Spin,
   Switch,
+  Tabs,
   Tag,
   Textarea,
 } from '../index.js';
@@ -26,8 +29,21 @@ import {
  * 不允许出现 Tailwind 工具类。样式全部来自组件自带的普通 CSS。
  */
 const SLOTS = [
+  'alert',
+  'alert-icon',
+  'alert-title',
+  'alert-description',
   'button',
   'card',
+  'field',
+  'field-label',
+  'field-control',
+  'field-hint',
+  'field-error',
+  'tabs',
+  'tabs-list',
+  'tabs-tab',
+  'tabs-panel',
   'empty',
   'empty-figure',
   'empty-description',
@@ -74,6 +90,21 @@ describe('类名契约', () => {
         <Select aria-label="城市">
           <option value="sh">上海</option>
         </Select>
+        <Alert variant="warning" title="注意">
+          请先完成鉴权
+        </Alert>
+        <Field label="昵称" hint="最多 20 字">
+          <Input placeholder="昵称" />
+        </Field>
+        <Field label="邮箱" htmlFor="contract-email" error="格式不正确">
+          <Input id="contract-email" placeholder="邮箱" />
+        </Field>
+        <Tabs
+          items={[
+            { value: 'a', label: 'A', content: <span>面板 A</span> },
+            { value: 'b', label: 'B', content: <span>面板 B</span> },
+          ]}
+        />
         <Spin label="加载中" />
         <Empty
           description="暂无数据"

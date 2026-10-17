@@ -1,0 +1,72 @@
+import { Field, Input, Select, Space, Textarea } from '@beauty/design';
+
+# Field 字段容器
+
+把 label、控件、提示与错误文案组织成固定结构。
+
+## 何时使用
+
+- 表单里每个字段需要标签与辅助说明;
+- 需要统一"必有 label、错误文案位置一致"的表单规范。
+
+## 基础用法
+
+<div className="bd-demo bd-demo--vertical">
+  <div style={{ width: '100%', maxWidth: '360px' }}>
+    <Space direction="vertical" style={{ width: '100%' }}>
+      <Field label="邮箱" htmlFor="field-email" required hint="用于接收通知">
+        <Input id="field-email" type="email" placeholder="you@example.com" />
+      </Field>
+      <Field label="角色" htmlFor="field-role">
+        <Select id="field-role" defaultValue="member">
+          <option value="member">member</option>
+          <option value="owner">owner</option>
+        </Select>
+      </Field>
+      <Field label="备注" htmlFor="field-note">
+        <Textarea id="field-note" rows={3} placeholder="可选" />
+      </Field>
+    </Space>
+  </div>
+</div>
+
+```tsx
+import { Field, Input } from '@beauty/design';
+
+<Field label="邮箱" htmlFor="email" required hint="用于接收通知">
+  <Input id="email" type="email" />
+</Field>;
+```
+
+## 校验错误
+
+传 `error` 后整体进入 invalid 态,错误文案优先于 `hint` 展示:
+
+<div className="bd-demo bd-demo--vertical">
+  <div style={{ width: '100%', maxWidth: '360px' }}>
+    <Field label="邮箱" htmlFor="field-email-invalid" error="邮箱格式不正确">
+      <Input id="field-email-invalid" type="email" invalid defaultValue="x@" />
+    </Field>
+  </div>
+</div>
+
+```tsx
+<Field label="邮箱" htmlFor="email" error="邮箱格式不正确">
+  <Input id="email" invalid defaultValue="x@" />
+</Field>
+```
+
+## API
+
+### FieldProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`(除 `children`)。
+
+| 属性     | 说明                  | 类型        | 默认值  |
+| -------- | --------------------- | ----------- | ------- |
+| label    | 字段名                | `ReactNode` | —       |
+| htmlFor  | 关联控件 id           | `string`    | —       |
+| hint     | 辅助说明              | `ReactNode` | —       |
+| error    | 校验错误(优先于 hint) | `ReactNode` | —       |
+| required | 必填标记(展示星号)    | `boolean`   | `false` |
+| children | 控件本体              | `ReactNode` | —       |

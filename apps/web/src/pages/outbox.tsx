@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import {
+  Alert,
   Button,
   Card,
   CardContent,
@@ -93,18 +94,18 @@ export function OutboxPage() {
       </div>
 
       {unauthorized ? (
-        <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+        <Alert variant="danger" className="mt-4">
           未登录或令牌失效:先在上方面板完成鉴权,再运维事件队列。
-        </p>
+        </Alert>
       ) : null}
 
       {disabled ? (
-        <p className="mt-4 rounded-md border border-dashed px-3 py-2 text-sm">
+        <Alert variant="neutral" className="mt-4 border-dashed">
           该服务未启用 outbox(<span className="font-mono">
             OUTBOX_ENABLED=false
           </span>
           ):没有事件流可运维。启用后重启服务即可。
-        </p>
+        </Alert>
       ) : null}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">

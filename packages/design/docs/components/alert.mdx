@@ -1,0 +1,59 @@
+import { Alert, Space } from '@beauty/design';
+
+# Alert 提示条
+
+页面级的说明、警告与错误,承载"需要被看到但不必打断"的信息。
+
+## 何时使用
+
+- 区块级的状态说明(未登录、服务未启用、表单整体错误);
+- 单字段的错误请用 Field 的 `error`,不要用 Alert。
+
+## 语义类型
+
+五种类型,颜色全部来自 `--bd-*` 令牌:
+
+<div className="bd-demo bd-demo--vertical">
+  <Alert variant="info" title="提示">
+    事件队列按至少一次投递,消费方需按事件 id 去重。
+  </Alert>
+  <Alert variant="success" title="已保存">
+    配额改动会在下一次请求生效。
+  </Alert>
+  <Alert variant="warning" title="注意">
+    该操作会重放全部失败事件。
+  </Alert>
+  <Alert variant="danger" title="未登录或令牌失效">
+    先完成鉴权,再操作知识库。
+  </Alert>
+  <Alert variant="neutral">纯说明,不带语义色。</Alert>
+</div>
+
+```tsx
+import { Alert } from '@beauty/design';
+
+<Alert variant="info" title="提示">
+  事件队列按至少一次投递,消费方需按事件 id 去重。
+</Alert>
+
+<Alert variant="danger" title="未登录或令牌失效">
+  先完成鉴权,再操作知识库。
+</Alert>
+```
+
+## 可访问性
+
+`danger` / `warning` 默认 `role="alert"`(动态出现时会被读屏立即播报),
+其余默认 `role="status"`。静态说明可用 `role="note"` 覆盖,避免播报噪音。
+
+## API
+
+### AlertProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`(除原生 `title`)。
+
+| 属性    | 说明               | 类型                                                        | 默认值   |
+| ------- | ------------------ | ----------------------------------------------------------- | -------- |
+| variant | 语义类型           | `'info' \| 'success' \| 'warning' \| 'danger' \| 'neutral'` | `'info'` |
+| title   | 标题               | `ReactNode`                                                 | —        |
+| role    | 覆盖默认 ARIA 角色 | `string`                                                    | 见上     |

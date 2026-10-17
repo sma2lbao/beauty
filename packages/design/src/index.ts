@@ -13,6 +13,9 @@ export type {
 export { Empty } from './components/empty/index.js';
 export type { EmptyProps } from './components/empty/index.js';
 
+export { Field } from './components/field/index.js';
+export type { FieldProps } from './components/field/index.js';
+
 export { Input } from './components/input/index.js';
 export type { InputProps, InputSize } from './components/input/index.js';
 
@@ -25,11 +28,17 @@ export type { SelectProps, SelectSize } from './components/select/index.js';
 export { Textarea } from './components/textarea/index.js';
 export type { TextareaProps } from './components/textarea/index.js';
 
+export { Tabs } from './components/tabs/index.js';
+export type { TabItem, TabsProps, TabsSize } from './components/tabs/index.js';
+
 export { Tag, tagVariants } from './components/tag/index.js';
 export type { TagColor, TagProps } from './components/tag/index.js';
 
 export { Switch } from './components/switch/index.js';
 export type { SwitchProps } from './components/switch/index.js';
+
+export { Alert, alertVariants } from './components/alert/index.js';
+export type { AlertProps, AlertVariant } from './components/alert/index.js';
 
 export {
   Card,

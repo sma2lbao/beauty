@@ -1,0 +1,114 @@
+import { Tabs } from '@beauty/design';
+
+# Tabs 页签
+
+在同层内容之间切换:登录/注册、概览/明细。
+
+## 何时使用
+
+- 内容量相近、可平行浏览的分组;
+- 需要顺序推进的流程请用步骤条,不要用 Tabs。
+
+## 基础用法
+
+数据驱动:`items` 里每项含 `value` / `label` / `content`:
+
+<div className="bd-demo">
+  <Tabs
+    items={[
+      {
+        value: 'overview',
+        label: '概览',
+        content: '事件与业务状态同事务落库。',
+      },
+      { value: 'retry', label: '重放', content: '失败事件可按退避策略重试。' },
+      {
+        value: 'failed',
+        label: '失败',
+        content: '超过最大尝试次数的事件保留在此。',
+      },
+    ]}
+  />
+</div>
+
+```tsx
+import { Tabs } from '@beauty/design';
+
+<Tabs
+  items={[
+    { value: 'overview', label: '概览', content: '事件与业务状态同事务落库。' },
+    { value: 'retry', label: '重放', content: '失败事件可按退避策略重试。' },
+  ]}
+/>;
+```
+
+## 只作切换器
+
+不传 `content` 时只渲染页签条,切换后的内容由使用方自己渲染:
+
+<div className="bd-demo">
+  <Tabs
+    items={[
+      { value: 'login', label: '登录' },
+      { value: 'register', label: '注册' },
+    ]}
+  />
+</div>
+
+```tsx
+<Tabs
+  items={[
+    { value: 'login', label: '登录' },
+    { value: 'register', label: '注册' },
+  ]}
+  defaultValue="login"
+  onValueChange={(value) => setMode(value)}
+/>
+```
+
+## 受控与尺寸
+
+`value` + `onValueChange` 受控;`size="sm"` 用于紧凑容器:
+
+<div className="bd-demo">
+  <Tabs
+    size="sm"
+    items={[
+      { value: 'a', label: '全部', content: '全部事件' },
+      { value: 'b', label: '待投递', content: '待投递事件' },
+    ]}
+  />
+</div>
+
+```tsx
+<Tabs size="sm" items={items} value={tab} onValueChange={setTab} />
+```
+
+## 可访问性
+
+页签条为 `role="tablist"`、页签为 `role="tab"`、面板为 `role="tabpanel"`;
+支持 `←` / `→` / `Home` / `End` 键盘导航(遵循 WAI-ARIA tabs 模式)。
+
+## API
+
+### TabsProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性          | 说明                   | 类型                      | 默认值  |
+| ------------- | ---------------------- | ------------------------- | ------- |
+| items         | 页签数据               | `TabItem[]`               | —       |
+| value         | 受控选中值             | `string`                  | —       |
+| defaultValue  | 非受控初始值           | `string`                  | 第一项  |
+| onValueChange | 选中变化回调           | `(value: string) => void` | —       |
+| size          | 尺寸                   | `'sm' \| 'md'`            | `'md'`  |
+| block         | 页签条撑满父容器并等分 | `boolean`                 | `false` |
+
+### TabItem
+
+| 字段     | 说明                        | 类型        |
+| -------- | --------------------------- | ----------- |
+| value    | 唯一标识                    | `string`    |
+| label    | 页签文字                    | `ReactNode` |
+| content  | 面板内容;不传则只渲染页签条 | `ReactNode` |
+| disabled | 是否禁用                    | `boolean`   |

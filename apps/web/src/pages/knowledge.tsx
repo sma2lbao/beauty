@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import {
+  Alert,
   Button,
   Card,
   CardContent,
@@ -101,9 +102,9 @@ export function KnowledgePage() {
       </div>
 
       {unauthorized ? (
-        <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+        <Alert variant="danger" className="mt-4">
           未登录或令牌失效:先在上方面板完成鉴权,再操作知识库。
-        </p>
+        </Alert>
       ) : null}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

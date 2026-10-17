@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
 import {
+  Alert,
   Button,
   Card,
   CardContent,
@@ -379,9 +380,9 @@ export function ChatPage() {
       </div>
 
       {unauthorized ? (
-        <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+        <Alert variant="danger" className="mt-4">
           未登录或令牌失效:先在上方面板完成鉴权,再开始对话。
-        </p>
+        </Alert>
       ) : null}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">

@@ -1,0 +1,47 @@
+/**
+ * Field 样式(普通 CSS + BEM 语义类名)
+ * 纵向:label、控件、提示/错误;间距固定,不依赖宿主重置。
+ */
+
+.bd-field {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  font-family: var(--bd-font-sans);
+  color: var(--bd-foreground);
+}
+
+.bd-field__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.125rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+
+.bd-field__required {
+  color: var(--bd-destructive);
+}
+
+.bd-field__control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.bd-field__hint,
+.bd-field__error {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}
+
+.bd-field__hint {
+  color: var(--bd-muted-foreground);
+}
+
+.bd-field__error {
+  color: var(--bd-destructive);
+}

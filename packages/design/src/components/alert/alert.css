@@ -1,0 +1,87 @@
+/**
+ * Alert 样式(普通 CSS + BEM 语义类名)
+ * 底色 = 语义色 8%,边框 = 语义色 30%,图标取语义色本身;
+ * 亮暗两套令牌自动适配,本文件不需要暗色分支。
+ */
+
+.bd-alert {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid
+    color-mix(in oklab, var(--bd-muted-foreground) 25%, transparent);
+  border-radius: calc(var(--bd-radius) - 2px);
+  background-color: color-mix(in oklab, var(--bd-muted) 60%, transparent);
+  color: var(--bd-foreground);
+  font-family: var(--bd-font-sans);
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+}
+
+.bd-alert__icon {
+  flex-shrink: 0;
+  margin-top: 0.1875rem;
+  color: var(--bd-muted-foreground);
+}
+
+.bd-alert__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.bd-alert__title {
+  margin: 0;
+  font-weight: 600;
+  color: inherit;
+}
+
+.bd-alert__description {
+  margin: 0;
+  color: var(--bd-muted-foreground);
+}
+
+.bd-alert__title + .bd-alert__description {
+  margin-top: 0.125rem;
+}
+
+/* ---------- 语义类型 ---------- */
+
+.bd-alert--info {
+  border-color: color-mix(in oklab, var(--bd-info) 30%, transparent);
+  background-color: color-mix(in oklab, var(--bd-info) 8%, transparent);
+}
+
+.bd-alert--info .bd-alert__icon {
+  color: var(--bd-info);
+}
+
+.bd-alert--success {
+  border-color: color-mix(in oklab, var(--bd-success) 30%, transparent);
+  background-color: color-mix(in oklab, var(--bd-success) 8%, transparent);
+}
+
+.bd-alert--success .bd-alert__icon {
+  color: var(--bd-success);
+}
+
+.bd-alert--warning {
+  border-color: color-mix(in oklab, var(--bd-warning) 30%, transparent);
+  background-color: color-mix(in oklab, var(--bd-warning) 8%, transparent);
+}
+
+.bd-alert--warning .bd-alert__icon {
+  color: var(--bd-warning);
+}
+
+.bd-alert--danger {
+  border-color: color-mix(in oklab, var(--bd-destructive) 30%, transparent);
+  background-color: color-mix(in oklab, var(--bd-destructive) 8%, transparent);
+}
+
+.bd-alert--danger .bd-alert__icon {
+  color: var(--bd-destructive);
+}

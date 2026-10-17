@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
-import { Button, Input } from '@beauty/design';
+import { Button, Input, Tabs } from '@beauty/design';
 
 import { BrandMark, BrandWordmark } from '@/components/brand/logo';
 import { accountApi } from '@/lib/account-api';
@@ -185,36 +185,16 @@ export function LoginPage() {
                     : '注册即创建你的组织,你就是组织所有者(owner)。'}
                 </p>
 
-                <div className="mt-4 flex gap-1 rounded-lg bg-muted p-1 text-sm" role="tablist">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === 'login'}
-                    className={
-                      'flex-1 rounded-md px-3 py-1.5 transition-colors ' +
-                      (tab === 'login'
-                        ? 'bg-background font-medium shadow-sm'
-                        : 'text-muted-foreground')
-                    }
-                    onClick={() => setTab('login')}
-                  >
-                    登录
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === 'register'}
-                    className={
-                      'flex-1 rounded-md px-3 py-1.5 transition-colors ' +
-                      (tab === 'register'
-                        ? 'bg-background font-medium shadow-sm'
-                        : 'text-muted-foreground')
-                    }
-                    onClick={() => setTab('register')}
-                  >
-                    注册
-                  </button>
-                </div>
+                <Tabs
+                  className="mt-4"
+                  block
+                  items={[
+                    { value: 'login', label: '登录' },
+                    { value: 'register', label: '注册' },
+                  ]}
+                  value={tab}
+                  onValueChange={(value) => setTab(value as 'login' | 'register')}
+                />
 
                 <form
                   className="mt-4 space-y-3"
