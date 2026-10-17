@@ -1,0 +1,44 @@
+/**
+ * Card 样式(普通 CSS + BEM 语义类名)。
+ * 结构对应 shadcn/ui Card:容器 flex 纵向,头部/内容/脚部只负责内边距与排列。
+ */
+
+.bd-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem 0;
+  border: 1px solid var(--bd-border);
+  border-radius: var(--bd-radius);
+  background-color: var(--bd-card);
+  color: var(--bd-card-foreground);
+  box-shadow: 0 1px 2px 0 oklch(0 0 0 / 5%);
+}
+
+.bd-card__header,
+.bd-card__footer {
+  display: flex;
+  align-items: center;
+  padding-inline: 1.5rem;
+}
+
+.bd-card__header {
+  flex-direction: column;
+  gap: 0.375rem;
+  align-items: flex-start;
+}
+
+.bd-card__content {
+  padding-inline: 1.5rem;
+}
+
+.bd-card__title {
+  font-weight: 600;
+  line-height: 1;
+}
+
+.bd-card__description {
+  font-size: 0.875rem;
+  color: var(--bd-muted-foreground);
+}

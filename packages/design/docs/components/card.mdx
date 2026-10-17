@@ -1,0 +1,78 @@
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  Input,
+  Space,
+} from '@beauty/design';
+
+# Card 卡片
+
+将一组相关信息组织成独立区块:表单、报表、详情面板。
+
+## 何时使用
+
+- 页面需要按主题切分内容区块;
+- 一个区块内同时有标题、正文与操作区。
+
+## 基础用法
+
+六个子组件各司其职:
+
+<div className="bd-demo">
+  <Card>
+    <CardHeader>
+      <CardTitle>创建计划</CardTitle>
+      <CardDescription>填写基础信息,稍后可继续调整</CardDescription>
+    </CardHeader>
+    <CardContent>
+      <Space direction="vertical">
+        <Input placeholder="计划名称" />
+        <Input placeholder="备注(可选)" />
+      </Space>
+    </CardContent>
+    <CardFooter>
+      <Space>
+        <Button variant="ghost">取消</Button>
+        <Button>创建</Button>
+      </Space>
+    </CardFooter>
+  </Card>
+</div>
+
+```tsx
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@beauty/design';
+
+<Card>
+  <CardHeader>
+    <CardTitle>创建计划</CardTitle>
+    <CardDescription>填写基础信息,稍后可继续调整</CardDescription>
+  </CardHeader>
+  <CardContent>表单内容</CardContent>
+  <CardFooter>操作按钮</CardFooter>
+</Card>;
+```
+
+## API
+
+各子组件 props 均为 `React.ComponentPropsWithoutRef<'div'>` 的类型别名。
+
+| 组件            | 说明                          |
+| --------------- | ----------------------------- |
+| Card            | 卡片容器,纵向 flex + 圆角边框 |
+| CardHeader      | 头部,纵向排列标题与描述       |
+| CardTitle       | 标题,加粗                     |
+| CardDescription | 描述文字,弱化色               |
+| CardContent     | 正文区域                      |
+| CardFooter      | 脚部,横向排列操作             |

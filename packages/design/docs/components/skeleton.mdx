@@ -1,0 +1,65 @@
+import { Card, CardContent, CardHeader, Skeleton, Space } from '@beauty/design';
+
+# Skeleton 骨架屏
+
+内容加载完成前的占位块,降低等待焦虑。
+
+## 何时使用
+
+- 网络请求返回前需要占住版面;
+- 不适合极短的加载(闪烁反而干扰)。
+
+## 基础用法
+
+宽度与高度由使用方指定:
+
+<div className="bd-demo">
+  <Space direction="vertical">
+    <Skeleton className="bd-demo-skeleton-title" />
+    <Skeleton className="bd-demo-skeleton-line" />
+    <Skeleton className="bd-demo-skeleton-line" />
+  </Space>
+</div>
+
+```tsx
+import { Skeleton } from '@beauty/design';
+
+<Skeleton style={{ height: '1.5rem', width: '40%' }} />
+<Skeleton style={{ height: '0.875rem', width: '100%' }} />
+```
+
+## 卡片占位示例
+
+<div className="bd-demo">
+  <Card style={{ maxWidth: '360px' }}>
+    <CardHeader>
+      <Skeleton className="bd-demo-skeleton-title" />
+    </CardHeader>
+    <CardContent>
+      <Space direction="vertical">
+        <Skeleton className="bd-demo-skeleton-line" />
+        <Skeleton className="bd-demo-skeleton-line" />
+      </Space>
+    </CardContent>
+  </Card>
+</div>
+
+```tsx
+import { Card, CardContent, CardHeader, Skeleton } from '@beauty/design';
+
+<Card>
+  <CardHeader>
+    <Skeleton style={{ height: '1.5rem', width: '40%' }} />
+  </CardHeader>
+  <CardContent>
+    <Skeleton style={{ height: '0.875rem' }} />
+    <Skeleton style={{ height: '0.875rem', width: '80%' }} />
+  </CardContent>
+</Card>;
+```
+
+## API
+
+### SkeletonProps
+
+为 `React.ComponentPropsWithoutRef<'div'>` 的类型别名。组件默认不设宽高,由 `className` 或 `style` 指定;对辅助技术自动 `aria-hidden`。

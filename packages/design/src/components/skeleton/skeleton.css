@@ -1,0 +1,23 @@
+/**
+ * Skeleton 样式(普通 CSS + BEM 语义类名)。
+ * 默认不写宽高(交由使用方),只定底色与脉冲动画。
+ */
+
+.bd-skeleton {
+  box-sizing: border-box;
+  border-radius: calc(var(--bd-radius) - 4px);
+  background-color: var(--bd-accent);
+  animation: bd-skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes bd-skeleton-pulse {
+  50% {
+    opacity: 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-skeleton {
+    animation: none;
+  }
+}
