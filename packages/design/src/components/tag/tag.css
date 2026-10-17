@@ -7,6 +7,9 @@
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
+  /* 作为 flex 子项时贴合自身内容高度:父级 align-items: stretch(默认值)
+     不会把标签拉高到与相邻更高元素齐平 */
+  align-self: center;
   gap: 0.25rem;
   padding: 1px 0.5rem;
   border: 1px solid transparent;
