@@ -28,6 +28,7 @@ vi.mock('@/lib/runs-api', async () => {
     ...actual,
     runsApi: {
       get: vi.fn(),
+      getPlan: vi.fn(),
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),
@@ -40,10 +41,6 @@ vi.mock('@/lib/runs-api', async () => {
 let currentEvents: RunEvent[] = [];
 vi.mock('@/components/runs/use-run-events', () => ({
   useRunEvents: () => ({ events: currentEvents, connected: true }),
-}));
-
-vi.mock('@/components/runs/auth-bar', () => ({
-  AuthBar: () => <div data-testid="auth-bar" />,
 }));
 
 function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
@@ -90,13 +87,13 @@ function event(seq: number, type: string, payload: Record<string, unknown>): Run
   return { seq, type, payload };
 }
 
-function renderPage() {
+function renderPage(initialEntry = '/') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <ChatPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -104,7 +101,9 @@ function renderPage() {
 }
 
 function typeAndSend(text: string) {
-  fireEvent.change(screen.getByLabelText('说点什么'), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText('描述下一步任务'), {
+    target: { value: text },
+  });
   fireEvent.click(screen.getByRole('button', { name: '发送' }));
 }
 
@@ -117,6 +116,11 @@ beforeEach(() => {
   );
   vi.mocked(conversationsApi.get).mockResolvedValue(makeConversation());
   vi.mocked(conversationsApi.messages).mockResolvedValue([makeMessage()]);
+  vi.mocked(runsApi.getPlan).mockResolvedValue({
+    run_id: 'run-1',
+    status: 'pending',
+    plan_markdown: '',
+  });
   // 默认:分流为任务(建 run),与流式端点同形状
   vi.mocked(streamMessage).mockImplementation(
     async (_conversationId, _content, _mode, handlers) => {
@@ -145,17 +149,13 @@ afterEach(() => {
 });
 
 describe('ChatPage', () => {
-  it('空态:给出引导且没有内容时不能发送', async () => {
-    vi.mocked(conversationsApi.list).mockResolvedValue([]);
+  it('空态:给出引导且没有内容时不能发送', () => {
     renderPage();
 
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('对话');
-    expect(
-      screen.getByText(/在下面说说你要做什么,例如「把本周邮件整理成周报」/),
-    ).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '开始一个新任务' })).toBeTruthy();
+    expect(screen.getByText(/描述要完成的事/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '新对话' })).toBeDisabled();
-    expect(await screen.findByText('还没有对话。')).toBeTruthy();
+    expect(screen.getByLabelText('描述下一步任务')).toHaveValue('');
   });
 
   it('发送首条消息:先建会话再发消息,消息与状态出现在对话里', async () => {
@@ -174,16 +174,15 @@ describe('ChatPage', () => {
     );
     // 返回的 run 立即接管:状态从它读
     await waitFor(() => expect(runsApi.get).toHaveBeenCalledWith('run-9'));
-    expect(await screen.findByText(/待审批/)).toBeTruthy();
+    expect((await screen.findAllByText(/待审批/)).length).toBeGreaterThan(0);
   });
 
   it('在已有会话里发送:不重复建会话,发送走 SSE 流', async () => {
-    renderPage();
+    renderPage('/?conversation=c1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    await screen.findByText('待审批'); // 等 run 载入(在途状态)
+    await screen.findAllByText('待审批'); // 等 run 载入(在途状态)
 
-    fireEvent.change(screen.getByLabelText('说点什么'), {
+    fireEvent.change(screen.getByLabelText('描述下一步任务'), {
       target: { value: '顺便看看日历' },
     });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
@@ -199,7 +198,7 @@ describe('ChatPage', () => {
     expect(conversationsApi.create).not.toHaveBeenCalled();
   });
 
-  it('消息历史:user 与 assistant 气泡都渲染', async () => {
+  it('消息历史:user 与 assistant 内容都渲染', async () => {
     vi.mocked(conversationsApi.messages).mockResolvedValue([
       makeMessage(),
       makeMessage({
@@ -208,70 +207,71 @@ describe('ChatPage', () => {
         content: '# 周报\n\n- 邮件已汇总',
       }),
     ]);
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
+    renderPage('/?conversation=c1');
 
     expect(await screen.findByText('把本周邮件整理成周报')).toBeTruthy();
     expect(await screen.findByText(/# 周报/)).toBeTruthy();
   });
 
   it('待审批:显示放行/拒绝,放行调用 approve', async () => {
-    renderPage();
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 执行计划',
+    });
+    renderPage('/?conversation=c1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    fireEvent.click(await screen.findByRole('button', { name: '放行执行' }));
+    const approveButtons = await screen.findAllByRole('button', {
+      name: '放行执行',
+    });
+    fireEvent.click(approveButtons[0]);
 
     await waitFor(() => expect(runsApi.approve).toHaveBeenCalledWith('run-1'));
   });
 
   it('待确认写操作:确认按钮调用 confirm(approve)', async () => {
-    vi.mocked(conversationsApi.get).mockResolvedValue(
-      makeConversation({ active_run_id: 'run-1' }),
-    );
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_confirmation' }),
     );
-    renderPage();
+    renderPage('/?conversation=c1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    fireEvent.click(await screen.findByRole('button', { name: '确认执行写操作' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: '确认并执行' }),
+    );
 
     await waitFor(() =>
       expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
     );
   });
 
-  it('把 run 事件翻译成对话内容(工具调用/交付/失败)', async () => {
+  it('把 run 事件翻成工具卡与状态播报', async () => {
     currentEvents = [
       event(1, 'run.created.v1', { title: '整理本周邮件成周报' }),
       event(2, 'run.planned.v1', { attempt: 1 }),
-      event(3, 'run.tool.called.v1', { name: 'fetch_emails', ok: true }),
+      event(3, 'run.tool.called.v1', {
+        name: 'fetch_emails',
+        arguments: '{"limit":5}',
+        ok: true,
+      }),
       event(4, 'run.delivered.v1', { title: '周报' }),
       event(5, 'run.completed.v1', {}),
     ];
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
-    renderPage();
+    renderPage('/?conversation=c1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-
-    expect(await screen.findByText(/已建立任务《整理本周邮件成周报》/)).toBeTruthy();
-    expect(screen.getByText(/计划已就绪/)).toBeTruthy();
-    expect(screen.getByText(/调用工具 fetch_emails —成功/)).toBeTruthy();
+    expect((await screen.findAllByText('fetch_emails')).length).toBeGreaterThan(0);
     expect(screen.getByText(/已交付《周报》/)).toBeTruthy();
     expect(screen.getByText('任务完成 ✅')).toBeTruthy();
   });
 
-  it('失败事件以错误语气展示,并提示去控制台处理', async () => {
+  it('失败事件以错误语气展示,并提示去任务编排处理', async () => {
     currentEvents = [
       event(1, 'run.failed.v1', { stage: 'execute', reason: 'UpstreamError: 上游 500' }),
     ];
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'failed', status_reason: 'UpstreamError: 上游 500' }),
     );
-    renderPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
+    renderPage('/?conversation=c1');
 
     expect(
       await screen.findByText(/执行失败\(execute\):UpstreamError: 上游 500/),
@@ -279,7 +279,7 @@ describe('ChatPage', () => {
     expect(
       await screen.findByText('失败原因:UpstreamError: 上游 500'),
     ).toBeTruthy();
-    expect(screen.getByRole('link', { name: '运行控制台' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '任务编排' })).toHaveAttribute(
       'href',
       '/runs',
     );
@@ -295,16 +295,17 @@ describe('ChatPage', () => {
       content: '# 本周周报\n\n- 邮件已汇总',
       created_at: '2026-10-13T10:05:00+00:00',
     });
-    renderPage();
+    renderPage('/?conversation=c1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    fireEvent.click(await screen.findByRole('button', { name: '查看成品' }));
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '查看成品' }))[0],
+    );
 
     await waitFor(() => expect(runsApi.artifact).toHaveBeenCalledWith('run-1'));
     expect(await screen.findByText(/# 本周周报/)).toBeTruthy();
   });
 
-  it('最近对话里可以切换会话', async () => {
+  it('会话选择以 URL 为准:直接打开某个会话就去拉它的详情', async () => {
     vi.mocked(conversationsApi.list).mockResolvedValue([
       makeConversation(),
       makeConversation({
@@ -313,33 +314,21 @@ describe('ChatPage', () => {
         active_run_id: null,
       }),
     ]);
-    vi.mocked(conversationsApi.get).mockImplementation(async (id) =>
-      id === 'c2'
-        ? makeConversation({ id: 'c2', title: '第二个对话', active_run_id: null })
-        : makeConversation(),
+    vi.mocked(conversationsApi.get).mockResolvedValue(
+      makeConversation({ id: 'c2', title: '第二个对话', active_run_id: null }),
     );
-    renderPage();
+    renderPage('/?conversation=c2');
 
-    fireEvent.click(await screen.findByRole('button', { name: /第二个对话/ }));
-
-    // 标题同时出现在侧栏与卡片头(详情解析后)
-    await waitFor(() =>
-      expect(screen.getAllByText('第二个对话')).toHaveLength(2),
-    );
+    expect(await screen.findByText('第二个对话')).toBeTruthy();
     expect(conversationsApi.get).toHaveBeenCalledWith('c2');
     expect(runsApi.get).not.toHaveBeenCalled(); // 无进行中的 run,不挂状态/事件流
   });
 
-  it('新对话清空当前选择', async () => {
-    renderPage();
+  it('new=1 表示新会话:不选中任何历史会话', () => {
+    renderPage('/?new=1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /整理本周邮件成周报/ }));
-    await screen.findByText('待审批');
-
-    fireEvent.click(screen.getByRole('button', { name: '新对话' }));
-
-    expect(await screen.findByText('还没开始的对话')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '新对话' })).toBeDisabled();
+    expect(screen.getByRole('heading', { name: '开始一个新任务' })).toBeTruthy();
+    expect(conversationsApi.get).not.toHaveBeenCalled();
   });
 
   it('简单对话:只回一条,不建任务、不查状态', async () => {
@@ -475,6 +464,6 @@ describe('ChatPage', () => {
     typeAndSend('你好');
 
     expect(await screen.findByText('网络断了')).toBeTruthy();
-    expect(screen.getByLabelText('说点什么')).toHaveValue('你好');
+    expect(screen.getByLabelText('描述下一步任务')).toHaveValue('你好');
   });
 });

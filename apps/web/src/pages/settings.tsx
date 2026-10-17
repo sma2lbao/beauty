@@ -17,6 +17,7 @@ import {
   Textarea,
 } from '@beauty/design';
 
+import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
@@ -148,16 +149,13 @@ export function SettingsPage() {
   const canAddSession = sessionUserId.trim().length > 0 && device.trim().length > 0;
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-12">
-      <h1 className="font-display text-3xl">账号与组织</h1>
-      <p className="mt-3 max-w-2xl leading-relaxed text-muted-foreground">
-        组织档案与配额、成员名单、多端会话。认证本身由 IdP 负责(§10),
-        这里只维护业务侧的组织结构。
-      </p>
-
-      <div className="mt-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageHeader
+        title="账号与组织"
+        subtitle="组织档案与配额 · 成员名单 · 多端会话 · 认证由 IdP 负责"
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refreshOrg()} />
-      </div>
 
       {unauthorized ? (
         <Alert variant="danger" className="mt-4">
@@ -433,6 +431,7 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
-    </section>
+      </div>
+    </div>
   );
 }

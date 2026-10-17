@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import type { CSSProperties } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -49,9 +50,11 @@ export function BrandChip({ className }: { className?: string }) {
 /** 纯图形 mark(大尺寸用,logo-mark 几何:圆月 + 云为负空间镂空)。 */
 export function BrandMark({
   className,
+  style,
   decorative = false,
 }: {
   className?: string;
+  style?: CSSProperties;
   /** 装饰性使用(旁边已有可见文字/可访问名)时不给可访问名,避免重复播报。 */
   decorative?: boolean;
 }) {
@@ -63,6 +66,7 @@ export function BrandMark({
         ? { 'aria-hidden': true }
         : { role: 'img', 'aria-label': 'beauty moon' })}
       className={cn('shrink-0', className)}
+      style={style}
     >
       <defs>
         <mask id={maskId}>
@@ -141,6 +145,61 @@ export function BrandWordmark({ className }: { className?: string }) {
       <MoonPhase />
       <MoonPhase crescent />
       <span aria-hidden="true">n</span>
+    </span>
+  );
+}
+
+/**
+ * 控制台/官网的方形标识牌:靛蓝圆角方块 + 白色月云 mark。
+ * 对应 ardot 设计稿里的方形 Logo(底色 #5E6AD2);月面用白色而不是月光米,
+ * 保证在靛蓝底上仍然读得出镂空云。
+ */
+export function BrandTile({
+  className,
+  size = 28,
+}: {
+  className?: string;
+  size?: number;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'inline-grid shrink-0 place-items-center rounded-[8px] bg-ha-accent',
+        className,
+      )}
+      style={{ width: size, height: size }}
+    >
+      <BrandMark
+        decorative
+        className="h-[64%] w-[64%]"
+        style={{ '--logo-moon': '#ffffff' } as CSSProperties}
+      />
+    </span>
+  );
+}
+
+/** 控制台/官网横版锁定:标识牌 + 无衬线产品名(设计稿用 Inter SemiBold)。 */
+export function BrandLockup({
+  className,
+  size = 28,
+  textClassName = 'text-[15px]',
+}: {
+  className?: string;
+  size?: number;
+  textClassName?: string;
+}) {
+  return (
+    <span className={cn('inline-flex items-center gap-2.5', className)}>
+      <BrandTile size={size} />
+      <span
+        className={cn(
+          'font-semibold tracking-[-0.01em] text-ha-text',
+          textClassName,
+        )}
+      >
+        beauty moon
+      </span>
     </span>
   );
 }

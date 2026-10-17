@@ -13,17 +13,17 @@ function renderPage() {
 }
 
 describe('NotFoundPage', () => {
-  it('渲染 404 提示与回到对话的入口', () => {
+  it('渲染 404 提示与回到工作台的入口', () => {
     renderPage();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
       '这个页面不在清单里',
     );
-    expect(screen.getByRole('link', { name: '回到对话' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '回到工作台' })).toHaveAttribute(
       'href',
       '/',
     );
-    expect(screen.getByRole('link', { name: '运行控制台' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '任务编排' })).toHaveAttribute(
       'href',
       '/runs',
     );

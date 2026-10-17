@@ -10,11 +10,11 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 
 import { Button, Field, Input, Tabs } from '@beauty/design';
 
-import { BrandMark, BrandWordmark } from '@/components/brand/logo';
+import { BrandLockup } from '@/components/brand/logo';
 import { accountApi } from '@/lib/account-api';
 import {
   accountLabel,
@@ -147,23 +147,23 @@ export function LoginPage() {
     });
 
   return (
-    <main className="flex min-h-svh items-center justify-center bg-background px-6 py-12 text-foreground">
+    <main className="flex min-h-svh flex-col items-center justify-center bg-ha-bg px-6 py-12 text-ha-text-body">
       <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center gap-2 text-center">
+          <Link to="/landing" aria-label="beauty moon 官网首页">
+            <BrandLockup size={34} textClassName="text-[20px]" />
+          </Link>
+          <p className="text-[12px] leading-5 text-ha-muted">
+            把任务交给 Agent,过程与产物都在掌握里
+          </p>
+        </div>
+
         <div
-          className="overflow-hidden rounded-xl border bg-card shadow-sm"
+          className="rounded-xl border border-ha-border bg-ha-sidebar shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
           data-testid="login-card"
         >
-          {/*
-            夜空条:官方 favicon 的夜空几何(径向渐变同源),月面半沉在天际线
-            上构成"月出" —— 登录页唯一的一次设计动作,表单区保持安静。
-          */}
-          <div className="relative h-28 shrink-0 bg-[radial-gradient(72%_72%_at_50%_38%,#331E6E_0%,#150E31_100%)]">
-            <BrandWordmark className="absolute left-5 top-4 text-lg text-[#FFEFC6]" />
-            <BrandMark decorative className="absolute -bottom-8 right-6 w-20" />
-          </div>
-
-          <div className="p-6 pt-12">
-            <h1 className="font-display text-2xl">登录</h1>
+          <div className="p-6">
+            <h1 className="text-[18px] font-semibold text-ha-text">登录</h1>
 
             {mode === 'token' && account ? (
               <SignedIn
@@ -305,6 +305,14 @@ export function LoginPage() {
             ) : null}
           </div>
         </div>
+        <p className="mt-5 text-center font-mono text-[11px] text-ha-faint">
+          <Link
+            to="/landing"
+            className="underline-offset-4 hover:text-ha-muted hover:underline"
+          >
+            返回产品官网
+          </Link>
+        </p>
       </div>
     </main>
   );

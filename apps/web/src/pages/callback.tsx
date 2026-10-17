@@ -28,7 +28,7 @@ export function CallbackPage() {
 
   return (
     <section className="mx-auto max-w-md px-6 py-24">
-      <h1 className="font-display text-2xl">正在完成登录…</h1>
+      <h1 className="text-[22px] font-semibold text-ha-text">正在完成登录…</h1>
       {error ? (
         <p className="mt-4 text-sm text-destructive">{error}</p>
       ) : (

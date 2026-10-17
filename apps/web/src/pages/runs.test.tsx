@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Run } from '@/lib/runs-api';
@@ -56,7 +57,9 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <RunsPage />
+      <MemoryRouter>
+        <RunsPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -107,6 +110,9 @@ describe('RunsPage', () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ id: 'run-2' }));
     renderPage();
 
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: '新建任务' }))[0],
+    );
     fireEvent.click(await screen.findByRole('button', { name: '创建' }));
 
     await waitFor(() =>
@@ -222,7 +228,8 @@ describe('RunsPage', () => {
     fireEvent.change(await screen.findByLabelText('追加指令'), {
       target: { value: '换个更短的计划' },
     });
-    expect(submit).toBeEnabled(); // blocked 不是终态:仍可排队
+    // 状态更新后重新取一次按钮(旧引用不会自动刷新)
+    expect(screen.getByRole('button', { name: '提交指令' })).toBeEnabled(); // blocked 不是终态:仍可排队
   });
 
   it('failed run:展示失败原因,重试后切到新 run', async () => {

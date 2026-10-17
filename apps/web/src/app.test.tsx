@@ -22,6 +22,49 @@ vi.mock('@/lib/auth', () => ({
   handleSignInCallback: vi.fn(async () => {}),
 }));
 
+vi.mock('@/lib/conversations-api', () => ({
+  conversationsApi: {
+    list: vi.fn(async () => []),
+    create: vi.fn(),
+    get: vi.fn(),
+    messages: vi.fn(),
+    postMessage: vi.fn(),
+  },
+  streamMessage: vi.fn(),
+}));
+
+vi.mock('@/lib/runs-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/runs-api')>('@/lib/runs-api');
+  return {
+    ...actual,
+    runsApi: {
+      list: vi.fn(async () => []),
+      get: vi.fn(),
+      getPlan: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      confirm: vi.fn(),
+      artifact: vi.fn(),
+      instructions: vi.fn(),
+      retry: vi.fn(),
+      resume: vi.fn(),
+      generatePlan: vi.fn(),
+      updatePlan: vi.fn(),
+      queueInstruction: vi.fn(),
+      create: vi.fn(),
+    },
+  };
+});
+
+vi.mock('@/lib/account-api', () => ({
+  accountApi: {
+    organization: vi.fn(async () => {
+      throw new Error('未配置 account-service');
+    }),
+  },
+}));
+
 function renderApp(path: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -42,11 +85,16 @@ describe('App 路由', () => {
     vi.mocked(accessToken).mockResolvedValue('access-jwt');
   });
 
-  it('/ 渲染对话页', async () => {
+  it('/ 渲染工作台', async () => {
     renderApp('/');
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(
-      '对话',
-    );
+    expect(await screen.findByText('开始一个新任务')).toBeInTheDocument();
+  });
+
+  it('/landing 是公开的官网落地页', async () => {
+    renderApp('/landing');
+    expect(
+      await screen.findByRole('heading', { name: /让 AI Agent 真正接手工程交付/ }),
+    ).toBeInTheDocument();
   });
 
   it('/products 已下线(渲染 404)', () => {
@@ -56,11 +104,11 @@ describe('App 路由', () => {
     );
   });
 
-  it('/about 渲染关于页', () => {
+  it('/about 渲染关于页', async () => {
     renderApp('/about');
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '关于 beauty moon',
-    );
+    expect(
+      await screen.findByRole('heading', { name: '关于 beauty moon' }),
+    ).toBeInTheDocument();
   });
 
   it('未知路由渲染 404', () => {
@@ -70,10 +118,12 @@ describe('App 路由', () => {
     );
   });
 
-  it('所有路由都包在站点布局里（页头 + 页脚）', async () => {
+  it('所有控制台路由都包在骨架里（侧边导航 + 主区域）', async () => {
     renderApp('/');
-    expect(await screen.findByRole('banner')).toBeInTheDocument();
-    expect(await screen.findByRole('contentinfo')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('complementary', { name: '控制台导航' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('main')).toBeInTheDocument();
   });
 });
 
@@ -82,9 +132,11 @@ describe('登录门（§10）', () => {
     vi.mocked(accessToken).mockResolvedValue(null);
   });
 
-  it('/login 是独立整页（不带站点导航）', () => {
+  it('/login 是独立整页（不带控制台导航）', () => {
     renderApp('/login');
-    expect(screen.queryByRole('banner')).toBeNull();
+    expect(
+      screen.queryByRole('complementary', { name: '控制台导航' }),
+    ).toBeNull();
     expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
   });
 
@@ -98,9 +150,7 @@ describe('登录门（§10）', () => {
   it('已登录：受保护页正常渲染', async () => {
     vi.mocked(accessToken).mockResolvedValue('access-jwt');
     renderApp('/');
-    expect(
-      await screen.findByRole('heading', { name: '对话' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('开始一个新任务')).toBeInTheDocument();
   });
 
   it('公开页（/about）不受守卫影响', async () => {

@@ -16,6 +16,7 @@ import {
   Textarea,
 } from '@beauty/design';
 
+import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { SearchResult } from '@/lib/knowledge-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
@@ -87,17 +88,13 @@ export function KnowledgePage() {
   const canSearch = query.trim().length > 0;
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-12">
-      <h1 className="font-display text-3xl">知识库</h1>
-      <p className="mt-3 max-w-2xl leading-relaxed text-muted-foreground">
-        把团队资料入库(服务端分块 + 向量化),Agent 在执行中会通过
-        <code className="mx-1 rounded bg-muted px-1">search_knowledge</code>
-        先查资料再作答。
-      </p>
-
-      <div className="mt-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageHeader
+        title="知识库"
+        subtitle="团队资料入库(分块 + 向量化),Agent 执行时先查资料再作答"
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refresh()} />
-      </div>
 
       {unauthorized ? (
         <Alert variant="danger" className="mt-4">
@@ -264,6 +261,7 @@ export function KnowledgePage() {
           )}
         </CardContent>
       </Card>
-    </section>
+      </div>
+    </div>
   );
 }

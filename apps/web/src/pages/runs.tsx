@@ -1,60 +1,62 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Filter, Plus } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router';
 
+import { Dialog, Field, Input, Textarea } from '@beauty/design';
+
+import { RunDetail } from '@/components/console/run-detail';
 import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Empty,
-  Field,
-  Input,
-  Spin,
-  Textarea,
-} from '@beauty/design';
-
-import { AuthBar } from '@/components/runs/auth-bar';
-import { RunEvents } from '@/components/runs/run-events';
-import { useRunEvents } from '@/components/runs/use-run-events';
-import type { Run, RunStatus } from '@/lib/runs-api';
+  ConsoleButton,
+  EmptyPanel,
+  PageHeader,
+  StatusDot,
+  ToneBadge,
+} from '@/components/console/ui';
+import { consoleButtonClass } from '@/components/console/button-class';
+import {
+  BOARD_COLUMNS,
+  RUN_STATUS_LABELS,
+  isRunQuiescent,
+  relativeTime,
+  runStatusTone,
+  taskCode,
+  toneClasses,
+} from '@/lib/presentation';
+import type { Run } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
-const STATUS_LABELS: Record<RunStatus, string> = {
-  pending: '待规划',
-  planning: '规划中',
-  awaiting_approval: '待审批',
-  running: '执行中',
-  awaiting_confirmation: '待确认写操作',
-  blocked: '已阻塞',
-  completed: '已完成',
-  failed: '已失败',
-};
+type FilterKey = 'all' | 'active' | 'review';
 
-const TERMINAL: readonly RunStatus[] = ['completed', 'failed'];
-
-function isTerminal(status: RunStatus): boolean {
-  return TERMINAL.includes(status);
-}
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: '全部任务' },
+  { key: 'active', label: '进行中' },
+  { key: 'review', label: '待审核' },
+];
 
 /**
- * 不会自变的终态:轮询可以停。
- * `blocked` 只能由人工 resume 改变(追加指令也不改状态),所以同样停下。
+ * 任务编排(原 /runs):设计稿《02 任务看板 · 多 Agent 编排》。
+ *
+ * 状态到列:待启动(pending/planning)、执行中(running)、
+ * 待审核(awaiting_approval/awaiting_confirmation/blocked)、已完成(completed/failed)。
+ * 卡片点开右侧抽屉,原控制台的能力(审批/追加指令/重试/交付物/事件)都在那里。
  */
-function isQuiescent(status: RunStatus): boolean {
-  return isTerminal(status) || status === 'blocked';
-}
-
 export function RunsPage() {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [filter, setFilter] = useState<FilterKey>('all');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [title, setTitle] = useState('整理本周邮件成周报');
   const [goal, setGoal] = useState('汇总本周邮件,生成周报草稿');
   const [criteria, setCriteria] = useState('覆盖 5 个工作日\n不超过 300 字');
 
-  const runsQuery = useQuery({ queryKey: ['runs'], queryFn: runsApi.list });
+  const runsQuery = useQuery({
+    queryKey: ['runs'],
+    queryFn: runsApi.list,
+    refetchInterval: 5000,
+  });
   const createMutation = useMutation({
     mutationFn: () =>
       runsApi.create({
@@ -67,462 +69,375 @@ export function RunsPage() {
       }),
     onSuccess: async (run) => {
       setSelectedRunId(run.id);
+      setCreateOpen(false);
       await queryClient.invalidateQueries({ queryKey: ['runs'] });
     },
   });
 
   const runs = runsQuery.data ?? [];
+  const activeCount = runs.filter((run) => !isRunQuiescent(run.status)).length;
+  const runningCount = runs.filter((run) => run.status === 'running').length;
+  const unauthorized = isUnauthorized(runsQuery.error);
+
+  const visibleColumns = BOARD_COLUMNS.filter((column) => {
+    if (filter === 'active') {
+      return column.key === 'queued' || column.key === 'running';
+    }
+    if (filter === 'review') return column.key === 'review';
+    return true;
+  });
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-12">
-      <h1 className="font-display text-3xl">运行控制台</h1>
-      <p className="mt-3 max-w-2xl leading-relaxed text-muted-foreground">
-        建 run → 审批计划 → 看 Agent 调工具 → 确认写操作 → 取交付物。
-        事件流走 SSE,实时推送。
-      </p>
-
-      <div className="mt-6">
-        <AuthBar
-          onChange={() => {
-            void queryClient.invalidateQueries();
-          }}
+    <div className="flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <PageHeader
+          title="任务编排"
+          subtitle={
+            runsQuery.isPending
+              ? '正在读取任务…'
+              : activeCount +
+                ' 个活跃任务 · ' +
+                runningCount +
+                ' 个执行中 · 共 ' +
+                runs.length +
+                ' 个任务'
+          }
+          actions={
+            <>
+              <div className="relative">
+                <ConsoleButton
+                  variant="secondary"
+                  size="md"
+                  aria-expanded={filterOpen}
+                  onClick={() => setFilterOpen((value) => !value)}
+                  className="h-8"
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  筛选
+                </ConsoleButton>
+                {filterOpen ? (
+                  <div className="absolute right-0 top-9 z-20 w-40 rounded-lg border border-ha-border bg-ha-sidebar p-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                    {FILTERS.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => {
+                          setFilter(item.key);
+                          setFilterOpen(false);
+                        }}
+                        className={cn(
+                          'flex h-7 w-full items-center justify-between rounded-md px-2 text-left text-[12px] transition-colors',
+                          filter === item.key
+                            ? 'bg-[#1c1d1f] text-ha-text'
+                            : 'text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text-2',
+                        )}
+                      >
+                        {item.label}
+                        {filter === item.key ? (
+                          <StatusDot tone="accent" />
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className={cn(
+                  consoleButtonClass({ variant: 'primary', size: 'md' }),
+                  'h-8',
+                )}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                新建任务
+              </button>
+            </>
+          }
         />
+
+        {unauthorized ? (
+          <div className="mx-6 mb-3 rounded-md border border-ha-warning-border bg-ha-warning-bg px-3 py-2.5 text-[12px] text-ha-warning sm:mx-8">
+            未登录或令牌已失效:请先
+            <Link className="mx-1 underline" to="/login">
+              登录
+            </Link>
+            再重新加载。
+          </div>
+        ) : null}
+
+        {runsQuery.isError && !unauthorized ? (
+          <p className="mx-6 mb-3 rounded-md border border-ha-danger-border bg-ha-danger-bg px-3 py-2.5 text-[12px] text-ha-danger sm:mx-8">
+            列表加载失败:{runsQuery.error.message}
+          </p>
+        ) : null}
+
+        <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto px-6 pb-6 sm:px-8">
+          {!runsQuery.isPending && runs.length === 0 ? (
+            <EmptyPanel
+              className="my-auto w-full border-ha-border-strong"
+              title="还没有 run。"
+              description="任务编排把每次执行当成一条可观测的运行:先规划、放行后执行、交付前审核。新建一个任务开始。"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  className={consoleButtonClass({ variant: 'primary', size: 'md' })}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  新建任务
+                </button>
+              }
+            />
+          ) : null}
+
+          {runsQuery.isPending
+            ? BOARD_COLUMNS.map((column) => (
+                <div
+                  key={column.key}
+                  className="flex min-w-[260px] flex-1 flex-col gap-2.5 rounded-lg border border-ha-border bg-ha-sidebar p-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-ha-text-2">
+                      {column.label}
+                    </span>
+                    <span className="h-5 w-6 animate-pulse rounded-[5px] bg-ha-panel-2" />
+                  </div>
+                  {[0, 1].map((key) => (
+                    <div
+                      key={key}
+                      className="h-24 animate-pulse rounded-lg border border-ha-border bg-ha-panel"
+                    />
+                  ))}
+                </div>
+              ))
+            : null}
+
+          {!runsQuery.isPending && runs.length > 0
+            ? visibleColumns.map((column) => {
+                const columnRuns = runs.filter((run) =>
+                  column.statuses.includes(run.status),
+                );
+                return (
+                  <BoardColumn
+                    key={column.key}
+                    label={column.label}
+                    tone={column.tone}
+                    runs={columnRuns}
+                    selectedRunId={selectedRunId}
+                    onSelect={setSelectedRunId}
+                  />
+                );
+              })
+            : null}
+
+          {!runsQuery.isPending && runs.length > 0 && filter === 'review'
+            ? null
+            : null}
+        </div>
       </div>
 
-      {isUnauthorized(runsQuery.error) ? (
-        <p className="mt-4 rounded-lg border border-dashed p-3 text-sm text-destructive">
-          未登录或令牌已失效:请先在上方面板完成鉴权,再重新加载。
-        </p>
+      {selectedRunId ? (
+        <div className="fixed inset-0 z-30 flex bg-black/40 sm:static sm:z-auto sm:bg-transparent">
+          <div className="ml-auto flex h-full w-full max-w-[460px] sm:max-w-none">
+            <RunDetail
+              runId={selectedRunId}
+              onSelectRun={setSelectedRunId}
+              onClose={() => setSelectedRunId(null)}
+            />
+          </div>
+        </div>
       ) : null}
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(280px,340px)_1fr]">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>新建 run</CardTitle>
-              <CardDescription>验收标准每行一条。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Field label="标题" htmlFor="run-title">
-                <Input
-                  id="run-title"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                />
-              </Field>
-              <Field label="目标" htmlFor="run-goal">
-                <Textarea
-                  id="run-goal"
-                  rows={3}
-                  value={goal}
-                  onChange={(event) => setGoal(event.target.value)}
-                />
-              </Field>
-              <Field label="验收标准" htmlFor="run-criteria">
-                <Textarea
-                  id="run-criteria"
-                  rows={3}
-                  value={criteria}
-                  onChange={(event) => setCriteria(event.target.value)}
-                />
-              </Field>
-              <Button
-                onClick={() => createMutation.mutate()}
-                disabled={
-                  createMutation.isPending || !title.trim() || !goal.trim()
-                }
-              >
-                {createMutation.isPending ? '创建中…' : '创建'}
-              </Button>
-              {createMutation.isError ? (
-                <p className="text-sm text-destructive">
-                  {createMutation.error.message}
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>运行列表</CardTitle>
-              <CardDescription>最新在前,点选查看详情。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {runsQuery.isPending ? <Spin label="加载中…" /> : null}
-              {runsQuery.isError ? (
-                <p className="text-sm text-destructive">
-                  列表加载失败:{runsQuery.error.message}
-                </p>
-              ) : null}
-              {!runsQuery.isPending && runs.length === 0 ? (
-                <Empty description="还没有 run。" />
-              ) : null}
-              {runs.map((run) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  aria-pressed={run.id === selectedRunId}
-                  onClick={() => setSelectedRunId(run.id)}
-                  className={cn(
-                    'w-full rounded-lg border p-3 text-left text-sm transition-colors',
-                    run.id === selectedRunId
-                      ? 'border-primary'
-                      : 'hover:border-primary/60',
-                  )}
-                >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate font-medium">{run.title}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {STATUS_LABELS[run.status]}
-                    </span>
-                  </span>
-                  <span className="mt-1 block truncate text-xs text-muted-foreground">
-                    {run.goal}
-                  </span>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
+      <Dialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        title="新建任务"
+        description="验收标准每行一条。创建后先规划,等你放行再执行。"
+        footer={
+          <>
+            <ConsoleButton
+              variant="secondary"
+              size="md"
+              onClick={() => setCreateOpen(false)}
+            >
+              取消
+            </ConsoleButton>
+            <ConsoleButton
+              variant="primary"
+              size="md"
+              onClick={() => createMutation.mutate()}
+              disabled={
+                createMutation.isPending || !title.trim() || !goal.trim()
+              }
+            >
+              {createMutation.isPending ? '创建中…' : '创建'}
+            </ConsoleButton>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="标题" htmlFor="new-run-title">
+            <Input
+              id="new-run-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </Field>
+          <Field label="目标" htmlFor="new-run-goal">
+            <Textarea
+              id="new-run-goal"
+              rows={3}
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+            />
+          </Field>
+          <Field label="验收标准" htmlFor="new-run-criteria">
+            <Textarea
+              id="new-run-criteria"
+              rows={3}
+              value={criteria}
+              onChange={(event) => setCriteria(event.target.value)}
+            />
+          </Field>
+          {createMutation.isError ? (
+            <p className="text-[12px] text-ha-danger">
+              {createMutation.error.message}
+            </p>
+          ) : null}
         </div>
-
-        <div>
-          {selectedRunId ? (
-            <RunDetail runId={selectedRunId} onSelectRun={setSelectedRunId} />
-          ) : (
-            <div className="rounded-xl border border-dashed p-10 text-sm text-muted-foreground">
-              左侧选一个 run,或先新建一个。
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
+      </Dialog>
+    </div>
   );
 }
 
-function RunDetail({
-  runId,
-  onSelectRun,
+function BoardColumn({
+  label,
+  tone,
+  runs,
+  selectedRunId,
+  onSelect,
 }: {
-  runId: string;
-  onSelectRun?: (nextRunId: string) => void;
+  label: string;
+  tone: 'neutral' | 'accent' | 'info' | 'success' | 'warning' | 'danger';
+  runs: Run[];
+  selectedRunId: string | null;
+  onSelect: (runId: string) => void;
 }) {
-  const queryClient = useQueryClient();
-  const [planDraft, setPlanDraft] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('先别发,我要改一下');
-  const [instruction, setInstruction] = useState('');
-  const [showArtifact, setShowArtifact] = useState(false);
-
-  const runQuery = useQuery({
-    queryKey: ['run', runId],
-    queryFn: () => runsApi.get(runId),
-    refetchInterval: (query) => {
-      const data = query.state.data as Run | undefined;
-      return data && isQuiescent(data.status) ? false : 2000;
-    },
-  });
-  const planQuery = useQuery({
-    queryKey: ['plan', runId],
-    queryFn: () => runsApi.getPlan(runId),
-  });
-  const instructionsQuery = useQuery({
-    queryKey: ['instructions', runId],
-    queryFn: () => runsApi.instructions(runId),
-  });
-  const artifactQuery = useQuery({
-    queryKey: ['artifact', runId],
-    queryFn: () => runsApi.artifact(runId),
-    enabled: showArtifact,
-    retry: false,
-  });
-  const { events, connected } = useRunEvents(runId);
-
-  const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['run', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['plan', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['instructions', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['runs'] }),
-    ]);
-  };
-
-  const retryMutation = useMutation({
-    mutationFn: () => runsApi.retry(runId),
-    onSuccess: async (created) => {
-      await refresh();
-      onSelectRun?.(created.id);
-    },
-  });
-
-  const action = useMutation({
-    mutationFn: (task: () => Promise<unknown>) => task(),
-    onSuccess: refresh,
-  });
-  const savePlan = useMutation({
-    mutationFn: () => runsApi.updatePlan(runId, planDraft ?? ''),
-    onSuccess: refresh,
-  });
-  const queueInstruction = useMutation({
-    mutationFn: () => runsApi.queueInstruction(runId, instruction.trim()),
-    onSuccess: async () => {
-      setInstruction('');
-      await refresh();
-    },
-  });
-
-  const run = runQuery.data;
-  const plan = planQuery.data;
-  const status = run?.status ?? 'pending';
-  const editable = status === 'awaiting_approval';
-
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <CardTitle>
-              {run ? run.title : <Spin size="sm" label="加载中…" />}
-            </CardTitle>
-            <span className="text-sm text-muted-foreground" data-testid="run-status">
-              {STATUS_LABELS[status]}
-              {run && run.rounds > 0 ? ` · 第 ${run.rounds} 轮` : ''}
-            </span>
-          </div>
-          <CardDescription>{run?.goal}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {run?.status_reason ? (
-            <p className="rounded-lg border border-dashed p-3 text-sm">
-              {status === 'failed' ? '失败原因' : '中断原因'}:{run.status_reason}
-            </p>
-          ) : null}
+    <div className="flex min-w-[260px] flex-1 flex-col gap-2.5 rounded-lg border border-ha-border bg-ha-sidebar p-3">
+      <div className="flex items-center justify-between">
+        <span
+          className={cn('text-[13px] font-semibold', toneClasses(tone).text)}
+        >
+          {label}
+        </span>
+        <span
+          className={cn(
+            'inline-flex h-5 min-w-6 items-center justify-center rounded-[5px] px-2 font-mono text-[11px] font-medium',
+            toneClasses(tone).soft,
+          )}
+        >
+          {runs.length}
+        </span>
+      </div>
 
-          {run?.parent_run_id ? (
-            <p className="text-xs text-muted-foreground">
-              由 run {run.parent_run_id.slice(0, 8)}… 重试而来(来源 run 的历史与失败原因原样保留)
-            </p>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            {status === 'pending' ? (
-              <Button
-                onClick={() => action.mutate(() => runsApi.generatePlan(runId))}
-                disabled={action.isPending}
-              >
-                生成计划
-              </Button>
-            ) : null}
-
-            {editable ? (
-              <>
-                <Button
-                  onClick={() => action.mutate(() => runsApi.approve(runId))}
-                  disabled={action.isPending}
-                >
-                  放行执行
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    action.mutate(() => runsApi.reject(runId, rejectReason))
-                  }
-                  disabled={action.isPending}
-                >
-                  拒绝计划
-                </Button>
-                <Input
-                  aria-label="拒绝原因"
-                  className="w-64"
-                  value={rejectReason}
-                  onChange={(event) => setRejectReason(event.target.value)}
-                />
-              </>
-            ) : null}
-
-            {status === 'failed' ? (
-              <>
-                <p className="max-w-xl text-sm text-muted-foreground">
-                  失败即终态:重试会另起一跑,继承目标、验收标准与已批准的计划,
-                  原 run 的历史(含失败原因)原样保留。重试后仍需人工放行才执行;
-                  若上次已产生副作用(例如邮件已发出),系统不会自动撤销,
-                  请先在计划里确认再放行。
-                </p>
-                <Button
-                  onClick={() => retryMutation.mutate()}
-                  disabled={retryMutation.isPending}
-                >
-                  {retryMutation.isPending ? '重试中…' : '重试(另起一跑)'}
-                </Button>
-                {retryMutation.isError ? (
-                  <span className="text-sm text-destructive">
-                    {retryMutation.error.message}
-                  </span>
-                ) : null}
-              </>
-            ) : null}
-
-            {status === 'blocked' ? (
-              <>
-                <p className="max-w-xl text-sm text-muted-foreground">
-                  计划被拒后 run 停在 blocked:改完计划或调整目标后可重新进闸
-                  (会记为新的一次尝试,原计划保留)。也可以在下方先追加指令。
-                </p>
-                <Button
-                  onClick={() => action.mutate(() => runsApi.resume(runId))}
-                  disabled={action.isPending}
-                >
-                  重新规划并进闸
-                </Button>
-              </>
-            ) : null}
-
-            {status === 'awaiting_confirmation' ? (
-              <>
-                <Button
-                  onClick={() =>
-                    action.mutate(() => runsApi.confirm(runId, 'approve'))
-                  }
-                  disabled={action.isPending}
-                >
-                  确认执行写操作
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => action.mutate(() => runsApi.confirm(runId, 'reject'))}
-                  disabled={action.isPending}
-                >
-                  拒绝写操作
-                </Button>
-              </>
-            ) : null}
-
-            {status === 'completed' ? (
-              <Button variant="outline" onClick={() => setShowArtifact(true)}>
-                查看交付物
-              </Button>
-            ) : null}
-          </div>
-
-          {action.isError ? (
-            <p className="text-sm text-destructive">{action.error.message}</p>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>计划</CardTitle>
-          <CardDescription>
-            {editable ? '审批前可编辑,保存后生效。' : '生成后显示,审批前可编辑。'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea
-            aria-label="计划内容"
-            className="mt-1 font-mono text-xs"
-            rows={12}
-            readOnly={!editable}
-            value={planDraft ?? plan?.plan_markdown ?? ''}
-            onChange={(event) => setPlanDraft(event.target.value)}
-          />
-          {editable ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => savePlan.mutate()}
-              disabled={savePlan.isPending}
-            >
-              保存计划
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>追加指令(§6.5)</CardTitle>
-          <CardDescription>
-            排队后在下一个人工边界(规划/放行/确认)并入执行,模型必须遵循。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea
-            aria-label="追加指令"
-            rows={2}
-            placeholder="例如:顺便把日历也汇总一下"
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => queueInstruction.mutate()}
-            disabled={
-              queueInstruction.isPending ||
-              !instruction.trim() ||
-              !run ||
-              isTerminal(status)
-            }
-          >
-            提交指令
-          </Button>
-          {queueInstruction.isError ? (
-            <p className="text-sm text-destructive">
-              {queueInstruction.error.message}
-            </p>
-          ) : null}
-          <ul className="space-y-2 text-sm">
-            {(instructionsQuery.data ?? []).map((item) => (
-              <li key={item.id} className="rounded-lg border p-3">
-                <span className="flex items-center justify-between gap-2">
-                  <span>{item.content}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {item.status === 'queued' ? '待消费' : '已消费'}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      {showArtifact ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>交付物</CardTitle>
-            <CardDescription>
-              {artifactQuery.isError ? (
-                '还没有交付物。'
-              ) : artifactQuery.data ? (
-                artifactQuery.data.title
-              ) : (
-                <Spin size="sm" label="加载中…" />
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        {runs.length === 0 ? (
+          <p className="rounded-md border border-dashed border-ha-border px-3 py-6 text-center text-[11px] text-ha-faint">
+            暂无任务
+          </p>
+        ) : null}
+        {runs.map((run) => {
+          const runTone = runStatusTone(run.status);
+          const running = run.status === 'running';
+          const selected = run.id === selectedRunId;
+          return (
+            <button
+              key={run.id}
+              type="button"
+              onClick={() => onSelect(run.id)}
+              className={cn(
+                'rounded-lg border p-3 text-left transition-colors',
+                running
+                  ? 'border-ha-info-border bg-ha-info-bg hover:border-ha-info'
+                  : runTone === 'warning'
+                    ? 'border-ha-warning-border bg-ha-warning-bg hover:border-ha-warning'
+                    : 'border-ha-border bg-ha-panel hover:border-ha-border-strong',
+                selected && 'ring-1 ring-ha-accent',
               )}
-            </CardDescription>
-          </CardHeader>
-          {artifactQuery.data ? (
-            <CardContent>
-              <pre className="whitespace-pre-wrap text-sm">
-                {artifactQuery.data.content}
-              </pre>
-            </CardContent>
-          ) : null}
-        </Card>
-      ) : null}
+            >
+              <span className="line-clamp-2 block text-[13px] font-medium leading-5 text-ha-text-body">
+                {run.title}
+              </span>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-baseline justify-between gap-2">
-            <CardTitle>事件流</CardTitle>
-            <span className="text-xs text-muted-foreground">
-              {connected ? 'SSE 已连接' : '已断开'}
-            </span>
-          </div>
-          <CardDescription>事件溯源读端:seq 单调递增,可回放。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <RunEvents events={events} />
-        </CardContent>
-      </Card>
+              <span className="mt-2.5 flex items-center justify-between gap-2">
+                <ToneBadge tone={running ? 'info' : runTone}>
+                  {run.conversation_id ? '会话任务' : '控制台任务'}
+                </ToneBadge>
+                <span className="shrink-0 font-mono text-[11px] text-ha-faint">
+                  {taskCode(run.id)}
+                </span>
+              </span>
+
+              {running ? (
+                <span className="mt-2.5 block h-[3px] overflow-hidden rounded-full bg-[#0b1b26]">
+                  <span className="block h-full w-2/5 animate-pulse rounded-full bg-ha-info" />
+                </span>
+              ) : null}
+
+              <span
+                className={cn(
+                  'mt-2.5 block truncate font-mono text-[11px]',
+                  running
+                    ? 'text-ha-info'
+                    : runTone === 'warning'
+                      ? 'text-ha-warning'
+                      : runTone === 'danger'
+                        ? 'text-ha-danger'
+                        : 'text-ha-dim',
+                )}
+              >
+                {cardStatusLine(run)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+function cardStatusLine(run: Run): string {
+  const label = RUN_STATUS_LABELS[run.status];
+  const time = relativeTime(run.created_at);
+  const reason = run.status_reason
+    ? run.status_reason.length > 28
+      ? run.status_reason.slice(0, 28) + '…'
+      : run.status_reason
+    : '';
+  if (run.status === 'failed') {
+    return '失败 · ' + (reason || time);
+  }
+  if (run.status === 'blocked') {
+    return '已阻塞 · ' + (reason || time);
+  }
+  if (run.status === 'awaiting_approval') {
+    return '待人工放行 · ' + time;
+  }
+  if (run.status === 'awaiting_confirmation') {
+    return '待确认写操作 · ' + time;
+  }
+  if (run.status === 'completed') {
+    return '已完成 · ' + time;
+  }
+  if (run.status === 'running') {
+    return (
+      RUN_STATUS_LABELS.running +
+      (run.rounds > 0 ? ' · 第 ' + run.rounds + ' 轮' : '') +
+      ' · ' +
+      time
+    );
+  }
+  return label + ' · ' + time;
 }

@@ -15,6 +15,7 @@ import {
   Spin,
 } from '@beauty/design';
 
+import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { Artifact } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
@@ -114,16 +115,13 @@ export function WorkspacePage() {
   const canCreate = name.trim().length > 0;
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-12">
-      <h1 className="font-display text-3xl">工作区</h1>
-      <p className="mt-3 max-w-2xl leading-relaxed text-muted-foreground">
-        工作区存放团队的交付物(§7:元数据在本服务,正文在对象存储)。
-        Agent 每完成一个 run,成品会镜像到这里,可用 run 溯源。
-      </p>
-
-      <div className="mt-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageHeader
+        title="工作区"
+        subtitle="交付物元数据在本服务、正文在对象存储;每个 run 的成品都可溯源"
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refreshWorkspaces()} />
-      </div>
 
       {unauthorized ? (
         <Alert variant="danger" className="mt-4">
@@ -294,6 +292,7 @@ export function WorkspacePage() {
           </Card>
         </div>
       </div>
-    </section>
+      </div>
+    </div>
   );
 }

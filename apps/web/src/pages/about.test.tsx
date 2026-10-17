@@ -1,11 +1,20 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
 import { AboutPage } from './about';
 
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <AboutPage />
+    </MemoryRouter>,
+  );
+}
+
 describe('AboutPage', () => {
   it('讲的是 AI 办公助手,不是护肤品牌(防回归)', () => {
-    const { container } = render(<AboutPage />);
+    const { container } = renderPage();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
       '关于 beauty moon',
@@ -18,7 +27,7 @@ describe('AboutPage', () => {
   });
 
   it('四条主张都在:先看后做 / 全程留痕 / 诚实 / 边界清晰', () => {
-    render(<AboutPage />);
+    renderPage();
 
     for (const principle of ['先看后做', '全程留痕', '诚实', '边界清晰']) {
       expect(screen.getByText(principle)).toBeInTheDocument();

@@ -15,6 +15,7 @@ import {
   Tag,
 } from '@beauty/design';
 
+import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import { ApiError, isUnauthorized } from '@/lib/http';
 import type { OutboxStatus } from '@/lib/outbox-api';
@@ -81,17 +82,13 @@ export function OutboxPage() {
   );
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-12">
-      <h1 className="font-display text-3xl">事件队列</h1>
-      <p className="mt-3 max-w-2xl leading-relaxed text-muted-foreground">
-        跨服务事件的发件箱(outbox):事件与业务状态同事务落库,再由后台最低一次投递。
-        投递失败的会按退避重试,超限落 <span className="font-mono">failed</span>
-        ,可以在这里人工重放。
-      </p>
-
-      <div className="mt-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageHeader
+        title="事件队列"
+        subtitle="发件箱(outbox):同事务落库、最低一次投递、退避重试,失败可人工重放"
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refresh()} />
-      </div>
 
       {unauthorized ? (
         <Alert variant="danger" className="mt-4">
@@ -223,6 +220,7 @@ export function OutboxPage() {
           ) : null}
         </CardContent>
       </Card>
-    </section>
+      </div>
+    </div>
   );
 }
