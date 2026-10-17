@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
-import { Button, Input, Tabs } from '@beauty/design';
+import { Button, Field, Input, Tabs } from '@beauty/design';
 
 import { BrandMark, BrandWordmark } from '@/components/brand/logo';
 import { accountApi } from '@/lib/account-api';
@@ -28,9 +28,6 @@ import {
 } from '@/lib/auth';
 
 const ACCOUNT_QUERY_KEY = ['auth-account'];
-
-const FIELD_CLASS = 'mt-1';
-const LABEL_CLASS = 'block text-sm font-medium';
 
 function SignedIn({
   account,
@@ -203,39 +200,36 @@ export function LoginPage() {
                     submitPassword();
                   }}
                 >
-                  <label className={LABEL_CLASS}>
-                    邮箱
+                  <Field label="邮箱" htmlFor="login-email">
                     <Input
+                      id="login-email"
                       type="email"
                       required
-                      className={FIELD_CLASS}
                       placeholder="you@example.com"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                     />
-                  </label>
-                  <label className={LABEL_CLASS}>
-                    密码
+                  </Field>
+                  <Field label="密码" htmlFor="login-password">
                     <Input
+                      id="login-password"
                       type="password"
                       required
                       minLength={8}
-                      className={FIELD_CLASS}
                       placeholder={tab === 'login' ? '输入密码' : '至少 8 位'}
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                     />
-                  </label>
+                  </Field>
                   {tab === 'register' ? (
-                    <label className={LABEL_CLASS}>
-                      显示名(可选)
+                    <Field label="显示名(可选)" htmlFor="login-display-name">
                       <Input
-                        className={FIELD_CLASS}
+                        id="login-display-name"
                         placeholder="怎么称呼你"
                         value={displayName}
                         onChange={(event) => setDisplayName(event.target.value)}
                       />
-                    </label>
+                    </Field>
                   ) : null}
                   <Button
                     type="submit"
@@ -258,16 +252,15 @@ export function LoginPage() {
                     loginWithToken();
                   }}
                 >
-                  <label className={LABEL_CLASS}>
-                    access token
+                  <Field label="access token" htmlFor="login-token">
                     <Input
+                      id="login-token"
                       type="password"
-                      className={FIELD_CLASS}
                       placeholder="粘贴令牌(联调/运维用,不自动续期)"
                       value={token}
                       onChange={(event) => setToken(event.target.value)}
                     />
-                  </label>
+                  </Field>
                   <Button
                     type="submit"
                     variant="outline"

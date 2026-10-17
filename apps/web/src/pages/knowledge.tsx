@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   Empty,
+  Field,
   Input,
   Spin,
   Textarea,
@@ -19,9 +20,6 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import type { SearchResult } from '@/lib/knowledge-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { isUnauthorized } from '@/lib/runs-api';
-
-const FIELD_CLASS = 'mt-1';
-const LABEL_CLASS = 'block text-sm font-medium';
 
 const DOCUMENTS_KEY = ['knowledge-documents'];
 
@@ -116,42 +114,31 @@ export function KnowledgePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className={LABEL_CLASS} htmlFor="knowledge-title">
-                资料标题
-              </label>
+            <Field label="资料标题" htmlFor="knowledge-title">
               <Input
                 id="knowledge-title"
-                className={FIELD_CLASS}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="客户 A 合同备忘"
               />
-            </div>
-            <div>
-              <label className={LABEL_CLASS} htmlFor="knowledge-source">
-                来源
-              </label>
+            </Field>
+            <Field label="来源" htmlFor="knowledge-source">
               <Input
                 id="knowledge-source"
-                className={FIELD_CLASS}
                 value={source}
                 onChange={(event) => setSource(event.target.value)}
                 placeholder="manual"
               />
-            </div>
-            <div>
-              <label className={LABEL_CLASS} htmlFor="knowledge-content">
-                正文
-              </label>
+            </Field>
+            <Field label="正文" htmlFor="knowledge-content">
               <Textarea
                 id="knowledge-content"
-                className="mt-1 min-h-40"
+                className="min-h-40"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 placeholder="把资料粘贴进来……"
               />
-            </div>
+            </Field>
             <div className="flex items-center gap-3">
               <Button
                 onClick={() => ingestMutation.mutate()}
@@ -182,18 +169,14 @@ export function KnowledgePage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className={LABEL_CLASS} htmlFor="knowledge-query">
-                  检索问题
-                </label>
+              <Field className="flex-1" label="检索问题" htmlFor="knowledge-query">
                 <Input
                   id="knowledge-query"
-                  className={FIELD_CLASS}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="客户 A 的合同评审什么时候?"
                 />
-              </div>
+              </Field>
               <Button
                 onClick={() => searchMutation.mutate()}
                 disabled={!canSearch || searchMutation.isPending}

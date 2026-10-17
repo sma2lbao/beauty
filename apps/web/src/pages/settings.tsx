@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   Empty,
+  Field,
   Input,
   Select,
   Spin,
@@ -20,9 +21,6 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { isUnauthorized } from '@/lib/http';
-
-const FIELD_CLASS = 'mt-1';
-const LABEL_CLASS = 'block text-sm font-medium';
 
 const ORG_KEY = ['account-organization'];
 const MEMBERS_KEY = ['account-members'];
@@ -176,41 +174,30 @@ export function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className={LABEL_CLASS} htmlFor="org-name">
-                组织名称
-              </label>
+            <Field label="组织名称" htmlFor="org-name">
               <Input
                 id="org-name"
-                className={FIELD_CLASS}
                 value={nameValue}
                 onChange={(event) => setOrgName(event.target.value)}
               />
-            </div>
-            <div>
-              <label className={LABEL_CLASS} htmlFor="org-plan">
-                套餐
-              </label>
+            </Field>
+            <Field label="套餐" htmlFor="org-plan">
               <Input
                 id="org-plan"
-                className={FIELD_CLASS}
                 value={planValue}
                 onChange={(event) => setOrgPlan(event.target.value)}
                 placeholder="free / team / enterprise"
               />
-            </div>
-            <div>
-              <label className={LABEL_CLASS} htmlFor="org-quota">
-                配额(JSON)
-              </label>
+            </Field>
+            <Field label="配额(JSON)" htmlFor="org-quota">
               <Textarea
                 id="org-quota"
-                className="mt-1 min-h-24 font-mono"
+                className="min-h-24 font-mono"
                 value={quotaValue}
                 onChange={(event) => setQuotaText(event.target.value)}
                 placeholder='{"seats": 20, "runs_per_month": 500}'
               />
-            </div>
+            </Field>
             {quotaError ? (
               <p className="text-sm text-destructive">{quotaError}</p>
             ) : null}
@@ -247,56 +234,40 @@ export function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className={LABEL_CLASS} htmlFor="member-subject">
-                IdP subject
-              </label>
+            <Field label="IdP subject" htmlFor="member-subject">
               <Input
                 id="member-subject"
-                className={FIELD_CLASS}
                 value={subject}
                 onChange={(event) => setSubject(event.target.value)}
                 placeholder="idp|user-1"
               />
-            </div>
-            <div>
-              <label className={LABEL_CLASS} htmlFor="member-email">
-                邮箱
-              </label>
+            </Field>
+            <Field label="邮箱" htmlFor="member-email">
               <Input
                 id="member-email"
-                className={FIELD_CLASS}
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="someone@example.com"
               />
-            </div>
+            </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className={LABEL_CLASS} htmlFor="member-name">
-                  显示名
-                </label>
+              <Field label="显示名" htmlFor="member-name">
                 <Input
                   id="member-name"
-                  className={FIELD_CLASS}
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
-              </div>
-              <div>
-                <label className={LABEL_CLASS} htmlFor="member-role">
-                  角色
-                </label>
+              </Field>
+              <Field label="角色" htmlFor="member-role">
                 <Select
                   id="member-role"
-                  className={FIELD_CLASS}
                   value={role}
                   onChange={(event) => setRole(event.target.value as Role)}
                 >
                   <option value="member">member</option>
                   <option value="owner">owner</option>
                 </Select>
-              </div>
+              </Field>
             </div>
             <div className="flex items-center gap-3">
               <Button
@@ -395,13 +366,9 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-56 flex-1">
-              <label className={LABEL_CLASS} htmlFor="session-user">
-                成员
-              </label>
+            <Field className="min-w-56 flex-1" label="成员" htmlFor="session-user">
               <Select
                 id="session-user"
-                className={FIELD_CLASS}
                 value={sessionUserId}
                 onChange={(event) => setSessionUserId(event.target.value)}
               >
@@ -412,19 +379,15 @@ export function SettingsPage() {
                   </option>
                 ))}
               </Select>
-            </div>
-            <div className="min-w-56 flex-1">
-              <label className={LABEL_CLASS} htmlFor="session-device">
-                设备
-              </label>
+            </Field>
+            <Field className="min-w-56 flex-1" label="设备" htmlFor="session-device">
               <Input
                 id="session-device"
-                className={FIELD_CLASS}
                 value={device}
                 onChange={(event) => setDevice(event.target.value)}
                 placeholder="MacBook / Chrome"
               />
-            </div>
+            </Field>
             <Button
               onClick={() => addSessionMutation.mutate()}
               disabled={!canAddSession || addSessionMutation.isPending}

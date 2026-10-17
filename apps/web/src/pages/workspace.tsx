@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   Empty,
+  Field,
   Input,
   Spin,
 } from '@beauty/design';
@@ -19,9 +20,6 @@ import type { Artifact } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/http';
 import { cn } from '@/lib/utils';
-
-const FIELD_CLASS = 'mt-1';
-const LABEL_CLASS = 'block text-sm font-medium';
 
 const WORKSPACES_KEY = ['workspaces'];
 
@@ -171,29 +169,21 @@ export function WorkspacePage() {
             )}
 
             <div className="space-y-3 border-t pt-4">
-              <div>
-                <label className={LABEL_CLASS} htmlFor="workspace-name">
-                  新建工作区
-                </label>
+              <Field label="新建工作区" htmlFor="workspace-name">
                 <Input
                   id="workspace-name"
-                  className={FIELD_CLASS}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   placeholder="销售资料"
                 />
-              </div>
-              <div>
-                <label className={LABEL_CLASS} htmlFor="workspace-description">
-                  描述(可选)
-                </label>
+              </Field>
+              <Field label="描述(可选)" htmlFor="workspace-description">
                 <Input
                   id="workspace-description"
-                  className={FIELD_CLASS}
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                 />
-              </div>
+              </Field>
               <div className="flex items-center gap-3">
                 <Button
                   onClick={() => createMutation.mutate()}

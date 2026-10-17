@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
   Empty,
+  Field,
   Input,
   Spin,
   Textarea,
@@ -45,8 +46,6 @@ function isTerminal(status: RunStatus): boolean {
 function isQuiescent(status: RunStatus): boolean {
   return isTerminal(status) || status === 'blocked';
 }
-
-const FIELD_CLASS = 'mt-1';
 
 export function RunsPage() {
   const queryClient = useQueryClient();
@@ -104,32 +103,29 @@ export function RunsPage() {
               <CardDescription>验收标准每行一条。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <label className="block text-sm">
-                标题
+              <Field label="标题" htmlFor="run-title">
                 <Input
-                  className={FIELD_CLASS}
+                  id="run-title"
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                 />
-              </label>
-              <label className="block text-sm">
-                目标
+              </Field>
+              <Field label="目标" htmlFor="run-goal">
                 <Textarea
-                  className={FIELD_CLASS}
+                  id="run-goal"
                   rows={3}
                   value={goal}
                   onChange={(event) => setGoal(event.target.value)}
                 />
-              </label>
-              <label className="block text-sm">
-                验收标准
+              </Field>
+              <Field label="验收标准" htmlFor="run-criteria">
                 <Textarea
-                  className={FIELD_CLASS}
+                  id="run-criteria"
                   rows={3}
                   value={criteria}
                   onChange={(event) => setCriteria(event.target.value)}
                 />
-              </label>
+              </Field>
               <Button
                 onClick={() => createMutation.mutate()}
                 disabled={
@@ -451,7 +447,6 @@ function RunDetail({
         <CardContent className="space-y-3">
           <Textarea
             aria-label="追加指令"
-            className={FIELD_CLASS}
             rows={2}
             placeholder="例如:顺便把日历也汇总一下"
             value={instruction}
