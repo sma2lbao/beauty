@@ -1,0 +1,65 @@
+import { Button, Space, Spin } from '@beauty/design';
+
+# Spin 加载指示
+
+旋转圆环指示加载进行中。
+
+## 何时使用
+
+- 操作或数据加载期间提供进行中的视觉反馈;
+- 配合 `label` 给出具体说明,或配合按钮 `loading` 属性内嵌使用。
+
+## 基础用法
+
+<div className="bd-demo">
+  <Spin />
+</div>
+
+```tsx
+import { Spin } from '@beauty/design';
+
+<Spin />;
+```
+
+## 带说明文字
+
+<div className="bd-demo">
+  <Space direction="vertical" align="center">
+    <Spin label="加载中…" />
+    <Spin size="sm" label="同步事件中…" />
+  </Space>
+</div>
+
+```tsx
+<Spin label="加载中…" />
+<Spin size="sm" label="同步事件中…" />
+```
+
+## 尺寸
+
+三档尺寸,与文本基线对齐:
+
+<div className="bd-demo">
+  <Space>
+    <Spin size="sm" />
+    <Spin size="md" />
+    <Spin size="lg" />
+  </Space>
+</div>
+
+```tsx
+<Spin size="sm" />
+<Spin size="md" />
+<Spin size="lg" />
+```
+
+## API
+
+### SpinProps
+
+继承 `React.ComponentPropsWithoutRef<'span'>`。
+
+| 属性  | 说明         | 类型     | 默认值 |
+| ----- | ------------ | -------- | ------ | ----- | ------ |
+| size  | 尺寸         | `'sm'    | 'md'   | 'lg'` | `'md'` |
+| label | 加载说明文字 | `string` | —      |

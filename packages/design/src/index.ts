@@ -10,6 +10,9 @@ export type {
   ButtonVariant,
 } from './components/button/index.js';
 
+export { Empty } from './components/empty/index.js';
+export type { EmptyProps } from './components/empty/index.js';
+
 export { Input } from './components/input/index.js';
 export type { InputProps, InputSize } from './components/input/index.js';
 
@@ -47,6 +50,9 @@ export type {
 
 export { Skeleton } from './components/skeleton/index.js';
 export type { SkeletonProps } from './components/skeleton/index.js';
+
+export { Spin } from './components/spin/index.js';
+export type { SpinProps, SpinSize } from './components/spin/index.js';
 
 export { Space } from './components/space/index.js';
 export type {

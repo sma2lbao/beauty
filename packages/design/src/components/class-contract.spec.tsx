@@ -10,10 +10,12 @@ import {
   CardHeader,
   CardTitle,
   Checkbox,
+  Empty,
   Input,
   Select,
   Skeleton,
   Space,
+  Spin,
   Switch,
   Tag,
   Textarea,
@@ -26,6 +28,10 @@ import {
 const SLOTS = [
   'button',
   'card',
+  'empty',
+  'empty-figure',
+  'empty-description',
+  'empty-actions',
   'checkbox-root',
   'checkbox',
   'checkbox-box',
@@ -48,6 +54,9 @@ const SLOTS = [
   'tag',
   'tag-close',
   'space',
+  'spin',
+  'spin-indicator',
+  'spin-label',
   'textarea',
 ];
 
@@ -65,6 +74,11 @@ describe('类名契约', () => {
         <Select aria-label="城市">
           <option value="sh">上海</option>
         </Select>
+        <Spin label="加载中" />
+        <Empty
+          description="暂无数据"
+          actions={<Button size="sm">刷新</Button>}
+        />
         <Card>
           <CardHeader>
             <CardTitle>标题</CardTitle>

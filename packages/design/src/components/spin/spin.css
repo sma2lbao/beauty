@@ -1,0 +1,86 @@
+/**
+ * Spin 样式(普通 CSS + BEM 语义类名)
+ * 旋转的是整个 SVG;轨道淡色、弧线用主色,弧长固定(约 240°)。
+ */
+
+.bd-spin {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--bd-foreground);
+  font-family: var(--bd-font-sans);
+}
+
+.bd-spin__indicator {
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  animation: bd-spin-rotate 0.8s linear infinite;
+}
+
+.bd-spin__track {
+  stroke: color-mix(in oklab, currentColor 15%, transparent);
+}
+
+.bd-spin__arc {
+  stroke: var(--bd-primary);
+}
+
+.bd-spin__label {
+  color: var(--bd-muted-foreground);
+}
+
+/* ---------- 尺寸 ---------- */
+
+.bd-spin--sm {
+  font-size: 0.875rem;
+}
+
+.bd-spin--sm .bd-spin__indicator {
+  font-size: 0.875rem;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.bd-spin--sm .bd-spin__label {
+  font-size: 0.75rem;
+}
+
+.bd-spin--md {
+  font-size: 1rem;
+}
+
+.bd-spin--md .bd-spin__indicator {
+  width: 1rem;
+  height: 1rem;
+}
+
+.bd-spin--md .bd-spin__label {
+  font-size: 0.875rem;
+}
+
+.bd-spin--lg {
+  font-size: 1.125rem;
+}
+
+.bd-spin--lg .bd-spin__indicator {
+  width: 1.375rem;
+  height: 1.375rem;
+}
+
+.bd-spin--lg .bd-spin__label {
+  font-size: 0.9375rem;
+}
+
+@keyframes bd-spin-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-spin__indicator {
+    animation-duration: 2.4s;
+  }
+}

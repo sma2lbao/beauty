@@ -1,0 +1,55 @@
+import { Button, Empty, Space } from '@beauty/design';
+
+# Empty 空态
+
+列表或页面无内容时的占位说明。
+
+## 何时使用
+
+- 数据为空、搜索无结果、尚无权限等场景;
+- 需要引导用户执行下一步操作时,配合 `actions` 提供入口。
+
+## 基础用法
+
+<div className="bd-demo bd-demo--vertical">
+  <div style={{ width: '100%', maxWidth: '420px' }}>
+    <Empty description="暂无事件:跑到交付或交付物入库后这里会有记录。" />
+  </div>
+</div>
+
+```tsx
+import { Empty } from '@beauty/design';
+
+<Empty description="暂无事件:跑到交付或交付物入库后这里会有记录。" />;
+```
+
+## 带操作
+
+<div className="bd-demo bd-demo--vertical">
+  <div style={{ width: '100%', maxWidth: '420px' }}>
+    <Empty
+      description="还没有任何知识库文档"
+      actions={<Button size="sm">上传文档</Button>}
+    />
+  </div>
+</div>
+
+```tsx
+import { Button, Empty } from '@beauty/design';
+
+<Empty
+  description="还没有任何知识库文档"
+  actions={<Button size="sm">上传文档</Button>}
+/>;
+```
+
+## API
+
+### EmptyProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性        | 说明                        | 类型        | 默认值 |
+| ----------- | --------------------------- | ----------- | ------ |
+| description | 主说明                      | `ReactNode` | —      |
+| actions     | 操作区,通常放 Button / Link | `ReactNode` | —      |
