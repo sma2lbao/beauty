@@ -1,0 +1,97 @@
+/**
+ * Radio 样式(普通 CSS + BEM 语义类名)
+ * 结构同 Checkbox:原生 input 视觉隐藏(保留键盘与互斥语义),圆形盒子由 span 绘制。
+ */
+
+.bd-radio-group {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  font-family: var(--bd-font-sans);
+}
+
+.bd-radio-group--horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.bd-radio {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--bd-foreground);
+  cursor: pointer;
+}
+
+.bd-radio[data-disabled='true'] {
+  color: color-mix(in oklab, var(--bd-muted-foreground) 70%, transparent);
+  cursor: not-allowed;
+}
+
+.bd-radio__input {
+  /* 视觉隐藏但保留焦点与可点击区域 */
+  position: absolute;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.bd-radio__box {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--bd-input);
+  border-radius: 9999px;
+  background-color: var(--bd-background);
+  transition-property: background-color, border-color;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bd-radio__dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--bd-primary-foreground);
+  opacity: 0;
+  transition-property: opacity;
+  transition-duration: 100ms;
+}
+
+.bd-radio__box[data-state='checked'] {
+  border-color: var(--bd-primary);
+  background-color: var(--bd-primary);
+}
+
+.bd-radio__box[data-state='checked'] .bd-radio__dot {
+  opacity: 1;
+}
+
+.bd-radio__input:focus-visible + .bd-radio__box {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bd-ring) 50%, transparent);
+}
+
+.bd-radio[data-disabled='true'] .bd-radio__box {
+  border-color: var(--bd-input);
+  background-color: color-mix(in oklab, var(--bd-muted) 60%, transparent);
+}
+
+.bd-radio[data-disabled='true'] .bd-radio__box[data-state='checked'] {
+  border-color: color-mix(in oklab, var(--bd-primary) 50%, transparent);
+  background-color: color-mix(in oklab, var(--bd-primary) 50%, transparent);
+}
+
+.bd-radio__label {
+  line-height: 1.25rem;
+}

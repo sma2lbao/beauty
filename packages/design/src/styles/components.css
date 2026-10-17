@@ -2,23 +2,22 @@
  * 组件样式汇总入口。
  *
  * 每个组件一份普通 CSS(语义类名 + BEM 修饰符 + --bd-* 令牌),
- * 不依赖宿主重置,也不依赖 Tailwind。新增组件时在此登记。
+ * 不依赖宿主重置,也不依赖 Tailwind。新增组件时在此登记(按字母序)。
  */
 
+@import '../components/alert/alert.css';
 @import '../components/button/button.css';
+@import '../components/card/card.css';
+@import '../components/checkbox/checkbox.css';
 @import '../components/empty/empty.css';
 @import '../components/field/field.css';
 @import '../components/input/input.css';
-@import '../components/alert/alert.css';
-@import '../components/card/card.css';
-@import '../components/checkbox/checkbox.css';
-@import '../components/select/select.css';
-@import '../components/checkbox/checkbox.css';
+@import '../components/radio/radio.css';
 @import '../components/select/select.css';
 @import '../components/skeleton/skeleton.css';
 @import '../components/space/space.css';
 @import '../components/spin/spin.css';
 @import '../components/switch/switch.css';
 @import '../components/tabs/tabs.css';
-@import '../components/textarea/textarea.css';
 @import '../components/tag/tag.css';
+@import '../components/textarea/textarea.css';

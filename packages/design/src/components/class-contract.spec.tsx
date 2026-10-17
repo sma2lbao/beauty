@@ -14,6 +14,8 @@ import {
   Empty,
   Field,
   Input,
+  Radio,
+  RadioGroup,
   Select,
   Skeleton,
   Space,
@@ -40,6 +42,11 @@ const SLOTS = [
   'field-control',
   'field-hint',
   'field-error',
+  'radio-group',
+  'radio-root',
+  'radio',
+  'radio-box',
+  'radio-label',
   'tabs',
   'tabs-list',
   'tabs-tab',
@@ -99,6 +106,10 @@ describe('类名契约', () => {
         <Field label="邮箱" htmlFor="contract-email" error="格式不正确">
           <Input id="contract-email" placeholder="邮箱" />
         </Field>
+        <RadioGroup defaultValue="a" aria-label="编排方式">
+          <Radio value="a" label="自动" />
+          <Radio value="b" label="手动" />
+        </RadioGroup>
         <Tabs
           items={[
             { value: 'a', label: 'A', content: <span>面板 A</span> },

@@ -22,6 +22,13 @@ export type { InputProps, InputSize } from './components/input/index.js';
 export { Checkbox } from './components/checkbox/index.js';
 export type { CheckboxProps } from './components/checkbox/index.js';
 
+export { Radio, RadioGroup } from './components/radio/index.js';
+export type {
+  RadioGroupOrientation,
+  RadioGroupProps,
+  RadioProps,
+} from './components/radio/index.js';
+
 export { Select } from './components/select/index.js';
 export type { SelectProps, SelectSize } from './components/select/index.js';
 

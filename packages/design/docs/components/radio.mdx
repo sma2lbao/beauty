@@ -1,0 +1,98 @@
+import { Radio, RadioGroup } from '@beauty/design';
+
+# Radio 单选框
+
+从一组互斥选项中选择一个。
+
+## 何时使用
+
+- 选项较少(建议 ≤ 5)且需要让用户看到全部候选;
+- 选项很多时用 Select,开关语义用 Switch。
+
+## 基础用法
+
+`RadioGroup` 管状态,组内 `Radio` 只声明值与文字:
+
+<div className="bd-demo bd-demo--vertical">
+  <RadioGroup defaultValue="monthly" aria-label="计费周期">
+    <Radio value="monthly" label="按月付费" />
+    <Radio value="yearly" label="按年付费(省两个月)" />
+    <Radio value="once" label="一次性买断" />
+  </RadioGroup>
+</div>
+
+```tsx
+import { Radio, RadioGroup } from '@beauty/design';
+
+<RadioGroup defaultValue="monthly">
+  <Radio value="monthly" label="按月付费" />
+  <Radio value="yearly" label="按年付费(省两个月)" />
+</RadioGroup>;
+```
+
+## 受控与横向排列
+
+<div className="bd-demo">
+  <RadioGroup
+    orientation="horizontal"
+    defaultValue="auto"
+    aria-label="发送方式"
+  >
+    <Radio value="auto" label="自动" />
+    <Radio value="chat" label="对话" />
+    <Radio value="task" label="任务" />
+  </RadioGroup>
+</div>
+
+```tsx
+const [mode, setMode] = useState('auto');
+
+<RadioGroup orientation="horizontal" value={mode} onValueChange={setMode}>
+  <Radio value="auto" label="自动" />
+  <Radio value="chat" label="对话" />
+</RadioGroup>;
+```
+
+## 禁用
+
+<div className="bd-demo">
+  <RadioGroup disabled defaultValue="a">
+    <Radio value="a" label="不可选" />
+    <Radio value="b" label="也不可选" />
+  </RadioGroup>
+</div>
+
+```tsx
+<RadioGroup disabled defaultValue="a">
+  <Radio value="a" label="不可选" />
+</RadioGroup>
+```
+
+## 可访问性
+
+组内所有 `Radio` 共享同一个原生 `name`,因此浏览器自带的**方向键切换**与
+"组内只能选中一个"行为直接生效;容器为 `role="radiogroup"` 并带 `aria-orientation`。
+
+## API
+
+### RadioGroupProps
+
+继承 `React.ComponentPropsWithRef<'div'>`(除 `onChange` / `defaultValue` / `value`)。
+
+| 属性          | 说明                   | 类型                         | 默认值       |
+| ------------- | ---------------------- | ---------------------------- | ------------ |
+| value         | 受控选中值             | `string`                     | —            |
+| defaultValue  | 非受控初始值           | `string`                     | —            |
+| onValueChange | 选中变化回调           | `(value: string) => void`    | —            |
+| name          | 原生 name,缺省自动生成 | `string`                     | 自动         |
+| disabled      | 整组禁用               | `boolean`                    | `false`      |
+| orientation   | 排列方向               | `'vertical' \| 'horizontal'` | `'vertical'` |
+
+### RadioProps
+
+继承 `React.ComponentPropsWithRef<'input'>`(除 `type` / `onChange` / `value`)。
+
+| 属性  | 说明     | 类型        |
+| ----- | -------- | ----------- |
+| value | 该项的值 | `string`    |
+| label | 选项文字 | `ReactNode` |

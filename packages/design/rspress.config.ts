@@ -92,6 +92,7 @@ export default defineConfig({
         { text: 'Empty 空态', link: '/components/empty' },
         { text: 'Field 字段容器', link: '/components/field' },
         { text: 'Input 输入框', link: '/components/input' },
+        { text: 'Radio 单选框', link: '/components/radio' },
         { text: 'Select 选择器', link: '/components/select' },
         { text: 'Skeleton 骨架屏', link: '/components/skeleton' },
         { text: 'Space 间距', link: '/components/space' },
