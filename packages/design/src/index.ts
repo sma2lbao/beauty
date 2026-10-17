@@ -10,6 +10,9 @@ export type {
   ButtonVariant,
 } from './components/button/index.js';
 
+export { Dialog } from './components/dialog/index.js';
+export type { DialogProps } from './components/dialog/index.js';
+
 export { Empty } from './components/empty/index.js';
 export type { EmptyProps } from './components/empty/index.js';
 

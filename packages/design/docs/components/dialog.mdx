@@ -1,0 +1,113 @@
+import { useState } from 'react';
+import { Button, Dialog } from '@beauty/design';
+
+# Dialog 对话框
+
+在当前页面之上覆盖一层内容,要求用户处理完再继续。
+
+## 何时使用
+
+- 需要用户确认的高风险操作(删除、放行、覆盖);
+- 需要聚焦填写的小型表单;
+- 只是提示信息时用 Alert,不要用对话框打断。
+
+## 基础用法
+
+`Dialog` 是**受控**组件:`open` 决定显隐,`onOpenChange` 接收关闭请求
+(关闭按钮 / ESC / 点遮罩都会走这里)。
+
+export function DialogDemo() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bd-demo">
+      <Button variant="danger" onClick={() => setOpen(true)}>
+        删除交付物
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="删除交付物"
+        description="删除后无法恢复,关联的元数据也会一并清理。"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button variant="danger" onClick={() => setOpen(false)}>
+              确认删除
+            </Button>
+          </>
+        }
+      >
+        确认要删除这个交付物吗?
+      </Dialog>
+    </div>
+  );
+}
+
+<DialogDemo />
+
+```tsx
+import { useState } from 'react';
+import { Button, Dialog } from '@beauty/design';
+
+function DeleteDialog() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button variant="danger" onClick={() => setOpen(true)}>
+        删除交付物
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="删除交付物"
+        description="删除后无法恢复。"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button variant="danger" onClick={() => setOpen(false)}>
+              确认删除
+            </Button>
+          </>
+        }
+      >
+        确认要删除这个交付物吗?
+      </Dialog>
+    </>
+  );
+}
+```
+
+## 关闭方式
+
+| 方式           | 是否触发 onOpenChange(false) | 关闭条件                  |
+| -------------- | ---------------------------- | ------------------------- |
+| 右上角关闭按钮 | 是                           | `closable` 为 true        |
+| ESC            | 是(原生 `close` 事件)        | 始终                      |
+| 点击遮罩       | 是                           | `closeOnBackdrop` 为 true |
+
+## 可访问性
+
+- 基于原生 `<dialog>`:浏览器负责**焦点陷阱**、ESC 关闭与顶层层级;
+- `title` 自动作为 `aria-labelledby` 的目标,`description` 对应 `aria-describedby`;
+- 打开时锁定 `body` 滚动,关闭后恢复。
+
+## API
+
+### DialogProps
+
+继承 `React.ComponentPropsWithoutRef<'dialog'>`(除 `open` / `onClose` / `title`)。
+
+| 属性            | 说明                   | 类型                      | 默认值 |
+| --------------- | ---------------------- | ------------------------- | ------ |
+| open            | 是否打开(受控)         | `boolean`                 | —      |
+| onOpenChange    | 打开态变化回调         | `(open: boolean) => void` | —      |
+| title           | 标题(同时作为可访问名) | `ReactNode`               | —      |
+| description     | 描述                   | `ReactNode`               | —      |
+| footer          | 底部操作区             | `ReactNode`               | —      |
+| closable        | 是否展示右上角关闭按钮 | `boolean`                 | `true` |
+| closeOnBackdrop | 点遮罩是否关闭         | `boolean`                 | `true` |

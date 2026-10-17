@@ -1,0 +1,115 @@
+/**
+ * Dialog 样式(普通 CSS + BEM 语义类名)
+ * 原生 <dialog> 负责居中与顶层层级,这里只定面板外观与 ::backdrop。
+ */
+
+.bd-dialog {
+  box-sizing: border-box;
+  width: min(32rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  padding: 0;
+  border: 1px solid var(--bd-border);
+  border-radius: var(--bd-radius);
+  background-color: var(--bd-popover);
+  color: var(--bd-popover-foreground);
+  font-family: var(--bd-font-sans);
+  box-shadow:
+    0 20px 40px -12px oklch(0 0 0 / 25%),
+    0 4px 12px -4px oklch(0 0 0 / 15%);
+}
+
+.bd-dialog::backdrop {
+  background-color: oklch(0 0 0 / 45%);
+  backdrop-filter: blur(2px);
+}
+
+.bd-dialog__panel {
+  box-sizing: border-box;
+  display: flex;
+  max-height: inherit;
+  flex-direction: column;
+}
+
+.bd-dialog__header {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.25rem 0.75rem;
+}
+
+.bd-dialog__heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.bd-dialog__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
+.bd-dialog__description {
+  margin: 0;
+  color: var(--bd-muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+}
+
+.bd-dialog__close {
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.25rem -0.25rem 0 0;
+  padding: 0;
+  border: none;
+  border-radius: calc(var(--bd-radius) - 6px);
+  background-color: transparent;
+  color: var(--bd-muted-foreground);
+  cursor: pointer;
+  outline: none;
+  transition-property: background-color, color;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (hover: hover) {
+  .bd-dialog__close:hover {
+    background-color: var(--bd-muted);
+    color: var(--bd-foreground);
+  }
+}
+
+.bd-dialog__close:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--bd-ring) 50%, transparent);
+}
+
+.bd-dialog__body {
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 0.5rem 1.25rem 1.25rem;
+  overflow-y: auto;
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+}
+
+.bd-dialog__footer {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--bd-border);
+  background-color: color-mix(in oklab, var(--bd-muted) 40%, transparent);
+  border-bottom-left-radius: var(--bd-radius);
+  border-bottom-right-radius: var(--bd-radius);
+}

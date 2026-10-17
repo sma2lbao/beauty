@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
   Checkbox,
+  Dialog,
   Empty,
   Field,
   Input,
@@ -42,6 +43,14 @@ const SLOTS = [
   'field-control',
   'field-hint',
   'field-error',
+  'dialog',
+  'dialog-panel',
+  'dialog-header',
+  'dialog-title',
+  'dialog-description',
+  'dialog-close',
+  'dialog-body',
+  'dialog-footer',
   'radio-group',
   'radio-root',
   'radio',
@@ -106,6 +115,15 @@ describe('类名契约', () => {
         <Field label="邮箱" htmlFor="contract-email" error="格式不正确">
           <Input id="contract-email" placeholder="邮箱" />
         </Field>
+        <Dialog
+          open
+          onOpenChange={() => {}}
+          title="确认"
+          description="删除后不可恢复"
+          footer={<Button size="sm">确定</Button>}
+        >
+          正文
+        </Dialog>
         <RadioGroup defaultValue="a" aria-label="编排方式">
           <Radio value="a" label="自动" />
           <Radio value="b" label="手动" />

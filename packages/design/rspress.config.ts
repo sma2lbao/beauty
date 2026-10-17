@@ -89,6 +89,7 @@ export default defineConfig({
         { text: 'Button 按钮', link: '/components/button' },
         { text: 'Card 卡片', link: '/components/card' },
         { text: 'Checkbox 多选框', link: '/components/checkbox' },
+        { text: 'Dialog 对话框', link: '/components/dialog' },
         { text: 'Empty 空态', link: '/components/empty' },
         { text: 'Field 字段容器', link: '/components/field' },
         { text: 'Input 输入框', link: '/components/input' },
