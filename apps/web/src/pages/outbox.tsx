@@ -1,19 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { AuthBar } from '@/components/runs/auth-bar';
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+  Empty,
+  Select,
+  Spin,
+  Tag,
+} from '@beauty/design';
+
+import { AuthBar } from '@/components/runs/auth-bar';
 import { ApiError, isUnauthorized } from '@/lib/http';
 import type { OutboxStatus } from '@/lib/outbox-api';
 import { outboxApi } from '@/lib/outbox-api';
-import { cn } from '@/lib/utils';
 
 const STATUS_LABELS: Record<OutboxStatus, string> = {
   pending: '待投递',
@@ -21,10 +25,10 @@ const STATUS_LABELS: Record<OutboxStatus, string> = {
   failed: '已失败',
 };
 
-const STATUS_STYLES: Record<OutboxStatus, string> = {
-  pending: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  dispatched: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-  failed: 'bg-destructive/15 text-destructive',
+const STATUS_COLORS: Record<OutboxStatus, 'warning' | 'success' | 'danger'> = {
+  pending: 'warning',
+  dispatched: 'success',
+  failed: 'danger',
 };
 
 const EVENTS_KEY = ['outbox-events'];
@@ -129,9 +133,9 @@ export function OutboxPage() {
               <label className="text-sm text-muted-foreground" htmlFor="outbox-status">
                 状态
               </label>
-              <select
+              <Select
                 id="outbox-status"
-                className="rounded-md border bg-transparent px-2 py-1 text-sm"
+                className="w-32"
                 value={status}
                 onChange={(event) =>
                   setStatus(event.target.value as OutboxStatus | 'all')
@@ -141,7 +145,7 @@ export function OutboxPage() {
                 <option value="pending">待投递</option>
                 <option value="dispatched">已投递</option>
                 <option value="failed">已失败</option>
-              </select>
+              </Select>
               <Button
                 variant="outline"
                 size="sm"
@@ -163,11 +167,9 @@ export function OutboxPage() {
           ) : null}
 
           {eventsQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
+            <Spin label="加载中…" />
           ) : events.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              暂无事件:跑到交付或交付物入库后这里会有记录。
-            </p>
+            <Empty description="暂无事件:跑到交付或交付物入库后这里会有记录。" />
           ) : (
             <ul className="divide-y">
               {events.map((event) => (
@@ -175,14 +177,9 @@ export function OutboxPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            'rounded px-2 py-0.5 text-xs',
-                            STATUS_STYLES[event.status],
-                          )}
-                        >
+                        <Tag color={STATUS_COLORS[event.status]}>
                           {STATUS_LABELS[event.status]}
-                        </span>
+                        </Tag>
                         <span className="font-mono text-sm">{event.event_type}</span>
                         {event.attempts > 0 ? (
                           <span className="text-xs text-muted-foreground">

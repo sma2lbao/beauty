@@ -2,8 +2,9 @@ import { Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink } from 'react-router';
 
+import { Button } from '@beauty/design';
+
 import { BrandLogo } from '@/components/brand/logo';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const navItems = [

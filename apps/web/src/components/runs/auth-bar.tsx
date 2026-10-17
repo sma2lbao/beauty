@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { Button, Input } from '@beauty/design';
 import {
   accountLabel,
   authMode,
@@ -81,11 +81,11 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
       {mode === 'token' && !account ? (
         <>
           <span className="text-xs text-muted-foreground">或粘贴令牌(联调):</span>
-          <input
+          <Input
             aria-label="access token"
             type="password"
             placeholder="粘贴 access token"
-            className="min-w-48 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm"
+            className="min-w-48 flex-1"
             value={token}
             onChange={(event) => setToken(event.target.value)}
           />

@@ -1,21 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { AuthBar } from '@/components/runs/auth-bar';
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+  Empty,
+  Input,
+  Spin,
+  Textarea,
+} from '@beauty/design';
+
+import { AuthBar } from '@/components/runs/auth-bar';
 import type { SearchResult } from '@/lib/knowledge-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { isUnauthorized } from '@/lib/runs-api';
 
-const FIELD_CLASS =
-  'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
+const FIELD_CLASS = 'mt-1';
 const LABEL_CLASS = 'block text-sm font-medium';
 
 const DOCUMENTS_KEY = ['knowledge-documents'];
@@ -115,7 +119,7 @@ export function KnowledgePage() {
               <label className={LABEL_CLASS} htmlFor="knowledge-title">
                 资料标题
               </label>
-              <input
+              <Input
                 id="knowledge-title"
                 className={FIELD_CLASS}
                 value={title}
@@ -127,7 +131,7 @@ export function KnowledgePage() {
               <label className={LABEL_CLASS} htmlFor="knowledge-source">
                 来源
               </label>
-              <input
+              <Input
                 id="knowledge-source"
                 className={FIELD_CLASS}
                 value={source}
@@ -139,9 +143,9 @@ export function KnowledgePage() {
               <label className={LABEL_CLASS} htmlFor="knowledge-content">
                 正文
               </label>
-              <textarea
+              <Textarea
                 id="knowledge-content"
-                className={`${FIELD_CLASS} min-h-40`}
+                className="mt-1 min-h-40"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 placeholder="把资料粘贴进来……"
@@ -181,7 +185,7 @@ export function KnowledgePage() {
                 <label className={LABEL_CLASS} htmlFor="knowledge-query">
                   检索问题
                 </label>
-                <input
+                <Input
                   id="knowledge-query"
                   className={FIELD_CLASS}
                   value={query}
@@ -244,11 +248,9 @@ export function KnowledgePage() {
         </CardHeader>
         <CardContent>
           {documentsQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
+            <Spin label="加载中…" />
           ) : documents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              还没有资料:先在上方入库一篇。
-            </p>
+            <Empty description="还没有资料:先在上方入库一篇。" />
           ) : (
             <ul className="divide-y">
               {documents.map((document) => (

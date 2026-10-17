@@ -12,8 +12,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
+import { Button, Input } from '@beauty/design';
+
 import { BrandMark, BrandWordmark } from '@/components/brand/logo';
-import { Button } from '@/components/ui/button';
 import { accountApi } from '@/lib/account-api';
 import {
   accountLabel,
@@ -28,8 +29,7 @@ import {
 
 const ACCOUNT_QUERY_KEY = ['auth-account'];
 
-const FIELD_CLASS =
-  'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
+const FIELD_CLASS = 'mt-1';
 const LABEL_CLASS = 'block text-sm font-medium';
 
 function SignedIn({
@@ -225,7 +225,7 @@ export function LoginPage() {
                 >
                   <label className={LABEL_CLASS}>
                     邮箱
-                    <input
+                    <Input
                       type="email"
                       required
                       className={FIELD_CLASS}
@@ -236,7 +236,7 @@ export function LoginPage() {
                   </label>
                   <label className={LABEL_CLASS}>
                     密码
-                    <input
+                    <Input
                       type="password"
                       required
                       minLength={8}
@@ -249,7 +249,7 @@ export function LoginPage() {
                   {tab === 'register' ? (
                     <label className={LABEL_CLASS}>
                       显示名(可选)
-                      <input
+                      <Input
                         className={FIELD_CLASS}
                         placeholder="怎么称呼你"
                         value={displayName}
@@ -280,7 +280,7 @@ export function LoginPage() {
                 >
                   <label className={LABEL_CLASS}>
                     access token
-                    <input
+                    <Input
                       type="password"
                       className={FIELD_CLASS}
                       placeholder="粘贴令牌(联调/运维用,不自动续期)"

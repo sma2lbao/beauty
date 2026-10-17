@@ -1,7 +1,8 @@
 import { Link } from 'react-router';
 
+import { Button } from '@beauty/design';
+
 import { BrandMark } from '@/components/brand/logo';
-import { Button } from '@/components/ui/button';
 
 export function NotFoundPage() {
   return (

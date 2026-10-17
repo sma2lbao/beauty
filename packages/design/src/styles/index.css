@@ -15,7 +15,11 @@
  */
 
 @import './tokens.css';
-@import './components.css';
+/* 组件样式进 components 层:Tailwind v4 声明了 theme, base, components, utilities 的顺序,
+   因此宿主的工具类(utilities)可以稳定覆盖组件样式,不必靠特异性或 !important 打架。
+   注意只有本 Tailwind 入口这么做:prebuilt.css(非 Tailwind 宿主 / 文档站)保持未分层,
+   以免文档站里 rspress 的元素级重置反过来压过组件样式。 */
+@import './components.css' layer(components);
 
 @custom-variant dark (&:is(.dark *));
 

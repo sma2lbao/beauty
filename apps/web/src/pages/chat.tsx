@@ -2,10 +2,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Empty,
+  Input,
+  Select,
+  Spin,
+  Textarea,
+} from '@beauty/design';
+
 import { AuthBar } from '@/components/runs/auth-bar';
 import { useRunEvents } from '@/components/runs/use-run-events';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { ChatMessage, SendMode } from '@/lib/conversations-api';
 import type { Run, RunStatus } from '@/lib/runs-api';
@@ -440,7 +452,7 @@ export function ChatPage() {
                       item.tone === 'error'
                         ? 'border-destructive/40 bg-destructive/10 text-destructive'
                         : item.tone === 'warn'
-                          ? 'border-amber-500/40 bg-amber-500/10'
+                          ? 'border-warning/40 bg-warning/10'
                           : 'bg-muted/50',
                     )}
                   >
@@ -472,9 +484,10 @@ export function ChatPage() {
                   >
                     拒绝计划
                   </Button>
-                  <input
+                  <Input
                     aria-label="拒绝原因"
-                    className="min-w-40 flex-1 rounded-md border bg-transparent px-3 py-1.5 text-sm"
+                    className="min-w-40 flex-1"
+                    size="sm"
                     value={rejectReason}
                     onChange={(event) => setRejectReason(event.target.value)}
                   />
@@ -540,9 +553,9 @@ export function ChatPage() {
               <label className="sr-only" htmlFor="chat-input">
                 说点什么
               </label>
-              <textarea
+              <Textarea
                 id="chat-input"
-                className="min-h-16 flex-1 rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring"
+                className="min-h-16 flex-1"
                 placeholder={
                   sendMode === 'chat'
                     ? '随便聊聊,例如:你是谁?'
@@ -561,16 +574,16 @@ export function ChatPage() {
                   }
                 }}
               />
-              <select
+              <Select
                 aria-label="发送方式"
-                className="rounded-md border bg-transparent px-2 py-2 text-sm"
+                className="w-24"
                 value={sendMode}
                 onChange={(event) => setSendMode(event.target.value as SendMode)}
               >
                 <option value="auto">自动</option>
                 <option value="chat">对话</option>
                 <option value="task">任务</option>
-              </select>
+              </Select>
               <Button type="submit" disabled={!canSend}>
                 发送
               </Button>
@@ -601,9 +614,9 @@ export function ChatPage() {
           </CardHeader>
           <CardContent>
             {conversationsQuery.isLoading ? (
-              <p className="text-sm text-muted-foreground">加载中…</p>
+              <Spin label="加载中…" />
             ) : conversations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">还没有对话。</p>
+              <Empty description="还没有对话。" />
             ) : (
               <ul className="space-y-2">
                 {conversations.map((item) => (

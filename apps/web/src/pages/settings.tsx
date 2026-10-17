@@ -1,21 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { AuthBar } from '@/components/runs/auth-bar';
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+  Empty,
+  Input,
+  Select,
+  Spin,
+  Textarea,
+} from '@beauty/design';
+
+import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { isUnauthorized } from '@/lib/http';
 
-const FIELD_CLASS =
-  'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
+const FIELD_CLASS = 'mt-1';
 const LABEL_CLASS = 'block text-sm font-medium';
 
 const ORG_KEY = ['account-organization'];
@@ -174,7 +179,7 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="org-name">
                 组织名称
               </label>
-              <input
+              <Input
                 id="org-name"
                 className={FIELD_CLASS}
                 value={nameValue}
@@ -185,7 +190,7 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="org-plan">
                 套餐
               </label>
-              <input
+              <Input
                 id="org-plan"
                 className={FIELD_CLASS}
                 value={planValue}
@@ -197,9 +202,9 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="org-quota">
                 配额(JSON)
               </label>
-              <textarea
+              <Textarea
                 id="org-quota"
-                className={`${FIELD_CLASS} min-h-24 font-mono`}
+                className="mt-1 min-h-24 font-mono"
                 value={quotaValue}
                 onChange={(event) => setQuotaText(event.target.value)}
                 placeholder='{"seats": 20, "runs_per_month": 500}'
@@ -245,7 +250,7 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="member-subject">
                 IdP subject
               </label>
-              <input
+              <Input
                 id="member-subject"
                 className={FIELD_CLASS}
                 value={subject}
@@ -257,7 +262,7 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="member-email">
                 邮箱
               </label>
-              <input
+              <Input
                 id="member-email"
                 className={FIELD_CLASS}
                 value={email}
@@ -270,7 +275,7 @@ export function SettingsPage() {
                 <label className={LABEL_CLASS} htmlFor="member-name">
                   显示名
                 </label>
-                <input
+                <Input
                   id="member-name"
                   className={FIELD_CLASS}
                   value={displayName}
@@ -281,7 +286,7 @@ export function SettingsPage() {
                 <label className={LABEL_CLASS} htmlFor="member-role">
                   角色
                 </label>
-                <select
+                <Select
                   id="member-role"
                   className={FIELD_CLASS}
                   value={role}
@@ -289,7 +294,7 @@ export function SettingsPage() {
                 >
                   <option value="member">member</option>
                   <option value="owner">owner</option>
-                </select>
+                </Select>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -316,9 +321,9 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent>
           {membersQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
+            <Spin label="加载中…" />
           ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">还没有成员:先在上方添加。</p>
+            <Empty description="还没有成员:先在上方添加。" />
           ) : (
             <ul className="divide-y">
               {members.map((member) => (
@@ -341,9 +346,10 @@ export function SettingsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <select
+                    <Select
                       aria-label={`${member.email} 的角色`}
-                      className="rounded-md border bg-transparent px-2 py-1 text-sm"
+                      className="w-28"
+                      size="sm"
                       value={member.role}
                       onChange={(event) =>
                         updateMemberMutation.mutate({
@@ -354,7 +360,7 @@ export function SettingsPage() {
                     >
                       <option value="member">member</option>
                       <option value="owner">owner</option>
-                    </select>
+                    </Select>
                     <Button
                       variant="outline"
                       size="sm"
@@ -392,7 +398,7 @@ export function SettingsPage() {
               <label className={LABEL_CLASS} htmlFor="session-user">
                 成员
               </label>
-              <select
+              <Select
                 id="session-user"
                 className={FIELD_CLASS}
                 value={sessionUserId}
@@ -404,13 +410,13 @@ export function SettingsPage() {
                     {member.display_name ?? member.email}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="min-w-56 flex-1">
               <label className={LABEL_CLASS} htmlFor="session-device">
                 设备
               </label>
-              <input
+              <Input
                 id="session-device"
                 className={FIELD_CLASS}
                 value={device}

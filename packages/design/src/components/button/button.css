@@ -152,6 +152,18 @@
   line-height: calc(1.5 / 1);
 }
 
+.bd-button--icon {
+  width: 2.125rem;
+  padding-inline: 0;
+}
+
+/* 图标按钮内的 svg 统一到 1rem,避免不同图标库的默认尺寸把按钮撑变形 */
+.bd-button--icon > svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
 .bd-button--block {
   display: flex;
   width: 100%;

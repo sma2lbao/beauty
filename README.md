@@ -16,7 +16,7 @@
 ```
 beauty-moon/
 ├── apps/
-│   ├── web/                    # 品牌前台站点（React + react-router + react-query + Tailwind + shadcn/ui）
+│   ├── web/                    # 品牌前台站点（React + react-router + react-query + Tailwind + @beauty/design）
 │   │   ├── src/                # 页面 / 组件 / 路由
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名

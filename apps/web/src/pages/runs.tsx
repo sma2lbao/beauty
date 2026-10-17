@@ -1,17 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { AuthBar } from '@/components/runs/auth-bar';
-import { RunEvents } from '@/components/runs/run-events';
-import { useRunEvents } from '@/components/runs/use-run-events';
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+  Empty,
+  Input,
+  Spin,
+  Textarea,
+} from '@beauty/design';
+
+import { AuthBar } from '@/components/runs/auth-bar';
+import { RunEvents } from '@/components/runs/run-events';
+import { useRunEvents } from '@/components/runs/use-run-events';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
@@ -41,8 +46,7 @@ function isQuiescent(status: RunStatus): boolean {
   return isTerminal(status) || status === 'blocked';
 }
 
-const FIELD_CLASS =
-  'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
+const FIELD_CLASS = 'mt-1';
 
 export function RunsPage() {
   const queryClient = useQueryClient();
@@ -102,7 +106,7 @@ export function RunsPage() {
             <CardContent className="space-y-3">
               <label className="block text-sm">
                 标题
-                <input
+                <Input
                   className={FIELD_CLASS}
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
@@ -110,7 +114,7 @@ export function RunsPage() {
               </label>
               <label className="block text-sm">
                 目标
-                <textarea
+                <Textarea
                   className={FIELD_CLASS}
                   rows={3}
                   value={goal}
@@ -119,7 +123,7 @@ export function RunsPage() {
               </label>
               <label className="block text-sm">
                 验收标准
-                <textarea
+                <Textarea
                   className={FIELD_CLASS}
                   rows={3}
                   value={criteria}
@@ -148,16 +152,14 @@ export function RunsPage() {
               <CardDescription>最新在前,点选查看详情。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              {runsQuery.isPending ? (
-                <p className="text-sm text-muted-foreground">加载中…</p>
-              ) : null}
+              {runsQuery.isPending ? <Spin label="加载中…" /> : null}
               {runsQuery.isError ? (
                 <p className="text-sm text-destructive">
                   列表加载失败:{runsQuery.error.message}
                 </p>
               ) : null}
               {!runsQuery.isPending && runs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">还没有 run。</p>
+                <Empty description="还没有 run。" />
               ) : null}
               {runs.map((run) => (
                 <button
@@ -281,7 +283,9 @@ function RunDetail({
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <CardTitle>{run ? run.title : '加载中…'}</CardTitle>
+            <CardTitle>
+              {run ? run.title : <Spin size="sm" label="加载中…" />}
+            </CardTitle>
             <span className="text-sm text-muted-foreground" data-testid="run-status">
               {STATUS_LABELS[status]}
               {run && run.rounds > 0 ? ` · 第 ${run.rounds} 轮` : ''}
@@ -329,9 +333,9 @@ function RunDetail({
                 >
                   拒绝计划
                 </Button>
-                <input
+                <Input
                   aria-label="拒绝原因"
-                  className="rounded-md border bg-transparent px-3 py-2 text-sm"
+                  className="w-64"
                   value={rejectReason}
                   onChange={(event) => setRejectReason(event.target.value)}
                 />
@@ -416,9 +420,9 @@ function RunDetail({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <textarea
+          <Textarea
             aria-label="计划内容"
-            className={cn(FIELD_CLASS, 'font-mono text-xs')}
+            className="mt-1 font-mono text-xs"
             rows={12}
             readOnly={!editable}
             value={planDraft ?? plan?.plan_markdown ?? ''}
@@ -445,7 +449,7 @@ function RunDetail({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <textarea
+          <Textarea
             aria-label="追加指令"
             className={FIELD_CLASS}
             rows={2}
@@ -491,9 +495,13 @@ function RunDetail({
           <CardHeader>
             <CardTitle>交付物</CardTitle>
             <CardDescription>
-              {artifactQuery.isError
-                ? '还没有交付物。'
-                : (artifactQuery.data?.title ?? '加载中…')}
+              {artifactQuery.isError ? (
+                '还没有交付物。'
+              ) : artifactQuery.data ? (
+                artifactQuery.data.title
+              ) : (
+                <Spin size="sm" label="加载中…" />
+              )}
             </CardDescription>
           </CardHeader>
           {artifactQuery.data ? (

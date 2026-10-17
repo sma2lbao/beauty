@@ -1,22 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { AuthBar } from '@/components/runs/auth-bar';
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+  Empty,
+  Input,
+  Spin,
+} from '@beauty/design';
+
+import { AuthBar } from '@/components/runs/auth-bar';
 import type { Artifact } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/http';
 import { cn } from '@/lib/utils';
 
-const FIELD_CLASS =
-  'mt-1 w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring';
+const FIELD_CLASS = 'mt-1';
 const LABEL_CLASS = 'block text-sm font-medium';
 
 const WORKSPACES_KEY = ['workspaces'];
@@ -137,7 +140,7 @@ export function WorkspacePage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {workspacesQuery.isLoading ? (
-              <p className="text-sm text-muted-foreground">加载中…</p>
+              <Spin label="加载中…" />
             ) : (
               <ul className="space-y-2">
                 {workspaces.map((workspace) => (
@@ -171,7 +174,7 @@ export function WorkspacePage() {
                 <label className={LABEL_CLASS} htmlFor="workspace-name">
                   新建工作区
                 </label>
-                <input
+                <Input
                   id="workspace-name"
                   className={FIELD_CLASS}
                   value={name}
@@ -183,7 +186,7 @@ export function WorkspacePage() {
                 <label className={LABEL_CLASS} htmlFor="workspace-description">
                   描述(可选)
                 </label>
-                <input
+                <Input
                   id="workspace-description"
                   className={FIELD_CLASS}
                   value={description}
@@ -217,11 +220,9 @@ export function WorkspacePage() {
             </CardHeader>
             <CardContent>
               {artifactsQuery.isLoading ? (
-                <p className="text-sm text-muted-foreground">加载中…</p>
+                <Spin label="加载中…" />
               ) : artifacts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  这个工作区还没有交付物:先在上面建个 run 并批准执行。
-                </p>
+                <Empty description="这个工作区还没有交付物:先在上面建个 run 并批准执行。" />
               ) : (
                 <ul className="divide-y">
                   {artifacts.map((artifact) => (

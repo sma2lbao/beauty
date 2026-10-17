@@ -94,6 +94,62 @@ describe('Button', () => {
     expect(handleClick).not.toHaveBeenCalled();
   });
 
+  it('icon 尺寸渲染方形按钮', () => {
+    render(
+      <Button size="icon" aria-label="切换主题">
+        <svg viewBox="0 0 16 16" />
+      </Button>,
+    );
+
+    const button = screen.getByRole('button', { name: '切换主题' });
+    expect(button).toHaveClass('bd-button', 'bd-button--icon');
+    expect(button).toHaveAttribute('data-size', 'icon');
+  });
+
+  it('asChild 把样式与 props 合并到子元素上', () => {
+    const handleClick = vi.fn();
+    render(
+      <Button asChild onClick={handleClick}>
+        <a href="/runs">链接按钮</a>
+      </Button>,
+    );
+
+    const link = screen.getByRole('link', { name: '链接按钮' });
+    expect(link).toHaveAttribute('href', '/runs');
+    expect(link).toHaveClass('bd-button', 'bd-button--primary');
+    expect(link).toHaveAttribute('data-slot', 'button');
+
+    fireEvent.click(link);
+    expect(handleClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('asChild 禁用时标记 aria-disabled 并拦截跳转', () => {
+    render(
+      <Button asChild disabled>
+        <a href="/runs">链接按钮</a>
+      </Button>,
+    );
+
+    const link = screen.getByRole('link', { name: '链接按钮' });
+    expect(link).toHaveAttribute('aria-disabled', 'true');
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('asChild 加载态把加载指示放进子元素', () => {
+    const { container } = render(
+      <Button asChild loading>
+        <a href="/runs">链接按钮</a>
+      </Button>,
+    );
+
+    const spinner = container.querySelector('[data-slot="button-spinner"]');
+    expect(spinner).not.toBeNull();
+    expect(spinner?.parentElement?.tagName).toBe('A');
+  });
+
   it('透传其余原生属性与 className', () => {
     render(
       <Button data-testid="cta" className="custom" form="login">

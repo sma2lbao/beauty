@@ -1,3 +1,5 @@
+import { Empty } from '@beauty/design';
+
 import type { RunEvent } from '@/lib/runs-api';
 
 const TOOL_EVENT = 'run.tool.called.v1';
@@ -12,7 +14,7 @@ function toolLine(event: RunEvent): string | null {
 
 export function RunEvents({ events }: { events: readonly RunEvent[] }) {
   if (events.length === 0) {
-    return <p className="text-sm text-muted-foreground">暂无事件。</p>;
+    return <Empty description="暂无事件。" />;
   }
 
   return (

@@ -33,18 +33,24 @@ import { Button } from '@beauty/design';
 
 ## 尺寸
 
-三档尺寸,与同尺寸的 Input 保持一致高度:
+三档尺寸,与同尺寸的 Input 保持一致高度;`icon` 是等宽等高的方形尺寸,用于纯图标按钮:
 
 <div className="bd-demo">
   <Button size="sm">小型</Button>
   <Button size="md">默认</Button>
   <Button size="lg">大型</Button>
+  <Button size="icon" aria-label="切换主题">
+    ☾
+  </Button>
 </div>
 
 ```tsx
 <Button size="sm">小型</Button>
 <Button size="md">默认</Button>
 <Button size="lg">大型</Button>
+<Button size="icon" aria-label="切换主题">
+  ☾
+</Button>
 ```
 
 ## 加载与禁用
@@ -73,6 +79,28 @@ import { Button } from '@beauty/design';
 <Button block>提交</Button>
 ```
 
+## 渲染为链接
+
+"看起来是按钮、语义上是链接"的场景(路由跳转、外链)用 `asChild`:样式与交互挂到唯一子元素上,
+由子元素自己决定渲染成 `a` / 路由 `Link`:
+
+```tsx
+import { Link } from 'react-router';
+import { Button } from '@beauty/design';
+
+<Button asChild>
+  <Link to="/runs">去控制台</Link>
+</Button>
+
+<Button asChild variant="outline">
+  <a href="https://example.com" target="_blank" rel="noreferrer">
+    外部文档
+  </a>
+</Button>
+```
+
+`disabled` / `loading` 在链接上没有原生对应物,组件会改为 `aria-disabled` 并拦截默认跳转。
+
 ## API
 
 ### ButtonProps
@@ -82,7 +110,8 @@ import { Button } from '@beauty/design';
 | 属性    | 说明                          | 类型                                                           | 默认值      |
 | ------- | ----------------------------- | -------------------------------------------------------------- | ----------- |
 | variant | 视觉类型,决定强调程度         | `'primary' \| 'secondary' \| 'outline' \| 'ghost' \| 'danger'` | `'primary'` |
-| size    | 尺寸                          | `'sm' \| 'md' \| 'lg'`                                         | `'md'`      |
+| size    | 尺寸(icon 为方形图标按钮)     | `'sm' \| 'md' \| 'lg' \| 'icon'`                               | `'md'`      |
 | block   | 撑满父容器宽度                | `boolean`                                                      | `false`     |
 | loading | 加载态:禁用交互并展示旋转指示 | `boolean`                                                      | `false`     |
+| asChild | 样式与交互挂到唯一子元素上    | `boolean`                                                      | `false`     |
 | type    | 原生按钮类型                  | `'button' \| 'submit' \| 'reset'`                              | `'button'`  |

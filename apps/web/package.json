@@ -12,9 +12,7 @@
   "dependencies": {
     "@beauty/design": "*",
     "@logto/browser": "^3.1.0",
-    "@radix-ui/react-slot": "^1.3.3",
     "@tanstack/react-query": "^5.103.2",
-    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.47.0",
     "react": "^19.3.0",
