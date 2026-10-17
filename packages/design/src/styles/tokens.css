@@ -10,35 +10,53 @@
  * - 亮色令牌定义在 :root,暗色通过 .dark class 显式启用(与 shadcn 约定一致,应用级切换)。
  * - 覆盖方式:在使用方 CSS 里重新定义 --bd-* 即可——挂 :root 做全局品牌定制,
  *   挂任意容器做局部换肤。覆盖点就是这一层,不需要碰组件。
+ *
+ * 配色路线:Vercel / Geist 风格的**单色灰阶**。
+ * - 主色不是彩色,而是"墨":亮色下近黑 #171717,暗色下近白 #ededed——
+ *   primary 按钮因此是黑底白字 / 白底黑字,与 Vercel 的按钮一致;
+ * - 底色只有纯白 / 纯黑与相邻的两三档灰(#fafafa / #f5f5f5 / #1a1a1a / #242424),
+ *   不再带任何暖色偏色,界面靠层次与边框而非色相区分;
+ * - 焦点环是唯一固定彩色(Geist 蓝 #0070f3),保证黑底按钮上的焦点可见;
+ * - 语义色(成功/警告/信息/危险)只在 Tag、校验态等小面积出现,避免彩色喧宾夺主;
+ *   取值均按"同色 10% 底 + 该色文字"的 Tag 用法校验过对比度(≥4.5:1)。
+ *
+ * 边框取值是有意为之的取舍:Vercel 的分隔线就是这种极轻的灰(#eaeaea / #262626),
+ * 它不满足 WCAG 1.4.11 对"控件边界 3:1"的严格解读。表单控件的可识别性由标签与
+ * 占位文字承担;若项目需要更硬的边界,覆盖 --bd-input(如亮色 #d4d4d4)即可。
+ *
+ * 说明:品牌月相色(logo 与字标里的月面)不走 --bd-*,由使用方用 --logo-moon 单独定义,
+ * 属于品牌资产而非主题色,换主题不影响它。
  */
 
 :root {
   color-scheme: light;
 
   --bd-radius: 0.75rem;
-  --bd-background: oklch(0.984 0.007 25);
-  --bd-foreground: oklch(0.25 0.035 350);
-  --bd-card: oklch(0.995 0.004 25);
-  --bd-card-foreground: oklch(0.25 0.035 350);
-  --bd-popover: oklch(0.995 0.004 25);
-  --bd-popover-foreground: oklch(0.25 0.035 350);
-  --bd-primary: oklch(0.55 0.115 10);
-  --bd-primary-foreground: oklch(0.985 0.006 25);
-  --bd-secondary: oklch(0.94 0.015 340);
-  --bd-secondary-foreground: oklch(0.35 0.04 350);
-  --bd-muted: oklch(0.955 0.01 340);
-  --bd-muted-foreground: oklch(0.5 0.025 350);
-  --bd-accent: oklch(0.93 0.018 300);
-  --bd-accent-foreground: oklch(0.32 0.04 340);
-  --bd-destructive: oklch(0.577 0.245 27.325);
-  --bd-border: oklch(0.905 0.012 345);
-  --bd-input: oklch(0.905 0.012 345);
-  --bd-ring: oklch(0.55 0.115 10);
+  --bd-background: #ffffff;
+  --bd-foreground: #171717;
+  --bd-card: #ffffff;
+  --bd-card-foreground: #171717;
+  --bd-popover: #ffffff;
+  --bd-popover-foreground: #171717;
+  --bd-primary: #171717;
+  --bd-primary-foreground: #ffffff;
+  --bd-secondary: #fafafa;
+  --bd-secondary-foreground: #171717;
+  --bd-muted: #fafafa;
+  --bd-muted-foreground: #666666;
+  --bd-accent: #f5f5f5;
+  --bd-accent-foreground: #171717;
+  --bd-destructive: #c81e1e;
+  --bd-destructive-foreground: #ffffff;
+  --bd-border: #eaeaea;
+  --bd-input: #eaeaea;
+  --bd-ring: #0070f3;
 
-  /* 扩展语义色:成功 / 警告 / 信息(Tag 等组件消费) */
-  --bd-success: #2e7d54;
-  --bd-warning: #9a6a1c;
-  --bd-info: #38678f;
+  /* 扩展语义色:成功 / 警告 / 信息(Tag 等组件消费)。
+     取值按"同色 10% 底 + 该色文字"的 Tag 用法校验过对比度,均 ≥4.5:1。 */
+  --bd-success: #0b7350;
+  --bd-warning: #955d0a;
+  --bd-info: #0060d1;
 
   --bd-font-sans:
     ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'HarmonyOS Sans SC',
@@ -48,26 +66,27 @@
 .dark {
   color-scheme: dark;
 
-  --bd-background: oklch(0.17 0.022 300);
-  --bd-foreground: oklch(0.93 0.01 310);
-  --bd-card: oklch(0.21 0.024 300);
-  --bd-card-foreground: oklch(0.93 0.01 310);
-  --bd-popover: oklch(0.21 0.024 300);
-  --bd-popover-foreground: oklch(0.93 0.01 310);
-  --bd-primary: oklch(0.7 0.115 10);
-  --bd-primary-foreground: oklch(0.18 0.03 350);
-  --bd-secondary: oklch(0.27 0.025 300);
-  --bd-secondary-foreground: oklch(0.88 0.012 310);
-  --bd-muted: oklch(0.25 0.025 300);
-  --bd-muted-foreground: oklch(0.68 0.02 310);
-  --bd-accent: oklch(0.28 0.03 300);
-  --bd-accent-foreground: oklch(0.9 0.012 310);
-  --bd-destructive: oklch(0.704 0.191 22.216);
-  --bd-border: oklch(1 0 0 / 12%);
-  --bd-input: oklch(1 0 0 / 16%);
-  --bd-ring: oklch(0.7 0.115 10);
+  --bd-background: #000000;
+  --bd-foreground: #ededed;
+  --bd-card: #0a0a0a;
+  --bd-card-foreground: #ededed;
+  --bd-popover: #0a0a0a;
+  --bd-popover-foreground: #ededed;
+  --bd-primary: #ededed;
+  --bd-primary-foreground: #0a0a0a;
+  --bd-secondary: #1a1a1a;
+  --bd-secondary-foreground: #ededed;
+  --bd-muted: #1a1a1a;
+  --bd-muted-foreground: #a1a1a1;
+  --bd-accent: #242424;
+  --bd-accent-foreground: #ededed;
+  --bd-destructive: #ef4444;
+  --bd-destructive-foreground: #0a0a0a;
+  --bd-border: #262626;
+  --bd-input: #2e2e2e;
+  --bd-ring: #3291ff;
 
-  --bd-success: #5dbd8c;
-  --bd-warning: #d9a256;
-  --bd-info: #74a8d4;
+  --bd-success: #3ecf8e;
+  --bd-warning: #f5a623;
+  --bd-info: #3291ff;
 }

@@ -82,7 +82,8 @@
   --bd-button-ring: color-mix(in oklab, var(--bd-destructive) 25%, transparent);
   --bd-button-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   background-color: var(--bd-destructive);
-  color: #fff;
+  /* 危险色在暗色主题偏亮,前景不能用固定白:交由 --bd-destructive-foreground 适配 */
+  color: var(--bd-destructive-foreground);
 }
 
 .bd-button--danger:focus-visible {
