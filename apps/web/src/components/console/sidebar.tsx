@@ -24,6 +24,7 @@ import {
   Inbox,
   LayoutGrid,
   MoreHorizontal,
+  PanelLeftClose,
   Pencil,
   Plus,
   Search,
@@ -49,6 +50,7 @@ import {
 } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
+import { useUiStore } from '@/stores/ui-store';
 import { cn } from '@/lib/utils';
 
 const PRIMARY_NAV = [
@@ -72,6 +74,7 @@ export function ConsoleSidebar() {
   const selectedConversation = searchParams.get('conversation');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const setSidebarVisible = useUiStore((state) => state.setSidebarVisible);
 
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -181,9 +184,20 @@ export function ConsoleSidebar() {
         <Link to="/" aria-label="beauty moon 工作台">
           <BrandLockup size={28} />
         </Link>
-        <span className="inline-flex h-5 items-center rounded-[4px] border border-ha-border-strong bg-ha-panel-2 px-1.5 font-mono text-[10px] font-medium text-ha-muted">
-          PROD
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-flex h-5 items-center rounded-[4px] border border-ha-border-strong bg-ha-panel-2 px-1.5 font-mono text-[10px] font-medium text-ha-muted">
+            PROD
+          </span>
+          <button
+            type="button"
+            aria-label="隐藏侧边栏"
+            title="隐藏侧边栏"
+            onClick={() => setSidebarVisible(false)}
+            className="grid h-6 w-6 place-items-center rounded text-ha-faint hover:bg-ha-panel-2 hover:text-ha-text-2"
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       <Link

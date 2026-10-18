@@ -5,7 +5,7 @@
  * 平台统一走 llm-gateway 路由,前端没有逐会话换模型的接口,不伪造下拉能力。
  */
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Cpu, Share2 } from 'lucide-react';
+import { ChevronRight, Cpu, PanelLeft, Share2 } from 'lucide-react';
 import { useState } from 'react';
 import { siteUrl } from '@/lib/site-links';
 
@@ -13,6 +13,7 @@ import { consoleButtonClass } from '@/components/console/button-class';
 import { Avatar, RunStatusPill } from '@/components/console/ui';
 import { accountLabel } from '@/lib/auth';
 import { insightsApi } from '@/lib/insights-api';
+import { useUiStore } from '@/stores/ui-store';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +34,8 @@ export function ConsoleTopbar({
     retry: false,
     staleTime: 60_000,
   });
+  const sidebarVisible = useUiStore((state) => state.sidebarVisible);
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const [copied, setCopied] = useState(false);
 
   const share = async () => {
@@ -72,6 +75,18 @@ export function ConsoleTopbar({
       </nav>
 
       <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          aria-label={sidebarVisible ? '隐藏侧边栏' : '显示侧边栏'}
+          title={sidebarVisible ? '隐藏侧边栏' : '显示侧边栏'}
+          onClick={toggleSidebar}
+          className={cn(
+            consoleButtonClass({ variant: 'secondary', size: 'md' }),
+            'hidden h-[30px] w-[30px] px-0 lg:inline-flex',
+          )}
+        >
+          <PanelLeft aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
         <span
           className="hidden h-[30px] max-w-[260px] items-center gap-1.5 rounded-md border border-ha-border-strong bg-ha-panel-2 px-2.5 font-mono text-[12px] text-ha-text-2 sm:inline-flex"
           title={

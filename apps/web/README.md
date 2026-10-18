@@ -10,6 +10,7 @@ monorepo 的 `apps/web` 目录下，由 npm workspaces 管理、Nx 识别。
 | 框架 | React 19 + TypeScript                                                 |
 | 路由 | react-router v8（`BrowserRouter` + 嵌套路由）                         |
 | 数据 | @tanstack/react-query（服务端状态）                                   |
+| 状态 | zustand（客户端 UI/看板状态，侧栏偏好持久化）                          |
 | 样式 | Tailwind CSS v4（`@tailwindcss/vite` 插件，CSS 变量主题）             |
 | 组件 | `@beauty/design`（monorepo 内组件库，源码直连 `packages/design/src`） |
 | 测试 | Vitest + Testing Library（jsdom 环境，`vitest.config.mts`）           |
@@ -37,6 +38,7 @@ apps/web/
 └── src/
     ├── main.tsx                # 入口：QueryClientProvider + BrowserRouter
     ├── app.tsx                 # 路由表（SiteLayout 嵌套布局）
+    ├── stores/                 # zustand：UI 偏好、任务看板选中/筛选
     ├── index.css               # Tailwind v4 主题：色板 / 字体 / 满月光盘样式
     ├── vitest.setup.ts         # 测试 setup：jest-dom 匹配器 + cleanup
     ├── components/

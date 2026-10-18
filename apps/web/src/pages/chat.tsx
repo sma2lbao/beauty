@@ -64,7 +64,9 @@ export function ChatPage() {
   const [draft, setDraft] = useState('');
   const [sendMode, setSendMode] = useState<SendMode>('auto');
   const skillParam = searchParams.get('skill');
-  const [selectedSkill, setSelectedSkill] = useState(skillParam ?? '');
+  const [skillOverride, setSkillOverride] = useState<string | null>(null);
+  // URL 里的 skill 是默认值;用户手动切换后以本地选择为准(不做 effect 同步)
+  const selectedSkill = skillOverride ?? skillParam ?? '';
   // 会话选择以 URL 为唯一来源:侧边栏/新建任务都改地址栏,组件不再另存一份
   const activeConversationId = newFlag ? null : conversationParam;
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
@@ -347,10 +349,6 @@ export function ChatPage() {
     toolCalls.length,
     visiblePending?.reply.length,
   ]);
-
-  useEffect(() => {
-    if (skillParam) setSelectedSkill(skillParam);
-  }, [skillParam]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -817,7 +815,7 @@ export function ChatPage() {
                     id="send-skill"
                     aria-label="选择技能"
                     value={selectedSkill}
-                    onChange={(event) => setSelectedSkill(event.target.value)}
+                    onChange={(event) => setSkillOverride(event.target.value)}
                     className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
                   >
                     <option value="">不使用技能</option>

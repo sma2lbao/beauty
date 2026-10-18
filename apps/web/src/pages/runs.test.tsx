@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Run } from '@/lib/runs-api';
 import { ApiError, runsApi, streamRunEvents } from '@/lib/runs-api';
+import { resetRunBoard } from '@/stores/run-board-store';
 
 import { RunsPage } from './runs';
 
@@ -65,11 +66,14 @@ function renderPage() {
 }
 
 async function selectRun(title: string) {
-  fireEvent.click(await screen.findByRole('button', { name: new RegExp(title) }));
+  fireEvent.click(
+    await screen.findByRole('button', { name: new RegExp(title) }),
+  );
 }
 
 describe('RunsPage', () => {
   beforeEach(() => {
+    resetRunBoard();
     vi.mocked(streamRunEvents).mockImplementation(
       () => new Promise<void>(() => {}), // 事件流挂起:测试不依赖 SSE
     );
@@ -99,9 +103,7 @@ describe('RunsPage', () => {
     );
     renderPage();
 
-    expect(
-      await screen.findByText(/未登录或令牌已失效/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/未登录或令牌已失效/)).toBeInTheDocument();
   });
 
   it('创建 run 时把验收标准按行解析', async () => {
@@ -136,7 +138,9 @@ describe('RunsPage', () => {
       status: 'awaiting_approval',
       plan_markdown: '# 执行计划\n- [ ] 覆盖 5 个工作日',
     });
-    vi.mocked(runsApi.approve).mockResolvedValue(makeRun({ status: 'running' }));
+    vi.mocked(runsApi.approve).mockResolvedValue(
+      makeRun({ status: 'running' }),
+    );
     renderPage();
 
     await selectRun('整理本周邮件成周报');
@@ -156,7 +160,9 @@ describe('RunsPage', () => {
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_confirmation' }),
     );
-    vi.mocked(runsApi.confirm).mockResolvedValue(makeRun({ status: 'running' }));
+    vi.mocked(runsApi.confirm).mockResolvedValue(
+      makeRun({ status: 'running' }),
+    );
     renderPage();
 
     await selectRun('整理本周邮件成周报');
@@ -171,7 +177,9 @@ describe('RunsPage', () => {
   });
 
   it('已完成 run:按需取交付物并展示正文', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([makeRun({ status: 'completed' })]);
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ status: 'completed' }),
+    ]);
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     vi.mocked(runsApi.artifact).mockResolvedValue({
       id: 'a1',
@@ -251,12 +259,12 @@ describe('RunsPage', () => {
     renderPage();
 
     await selectRun('整理本周邮件成周报');
-    expect(await screen.findByText(/失败原因:RuntimeError: 模型挂了/)).toBeTruthy();
+    expect(
+      await screen.findByText(/失败原因:RuntimeError: 模型挂了/),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '重试(另起一跑)' }));
-    await waitFor(() =>
-      expect(runsApi.retry).toHaveBeenCalledWith('run-1'),
-    );
+    await waitFor(() => expect(runsApi.retry).toHaveBeenCalledWith('run-1'));
     // 成功后切到新 run,并显示血缘
     expect(await screen.findByText(/由 run run-1… 重试而来/)).toBeTruthy();
   });
@@ -296,7 +304,10 @@ describe('RunsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '提交指令' }));
 
     await waitFor(() =>
-      expect(runsApi.queueInstruction).toHaveBeenCalledWith('run-1', '也看看日历'),
+      expect(runsApi.queueInstruction).toHaveBeenCalledWith(
+        'run-1',
+        '也看看日历',
+      ),
     );
     expect(await screen.findByText('待消费')).toBeInTheDocument();
   });

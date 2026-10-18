@@ -25,11 +25,10 @@ import {
 } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
+import { type RunFilterKey, useRunBoardStore } from '@/stores/run-board-store';
 import { cn } from '@/lib/utils';
 
-type FilterKey = 'all' | 'active' | 'review';
-
-const FILTERS: { key: FilterKey; label: string }[] = [
+const FILTERS: { key: RunFilterKey; label: string }[] = [
   { key: 'all', label: '全部任务' },
   { key: 'active', label: '进行中' },
   { key: 'review', label: '待审核' },
@@ -44,9 +43,11 @@ const FILTERS: { key: FilterKey; label: string }[] = [
  */
 export function RunsPage() {
   const queryClient = useQueryClient();
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const selectedRunId = useRunBoardStore((state) => state.selectedRunId);
+  const setSelectedRunId = useRunBoardStore((state) => state.setSelectedRun);
+  const filter = useRunBoardStore((state) => state.filter);
+  const setFilter = useRunBoardStore((state) => state.setFilter);
   const [createOpen, setCreateOpen] = useState(false);
-  const [filter, setFilter] = useState<FilterKey>('all');
   const [filterOpen, setFilterOpen] = useState(false);
   const [title, setTitle] = useState('整理本周邮件成周报');
   const [goal, setGoal] = useState('汇总本周邮件,生成周报草稿');
@@ -182,7 +183,10 @@ export function RunsPage() {
                 <button
                   type="button"
                   onClick={() => setCreateOpen(true)}
-                  className={consoleButtonClass({ variant: 'primary', size: 'md' })}
+                  className={consoleButtonClass({
+                    variant: 'primary',
+                    size: 'md',
+                  })}
                 >
                   <Plus className="h-3.5 w-3.5" />
                   新建任务

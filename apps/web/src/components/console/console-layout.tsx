@@ -12,6 +12,7 @@ import {
   Columns3,
   GitCompareArrows,
   LayoutGrid,
+  PanelLeft,
   Settings,
   Sparkles,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ import { Link, Outlet } from 'react-router';
 import { BrandLockup } from '@/components/brand/logo';
 import { ConsoleNavLink } from '@/components/console/ui';
 import { ConsoleSidebar } from '@/components/console/sidebar';
+import { useUiStore } from '@/stores/ui-store';
 
 const MOBILE_NAV = [
   { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
@@ -33,9 +35,22 @@ const MOBILE_NAV = [
 ];
 
 export function ConsoleLayout() {
+  const sidebarVisible = useUiStore((state) => state.sidebarVisible);
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   return (
     <div className="flex h-svh overflow-hidden bg-ha-bg text-ha-text-body">
-      <ConsoleSidebar />
+      {!sidebarVisible ? (
+        <button
+          type="button"
+          aria-label="显示侧边栏"
+          title="显示侧边栏"
+          onClick={toggleSidebar}
+          className="fixed left-3 top-3 z-40 hidden h-7 w-7 place-items-center rounded-md border border-ha-border-strong bg-ha-panel-2 text-ha-muted hover:text-ha-text lg:grid"
+        >
+          <PanelLeft className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+      {sidebarVisible ? <ConsoleSidebar /> : null}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-ha-border bg-ha-sidebar px-3 lg:hidden">
           <Link to="/" aria-label="beauty moon 工作台" className="mr-1">
