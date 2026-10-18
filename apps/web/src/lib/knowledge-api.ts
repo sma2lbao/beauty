@@ -8,11 +8,13 @@
  *   与运行控制台共用同一套。
  */
 
+import { authMode } from '@/lib/auth';
 import { requestJson } from '@/lib/http';
 
-const BASE = (import.meta.env.VITE_KNOWLEDGE_API_URL as string | undefined) ?? '';
+const BASE =
+  (import.meta.env.VITE_KNOWLEDGE_API_URL as string | undefined) ?? '';
 
-const PREFIX = '/knowledge-api';
+const PREFIX = authMode() === 'session' ? '/api/knowledge' : '/knowledge-api';
 
 export type KnowledgeDocument = {
   id: string;
@@ -52,7 +54,9 @@ export const knowledgeApi = {
       body: JSON.stringify(body),
     }),
   remove: (documentId: string) =>
-    request<void>(`/v1/knowledge/documents/${documentId}`, { method: 'DELETE' }),
+    request<void>(`/v1/knowledge/documents/${documentId}`, {
+      method: 'DELETE',
+    }),
   search: (query: string, limit = 5) =>
     request<SearchResult>('/v1/knowledge/search', {
       method: 'POST',

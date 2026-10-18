@@ -9,7 +9,13 @@
 from database.repository import Repository, TenantRepository
 from sqlalchemy import select
 
-from account.models.account import Organization, RefreshToken, Session, User
+from account.models.account import (
+    OAuthIdentity,
+    Organization,
+    RefreshToken,
+    Session,
+    User,
+)
 
 
 class OrganizationRepository(Repository[Organization]):
@@ -40,6 +46,24 @@ class SessionRepository(TenantRepository[Session]):
     not_found_code = "account.session_not_found"
     not_found_message = "会话不存在"
     id_detail_key = "session_id"
+
+
+class OAuthIdentityRepository(TenantRepository[OAuthIdentity]):
+    model = OAuthIdentity
+    not_found_code = "account.oauth_identity_not_found"
+    not_found_message = "社交登录身份不存在"
+    id_detail_key = "oauth_identity_id"
+
+    async def find_by_provider_subject(
+        self, provider: str, subject: str
+    ) -> OAuthIdentity | None:
+        """登录入口无租户上下文:provider + subject 是外部身份的唯一键。"""
+        return await self.session.scalar(
+            select(OAuthIdentity).where(
+                OAuthIdentity.provider == provider,
+                OAuthIdentity.subject == subject,
+            )
+        )
 
 
 class RefreshTokenRepository(TenantRepository[RefreshToken]):

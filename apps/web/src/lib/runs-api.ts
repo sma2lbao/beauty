@@ -183,6 +183,7 @@ export async function streamRunEvents(
     headers['Last-Event-ID'] = String(handlers.lastEventId);
   }
   const response = await fetch(`${BASE}/api/v1/runs/${runId}/events/stream`, {
+    credentials: 'include',
     headers,
     signal: handlers.signal,
   });

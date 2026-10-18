@@ -23,7 +23,7 @@ vi.mock('@logto/browser', () => ({
 
 /** 按指定模式重新加载鉴权模块(模式是模块加载期读取的)。 */
 async function loadAuth(
-  mode: 'token' | 'logto',
+  mode: 'token' | 'logto' | 'session',
   extra: Record<string, string> = {},
 ) {
   vi.resetModules();
@@ -132,11 +132,15 @@ describe('refreshAccessToken(token 模式)', () => {
   it('刷新成功:存新令牌对,返回 true', async () => {
     const auth = await loadAuth('token');
     auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
-    const fetchSpy = vi.fn(async () =>
-      new Response(
-        JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' }),
-        { status: 200 },
-      ),
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            access_token: 'new-access',
+            refresh_token: 'new-refresh',
+          }),
+          { status: 200 },
+        ),
     );
     vi.stubGlobal('fetch', fetchSpy);
 
@@ -171,7 +175,10 @@ describe('refreshAccessToken(token 模式)', () => {
   it('网络错误:令牌保留,返回 false(下次再试)', async () => {
     const auth = await loadAuth('token');
     auth.setStoredTokens('old-access', 'old-refresh', 'a@b.c');
-    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Promise.reject(new Error('offline'))),
+    );
 
     expect(await auth.refreshAccessToken()).toBe(false);
     expect(auth.getStoredToken()).toBe('old-access');
@@ -184,7 +191,10 @@ describe('refreshAccessToken(token 模式)', () => {
     const fetchSpy = vi.fn(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       return new Response(
-        JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' }),
+        JSON.stringify({
+          access_token: 'new-access',
+          refresh_token: 'new-refresh',
+        }),
         { status: 200 },
       );
     });
@@ -218,5 +228,57 @@ describe('登录来路记忆', () => {
     auth.rememberLoginRedirect('//evil.example');
     expect(auth.takeLoginRedirect()).toBe('/');
     expect(auth.takeLoginRedirect()).toBe('/');
+  });
+});
+
+describe('session 模式(BFF Cookie)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    document.cookie = 'bm_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+  });
+
+  it('accessToken 走 session 探针,请求头带 CSRF', async () => {
+    document.cookie = 'bm_csrf=csrf-1; path=/';
+    const auth = await loadAuth('session');
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ authenticated: true }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await auth.accessToken()).toBe('session');
+    expect(await auth.authHeaders()).toEqual({ 'X-CSRF-Token': 'csrf-1' });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auth/session',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
+  it('sessionLogin 提交到 BFF 且不保存本地令牌', async () => {
+    const auth = await loadAuth('session');
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ authenticated: true }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await auth.sessionLogin('a@b.c', 'password123');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auth/login',
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
+    );
+    expect(auth.getStoredToken()).toBeNull();
+  });
+
+  it('refresh 走 /api/auth/refresh,失败返回 false', async () => {
+    const auth = await loadAuth('session');
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await auth.refreshAccessToken()).toBe(true);
+
+    fetchSpy.mockResolvedValue(new Response(null, { status: 401 }));
+    expect(await auth.refreshAccessToken()).toBe(false);
   });
 });

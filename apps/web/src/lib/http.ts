@@ -45,6 +45,7 @@ export async function requestJson<T>(
   const send = async () =>
     fetch(`${base}${path}`, {
       ...init,
+      credentials: 'include',
       headers: { ...(await jsonHeaders()), ...init?.headers },
     });
   let response = await send();
@@ -56,7 +57,10 @@ export async function requestJson<T>(
     let code = 'request_failed';
     let message = `请求失败(${response.status})`;
     try {
-      const body = (await response.json()) as { code?: string; message?: string };
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string;
+      };
       code = body.code ?? code;
       message = body.message ?? message;
     } catch {

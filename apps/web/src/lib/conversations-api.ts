@@ -84,8 +84,12 @@ export const conversationsApi = {
    * 兼容滚动升级:旧版后端返回 Conversation[](没有 items/next_cursor),
    * 这里统一归一化,避免前后端短暂版本错配时整个侧边栏崩溃。
    */
-  page: async (params: ConversationListParams = {}): Promise<ConversationPage> => {
-    const data = await request<ConversationPage | Conversation[]>(listPath(params));
+  page: async (
+    params: ConversationListParams = {},
+  ): Promise<ConversationPage> => {
+    const data = await request<ConversationPage | Conversation[]>(
+      listPath(params),
+    );
     return Array.isArray(data) ? { items: data, next_cursor: null } : data;
   },
   /** 兼容旧调用:只取当前页 items */
@@ -184,6 +188,7 @@ export async function streamMessage(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
     {
       method: 'POST',
+      credentials: 'include',
       headers: { ...(await jsonHeaders()), Accept: 'text/event-stream' },
       body: JSON.stringify({ content, mode }),
       signal: handlers.signal,

@@ -16,12 +16,17 @@
 
 import LogtoClient from '@logto/browser';
 
-export type AuthMode = 'token' | 'logto';
+export type AuthMode = 'token' | 'logto' | 'session';
 
-const MODE = (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? 'token';
-const LOGTO_ENDPOINT = import.meta.env.VITE_LOGTO_ENDPOINT as string | undefined;
+const MODE =
+  (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? 'token';
+const LOGTO_ENDPOINT = import.meta.env.VITE_LOGTO_ENDPOINT as
+  | string
+  | undefined;
 const LOGTO_APP_ID = import.meta.env.VITE_LOGTO_APP_ID as string | undefined;
-const LOGTO_RESOURCE = import.meta.env.VITE_LOGTO_RESOURCE as string | undefined;
+const LOGTO_RESOURCE = import.meta.env.VITE_LOGTO_RESOURCE as
+  | string
+  | undefined;
 const ACCOUNT_BASE =
   (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
 const TOKEN_KEY = 'beauty.auth.access_token';
@@ -30,6 +35,77 @@ const LABEL_KEY = 'beauty.auth.account_label';
 
 export function authMode(): AuthMode {
   return MODE;
+}
+
+/** session 模式:token 只在 httpOnly Cookie,BFF 同源 /api/auth/*。 */
+function isSession(): boolean {
+  return MODE === 'session';
+}
+
+function cookieValue(name: string): string | null {
+  const match = document.cookie
+    .split('; ')
+    .find((item) => item.startsWith(name + '='));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const token = cookieValue('bm_csrf');
+  return token ? { 'X-CSRF-Token': token } : {};
+}
+
+async function sessionFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetch(path, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...csrfHeaders(),
+      ...init.headers,
+    },
+  });
+}
+
+async function sessionResult(response: Response): Promise<void> {
+  if (response.ok) return;
+  let message = '登录失败';
+  try {
+    const body = (await response.json()) as { message?: string };
+    message = body.message ?? message;
+  } catch {
+    // 非 JSON 错误体保留兜底文案
+  }
+  throw new Error(message);
+}
+
+export async function sessionLogin(
+  email: string,
+  password: string,
+): Promise<void> {
+  const response = await sessionFetch('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  await sessionResult(response);
+}
+
+export async function sessionRegister(input: {
+  email: string;
+  password: string;
+  display_name?: string;
+}): Promise<void> {
+  const response = await sessionFetch('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  await sessionResult(response);
+}
+
+export function oauthStartUrl(provider: 'google' | 'github'): string {
+  return '/api/auth/oauth/' + provider + '/start';
 }
 
 export function getStoredToken(): string | null {
@@ -95,6 +171,9 @@ async function logto(): Promise<LogtoClient> {
 
 /** 当前 access token;拿不到返回 null(由调用方决定是否带 Authorization)。 */
 export async function accessToken(): Promise<string | null> {
+  if (MODE === 'session') {
+    return (await sessionAuthenticated()) ? 'session' : null;
+  }
   if (MODE === 'token') {
     return getStoredToken();
   }
@@ -123,16 +202,29 @@ export function refreshAccessToken(): Promise<boolean> {
 }
 
 async function doRefresh(): Promise<boolean> {
+  if (isSession()) {
+    try {
+      const response = await sessionFetch('/api/auth/refresh', {
+        method: 'POST',
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
   const token = getStoredRefreshToken();
   if (!token) {
     return false;
   }
   try {
-    const response = await fetch(`${ACCOUNT_BASE}/account-api/v1/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: token }),
-    });
+    const response = await fetch(
+      `${ACCOUNT_BASE}/account-api/v1/auth/refresh`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: token }),
+      },
+    );
     if (!response.ok) {
       // 401 = 过期/被吊销/重用检测:后端已切断,前端同步清空
       clearStoredTokens();
@@ -155,6 +247,9 @@ async function doRefresh(): Promise<boolean> {
  * 未登录的访问由守卫拦在页面之外,这里不做兜底。
  */
 export async function authHeaders(): Promise<Record<string, string>> {
+  if (isSession()) {
+    return csrfHeaders();
+  }
   const token = await accessToken();
   if (token) {
     return { Authorization: `Bearer ${token}` };
@@ -190,6 +285,14 @@ export async function handleSignInCallback(href: string): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+  if (MODE === 'session') {
+    try {
+      await sessionFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // 网络失败不阻塞本地跳转
+    }
+    return;
+  }
   if (MODE === 'logto') {
     await (await logto()).signOut(window.location.origin);
     return;
@@ -209,7 +312,28 @@ export async function signOut(): Promise<void> {
 }
 
 /** 已登录账号展示名;未登录返回 null。 */
+export async function sessionAuthenticated(): Promise<boolean> {
+  try {
+    const response = await sessionFetch('/api/auth/session');
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function accountLabel(): Promise<string | null> {
+  if (MODE === 'session') {
+    try {
+      const response = await sessionFetch('/api/auth/session');
+      if (!response.ok) return null;
+      const body = (await response.json()) as {
+        user?: { display_name?: string | null; email?: string };
+      };
+      return body.user?.display_name ?? body.user?.email ?? '已登录';
+    } catch {
+      return null;
+    }
+  }
   if (MODE === 'token') {
     if (!getStoredToken()) {
       return null;

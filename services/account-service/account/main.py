@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from account.api.health import health_router
 from account.api.v1 import auth as auth_api
+from account.api.v1 import oauth as oauth_api
 from account.api.v1 import oidc as oidc_api
 from account.api.v1.router import api_router
 from account.core.config import Settings
@@ -61,12 +62,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(
     settings: Settings | None = None,
     token_verifier: JwtVerifier | None = None,
+    oauth_transport=None,
 ) -> FastAPI:
-    """测试注入:token_verifier(假 JWKS)。"""
+    """测试注入:token_verifier(假 JWKS)、oauth_transport(假 OAuth HTTP)。"""
     app = FastAPI(title="account-service", version="0.1.0", lifespan=lifespan)
     settings = settings or Settings()
     app.state.settings = settings
     app.state.token_verifier = token_verifier
+    app.state.oauth_transport = oauth_transport
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -91,6 +94,7 @@ def create_app(
             ttl_seconds=settings.token_ttl_seconds,
         )
     app.include_router(auth_api.router, prefix="/v1")
+    app.include_router(oauth_api.router, prefix="/v1")
     app.include_router(oidc_api.router)
     return app
 

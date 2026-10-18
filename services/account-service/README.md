@@ -34,14 +34,14 @@
 
 ### 配置(前缀 `ACCOUNT__`)
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `TOKEN_TTL_SECONDS` | 3600 | access token 有效期 |
-| `REFRESH_TTL_SECONDS` | 2592000 | refresh token 有效期(30 天) |
-| `TOKEN_AUDIENCE` | beauty-api | JWT `aud`(与各服务 `AUTH_AUDIENCE` 一致) |
-| `SIGNING_KEY_PATH` | 空 | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test) |
-| `INTERNAL_SECRET` | 空 | `/v1/auth/issue` 的共享密钥,留空即关闭内部签发 |
-| `AUTH_ENABLED` | true | 校验 Bearer 并从 token claim 解析租户(自建 IdP 即本服务;显式关闭走旧临时头,仅特殊部署) |
+| 变量                  | 默认       | 说明                                                                                   |
+| --------------------- | ---------- | -------------------------------------------------------------------------------------- |
+| `TOKEN_TTL_SECONDS`   | 3600       | access token 有效期                                                                    |
+| `REFRESH_TTL_SECONDS` | 2592000    | refresh token 有效期(30 天)                                                            |
+| `TOKEN_AUDIENCE`      | beauty-api | JWT `aud`(与各服务 `AUTH_AUDIENCE` 一致)                                               |
+| `SIGNING_KEY_PATH`    | 空         | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test)          |
+| `INTERNAL_SECRET`     | 空         | `/v1/auth/issue` 的共享密钥,留空即关闭内部签发                                         |
+| `AUTH_ENABLED`        | true       | 校验 Bearer 并从 token claim 解析租户(自建 IdP 即本服务;显式关闭走旧临时头,仅特殊部署) |
 
 ## 迁移
 
@@ -53,3 +53,20 @@ refresh_tokens 表(哈希 + 过期/吊销时间,租户隔离)。
 
 命令(仓库根):`npx nx run account-service:serve`(:8001)/ `npx nx test account-service`
 迁移:`cd services/account-service && uv run alembic upgrade head`
+
+## 社交 OAuth(M0-05)
+
+BFF 调用本服务的两个端点,浏览器不直接拿 token:
+
+- `GET /v1/auth/oauth/{provider}/authorize?redirect_uri=...` → `{authorization_url,state}`
+- `POST /v1/auth/oauth/{provider}/exchange` `{code,state}` → 与登录相同的双令牌响应
+
+配置: `ACCOUNT__GOOGLE_CLIENT_ID/SECRET`、`ACCOUNT__GITHUB_CLIENT_ID/SECRET`、
+`ACCOUNT__OAUTH_STATE_SECRET`(留空回退 `ACCOUNT__INTERNAL_SECRET`)。
+
+OAuth 应用回调地址(本地):
+
+- Google: `http://localhost:5173/api/auth/oauth/google/callback`
+- GitHub: `http://localhost:5173/api/auth/oauth/github/callback`
+
+生产改成 `https://app.<domain>/api/auth/oauth/<provider>/callback`。

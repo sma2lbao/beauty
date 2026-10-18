@@ -6,11 +6,13 @@
  *   `/workspace-api` 代理到 :8005,见 vite.config.ts)。
  */
 
+import { authMode } from '@/lib/auth';
 import { requestJson } from '@/lib/http';
 
-const BASE = (import.meta.env.VITE_WORKSPACE_API_URL as string | undefined) ?? '';
+const BASE =
+  (import.meta.env.VITE_WORKSPACE_API_URL as string | undefined) ?? '';
 
-const PREFIX = '/workspace-api';
+const PREFIX = authMode() === 'session' ? '/api/workspace' : '/workspace-api';
 
 export type Workspace = {
   id: string;

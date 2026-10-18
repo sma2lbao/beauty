@@ -41,6 +41,18 @@ class User(UUIDMixin, TenantMixin, TimestampMixin, Base):
     password_hash: Mapped[str | None] = mapped_column(String(512))
 
 
+class OAuthIdentity(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """社交登录身份:provider + subject 全局唯一,关联到租户成员。"""
+
+    __tablename__ = "oauth_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject"),)
+
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    subject: Mapped[str] = mapped_column(String(191), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320))
+
+
 class Session(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """多端会话/设备(为 app 预留,§7):可登记、可吊销。"""
 

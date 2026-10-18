@@ -13,3 +13,13 @@ curl http://127.0.0.1:8007/api/health
 ```
 
 环境变量前缀 `BFF__`,见 `.env.example`。
+
+## 会话与同源 API(M0-05/06)
+
+- `/api/auth/*`:登录/注册/刷新/登出/session/OAuth start+callback;双令牌只进
+  加密 httpOnly Cookie,响应体不含 token;写请求要求 `X-CSRF-Token`。
+- `/api/v1/*` → orchestrator; `/api/account|workspace|knowledge/*` → 对应服务;
+  下游 401 自动刷新一次;SSE 流式转发;限流默认 120/min。
+- `GET /api/files/{artifactId}`:带会话的产物下载。
+- `POST /api/stream-token`:`{run_id}` → 短时 token + runtime SSE URL。
+- 开发兼容:没有 Cookie 时允许 `Authorization: Bearer` 直通(保留 token 模式联调)。

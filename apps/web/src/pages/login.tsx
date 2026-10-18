@@ -10,7 +10,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import { Button, Field, Input, Tabs } from '@beauty/design';
 
@@ -20,7 +20,10 @@ import { siteUrl } from '@/lib/site-links';
 import {
   accountLabel,
   authMode,
+  oauthStartUrl,
   rememberLoginRedirect,
+  sessionLogin,
+  sessionRegister,
   setStoredToken,
   setStoredTokens,
   signIn,
@@ -63,6 +66,8 @@ export function LoginPage() {
   const mode = authMode();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const oauthError = searchParams.get('oauth_error');
   const queryClient = useQueryClient();
   // 守卫带来的来路(站内路径,防开放重定向);没有来路回对话页
   const from = (location.state as { from?: { pathname?: string } } | null)?.from
@@ -101,7 +106,17 @@ export function LoginPage() {
 
   const submitPassword = () =>
     void attempt(async () => {
-      if (tab === 'login') {
+      if (mode === 'session') {
+        if (tab === 'login') {
+          await sessionLogin(email.trim(), password);
+        } else {
+          await sessionRegister({
+            email: email.trim(),
+            password,
+            display_name: displayName.trim() || undefined,
+          });
+        }
+      } else if (tab === 'login') {
         const result = await accountApi.login({
           email: email.trim(),
           password,
@@ -173,7 +188,7 @@ export function LoginPage() {
           <div className="p-6">
             <h1 className="text-[18px] font-semibold text-ha-text">登录</h1>
 
-            {mode === 'token' && account ? (
+            {(mode === 'token' || mode === 'session') && account ? (
               <SignedIn
                 account={account}
                 busy={busy}
@@ -182,7 +197,7 @@ export function LoginPage() {
               />
             ) : null}
 
-            {mode === 'token' && !account ? (
+            {(mode === 'token' || mode === 'session') && !account ? (
               <>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {tab === 'login'
@@ -250,36 +265,63 @@ export function LoginPage() {
                   </Button>
                 </form>
 
-                <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                  或
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                </div>
+                {mode === 'token' ? (
+                  <>
+                    <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+                      <span
+                        className="h-px flex-1 bg-border"
+                        aria-hidden="true"
+                      />
+                      或
+                      <span
+                        className="h-px flex-1 bg-border"
+                        aria-hidden="true"
+                      />
+                    </div>
 
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    loginWithToken();
-                  }}
-                >
-                  <Field label="access token" htmlFor="login-token">
-                    <Input
-                      id="login-token"
-                      type="password"
-                      placeholder="粘贴令牌(联调/运维用,不自动续期)"
-                      value={token}
-                      onChange={(event) => setToken(event.target.value)}
-                    />
-                  </Field>
-                  <Button
-                    type="submit"
-                    variant="outline"
-                    className="mt-3 w-full"
-                    disabled={busy || !token.trim()}
-                  >
-                    用令牌进入
-                  </Button>
-                </form>
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        loginWithToken();
+                      }}
+                    >
+                      <Field label="access token" htmlFor="login-token">
+                        <Input
+                          id="login-token"
+                          type="password"
+                          placeholder="粘贴令牌(联调/运维用,不自动续期)"
+                          value={token}
+                          onChange={(event) => setToken(event.target.value)}
+                        />
+                      </Field>
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        className="mt-3 w-full"
+                        disabled={busy || !token.trim()}
+                      >
+                        用令牌进入
+                      </Button>
+                    </form>
+                  </>
+                ) : null}
+
+                {mode === 'session' ? (
+                  <div className="mt-5 grid gap-2">
+                    <a
+                      href={oauthStartUrl('google')}
+                      className="inline-flex h-9 items-center justify-center rounded-md border border-ha-border-strong bg-ha-panel-2 text-[13px] font-medium text-ha-text-2 transition-colors hover:text-ha-text"
+                    >
+                      使用 Google 登录
+                    </a>
+                    <a
+                      href={oauthStartUrl('github')}
+                      className="inline-flex h-9 items-center justify-center rounded-md border border-ha-border-strong bg-ha-panel-2 text-[13px] font-medium text-ha-text-2 transition-colors hover:text-ha-text"
+                    >
+                      使用 GitHub 登录
+                    </a>
+                  </div>
+                ) : null}
               </>
             ) : null}
 
@@ -306,6 +348,12 @@ export function LoginPage() {
                   </Button>
                 </>
               )
+            ) : null}
+
+            {oauthError ? (
+              <p className="mt-4 text-sm text-destructive" role="alert">
+                社交登录未完成({oauthError})
+              </p>
             ) : null}
 
             {error ? (

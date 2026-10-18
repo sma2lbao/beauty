@@ -33,3 +33,10 @@ class Settings(BaseAppSettings):
     # 内部服务签发密钥(POST /v1/auth/issue 的 X-Internal-Secret):
     # 与服务间调用方(orchestrator)的 INTERNAL_AUTH_SECRET 一致;留空即关闭该端点
     internal_secret: str = ""
+    # 社交 OAuth(Google/GitHub);client id/secret 留空即该 provider 关闭
+    oauth_state_secret: str = ""  # 留空回退 internal_secret;两者都空则 OAuth 关闭
+    oauth_state_ttl_seconds: int = 600
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    github_client_id: str = ""
+    github_client_secret: str = ""

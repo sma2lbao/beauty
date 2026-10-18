@@ -23,7 +23,7 @@
 7. 文档更新：环境变量清单、部署手册、回滚手册、已知限制；
 8. **本地启动验证：六个服务 + web 健康检查通过（SQLite + LLM 桩/可选真实模型）。**
 
-**当前进度（2026-10-18）**：M0-01（静态 SPA + FastAPI BFF + Next.js 官网）、M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）已完成并通过测试；其余任务待排期。
+**当前进度（2026-10-18）**：M0-01（静态 SPA + FastAPI BFF + Next.js 官网）、M0-05（社交 OAuth + BFF Cookie 会话）、M0-06（BFF 代理/限流/下载/stream token）、M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）已完成并通过测试；其余任务待排期。
 
 **M0 本地启动基线（当前已可用）**
 
@@ -166,6 +166,8 @@
 
 ### M0-05 account-service 社交 OAuth + BFF Cookie 会话
 
+> ✅ 已完成（2026-10-18）：account-service 新增 Google/GitHub authorize/exchange（HMAC state + PKCE、`oauth_identities` 表与迁移、首次登录按 email 复用成员/新建组织）；BFF 提供 `/api/auth/*` 登录/注册/刷新/登出/session、加密 httpOnly Cookie、CSRF double-submit、OAuth start/callback；前端新增 `session` 模式与 OAuth 按钮。真实 provider 调用用 MockTransport 测试，未用外部凭据。
+
 **目标**：不用 Logto，沿用 account-service 作为 IdP 并补 Google/GitHub 登录；BFF 用 httpOnly Cookie 管会话。
 
 **范围**
@@ -192,6 +194,8 @@
 ---
 
 ### M0-06 BFF：代理、错误契约、限流、下载、stream token
+
+> ✅ 已完成（2026-10-18）：`/api/v1/*`→runtime、`/api/account|workspace|knowledge/*`→对应服务；下游 401 自动刷新并重试一次；进程内限流 429；`/api/files/{id}` 下载；`/api/stream-token` 短时 token；SSE 流式转发并保留 Last-Event-ID。开发 token 模式保留 Bearer 直通兜底。
 
 > 技术栈：随 M0-01 使用 **FastAPI（`services/bff`）**，不再使用 Vercel Functions/Node BFF。
 

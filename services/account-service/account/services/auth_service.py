@@ -29,8 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.core.config import Settings
 from account.core.idp import IdPSigner
-from account.models.account import RefreshToken, User
-from account.repositories import RefreshTokenRepository, UserRepository
+from account.core.oauth import OAuthProfile
+from account.models.account import OAuthIdentity, RefreshToken, User
+from account.repositories import (
+    OAuthIdentityRepository,
+    RefreshTokenRepository,
+    UserRepository,
+)
 from account.schemas.account import SessionCreate
 from account.schemas.auth import LoginRequest, RegisterRequest
 from account.services.account import (
@@ -196,6 +201,57 @@ async def refresh_tokens(
 
     record.revoked_at = now  # 旋转:旧令牌即刻作废
     return await _issue_tokens(session, settings, signer, user, device="refresh")
+
+
+async def oauth_login(
+    session: AsyncSession,
+    settings: Settings,
+    signer: IdPSigner,
+    profile: OAuthProfile,
+) -> AuthResult:
+    """社交登录:已有身份直接签发;首次登录按 email 复用成员或新建组织。"""
+    identities = OAuthIdentityRepository(session)
+    identity = await identities.find_by_provider_subject(
+        profile.provider, profile.subject
+    )
+    if identity is not None:
+        user = await UserRepository(session).require_for_tenant(
+            identity.tenant_id, identity.user_id
+        )
+        if user.status != "active":
+            raise UnauthorizedError("auth.user_disabled", "成员已停用")
+        return await _issue_tokens(
+            session, settings, signer, user, device=f"oauth-{profile.provider}"
+        )
+
+    users = UserRepository(session)
+    user = await users.find_active_by_email(profile.email)
+    if user is None:
+        tenant_id = secrets.token_hex(16)
+        await require_or_create_organization(session, tenant_id, settings.default_plan)
+        user = await users.add(
+            User(
+                tenant_id=tenant_id,
+                subject=profile.email,
+                email=profile.email,
+                display_name=profile.name,
+                role="owner",
+                status="active",
+                password_hash=None,
+            )
+        )
+    await identities.add(
+        OAuthIdentity(
+            tenant_id=user.tenant_id,
+            provider=profile.provider,
+            subject=profile.subject,
+            user_id=user.id,
+            email=profile.email,
+        )
+    )
+    return await _issue_tokens(
+        session, settings, signer, user, device=f"oauth-{profile.provider}"
+    )
 
 
 async def logout(session: AsyncSession, raw_refresh: str) -> None:

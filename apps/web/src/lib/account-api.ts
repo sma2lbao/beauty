@@ -6,11 +6,12 @@
  *   `/account-api` 代理到 :8001,见 vite.config.ts)。
  */
 
+import { authMode } from '@/lib/auth';
 import { requestJson } from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
 
-const PREFIX = '/account-api';
+const PREFIX = authMode() === 'session' ? '/api/account' : '/account-api';
 
 export type Role = 'owner' | 'member';
 export type MemberStatus = 'active' | 'disabled';
