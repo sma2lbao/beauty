@@ -8,7 +8,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from connector.api.deps import get_session, get_tenant_id, get_transport_factory
+from connector.api.deps import (
+    get_session,
+    get_settings,
+    get_tenant_id,
+    get_transport_factory,
+)
+from connector.core.config import Settings
 from connector.models.connections import Connection
 from connector.schemas.connections import (
     ConnectionCreate,
@@ -28,13 +34,19 @@ TenantId = Annotated[str, Depends(get_tenant_id)]
 TransportFactory = Annotated[
     Callable[[Connection], MailTransport], Depends(get_transport_factory)
 ]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 @router.post("", response_model=ConnectionRead, status_code=status.HTTP_201_CREATED)
 async def create_connection(
-    body: ConnectionCreate, session: DBSession, tenant_id: TenantId
+    body: ConnectionCreate,
+    session: DBSession,
+    tenant_id: TenantId,
+    settings: SettingsDep,
 ) -> ConnectionRead:
-    conn = await connections_service.create_connection(session, tenant_id, body)
+    conn = await connections_service.create_connection(
+        session, tenant_id, body, credential_secret=settings.credential_secret
+    )
     return ConnectionRead.model_validate(conn)
 
 

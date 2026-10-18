@@ -188,3 +188,22 @@ def test_connection_not_found_details_key(client) -> None:
     body = response.json()
     assert body["code"] == "connector.connection_not_found"
     assert body["details"] == {"connection_id": "nope"}
+
+
+def test_credentials_encrypted_at_rest(client: TestClient, tmp_path: Path) -> None:
+    import json
+    import sqlite3
+
+    from connector.core.crypto import decrypt_credentials
+
+    assert _create(client).status_code == 201
+    conn = sqlite3.connect(tmp_path / "test.db")
+    row = conn.execute("select credentials from connections").fetchone()
+    conn.close()
+    stored = json.loads(row[0])
+    assert "password" not in str(stored)
+    assert stored.get("ciphertext", "").startswith("fernet:")
+    decrypted = decrypt_credentials(
+        "dev-connector-secret-change-me", stored
+    )
+    assert decrypted["password"] == "fake-auth-code-16chars"

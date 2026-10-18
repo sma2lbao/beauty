@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 from common.auth import JwtVerifier
 from common.errors import AppError
@@ -38,7 +39,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await conn.run_sync(Base.metadata.create_all)
     if app.state.transport_factory is None:
         # 生产装配真实传输工厂;测试注入 FakeTransport 走同一属性
-        app.state.transport_factory = build_transport
+        app.state.transport_factory = partial(
+            build_transport, credential_secret=settings.credential_secret
+        )
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier

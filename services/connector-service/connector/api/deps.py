@@ -16,6 +16,7 @@ from database.session import session_scope
 from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from connector.core.config import Settings
 from connector.models.connections import Connection
 from connector.services.mail import MailTransport
 
@@ -44,6 +45,10 @@ async def get_tenant_id(
         raise UnauthorizedError("auth.token_missing", "缺少 Bearer token")
     principal = await verifier.verify(authorization.split(" ", 1)[1].strip())
     return principal.tenant_id
+
+
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
 
 
 def get_transport_factory(

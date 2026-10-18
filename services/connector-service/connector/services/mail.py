@@ -20,6 +20,7 @@ from typing import Protocol
 
 from common.errors import AppError, UpstreamError
 
+from connector.core.crypto import decrypt_credentials
 from connector.models.connections import Connection
 
 
@@ -180,7 +181,9 @@ class ImapTransport:
         return f"已发送至 {to}"
 
 
-def build_transport(connection: Connection) -> MailTransport:
+def build_transport(
+    connection: Connection, *, credential_secret: str
+) -> MailTransport:
     """按 provider 装配传输;阶段 A 仅 imap(gmail/outlook 见 §8 阶段 B)。"""
     if connection.provider != "imap":
         raise AppError(
@@ -188,7 +191,7 @@ def build_transport(connection: Connection) -> MailTransport:
             f"提供商 {connection.provider} 暂不支持(阶段 A 仅 imap)",
             details={"provider": connection.provider},
         )
-    cred = connection.credentials or {}
+    cred = decrypt_credentials(credential_secret, connection.credentials or {})
     smtp_port = cred.get("smtp_port")
     return ImapTransport(
         host=str(cred.get("host", "")),

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from common.errors import ConflictError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from connector.core.crypto import encrypt_credentials
 from connector.models.connections import Connection
 from connector.repositories import ConnectionRepository
 from connector.schemas.connections import ConnectionCreate, ConnectionStatus
@@ -44,7 +45,11 @@ async def require_active_connection(
 
 
 async def create_connection(
-    session: AsyncSession, tenant_id: str, data: ConnectionCreate
+    session: AsyncSession,
+    tenant_id: str,
+    data: ConnectionCreate,
+    *,
+    credential_secret: str,
 ) -> Connection:
     connections = ConnectionRepository(session)
     duplicate = await connections.find_by_account(
@@ -62,7 +67,9 @@ async def create_connection(
         account=data.account,
         display_name=data.display_name,
         status=ConnectionStatus.ACTIVE.value,
-        credentials=data.credentials.model_dump(),
+        credentials=encrypt_credentials(
+            credential_secret, data.credentials.model_dump()
+        ),
     )
     return await connections.add(conn)
 

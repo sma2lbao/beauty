@@ -97,7 +97,9 @@ def test_build_transport_rejects_unsupported_provider() -> None:
         credentials = {}
 
     with pytest.raises(AppError) as exc_info:
-        mail.build_transport(FakeConn())  # type: ignore[arg-type]
+        mail.build_transport(  # type: ignore[arg-type]
+            FakeConn(), credential_secret="test-secret"
+        )
     assert exc_info.value.code == "connector.provider_unsupported"
 
 
@@ -163,6 +165,30 @@ def test_build_transport_carries_smtp_settings() -> None:
             "smtp_port": 465,
         }
 
-    transport = mail.build_transport(FakeConn())  # type: ignore[arg-type]
+    transport = mail.build_transport(  # type: ignore[arg-type]
+        FakeConn(), credential_secret="test-secret"
+    )
     assert isinstance(transport, mail.ImapTransport)
     assert (transport.smtp_host, transport.smtp_port) == ("smtp.qq.com", 465)
+
+
+def test_build_transport_decrypts_credentials() -> None:
+    from connector.core.crypto import encrypt_credentials
+
+    class FakeConn:
+        provider = "imap"
+        credentials = encrypt_credentials(
+            "test-secret",
+            {
+                "host": "imap.qq.com",
+                "port": 993,
+                "username": "u",
+                "password": "p",
+            },
+        )
+
+    transport = mail.build_transport(  # type: ignore[arg-type]
+        FakeConn(), credential_secret="test-secret"
+    )
+    assert transport.password == "p"
+    assert transport.host == "imap.qq.com"

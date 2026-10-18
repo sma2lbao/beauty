@@ -22,3 +22,5 @@ class Settings(BaseAppSettings):
     auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
     auth_tenant_claim: str = "tenant_id"
+    # 连接凭证应用层加密密钥(生产必须换随机长密钥/KMS)
+    credential_secret: str = "dev-connector-secret-change-me"

@@ -61,6 +61,12 @@ def _resolve_upstream(settings: Settings, path: str) -> str | None:
         return _base(settings.llm_gateway_base_url) + "/v1/models"
     if path.startswith(("usage/", "byok")):
         return _base(settings.account_base_url) + "/v1/" + path
+    if path.startswith("connector/"):
+        return (
+            _base(settings.connector_base_url)
+            + "/v1/"
+            + path.removeprefix("connector/")
+        )
     if path.startswith(("account/", "workspace/", "knowledge/")):
         prefix, _, rest = path.partition("/")
         base = {

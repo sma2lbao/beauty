@@ -20,6 +20,7 @@ class Settings(BaseAppSettings):
     account_base_url: str = "http://127.0.0.1:8001"
     workspace_base_url: str = "http://127.0.0.1:8005"
     knowledge_base_url: str = "http://127.0.0.1:8006"
+    connector_base_url: str = "http://127.0.0.1:8004"
     llm_gateway_base_url: str = "http://127.0.0.1:8003"
     # 浏览器直连 SSE 的公开 runtime 地址(M0-06 stream token)
     runtime_public_url: str = "http://127.0.0.1:8002"

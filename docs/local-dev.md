@@ -70,6 +70,13 @@ VITE_AUTH_MODE=session
 OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
 邮箱+密码登录。
 
+## 3.2 连接器（邮箱）
+
+- 页面：`/connectors`，支持添加 IMAP 连接、测试连通性、读取最近 10 封邮件、SMTP 发信、撤销连接。
+- 凭证只提交一次，服务端用 `CONNECTOR__CREDENTIAL_SECRET` 做 Fernet 加密后存 DB，读端永不返回。
+- 发信/撤销是写操作，前端二次确认；发信需要连接里填了 SMTP host。
+- 本地没有真实邮箱时可以先建一条假连接验证 UI 与加密存储，连通性测试会如实失败。
+
 ## 4.0 Job worker（run 队列）
 
 orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
