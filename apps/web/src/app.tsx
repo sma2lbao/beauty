@@ -13,6 +13,7 @@ import { ChatPage } from '@/pages/chat';
 import { KnowledgePage } from '@/pages/knowledge';
 import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
+import { OAuthAuthorizePage } from '@/pages/oauth-authorize';
 import { OutboxPage } from '@/pages/outbox';
 import { SettingsPage } from '@/pages/settings';
 import { SkillsPage } from '@/pages/skills';
@@ -31,6 +32,11 @@ export function App() {
       <Route element={<SiteLayout />}>
         <Route path="about" element={<AboutPage />} />
         <Route path="*" element={<NotFoundPage />} />
+      </Route>
+
+      {/* OAuth 2.1 授权页:登录门 + 独立布局 */}
+      <Route element={<AuthGuard />}>
+        <Route path="oauth/authorize" element={<OAuthAuthorizePage />} />
       </Route>
 
       {/* 控制台:登录门(§10)+ 侧边栏骨架 */}

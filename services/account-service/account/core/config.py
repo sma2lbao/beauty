@@ -38,6 +38,12 @@ class Settings(BaseAppSettings):
     oauth_state_ttl_seconds: int = 600
     # BYOK 应用层加密密钥(M0-11 占位;生产必须换随机长密钥/KMS)
     byok_secret: str = "dev-byok-secret-change-me"
+    # MCP OAuth 2.1(M3-04):客户端动态注册 + 授权码 + PKCE
+    oauth21_enabled: bool = True
+    oauth21_web_origin: str = "http://localhost:5173"  # 授权页所在的 SPA
+    oauth21_code_ttl_seconds: int = 600
+    oauth21_access_ttl_seconds: int = 3600
+    oauth21_refresh_ttl_seconds: int = 2_592_000
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""

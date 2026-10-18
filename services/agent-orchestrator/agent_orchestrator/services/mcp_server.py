@@ -34,6 +34,52 @@ class MCPPrincipal:
     scopes: frozenset[str]
 
 
+class OAuthTokenIntrospector:
+    """OAuth 2.1 access token 内省;非 active 一律视为无效。"""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        internal_secret: str,
+        timeout_seconds: float = 5.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout_seconds,
+            transport=transport,
+        )
+        self._secret = internal_secret
+
+    async def introspect(self, token: str) -> MCPPrincipal | None:
+        if not self._secret:
+            return None
+        try:
+            response = await self._client.post(
+                "/v1/oauth/introspect",
+                json={"token": token},
+                headers={"X-Internal-Secret": self._secret},
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                "mcp.auth_unavailable", f"OAuth introspect 服务不可达:{exc}"
+            ) from exc
+        if response.status_code != 200:
+            return None
+        body = response.json()
+        if not body.get("active"):
+            return None
+        return MCPPrincipal(
+            tenant_id=str(body["tenant_id"]),
+            api_key_id=str(body.get("client_id") or "oauth"),
+            scopes=frozenset(str(body.get("scope") or "").split()),
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 class ApiKeyVerifier:
     """account-service 内部校验客户端;失败一律 401,不泄漏细节。"""
 

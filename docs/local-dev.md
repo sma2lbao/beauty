@@ -102,7 +102,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 ## 3.5 公开 MCP Server（本地版）
 
 - 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 BFF 会话)。
-- 鉴权:`Authorization: Bearer bm_live_...` 或 `X-API-Key`;只接受 API Key,OAuth 2.1 暂未接。
+- 鉴权:`Authorization: Bearer bm_live_...`(API Key)或 OAuth 2.1 access token;也支持 `X-API-Key`。
 - 支持 `initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`。
 - 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及连接器/文档/知识库中非写工具;发信等写操作不暴露。
 - 资源:`beauty://artifacts/{artifact_id}`(仅数据库内联存储的 Markdown)。
@@ -115,6 +115,15 @@ curl -s http://127.0.0.1:8002/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+## 3.6 OAuth 2.1（MCP 客户端授权）
+
+- 授权服务器元数据:`http://127.0.0.1:8001/.well-known/oauth-authorization-server`
+- MCP 受保护资源元数据:`http://127.0.0.1:8002/.well-known/oauth-protected-resource`
+- 流程:动态注册 `POST /v1/oauth/register` → 浏览器打开 `http://localhost:5173/oauth/authorize?...` 登录并确认 → 以 `code + PKCE S256` 换 `POST /v1/oauth/token` → 用 access token 调 `/mcp`。
+- access/refresh token 都是不透明串,DB 只存 SHA-256;MCP Server 通过内部 `/v1/oauth/introspect` 换取租户/scopes。
+- refresh token 旋转:旧 refresh 使用一次即失效。
+- 配置:`ACCOUNT__OAUTH21_WEB_ORIGIN`(授权页 origin)、`AGENT_ORCHESTRATOR__MCP_RESOURCE_URL`(受保护资源 URL)。
 
 ## 4.0 Job worker（run 队列）
 

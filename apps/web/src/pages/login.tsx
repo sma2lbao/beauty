@@ -69,10 +69,15 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const oauthError = searchParams.get('oauth_error');
   const queryClient = useQueryClient();
-  // 守卫带来的来路(站内路径,防开放重定向);没有来路回对话页
-  const from = (location.state as { from?: { pathname?: string } } | null)?.from
-    ?.pathname;
-  const target = from?.startsWith('/') && !from.startsWith('//') ? from : '/';
+  // 守卫带来的来路(站内路径 + 查询串,防开放重定向);OAuth 授权页必须保留 query
+  const from = (
+    location.state as { from?: { pathname?: string; search?: string } } | null
+  )?.from;
+  const fromPath = from?.pathname;
+  const target =
+    fromPath?.startsWith('/') && !fromPath.startsWith('//')
+      ? fromPath + (from?.search ?? '')
+      : '/';
 
   const [tab, setTab] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');

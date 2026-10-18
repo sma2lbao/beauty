@@ -113,6 +113,47 @@ class ApiKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
 
 
+class OAuthClient(UUIDMixin, TimestampMixin, Base):
+    """OAuth 2.1 动态注册的公开客户端(M3-04);不带租户,授权时再绑定租户。"""
+
+    __tablename__ = "oauth_clients"
+
+    client_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_name: Mapped[str] = mapped_column(String(120))
+    redirect_uris: Mapped[list[str]] = mapped_column(JSON, default=list)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class OAuthAuthorizationCode(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    __tablename__ = "oauth_authorization_codes"
+
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    redirect_uri: Mapped[str] = mapped_column(String(500))
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    code_challenge: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class OAuthToken(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    __tablename__ = "oauth_tokens"
+
+    access_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    refresh_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    access_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    refresh_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class RefreshToken(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """旋转式刷新令牌:本体即哈希。
 

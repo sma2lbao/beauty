@@ -105,3 +105,49 @@ def test_sse_response_when_requested(tmp_path: Path) -> None:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert response.text.startswith("data: ")
+
+
+class FakeIntrospector:
+    async def introspect(self, token: str):
+        if token != "bm_oauth_valid":
+            return None
+        return MCPPrincipal(
+            tenant_id="t-1",
+            api_key_id="oauth-client",
+            scopes=frozenset({"mcp:tools:read", "mcp:tools:call", "artifacts:read"}),
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+def test_oauth_token_and_protected_resource_metadata(tmp_path: Path) -> None:
+    from agent_orchestrator.main import create_app
+
+    app = create_app(
+        _settings(tmp_path, jobs_enabled=False, mcp_enabled=False),
+        token_verifier=_IDP.verifier(),
+        api_key_verifier=FakeVerifier(),
+        oauth_introspector=FakeIntrospector(),
+    )
+    with TestClient(app) as client:
+        metadata = client.get("/.well-known/oauth-protected-resource")
+        assert metadata.status_code == 200
+        assert metadata.json()["resource"].endswith("/mcp")
+        assert metadata.json()["authorization_servers"]
+
+        tools = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            headers={"Authorization": "Bearer bm_oauth_valid"},
+        )
+        assert tools.status_code == 200
+        assert any(tool["name"] == "beauty.whoami" for tool in tools.json()["result"]["tools"])
+
+        bad = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "initialize"},
+            headers={"Authorization": "Bearer bm_oauth_invalid"},
+        )
+        assert bad.status_code == 401
+        assert "oauth-protected-resource" in bad.headers["www-authenticate"]

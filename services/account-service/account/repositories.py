@@ -12,7 +12,10 @@ from sqlalchemy import select
 from account.models.account import (
     ApiKey,
     BYOKKey,
+    OAuthAuthorizationCode,
+    OAuthClient,
     OAuthIdentity,
+    OAuthToken,
     Organization,
     RefreshToken,
     Session,
@@ -66,6 +69,54 @@ class OAuthIdentityRepository(TenantRepository[OAuthIdentity]):
                 OAuthIdentity.provider == provider,
                 OAuthIdentity.subject == subject,
             )
+        )
+
+
+class OAuthClientRepository:
+    """OAuth 客户端不带租户(授权时才绑定);直接按 client_id 查。"""
+
+    def __init__(self, session) -> None:
+        self.session = session
+
+    async def find(self, client_id: str) -> OAuthClient | None:
+        return await self.session.scalar(
+            select(OAuthClient).where(OAuthClient.client_id == client_id)
+        )
+
+    async def add(self, client: OAuthClient) -> OAuthClient:
+        self.session.add(client)
+        await self.session.flush()
+        return client
+
+
+class OAuthCodeRepository(TenantRepository[OAuthAuthorizationCode]):
+    model = OAuthAuthorizationCode
+    not_found_code = "oauth.code_not_found"
+    not_found_message = "授权码不存在"
+    id_detail_key = "code"
+
+    async def find_by_hash(self, code_hash: str) -> OAuthAuthorizationCode | None:
+        return await self.session.scalar(
+            select(OAuthAuthorizationCode).where(
+                OAuthAuthorizationCode.code_hash == code_hash
+            )
+        )
+
+
+class OAuthTokenRepository(TenantRepository[OAuthToken]):
+    model = OAuthToken
+    not_found_code = "oauth.token_not_found"
+    not_found_message = "OAuth token 不存在"
+    id_detail_key = "token"
+
+    async def find_by_access_hash(self, token_hash: str) -> OAuthToken | None:
+        return await self.session.scalar(
+            select(OAuthToken).where(OAuthToken.access_hash == token_hash)
+        )
+
+    async def find_by_refresh_hash(self, token_hash: str) -> OAuthToken | None:
+        return await self.session.scalar(
+            select(OAuthToken).where(OAuthToken.refresh_hash == token_hash)
         )
 
 

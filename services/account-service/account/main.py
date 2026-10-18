@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from account.api.health import health_router
+from account.api.oauth_metadata import router as oauth_metadata_router
 from account.api.v1 import auth as auth_api
 from account.api.v1 import oauth as oauth_api
 from account.api.v1 import oidc as oidc_api
@@ -96,6 +97,7 @@ def create_app(
     app.include_router(auth_api.router, prefix="/v1")
     app.include_router(oauth_api.router, prefix="/v1")
     app.include_router(oidc_api.router)
+    app.include_router(oauth_metadata_router)
     return app
 
 
