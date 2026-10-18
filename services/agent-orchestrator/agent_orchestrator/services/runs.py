@@ -37,6 +37,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.schemas.skills import SkillManifest
 from agent_orchestrator.services import artifacts, history
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.workspace import Workspace
@@ -242,7 +243,13 @@ async def _conversation_history(
     return history.to_prompt(rows)
 
 
-async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> Run:
+async def create_run(
+    session: AsyncSession,
+    tenant_id: str,
+    data: RunCreate,
+    *,
+    skill: SkillManifest | None = None,
+) -> Run:
     run = Run(
         tenant_id=tenant_id,
         title=data.title,
@@ -250,9 +257,17 @@ async def create_run(session: AsyncSession, tenant_id: str, data: RunCreate) -> 
         status=RunStatus.PENDING.value,
         acceptance_criteria=data.acceptance_criteria,
         conversation_id=data.conversation_id,
+        skill_id=skill.id if skill else data.skill_id,
+        skill_system_prompt=skill.system_prompt if skill else None,
+        skill_tools=list(skill.tools) if skill else None,
     )
     await RunRepository(session).add(run)
-    await append_event(session, run, "run.created.v1", {"title": run.title})
+    await append_event(
+        session,
+        run,
+        "run.created.v1",
+        {"title": run.title, "skill_id": run.skill_id},
+    )
     return run
 
 
@@ -276,6 +291,12 @@ async def _invoke_plan(
     }
     if run.plan_markdown:
         state["plan_markdown"] = run.plan_markdown
+    if run.skill_id:
+        state["skill_id"] = run.skill_id
+    if run.skill_system_prompt:
+        state["skill_system_prompt"] = run.skill_system_prompt
+    if run.skill_tools is not None:
+        state["allowed_tools"] = list(run.skill_tools)
     if run.conversation_id:
         # 对话触发的 run:带上多轮上下文,模型才能理解"接着刚才的做"
         state["conversation_history"] = await _conversation_history(session, run)

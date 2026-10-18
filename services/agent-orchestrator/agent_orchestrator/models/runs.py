@@ -34,6 +34,12 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     # 状态原因:blocked(拒绝计划/验收未通过)与 failed(异常收敛)共用一列;
     # 具体含义由 status 决定,故不叫 blocked_reason
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Skill 快照(M1):创建时冻结 manifest,后续技能版本变更不影响已建 run
+    skill_id: Mapped[str | None] = mapped_column(
+        String(80), index=True, nullable=True
+    )
+    skill_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    skill_tools: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     # 重试血缘:本 run 由哪个 failed run 派生(§6.2 failed 的重试语义是新起 run)
     parent_run_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True

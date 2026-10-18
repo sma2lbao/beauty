@@ -40,6 +40,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.schemas.skills import SkillManifest
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
@@ -227,6 +228,7 @@ async def _task_path(
     content: str,
     *,
     jobs_enabled: bool = False,
+    skill: SkillManifest | None = None,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
     run = await active_run(session, conversation.tenant_id, conversation.id)
@@ -244,7 +246,9 @@ async def _task_path(
             goal=content,
             acceptance_criteria=[],
             conversation_id=conversation.id,
+            skill_id=skill.id if skill else None,
         ),
+        skill=skill,
     )
     message.run_id = run.id
     if jobs_enabled:
@@ -267,6 +271,7 @@ async def post_message(
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
+    skill: SkillManifest | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -292,7 +297,13 @@ async def post_message(
         )
         return message, None, reply, triage.CHAT
     run, outcome = await _task_path(
-        session, graph, conversation, message, content, jobs_enabled=jobs_enabled
+        session,
+        graph,
+        conversation,
+        message,
+        content,
+        jobs_enabled=jobs_enabled,
+        skill=skill,
     )
     return message, run, None, outcome
 
@@ -316,6 +327,7 @@ async def stream_message(
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
+    skill: SkillManifest | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -354,6 +366,7 @@ async def stream_message(
                 message,
                 content,
                 jobs_enabled=jobs_enabled,
+                skill=skill,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:

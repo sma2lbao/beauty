@@ -56,6 +56,14 @@ DELIVER_SYSTEM_PROMPT = (
 )
 
 
+def _skill_block(state: RunGraphState) -> str:
+    """Skill 约束(系统提示词):plan/execute/verify/deliver 都要遵循。"""
+    prompt = state.get("skill_system_prompt")
+    if not prompt:
+        return ""
+    return f"\n\n技能约束(必须遵循):\n{prompt}"
+
+
 def _criteria_block(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
 
@@ -124,7 +132,10 @@ def make_plan_node(llm: LLMClient | None):
         criteria = state.get("acceptance_criteria") or []
         reply = await llm.complete(
             [
-                {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": PLAN_SYSTEM_PROMPT + _skill_block(state),
+                },
                 {
                     "role": "user",
                     "content": (
@@ -165,7 +176,10 @@ def _gate_update(answer: dict[str, Any]) -> dict[str, Any]:
 def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
     done = "\n".join(state.get("results") or []) or "(尚无)"
     return [
-        {"role": "system", "content": EXECUTE_SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": EXECUTE_SYSTEM_PROMPT + _skill_block(state),
+        },
         {
             "role": "user",
             "content": (
@@ -234,6 +248,9 @@ def make_execute_node(
         toolkit = (
             toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
         )
+        allowed = state.get("allowed_tools")
+        if toolkit is not None and allowed is not None:
+            toolkit = toolkit.restricted(allowed)
         if toolkit is None or len(toolkit) == 0:
             reply = await llm.complete(messages)
             return {"results": [reply.content], "rounds": 1}
@@ -310,6 +327,9 @@ def make_tool_exec_node(toolkit_factory: ToolkitFactory | None):
         toolkit = (
             toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
         )
+        allowed = state.get("allowed_tools")
+        if toolkit is not None and allowed is not None:
+            toolkit = toolkit.restricted(allowed)
         records: list[dict[str, Any]] = []
         for call in pending:
             name = str(call.get("name") or "")
@@ -360,7 +380,10 @@ def make_verify_node(llm: LLMClient | None):
         done = "\n".join(state.get("results") or []) or "(尚无)"
         reply = await llm.complete(
             [
-                {"role": "system", "content": VERIFY_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": VERIFY_SYSTEM_PROMPT + _skill_block(state),
+                },
                 {
                     "role": "user",
                     "content": (
@@ -427,7 +450,10 @@ def make_deliver_node(llm: LLMClient | None):
         results = "\n\n".join(state.get("results") or []) or "(无执行结果)"
         reply = await llm.complete(
             [
-                {"role": "system", "content": DELIVER_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": DELIVER_SYSTEM_PROMPT + _skill_block(state),
+                },
                 {
                     "role": "user",
                     "content": (

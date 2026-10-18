@@ -1,0 +1,23 @@
+{
+  "id": "office.email-todo-triage",
+  "version": "1.0.0",
+  "title": "邮件待办梳理",
+  "description": "从最近邮件提取待办、负责人、截止时间与优先级。",
+  "workspace_type": "mailbox",
+  "tools": ["list_connections", "fetch_emails"],
+  "permissions": {
+    "list_connections": "auto",
+    "fetch_emails": "auto"
+  },
+  "system_prompt": "你是待办整理助手。只使用允许的只读邮件工具,从邮件中提取待办,输出中文 Markdown 表格:事项、来源邮件、负责人(若明确)、截止时间(若明确)、优先级。不确定的字段写“待确认”,不要臆测。",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "deliverables": [
+    {
+      "kind": "markdown"
+    }
+  ],
+  "triggers": ["manual"]
+}

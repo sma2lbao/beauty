@@ -133,6 +133,7 @@ export const conversationsApi = {
     content: string,
     mode: SendMode = 'auto',
     attachmentIds: string[] = [],
+    skillId?: string,
   ) =>
     request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
@@ -142,6 +143,7 @@ export const conversationsApi = {
           content,
           mode,
           attachment_ids: attachmentIds,
+          skill_id: skillId,
         }),
       },
     ),
@@ -248,6 +250,7 @@ export async function streamMessage(
   mode: SendMode,
   handlers: StreamMessageHandlers,
   attachmentIds: string[] = [],
+  skillId?: string,
 ): Promise<void> {
   const response = await fetch(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
@@ -259,6 +262,7 @@ export async function streamMessage(
         content,
         mode,
         attachment_ids: attachmentIds,
+        skill_id: skillId,
       }),
       signal: handlers.signal,
     },

@@ -21,10 +21,12 @@ import { Markdown } from '@/components/console/markdown';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { downloadArtifact } from '@/lib/artifacts';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
+import { skillsApi } from '@/lib/skills-api';
 import type {
   Attachment,
   ChatMessage,
   SendMode,
+  StreamMessageHandlers,
 } from '@/lib/conversations-api';
 import {
   RUN_STATUS_LABELS,
@@ -61,6 +63,8 @@ export function ChatPage() {
 
   const [draft, setDraft] = useState('');
   const [sendMode, setSendMode] = useState<SendMode>('auto');
+  const skillParam = searchParams.get('skill');
+  const [selectedSkill, setSelectedSkill] = useState(skillParam ?? '');
   // 会话选择以 URL 为唯一来源:侧边栏/新建任务都改地址栏,组件不再另存一份
   const activeConversationId = newFlag ? null : conversationParam;
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
@@ -92,6 +96,11 @@ export function ChatPage() {
   const conversationsQuery = useQuery({
     queryKey: ['conversations'],
     queryFn: () => conversationsApi.list(),
+  });
+  const skillsQuery = useQuery({
+    queryKey: ['skills'],
+    queryFn: skillsApi.list,
+    retry: false,
   });
   const conversations = conversationsQuery.data ?? [];
 
@@ -238,43 +247,58 @@ export function ChatPage() {
         reply: '',
         attachments: selectedAttachments,
       });
-      await streamMessage(
-        targetConversationId,
-        text,
-        sendMode,
-        {
-          signal: controller.signal,
-          onMeta: (meta) => {
-            if (meta.run) {
-              setManualRun({
-                conversationId: targetConversationId,
-                runId: meta.run.id,
-              });
-            }
-            void queryClient.invalidateQueries({ queryKey: ['conversations'] });
-            void queryClient.invalidateQueries({
-              queryKey: ['conversation', targetConversationId],
-            });
-          },
-          onDelta: (delta) =>
-            setPending((previous) =>
-              previous && previous.conversationId === targetConversationId
-                ? { ...previous, reply: previous.reply + delta }
-                : previous,
-            ),
-          onDone: () => {
-            void settle(targetConversationId);
-          },
-          onError: (failure) => {
-            setStreamError({
+      const streamHandlers: StreamMessageHandlers = {
+        signal: controller.signal,
+        onMeta: (meta) => {
+          if (meta.run) {
+            setManualRun({
               conversationId: targetConversationId,
-              error: new Error(failure.message),
+              runId: meta.run.id,
             });
-            void settle(targetConversationId);
-          },
+          }
+          void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          void queryClient.invalidateQueries({
+            queryKey: ['conversation', targetConversationId],
+          });
         },
-        selectedAttachments.map((attachment) => attachment.id),
+        onDelta: (delta) =>
+          setPending((previous) =>
+            previous && previous.conversationId === targetConversationId
+              ? { ...previous, reply: previous.reply + delta }
+              : previous,
+          ),
+        onDone: () => {
+          void settle(targetConversationId);
+        },
+        onError: (failure) => {
+          setStreamError({
+            conversationId: targetConversationId,
+            error: new Error(failure.message),
+          });
+          void settle(targetConversationId);
+        },
+      };
+      const attachmentIds = selectedAttachments.map(
+        (attachment) => attachment.id,
       );
+      if (selectedSkill) {
+        await streamMessage(
+          targetConversationId,
+          text,
+          sendMode,
+          streamHandlers,
+          attachmentIds,
+          selectedSkill,
+        );
+      } else {
+        await streamMessage(
+          targetConversationId,
+          text,
+          sendMode,
+          streamHandlers,
+          attachmentIds,
+        );
+      }
     } catch (failure) {
       if ((failure as Error)?.name !== 'AbortError') {
         const error =
@@ -323,6 +347,10 @@ export function ChatPage() {
     toolCalls.length,
     visiblePending?.reply.length,
   ]);
+
+  useEffect(() => {
+    if (skillParam) setSelectedSkill(skillParam);
+  }, [skillParam]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -778,6 +806,26 @@ export function ChatPage() {
                     <option value="auto">自动分流</option>
                     <option value="chat">直接对话</option>
                     <option value="task">作为任务</option>
+                  </select>
+                  <label
+                    htmlFor="send-skill"
+                    className="font-mono text-[11px] text-ha-faint"
+                  >
+                    技能
+                  </label>
+                  <select
+                    id="send-skill"
+                    aria-label="选择技能"
+                    value={selectedSkill}
+                    onChange={(event) => setSelectedSkill(event.target.value)}
+                    className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+                  >
+                    <option value="">不使用技能</option>
+                    {(skillsQuery.data ?? []).map((skill) => (
+                      <option key={skill.id} value={skill.id}>
+                        {skill.title}
+                      </option>
+                    ))}
                   </select>
                   {inFlight ? (
                     <span className="hidden truncate font-mono text-[11px] text-ha-info sm:inline">

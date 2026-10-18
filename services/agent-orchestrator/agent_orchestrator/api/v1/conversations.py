@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from common.errors import AppError
+from common.errors import AppError, NotFoundError
 from database.session import session_scope
 from fastapi import (
     APIRouter,
@@ -34,6 +34,7 @@ from agent_orchestrator.api.deps import (
     get_run_graph,
     get_session,
     get_settings,
+    get_skills,
     get_tenant_id,
 )
 from agent_orchestrator.schemas.conversations import (
@@ -52,6 +53,7 @@ from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
 from agent_orchestrator.services import triage
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.skills import SkillRegistry
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 attachments_router = APIRouter(prefix="/attachments", tags=["attachments"])
@@ -60,6 +62,17 @@ DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
+SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
+
+
+def _resolve_skill(skills: SkillRegistry, skill_id: str | None):
+    """消息可选绑定 Skill:未知 id 在落库前 404,避免建出半残 run。"""
+    if not skill_id:
+        return None
+    skill = skills.get(skill_id)
+    if skill is None:
+        raise NotFoundError("skill.not_found", "Skill 不存在")
+    return skill
 
 #: SSE 标准头:不缓存、禁代理缓冲(否则增量会被攒成一坨)
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -250,6 +263,7 @@ async def post_message(
     graph: RunGraph,
     llm: LLM,
     settings: Annotated[Any, Depends(get_settings)],
+    skills: SkillDep,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     message, run, reply, mode = await conversations_service.post_message(
@@ -262,6 +276,7 @@ async def post_message(
         mode=body.mode,
         attachment_ids=body.attachment_ids,
         jobs_enabled=settings.jobs_enabled,
+        skill=_resolve_skill(skills, body.skill_id),
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -319,6 +334,7 @@ async def stream_message(
     graph: RunGraph,
     llm: LLM,
     settings: Annotated[Any, Depends(get_settings)],
+    skills: SkillDep,
 ) -> StreamingResponse:
     """SSE 流式发消息:meta(分流结果)→ delta(增量)→ done;失败以 error 帧收尾。
 
@@ -342,6 +358,7 @@ async def stream_message(
                 mode=body.mode,
                 attachment_ids=body.attachment_ids,
                 jobs_enabled=settings.jobs_enabled,
+                skill=_resolve_skill(skills, body.skill_id),
             )
         ),
         media_type="text/event-stream",

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectorApi } from './connector-api';
 
 function mockFetch(status: number, body?: unknown) {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
     ok: status < 400,
     status,
     json: async () => body,
@@ -43,7 +43,10 @@ describe('connectorApi', () => {
       account: 'a@b.c',
       credentials: { host: 'imap', username: 'a@b.c', password: 'p' },
     });
-    const [url, init] = createMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = createMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe('/api/connector/connections');
     expect(init.method).toBe('POST');
     expect(init.body).toContain('"password":"p"');

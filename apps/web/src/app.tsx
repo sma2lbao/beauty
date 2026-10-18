@@ -15,6 +15,7 @@ import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
 import { OutboxPage } from '@/pages/outbox';
 import { SettingsPage } from '@/pages/settings';
+import { SkillsPage } from '@/pages/skills';
 import { UsagePage } from '@/pages/usage';
 import { WorkspacePage } from '@/pages/workspace';
 import { RunsPage } from '@/pages/runs';
@@ -41,6 +42,7 @@ export function App() {
           <Route path="connectors" element={<ConnectorsPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="skills" element={<SkillsPage />} />
           <Route path="usage" element={<UsagePage />} />
           <Route path="workspace" element={<WorkspacePage />} />
           <Route path="outbox" element={<OutboxPage />} />

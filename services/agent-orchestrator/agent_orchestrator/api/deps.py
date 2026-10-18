@@ -23,6 +23,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
 
@@ -43,6 +44,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 def get_settings(request: Request):
     """当前进程配置(附件大小上限等端点参数)。"""
     return request.app.state.settings
+
+
+def get_skills(request: Request) -> SkillRegistry:
+    """启动时加载的 Skill 注册表。"""
+    return request.app.state.skills
 
 
 def get_run_graph(request: Request) -> CompiledStateGraph:

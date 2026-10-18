@@ -43,6 +43,7 @@ from agent_orchestrator.services.outbox import (
     record_run_event,
     register_consumers,
 )
+from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
@@ -54,6 +55,7 @@ ToolkitFactory = Callable[[str], ToolRegistry]
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
+    app.state.skills = load_skills(settings.skills_dir or None)
     factory = create_session_factory(settings.database_url)
     app.state.session_factory = factory
     if settings.auto_create_tables:

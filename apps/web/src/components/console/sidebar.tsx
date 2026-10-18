@@ -28,6 +28,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useDeferredValue, useState } from 'react';
@@ -55,6 +56,7 @@ const PRIMARY_NAV = [
   { to: '/runs', icon: <Columns3 />, label: '任务编排' },
   { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
   { to: '/connectors', icon: <Cable />, label: '连接器' },
+  { to: '/skills', icon: <Sparkles />, label: 'Skills' },
   { to: '/usage', icon: <BarChart3 />, label: '用量' },
   { to: '/knowledge', icon: <BookOpen />, label: '知识库' },
   { to: '/settings', icon: <Settings />, label: '设置' },

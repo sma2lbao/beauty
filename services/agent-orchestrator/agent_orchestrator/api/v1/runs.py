@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from common.artifacts import ArtifactStore
-from common.errors import AppError
+from common.errors import AppError, NotFoundError
 from database.session import session_scope
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -20,6 +20,7 @@ from agent_orchestrator.api.deps import (
     get_run_graph,
     get_session,
     get_settings,
+    get_skills,
     get_tenant_id,
     get_workspace_client,
 )
@@ -40,6 +41,7 @@ from agent_orchestrator.schemas.runs import (
 )
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -50,6 +52,7 @@ RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+SkillsDep = Annotated[SkillRegistry, Depends(get_skills)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -62,8 +65,16 @@ async def create_run(
     session: DBSession,
     tenant_id: TenantId,
     settings: SettingsDep,
+    skills: SkillsDep,
 ) -> RunRead:
-    run = await runs_service.create_run(session, tenant_id, body)
+    skill = None
+    if body.skill_id:
+        skill = skills.get(body.skill_id)
+        if skill is None:
+            raise NotFoundError("skill.not_found", "Skill 不存在")
+    run = await runs_service.create_run(
+        session, tenant_id, body, skill=skill
+    )
     if settings.jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", run.id)
     return RunRead.model_validate(run)

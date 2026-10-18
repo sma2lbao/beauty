@@ -73,6 +73,13 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._specs)
 
+    def restricted(self, allowed: list[str]) -> ToolRegistry:
+        """按 Skill 的 tools 白名单裁剪(能力边界);未知/未列出工具不暴露。"""
+        allow = set(allowed)
+        return ToolRegistry(
+            [spec for name, spec in self._specs.items() if name in allow]
+        )
+
     def requires_confirmation(self, name: str) -> bool:
         """写操作工具:execute 不得直接执行,必须交确认闸(§6.2)。"""
         spec = self._specs.get(name)

@@ -14,6 +14,8 @@ import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { Run, RunEvent } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
+import { skillsApi } from '@/lib/skills-api';
+
 import { ChatPage } from './chat';
 
 vi.mock('@/lib/conversations-api', () => ({
@@ -28,6 +30,10 @@ vi.mock('@/lib/conversations-api', () => ({
     downloadAttachment: vi.fn(),
   },
   streamMessage: vi.fn(),
+}));
+
+vi.mock('@/lib/skills-api', () => ({
+  skillsApi: { list: vi.fn(async () => []), get: vi.fn() },
 }));
 
 vi.mock('@/lib/runs-api', async () => {
@@ -540,6 +546,42 @@ describe('ChatPage 附件', () => {
         'auto',
         expect.anything(),
         ['a1'],
+      ),
+    );
+  });
+});
+
+describe('ChatPage 技能', () => {
+  it('选择技能后发送携带 skill_id', async () => {
+    vi.mocked(skillsApi.list).mockResolvedValue([
+      {
+        id: 'office.email-summary',
+        version: '1.0.0',
+        title: '邮件摘要',
+        description: 'x',
+        workspace_type: 'mailbox',
+        tools: [],
+        permissions: {},
+        system_prompt: 'x',
+        input_schema: {},
+        deliverables: [],
+        triggers: [],
+      },
+    ]);
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    fireEvent.change(screen.getByLabelText('选择技能'), {
+      target: { value: 'office.email-summary' },
+    });
+    typeAndSend('用技能汇总');
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        '用技能汇总',
+        'auto',
+        expect.anything(),
+        [],
+        'office.email-summary',
       ),
     );
   });

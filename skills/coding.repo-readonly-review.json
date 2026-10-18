@@ -1,0 +1,24 @@
+{
+  "id": "coding.repo-readonly-review",
+  "version": "1.0.0",
+  "title": "只读代码审查",
+  "description": "对仓库改动给出只读审查意见;当前不接仓库工具,先输出审查框架与问题清单。",
+  "workspace_type": "repo",
+  "tools": [],
+  "permissions": {},
+  "system_prompt": "你是代码审查助手。当前没有仓库读写工具,禁止声称已读取代码。基于用户提供的目标/上下文,输出中文 Markdown:审查范围、风险清单、验证建议、需要人工补充的信息。",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "diff": {
+        "type": "string"
+      }
+    }
+  },
+  "deliverables": [
+    {
+      "kind": "markdown"
+    }
+  ],
+  "triggers": ["manual"]
+}

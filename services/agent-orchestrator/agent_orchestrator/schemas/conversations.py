@@ -76,6 +76,7 @@ class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
     mode: Literal["auto", "chat", "task"] = "auto"
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+    skill_id: str | None = Field(default=None, max_length=80)
 
 
 class MessageRead(BaseModel):
