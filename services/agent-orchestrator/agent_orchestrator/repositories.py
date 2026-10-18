@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from database.repository import TenantRepository
 from sqlalchemy import and_, func, or_, select
@@ -17,6 +17,7 @@ from agent_orchestrator.models.conversations import (
     Conversation,
 )
 from agent_orchestrator.models.runs import (
+    Job,
     PendingInstruction,
     Run,
     RunArtifact,
@@ -111,6 +112,53 @@ class ConversationRepository(TenantRepository[Conversation]):
         if conversation is None or conversation.deleted_at is not None:
             raise self._not_found(conversation_id)
         return conversation
+
+
+class JobRepository(TenantRepository[Job]):
+    model = Job
+    not_found_code = "job.not_found"
+    not_found_message = "任务不存在"
+    id_detail_key = "job_id"
+
+    async def find_queued(
+        self, tenant_id: str, kind: str, run_id: str
+    ) -> Job | None:
+        """同一 run 的同类 job 去重(避免用户连点产生重复执行)。"""
+        return await self.session.scalar(
+            self.scoped(
+                tenant_id,
+                Job.kind == kind,
+                Job.run_id == run_id,
+                Job.status.in_(("queued", "running")),
+            ).order_by(Job.created_at)
+        )
+
+    async def claim_next(
+        self, worker_id: str, now: datetime, lease_seconds: int
+    ) -> Job | None:
+        """本地轮询领取:queued 到期或 running 租约过期;PG 后续换 SKIP LOCKED。"""
+        job = await self.session.scalar(
+            select(Job)
+            .where(
+                or_(
+                    and_(Job.status == "queued", Job.run_at <= now),
+                    and_(
+                        Job.status == "running",
+                        Job.lease_until.is_not(None),
+                        Job.lease_until < now,
+                    ),
+                )
+            )
+            .order_by(Job.run_at, Job.created_at)
+            .limit(1)
+        )
+        if job is None:
+            return None
+        job.status = "running"
+        job.attempts += 1
+        job.locked_by = worker_id
+        job.lease_until = now + timedelta(seconds=lease_seconds)
+        return job
 
 
 class AttachmentRepository(TenantRepository[Attachment]):

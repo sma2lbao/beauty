@@ -23,6 +23,12 @@ class Settings(BaseAppSettings):
     # 附件本地最小版(M0-12):内容进 DB;单文件上限与单条消息附件数上限
     max_attachment_bytes: int = 10 * 1024 * 1024
     max_attachments_per_message: int = 5
+    # 本地 worker(M0-04):run 的 plan/approve/resume/retry 入队执行。
+    # 测试夹具显式关闭以保留同步语义。
+    jobs_enabled: bool = True
+    jobs_poll_interval_seconds: float = 0.5
+    jobs_lease_seconds: int = 60
+    jobs_max_attempts: int = 3
     # 模型网关(架构 §5 唯一出口):enabled=false 时 plan/execute 走确定性桩
     llm_enabled: bool = False
     llm_gateway_url: str = "http://127.0.0.1:8003"

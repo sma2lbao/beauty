@@ -70,6 +70,17 @@ VITE_AUTH_MODE=session
 OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
 邮箱+密码登录。
 
+## 4.0 Job worker（run 队列）
+
+orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
+
+- run 的 plan/approve/confirm/resume/retry 先写 `jobs` 表,worker 轮询领取;
+- 领取后置 running + lease(默认 60s),进程崩溃后 lease 过期会被重新领取;
+- 失败按 attempts 指数退避,超过 `max_attempts` 落 failed 并记录 last_error;
+- 测试夹具显式 `jobs_enabled=false`,保留同步语义。
+
+前端提交审批后会短暂看到原状态,worker 执行完下一次轮询即更新;这是队列化的预期行为。
+
 ## 4.1 用量 / 模型 / BYOK
 
 - `/usage`：今日/本月 tokens、请求次数、按模型分布；没有数据时显示空态。

@@ -42,6 +42,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
+from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
 
@@ -224,6 +225,8 @@ async def _task_path(
     conversation: Conversation,
     message: ChatMessage,
     content: str,
+    *,
+    jobs_enabled: bool = False,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
     run = await active_run(session, conversation.tenant_id, conversation.id)
@@ -244,7 +247,12 @@ async def _task_path(
         ),
     )
     message.run_id = run.id
-    await runs_service.plan_run(session, graph, conversation.tenant_id, run.id)
+    if jobs_enabled:
+        await jobs_service.enqueue(
+            session, conversation.tenant_id, "plan", run.id
+        )
+    else:
+        await runs_service.plan_run(session, graph, conversation.tenant_id, run.id)
     return run, "run_created"
 
 
@@ -258,6 +266,7 @@ async def post_message(
     *,
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
+    jobs_enabled: bool = False,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -282,7 +291,9 @@ async def post_message(
             session, message, await chat.answer(session, llm, message)
         )
         return message, None, reply, triage.CHAT
-    run, outcome = await _task_path(session, graph, conversation, message, content)
+    run, outcome = await _task_path(
+        session, graph, conversation, message, content, jobs_enabled=jobs_enabled
+    )
     return message, run, None, outcome
 
 
@@ -304,6 +315,7 @@ async def stream_message(
     *,
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
+    jobs_enabled: bool = False,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -336,7 +348,12 @@ async def stream_message(
             outcome = triage.CHAT
         else:
             run, outcome = await _task_path(
-                session, graph, conversation, message, content
+                session,
+                graph,
+                conversation,
+                message,
+                content,
+                jobs_enabled=jobs_enabled,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:

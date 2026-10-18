@@ -38,6 +38,7 @@ from agent_orchestrator.repositories import (
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.services import artifacts, history
+from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.workspace import Workspace
 
 
@@ -297,9 +298,14 @@ async def plan_run(
     graph: CompiledStateGraph,
     tenant_id: str,
     run_id: str,
+    *,
+    jobs_enabled: bool = False,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.PENDING)
+    if jobs_enabled:
+        await jobs_service.enqueue(session, tenant_id, "plan", run.id)
+        return run
     await _invoke_plan(session, graph, run)
     return run
 
@@ -393,11 +399,20 @@ async def approve_run(
     run_id: str,
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
+    *,
+    jobs_enabled: bool = False,
+    emit_approved: bool = True,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_APPROVAL)
-    # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
-    await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
+    if emit_approved:
+        # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
+        await append_event(
+            session, run, "run.approved.v1", {"attempt": run.attempts}
+        )
+    if jobs_enabled:
+        await jobs_service.enqueue(session, tenant_id, "approve", run.id)
+        return run
     # §6.5:放行边界消费排队指令,经 resume 载荷由审批闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
@@ -420,16 +435,29 @@ async def confirm_run(
     reason: str | None,
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
+    *,
+    jobs_enabled: bool = False,
+    emit_confirmation: bool = True,
 ) -> Run:
     """写操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_CONFIRMATION)
-    await append_event(
-        session,
-        run,
-        "run.confirmation.received.v1",
-        {"action": action, "reason": reason},
-    )
+    if emit_confirmation:
+        await append_event(
+            session,
+            run,
+            "run.confirmation.received.v1",
+            {"action": action, "reason": reason},
+        )
+    if jobs_enabled:
+        await jobs_service.enqueue(
+            session,
+            tenant_id,
+            "confirm",
+            run.id,
+            payload={"action": action, "reason": reason},
+        )
+        return run
     # §6.5:确认边界消费排队指令,经 resume 载荷由确认闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
@@ -489,6 +517,8 @@ async def retry_run(
     graph: CompiledStateGraph,
     tenant_id: str,
     run_id: str,
+    *,
+    jobs_enabled: bool = False,
 ) -> Run:
     """failed → **另起一跑**并继承上下文(§6.2:failed 是终态,不重放旧图)。
 
@@ -525,7 +555,10 @@ async def retry_run(
         {"new_run_id": child.id, "failures": 1, "reason": parent.status_reason},
     )
     # 继承计划 → 直接进审批闸(人工再确认后才执行;副作用如已发邮件不会被自动撤销)
-    await _invoke_plan(session, graph, child)
+    if jobs_enabled:
+        await jobs_service.enqueue(session, tenant_id, "plan", child.id)
+    else:
+        await _invoke_plan(session, graph, child)
     return child
 
 
@@ -534,13 +567,19 @@ async def resume_run(
     graph: CompiledStateGraph,
     tenant_id: str,
     run_id: str,
+    *,
+    jobs_enabled: bool = False,
 ) -> Run:
     """blocked → 新 attempt 重新进审批闸,计划保留(§6.2 goal 语义)。"""
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.BLOCKED)
     run.attempts += 1
+    run.status = RunStatus.PENDING.value
     run.status_reason = None
     await append_event(session, run, "run.resumed.v1", {"attempt": run.attempts})
+    if jobs_enabled:
+        await jobs_service.enqueue(session, tenant_id, "plan", run.id)
+        return run
     await _invoke_plan(session, graph, run)
     return run
 

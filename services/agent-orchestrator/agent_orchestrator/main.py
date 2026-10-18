@@ -36,6 +36,7 @@ from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import ConnectorClient
 from agent_orchestrator.services.documents import DocumentLibrary
+from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
 from agent_orchestrator.services.outbox import (
@@ -188,6 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     app.state.outbox_recorder = recorder
     app.state.outbox_dispatcher = dispatcher
+    worker_task: asyncio.Task | None = None
 
     try:
         if settings.database_url.startswith("postgres"):
@@ -203,14 +205,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.run_graph = build_run_graph(
                     checkpointer=saver, llm=llm, toolkit_factory=toolkit_factory
                 )
+                if settings.jobs_enabled:
+                    worker_task = start_worker(app)
                 yield
         else:
             # sqlite/dev:进程内 checkpointer
             app.state.run_graph = build_run_graph(
                 llm=llm, toolkit_factory=toolkit_factory
             )
+            if settings.jobs_enabled:
+                worker_task = start_worker(app)
             yield
     finally:
+        if worker_task is not None:
+            worker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker_task
         if outbox_stop is not None:
             outbox_stop.set()
         if outbox_task is not None:

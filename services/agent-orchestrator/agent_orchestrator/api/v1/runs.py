@@ -19,6 +19,7 @@ from agent_orchestrator.api.deps import (
     get_artifact_store,
     get_run_graph,
     get_session,
+    get_settings,
     get_tenant_id,
     get_workspace_client,
 )
@@ -37,6 +38,7 @@ from agent_orchestrator.schemas.runs import (
     RunRead,
     RunStatus,
 )
+from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.workspace import Workspace
 
@@ -47,6 +49,7 @@ TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -55,9 +58,14 @@ def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
 
 @router.post("", response_model=RunRead, status_code=status.HTTP_201_CREATED)
 async def create_run(
-    body: RunCreate, session: DBSession, tenant_id: TenantId
+    body: RunCreate,
+    session: DBSession,
+    tenant_id: TenantId,
+    settings: SettingsDep,
 ) -> RunRead:
     run = await runs_service.create_run(session, tenant_id, body)
+    if settings.jobs_enabled:
+        await jobs_service.enqueue(session, tenant_id, "plan", run.id)
     return RunRead.model_validate(run)
 
 
@@ -120,10 +128,16 @@ async def get_run_artifact(
 
 @router.post("/{run_id}/plan", response_model=PlanRead)
 async def plan_run(
-    run_id: str, session: DBSession, tenant_id: TenantId, graph: RunGraph
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+    settings: SettingsDep,
 ) -> PlanRead:
     """生成计划并进入人工审批(§6.2 pending → awaiting_approval)。"""
-    run = await runs_service.plan_run(session, graph, tenant_id, run_id)
+    run = await runs_service.plan_run(
+        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+    )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
 
@@ -150,10 +164,17 @@ async def approve_run(
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    settings: SettingsDep,
 ) -> RunRead:
     """放行审批闸,执行到完成(§6.2 awaiting_approval → completed)。"""
     run = await runs_service.approve_run(
-        session, graph, tenant_id, run_id, store, workspace
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        store,
+        workspace,
+        jobs_enabled=settings.jobs_enabled,
     )
     return RunRead.model_validate(run)
 
@@ -173,19 +194,31 @@ async def reject_run(
 
 @router.post("/{run_id}/resume", response_model=PlanRead)
 async def resume_run(
-    run_id: str, session: DBSession, tenant_id: TenantId, graph: RunGraph
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+    settings: SettingsDep,
 ) -> PlanRead:
     """blocked → 重新进审批闸,保留已编辑计划(§6.2 goal 语义)。"""
-    run = await runs_service.resume_run(session, graph, tenant_id, run_id)
+    run = await runs_service.resume_run(
+        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+    )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
 
 @router.post("/{run_id}/retry", response_model=RunRead, status_code=201)
 async def retry_run(
-    run_id: str, session: DBSession, tenant_id: TenantId, graph: RunGraph
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+    settings: SettingsDep,
 ) -> RunRead:
     """failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。"""
-    run = await runs_service.retry_run(session, graph, tenant_id, run_id)
+    run = await runs_service.retry_run(
+        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+    )
     return RunRead.model_validate(run)
 
 
@@ -198,10 +231,19 @@ async def confirm_run(
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    settings: SettingsDep,
 ) -> RunRead:
     """确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。"""
     run = await runs_service.confirm_run(
-        session, graph, tenant_id, run_id, body.action, body.reason, store, workspace
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        body.action,
+        body.reason,
+        store,
+        workspace,
+        jobs_enabled=settings.jobs_enabled,
     )
     return RunRead.model_validate(run)
 

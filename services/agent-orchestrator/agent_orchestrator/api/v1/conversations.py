@@ -249,6 +249,7 @@ async def post_message(
     tenant_id: TenantId,
     graph: RunGraph,
     llm: LLM,
+    settings: Annotated[Any, Depends(get_settings)],
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     message, run, reply, mode = await conversations_service.post_message(
@@ -260,6 +261,7 @@ async def post_message(
         body.content,
         mode=body.mode,
         attachment_ids=body.attachment_ids,
+        jobs_enabled=settings.jobs_enabled,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -316,6 +318,7 @@ async def stream_message(
     tenant_id: TenantId,
     graph: RunGraph,
     llm: LLM,
+    settings: Annotated[Any, Depends(get_settings)],
 ) -> StreamingResponse:
     """SSE 流式发消息:meta(分流结果)→ delta(增量)→ done;失败以 error 帧收尾。
 
@@ -338,6 +341,7 @@ async def stream_message(
                 body.content,
                 mode=body.mode,
                 attachment_ids=body.attachment_ids,
+                jobs_enabled=settings.jobs_enabled,
             )
         ),
         media_type="text/event-stream",

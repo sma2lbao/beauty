@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -64,6 +74,30 @@ class PendingInstruction(UUIDMixin, TenantMixin, TimestampMixin, Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     content: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="queued")
+
+
+class Job(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """run 执行队列(M0-04):SQLite 轮询 / PG 可换 SKIP LOCKED。
+
+    plan/approve/confirm/resume/retry 都作为 job 入队;worker 领取后置
+    running + lease,崩溃后 lease 过期可被重新领取。
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_status_run_at", "status", "run_at"),)
+
+    kind: Mapped[str] = mapped_column(String(32))
+    run_id: Mapped[str] = mapped_column(String(32), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    locked_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
