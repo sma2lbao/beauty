@@ -22,10 +22,12 @@ resume,新任务消息应该另开一跑。首条消息自动定题;两条路径
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
+from common.errors import AppError
 from database.session import session_scope
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -71,20 +73,87 @@ async def create_conversation(
     return conversation
 
 
+def encode_cursor(conversation_id: str) -> str:
+    """把分页锚点编码成不透明游标(base64url,无填充)。"""
+    raw = base64.urlsafe_b64encode(conversation_id.encode()).decode()
+    return raw.rstrip("=")
+
+
+def decode_cursor(cursor: str) -> str:
+    """解码游标;非法游标给 400(不泄漏内部格式)。"""
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        return base64.urlsafe_b64decode(padded.encode()).decode()
+    except Exception as exc:  # noqa: BLE001 - 任何解码失败都视为坏游标
+        raise AppError("conversation.bad_cursor", "分页游标无效") from exc
+
+
 async def list_conversations(
-    session: AsyncSession, tenant_id: str, limit: int = 50
-) -> list[Conversation]:
-    """租户内最近活跃在前的对话列表(消息会顶 updated_at)。"""
-    return await ConversationRepository(session).list_recent(tenant_id, limit)
+    session: AsyncSession,
+    tenant_id: str,
+    limit: int = 50,
+    *,
+    q: str | None = None,
+    archived: bool = False,
+    cursor: str | None = None,
+) -> tuple[list[Conversation], str | None]:
+    """租户内最近活跃在前的对话列表(消息会顶 updated_at)。
+
+    keyset 分页:多取一条判断 has_more,用最后一条 id 作下一页游标。
+    """
+    before_id = decode_cursor(cursor) if cursor else None
+    rows = await ConversationRepository(session).list_recent(
+        tenant_id,
+        limit + 1,
+        q=q,
+        archived=archived,
+        before_id=before_id,
+    )
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = encode_cursor(items[-1].id) if has_more and items else None
+    return items, next_cursor
 
 
 async def require_conversation(
     session: AsyncSession, tenant_id: str, conversation_id: str
 ) -> Conversation:
-    """取租户内对话;不存在(或跨租户)→ NotFoundError(404)。"""
-    return await ConversationRepository(session).require_for_tenant(
+    """取租户内未删除的对话;不存在/跨租户/已删 → NotFoundError(404)。"""
+    return await ConversationRepository(session).require_active_for_tenant(
         tenant_id, conversation_id
     )
+
+
+async def rename_conversation(
+    session: AsyncSession, tenant_id: str, conversation_id: str, title: str
+) -> Conversation:
+    """重命名会话(标题来自用户编辑,保留首尾空白清理)。"""
+    conversation = await require_conversation(session, tenant_id, conversation_id)
+    cleaned = title.strip()
+    if not cleaned:
+        raise AppError("conversation.invalid_title", "会话标题不能为空")
+    conversation.title = cleaned
+    conversation.updated_at = datetime.now(UTC)
+    return conversation
+
+
+async def set_archived(
+    session: AsyncSession, tenant_id: str, conversation_id: str, archived: bool
+) -> Conversation:
+    """归档 / 取消归档。"""
+    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation.archived_at = datetime.now(UTC) if archived else None
+    conversation.updated_at = datetime.now(UTC)
+    return conversation
+
+
+async def delete_conversation(
+    session: AsyncSession, tenant_id: str, conversation_id: str
+) -> None:
+    """软删除:保留审计数据,列表/详情/消息随即按 404 处理。"""
+    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation.deleted_at = datetime.now(UTC)
+    conversation.updated_at = datetime.now(UTC)
 
 
 async def active_run(

@@ -33,7 +33,9 @@ describe('parseEventFrame', () => {
   });
 
   it('stream.end 帧没有 seq → null', () => {
-    expect(parseEventFrame('event: stream.end\ndata: {"status":"completed"}')).toBeNull();
+    expect(
+      parseEventFrame('event: stream.end\ndata: {"status":"completed"}'),
+    ).toBeNull();
   });
 
   it('坏 JSON / 空 data → null(不抛)', () => {
@@ -44,7 +46,11 @@ describe('parseEventFrame', () => {
 
 describe('mergeEvents', () => {
   it('去重并按 seq 升序', () => {
-    const merged = mergeEvents([event], { seq: 2, type: 'run.created.v1', payload: {} });
+    const merged = mergeEvents([event], {
+      seq: 2,
+      type: 'run.created.v1',
+      payload: {},
+    });
     expect(merged.map((item) => item.seq)).toEqual([2, 3]);
   });
 
@@ -84,7 +90,10 @@ describe('runsApi', () => {
       vi.fn().mockResolvedValue({
         ok: false,
         status: 409,
-        json: async () => ({ code: 'run.invalid_state', message: 'run 状态不允许' }),
+        json: async () => ({
+          code: 'run.invalid_state',
+          message: 'run 状态不允许',
+        }),
       }),
     );
 
@@ -145,5 +154,44 @@ describe('streamRunEvents', () => {
     expect(onOpen).toHaveBeenCalledOnce();
     expect(received).toEqual([1, 2]);
     expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it('重连时带 Last-Event-ID 请求头', async () => {
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: stream.end\ndata: {}\n\n'));
+          controller.close();
+        },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamRunEvents('r1', { lastEventId: 5, onEvent: () => {} });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['Last-Event-ID']).toBe('5');
+  });
+
+  it('没有 stream.end 的关闭抛 interrupted(交给上层重连)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        }),
+      }),
+    );
+
+    await expect(
+      streamRunEvents('r1', { onEvent: () => {} }),
+    ).rejects.toMatchObject({
+      code: 'stream.interrupted',
+    });
   });
 });

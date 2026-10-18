@@ -1,9 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
-import { Check, Copy, Download, FileCode2, GitCompareArrows } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Download,
+  FileCode2,
+  GitCompareArrows,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
-import { DiffViewer } from '@/components/console/diff-view';
+import { CodePreview, DiffViewer } from '@/components/console/diff-view';
+import { Markdown } from '@/components/console/markdown';
 import {
   ConsoleButton,
   ConsolePanel,
@@ -66,9 +73,8 @@ export function ChangesPage() {
   const isDiff = Boolean(parseUnifiedDiff(content));
   const stats = diffStats(content);
   const totalBytes = artifacts.reduce((sum, item) => sum + item.size_bytes, 0);
-  const runCount = new Set(
-    artifacts.map((item) => item.run_id).filter(Boolean),
-  ).size;
+  const runCount = new Set(artifacts.map((item) => item.run_id).filter(Boolean))
+    .size;
 
   const error =
     workspaceQuery.error ?? artifactsQuery.error ?? contentQuery.error;
@@ -161,7 +167,10 @@ export function ChangesPage() {
             action={
               <Link
                 to="/"
-                className={consoleButtonClass({ variant: 'primary', size: 'md' })}
+                className={consoleButtonClass({
+                  variant: 'primary',
+                  size: 'md',
+                })}
               >
                 去工作台发起任务
               </Link>
@@ -198,9 +207,7 @@ export function ChangesPage() {
                     aria-pressed={active}
                     className={cn(
                       'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors',
-                      active
-                        ? 'bg-[#1c1d1f]'
-                        : 'hover:bg-ha-panel-2/60',
+                      active ? 'bg-[#1c1d1f]' : 'hover:bg-ha-panel-2/60',
                     )}
                   >
                     <FileCode2
@@ -284,16 +291,20 @@ export function ChangesPage() {
               {contentQuery.isPending ? (
                 <p className="p-6 text-[12px] text-ha-dim">读取产物正文…</p>
               ) : content ? (
-                <DiffViewer
-                  content={content}
-                  view={view}
-                  numbers="double"
-                  className="py-2"
-                />
+                isDiff ? (
+                  <DiffViewer
+                    content={content}
+                    view={view}
+                    numbers="double"
+                    className="py-2"
+                  />
+                ) : selected?.kind === 'markdown' ? (
+                  <Markdown content={content} className="px-4 py-3" />
+                ) : (
+                  <CodePreview content={content} numbers />
+                )
               ) : selected ? (
-                <p className="p-6 text-[12px] text-ha-dim">
-                  产物正文为空。
-                </p>
+                <p className="p-6 text-[12px] text-ha-dim">产物正文为空。</p>
               ) : (
                 <p className="p-6 text-[12px] text-ha-dim">
                   从左侧选择一个产物查看内容。

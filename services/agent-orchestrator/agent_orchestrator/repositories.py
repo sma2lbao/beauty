@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from database.repository import TenantRepository
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import (
@@ -56,13 +56,57 @@ class ConversationRepository(TenantRepository[Conversation]):
     not_found_message = "对话不存在"
     id_detail_key = "conversation_id"
 
-    async def list_recent(self, tenant_id: str, limit: int = 50) -> list[Conversation]:
-        """租户内最近活跃在前的对话列表(活跃 = updated_at,消息会顶上去)。"""
+    async def list_recent(
+        self,
+        tenant_id: str,
+        limit: int = 50,
+        *,
+        q: str | None = None,
+        archived: bool = False,
+        before_id: str | None = None,
+    ) -> list[Conversation]:
+        """租户内最近活跃在前的对话列表(活跃 = updated_at,消息会顶上去)。
+
+        - 默认排除已归档/已软删;
+        - q 按标题模糊搜索;
+        - before_id 是游标锚点(按 updated_at + id 做 keyset,避免 offset 漂移)。
+        """
+        criteria: list = [Conversation.deleted_at.is_(None)]
+        criteria.append(
+            Conversation.archived_at.is_not(None)
+            if archived
+            else Conversation.archived_at.is_(None)
+        )
+        if q and q.strip():
+            criteria.append(Conversation.title.ilike(f"%{q.strip()}%"))
+        if before_id:
+            anchor = await self.get_for_tenant(tenant_id, before_id)
+            if anchor is None or anchor.deleted_at is not None:
+                return []
+            criteria.append(
+                or_(
+                    Conversation.updated_at < anchor.updated_at,
+                    and_(
+                        Conversation.updated_at == anchor.updated_at,
+                        Conversation.id < anchor.id,
+                    ),
+                )
+            )
         return await self.list_scoped(
             tenant_id,
+            *criteria,
             limit=limit,
             order_by=[Conversation.updated_at.desc(), Conversation.id.desc()],
         )
+
+    async def require_active_for_tenant(
+        self, tenant_id: str, conversation_id: str
+    ) -> Conversation:
+        """取未删除的对话;已软删与不存在一律 404(不泄漏存在性)。"""
+        conversation = await self.get_for_tenant(tenant_id, conversation_id)
+        if conversation is None or conversation.deleted_at is not None:
+            raise self._not_found(conversation_id)
+        return conversation
 
 
 class MessageRepository(TenantRepository[ChatMessage]):

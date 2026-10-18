@@ -6,12 +6,7 @@
  * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
  */
 
-import {
-  ApiError,
-  isUnauthorized,
-  jsonHeaders,
-  requestJson,
-} from '@/lib/http';
+import { ApiError, isUnauthorized, jsonHeaders, requestJson } from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -72,7 +67,6 @@ export type Instruction = {
   created_at: string;
 };
 
-
 /** 统一错误契约与请求封装见 @/lib/http;这里保留同名再导出,老的引用不用改。 */
 export { ApiError, isUnauthorized };
 
@@ -93,7 +87,8 @@ export const runsApi = {
     }),
   get: (runId: string) => request<Run>(`/api/v1/runs/${runId}`),
   getPlan: (runId: string) => request<Plan>(`/api/v1/runs/${runId}/plan`),
-  events: (runId: string) => request<RunEvent[]>(`/api/v1/runs/${runId}/events`),
+  events: (runId: string) =>
+    request<RunEvent[]>(`/api/v1/runs/${runId}/events`),
   generatePlan: (runId: string) =>
     request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>
@@ -176,12 +171,19 @@ export async function streamRunEvents(
   handlers: {
     onEvent: (event: RunEvent) => void;
     onOpen?: () => void;
+    /** 服务端正常结束(stream.end);网络异常会抛错,不会走这里。 */
     onEnd?: () => void;
+    /** 断线重连游标:上一次收到的最大 seq,作为 Last-Event-ID。 */
+    lastEventId?: number | null;
     signal?: AbortSignal;
   },
 ): Promise<void> {
+  const headers = await jsonHeaders();
+  if (handlers.lastEventId) {
+    headers['Last-Event-ID'] = String(handlers.lastEventId);
+  }
   const response = await fetch(`${BASE}/api/v1/runs/${runId}/events/stream`, {
-    headers: await jsonHeaders(),
+    headers,
     signal: handlers.signal,
   });
   if (!response.ok || !response.body) {
@@ -195,10 +197,15 @@ export async function streamRunEvents(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let ended = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) {
-      return;
+      if (ended) {
+        return;
+      }
+      // 没有 stream.end 就断开:当作网络中断,交给调用方重连(带 Last-Event-ID)。
+      throw new ApiError(0, 'stream.interrupted', '事件流意外中断');
     }
     buffer += decoder.decode(value, { stream: true });
     const frames = buffer.split('\n\n');
@@ -208,6 +215,7 @@ export async function streamRunEvents(
         continue;
       }
       if (frame.includes('event: stream.end')) {
+        ended = true;
         handlers.onEnd?.();
         return;
       }

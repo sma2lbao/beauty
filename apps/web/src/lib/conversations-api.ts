@@ -19,6 +19,23 @@ export type Conversation = {
   updated_at: string;
   /** 仅详情返回:当前进行中的 run(接 SSE 用);列表项不带该字段 */
   active_run_id?: string | null;
+  /** 归档时间;null/未返回表示未归档 */
+  archived_at?: string | null;
+};
+
+export type ConversationPage = {
+  items: Conversation[];
+  next_cursor: string | null;
+};
+
+export type ConversationListParams = {
+  limit?: number;
+  /** 标题搜索(服务端模糊匹配) */
+  q?: string;
+  /** 只看已归档 */
+  archived?: boolean;
+  /** 上一页返回的 next_cursor */
+  cursor?: string;
 };
 
 export type ChatMessage = {
@@ -50,8 +67,42 @@ function request<T>(path: string, init?: RequestInit): Promise<T> {
   return requestJson<T>(BASE, path, init);
 }
 
+function listPath(params: ConversationListParams = {}): string {
+  const search = new URLSearchParams();
+  search.set('limit', String(params.limit ?? 50));
+  const q = params.q?.trim();
+  if (q) search.set('q', q);
+  if (params.archived) search.set('archived', 'true');
+  if (params.cursor) search.set('cursor', params.cursor);
+  return `/api/v1/conversations?${search.toString()}`;
+}
+
 export const conversationsApi = {
-  list: () => request<Conversation[]>('/api/v1/conversations?limit=50'),
+  /**
+   * 分页列表(侧边栏"加载更多"用)。
+   *
+   * 兼容滚动升级:旧版后端返回 Conversation[](没有 items/next_cursor),
+   * 这里统一归一化,避免前后端短暂版本错配时整个侧边栏崩溃。
+   */
+  page: async (params: ConversationListParams = {}): Promise<ConversationPage> => {
+    const data = await request<ConversationPage | Conversation[]>(listPath(params));
+    return Array.isArray(data) ? { items: data, next_cursor: null } : data;
+  },
+  /** 兼容旧调用:只取当前页 items */
+  list: async (params: ConversationListParams = {}) =>
+    (await conversationsApi.page(params)).items,
+  update: (
+    conversationId: string,
+    patch: { title?: string; archived?: boolean },
+  ) =>
+    request<Conversation>(`/api/v1/conversations/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  remove: (conversationId: string) =>
+    request<void>(`/api/v1/conversations/${conversationId}`, {
+      method: 'DELETE',
+    }),
   create: () =>
     request<Conversation>('/api/v1/conversations', {
       method: 'POST',
@@ -61,11 +112,18 @@ export const conversationsApi = {
     request<Conversation>(`/api/v1/conversations/${conversationId}`),
   messages: (conversationId: string) =>
     request<ChatMessage[]>(`/api/v1/conversations/${conversationId}/messages`),
-  postMessage: (conversationId: string, content: string, mode: SendMode = 'auto') =>
-    request<MessagePostResult>(`/api/v1/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ content, mode }),
-    }),
+  postMessage: (
+    conversationId: string,
+    content: string,
+    mode: SendMode = 'auto',
+  ) =>
+    request<MessagePostResult>(
+      `/api/v1/conversations/${conversationId}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ content, mode }),
+      },
+    ),
 };
 
 /**
@@ -135,7 +193,10 @@ export async function streamMessage(
     let code = 'stream_failed';
     let message = `发送失败(${response.status})`;
     try {
-      const body = (await response.json()) as { code?: string; message?: string };
+      const body = (await response.json()) as {
+        code?: string;
+        message?: string;
+      };
       code = body.code ?? code;
       message = body.message ?? message;
     } catch {
@@ -164,15 +225,21 @@ export async function streamMessage(
       }
       const [name, data] = parsed;
       if (name === 'meta') {
-        handlers.onMeta?.(data as Parameters<NonNullable<StreamMessageHandlers['onMeta']>>[0]);
+        handlers.onMeta?.(
+          data as Parameters<NonNullable<StreamMessageHandlers['onMeta']>>[0],
+        );
       } else if (name === 'delta') {
         handlers.onDelta?.(typeof data.text === 'string' ? data.text : '');
       } else if (name === 'done') {
-        handlers.onDone?.(data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0]);
+        handlers.onDone?.(
+          data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
+        );
       } else if (name === 'error') {
         handlers.onError?.({
-          code: typeof data.code === 'string' ? data.code : 'llm.upstream_error',
-          message: typeof data.message === 'string' ? data.message : '模型调用失败',
+          code:
+            typeof data.code === 'string' ? data.code : 'llm.upstream_error',
+          message:
+            typeof data.message === 'string' ? data.message : '模型调用失败',
         });
       }
     }

@@ -6,13 +6,7 @@
  * - 变更 = 本次运行的交付物与写操作记录(没有就诚实说没有);
  * - 终端 = 原始事件流水(seq/type),SSE 连接状态在这里显示。
  */
-import {
-  Check,
-  Circle,
-  Loader2,
-  Terminal,
-  X,
-} from 'lucide-react';
+import { Check, Circle, Loader2, Terminal, X } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
@@ -35,6 +29,7 @@ export function ExecutionPanel({
   events,
   toolCalls,
   connected,
+  reconnecting = false,
   artifact,
   footerAction,
 }: {
@@ -43,6 +38,7 @@ export function ExecutionPanel({
   events: readonly RunEvent[];
   toolCalls: readonly ToolCall[];
   connected: boolean;
+  reconnecting?: boolean;
   artifact?: Artifact | null;
   footerAction?: ReactNode;
 }) {
@@ -78,10 +74,7 @@ export function ExecutionPanel({
           ) : null}
 
           {toolCalls.map((call, index) => {
-            const live =
-              running &&
-              index === toolCalls.length - 1 &&
-              call.ok;
+            const live = running && index === toolCalls.length - 1 && call.ok;
             const tone = live ? 'info' : call.ok ? 'success' : 'danger';
             return (
               <div
@@ -141,7 +134,9 @@ export function ExecutionPanel({
       {tab === 'changes' ? (
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           <div className="flex items-center justify-between px-0.5">
-            <span className="text-[11px] font-semibold text-ha-dim">交付物</span>
+            <span className="text-[11px] font-semibold text-ha-dim">
+              交付物
+            </span>
             <ToneBadge tone={artifact ? 'success' : 'neutral'}>
               {artifact ? '1 个' : '0 个'}
             </ToneBadge>
@@ -214,16 +209,28 @@ export function ExecutionPanel({
             <span
               className={cn(
                 'inline-flex items-center gap-1.5 font-mono text-[11px]',
-                connected ? 'text-ha-success' : 'text-ha-dim',
+                connected
+                  ? 'text-ha-success'
+                  : reconnecting
+                    ? 'text-ha-warning'
+                    : 'text-ha-dim',
               )}
             >
               <span
                 className={cn(
                   'h-1.5 w-1.5 rounded-full',
-                  connected ? 'animate-pulse bg-ha-success' : 'bg-ha-ghost',
+                  connected
+                    ? 'animate-pulse bg-ha-success'
+                    : reconnecting
+                      ? 'animate-pulse bg-ha-warning'
+                      : 'bg-ha-ghost',
                 )}
               />
-              {connected ? 'SSE 已连接' : 'SSE 未连接'}
+              {connected
+                ? 'SSE 已连接'
+                : reconnecting
+                  ? 'SSE 重连中'
+                  : 'SSE 未连接'}
             </span>
           </div>
           {events.length === 0 ? (
@@ -304,10 +311,7 @@ function StatusStep({ status, run }: { status: RunStatus; run?: Run }) {
             <X className="h-2.5 w-2.5 text-ha-danger" />
           </span>
         ) : (
-          <Circle
-            aria-hidden="true"
-            className="h-4 w-4 text-ha-ghost"
-          />
+          <Circle aria-hidden="true" className="h-4 w-4 text-ha-ghost" />
         )}
       </span>
       <span className="min-w-0 flex-1">

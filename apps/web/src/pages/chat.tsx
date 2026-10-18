@@ -7,12 +7,9 @@ import { ExecutionPanel } from '@/components/console/execution-panel';
 import { ConsoleStatusBar } from '@/components/console/status-bar';
 import { ToolCallCard } from '@/components/console/tool-call-card';
 import { ConsoleTopbar } from '@/components/console/topbar';
-import {
-  ConsoleButton,
-  StatusDot,
-  ToneBadge,
-} from '@/components/console/ui';
+import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
 import { CodePreview } from '@/components/console/diff-view';
+import { Markdown } from '@/components/console/markdown';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { ChatMessage, SendMode } from '@/lib/conversations-api';
@@ -76,7 +73,7 @@ export function ChatPage() {
 
   const conversationsQuery = useQuery({
     queryKey: ['conversations'],
-    queryFn: conversationsApi.list,
+    queryFn: () => conversationsApi.list(),
   });
   const conversations = conversationsQuery.data ?? [];
 
@@ -97,7 +94,8 @@ export function ChatPage() {
     manualRun && manualRun.conversationId === activeConversationId
       ? manualRun.runId
       : null;
-  const activeRunId = manualRunId ?? conversationQuery.data?.active_run_id ?? null;
+  const activeRunId =
+    manualRunId ?? conversationQuery.data?.active_run_id ?? null;
 
   const runQuery = useQuery({
     queryKey: ['run', activeRunId],
@@ -108,7 +106,7 @@ export function ChatPage() {
       return data && isRunTerminal(data.status) ? false : 2000;
     },
   });
-  const { events, connected } = useRunEvents(activeRunId);
+  const { events, connected, reconnecting } = useRunEvents(activeRunId);
   const toolCalls = toolCallsFrom(events);
   const planQuery = useQuery({
     queryKey: ['plan', activeRunId],
@@ -132,7 +130,8 @@ export function ChatPage() {
     conversation?.title ??
     conversations.find((item) => item.id === activeConversationId)?.title ??
     '新会话';
-  const inFlight = Boolean(activeRunId) && run !== undefined && !isRunTerminal(status);
+  const inFlight =
+    Boolean(activeRunId) && run !== undefined && !isRunTerminal(status);
   const eventLines = events.flatMap((event) => {
     const line = eventLine(event);
     if (!line || line.tone === 'neutral') return [];
@@ -171,12 +170,19 @@ export function ChatPage() {
         setSearchParams({ conversation: conversationId }, { replace: true });
       }
       const targetConversationId = conversationId;
-      setPending({ conversationId: targetConversationId, user: text, reply: '' });
+      setPending({
+        conversationId: targetConversationId,
+        user: text,
+        reply: '',
+      });
       await streamMessage(targetConversationId, text, sendMode, {
         signal: controller.signal,
         onMeta: (meta) => {
           if (meta.run) {
-            setManualRun({ conversationId: targetConversationId, runId: meta.run.id });
+            setManualRun({
+              conversationId: targetConversationId,
+              runId: meta.run.id,
+            });
           }
           void queryClient.invalidateQueries({ queryKey: ['conversations'] });
           void queryClient.invalidateQueries({
@@ -241,7 +247,12 @@ export function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [messages.length, eventLines.length, toolCalls.length, visiblePending?.reply.length]);
+  }, [
+    messages.length,
+    eventLines.length,
+    toolCalls.length,
+    visiblePending?.reply.length,
+  ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -284,12 +295,19 @@ export function ChatPage() {
       <ConsoleButton
         variant="secondary"
         size="sm"
-        onClick={() => setArtifactFor(showArtifact ? null : activeConversationId)}
+        onClick={() =>
+          setArtifactFor(showArtifact ? null : activeConversationId)
+        }
       >
         查看成品
       </ConsoleButton>
     ) : status === 'running' ? (
-      <ConsoleButton variant="secondary" size="sm" disabled title="暂停能力暂未开放">
+      <ConsoleButton
+        variant="secondary"
+        size="sm"
+        disabled
+        title="暂停能力暂未开放"
+      >
         暂停执行
       </ConsoleButton>
     ) : null;
@@ -405,14 +423,16 @@ export function ChatPage() {
                     </span>
                     <ToneBadge tone="warning">等待审批</ToneBadge>
                   </div>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-3 font-mono text-[12px] leading-5 text-ha-text-2">
-                    {planQuery.data.plan_markdown}
-                  </pre>
+                  <div className="max-h-64 overflow-auto px-3 py-2">
+                    <Markdown content={planQuery.data.plan_markdown} />
+                  </div>
                   <div className="flex flex-wrap items-center gap-2 border-t border-ha-warning-border/60 px-3 py-2.5">
                     <ConsoleButton
                       variant="primary"
                       size="sm"
-                      onClick={() => action.mutate(() => runsApi.approve(run.id))}
+                      onClick={() =>
+                        action.mutate(() => runsApi.approve(run.id))
+                      }
                       disabled={action.isPending}
                     >
                       放行执行
@@ -448,7 +468,9 @@ export function ChatPage() {
                   <ConsoleButton
                     variant="primary"
                     size="sm"
-                    onClick={() => action.mutate(() => runsApi.confirm(run.id, 'approve'))}
+                    onClick={() =>
+                      action.mutate(() => runsApi.confirm(run.id, 'approve'))
+                    }
                     disabled={action.isPending}
                   >
                     确认并执行
@@ -456,7 +478,9 @@ export function ChatPage() {
                   <ConsoleButton
                     variant="danger"
                     size="sm"
-                    onClick={() => action.mutate(() => runsApi.confirm(run.id, 'reject'))}
+                    onClick={() =>
+                      action.mutate(() => runsApi.confirm(run.id, 'reject'))
+                    }
                     disabled={action.isPending}
                   >
                     拒绝写操作
@@ -464,10 +488,15 @@ export function ChatPage() {
                 </div>
               ) : null}
 
-              {run?.status_reason && (status === 'failed' || status === 'blocked') ? (
+              {run?.status_reason &&
+              (status === 'failed' || status === 'blocked') ? (
                 <p className="rounded-md border border-ha-danger-border bg-ha-danger-bg px-3 py-2.5 text-[12px] leading-5 text-ha-danger">
-                  {status === 'failed' ? '失败原因' : '中断原因'}:{run.status_reason}
-                  <Link to="/runs" className="ml-2 underline underline-offset-2">
+                  {status === 'failed' ? '失败原因' : '中断原因'}:
+                  {run.status_reason}
+                  <Link
+                    to="/runs"
+                    className="ml-2 underline underline-offset-2"
+                  >
                     去任务编排处理
                   </Link>
                 </p>
@@ -479,13 +508,19 @@ export function ChatPage() {
                     <ConsoleButton
                       variant="secondary"
                       size="sm"
-                      onClick={() => setArtifactFor(showArtifact ? null : activeConversationId)}
+                      onClick={() =>
+                        setArtifactFor(
+                          showArtifact ? null : activeConversationId,
+                        )
+                      }
                     >
                       <FileText className="h-3.5 w-3.5" />
                       {showArtifact ? '收起成品' : '查看成品'}
                     </ConsoleButton>
                     {artifactQuery.data ? (
-                      <ToneBadge tone="success">{artifactQuery.data.kind}</ToneBadge>
+                      <ToneBadge tone="success">
+                        {artifactQuery.data.kind}
+                      </ToneBadge>
                     ) : null}
                   </div>
                   {showArtifact ? (
@@ -502,7 +537,14 @@ export function ChatPage() {
                           </span>
                         </div>
                         <div className="max-h-72 overflow-auto py-2">
-                          <CodePreview content={artifactQuery.data.content} />
+                          {artifactQuery.data.kind === 'markdown' ? (
+                            <Markdown
+                              content={artifactQuery.data.content}
+                              className="px-3"
+                            />
+                          ) : (
+                            <CodePreview content={artifactQuery.data.content} />
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -515,7 +557,10 @@ export function ChatPage() {
               {isRunTerminal(status) && activeRunId ? (
                 <p className="text-[12px] text-ha-dim">
                   需要重试、恢复或看完整审计流水?去
-                  <Link className="mx-1 text-ha-accent-soft underline underline-offset-2" to="/runs">
+                  <Link
+                    className="mx-1 text-ha-accent-soft underline underline-offset-2"
+                    to="/runs"
+                  >
                     任务编排
                   </Link>
                   。
@@ -559,7 +604,11 @@ export function ChatPage() {
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  if (
+                    event.key === 'Enter' &&
+                    !event.shiftKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
                     event.preventDefault();
                     submit();
                   }
@@ -582,7 +631,9 @@ export function ChatPage() {
                   <select
                     id="send-mode"
                     value={sendMode}
-                    onChange={(event) => setSendMode(event.target.value as SendMode)}
+                    onChange={(event) =>
+                      setSendMode(event.target.value as SendMode)
+                    }
                     className="h-[22px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
                   >
                     <option value="auto">自动分流</option>
@@ -628,6 +679,7 @@ export function ChatPage() {
           events={events}
           toolCalls={toolCalls}
           connected={connected}
+          reconnecting={reconnecting}
           artifact={artifactQuery.data ?? null}
           footerAction={footerAction}
         />
@@ -637,8 +689,12 @@ export function ChatPage() {
         items={[
           { label: `事件 ${events.length}` },
           {
-            label: connected ? 'SSE 已连接' : 'SSE 未连接',
-            tone: connected ? 'success' : undefined,
+            label: connected
+              ? 'SSE 已连接'
+              : reconnecting
+                ? 'SSE 重连中'
+                : 'SSE 未连接',
+            tone: connected ? 'success' : reconnecting ? 'warning' : undefined,
           },
           ...(activeRunId
             ? [
@@ -651,7 +707,10 @@ export function ChatPage() {
             ? [
                 {
                   label: RUN_STATUS_LABELS[status],
-                  tone: runStatusTone(status) === 'neutral' ? undefined : runStatusTone(status),
+                  tone:
+                    runStatusTone(status) === 'neutral'
+                      ? undefined
+                      : runStatusTone(status),
                 },
               ]
             : []),
@@ -702,15 +761,7 @@ function AgentBlock({
         </span>
         <span className="font-mono text-[11px] text-ha-dim">{meta}</span>
       </header>
-      <p className="whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-2">
-        {children}
-        {live && !children ? (
-          <span className="text-ha-dim">正在回答…</span>
-        ) : null}
-        {live && children ? (
-          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-ha-muted align-middle" />
-        ) : null}
-      </p>
+      <Markdown content={children} streaming={live} />
     </article>
   );
 }

@@ -15,6 +15,7 @@ import {
   Spin,
 } from '@beauty/design';
 
+import { Markdown } from '@/components/console/markdown';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { Artifact } from '@/lib/workspace-api';
@@ -33,7 +34,9 @@ function formatSize(bytes: number): string {
 
 function formatTime(value: string): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN');
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleString('zh-CN');
 }
 
 /** 工作区控制台:工作区清单 + 交付物(元数据/正文/删除),§7 artifacts 归属 workspace。 */
@@ -42,7 +45,9 @@ export function WorkspacePage() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
     null,
   );
-  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
+    null,
+  );
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
@@ -123,175 +128,181 @@ export function WorkspacePage() {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refreshWorkspaces()} />
 
-      {unauthorized ? (
-        <Alert variant="danger" className="mt-4">
-          未登录或令牌失效:先在上方面板完成鉴权,再查看工作区。
-        </Alert>
-      ) : null}
+        {unauthorized ? (
+          <Alert variant="danger" className="mt-4">
+            未登录或令牌失效:先在上方面板完成鉴权,再查看工作区。
+          </Alert>
+        ) : null}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_2fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>工作区</CardTitle>
-            <CardDescription>共 {workspaces.length} 个</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {workspacesQuery.isLoading ? (
-              <Spin label="加载中…" />
-            ) : (
-              <ul className="space-y-2">
-                {workspaces.map((workspace) => (
-                  <li key={workspace.id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedWorkspaceId(workspace.id);
-                        setSelectedArtifact(null);
-                      }}
-                      className={cn(
-                        'w-full rounded-md border px-3 py-2 text-left text-sm transition-colors',
-                        workspace.id === activeWorkspaceId
-                          ? 'border-primary bg-muted'
-                          : 'hover:bg-muted/60',
-                      )}
-                    >
-                      <span className="font-medium">{workspace.name}</span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {workspace.description ?? '无描述'} ·{' '}
-                        {formatTime(workspace.created_at)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <div className="space-y-3 border-t pt-4">
-              <Field label="新建工作区" htmlFor="workspace-name">
-                <Input
-                  id="workspace-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="销售资料"
-                />
-              </Field>
-              <Field label="描述(可选)" htmlFor="workspace-description">
-                <Input
-                  id="workspace-description"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                />
-              </Field>
-              <div className="flex items-center gap-3">
-                <Button
-                  onClick={() => createMutation.mutate()}
-                  disabled={!canCreate || createMutation.isPending}
-                >
-                  {createMutation.isPending ? '创建中…' : '创建'}
-                </Button>
-                {createMutation.isError ? (
-                  <span className="text-sm text-destructive">
-                    {(createMutation.error as Error).message}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-6">
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_2fr]">
           <Card>
             <CardHeader>
-              <CardTitle>交付物</CardTitle>
-              <CardDescription>
-                当前工作区共 {artifacts.length} 件;点「查看」读正文。
-              </CardDescription>
+              <CardTitle>工作区</CardTitle>
+              <CardDescription>共 {workspaces.length} 个</CardDescription>
             </CardHeader>
-            <CardContent>
-              {artifactsQuery.isLoading ? (
+            <CardContent className="space-y-4">
+              {workspacesQuery.isLoading ? (
                 <Spin label="加载中…" />
-              ) : artifacts.length === 0 ? (
-                <Empty description="这个工作区还没有交付物:先在上面建个 run 并批准执行。" />
               ) : (
-                <ul className="divide-y">
-                  {artifacts.map((artifact) => (
-                    <li
-                      key={artifact.id}
-                      className="flex flex-wrap items-center justify-between gap-3 py-3"
-                    >
-                      <div>
-                        <p className="font-medium">{artifact.title}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {artifact.kind} · {artifact.storage} ·{' '}
-                          {formatSize(artifact.size_bytes)} ·{' '}
-                          {artifact.run_id
-                            ? `run ${artifact.run_id.slice(0, 8)}…`
-                            : '无 run'}{' '}
-                          · {formatTime(artifact.created_at)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            openArtifactMutation.mutate(artifact.id)
-                          }
-                          disabled={openArtifactMutation.isPending}
-                        >
-                          查看
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeMutation.mutate(artifact.id)}
-                          disabled={removeMutation.isPending}
-                        >
-                          删除
-                        </Button>
-                      </div>
+                <ul className="space-y-2">
+                  {workspaces.map((workspace) => (
+                    <li key={workspace.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedWorkspaceId(workspace.id);
+                          setSelectedArtifact(null);
+                        }}
+                        className={cn(
+                          'w-full rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                          workspace.id === activeWorkspaceId
+                            ? 'border-primary bg-muted'
+                            : 'hover:bg-muted/60',
+                        )}
+                      >
+                        <span className="font-medium">{workspace.name}</span>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {workspace.description ?? '无描述'} ·{' '}
+                          {formatTime(workspace.created_at)}
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
-              {removeMutation.isError ? (
-                <p className="mt-3 text-sm text-destructive">
-                  {(removeMutation.error as Error).message}
-                </p>
-              ) : null}
+
+              <div className="space-y-3 border-t pt-4">
+                <Field label="新建工作区" htmlFor="workspace-name">
+                  <Input
+                    id="workspace-name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="销售资料"
+                  />
+                </Field>
+                <Field label="描述(可选)" htmlFor="workspace-description">
+                  <Input
+                    id="workspace-description"
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                  />
+                </Field>
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={() => createMutation.mutate()}
+                    disabled={!canCreate || createMutation.isPending}
+                  >
+                    {createMutation.isPending ? '创建中…' : '创建'}
+                  </Button>
+                  {createMutation.isError ? (
+                    <span className="text-sm text-destructive">
+                      {(createMutation.error as Error).message}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>正文预览</CardTitle>
-              <CardDescription>
-                {selectedArtifact
-                  ? `${selectedArtifact.title} · ${formatSize(selectedArtifact.size_bytes)}`
-                  : '还没选中交付物'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {openArtifactMutation.isPending ? (
-                <p className="text-sm text-muted-foreground">读取中…</p>
-              ) : selectedArtifact ? (
-                <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm">
-                  {selectedArtifact.content}
-                </pre>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  在列表里点「查看」,正文会显示在这里。
-                </p>
-              )}
-              {openArtifactMutation.isError ? (
-                <p className="mt-3 text-sm text-destructive">
-                  {(openArtifactMutation.error as Error).message}
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>交付物</CardTitle>
+                <CardDescription>
+                  当前工作区共 {artifacts.length} 件;点「查看」读正文。
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {artifactsQuery.isLoading ? (
+                  <Spin label="加载中…" />
+                ) : artifacts.length === 0 ? (
+                  <Empty description="这个工作区还没有交付物:先在上面建个 run 并批准执行。" />
+                ) : (
+                  <ul className="divide-y">
+                    {artifacts.map((artifact) => (
+                      <li
+                        key={artifact.id}
+                        className="flex flex-wrap items-center justify-between gap-3 py-3"
+                      >
+                        <div>
+                          <p className="font-medium">{artifact.title}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {artifact.kind} · {artifact.storage} ·{' '}
+                            {formatSize(artifact.size_bytes)} ·{' '}
+                            {artifact.run_id
+                              ? `run ${artifact.run_id.slice(0, 8)}…`
+                              : '无 run'}{' '}
+                            · {formatTime(artifact.created_at)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              openArtifactMutation.mutate(artifact.id)
+                            }
+                            disabled={openArtifactMutation.isPending}
+                          >
+                            查看
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeMutation.mutate(artifact.id)}
+                            disabled={removeMutation.isPending}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {removeMutation.isError ? (
+                  <p className="mt-3 text-sm text-destructive">
+                    {(removeMutation.error as Error).message}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>正文预览</CardTitle>
+                <CardDescription>
+                  {selectedArtifact
+                    ? `${selectedArtifact.title} · ${formatSize(selectedArtifact.size_bytes)}`
+                    : '还没选中交付物'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {openArtifactMutation.isPending ? (
+                  <p className="text-sm text-muted-foreground">读取中…</p>
+                ) : selectedArtifact ? (
+                  selectedArtifact.kind === 'markdown' ? (
+                    <div className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3">
+                      <Markdown content={selectedArtifact.content} />
+                    </div>
+                  ) : (
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm">
+                      {selectedArtifact.content}
+                    </pre>
+                  )
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    在列表里点「查看」,正文会显示在这里。
+                  </p>
+                )}
+                {openArtifactMutation.isError ? (
+                  <p className="mt-3 text-sm text-destructive">
+                    {(openArtifactMutation.error as Error).message}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
         </div>
-      </div>
       </div>
     </div>
   );

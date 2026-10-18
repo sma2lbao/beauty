@@ -41,12 +41,61 @@ function fakeStreamResponse(frames: string) {
 }
 
 describe('conversationsApi', () => {
-  it('列表走 /api/v1/conversations?limit=50', async () => {
-    const fetchMock = mockFetch(200, []);
+  it('列表走 /api/v1/conversations?limit=50 并解包 items', async () => {
+    const fetchMock = mockFetch(200, {
+      items: [{ id: 'c1' }],
+      next_cursor: null,
+    });
 
-    await conversationsApi.list();
+    const items = await conversationsApi.list();
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/conversations?limit=50');
+    expect(items).toEqual([{ id: 'c1' }]);
+  });
+
+  it('分页列表带 q / archived / cursor', async () => {
+    const fetchMock = mockFetch(200, { items: [], next_cursor: null });
+
+    await conversationsApi.page({
+      limit: 10,
+      q: '周报',
+      archived: true,
+      cursor: 'abc',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/conversations?limit=10&q=%E5%91%A8%E6%8A%A5&archived=true&cursor=abc',
+    );
+  });
+
+  it('兼容旧版后端的数组响应(滚动升级不崩)', async () => {
+    mockFetch(200, [{ id: 'c1' }]);
+
+    const page = await conversationsApi.page();
+
+    expect(page).toEqual({ items: [{ id: 'c1' }], next_cursor: null });
+  });
+
+  it('重命名走 PATCH,删除走 DELETE', async () => {
+    const fetchMock = mockFetch(200, { id: 'c1', title: '新标题' });
+
+    await conversationsApi.update('c1', { title: '新标题' });
+    const [updateUrl, updateInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(updateUrl).toBe('/api/v1/conversations/c1');
+    expect(updateInit.method).toBe('PATCH');
+    expect(updateInit.body).toBe(JSON.stringify({ title: '新标题' }));
+
+    const removeMock = mockFetch(204);
+    await conversationsApi.remove('c1');
+    const [removeUrl, removeInit] = removeMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(removeUrl).toBe('/api/v1/conversations/c1');
+    expect(removeInit.method).toBe('DELETE');
   });
 
   it('create 用 POST 空对象(标题由首条消息自动定题)', async () => {
@@ -73,7 +122,9 @@ describe('conversationsApi', () => {
 
     await conversationsApi.messages('c1');
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/conversations/c1/messages');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/conversations/c1/messages',
+    );
   });
 
   it('postMessage 发 JSON content + mode,默认 auto', async () => {
@@ -165,7 +216,10 @@ describe('conversationsApi', () => {
     const frames =
       'event: meta\ndata: {"mode":"chat","message":{"id":"m1"},"run":null}\n\n' +
       'event: error\ndata: {"code":"llm.upstream_error","message":"上游断了"}\n\n';
-    vi.stubGlobal('fetch', vi.fn(async () => fakeStreamResponse(frames)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeStreamResponse(frames)),
+    );
     const errors: unknown[] = [];
 
     await streamMessage('c1', '你好', 'chat', {
@@ -191,7 +245,9 @@ describe('conversationsApi', () => {
   it('跨租户探测返回 404 conversation.not_found 映射为 ApiError', async () => {
     mockFetch(404, { code: 'conversation.not_found', message: '对话不存在' });
 
-    const error = (await conversationsApi.get('nope').catch((err: unknown) => err)) as ApiError;
+    const error = (await conversationsApi
+      .get('nope')
+      .catch((err: unknown) => err)) as ApiError;
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(404);

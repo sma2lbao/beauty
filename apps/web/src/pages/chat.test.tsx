@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -83,7 +89,11 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-function event(seq: number, type: string, payload: Record<string, unknown>): RunEvent {
+function event(
+  seq: number,
+  type: string,
+  payload: Record<string, unknown>,
+): RunEvent {
   return { seq, type, payload };
 }
 
@@ -112,7 +122,11 @@ beforeEach(() => {
   currentEvents = [];
   vi.mocked(conversationsApi.list).mockResolvedValue([makeConversation()]);
   vi.mocked(conversationsApi.create).mockResolvedValue(
-    makeConversation({ id: 'c-new', title: '新对话', active_run_id: undefined }),
+    makeConversation({
+      id: 'c-new',
+      title: '新对话',
+      active_run_id: undefined,
+    }),
   );
   vi.mocked(conversationsApi.get).mockResolvedValue(makeConversation());
   vi.mocked(conversationsApi.messages).mockResolvedValue([makeMessage()]);
@@ -152,7 +166,9 @@ describe('ChatPage', () => {
   it('空态:给出引导且没有内容时不能发送', () => {
     renderPage();
 
-    expect(screen.getByRole('heading', { name: '开始一个新任务' })).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: '开始一个新任务' }),
+    ).toBeTruthy();
     expect(screen.getByText(/描述要完成的事/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
     expect(screen.getByLabelText('描述下一步任务')).toHaveValue('');
@@ -210,7 +226,10 @@ describe('ChatPage', () => {
     renderPage('/?conversation=c1');
 
     expect(await screen.findByText('把本周邮件整理成周报')).toBeTruthy();
-    expect(await screen.findByText(/# 周报/)).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { name: '周报' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('邮件已汇总')).toBeInTheDocument();
   });
 
   it('待审批:显示放行/拒绝,放行调用 approve', async () => {
@@ -235,9 +254,7 @@ describe('ChatPage', () => {
     );
     renderPage('/?conversation=c1');
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: '确认并执行' }),
-    );
+    fireEvent.click(await screen.findByRole('button', { name: '确认并执行' }));
 
     await waitFor(() =>
       expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
@@ -259,14 +276,19 @@ describe('ChatPage', () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     renderPage('/?conversation=c1');
 
-    expect((await screen.findAllByText('fetch_emails')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('fetch_emails')).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByText(/已交付《周报》/)).toBeTruthy();
     expect(screen.getByText('任务完成 ✅')).toBeTruthy();
   });
 
   it('失败事件以错误语气展示,并提示去任务编排处理', async () => {
     currentEvents = [
-      event(1, 'run.failed.v1', { stage: 'execute', reason: 'UpstreamError: 上游 500' }),
+      event(1, 'run.failed.v1', {
+        stage: 'execute',
+        reason: 'UpstreamError: 上游 500',
+      }),
     ];
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'failed', status_reason: 'UpstreamError: 上游 500' }),
@@ -302,7 +324,9 @@ describe('ChatPage', () => {
     );
 
     await waitFor(() => expect(runsApi.artifact).toHaveBeenCalledWith('run-1'));
-    expect(await screen.findByText(/# 本周周报/)).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { name: '本周周报' }),
+    ).toBeInTheDocument();
   });
 
   it('会话选择以 URL 为准:直接打开某个会话就去拉它的详情', async () => {
@@ -327,7 +351,9 @@ describe('ChatPage', () => {
   it('new=1 表示新会话:不选中任何历史会话', () => {
     renderPage('/?new=1');
 
-    expect(screen.getByRole('heading', { name: '开始一个新任务' })).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: '开始一个新任务' }),
+    ).toBeTruthy();
     expect(conversationsApi.get).not.toHaveBeenCalled();
   });
 

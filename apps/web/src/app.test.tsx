@@ -25,10 +25,13 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/lib/conversations-api', () => ({
   conversationsApi: {
     list: vi.fn(async () => []),
+    page: vi.fn(async () => ({ items: [], next_cursor: null })),
     create: vi.fn(),
     get: vi.fn(),
     messages: vi.fn(),
     postMessage: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
   },
   streamMessage: vi.fn(),
 }));
@@ -93,7 +96,9 @@ describe('App 路由', () => {
   it('/landing 是公开的官网落地页', async () => {
     renderApp('/landing');
     expect(
-      await screen.findByRole('heading', { name: /让 AI Agent 真正接手工程交付/ }),
+      await screen.findByRole('heading', {
+        name: /让 AI Agent 真正接手工程交付/,
+      }),
     ).toBeInTheDocument();
   });
 

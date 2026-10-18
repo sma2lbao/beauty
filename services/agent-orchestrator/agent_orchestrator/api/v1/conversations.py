@@ -12,6 +12,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
+from common.errors import AppError
 from database.session import session_scope
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -27,7 +28,9 @@ from agent_orchestrator.api.deps import (
 from agent_orchestrator.schemas.conversations import (
     ConversationCreate,
     ConversationDetail,
+    ConversationPage,
     ConversationRead,
+    ConversationUpdate,
     MessageCreate,
     MessagePostResult,
     MessageRead,
@@ -64,17 +67,65 @@ async def create_conversation(
     return ConversationRead.model_validate(conversation)
 
 
-@router.get("", response_model=list[ConversationRead])
+@router.get("", response_model=ConversationPage)
 async def list_conversations(
     session: DBSession,
     tenant_id: TenantId,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> list[ConversationRead]:
-    """租户内对话列表,最近活跃在前(对话页侧栏)。"""
-    conversations = await conversations_service.list_conversations(
-        session, tenant_id, limit
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    archived: bool = False,
+    cursor: str | None = None,
+) -> ConversationPage:
+    """租户内对话列表,最近活跃在前(对话页侧栏)。
+
+    q 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor。
+    """
+    conversations, next_cursor = await conversations_service.list_conversations(
+        session,
+        tenant_id,
+        limit,
+        q=q,
+        archived=archived,
+        cursor=cursor,
     )
-    return [ConversationRead.model_validate(item) for item in conversations]
+    return ConversationPage(
+        items=[ConversationRead.model_validate(item) for item in conversations],
+        next_cursor=next_cursor,
+    )
+
+
+@router.patch("/{conversation_id}", response_model=ConversationRead)
+async def update_conversation(
+    conversation_id: str,
+    body: ConversationUpdate,
+    session: DBSession,
+    tenant_id: TenantId,
+) -> ConversationRead:
+    """局部更新会话:重命名 / 归档 / 取消归档(至少给一项)。"""
+    if body.title is None and body.archived is None:
+        raise AppError("conversation.empty_update", "没有可更新的字段")
+    conversation = None
+    if body.title is not None:
+        conversation = await conversations_service.rename_conversation(
+            session, tenant_id, conversation_id, body.title
+        )
+    if body.archived is not None:
+        conversation = await conversations_service.set_archived(
+            session, tenant_id, conversation_id, body.archived
+        )
+    if conversation is None:  # pragma: no cover - 上面的空更新已拦截
+        raise AppError("conversation.empty_update", "没有可更新的字段")
+    return ConversationRead.model_validate(conversation)
+
+
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(
+    conversation_id: str, session: DBSession, tenant_id: TenantId
+) -> None:
+    """软删除会话(保留审计数据;列表/详情/消息随即 404)。"""
+    await conversations_service.delete_conversation(
+        session, tenant_id, conversation_id
+    )
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)

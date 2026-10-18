@@ -9,10 +9,9 @@ import { workspaceApi } from '@/lib/workspace-api';
 import { WorkspacePage } from './workspace';
 
 vi.mock('@/lib/workspace-api', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/workspace-api')>(
-      '@/lib/workspace-api',
-    );
+  const actual = await vi.importActual<typeof import('@/lib/workspace-api')>(
+    '@/lib/workspace-api',
+  );
   return {
     ...actual,
     workspaceApi: {
@@ -115,8 +114,9 @@ describe('WorkspacePage', () => {
       expect(workspaceApi.artifact).toHaveBeenCalledWith('a1');
     });
     expect(
-      await screen.findByText(/# 本周周报\(成品\)/),
+      await screen.findByRole('heading', { name: '本周周报(成品)' }),
     ).toBeTruthy();
+    expect(screen.getByText('邮件已汇总')).toBeInTheDocument();
   });
 
   it('点「删除」调用删除接口', async () => {

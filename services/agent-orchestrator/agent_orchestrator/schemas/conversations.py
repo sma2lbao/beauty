@@ -23,6 +23,21 @@ class ConversationRead(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class ConversationPage(BaseModel):
+    """会话列表分页:keyset 游标,避免 offset 漂移。"""
+
+    items: list[ConversationRead]
+    next_cursor: str | None = None
+
+
+class ConversationUpdate(BaseModel):
+    """会话局部更新:重命名 / 归档 / 取消归档(至少一项)。"""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    archived: bool | None = None
 
 
 class ConversationDetail(ConversationRead):

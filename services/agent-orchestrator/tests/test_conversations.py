@@ -208,18 +208,136 @@ def test_tenant_isolation(client: TestClient) -> None:
         == 404
     )
     # 列表互不可见
-    assert client.get("/api/v1/conversations", headers=OTHER).json() == []
+    assert client.get("/api/v1/conversations", headers=OTHER).json()["items"] == []
 
 
 def test_list_conversations_orders_by_recent_activity(client: TestClient) -> None:
     a = _create_conversation(client)
     b = _create_conversation(client)
-    listing = client.get("/api/v1/conversations", headers=TENANT).json()
+    listing = client.get("/api/v1/conversations", headers=TENANT).json()["items"]
     assert [c["id"] for c in listing] == [b, a]  # 创建新的在前
 
     _post_message(client, a, "旧对话来了一条新消息")
-    listing = client.get("/api/v1/conversations", headers=TENANT).json()
+    listing = client.get("/api/v1/conversations", headers=TENANT).json()["items"]
     assert [c["id"] for c in listing] == [a, b]  # 消息把 a 顶到最前
+
+
+def test_rename_conversation(client: TestClient) -> None:
+    conversation_id = _create_conversation(client)
+
+    resp = client.patch(
+        f"/api/v1/conversations/{conversation_id}",
+        json={"title": "  新的标题  "},
+        headers=TENANT,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "新的标题"
+    assert _detail(client, conversation_id)["title"] == "新的标题"
+    # 跨租户不可见
+    assert (
+        client.patch(
+            f"/api/v1/conversations/{conversation_id}",
+            json={"title": "偷改"},
+            headers=OTHER,
+        ).status_code
+        == 404
+    )
+
+
+def test_archive_and_unarchive_conversation(client: TestClient) -> None:
+    conversation_id = _create_conversation(client)
+
+    archived = client.patch(
+        f"/api/v1/conversations/{conversation_id}",
+        json={"archived": True},
+        headers=TENANT,
+    )
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] is not None
+    assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
+    listing = client.get(
+        "/api/v1/conversations?archived=true", headers=TENANT
+    ).json()["items"]
+    assert [c["id"] for c in listing] == [conversation_id]
+    # 归档不删除:详情仍可访问
+    assert _detail(client, conversation_id)["id"] == conversation_id
+
+    restored = client.patch(
+        f"/api/v1/conversations/{conversation_id}",
+        json={"archived": False},
+        headers=TENANT,
+    )
+    assert restored.json()["archived_at"] is None
+    assert [c["id"] for c in client.get(
+        "/api/v1/conversations", headers=TENANT
+    ).json()["items"]] == [conversation_id]
+
+
+def test_soft_delete_conversation(client: TestClient) -> None:
+    conversation_id = _create_conversation(client)
+    _post_message(client, conversation_id, "要删掉的会话")
+
+    assert (
+        client.delete(
+            f"/api/v1/conversations/{conversation_id}", headers=TENANT
+        ).status_code
+        == 204
+    )
+    assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}", headers=TENANT
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+    ).status_code == 404
+
+
+def test_search_conversations_by_title(client: TestClient) -> None:
+    weekly = client.post(
+        "/api/v1/conversations", json={"title": "本周邮件周报"}, headers=TENANT
+    ).json()["id"]
+    client.post(
+        "/api/v1/conversations", json={"title": "合同评审"}, headers=TENANT
+    )
+    client.post("/api/v1/conversations", json={"title": "周报模板"}, headers=TENANT)
+
+    listing = client.get(
+        "/api/v1/conversations?q=周报", headers=TENANT
+    ).json()["items"]
+    assert weekly in [item["id"] for item in listing]
+    assert all("周报" in item["title"] for item in listing)
+
+
+def test_conversation_pagination_cursor(client: TestClient) -> None:
+    ids = [
+        client.post(
+            "/api/v1/conversations", json={"title": f"会话{i}"}, headers=TENANT
+        ).json()["id"]
+        for i in range(3)
+    ]
+
+    first = client.get(
+        "/api/v1/conversations?limit=2", headers=TENANT
+    ).json()
+    assert len(first["items"]) == 2
+    assert first["next_cursor"]
+    second = client.get(
+        f"/api/v1/conversations?limit=2&cursor={first['next_cursor']}",
+        headers=TENANT,
+    ).json()
+    assert len(second["items"]) == 1
+    assert second["next_cursor"] is None
+    assert {item["id"] for item in first["items"]} | {
+        item["id"] for item in second["items"]
+    } == set(ids)
+    # 坏游标给 400
+    assert (
+        client.get(
+            "/api/v1/conversations?cursor=not-base64", headers=TENANT
+        ).status_code
+        == 400
+    )
 
 
 def test_simple_chat_answers_without_run(tmp_path) -> None:

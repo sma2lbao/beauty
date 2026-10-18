@@ -8,17 +8,30 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
 class Conversation(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """一段持续对话:消息的容器,也是多轮上下文的边界。"""
+    """一段持续对话:消息的容器,也是多轮上下文的边界。
+
+    archived_at / deleted_at 采用软状态:
+    - archived:用户主动归档,列表默认不展示,可取消;
+    - deleted:软删除,列表/详情/消息一律按 404 处理,底层保留审计数据。
+    """
 
     __tablename__ = "conversations"
 
     title: Mapped[str] = mapped_column(String(200), default="新对话")
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
