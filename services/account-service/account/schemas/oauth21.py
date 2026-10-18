@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -37,6 +38,13 @@ class AuthorizeApprove(BaseModel):
 
 class AuthorizeResult(BaseModel):
     redirect_to: str
+
+
+class AuthorizedClientRead(BaseModel):
+    client_id: str
+    client_name: str
+    scopes: list[str]
+    authorized_at: datetime
 
 
 class TokenResponse(BaseModel):

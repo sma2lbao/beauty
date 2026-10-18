@@ -44,6 +44,8 @@ class Settings(BaseAppSettings):
     oauth21_code_ttl_seconds: int = 600
     oauth21_access_ttl_seconds: int = 3600
     oauth21_refresh_ttl_seconds: int = 2_592_000
+    # 动态注册限流(进程内;生产换 Redis/网关)
+    oauth21_register_limit_per_hour: int = 10
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""

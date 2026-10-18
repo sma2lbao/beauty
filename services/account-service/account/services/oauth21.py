@@ -26,6 +26,7 @@ from account.schemas.oauth21 import (
     DEFAULT_OAUTH21_SCOPES,
     OAUTH21_SCOPES,
     AuthorizeApprove,
+    AuthorizedClientRead,
     AuthorizeResult,
     OAuthClientRead,
     OAuthClientRegister,
@@ -258,3 +259,48 @@ async def introspect(session: AsyncSession, token: str) -> OAuthIntrospectRead:
         scope=" ".join(record.scopes or []),
         exp=int(expires_at.timestamp()),
     )
+
+
+async def revoke_token(
+    session: AsyncSession, token: str, client_id: str | None = None
+) -> None:
+    """RFC 7009:撤销 access/refresh token;未知 token 也返回成功(不泄漏)。"""
+    repo = OAuthTokenRepository(session)
+    token_hash = _hash(token)
+    record = await repo.find_by_access_hash(token_hash)
+    if record is None:
+        record = await repo.find_by_refresh_hash(token_hash)
+    if record is None:
+        return
+    if client_id and record.client_id != client_id:
+        return
+    if record.revoked_at is None:
+        record.revoked_at = _now()
+
+
+async def list_authorizations(
+    session: AsyncSession, tenant_id: str
+) -> list[AuthorizedClientRead]:
+    tokens = await OAuthTokenRepository(session).list_active_for_tenant(tenant_id)
+    clients = OAuthClientRepository(session)
+    grouped: dict[str, AuthorizedClientRead] = {}
+    for token in tokens:
+        if token.client_id in grouped:
+            continue
+        client = await clients.find(token.client_id)
+        grouped[token.client_id] = AuthorizedClientRead(
+            client_id=token.client_id,
+            client_name=client.client_name if client else "未知客户端",
+            scopes=list(token.scopes or []),
+            authorized_at=token.created_at,
+        )
+    return list(grouped.values())
+
+
+async def revoke_authorization(
+    session: AsyncSession, tenant_id: str, client_id: str
+) -> None:
+    tokens = await OAuthTokenRepository(session).list_active_for_tenant(tenant_id)
+    for token in tokens:
+        if token.client_id == client_id and token.revoked_at is None:
+            token.revoked_at = _now()

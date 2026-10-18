@@ -119,6 +119,9 @@ class OAuthTokenRepository(TenantRepository[OAuthToken]):
             select(OAuthToken).where(OAuthToken.refresh_hash == token_hash)
         )
 
+    async def list_active_for_tenant(self, tenant_id: str) -> list[OAuthToken]:
+        return await self.list_scoped(tenant_id, OAuthToken.revoked_at.is_(None))
+
 
 class ApiKeyRepository(TenantRepository[ApiKey]):
     model = ApiKey

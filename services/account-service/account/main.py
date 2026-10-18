@@ -25,6 +25,7 @@ from account.api.v1 import oidc as oidc_api
 from account.api.v1.router import api_router
 from account.core.config import Settings
 from account.core.idp import IdPSigner, load_or_create_signer
+from account.core.ratelimit import SlidingWindowLimiter
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
 
 
@@ -71,6 +72,9 @@ def create_app(
     app.state.settings = settings
     app.state.token_verifier = token_verifier
     app.state.oauth_transport = oauth_transport
+    app.state.oauth_register_limiter = SlidingWindowLimiter(
+        settings.oauth21_register_limit_per_hour
+    )
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

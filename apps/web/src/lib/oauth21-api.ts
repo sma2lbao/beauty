@@ -10,6 +10,13 @@ export type OAuthClientInfo = {
   scopes: string[];
 };
 
+export type OAuthAuthorizedClient = {
+  client_id: string;
+  client_name: string;
+  scopes: string[];
+  authorized_at: string;
+};
+
 export type OAuthApproveInput = {
   client_id: string;
   redirect_uri: string;
@@ -32,4 +39,12 @@ export const oauth21Api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  authorizations: () =>
+    requestJson<OAuthAuthorizedClient[]>('', PATH + '/authorizations'),
+  revokeAuthorization: (clientId: string) =>
+    requestJson<void>(
+      '',
+      PATH + '/authorizations/' + encodeURIComponent(clientId),
+      { method: 'DELETE' },
+    ),
 };

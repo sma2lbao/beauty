@@ -23,6 +23,7 @@ async def authorization_server_metadata(settings: SettingsDep) -> dict:
         "authorization_endpoint": f"{web}/oauth/authorize",
         "token_endpoint": f"{issuer}/v1/oauth/token",
         "registration_endpoint": f"{issuer}/v1/oauth/register",
+        "revocation_endpoint": f"{issuer}/v1/oauth/revoke",
         "scopes_supported": list(DEFAULT_OAUTH21_SCOPES),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],

@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from urllib.parse import parse_qs
 
 from common.errors import AppError, UnauthorizedError
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from account.api.deps import get_session, get_settings, get_tenant_id
 from account.core.config import Settings
 from account.schemas.oauth21 import (
     AuthorizeApprove,
+    AuthorizedClientRead,
     AuthorizeResult,
     OAuthClientRead,
     OAuthClientRegister,
@@ -50,8 +51,18 @@ async def _request_params(request: Request) -> dict[str, str]:
 
 @router.post("/register", response_model=OAuthClientRead, status_code=201)
 async def register_client(
-    body: OAuthClientRegister, session: DBSession
-) -> OAuthClientRead:
+    body: OAuthClientRegister, request: Request, session: DBSession
+) -> OAuthClientRead | JSONResponse:
+    limiter = request.app.state.oauth_register_limiter
+    client_ip = request.client.host if request.client else "unknown"
+    if not limiter.allow(f"oauth-register:{client_ip}"):
+        return JSONResponse(
+            {
+                "error": "temporarily_unavailable",
+                "error_description": "动态注册过于频繁,请稍后重试",
+            },
+            status_code=429,
+        )
     return await oauth_service.register_client(session, body)
 
 
@@ -112,3 +123,30 @@ async def introspect(
         raise UnauthorizedError("oauth.internal_forbidden", "内部 introspect 未开放")
     body: dict[str, Any] = await request.json()
     return await oauth_service.introspect(session, str(body.get("token") or ""))
+
+
+@router.post("/revoke")
+async def revoke(request: Request, session: DBSession) -> dict[str, bool]:
+    """RFC 7009 token 撤销;未知 token 也 200(不泄漏存在性)。"""
+    params = await _request_params(request)
+    await oauth_service.revoke_token(
+        session, params.get("token", ""), params.get("client_id")
+    )
+    return {"ok": True}
+
+
+@router.get("/authorizations", response_model=list[AuthorizedClientRead])
+async def list_authorizations(
+    session: DBSession, tenant_id: TenantId
+) -> list[AuthorizedClientRead]:
+    return await oauth_service.list_authorizations(session, tenant_id)
+
+
+@router.delete(
+    "/authorizations/{client_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def revoke_authorization(
+    client_id: str, session: DBSession, tenant_id: TenantId
+) -> Response:
+    await oauth_service.revoke_authorization(session, tenant_id, client_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

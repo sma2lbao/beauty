@@ -39,5 +39,20 @@ describe('oauth21Api', () => {
     ];
     expect(url).toBe('/api/account/v1/oauth/authorize/approve');
     expect(init.method).toBe('POST');
+
+    const listMock = mockFetch(200, []);
+    await oauth21Api.authorizations();
+    expect(listMock.mock.calls[0]?.[0]).toBe(
+      '/api/account/v1/oauth/authorizations',
+    );
+
+    const revokeMock = mockFetch(204);
+    await oauth21Api.revokeAuthorization('c1');
+    expect(revokeMock.mock.calls[0]?.[0]).toBe(
+      '/api/account/v1/oauth/authorizations/c1',
+    );
+    expect((revokeMock.mock.calls[0]?.[1] as RequestInit).method).toBe(
+      'DELETE',
+    );
   });
 });

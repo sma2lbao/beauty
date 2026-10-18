@@ -171,3 +171,88 @@ def test_pkce_and_redirect_validation(tmp_path: Path) -> None:
         )
         assert wrong_verifier.status_code == 400
         assert wrong_verifier.json()["error"] == "invalid_grant"
+
+
+def _access_token(client: TestClient, registered: dict) -> dict:
+    verifier, challenge = _pkce()
+    authorized = _authorize(client, registered, challenge)
+    code = authorized.json()["redirect_to"].split("code=", 1)[1].split("&", 1)[0]
+    token = client.post(
+        "/v1/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": registered["client_id"],
+            "redirect_uri": registered["redirect_uris"][0],
+            "code_verifier": verifier,
+        },
+    )
+    assert token.status_code == 200
+    return token.json()
+
+
+def test_revoke_token_and_authorized_clients(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        registered = _register(client)
+        tokens = _access_token(client, registered)
+        authorized = client.get("/v1/oauth/authorizations", headers=TENANT)
+        assert authorized.status_code == 200
+        items = authorized.json()
+        assert items[0]["client_id"] == registered["client_id"]
+        assert items[0]["scopes"] == ["mcp:tools:read"]
+
+        revoked = client.post(
+            "/v1/oauth/revoke",
+            data={
+                "token": tokens["access_token"],
+                "client_id": registered["client_id"],
+            },
+        )
+        assert revoked.status_code == 200
+        introspected = client.post(
+            "/v1/oauth/introspect",
+            json={"token": tokens["access_token"]},
+            headers={"X-Internal-Secret": "internal-secret"},
+        )
+        assert introspected.json()["active"] is False
+
+        # 重新授权后按客户端整体撤销
+        tokens2 = _access_token(client, registered)
+        assert (
+            client.delete(
+                f"/v1/oauth/authorizations/{registered['client_id']}",
+                headers=TENANT,
+            ).status_code
+            == 204
+        )
+        assert (
+            client.post(
+                "/v1/oauth/introspect",
+                json={"token": tokens2["access_token"]},
+                headers={"X-Internal-Secret": "internal-secret"},
+            ).json()["active"]
+            is False
+        )
+
+
+def test_registration_rate_limit(tmp_path: Path) -> None:
+    app = create_app(
+        _settings(
+            tmp_path,
+            internal_secret="internal-secret",
+            oauth21_register_limit_per_hour=2,
+        ),
+        token_verifier=_IDP.verifier(),
+    )
+    with TestClient(app) as client:
+        assert _register(client)["client_id"]
+        assert _register(client)["client_id"]
+        third = client.post(
+            "/v1/oauth/register",
+            json={
+                "client_name": "too many",
+                "redirect_uris": ["http://127.0.0.1:9876/callback"],
+            },
+        )
+        assert third.status_code == 429
+        assert third.json()["error"] == "temporarily_unavailable"
