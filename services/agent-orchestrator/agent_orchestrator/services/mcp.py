@@ -205,7 +205,7 @@ async def tool_specs(
                 continue
             specs.append(
                 ToolSpec(
-                    name=f"mcp.{slug}.{wrapped.name}",
+                    name=f"mcp__{slug}__{wrapped.name}",
                     description=wrapped.description or f"MCP {server.name} 工具",
                     parameters=wrapped.input_schema or {"type": "object"},
                     handler=_make_handler(server, wrapped.name, secret),

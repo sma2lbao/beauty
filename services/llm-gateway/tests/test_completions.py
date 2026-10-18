@@ -248,3 +248,24 @@ def test_completion_stream_midway_failure_keeps_deltas(
     assert frames[0]["delta"] == "前半段"  # 已产出的增量不丢
     assert frames[-1]["error"]["code"] == "llm.upstream_error"
     assert "连接断了" in frames[-1]["error"]["message"]
+
+
+def test_provider_credentials_passed_to_litellm(monkeypatch) -> None:
+    from llm_gateway.core.config import Settings
+    from llm_gateway.main import create_app
+
+    captured: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    app = create_app(
+        Settings(env="dev", api_key="sk-test", api_base="http://provider.local")
+    )
+    with TestClient(app) as client:
+        resp = client.post("/v1/completions", json=BODY)
+    assert resp.status_code == 200
+    assert captured["api_key"] == "sk-test"
+    assert captured["api_base"] == "http://provider.local"

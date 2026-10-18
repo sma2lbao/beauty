@@ -92,7 +92,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 ## 3.3 MCP Client（第三方工具）
 
 - 设置页「MCP Servers」：注册 Streamable HTTP MCP server、测试/刷新工具、启用/停用、删除。
-- 工具命名空间：`mcp.<server>.<tool>`；统一注入执行图，默认按写操作处理（需人工确认）。
+- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，默认按写操作处理（需人工确认）。
 - token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号。
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在设置页注册后点「测试/刷新」。
 - 当前只支持 Streamable HTTP，不支持 stdio；MCP Server 对外暴露（M3）尚未实现。
@@ -130,6 +130,13 @@ curl -s http://127.0.0.1:8002/mcp \
 - 撤销:标准 `POST /v1/oauth/revoke`;设置页「已授权应用」可查看/按客户端整体撤销。
 - 动态注册限流:`ACCOUNT__OAUTH21_REGISTER_LIMIT_PER_HOUR`(进程内滑动窗口,默认 10/小时/IP)。
 - 配置:`ACCOUNT__OAUTH21_WEB_ORIGIN`(授权页 origin)、`AGENT_ORCHESTRATOR__MCP_RESOURCE_URL`(受保护资源 URL)。
+
+## 3.7 真实模型
+
+- 在 services/llm-gateway/.env 配 LLM_GATEWAY**API_KEY,可选 LLM_GATEWAY**API_BASE 与 DEFAULT_MODEL。
+- orchestrator 侧设 AGENT_ORCHESTRATOR\_\_LLM_ENABLED=true;需要工具调用时再开 TOOLS_ENABLED=true 与 MCP_ENABLED=true。
+- 验证:curl -s -H Content-Type:application/json -d {"messages":[{"role":"user","content":"只回复:模型正常"}]} http://127.0.0.1:8003/v1/completions。
+- 真实模型工具名必须匹配 ^[a-zA-Z0-9_-]+$;MCP 工具使用 mcp**<server>**<tool>。
 
 ## 4.0 Job worker（run 队列）
 
@@ -208,7 +215,7 @@ npm run dev:reset -- --yes # 不确认
 | 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码                                  |
 | 官网打不开          | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                 |
 | SQLite 表结构不对   | npm run dev:reset 后重启                                                      |
-| 想用真实模型        | 配 llm-gateway 的 LLM_ENABLED/API_KEY,或用本地 OpenAI 兼容端点                |
+| 想用真实模型        | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                   |
 | 附件上传失败        | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新 |
 
 ## 8. 测试

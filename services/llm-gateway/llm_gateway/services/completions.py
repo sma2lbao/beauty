@@ -57,6 +57,16 @@ def _extra(data: CompletionRequest) -> dict[str, Any]:
     return extra
 
 
+def _provider_kwargs(settings: Settings) -> dict[str, Any]:
+    """把平台配置的模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。"""
+    extra: dict[str, Any] = {}
+    if settings.api_key:
+        extra["api_key"] = settings.api_key
+    if settings.api_base:
+        extra["api_base"] = settings.api_base
+    return extra
+
+
 def _usage(raw: Any) -> UsageOut | None:
     if raw is None:
         return None
@@ -86,6 +96,7 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
             messages=[m.model_dump(exclude_none=True) for m in data.messages],
             temperature=data.temperature,
             timeout=settings.request_timeout_seconds,
+            **_provider_kwargs(settings),
             **extra,
         )
     except Exception as exc:
@@ -130,6 +141,7 @@ async def stream(
             temperature=data.temperature,
             timeout=settings.request_timeout_seconds,
             stream=True,
+            **_provider_kwargs(settings),
             **extra,
         )
     except Exception as exc:

@@ -191,7 +191,7 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
 
     async def scenario() -> None:
         specs = await mcp_service.tool_specs(None, "t", secret="x")  # type: ignore[arg-type]
-        assert [spec.name for spec in specs] == ["mcp.demo_server.echo"]
+        assert [spec.name for spec in specs] == ["mcp__demo_server__echo"]
         assert specs[0].requires_confirmation is True
         assert await specs[0].handler({"text": "hi"}) == "echo:hi"
 

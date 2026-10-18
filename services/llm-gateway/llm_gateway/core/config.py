@@ -17,5 +17,8 @@ class Settings(BaseAppSettings):
     # 模型列表(M0-11 静态配置):留空时只返回 default_model
     available_models: list[str] = []
     request_timeout_seconds: float = 60.0
+    # 提供商凭据:显式传给 litellm(不依赖 os.environ 注入)
+    api_key: str = ""
+    api_base: str = ""
     # 嵌入路由(§9):知识库等服务经此向量化,不直连模型提供商
     default_embedding_model: str = "bge-m3"

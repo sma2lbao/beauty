@@ -22,16 +22,16 @@
 | 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                             |
 | 支付              | **不做 Stripe**                                         | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续    |
 | 事务邮件          | **暂不做 Resend**                                       | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                    |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）              | 本地 Vite                                    | ✅ 实施                                                  |
-| BFF               | **FastAPI 服务**（同域 `/api`）                        | 本地 uvicorn                                 | ✅ 实施                                                  |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）               | 本地 Vite                                    | ✅ 实施                                                  |
+| BFF               | **FastAPI 服务**（同域 `/api`）                         | 本地 uvicorn                                 | ✅ 实施                                                  |
 | LLM 推理          | **继续用 API**（litellm 网关）                          | 本地/API                                     | ✅ 实施                                                  |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）             | 本地 Next dev                                | ✅ 实施                                                  |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）            | 本地 Next dev                                | ✅ 实施                                                  |
 | 多区域 / 数据驻留 | 不做                                                    | —                                            | ⏸ 后续                                                  |
 
 ### 0.1 两种部署形态（同一套代码）
 
-| 形态                       | 适用      | Web/BFF                          | 数据           | 外部依赖                | 状态    |
-| -------------------------- | --------- | -------------------------------- | -------------- | ----------------------- | ------- |
+| 形态                         | 适用      | Web/BFF                                               | 数据           | 外部依赖                | 状态    |
+| ---------------------------- | --------- | ----------------------------------------------------- | -------------- | ----------------------- | ------- |
 | **A. SaaS（静态 SPA + 云）** | to C 公网 | Nginx 托管 SPA + FastAPI BFF；Next.js 官网部署 Vercel | 云 PG/云 Redis | LLM API、Sentry（可选） | ✅ 当前 |
 
 | **B. 内网/离线（Intranet）** | 私有化/内网/无外网 | **Linux VM/裸机 + systemd 原生进程 + Nginx**（不用 Compose/K8s）；**仅 HTTP** | SQLite + 本地目录；无 Redis | 内网 OpenAI 兼容模型（支持 function calling）；或 `LLM_ENABLED=false` 桩；Sentry 关闭；**⏸ 暂缓** |
@@ -108,18 +108,18 @@ Browser
 
 ## 3. 服务与职责（相对 v1 的变化）
 
-| 服务              | 部署             | 职责                                    | v2 变化                                                                             |
-| ----------------- | ---------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
-| apps/web          | Nginx 静态      | Vite SPA 控制台                         | 保留；新增模板、API Key、MCP、用量/账单、文件/终端/预览面板（终端的落地依赖 §11.1） |
-| services/bff      | 容器            | BFF：认证、代理、下载、限流             | 新增（FastAPI；同域 `/api`）                                                        |
-| apps/site         | Vercel 静态      | Next.js 官网、文档、博客、Changelog     | 新增（静态导出/SEO）                                                                 |
-| agent-runtime     | 容器             | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
-| sandbox adapter   | —                | E2B 适配                                | ⏸ 暂缓（见 §11.1）                                                                 |
-| llm-gateway       | 容器             | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
-| connector-service | 容器             | 邮箱/日历/文档连接器；OAuth、同步       | IMAP 先行；OAuth 双轨后续                                                           |
-| knowledge-service | 容器             | 摄取、检索、重排、引用、记忆            | 增加 rerank/citation/memory                                                         |
-| workspace-service | 容器             | 工作区、产物、附件元数据                | 暂用 DB/本地文件；对象存储后置                                                      |
-| account-service   | 容器             | 租户/成员/配额/usage/API Key            | 增加社交 OAuth、用量账本（Stripe 后置）                                             |
+| 服务              | 部署        | 职责                                    | v2 变化                                                                             |
+| ----------------- | ----------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| apps/web          | Nginx 静态  | Vite SPA 控制台                         | 保留；新增模板、API Key、MCP、用量/账单、文件/终端/预览面板（终端的落地依赖 §11.1） |
+| services/bff      | 容器        | BFF：认证、代理、下载、限流             | 新增（FastAPI；同域 `/api`）                                                        |
+| apps/site         | Vercel 静态 | Next.js 官网、文档、博客、Changelog     | 新增（静态导出/SEO）                                                                |
+| agent-runtime     | 容器        | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
+| sandbox adapter   | —           | E2B 适配                                | ⏸ 暂缓（见 §11.1）                                                                 |
+| llm-gateway       | 容器        | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
+| connector-service | 容器        | 邮箱/日历/文档连接器；OAuth、同步       | IMAP 先行；OAuth 双轨后续                                                           |
+| knowledge-service | 容器        | 摄取、检索、重排、引用、记忆            | 增加 rerank/citation/memory                                                         |
+| workspace-service | 容器        | 工作区、产物、附件元数据                | 暂用 DB/本地文件；对象存储后置                                                      |
+| account-service   | 容器        | 租户/成员/配额/usage/API Key            | 增加社交 OAuth、用量账本（Stripe 后置）                                             |
 
 > 拆分节奏：M0 保持六业务服务 + FastAPI BFF；M1 起把 tool registry 从 orchestrator 内拆出；M3 再拆 platform-api（先复用 runtime 路由）。
 
@@ -154,7 +154,7 @@ ToolSpec {
 ```
 
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
-- 第三方工具（MCP）以 `mcp.<server>.<tool>` 命名空间接入；
+- 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
 - 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`，默认写操作 confirm；
 - 所有工具调用写 `run_events`（可回放/审计/计量），不改变 v1 语义。
 
@@ -302,11 +302,11 @@ packages/console   控制台组件（可选抽出）
 
 ### 10.1 环境
 
-| 环境    | Web                     | Runtime            | 数据                                           |
-| ------- | ----------------------- | ------------------ | ---------------------------------------------- |
-| dev     | 本地 Vite + 本地 BFF    | 本地容器/进程      | SQLite + 本地 Redis + 本地目录                 |
+| 环境    | Web                              | Runtime           | 数据                                           |
+| ------- | -------------------------------- | ----------------- | ---------------------------------------------- |
+| dev     | 本地 Vite + 本地 BFF             | 本地容器/进程     | SQLite + 本地 Redis + 本地目录                 |
 | staging | Nginx SPA + Vercel preview(site) | Fly staging + BFF | 云 PG（staging URL）+ 云 Redis + DB artifact   |
-| prod    | Nginx SPA + Vercel(site)          | Fly prod + BFF    | 云 PG + 云 Redis + DB artifact（对象存储后置） |
+| prod    | Nginx SPA + Vercel(site)         | Fly prod + BFF    | 云 PG + 云 Redis + DB artifact（对象存储后置） |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
 - 服务镜像：每服务 Dockerfile + 健康检查 + 迁移 job（部署前执行）；
