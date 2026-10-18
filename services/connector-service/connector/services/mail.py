@@ -32,6 +32,14 @@ class TestResult:
 
 
 @dataclass(frozen=True)
+class AttachmentInfo:
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
 class EmailSummary:
     subject: str
     sender: str
@@ -50,6 +58,12 @@ class MailTransport(Protocol):
     async def fetch(self, limit: int) -> list[EmailSummary]: ...
 
     async def send(self, to: str, subject: str, body: str) -> str: ...
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]: ...
+
+    async def download_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> tuple[bytes, str, str]: ...
 
 
 def _decode(value: str | None) -> str:
@@ -74,7 +88,7 @@ def _body_text(msg: Message) -> str:
     return ""
 
 
-def _to_summary(msg: Message) -> EmailSummary:
+def _to_summary(msg: Message, sequence_id: str = "") -> EmailSummary:
     subject = _decode(msg.get("Subject"))
     sender_raw = _decode(msg.get("From"))
     body = _body_text(msg)
@@ -87,7 +101,7 @@ def _to_summary(msg: Message) -> EmailSummary:
         sender=parseaddr(sender_raw)[1] or sender_raw,
         sent_at=msg.get("Date", ""),
         snippet=" ".join(body.split())[:200],
-        id=message_id.strip("<>") or str(msg.get("Date", "")),
+        id=sequence_id or message_id or str(msg.get("Date", "")),
         thread_id=references.split()[0].strip("<>") if references else message_id,
         has_attachments=has_attachments,
     )
@@ -155,7 +169,11 @@ class ImapTransport:
                     )
                     if raw is None:
                         continue
-                    out.append(_to_summary(email.message_from_bytes(raw)))
+                    out.append(
+                        _to_summary(
+                            email.message_from_bytes(raw), mid.decode()
+                        )
+                    )
                 return out
             finally:
                 client.logout()
@@ -165,6 +183,76 @@ class ImapTransport:
         except Exception as exc:
             raise UpstreamError(
                 "connector.mail_unavailable", f"邮件收取失败:{exc}"
+            ) from exc
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]:
+        def pull() -> list[AttachmentInfo]:
+            client = self._login()
+            try:
+                client.select("INBOX", readonly=True)
+                _, msg_data = client.fetch(message_id, "(RFC822)")
+                raw = next(
+                    (part[1] for part in msg_data if isinstance(part, tuple)), None
+                )
+                if raw is None:
+                    return []
+                message = email.message_from_bytes(raw)
+                out: list[AttachmentInfo] = []
+                for index, part in enumerate(message.walk()):
+                    filename = _decode(part.get_filename())
+                    if not filename:
+                        continue
+                    payload = part.get_payload(decode=True) or b""
+                    out.append(
+                        AttachmentInfo(
+                            id=str(index),
+                            filename=filename,
+                            content_type=part.get_content_type(),
+                            size_bytes=len(payload),
+                        )
+                    )
+                return out
+            finally:
+                client.logout()
+
+        try:
+            return await to_thread(pull)
+        except Exception as exc:  # noqa: BLE001
+            raise UpstreamError(
+                "connector.mail_unavailable", f"读取附件失败:{exc}"
+            ) from exc
+
+    async def download_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> tuple[bytes, str, str]:
+        def pull() -> tuple[bytes, str, str]:
+            client = self._login()
+            try:
+                client.select("INBOX", readonly=True)
+                _, msg_data = client.fetch(message_id, "(RFC822)")
+                raw = next(
+                    (part[1] for part in msg_data if isinstance(part, tuple)), None
+                )
+                if raw is None:
+                    raise ValueError("message not found")
+                message = email.message_from_bytes(raw)
+                for index, part in enumerate(message.walk()):
+                    if str(index) != attachment_id or not part.get_filename():
+                        continue
+                    return (
+                        part.get_payload(decode=True) or b"",
+                        part.get_content_type(),
+                        _decode(part.get_filename()),
+                    )
+                raise ValueError("attachment not found")
+            finally:
+                client.logout()
+
+        try:
+            return await to_thread(pull)
+        except Exception as exc:  # noqa: BLE001
+            raise UpstreamError(
+                "connector.attachment_unavailable", f"下载附件失败:{exc}"
             ) from exc
 
     async def send(self, to: str, subject: str, body: str) -> str:

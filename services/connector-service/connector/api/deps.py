@@ -51,6 +51,10 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def get_calendar_factory(request: Request):
+    return request.app.state.calendar_factory
+
+
 def get_transport_factory(
     request: Request,
 ) -> Callable[[Connection], MailTransport]:

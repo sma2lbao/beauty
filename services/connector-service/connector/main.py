@@ -25,6 +25,7 @@ from connector.models import (
     connections as connections_models,  # noqa: F401  注册 ORM 元数据
 )
 from connector.services.mail import build_transport
+from connector.services.oauth_calendar import build_calendar
 
 
 @asynccontextmanager
@@ -41,6 +42,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 生产装配真实传输工厂;测试注入 FakeTransport 走同一属性
         app.state.transport_factory = partial(
             build_transport,
+            credential_secret=settings.credential_secret,
+            google_client_id=settings.google_client_id,
+            google_client_secret=settings.google_client_secret,
+            microsoft_client_id=settings.microsoft_client_id,
+            microsoft_client_secret=settings.microsoft_client_secret,
+        )
+        app.state.calendar_factory = partial(
+            build_calendar,
             credential_secret=settings.credential_secret,
             google_client_id=settings.google_client_id,
             google_client_secret=settings.google_client_secret,
@@ -73,6 +82,7 @@ def create_app(
     transport_factory=None,
     token_verifier: JwtVerifier | None = None,
     oauth_transport=None,
+    calendar_factory=None,
 ) -> FastAPI:
     """注入点:transport_factory/oauth_transport/token_verifier 供测试使用。"""
     app = FastAPI(title="connector-service", version="0.1.0", lifespan=lifespan)
@@ -80,6 +90,7 @@ def create_app(
     app.state.transport_factory = transport_factory
     app.state.token_verifier = token_verifier
     app.state.oauth_transport = oauth_transport
+    app.state.calendar_factory = calendar_factory
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

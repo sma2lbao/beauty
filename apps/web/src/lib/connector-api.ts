@@ -2,7 +2,8 @@
  * 连接器数据层:同源 /api/connector/*,BFF 转发 connector-service。
  * 凭证只在创建时提交,读端永远不返回。
  */
-import { requestJson } from '@/lib/http';
+import { authHeaders, refreshAccessToken } from '@/lib/auth';
+import { ApiError, requestJson } from '@/lib/http';
 
 export type Connection = {
   id: string;
@@ -30,6 +31,22 @@ export type OAuthProvider = {
   enabled: boolean;
 };
 
+export type Attachment = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+};
+
+export type CalendarEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  description: string;
+  html_link: string;
+};
+
 export type ConnectionInput = {
   provider: 'imap';
   account: string;
@@ -46,6 +63,37 @@ export type ConnectionInput = {
 
 function request<T>(path: string, init?: RequestInit): Promise<T> {
   return requestJson<T>('', '/api/connector' + path, init);
+}
+
+function filenameFromDisposition(value: string | null): string {
+  if (!value) return 'attachment';
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) return decodeURIComponent(encoded);
+  const plain = value.match(/filename="?([^";]+)"?/i)?.[1];
+  return plain ?? 'attachment';
+}
+
+async function downloadBlob(
+  path: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const send = async () =>
+    fetch('/api/connector' + path, {
+      credentials: 'include',
+      headers: { ...(await authHeaders()) },
+    });
+  let response = await send();
+  if (response.status === 401 && (await refreshAccessToken())) {
+    response = await send();
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, 'download_failed', '下载附件失败');
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(
+      response.headers.get('content-disposition'),
+    ),
+  };
 }
 
 export const connectorApi = {
@@ -76,4 +124,36 @@ export const connectorApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  attachments: (id: string, messageId: string) =>
+    request<Attachment[]>(
+      '/connections/' +
+        id +
+        '/emails/' +
+        encodeURIComponent(messageId) +
+        '/attachments',
+    ),
+  downloadAttachment: (id: string, messageId: string, attachmentId: string) =>
+    downloadBlob(
+      '/connections/' +
+        id +
+        '/emails/' +
+        encodeURIComponent(messageId) +
+        '/attachments/' +
+        encodeURIComponent(attachmentId),
+    ),
+  events: (id: string) =>
+    request<CalendarEvent[]>('/connections/' + id + '/events'),
+  createEvent: (
+    id: string,
+    input: { title: string; start: string; end: string; description?: string },
+  ) =>
+    request<CalendarEvent>('/connections/' + id + '/events', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  deleteEvent: (id: string, eventId: string) =>
+    request<void>(
+      '/connections/' + id + '/events/' + encodeURIComponent(eventId),
+      { method: 'DELETE' },
+    ),
 };

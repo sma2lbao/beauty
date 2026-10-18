@@ -46,6 +46,18 @@ describe('connectorApi', () => {
     expect(emailsMock.mock.calls[0]?.[0]).toBe(
       '/api/connector/connections/c1/emails?limit=5',
     );
+
+    const attachmentsMock = mockFetch(200, []);
+    await connectorApi.attachments('c1', 'm1');
+    expect(attachmentsMock.mock.calls[0]?.[0]).toBe(
+      '/api/connector/connections/c1/emails/m1/attachments',
+    );
+
+    const eventsMock = mockFetch(200, []);
+    await connectorApi.events('c1');
+    expect(eventsMock.mock.calls[0]?.[0]).toBe(
+      '/api/connector/connections/c1/events',
+    );
   });
 
   it('创建提交凭证到后端,发信是 POST', async () => {

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
 from connector.main import create_app
-from connector.services.mail import EmailSummary, TestResult
+from connector.services.mail import AttachmentInfo, EmailSummary, TestResult
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
@@ -35,6 +35,8 @@ class FakeTransport:
         self.emails = emails or []
         self.fetch_limits: list[int] = []
         self.sent: list[tuple[str, str, str]] = []
+        self.attachment_list: list[AttachmentInfo] = []
+        self.attachment_content = b"attachment-bytes"
 
     async def test(self) -> TestResult:
         return self.test_result
@@ -46,6 +48,14 @@ class FakeTransport:
     async def send(self, to: str, subject: str, body: str) -> str:
         self.sent.append((to, subject, body))
         return f"已发送至 {to}"
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]:
+        return list(self.attachment_list)
+
+    async def download_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> tuple[bytes, str, str]:
+        return self.attachment_content, "text/plain", "note.txt"
 
 
 def _settings(tmp_path: Path) -> Settings:

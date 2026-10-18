@@ -85,7 +85,8 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 发信/撤销是写操作，前端二次确认；发信需要连接里填了 SMTP host。
 - Gmail / Microsoft 365 走 OAuth：`CONNECTOR__GOOGLE_CLIENT_ID/SECRET` 或 `CONNECTOR__MICROSOFT_CLIENT_ID/SECRET`；连接页点 OAuth 按钮跳授权，回调到 `/connectors?oauth=success`。
 - OAuth 回调地址：`CONNECTOR__OAUTH_REDIRECT_BASE`（默认 `http://127.0.0.1:8004/v1/oauth`），需在 Google/Microsoft 应用里登记。
-- 邮件列表带 `thread_id` / `has_attachments`；附件下载与日历 CRUD 仍待阶段 3B。
+- 邮件列表带 `thread_id` / `has_attachments`；邮件可展开附件并下载（IMAP/Gmail/Graph）。
+- Gmail/M365 OAuth 连接还支持日历 CRUD：`GET/POST /v1/connections/{id}/events`、`PATCH/DELETE .../events/{event_id}`；OAuth scope 已包含 Gmail Calendar / Microsoft Calendars.ReadWrite，老连接需重新授权。
 - 本地没有真实邮箱时可以先建一条假连接验证 UI 与加密存储，连通性测试会如实失败。
 
 ## 3.3 MCP Client（第三方工具）

@@ -207,3 +207,36 @@ def test_credentials_encrypted_at_rest(client: TestClient, tmp_path: Path) -> No
         "dev-connector-secret-change-me", stored
     )
     assert decrypted["password"] == "fake-auth-code-16chars"
+
+
+def test_attachments_list_and_download(tmp_path: Path) -> None:
+    from connector.main import create_app
+    from connector.services.mail import AttachmentInfo
+    from tests.conftest import FakeTransport, _settings, verifier
+
+    transport = FakeTransport()
+    transport.attachment_list = [
+        AttachmentInfo(
+            id="a1", filename="note.txt", content_type="text/plain", size_bytes=4
+        )
+    ]
+    app = create_app(
+        _settings(tmp_path),
+        transport_factory=lambda conn: transport,
+        token_verifier=verifier(),
+    )
+    with TestClient(app) as client:
+        created = _create(client)
+        cid = created.json()["id"]
+        listing = client.get(
+            f"/v1/connections/{cid}/emails/m1/attachments", headers=TENANT
+        )
+        assert listing.status_code == 200
+        assert listing.json()[0]["filename"] == "note.txt"
+
+        download = client.get(
+            f"/v1/connections/{cid}/emails/m1/attachments/a1", headers=TENANT
+        )
+        assert download.status_code == 200
+        assert download.content == b"attachment-bytes"
+        assert "note.txt" in download.headers["content-disposition"]

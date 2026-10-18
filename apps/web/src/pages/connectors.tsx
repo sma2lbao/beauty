@@ -60,6 +60,14 @@ export function ConnectorsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [sendForm, setSendForm] = useState({ to: '', subject: '', body: '' });
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [attachmentsFor, setAttachmentsFor] = useState<string | null>(null);
+  const [calendarForm, setCalendarForm] = useState({
+    title: '',
+    start: '',
+    end: '',
+    description: '',
+  });
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const connectionsQuery = useQuery({
     queryKey: ['connector-connections'],
@@ -84,6 +92,24 @@ export function ConnectorsPage() {
     queryKey: ['connector-emails', selected?.id],
     queryFn: () => connectorApi.emails(selected?.id as string),
     enabled: Boolean(selected?.id) && selected?.status === 'active',
+    retry: false,
+  });
+  const attachmentsQuery = useQuery({
+    queryKey: ['connector-attachments', selected?.id, attachmentsFor],
+    queryFn: () =>
+      connectorApi.attachments(
+        selected?.id as string,
+        attachmentsFor as string,
+      ),
+    enabled: Boolean(selected?.id && attachmentsFor),
+    retry: false,
+  });
+  const calendarQuery = useQuery({
+    queryKey: ['connector-events', selected?.id],
+    queryFn: () => connectorApi.events(selected?.id as string),
+    enabled:
+      Boolean(selected?.id) &&
+      (selected?.provider === 'gmail' || selected?.provider === 'outlook'),
     retry: false,
   });
 
@@ -122,6 +148,50 @@ export function ConnectorsPage() {
     },
     onError: (failure) => setSendResult((failure as Error).message),
   });
+
+  const calendarCreateMutation = useMutation({
+    mutationFn: () =>
+      connectorApi.createEvent(selected?.id as string, {
+        title: calendarForm.title.trim(),
+        start: calendarForm.start,
+        end: calendarForm.end,
+        description: calendarForm.description,
+      }),
+    onSuccess: async () => {
+      setCalendarForm({ title: '', start: '', end: '', description: '' });
+      await queryClient.invalidateQueries({
+        queryKey: ['connector-events', selected?.id],
+      });
+    },
+  });
+  const calendarDeleteMutation = useMutation({
+    mutationFn: (eventId: string) =>
+      connectorApi.deleteEvent(selected?.id as string, eventId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['connector-events', selected?.id],
+      }),
+  });
+
+  const downloadAttachment = async (attachmentId: string) => {
+    if (!selected || !attachmentsFor) return;
+    try {
+      const { blob, filename } = await connectorApi.downloadAttachment(
+        selected.id,
+        attachmentsFor,
+        attachmentId,
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setDownloadError(null);
+    } catch (failure) {
+      setDownloadError((failure as Error).message);
+    }
+  };
 
   const submitConnection = () => {
     setFormError(null);
@@ -460,6 +530,55 @@ export function ConnectorsPage() {
                             <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-ha-muted">
                               {email.snippet}
                             </p>
+                            {email.has_attachments ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setAttachmentsFor((previous) =>
+                                    previous === email.id ? null : email.id,
+                                  )
+                                }
+                                className="mt-1 font-mono text-[10px] text-ha-accent-soft hover:text-ha-text"
+                              >
+                                {attachmentsFor === email.id
+                                  ? '收起附件'
+                                  : '查看附件'}
+                              </button>
+                            ) : null}
+                            {attachmentsFor === email.id ? (
+                              <div className="mt-2 space-y-1">
+                                {attachmentsQuery.isPending ? (
+                                  <p className="text-[11px] text-ha-dim">
+                                    读取附件…
+                                  </p>
+                                ) : attachmentsQuery.data?.length ? (
+                                  attachmentsQuery.data.map((attachment) => (
+                                    <button
+                                      key={attachment.id}
+                                      type="button"
+                                      onClick={() =>
+                                        void downloadAttachment(attachment.id)
+                                      }
+                                      className="flex w-full items-center justify-between gap-2 rounded border border-ha-border bg-ha-panel px-2 py-1.5 text-left hover:border-ha-border-strong"
+                                    >
+                                      <span className="truncate font-mono text-[11px] text-ha-text-2">
+                                        {attachment.filename}
+                                      </span>
+                                      <span className="shrink-0 font-mono text-[10px] text-ha-dim">
+                                        {Math.ceil(
+                                          attachment.size_bytes / 1024,
+                                        )}{' '}
+                                        KB
+                                      </span>
+                                    </button>
+                                  ))
+                                ) : (
+                                  <p className="text-[11px] text-ha-dim">
+                                    没有可下载附件。
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
@@ -543,6 +662,129 @@ export function ConnectorsPage() {
                   </CardContent>
                 </Card>
               </div>
+
+              {downloadError ? (
+                <p className="text-[12px] text-ha-danger">{downloadError}</p>
+              ) : null}
+
+              {selected.provider === 'gmail' ||
+              selected.provider === 'outlook' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>日历</CardTitle>
+                    <CardDescription>
+                      OAuth 连接的日历 CRUD（北京时间请输入 ISO 字符串，例如
+                      2026-10-20T10:00:00+08:00）
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Field label="标题" htmlFor="event-title">
+                        <Input
+                          id="event-title"
+                          value={calendarForm.title}
+                          onChange={(event) =>
+                            setCalendarForm({
+                              ...calendarForm,
+                              title: event.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="描述" htmlFor="event-desc">
+                        <Input
+                          id="event-desc"
+                          value={calendarForm.description}
+                          onChange={(event) =>
+                            setCalendarForm({
+                              ...calendarForm,
+                              description: event.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="开始" htmlFor="event-start">
+                        <Input
+                          id="event-start"
+                          value={calendarForm.start}
+                          onChange={(event) =>
+                            setCalendarForm({
+                              ...calendarForm,
+                              start: event.target.value,
+                            })
+                          }
+                          placeholder="2026-10-20T10:00:00Z"
+                        />
+                      </Field>
+                      <Field label="结束" htmlFor="event-end">
+                        <Input
+                          id="event-end"
+                          value={calendarForm.end}
+                          onChange={(event) =>
+                            setCalendarForm({
+                              ...calendarForm,
+                              end: event.target.value,
+                            })
+                          }
+                          placeholder="2026-10-20T11:00:00Z"
+                        />
+                      </Field>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={
+                        !calendarForm.title.trim() ||
+                        !calendarForm.start ||
+                        !calendarForm.end ||
+                        calendarCreateMutation.isPending
+                      }
+                      onClick={() => calendarCreateMutation.mutate()}
+                    >
+                      {calendarCreateMutation.isPending
+                        ? '创建中…'
+                        : '创建日程'}
+                    </Button>
+                    {calendarCreateMutation.error ? (
+                      <p className="text-[12px] text-ha-danger">
+                        {(calendarCreateMutation.error as Error).message}
+                      </p>
+                    ) : null}
+                    {calendarQuery.isPending ? (
+                      <p className="text-[12px] text-ha-dim">读取日程…</p>
+                    ) : calendarQuery.data?.length ? (
+                      <ul className="space-y-2">
+                        {calendarQuery.data.map((event) => (
+                          <li
+                            key={event.id}
+                            className="flex items-center justify-between gap-3 rounded border border-ha-border bg-ha-panel-2 px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-[12px] font-medium text-ha-text-2">
+                                {event.title}
+                              </p>
+                              <p className="truncate font-mono text-[10px] text-ha-dim">
+                                {event.start} → {event.end}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={'删除日程 ' + event.title}
+                              onClick={() =>
+                                calendarDeleteMutation.mutate(event.id)
+                              }
+                              className="text-ha-dim hover:text-ha-danger"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[12px] text-ha-dim">暂无日程。</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : null}
             </div>
           ) : (
             <ConsolePanel className="grid place-items-center p-10 text-[12px] text-ha-dim">

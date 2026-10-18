@@ -13,7 +13,7 @@ from email.utils import parseaddr
 import httpx
 from common.errors import UpstreamError
 
-from connector.services.mail import EmailSummary, TestResult
+from connector.services.mail import AttachmentInfo, EmailSummary, TestResult
 
 
 class _OAuthTransport:
@@ -157,6 +157,43 @@ class GmailTransport(_OAuthTransport):
         return f"已发送至 {to}"
 
 
+    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]:
+        response = await self._request(
+            "GET",
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/" + message_id,
+            params={"format": "full"},
+        )
+        if response.status_code != 200:
+            raise UpstreamError("connector.mail_unavailable", "Gmail 读取邮件失败")
+        payload = response.json().get("payload") or {}
+        return _gmail_attachments(payload)
+
+    async def download_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> tuple[bytes, str, str]:
+        attachments = await self.list_attachments(message_id)
+        match = next((item for item in attachments if item.id == attachment_id), None)
+        if match is None:
+            raise UpstreamError("connector.attachment_not_found", "附件不存在")
+        response = await self._request(
+            "GET",
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/"
+            + message_id
+            + "/attachments/"
+            + attachment_id,
+        )
+        if response.status_code != 200:
+            raise UpstreamError(
+                "connector.attachment_unavailable", "Gmail 附件下载失败"
+            )
+        data = response.json().get("data") or ""
+        padded = data + "=" * (-len(data) % 4)
+        return (
+            base64.urlsafe_b64decode(padded),
+            match.content_type,
+            match.filename,
+        )
+
 class OutlookTransport(_OAuthTransport):
     provider = "outlook"
 
@@ -240,6 +277,69 @@ class OutlookTransport(_OAuthTransport):
                 "connector.send_failed", f"Outlook 发信失败 {response.status_code}"
             )
         return f"已发送至 {to}"
+
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]:
+        response = await self._request(
+            "GET",
+            "https://graph.microsoft.com/v1.0/me/messages/"
+            + message_id
+            + "/attachments",
+            params={"$select": "id,name,contentType,size"},
+        )
+        if response.status_code != 200:
+            raise UpstreamError("connector.mail_unavailable", "Graph 读取附件失败")
+        return [
+            AttachmentInfo(
+                id=str(item.get("id") or ""),
+                filename=str(item.get("name") or "attachment"),
+                content_type=str(item.get("contentType") or "application/octet-stream"),
+                size_bytes=int(item.get("size") or 0),
+            )
+            for item in response.json().get("value", [])
+        ]
+
+    async def download_attachment(
+        self, message_id: str, attachment_id: str
+    ) -> tuple[bytes, str, str]:
+        attachments = await self.list_attachments(message_id)
+        match = next((item for item in attachments if item.id == attachment_id), None)
+        if match is None:
+            raise UpstreamError("connector.attachment_not_found", "附件不存在")
+        response = await self._request(
+            "GET",
+            "https://graph.microsoft.com/v1.0/me/messages/"
+            + message_id
+            + "/attachments/"
+            + attachment_id
+            + "/$value",
+        )
+        if response.status_code != 200:
+            raise UpstreamError(
+                "connector.attachment_unavailable", "Graph 附件下载失败"
+            )
+        return response.content, match.content_type, match.filename
+
+
+def _gmail_attachments(payload: dict) -> list[AttachmentInfo]:
+    out: list[AttachmentInfo] = []
+    for part in payload.get("parts") or []:
+        filename = str(part.get("filename") or "")
+        body = part.get("body") or {}
+        if filename and body.get("attachmentId"):
+            out.append(
+                AttachmentInfo(
+                    id=str(body["attachmentId"]),
+                    filename=filename,
+                    content_type=str(
+                        part.get("mimeType") or "application/octet-stream"
+                    ),
+                    size_bytes=int(body.get("size") or 0),
+                )
+            )
+        if part.get("parts"):
+            out.extend(_gmail_attachments(part))
+    return out
 
 
 def _gmail_summary(message: dict) -> EmailSummary:

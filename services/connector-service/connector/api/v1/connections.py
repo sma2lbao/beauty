@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from connector.api.deps import (
@@ -17,6 +18,7 @@ from connector.api.deps import (
 from connector.core.config import Settings
 from connector.models.connections import Connection
 from connector.schemas.connections import (
+    AttachmentRead,
     ConnectionCreate,
     ConnectionRead,
     EmailRead,
@@ -136,3 +138,52 @@ async def send_email(
     )
     detail = await transport_factory(conn).send(body.to, body.subject, body.body)
     return SendEmailResult(ok=True, detail=detail)
+
+
+@router.get(
+    "/{connection_id}/emails/{message_id}/attachments",
+    response_model=list[AttachmentRead],
+)
+async def list_attachments(
+    connection_id: str,
+    message_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    transport_factory: TransportFactory,
+) -> list[AttachmentRead]:
+    conn = await connections_service.require_active_connection(
+        session, tenant_id, connection_id
+    )
+    attachments = await transport_factory(conn).list_attachments(message_id)
+    return [
+        AttachmentRead(
+            id=item.id,
+            filename=item.filename,
+            content_type=item.content_type,
+            size_bytes=item.size_bytes,
+        )
+        for item in attachments
+    ]
+
+
+@router.get("/{connection_id}/emails/{message_id}/attachments/{attachment_id}")
+async def download_attachment(
+    connection_id: str,
+    message_id: str,
+    attachment_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    transport_factory: TransportFactory,
+) -> Response:
+    conn = await connections_service.require_active_connection(
+        session, tenant_id, connection_id
+    )
+    content, content_type, filename = await transport_factory(
+        conn
+    ).download_attachment(message_id, attachment_id)
+    disposition = "attachment; filename*=UTF-8''" + quote(filename)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": disposition},
+    )

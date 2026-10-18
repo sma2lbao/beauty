@@ -58,6 +58,36 @@ class EmailRead(BaseModel):
     has_attachments: bool = False
 
 
+class CalendarEventCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    start: str = Field(min_length=10, max_length=64)
+    end: str = Field(min_length=10, max_length=64)
+    description: str = Field(default="", max_length=20000)
+
+
+class CalendarEventUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    start: str | None = Field(default=None, min_length=10, max_length=64)
+    end: str | None = Field(default=None, min_length=10, max_length=64)
+    description: str | None = Field(default=None, max_length=20000)
+
+
+class CalendarEventRead(BaseModel):
+    id: str
+    title: str
+    start: str
+    end: str
+    description: str
+    html_link: str
+
+
+class AttachmentRead(BaseModel):
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
 class TestResultRead(BaseModel):
     ok: bool
     detail: str
