@@ -17,6 +17,7 @@ import {
   Textarea,
 } from '@beauty/design';
 
+import { ApiKeysPanel } from '@/components/console/api-keys-panel';
 import { ByokPanel } from '@/components/console/byok-panel';
 import { McpPanel } from '@/components/console/mcp-panel';
 import { PageHeader } from '@/components/console/ui';
@@ -181,6 +182,7 @@ export function SettingsPage() {
         <div className="mt-6 grid gap-6">
           <ByokPanel />
           <McpPanel />
+          <ApiKeysPanel />
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">

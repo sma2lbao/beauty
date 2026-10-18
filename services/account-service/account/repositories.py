@@ -10,6 +10,7 @@ from database.repository import Repository, TenantRepository
 from sqlalchemy import select
 
 from account.models.account import (
+    ApiKey,
     BYOKKey,
     OAuthIdentity,
     Organization,
@@ -65,6 +66,18 @@ class OAuthIdentityRepository(TenantRepository[OAuthIdentity]):
                 OAuthIdentity.provider == provider,
                 OAuthIdentity.subject == subject,
             )
+        )
+
+
+class ApiKeyRepository(TenantRepository[ApiKey]):
+    model = ApiKey
+    not_found_code = "api_key.not_found"
+    not_found_message = "API Key 不存在"
+    id_detail_key = "api_key_id"
+
+    async def find_by_hash(self, key_hash: str) -> ApiKey | None:
+        return await self.session.scalar(
+            select(ApiKey).where(ApiKey.key_hash == key_hash)
         )
 
 

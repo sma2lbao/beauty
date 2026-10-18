@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agent_orchestrator.api.health import health_router
+from agent_orchestrator.api.mcp_server import router as mcp_server_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.builder import build_run_graph
@@ -41,6 +42,7 @@ from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
+from agent_orchestrator.services.mcp_server import ApiKeyVerifier
 from agent_orchestrator.services.outbox import (
     record_run_event,
     register_consumers,
@@ -58,6 +60,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
     app.state.skills = load_skills(settings.skills_dir or None)
+
+    key_verifier: ApiKeyVerifier | None = app.state.api_key_verifier
+    owns_key_verifier = False
+    if key_verifier is None and settings.mcp_server_enabled:
+        key_verifier = ApiKeyVerifier(
+            base_url=settings.account_service_url,
+            internal_secret=settings.internal_auth_secret,
+        )
+        owns_key_verifier = True
+    app.state.api_key_verifier = key_verifier
+
     factory = create_session_factory(settings.database_url)
     app.state.session_factory = factory
     if settings.auto_create_tables:
@@ -253,6 +266,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await llm.aclose()
         if owns_verifier:
             await verifier.aclose()
+        if owns_key_verifier and key_verifier is not None:
+            await key_verifier.aclose()
         if connector is not None:
             await connector.aclose()
         if knowledge is not None:
@@ -269,6 +284,7 @@ def create_app(
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
     event_bus: EventBus | None = None,
+    api_key_verifier: ApiKeyVerifier | None = None,
 ) -> FastAPI:
     """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
@@ -279,6 +295,7 @@ def create_app(
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client
     app.state.event_bus = event_bus
+    app.state.api_key_verifier = api_key_verifier
 
     if app.state.settings.cors_allow_origins:
         # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配
@@ -295,6 +312,7 @@ def create_app(
         return JSONResponse(status_code=exc.status, content=exc.to_dict())
 
     app.include_router(health_router)
+    app.include_router(mcp_server_router)
     app.include_router(api_router, prefix="/api/v1")
     return app
 

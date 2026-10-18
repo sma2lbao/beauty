@@ -93,6 +93,29 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在设置页注册后点「测试/刷新」。
 - 当前只支持 Streamable HTTP，不支持 stdio；MCP Server 对外暴露（M3）尚未实现。
 
+## 3.4 API Key
+
+- 设置页「API Keys」创建/轮换/吊销;明文只在创建/轮换时返回一次,服务端只存 SHA-256 哈希。
+- scopes:`mcp:tools:read`、`mcp:tools:call`、`artifacts:read`。
+- 用 account-service 内部校验接口 `/v1/api-keys/verify`(X-Internal-Secret)。
+
+## 3.5 公开 MCP Server（本地版）
+
+- 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 BFF 会话)。
+- 鉴权:`Authorization: Bearer bm_live_...` 或 `X-API-Key`;只接受 API Key,OAuth 2.1 暂未接。
+- 支持 `initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`。
+- 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及连接器/文档/知识库中非写工具;发信等写操作不暴露。
+- 资源:`beauty://artifacts/{artifact_id}`(仅数据库内联存储的 Markdown)。
+- 本地示例:
+
+```sh
+KEY=bm_live_...  # 设置页创建
+curl -s http://127.0.0.1:8002/mcp \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
 ## 4.0 Job worker（run 队列）
 
 orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
@@ -111,7 +134,7 @@ orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
 - 设置页 BYOK：应用层加密存储，只显示尾号；**暂不参与模型调用**。
 - 本地没有模型 key 时用量页为空是正常现象；可用 account-service 的内部上报接口造数：
 
-¤¤¤sh
+```sh
 
 # 需要 ACCOUNT\_\_INTERNAL_SECRET
 
@@ -120,7 +143,7 @@ curl -X POST http://127.0.0.1:8001/v1/usage/events \
  -H "X-Internal-Secret: <internal-secret>" \
  -H 'Content-Type: application/json' \
  -d '{"model":"deepseek/deepseek-chat","prompt_tokens":1200,"completion_tokens":400}'
-¤¤¤
+```
 
 ## 5. 演示数据
 

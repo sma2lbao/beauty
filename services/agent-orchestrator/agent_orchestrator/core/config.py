@@ -35,6 +35,9 @@ class Settings(BaseAppSettings):
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
     mcp_timeout_seconds: float = 10.0
+    # 公开 MCP Server(M3 本地版):API Key 入口
+    mcp_server_enabled: bool = True
+    account_service_url: str = "http://127.0.0.1:8001"
     # 模型网关(架构 §5 唯一出口):enabled=false 时 plan/execute 走确定性桩
     llm_enabled: bool = False
     llm_gateway_url: str = "http://127.0.0.1:8003"

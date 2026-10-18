@@ -95,6 +95,24 @@ class BYOKKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
     key_hint: Mapped[str] = mapped_column(String(16))
 
 
+class ApiKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """开放平台 API Key(M3-01):只存 SHA-256 哈希,明文仅创建/轮换时返回一次。"""
+
+    __tablename__ = "api_keys"
+
+    name: Mapped[str] = mapped_column(String(80))
+    prefix: Mapped[str] = mapped_column(String(24), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    key_hint: Mapped[str] = mapped_column(String(8))
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class RefreshToken(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """旋转式刷新令牌:本体即哈希。
 
