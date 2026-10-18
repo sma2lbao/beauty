@@ -11,6 +11,12 @@ export default defineConfig({
     // 开发期把 /api 代理到 agent-orchestrator(:8002):前端同源、免 CORS
     // (服务端也配了白名单,直连同样可用;见 services/agent-orchestrator 的 CORS 配置)
     proxy: {
+      // M0-01:BFF 健康检查走同源 /api/health(生产由 Nginx 反代);
+      // 其余 /api 仍直连 orchestrator,等 M0-06 再把整组 /api 切到 BFF。
+      '/api/health': {
+        target: 'http://127.0.0.1:8007',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://127.0.0.1:8002',
         changeOrigin: true,

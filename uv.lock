@@ -21,6 +21,7 @@ members = [
     "account-service",
     "agent-orchestrator",
     "beauty-moon",
+    "bff",
     "common",
     "connector-service",
     "database",
@@ -468,6 +469,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "account-service" },
     { name = "agent-orchestrator" },
+    { name = "bff" },
     { name = "common" },
     { name = "connector-service" },
     { name = "database" },
@@ -491,6 +493,7 @@ dev = [
 requires-dist = [
     { name = "account-service", editable = "services/account-service" },
     { name = "agent-orchestrator", editable = "services/agent-orchestrator" },
+    { name = "bff", editable = "services/bff" },
     { name = "common", editable = "packages/common" },
     { name = "connector-service", editable = "services/connector-service" },
     { name = "database", editable = "packages/database" },
@@ -508,6 +511,35 @@ dev = [
     { name = "pytest-html", specifier = ">=4.1.1" },
     { name = "pytest-sugar", specifier = ">=1.0.0" },
     { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
+name = "bff"
+version = "0.1.0"
+source = { editable = "services/bff" }
+dependencies = [
+    { name = "common" },
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "common", editable = "packages/common" },
+    { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "uvicorn", specifier = ">=0.53.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]
 
 [[package]]

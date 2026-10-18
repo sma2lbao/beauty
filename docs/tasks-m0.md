@@ -10,7 +10,7 @@
 
 ## 0. M0 目标与完成定义
 
-**一句话目标**：把现有 SPA + 六服务搬上「Vercel + 容器 + 云 PG/Redis」，并补齐上线前必须的登录、会话、附件、产物、Markdown、可观测与部署闭环。
+**一句话目标**：把现有 SPA + 六业务服务搬到「Nginx/Vercel 静态托管 + 容器 + 云 PG/Redis + FastAPI BFF」，并补齐上线前必须的登录、会话、附件、产物、Markdown、可观测与部署闭环。
 
 **M0 Definition of Done（全局）**
 
@@ -23,7 +23,7 @@
 7. 文档更新：环境变量清单、部署手册、回滚手册、已知限制；
 8. **本地启动验证：六个服务 + web 健康检查通过（SQLite + LLM 桩/可选真实模型）。**
 
-**当前进度（2026-10-18）**：M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）已完成并通过测试；其余任务待排期。
+**当前进度（2026-10-18）**：M0-01（静态 SPA + FastAPI BFF + Next.js 官网）、M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）已完成并通过测试；其余任务待排期。
 
 **M0 本地启动基线（当前已可用）**
 
@@ -47,8 +47,8 @@
 
 | ID    | 任务                                                      | 端          | 规模 | 依赖     | 建议角色         |
 | ----- | --------------------------------------------------------- | ----------- | ---- | -------- | ---------------- |
-| M0-01 | Vercel 项目拆分：SPA + BFF + 独立静态官网                 | Web         | M    | —        | Web              |
-| M0-02 | 六服务容器化 + 容器平台部署 + 迁移 job                    | Infra       | M    | —        | Platform         |
+| M0-01 | 部署拆分：静态 SPA(Nginx) + FastAPI BFF + Next.js 官网     | Web/Infra   | M    | —        | Web/Platform     |
+| M0-02 | 七服务容器化（六业务 + BFF）+ 容器平台部署 + 迁移 job     | Infra       | M    | —        | Platform         |
 | M0-03 | 云 PG/云 Redis 接入 + 开发 SQLite/本地 Redis + CI PG 迁移 | Service     | M    | M0-02    | Platform/Service |
 | M0-04 | PG job 表 + worker（替代 Temporal）                       | Service     | M    | M0-02    | Service          |
 | M0-05 | account-service 社交 OAuth + BFF Cookie 会话              | Auth/Web    | M    | M0-01    | Service/Web      |
@@ -66,32 +66,37 @@
 
 ## 2. 任务详情
 
-### M0-01 Vercel 项目拆分：SPA + BFF + 独立静态官网
+### M0-01 部署拆分：静态 SPA（Nginx）+ FastAPI BFF + Next.js 官网
 
-**目标**：两个 Vercel 项目；`apps/web` 保持 Vite SPA 并新增 `/api` BFF；`apps/site` 承载官网/文档/博客（SSG/SEO）。
+> ✅ 已完成（2026-10-18）：`apps/web` 保持纯 Vite SPA；新增 `services/bff`（FastAPI，:8007，`/healthz` + `/api/health`，3 个 pytest 用例）；新增 `apps/site`（Next.js App Router，静态导出，Landing/About/Pricing/Docs/Changelog + sitemap/robots/OG）；新增 `deploy/web/nginx.conf`（SPA 深链 + `/api` 反代）；本地 Vite `/api/health` 代理到 BFF 已验证。
+
+**目标**：web 不走 Vercel；`apps/web` 只出静态产物由 Nginx 托管；新增 FastAPI BFF 与独立 Next.js 官网。
 
 **范围**
 
-- `apps/web`：Vite 构建保持；新增 `apps/web/api/`（Node runtime）；根 `vercel.json`（SPA rewrites、函数区域、headers）；环境变量分组（`VITE_*` 公开 / 服务端 secret）。
-- `apps/site`：新建（建议 Vite + `vite-react-ssg` 或 Astro，M0-01 内 1 天 spike 定）；页面：Landing、About、Pricing（占位）、Docs（外链/占位）、Changelog；复用 `@beauty/design` 令牌与品牌组件。
-- 部署：两项目均接 Git；PR 自动 preview；生产域名 + 证书。
+- `apps/web`：保持 Vite 构建；`/api` 不再放 Node Functions；新增 `deploy/web/nginx.conf`（`try_files` 深链回退 + `/api` 反代 + SSE 不缓冲）；本地 Vite 仅把 `/api/health` 代理到 BFF，其余 `/api` 等 M0-06 统一切到 BFF。
+- `services/bff`：FastAPI 骨架，`/healthz`、`/api/health`；CORS 仅本地跨端口兜底；pyproject/uv workspace/Nx target/pytest/.env.example；M0-05 装配 Cookie 会话，M0-06 装配代理/限流/下载/stream token。
+- `apps/site`：Next.js App Router + `output: 'export'`；页面 Landing、About、Pricing（占位）、Docs（占位/入口）、Changelog；复用 `@beauty/design` 令牌与品牌组件；metadata/OG、sitemap、robots；控制台跳转由 `NEXT_PUBLIC_APP_URL` 配置。
+- 部署：web/BFF 同域（Nginx），官网部署 Vercel；官网 PR 自动 preview，web/BFF 走 staging 发布。
 
 **验收**
 
-- [ ] `app.*` 深链刷新不 404；`/api/health` 返回 200；
-- [ ] `www.*` 首页为预渲染 HTML（view-source 有正文/meta/OG）；sitemap.xml/robots.txt 可访问；
-- [ ] PR 生成两个 preview URL；客户端 bundle 无 secret；
-- [ ] 官网首页 Lighthouse Performance/SEO ≥ 90；控制台无 console error。
+- [x] `/api/health` 返回 200（BFF 直连 + 本地 Vite 同源代理已验证）；
+- [ ] `app.*` 深链刷新不 404（Nginx 配置已提供，待部署环境 `nginx -t` + 刷新验证）；
+- [x] `www.*` 首页为预渲染 HTML（view-source 有正文/meta/OG）；sitemap.xml/robots.txt 可访问（Next 静态产物已验证）；
+- [x] 客户端 bundle 无服务端 secret（web 只保留 `VITE_*`，BFF secret 走环境变量）；
+- [ ] 官网首页 Lighthouse Performance/SEO ≥ 90（待部署后跑）；
+- [ ] 控制台无 console error（待 BFF 代理接入后回归）。
 
-**测试**：CI build；preview smoke（curl 200 + 关键文案）；SEO 静态检查。
+**测试**：CI build；preview smoke（curl 200 + 关键文案）；SEO 静态检查；BFF pytest。
 
-**备注**：Vercel Functions 只承载 BFF，不跑 Python；长流不走 Vercel（M0-06/07）。
+**备注**：Vercel 只部署 `apps/site`（Next.js 静态导出），不承载 SPA/BFF；长流由 BFF 发 stream token 后浏览器直连 runtime（M0-06/07）。
 
 ---
 
-### M0-02 六服务容器化 + 容器平台部署 + 迁移 job
+### M0-02 七服务容器化 + 容器平台部署 + 迁移 job
 
-**目标**：六个 Python 服务可在 Fly.io / Cloud Run（建议 Fly 起步）一键部署，支持滚动/回滚与迁移。
+**目标**：六个业务服务 + BFF 可在 Fly.io / Cloud Run（建议 Fly 起步）一键部署，支持滚动/回滚与迁移。
 
 **范围**
 
@@ -103,7 +108,7 @@
 
 **验收**
 
-- [ ] staging 六服务健康检查全绿；`/readyz` 在 DB 不可用时失败；
+- [ ] staging 七个服务（六业务 + BFF）健康检查全绿；`/readyz` 在 DB 不可用时失败；
 - [ ] 发布新镜像 ≤10 分钟；回滚上一镜像 ≤10 分钟；
 - [ ] 迁移 job 失败会阻断发布；有回退演练记录；
 - [ ] 服务以非 root 运行；容器内无本地持久状态。
@@ -170,7 +175,7 @@
   - `oauth_identities` 表（provider/subject/user_id），首次登录自动建用户/组织；
   - 配置 `GOOGLE_CLIENT_ID/SECRET`、`GITHUB_CLIENT_ID/SECRET`、回调白名单；
   - 现有邮箱密码/刷新令牌/JWKS 不变。
-- BFF：登录/回调/登出/session；**HttpOnly + Secure + SameSite=Lax** Cookie；不向 SPA 暴露 token；静默续期；CSRF double-submit；本地开发保留 token 兜底。
+- BFF（FastAPI）：登录/回调/登出/session；**HttpOnly + Secure + SameSite=Lax** Cookie；不向 SPA 暴露 token；静默续期；CSRF double-submit；本地开发保留 token 兜底。
 - Web：登录页加 Google/GitHub；`auth.ts` 适配 session 模式。
 
 **验收**
@@ -187,6 +192,8 @@
 ---
 
 ### M0-06 BFF：代理、错误契约、限流、下载、stream token
+
+> 技术栈：随 M0-01 使用 **FastAPI（`services/bff`）**，不再使用 Vercel Functions/Node BFF。
 
 **目标**：BFF 成为 SPA 唯一同源入口，收敛鉴权、错误、限流与文件下载。
 
@@ -445,7 +452,7 @@
   5. 断网重连（route abort）→ 事件不丢；
 - **安全**：Cookie 属性、CSRF、XSS（Markdown）、越权（跨租户 404）、上传类型/大小、SSRF（BFF allowlist）；
 - **性能**：100 并发 run 压测；大文件下载内存曲线；会话列表 1k 条分页；
-- **本地启动**：六服务 + web 一键启动、健康检查全绿；SQLite 自动建表；LLM 桩可用；
+- **本地启动**：六业务服务 + BFF + web 一键启动、健康检查全绿；SQLite 自动建表；LLM 桩可用；
 - **CI 门禁**：lint/typecheck/test/build、PG 迁移、E2E smoke、Sentry release（可选）。
 
 ---

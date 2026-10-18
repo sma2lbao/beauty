@@ -4,6 +4,9 @@
 dist
 tmp
 out-tsc
+# Next.js 官网构建产物(apps/site)
+apps/site/.next/
+apps/site/out/
 # TypeScript 增量构建信息（root/packages 的 composite 工程均会产出）
 *.tsbuildinfo
 # Rspress 文档站构建产物（packages/design/rspress.config.ts 的 outDir）
@@ -64,6 +67,9 @@ vitest.config.*.timestamp*
 __pycache__/
 .ruff_cache
 *.egg-info
+# pytest / ruff 缓存
+.pytest_cache/
+.ruff_cache/
 # pytest-cov
 .coverage
 coverage.xml

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="beauty-moon favicon">
+  <defs>
+    <radialGradient id="fsky" cx="0.5" cy="0.38" r="0.72">
+      <stop offset="0" stop-color="#331E6E"/>
+      <stop offset="1" stop-color="#150E31"/>
+    </radialGradient>
+    <mask id="fmoonCut">
+      <circle cx="32" cy="30" r="18" fill="#FFFFFF"/>
+      <g fill="#000000">
+        <rect x="29" y="46.5" width="17" height="7" rx="2.5"/>
+        <circle cx="32.5" cy="45.5" r="2.2"/>
+        <circle cx="38" cy="44" r="4"/>
+        <circle cx="42.5" cy="45.5" r="2.5"/>
+      </g>
+    </mask>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#fsky)"/>
+  <circle cx="32" cy="30" r="18" fill="#FFEFC6" mask="url(#fmoonCut)"/>
+</svg>

@@ -1,7 +1,7 @@
-# beauty-moon 架构 v2（Vercel Web + 容器 Runtime）
+# beauty-moon 架构 v2（静态 SPA + FastAPI BFF + 容器 Runtime）
 
 > 状态：**决策版**（2026-10-18）。本文件已按以下拍板结果收敛：
-> Web 保留 **Vite SPA** + 独立静态官网；**Vercel web + 容器 runtime** 混合；
+> Web 保留 **Vite SPA** + 独立 Next.js 官网；**静态 SPA + FastAPI BFF + 容器 runtime** 混合；
 > **Free 额度 + 订阅 + BYOK**（Stripe 暂缓）；**coding agent + 办公多场景**；**开放平台 / MCP**。
 >
 > 关系：`docs/architecture.md` 是 v1（阶段 A 微服务设计），v2 评审通过前 v1 仍为实现事实源；
@@ -22,23 +22,24 @@
 | 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                             |
 | 支付              | **不做 Stripe**                                         | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续    |
 | 事务邮件          | **暂不做 Resend**                                       | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                    |
-| Web 托管          | **Vercel**（不自建）                                    | 本地 Vite + 本地 BFF                         | ✅ 实施                                                  |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）              | 本地 Vite                                    | ✅ 实施                                                  |
+| BFF               | **FastAPI 服务**（同域 `/api`）                        | 本地 uvicorn                                 | ✅ 实施                                                  |
 | LLM 推理          | **继续用 API**（litellm 网关）                          | 本地/API                                     | ✅ 实施                                                  |
-| 静态官网          | **Vercel 独立项目**（SSG/SEO）                          | 本地 Vite                                    | ✅ 实施                                                  |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）             | 本地 Next dev                                | ✅ 实施                                                  |
 | 多区域 / 数据驻留 | 不做                                                    | —                                            | ⏸ 后续                                                  |
 
 ### 0.1 两种部署形态（同一套代码）
 
 | 形态                       | 适用      | Web/BFF                          | 数据           | 外部依赖                | 状态    |
 | -------------------------- | --------- | -------------------------------- | -------------- | ----------------------- | ------- |
-| **A. SaaS（Vercel + 云）** | to C 公网 | Vercel SPA + Functions；静态官网 | 云 PG/云 Redis | LLM API、Sentry（可选） | ✅ 当前 |
+| **A. SaaS（静态 SPA + 云）** | to C 公网 | Nginx 托管 SPA + FastAPI BFF；Next.js 官网部署 Vercel | 云 PG/云 Redis | LLM API、Sentry（可选） | ✅ 当前 |
 
 | **B. 内网/离线（Intranet）** | 私有化/内网/无外网 | **Linux VM/裸机 + systemd 原生进程 + Nginx**（不用 Compose/K8s）；**仅 HTTP** | SQLite + 本地目录；无 Redis | 内网 OpenAI 兼容模型（支持 function calling）；或 `LLM_ENABLED=false` 桩；Sentry 关闭；**⏸ 暂缓** |
 
 **硬性原则**
 
 1. 内网形态**不依赖 Vercel/云 PG/云 Redis/Sentry/Logto/Stripe/Resend/Langfuse**；
-2. BFF 核心路由与部署适配器解耦：一套 handler，两个 adapter（Vercel Functions / Node 容器）；
+2. BFF 用 FastAPI 实现并与 SPA 同域部署（Nginx 反代 `/api`），不依赖 Vercel Functions；
 3. 前端产物必须可静态托管（无外部 CDN/字体/远程图片）；
 4. 模型可指向内网 OpenAI 兼容端点；无模型时系统仍能启动（降级为确定性桩）；
 5. 内网验收必须在**禁止外网 egress** 的环境下通过。
@@ -49,8 +50,8 @@
 
 | ADR | 决策                                     | 状态                   | 说明                                                     |
 | --- | ---------------------------------------- | ---------------------- | -------------------------------------------------------- |
-| 001 | Vite SPA + 独立静态官网                  | ✅ 采用                | 两个 Vercel 项目；SPA 保留现有前端资产                   |
-| 002 | Vercel web + 容器 runtime                | ✅ 采用                | 六服务跑 Fly/Cloud Run；Vercel 只做 web/BFF/静态         |
+| 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）            |
+| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 六业务服务跑 Fly/Cloud Run；BFF 为独立 FastAPI 服务      |
 | 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer |
 | 004 | Sandbox 用 E2B                           | ⏸ 暂缓                | 见 §11.1；coding 执行需先定替代                          |
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件                          |
@@ -67,13 +68,13 @@
 
 ```text
 Browser
-├── app.beautymoon.com      Vercel Project: apps/web（Vite SPA 静态）
-│      └── /api/*           Vercel Functions: BFF（Node）
+├── app.beautymoon.com      Nginx: apps/web 静态产物
+│      └── /api/*           FastAPI BFF（同域反代）
 │            ├── 登录/登出/会话 Cookie（account-service 为 IdP）
 │            ├── 代理 runtime（短请求 + 短流）
 │            ├── 产物/附件下载（DB/本地存储 → 流式响应）
 │            └── 限流/错误契约/审计头
-├── www.beautymoon.com      Vercel Project: apps/site（静态官网/文档/博客）
+├── www.beautymoon.com      Vercel Project: apps/site（Next.js 静态导出）
 └── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
 
 容器平台（Fly.io / Cloud Run / 自有云主机）
@@ -98,8 +99,8 @@ Browser
 
 **流量原则**
 
-- 普通 CRUD / 短请求：浏览器 → Vercel BFF → 容器服务；
-- 长任务事件流：BFF 发短时 token，浏览器直连 runtime SSE（避免 Vercel 函数时长上限）；
+- 普通 CRUD / 短请求：浏览器 → Nginx → FastAPI BFF → 容器服务；
+- 长任务事件流：BFF 发短时 token，浏览器直连 runtime SSE（避免 BFF/代理超时）；
 - 公开 API / MCP：第三方 → api.beautymoon.com（API Key/OAuth，限流）；
 - 服务间：内部 HTTP + 租户 JWT；禁止跨服务直连数据库。
 
@@ -109,9 +110,9 @@ Browser
 
 | 服务              | 部署             | 职责                                    | v2 变化                                                                             |
 | ----------------- | ---------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
-| apps/web          | Vercel 静态      | Vite SPA 控制台                         | 保留；新增模板、API Key、MCP、用量/账单、文件/终端/预览面板（终端的落地依赖 §11.1） |
-| apps/web/api      | Vercel Functions | BFF：认证、代理、下载、限流             | 新增                                                                                |
-| apps/site         | Vercel 静态      | 官网、文档、博客、Changelog             | 新增（SSG/SEO）                                                                     |
+| apps/web          | Nginx 静态      | Vite SPA 控制台                         | 保留；新增模板、API Key、MCP、用量/账单、文件/终端/预览面板（终端的落地依赖 §11.1） |
+| services/bff      | 容器            | BFF：认证、代理、下载、限流             | 新增（FastAPI；同域 `/api`）                                                        |
+| apps/site         | Vercel 静态      | Next.js 官网、文档、博客、Changelog     | 新增（静态导出/SEO）                                                                 |
 | agent-runtime     | 容器             | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
 | sandbox adapter   | —                | E2B 适配                                | ⏸ 暂缓（见 §11.1）                                                                 |
 | llm-gateway       | 容器             | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
@@ -120,7 +121,7 @@ Browser
 | workspace-service | 容器             | 工作区、产物、附件元数据                | 暂用 DB/本地文件；对象存储后置                                                      |
 | account-service   | 容器             | 租户/成员/配额/usage/API Key            | 增加社交 OAuth、用量账本（Stripe 后置）                                             |
 
-> 拆分节奏：M0 保持六服务 + BFF；M1 起把 tool registry 从 orchestrator 内拆出；M3 再拆 platform-api（先复用 runtime 路由）。
+> 拆分节奏：M0 保持六业务服务 + FastAPI BFF；M1 起把 tool registry 从 orchestrator 内拆出；M3 再拆 platform-api（先复用 runtime 路由）。
 
 ---
 
@@ -186,16 +187,16 @@ Skill {
 
 ```text
 apps/web           Vite SPA（现有代码）
-  ├── src/         页面/组件/数据层
-  └── api/         Vercel Functions（BFF，TypeScript）
-apps/site          Vite/静态站（官网、文档、博客）
+  └── src/         页面/组件/数据层
+apps/site          Next.js App Router（官网、文档、博客；静态导出）
+services/bff       FastAPI BFF（同域 /api）
 packages/design    现有组件库
 packages/console   控制台组件（可选抽出）
 ```
 
-- SPA 构建产物 + `/api` 函数由同一个 Vercel 项目部署；
-- 官网独立项目，SSG/预渲染 + sitemap/RSS；
-- 环境变量拆分：公开配置（VITE\_\*）与服务端 secret（Vercel env）。
+- SPA 静态产物由 Nginx 托管，`/api` 反代到 FastAPI BFF；
+- 官网独立项目，Next.js 静态导出 + sitemap/RSS，部署 Vercel；
+- 环境变量拆分：公开配置（`VITE_*` / `NEXT_PUBLIC_*`）与服务端 secret。
 
 ### 5.2 认证与会话
 
@@ -207,8 +208,8 @@ packages/console   控制台组件（可选抽出）
 
 ### 5.3 流式
 
-- BFF 实现为「核心 handler + 部署适配器」：Vercel Functions 与 Node 容器（Hono/Fastify）共用同一套路由，内网用后者；
-- 短对话/短流：BFF 代理 SSE（Vercel streaming / Node 流式响应）；
+- BFF 以 FastAPI 实现，Nginx 同域反代 `/api`；一套实现同时服务 SaaS 与内网；
+- 短对话/短流：BFF 代理 SSE（FastAPI StreamingResponse）；
 - 长任务：BFF 发 `streamToken`（短时、单 run），浏览器直连 runtime SSE；
 - 断线重连带 `Last-Event-ID`；Redis 做 fan-out（可选），Postgres 做重放；
 - 不做 WebSocket；多端同步后续再评估。
@@ -304,8 +305,8 @@ packages/console   控制台组件（可选抽出）
 | 环境    | Web                     | Runtime            | 数据                                           |
 | ------- | ----------------------- | ------------------ | ---------------------------------------------- |
 | dev     | 本地 Vite + 本地 BFF    | 本地容器/进程      | SQLite + 本地 Redis + 本地目录                 |
-| staging | Vercel preview          | Fly staging        | 云 PG（staging URL）+ 云 Redis + DB artifact   |
-| prod    | Vercel prod（web/site） | Fly prod（多实例） | 云 PG + 云 Redis + DB artifact（对象存储后置） |
+| staging | Nginx SPA + Vercel preview(site) | Fly staging + BFF | 云 PG（staging URL）+ 云 Redis + DB artifact   |
+| prod    | Nginx SPA + Vercel(site)          | Fly prod + BFF    | 云 PG + 云 Redis + DB artifact（对象存储后置） |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
 - 服务镜像：每服务 Dockerfile + 健康检查 + 迁移 job（部署前执行）；
@@ -314,7 +315,7 @@ packages/console   控制台组件（可选抽出）
 
 ### 10.2 从当前仓库迁移（M0 路径）
 
-1. 新增 `apps/web/api`（BFF）与 `apps/site`；现有 SPA 构建不变；
+1. 新增 `services/bff`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
 2. 六个服务补 Dockerfile + Fly app 配置（SaaS）；内网另加 systemd 单元 + 发布包（M0-13）；本地开发保留 compose；
 3. 接入云 PG/云 Redis URL；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
 4. account-service 补 Google/GitHub OAuth + BFF Cookie 会话（保留 token 模式开发兜底）；
@@ -339,13 +340,13 @@ packages/console   控制台组件（可选抽出）
 /var/lib/beauty/<service>/*.db        SQLite
 /var/lib/beauty/artifacts/            产物/附件（filesystem）
 /var/backups/beauty/<date>/           DB + artifacts 备份
-/etc/systemd/system/beauty-*.service  六服务 + BFF + 迁移（oneshot）
+/etc/systemd/system/beauty-*.service  六业务服务 + BFF + 迁移（oneshot）
 /etc/nginx/conf.d/beauty.conf         HTTP 静态站 + /api 反代（SSE 不缓冲）
 ```
 
 **必须满足**
 
-1. **无 Vercel/容器编排**：BFF 以 Node 进程由 systemd 管理；Nginx 托管 SPA 静态产物并反代 `/api`；SPA 深链 rewrite 由 Nginx 完成；
+1. **无 Vercel/容器编排**：BFF 以 FastAPI 进程由 systemd 管理；Nginx 托管 SPA 静态产物并反代 `/api`；SPA 深链 rewrite 由 Nginx 完成；
 2. **无外部 CDN/字体/图片**：构建产物自包含；
 3. **模型可配**：`LLM_GATEWAY__API_BASE`、`LLM_GATEWAY__API_KEY`、`LLM_GATEWAY__DEFAULT_MODEL`（litellm 透传 `api_base`/`api_key`）；未配置且 `LLM_ENABLED=false` 时可启动（桩）；内网模型**支持 function calling**；
 4. **数据本地**：SQLite + 本地目录；Redis 不配置（进程内限流/锁）；产物 `ARTIFACT_STORE=filesystem|database`；
@@ -364,8 +365,7 @@ packages/console   控制台组件（可选抽出）
 **环境变量补充（内网）**
 
 ```text
-BFF_RUNTIME=node               # node | vercel
-BFF_COOKIE_SECURE=false        # 无 HTTPS 内网；上线 HTTPS 后改 true
+BFF__COOKIE_SECURE=false       # 无 HTTPS 内网；上线 HTTPS 后改 true
 LLM_GATEWAY__API_BASE=...      # 内网 OpenAI 兼容地址
 LLM_GATEWAY__API_KEY=...
 LLM_GATEWAY__DEFAULT_MODEL=openai/<model>
@@ -420,10 +420,11 @@ REDIS_URL=                      # 留空 = 进程内降级
 - 没有 prompt/response trace 与数据集回放；先用 Sentry + 结构化日志；
 - 评估/数据集能力后置到 M4。
 
-### 11.8 Vercel 限制
+### 11.8 静态托管与 BFF 边界
 
-- 函数时长/无 WebSocket/无持久盘：长流直连 runtime，长任务走 worker；
-- Vercel 仅部署 SPA/BFF/静态站，不承载 Python runtime。
+- Vercel 只部署 `apps/site`（Next.js 静态导出），不承载 SPA/BFF；
+- SPA 静态产物由 Nginx 托管，`/api` 反代到 FastAPI BFF；长流仍直连 runtime，长任务走 worker；
+- BFF 不受 Vercel 函数时长限制，但代理 SSE 时必须关闭缓冲并设置足够 read timeout。
 
 ---
 
@@ -438,7 +439,7 @@ REDIS_URL=                      # 留空 = 进程内降级
 | PG job 队列吞吐                          | 小团队/MVP 足够；量级上来换专业队列                                 |
 | 自建认证的安全负担                       | 沿用现有旋转刷新令牌/JWKS；补社交 OAuth 时做安全评审                |
 | 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC             |
-| Vercel SSE 超时                          | 长流直连 runtime；BFF 仅短流                                        |
+| BFF/代理 SSE 超时                        | 长流直连 runtime；BFF 仅短流，Nginx 关闭缓冲并放宽 read timeout     |
 | BYOK 密钥安全（无 KMS）                  | 应用层加密 + 密钥轮换 + 不落日志；KMS 后置                          |
 
 **待定**

@@ -7,6 +7,7 @@
 | 路径                          | Nx 项目名               | 类型         | 技术栈                                                                                                                                                                                  |
 | ----------------------------- | ----------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web`                    | `@beauty/web`           | React 应用   | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + `@beauty/design` 组件库,Vite 8                                                                                   |
+| `apps/site`                   | `@beauty/site`          | Next.js 官网 | Next.js App Router + Tailwind CSS v4 + `@beauty/design` 令牌;静态导出(`output: 'export'`),部署 Vercel                                                                                   |
 | `packages/design`             | `@beauty/design`        | React 组件库 | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                                                                                                                         |
 | `packages/common`             | `common`                | Python 库    | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS)、交付物存储抽象;hatchling + pytest + ruff                                                                           |
 | `packages/database`           | `database`              | Python 库    | 数据库基座:命名约定、Base/mixin、session_scope、Repository(租户隔离+统一 404)、UnitOfWork、Postgres 集成夹具;hatchling + pytest + ruff                                                  |
@@ -17,6 +18,7 @@
 | `services/knowledge-service`  | `knowledge-service`     | Python 服务  | FastAPI + uvicorn(:8006):文档知识库(分块/嵌入/检索;嵌入提供方可插拔)                                                                                                                    |
 | `services/account-service`    | `account-service`       | Python 服务  | FastAPI + uvicorn(:8001):用户/组织/配额/套餐 + sessions/devices(自建认证:注册/邮箱密码登录/旋转式刷新令牌/内部签发 + OIDC 发现/JWKS,签名密钥可经 `SIGNING_KEY_PATH` 持久化,见其 README) |
 | `services/workspace-service`  | `workspace-service`     | Python 服务  | FastAPI + uvicorn(:8005):工作区/交付物元数据/对象存储(沙箱生命周期阶段 B)                                                                                                               |
+| `services/bff`                | `bff`                   | Python 服务  | FastAPI + uvicorn(:8007):同源 `/api` 门面;M0-05/06 承载 Cookie 会话、代理、限流、下载、stream token                                                                                      |
 | `tools/eslint-config`         | `@beauty/eslint-config` | 共享工具包   | ESLint 9 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                                                                                                                       |
 
 微服务架构设计(定稿)见 `docs/architecture.md`:微服务放 `services/`(部署单元),共享库实名命名(不用 `py-` 前缀),新 Python 项目必须在根 `pyproject.toml` 登记 uv workspace members。
@@ -44,6 +46,8 @@ npx nx test @beauty/design -- --run
 
 npx nx dev @beauty/web                 # Vite dev server(5173 端口,交互开发用)
 npx nx build @beauty/web               # tsc --noEmit + vite 生产构建
+npx nx run @beauty/site:dev            # Next.js 官网 dev(3000 端口)
+npx nx build @beauty/site              # Next.js 静态导出(产物 apps/site/out)
 npx nx typecheck @beauty/web           # 仅类型检查(web/design 同名)
 npx nx lint @beauty/web                # ESLint(共享配置 tools/eslint-config)
 npx nx lint @beauty/web -- --fix       # ESLint 自动修复
@@ -53,7 +57,7 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
-### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service)
+### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / bff)
 
 ```sh
 npx nx run common:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -67,9 +71,10 @@ npx nx run connector-service:serve   # uvicorn :8004(连接器服务)
 npx nx run knowledge-service:serve   # uvicorn :8006(知识库)
 npx nx run account-service:serve     # uvicorn :8001(账号/组织)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
+npx nx run bff:serve                 # uvicorn :8007(FastAPI BFF,同源 /api)
 ```
 
-`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
+`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`bff` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -101,7 +106,7 @@ npx nx run common:sync                              # 变更后同步 .venv
   品牌变量 `--logo-moon` 定义在 `apps/web/src/index.css`(亮色取品牌暖玫瑰,暗色取官方月光米),
   字标月相与标识共用该色,形成呼应。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service` line-length 88(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service`、`bff` line-length 88(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
