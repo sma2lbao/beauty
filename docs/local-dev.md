@@ -85,6 +85,14 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 发信/撤销是写操作，前端二次确认；发信需要连接里填了 SMTP host。
 - 本地没有真实邮箱时可以先建一条假连接验证 UI 与加密存储，连通性测试会如实失败。
 
+## 3.3 MCP Client（第三方工具）
+
+- 设置页「MCP Servers」：注册 Streamable HTTP MCP server、测试/刷新工具、启用/停用、删除。
+- 工具命名空间：`mcp.<server>.<tool>`；统一注入执行图，默认按写操作处理（需人工确认）。
+- token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号。
+- 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在设置页注册后点「测试/刷新」。
+- 当前只支持 Streamable HTTP，不支持 stdio；MCP Server 对外暴露（M3）尚未实现。
+
 ## 4.0 Job worker（run 队列）
 
 orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):

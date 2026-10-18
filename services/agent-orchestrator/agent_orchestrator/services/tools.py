@@ -73,6 +73,10 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._specs)
 
+    def extended(self, specs: list[ToolSpec]) -> ToolRegistry:
+        """合并外部工具(如 MCP);同名后者覆盖前者。"""
+        return ToolRegistry([*self._specs.values(), *specs])
+
     def restricted(self, allowed: list[str]) -> ToolRegistry:
         """按 Skill 的 tools 白名单裁剪(能力边界);未知/未列出工具不暴露。"""
         allow = set(allowed)

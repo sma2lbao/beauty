@@ -33,12 +33,13 @@ from agent_orchestrator.graph.nodes import (
 from agent_orchestrator.graph.state import RunGraphState
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from agent_orchestrator.services.llm import LLMClient
-    from agent_orchestrator.services.tools import ToolRegistry
+    from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
 
     ToolkitFactory = Callable[[str], ToolRegistry]
+    ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 MAX_REWORK_ROUNDS = 3
 
@@ -75,14 +76,21 @@ def build_run_graph(
     checkpointer: BaseCheckpointSaver | None = None,
     llm: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    mcp_tools_factory: ToolExtrasFactory | None = None,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
     builder.add_node("plan", make_plan_node(llm))
     builder.add_node("approval_gate", approval_gate_node)
-    builder.add_node("execute", make_execute_node(llm, toolkit_factory))
+    builder.add_node(
+        "execute",
+        make_execute_node(llm, toolkit_factory, mcp_tools_factory),
+    )
     builder.add_node("confirm_gate", confirm_gate_node)
-    builder.add_node("tool_exec", make_tool_exec_node(toolkit_factory))
+    builder.add_node(
+        "tool_exec",
+        make_tool_exec_node(toolkit_factory, mcp_tools_factory),
+    )
     builder.add_node("verify", make_verify_node(llm))
     builder.add_node("deliver", make_deliver_node(llm))
     builder.add_node("fail", fail_node)

@@ -16,6 +16,7 @@ from agent_orchestrator.models.conversations import (
     ChatMessage,
     Conversation,
 )
+from agent_orchestrator.models.mcp import MCPServer
 from agent_orchestrator.models.runs import (
     Job,
     PendingInstruction,
@@ -112,6 +113,18 @@ class ConversationRepository(TenantRepository[Conversation]):
         if conversation is None or conversation.deleted_at is not None:
             raise self._not_found(conversation_id)
         return conversation
+
+
+class MCPServerRepository(TenantRepository[MCPServer]):
+    model = MCPServer
+    not_found_code = "mcp.server_not_found"
+    not_found_message = "MCP server 不存在"
+    id_detail_key = "mcp_server_id"
+
+    async def find_by_name(self, tenant_id: str, name: str) -> MCPServer | None:
+        return await self.session.scalar(
+            self.scoped(tenant_id, MCPServer.name == name)
+        )
 
 
 class JobRepository(TenantRepository[Job]):

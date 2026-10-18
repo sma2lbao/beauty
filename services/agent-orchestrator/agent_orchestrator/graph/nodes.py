@@ -22,12 +22,13 @@ from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.services.llm import LLMReply
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from agent_orchestrator.services.llm import LLMClient
-    from agent_orchestrator.services.tools import ToolRegistry
+    from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
 
     ToolkitFactory = Callable[[str], ToolRegistry]
+    ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 MAX_TOOL_ROUNDS = 3  # execute 内 function-calling 轮次上限
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
@@ -225,8 +226,28 @@ def _tool_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
+async def _load_toolkit(
+    tenant_id: str,
+    toolkit_factory: ToolkitFactory | None,
+    extras_factory: ToolExtrasFactory | None,
+) -> ToolRegistry | None:
+    """基础工具 + 外部工具(MCP)。外部工具加载失败不阻断 run。"""
+    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    if extras_factory is not None:
+        try:
+            extras = await extras_factory(tenant_id)
+        except Exception:  # noqa: BLE001 - MCP 故障降级为基础工具
+            extras = []
+        if extras:
+            base = toolkit or ToolRegistry([])
+            toolkit = base.extended(extras)
+    return toolkit
+
+
 def make_execute_node(
-    llm: LLMClient | None, toolkit_factory: ToolkitFactory | None = None
+    llm: LLMClient | None,
+    toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ToolExtrasFactory | None = None,
 ):
     """execute 节点工厂:LLM 执行;有工具时跑 function-calling 循环(§6.1)。
 
@@ -245,8 +266,8 @@ def make_execute_node(
             }
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
-        toolkit = (
-            toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
+        toolkit = await _load_toolkit(
+            state.get("tenant_id", ""), toolkit_factory, extras_factory
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:
@@ -317,15 +338,18 @@ def confirm_gate_node(state: RunGraphState) -> dict:
     return {**gate, "writes_approved": True}
 
 
-def make_tool_exec_node(toolkit_factory: ToolkitFactory | None):
+def make_tool_exec_node(
+    toolkit_factory: ToolkitFactory | None,
+    extras_factory: ToolExtrasFactory | None = None,
+):
     """执行已确认的写操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
 
     async def tool_exec_node(state: RunGraphState) -> dict:
         pending = state.get("pending_writes") or []
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
-        toolkit = (
-            toolkit_factory(state.get("tenant_id", "")) if toolkit_factory else None
+        toolkit = await _load_toolkit(
+            state.get("tenant_id", ""), toolkit_factory, extras_factory
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:

@@ -18,6 +18,7 @@ import {
 } from '@beauty/design';
 
 import { ByokPanel } from '@/components/console/byok-panel';
+import { McpPanel } from '@/components/console/mcp-panel';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
@@ -177,8 +178,9 @@ export function SettingsPage() {
           </Alert>
         ) : null}
 
-        <div className="mt-6">
+        <div className="mt-6 grid gap-6">
           <ByokPanel />
+          <McpPanel />
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">

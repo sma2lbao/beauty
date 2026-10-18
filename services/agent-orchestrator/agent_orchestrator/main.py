@@ -16,7 +16,7 @@ from common.auth import JwtVerifier
 from common.errors import AppError
 from common.logging import setup_logging
 from database.base import Base
-from database.session import create_session_factory
+from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 from events.bus import EventBus, InMemoryEventBus
 from events.outbox import OutboxDispatcher
@@ -31,7 +31,9 @@ from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
     conversations as conversations_models,
 )
+from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
+from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import ConnectorClient
@@ -122,6 +124,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             knowledge=knowledge,
         )
 
+    mcp_tools_factory = None
+    if settings.mcp_enabled:
+
+        async def _load_mcp_tools(tenant_id: str):
+            async with session_scope(factory) as session:
+                return await mcp_service.tool_specs(
+                    session, tenant_id, secret=settings.mcp_secret
+                )
+
+        mcp_tools_factory = _load_mcp_tools
+
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier
     owns_verifier = False
@@ -205,7 +218,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
                 await saver.setup()
                 app.state.run_graph = build_run_graph(
-                    checkpointer=saver, llm=llm, toolkit_factory=toolkit_factory
+                    checkpointer=saver,
+                    llm=llm,
+                    toolkit_factory=toolkit_factory,
+                    mcp_tools_factory=mcp_tools_factory,
                 )
                 if settings.jobs_enabled:
                     worker_task = start_worker(app)
@@ -213,7 +229,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             # sqlite/dev:进程内 checkpointer
             app.state.run_graph = build_run_graph(
-                llm=llm, toolkit_factory=toolkit_factory
+                llm=llm,
+                toolkit_factory=toolkit_factory,
+                mcp_tools_factory=mcp_tools_factory,
             )
             if settings.jobs_enabled:
                 worker_task = start_worker(app)
