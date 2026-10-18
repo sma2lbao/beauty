@@ -17,6 +17,7 @@ import {
   Textarea,
 } from '@beauty/design';
 
+import { ByokPanel } from '@/components/console/byok-panel';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
@@ -32,7 +33,9 @@ function formatTime(value: string | null): string {
     return '—';
   }
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN');
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleString('zh-CN');
 }
 
 /** 账号控制台:组织档案/配额、成员、多端会话(§3/§7)。 */
@@ -50,8 +53,14 @@ export function SettingsPage() {
   const [device, setDevice] = useState('');
   const [sessionUserId, setSessionUserId] = useState('');
 
-  const orgQuery = useQuery({ queryKey: ORG_KEY, queryFn: accountApi.organization });
-  const membersQuery = useQuery({ queryKey: MEMBERS_KEY, queryFn: accountApi.members });
+  const orgQuery = useQuery({
+    queryKey: ORG_KEY,
+    queryFn: accountApi.organization,
+  });
+  const membersQuery = useQuery({
+    queryKey: MEMBERS_KEY,
+    queryFn: accountApi.members,
+  });
   const sessionsQuery = useQuery({
     queryKey: SESSIONS_KEY,
     queryFn: accountApi.sessions,
@@ -64,7 +73,11 @@ export function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
 
   const orgMutation = useMutation({
-    mutationFn: async (input: { name: string; plan: string; quota: string }) => {
+    mutationFn: async (input: {
+      name: string;
+      plan: string;
+      quota: string;
+    }) => {
       let quota: Record<string, unknown> | undefined;
       if (input.quota.trim()) {
         try {
@@ -146,7 +159,8 @@ export function SettingsPage() {
   ].filter(Boolean);
   const unauthorized = errors.some(isUnauthorized);
   const canAddMember = subject.trim().length > 0 && email.trim().length > 0;
-  const canAddSession = sessionUserId.trim().length > 0 && device.trim().length > 0;
+  const canAddSession =
+    sessionUserId.trim().length > 0 && device.trim().length > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -157,280 +171,297 @@ export function SettingsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void refreshOrg()} />
 
-      {unauthorized ? (
-        <Alert variant="danger" className="mt-4">
-          未登录或令牌失效:先在上方面板完成鉴权,再管理账号。
-        </Alert>
-      ) : null}
+        {unauthorized ? (
+          <Alert variant="danger" className="mt-4">
+            未登录或令牌失效:先在上方面板完成鉴权,再管理账号。
+          </Alert>
+        ) : null}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>组织档案</CardTitle>
-            <CardDescription>
-              组织 id 即租户标识:{organization?.id ?? '读取中…'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Field label="组织名称" htmlFor="org-name">
-              <Input
-                id="org-name"
-                value={nameValue}
-                onChange={(event) => setOrgName(event.target.value)}
-              />
-            </Field>
-            <Field label="套餐" htmlFor="org-plan">
-              <Input
-                id="org-plan"
-                value={planValue}
-                onChange={(event) => setOrgPlan(event.target.value)}
-                placeholder="free / team / enterprise"
-              />
-            </Field>
-            <Field label="配额(JSON)" htmlFor="org-quota">
-              <Textarea
-                id="org-quota"
-                className="min-h-24 font-mono"
-                value={quotaValue}
-                onChange={(event) => setQuotaText(event.target.value)}
-                placeholder='{"seats": 20, "runs_per_month": 500}'
-              />
-            </Field>
-            {quotaError ? (
-              <p className="text-sm text-destructive">{quotaError}</p>
-            ) : null}
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={() =>
-                  orgMutation.mutate({
-                    name: nameValue,
-                    plan: planValue,
-                    quota: quotaValue,
-                  })
-                }
-                disabled={orgMutation.isPending}
-              >
-                {orgMutation.isPending ? '保存中…' : '保存'}
-              </Button>
-              {orgMutation.isSuccess ? (
-                <span className="text-sm text-muted-foreground">已保存</span>
-              ) : null}
-              {orgMutation.isError && !quotaError ? (
-                <span className="text-sm text-destructive">
-                  {(orgMutation.error as Error).message}
-                </span>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
+        <div className="mt-6">
+          <ByokPanel />
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>邀请成员</CardTitle>
-            <CardDescription>
-              subject 必须与 IdP 签发的 sub 一致,否则该成员登录后对不上号。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Field label="IdP subject" htmlFor="member-subject">
-              <Input
-                id="member-subject"
-                value={subject}
-                onChange={(event) => setSubject(event.target.value)}
-                placeholder="idp|user-1"
-              />
-            </Field>
-            <Field label="邮箱" htmlFor="member-email">
-              <Input
-                id="member-email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="someone@example.com"
-              />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="显示名" htmlFor="member-name">
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>组织档案</CardTitle>
+              <CardDescription>
+                组织 id 即租户标识:{organization?.id ?? '读取中…'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Field label="组织名称" htmlFor="org-name">
                 <Input
-                  id="member-name"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
+                  id="org-name"
+                  value={nameValue}
+                  onChange={(event) => setOrgName(event.target.value)}
                 />
               </Field>
-              <Field label="角色" htmlFor="member-role">
-                <Select
-                  id="member-role"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as Role)}
-                >
-                  <option value="member">member</option>
-                  <option value="owner">owner</option>
-                </Select>
+              <Field label="套餐" htmlFor="org-plan">
+                <Input
+                  id="org-plan"
+                  value={planValue}
+                  onChange={(event) => setOrgPlan(event.target.value)}
+                  placeholder="free / team / enterprise"
+                />
               </Field>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={() => addMemberMutation.mutate()}
-                disabled={!canAddMember || addMemberMutation.isPending}
-              >
-                {addMemberMutation.isPending ? '添加中…' : '添加成员'}
-              </Button>
-              {addMemberMutation.isError ? (
-                <span className="text-sm text-destructive">
-                  {(addMemberMutation.error as Error).message}
-                </span>
+              <Field label="配额(JSON)" htmlFor="org-quota">
+                <Textarea
+                  id="org-quota"
+                  className="min-h-24 font-mono"
+                  value={quotaValue}
+                  onChange={(event) => setQuotaText(event.target.value)}
+                  placeholder='{"seats": 20, "runs_per_month": 500}'
+                />
+              </Field>
+              {quotaError ? (
+                <p className="text-sm text-destructive">{quotaError}</p>
               ) : null}
-            </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() =>
+                    orgMutation.mutate({
+                      name: nameValue,
+                      plan: planValue,
+                      quota: quotaValue,
+                    })
+                  }
+                  disabled={orgMutation.isPending}
+                >
+                  {orgMutation.isPending ? '保存中…' : '保存'}
+                </Button>
+                {orgMutation.isSuccess ? (
+                  <span className="text-sm text-muted-foreground">已保存</span>
+                ) : null}
+                {orgMutation.isError && !quotaError ? (
+                  <span className="text-sm text-destructive">
+                    {(orgMutation.error as Error).message}
+                  </span>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>邀请成员</CardTitle>
+              <CardDescription>
+                subject 必须与 IdP 签发的 sub 一致,否则该成员登录后对不上号。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Field label="IdP subject" htmlFor="member-subject">
+                <Input
+                  id="member-subject"
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  placeholder="idp|user-1"
+                />
+              </Field>
+              <Field label="邮箱" htmlFor="member-email">
+                <Input
+                  id="member-email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="someone@example.com"
+                />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="显示名" htmlFor="member-name">
+                  <Input
+                    id="member-name"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                  />
+                </Field>
+                <Field label="角色" htmlFor="member-role">
+                  <Select
+                    id="member-role"
+                    value={role}
+                    onChange={(event) => setRole(event.target.value as Role)}
+                  >
+                    <option value="member">member</option>
+                    <option value="owner">owner</option>
+                  </Select>
+                </Field>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => addMemberMutation.mutate()}
+                  disabled={!canAddMember || addMemberMutation.isPending}
+                >
+                  {addMemberMutation.isPending ? '添加中…' : '添加成员'}
+                </Button>
+                {addMemberMutation.isError ? (
+                  <span className="text-sm text-destructive">
+                    {(addMemberMutation.error as Error).message}
+                  </span>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>成员</CardTitle>
+            <CardDescription>
+              共 {members.length} 人;停用不删除,保留审计。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {membersQuery.isLoading ? (
+              <Spin label="加载中…" />
+            ) : members.length === 0 ? (
+              <Empty description="还没有成员:先在上方添加。" />
+            ) : (
+              <ul className="divide-y">
+                {members.map((member) => (
+                  <li
+                    key={member.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    <div>
+                      <p className="font-medium">
+                        {member.display_name ?? member.email}
+                        {member.status === 'disabled' ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            (已停用)
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {member.email} · {member.subject} · 加入于{' '}
+                        {formatTime(member.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        aria-label={`${member.email} 的角色`}
+                        className="w-28"
+                        size="sm"
+                        value={member.role}
+                        onChange={(event) =>
+                          updateMemberMutation.mutate({
+                            memberId: member.id,
+                            patch: { role: event.target.value as Role },
+                          })
+                        }
+                      >
+                        <option value="member">member</option>
+                        <option value="owner">owner</option>
+                      </Select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          updateMemberMutation.mutate({
+                            memberId: member.id,
+                            patch: {
+                              status:
+                                member.status === 'active'
+                                  ? 'disabled'
+                                  : 'active',
+                            },
+                          })
+                        }
+                        disabled={updateMemberMutation.isPending}
+                      >
+                        {member.status === 'active' ? '停用' : '启用'}
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
-      </div>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>成员</CardTitle>
-          <CardDescription>共 {members.length} 人;停用不删除,保留审计。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {membersQuery.isLoading ? (
-            <Spin label="加载中…" />
-          ) : members.length === 0 ? (
-            <Empty description="还没有成员:先在上方添加。" />
-          ) : (
-            <ul className="divide-y">
-              {members.map((member) => (
-                <li
-                  key={member.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>设备会话</CardTitle>
+            <CardDescription>
+              多端登录登记(app 预留,§7);吊销后该会话立即失效。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field
+                className="min-w-56 flex-1"
+                label="成员"
+                htmlFor="session-user"
+              >
+                <Select
+                  id="session-user"
+                  value={sessionUserId}
+                  onChange={(event) => setSessionUserId(event.target.value)}
                 >
-                  <div>
-                    <p className="font-medium">
+                  <option value="">选择成员…</option>
+                  {members.map((member) => (
+                    <option key={member.id} value={member.id}>
                       {member.display_name ?? member.email}
-                      {member.status === 'disabled' ? (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          (已停用)
-                        </span>
-                      ) : null}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {member.email} · {member.subject} · 加入于{' '}
-                      {formatTime(member.created_at)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      aria-label={`${member.email} 的角色`}
-                      className="w-28"
-                      size="sm"
-                      value={member.role}
-                      onChange={(event) =>
-                        updateMemberMutation.mutate({
-                          memberId: member.id,
-                          patch: { role: event.target.value as Role },
-                        })
-                      }
-                    >
-                      <option value="member">member</option>
-                      <option value="owner">owner</option>
-                    </Select>
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                className="min-w-56 flex-1"
+                label="设备"
+                htmlFor="session-device"
+              >
+                <Input
+                  id="session-device"
+                  value={device}
+                  onChange={(event) => setDevice(event.target.value)}
+                  placeholder="MacBook / Chrome"
+                />
+              </Field>
+              <Button
+                onClick={() => addSessionMutation.mutate()}
+                disabled={!canAddSession || addSessionMutation.isPending}
+              >
+                {addSessionMutation.isPending ? '登记中…' : '登记会话'}
+              </Button>
+            </div>
+            {addSessionMutation.isError ? (
+              <p className="text-sm text-destructive">
+                {(addSessionMutation.error as Error).message}
+              </p>
+            ) : null}
+
+            {sessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">还没有会话记录。</p>
+            ) : (
+              <ul className="divide-y">
+                {sessions.map((session) => (
+                  <li
+                    key={session.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    <div>
+                      <p className="font-medium">{session.device}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {session.status} · 成员 {session.user_id.slice(0, 8)}… ·{' '}
+                        {formatTime(session.created_at)}
+                      </p>
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        updateMemberMutation.mutate({
-                          memberId: member.id,
-                          patch: {
-                            status:
-                              member.status === 'active' ? 'disabled' : 'active',
-                          },
-                        })
+                      onClick={() => revokeSessionMutation.mutate(session.id)}
+                      disabled={
+                        session.status !== 'active' ||
+                        revokeSessionMutation.isPending
                       }
-                      disabled={updateMemberMutation.isPending}
                     >
-                      {member.status === 'active' ? '停用' : '启用'}
+                      {session.status === 'active' ? '吊销' : '已吊销'}
                     </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>设备会话</CardTitle>
-          <CardDescription>
-            多端登录登记(app 预留,§7);吊销后该会话立即失效。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <Field className="min-w-56 flex-1" label="成员" htmlFor="session-user">
-              <Select
-                id="session-user"
-                value={sessionUserId}
-                onChange={(event) => setSessionUserId(event.target.value)}
-              >
-                <option value="">选择成员…</option>
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.display_name ?? member.email}
-                  </option>
+                  </li>
                 ))}
-              </Select>
-            </Field>
-            <Field className="min-w-56 flex-1" label="设备" htmlFor="session-device">
-              <Input
-                id="session-device"
-                value={device}
-                onChange={(event) => setDevice(event.target.value)}
-                placeholder="MacBook / Chrome"
-              />
-            </Field>
-            <Button
-              onClick={() => addSessionMutation.mutate()}
-              disabled={!canAddSession || addSessionMutation.isPending}
-            >
-              {addSessionMutation.isPending ? '登记中…' : '登记会话'}
-            </Button>
-          </div>
-          {addSessionMutation.isError ? (
-            <p className="text-sm text-destructive">
-              {(addSessionMutation.error as Error).message}
-            </p>
-          ) : null}
-
-          {sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">还没有会话记录。</p>
-          ) : (
-            <ul className="divide-y">
-              {sessions.map((session) => (
-                <li
-                  key={session.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
-                >
-                  <div>
-                    <p className="font-medium">{session.device}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {session.status} · 成员 {session.user_id.slice(0, 8)}… ·{' '}
-                      {formatTime(session.created_at)}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => revokeSessionMutation.mutate(session.id)}
-                    disabled={
-                      session.status !== 'active' || revokeSessionMutation.isPending
-                    }
-                  >
-                    {session.status === 'active' ? '吊销' : '已吊销'}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

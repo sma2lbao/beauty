@@ -285,7 +285,10 @@ describe('attachments API', () => {
     const attachment = await conversationsApi.uploadAttachment('c1', file);
 
     expect(attachment).toMatchObject({ id: 'a1', filename: 'note.md' });
-    const [url, init] = uploadMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = uploadMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
     expect(url).toBe('/api/v1/conversations/c1/attachments');
     expect(init.method).toBe('POST');
     expect(init.body).toBeInstanceOf(FormData);

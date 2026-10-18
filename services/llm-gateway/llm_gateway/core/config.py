@@ -14,6 +14,8 @@ class Settings(BaseAppSettings):
 
     service_name: str = "llm-gateway"
     default_model: str = "deepseek/deepseek-chat"  # litellm 路由格式 provider/model(§9)
+    # 模型列表(M0-11 静态配置):留空时只返回 default_model
+    available_models: list[str] = []
     request_timeout_seconds: float = 60.0
     # 嵌入路由(§9):知识库等服务经此向量化,不直连模型提供商
     default_embedding_model: str = "bge-m3"

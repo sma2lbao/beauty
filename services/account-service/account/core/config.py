@@ -36,6 +36,8 @@ class Settings(BaseAppSettings):
     # 社交 OAuth(Google/GitHub);client id/secret 留空即该 provider 关闭
     oauth_state_secret: str = ""  # 留空回退 internal_secret;两者都空则 OAuth 关闭
     oauth_state_ttl_seconds: int = 600
+    # BYOK 应用层加密密钥(M0-11 占位;生产必须换随机长密钥/KMS)
+    byok_secret: str = "dev-byok-secret-change-me"
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""

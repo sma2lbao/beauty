@@ -70,6 +70,24 @@ VITE_AUTH_MODE=session
 OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
 邮箱+密码登录。
 
+## 4.1 用量 / 模型 / BYOK
+
+- `/usage`：今日/本月 tokens、请求次数、按模型分布；没有数据时显示空态。
+- 顶栏模型 chip 读取 llm-gateway 的 `/v1/models`（当前默认 `deepseek/deepseek-chat`）。
+- 设置页 BYOK：应用层加密存储，只显示尾号；**暂不参与模型调用**。
+- 本地没有模型 key 时用量页为空是正常现象；可用 account-service 的内部上报接口造数：
+
+¤¤¤sh
+
+# 需要 ACCOUNT\_\_INTERNAL_SECRET
+
+curl -X POST http://127.0.0.1:8001/v1/usage/events \
+ -H "Authorization: Bearer <access-token>" \
+ -H "X-Internal-Secret: <internal-secret>" \
+ -H 'Content-Type: application/json' \
+ -d '{"model":"deepseek/deepseek-chat","prompt_tokens":1200,"completion_tokens":400}'
+¤¤¤
+
 ## 5. 演示数据
 
 ```sh

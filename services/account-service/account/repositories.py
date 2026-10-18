@@ -10,10 +10,12 @@ from database.repository import Repository, TenantRepository
 from sqlalchemy import select
 
 from account.models.account import (
+    BYOKKey,
     OAuthIdentity,
     Organization,
     RefreshToken,
     Session,
+    UsageEvent,
     User,
 )
 
@@ -63,6 +65,34 @@ class OAuthIdentityRepository(TenantRepository[OAuthIdentity]):
                 OAuthIdentity.provider == provider,
                 OAuthIdentity.subject == subject,
             )
+        )
+
+
+class UsageEventRepository(TenantRepository[UsageEvent]):
+    model = UsageEvent
+    not_found_code = "usage.event_not_found"
+    not_found_message = "用量事件不存在"
+    id_detail_key = "usage_event_id"
+
+    async def list_since(self, tenant_id: str, since) -> list[UsageEvent]:
+        return await self.list_scoped(
+            tenant_id,
+            UsageEvent.created_at >= since,
+            order_by=[UsageEvent.created_at],
+        )
+
+
+class BYOKRepository(TenantRepository[BYOKKey]):
+    model = BYOKKey
+    not_found_code = "byok.not_found"
+    not_found_message = "BYOK 密钥不存在"
+    id_detail_key = "provider"
+
+    async def find_for_provider(
+        self, tenant_id: str, provider: str
+    ) -> BYOKKey | None:
+        return await self.session.scalar(
+            self.scoped(tenant_id, BYOKKey.provider == provider)
         )
 
 

@@ -14,6 +14,7 @@ import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
 import { OutboxPage } from '@/pages/outbox';
 import { SettingsPage } from '@/pages/settings';
+import { UsagePage } from '@/pages/usage';
 import { WorkspacePage } from '@/pages/workspace';
 import { RunsPage } from '@/pages/runs';
 
@@ -38,6 +39,7 @@ export function App() {
           <Route path="changes" element={<ChangesPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="usage" element={<UsagePage />} />
           <Route path="workspace" element={<WorkspacePage />} />
           <Route path="outbox" element={<OutboxPage />} />
         </Route>

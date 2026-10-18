@@ -5,13 +5,14 @@
  * 平台统一走 llm-gateway 路由,前端没有逐会话换模型的接口,不伪造下拉能力。
  */
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Cpu, Share2 } from 'lucide-react';
+import { ChevronRight, Cpu, Share2 } from 'lucide-react';
 import { useState } from 'react';
 import { siteUrl } from '@/lib/site-links';
 
 import { consoleButtonClass } from '@/components/console/button-class';
 import { Avatar, RunStatusPill } from '@/components/console/ui';
 import { accountLabel } from '@/lib/auth';
+import { insightsApi } from '@/lib/insights-api';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +26,12 @@ export function ConsoleTopbar({
   const accountQuery = useQuery({
     queryKey: ['auth-account'],
     queryFn: accountLabel,
+  });
+  const modelsQuery = useQuery({
+    queryKey: ['models'],
+    queryFn: insightsApi.models,
+    retry: false,
+    staleTime: 60_000,
   });
   const [copied, setCopied] = useState(false);
 
@@ -66,12 +73,20 @@ export function ConsoleTopbar({
 
       <div className="flex shrink-0 items-center gap-2">
         <span
-          className="hidden h-[30px] items-center gap-1.5 rounded-md border border-ha-border-strong bg-ha-panel-2 px-2.5 font-mono text-[12px] text-ha-text-2 sm:inline-flex"
-          title="平台统一经 llm-gateway 路由,会话内不单独切换模型"
+          className="hidden h-[30px] max-w-[260px] items-center gap-1.5 rounded-md border border-ha-border-strong bg-ha-panel-2 px-2.5 font-mono text-[12px] text-ha-text-2 sm:inline-flex"
+          title={
+            modelsQuery.data
+              ? `默认模型:${modelsQuery.data.default_model};平台统一经 llm-gateway 路由`
+              : '平台统一经 llm-gateway 路由'
+          }
         >
-          <Cpu aria-hidden="true" className="h-3.5 w-3.5 text-ha-muted" />
-          自动路由
-          <ChevronDown aria-hidden="true" className="h-3 w-3 text-ha-dim" />
+          <Cpu
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 text-ha-muted"
+          />
+          <span className="truncate">
+            {modelsQuery.data?.default_model ?? '自动路由'}
+          </span>
         </span>
 
         {status ? (

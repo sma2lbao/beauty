@@ -23,7 +23,7 @@
 7. 文档更新：环境变量清单、部署手册、回滚手册、已知限制；
 8. **本地启动验证：六个服务 + web 健康检查通过（SQLite + LLM 桩/可选真实模型）。**
 
-**当前进度（2026-10-18）**：M0-01（静态 SPA + FastAPI BFF + Next.js 官网）、M0-05（社交 OAuth + BFF Cookie 会话）、M0-06（BFF 代理/限流/下载/stream token）、M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）、M0-12（附件本地最小版）已完成并通过测试；**本地开发基线**（一键启动/健康检查/重置/seed + 文档）也已完成。其余任务待排期。
+**当前进度（2026-10-18）**：M0-01（静态 SPA + FastAPI BFF + Next.js 官网）、M0-05（社交 OAuth + BFF Cookie 会话）、M0-06（BFF 代理/限流/下载/stream token）、M0-07（SSE 断线续传/重连）、M0-08（Markdown 渲染）、M0-09（会话管理）、M0-10（产物预览/下载）、M0-11（用量/模型/BYOK 本地版）、M0-12（附件本地最小版）已完成并通过测试；**本地开发基线**（一键启动/健康检查/重置/seed + 文档）也已完成。其余任务待排期。
 
 **M0 本地启动基线（当前已可用）**
 
@@ -316,6 +316,8 @@
 ---
 
 ### M0-11 Sentry + 用量只读页 + 模型列表 + BYOK 占位
+
+> ✅ 本地版已完成（2026-10-18，Sentry 暂缓）：llm-gateway `GET /v1/models` 静态模型列表；account-service `usage_events`/`byok_keys` 表与迁移、`GET /v1/usage/summary`、内部 `POST /v1/usage/events`、BYOK 加密存取（掩码返回）；BFF `/api/models`、`/api/usage/summary`、`/api/byok`；Web 新增 `/usage` 只读页、顶栏真实模型 chip、设置页 BYOK 占位。
 
 **目标**：上线可观测与最小成本控制入口，为 M3 计费/BYOK 打底。
 

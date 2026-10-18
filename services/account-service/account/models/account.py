@@ -12,7 +12,15 @@ from __future__ import annotations
 from datetime import datetime
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -62,6 +70,29 @@ class Session(UUIDMixin, TenantMixin, TimestampMixin, Base):
     device: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UsageEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """用量事件(M0-11):run 级 token 记录,只读聚合给用量页。"""
+
+    __tablename__ = "usage_events"
+
+    run_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    model: Mapped[str] = mapped_column(String(128), default="unknown")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, index=True)
+
+
+class BYOKKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """BYOK 占位(M0-11):应用层加密存储,暂不参与模型调用。"""
+
+    __tablename__ = "byok_keys"
+    __table_args__ = (UniqueConstraint("tenant_id", "provider"),)
+
+    provider: Mapped[str] = mapped_column(String(32), index=True)
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    key_hint: Mapped[str] = mapped_column(String(16))
 
 
 class RefreshToken(UUIDMixin, TenantMixin, TimestampMixin, Base):
