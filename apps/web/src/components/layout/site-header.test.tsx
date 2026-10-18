@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
+import { siteUrl } from '@/lib/site-links';
+
 import { SiteHeader } from './site-header';
 
 function renderHeader(initialEntry = '/about') {
@@ -18,10 +20,10 @@ describe('SiteHeader', () => {
 
     expect(
       screen.getByRole('link', { name: 'beauty moon 官网首页' }),
-    ).toHaveAttribute('href', '/landing');
+    ).toHaveAttribute('href', siteUrl('/'));
     expect(screen.getByRole('link', { name: '产品官网' })).toHaveAttribute(
       'href',
-      '/landing',
+      siteUrl('/'),
     );
     expect(screen.getByRole('link', { name: '关于' })).toHaveAttribute(
       'href',

@@ -8,7 +8,10 @@ import type { AnchorHTMLAttributes, ReactNode } from 'react';
  * - #锚点原样保留。
  */
 export const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:5173';
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.NODE_ENV === 'production'
+    ? 'https://app.beautymoon.com'
+    : 'http://localhost:5173');
 
 const APP_PATH_PREFIXES = [
   '/login',

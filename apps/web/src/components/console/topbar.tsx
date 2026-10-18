@@ -7,7 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Cpu, Share2 } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router';
+import { siteUrl } from '@/lib/site-links';
 
 import { consoleButtonClass } from '@/components/console/button-class';
 import { Avatar, RunStatusPill } from '@/components/console/ui';
@@ -44,15 +44,21 @@ export function ConsoleTopbar({
         aria-label="面包屑"
         className="flex min-w-0 items-center gap-2 font-mono text-[12px]"
       >
-        <Link
-          to="/landing"
+        <a
+          href={siteUrl('/')}
           className="shrink-0 text-ha-dim transition-colors hover:text-ha-text-2"
         >
           beauty moon
-        </Link>
-        <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0 text-ha-ghost" />
+        </a>
+        <ChevronRight
+          aria-hidden="true"
+          className="h-3 w-3 shrink-0 text-ha-ghost"
+        />
         <span className="shrink-0 text-ha-dim">工作台</span>
-        <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0 text-ha-ghost" />
+        <ChevronRight
+          aria-hidden="true"
+          className="h-3 w-3 shrink-0 text-ha-ghost"
+        />
         <span className="truncate text-[13px] font-semibold text-ha-text">
           {title}
         </span>

@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
+import { siteUrl } from '@/lib/site-links';
 
 /** 公开页页脚:与控制台/官网一致的暗色信息层级。 */
 export function SiteFooter() {
@@ -10,18 +11,28 @@ export function SiteFooter() {
         <div className="flex flex-col gap-2.5">
           <BrandLockup size={24} textClassName="text-[14px]" />
           <p className="max-w-sm text-[12px] leading-5 text-ha-dim">
-            把 AI Agent 真正接进工作流:任务编排、过程观测、变更评审在同一个工作台完成。
+            把 AI Agent
+            真正接进工作流:任务编排、过程观测、变更评审在同一个工作台完成。
           </p>
         </div>
         <div className="flex flex-col gap-2 text-[12px] text-ha-muted sm:items-end">
           <div className="flex gap-4">
-            <Link to="/landing" className="transition-colors hover:text-ha-text-2">
+            <a
+              href={siteUrl('/')}
+              className="transition-colors hover:text-ha-text-2"
+            >
               产品官网
-            </Link>
-            <Link to="/about" className="transition-colors hover:text-ha-text-2">
+            </a>
+            <Link
+              to="/about"
+              className="transition-colors hover:text-ha-text-2"
+            >
               关于我们
             </Link>
-            <Link to="/login" className="transition-colors hover:text-ha-text-2">
+            <Link
+              to="/login"
+              className="transition-colors hover:text-ha-text-2"
+            >
               登录
             </Link>
           </div>

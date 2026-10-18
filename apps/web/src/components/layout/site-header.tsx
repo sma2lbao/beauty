@@ -2,10 +2,10 @@ import { Link, NavLink } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
 import { consoleButtonClass } from '@/components/console/button-class';
+import { siteUrl } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 
 const PUBLIC_NAV = [
-  { to: '/landing', label: '产品官网' },
   { to: '/about', label: '关于' },
   { to: '/', label: '控制台' },
 ];
@@ -15,11 +15,20 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-ha-border bg-ha-sidebar/90 backdrop-blur">
       <div className="mx-auto flex h-[64px] max-w-[1120px] items-center justify-between gap-4 px-5 sm:px-8">
-        <Link to="/landing" aria-label="beauty moon 官网首页">
+        <a href={siteUrl('/')} aria-label="beauty moon 官网首页">
           <BrandLockup size={26} textClassName="text-[15px]" />
-        </Link>
+        </a>
 
-        <nav aria-label="公开页导航" className="flex items-center gap-1 sm:gap-2">
+        <nav
+          aria-label="公开页导航"
+          className="flex items-center gap-1 sm:gap-2"
+        >
+          <a
+            href={siteUrl('/')}
+            className="rounded-md px-2.5 py-1.5 text-[13px] text-ha-text-3 transition-colors hover:text-ha-text"
+          >
+            产品官网
+          </a>
           {PUBLIC_NAV.map((item) => (
             <NavLink
               key={item.to}

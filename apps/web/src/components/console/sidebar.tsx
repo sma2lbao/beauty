@@ -38,6 +38,7 @@ import { accountApi } from '@/lib/account-api';
 import { accountLabel } from '@/lib/auth';
 import type { Conversation } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
+import { siteUrl } from '@/lib/site-links';
 import {
   RUN_STATUS_LABELS,
   relativeTime,
@@ -58,7 +59,6 @@ const PRIMARY_NAV = [
 const SECONDARY_NAV = [
   { to: '/workspace', icon: <FolderKanban />, label: '工作区' },
   { to: '/outbox', icon: <Inbox />, label: '事件队列' },
-  { to: '/landing', icon: <Globe />, label: '官网' },
 ];
 
 export function ConsoleSidebar() {
@@ -395,6 +395,15 @@ export function ConsoleSidebar() {
         {SECONDARY_NAV.map((item) => (
           <ConsoleNavLink key={item.to} {...item} />
         ))}
+        <a
+          href={siteUrl('/')}
+          target="_blank"
+          rel="noreferrer"
+          className="flex h-8 items-center gap-2.5 rounded-md px-2.5 text-ha-text-3 transition-colors hover:bg-ha-panel-2/70 hover:text-ha-text-2"
+        >
+          <Globe aria-hidden="true" className="h-4 w-4 shrink-0" />
+          <span className="text-[13px]">官网</span>
+        </a>
       </nav>
 
       <Link

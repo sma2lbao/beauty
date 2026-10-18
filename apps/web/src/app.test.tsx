@@ -93,13 +93,11 @@ describe('App 路由', () => {
     expect(await screen.findByText('开始一个新任务')).toBeInTheDocument();
   });
 
-  it('/landing 是公开的官网落地页', async () => {
+  it('/landing 旧链接跳转到独立官网', async () => {
     renderApp('/landing');
     expect(
-      await screen.findByRole('heading', {
-        name: /让 AI Agent 真正接手工程交付/,
-      }),
-    ).toBeInTheDocument();
+      await screen.findByRole('link', { name: '继续前往官网' }),
+    ).toHaveAttribute('href', 'http://localhost:3000/');
   });
 
   it('/products 已下线(渲染 404)', () => {

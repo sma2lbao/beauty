@@ -47,7 +47,7 @@
 
 | ID    | 任务                                                      | 端          | 规模 | 依赖     | 建议角色         |
 | ----- | --------------------------------------------------------- | ----------- | ---- | -------- | ---------------- |
-| M0-01 | 部署拆分：静态 SPA(Nginx) + FastAPI BFF + Next.js 官网     | Web/Infra   | M    | —        | Web/Platform     |
+| M0-01 | 部署拆分：静态 SPA(Nginx) + FastAPI BFF + Next.js 官网    | Web/Infra   | M    | —        | Web/Platform     |
 | M0-02 | 七服务容器化（六业务 + BFF）+ 容器平台部署 + 迁移 job     | Infra       | M    | —        | Platform         |
 | M0-03 | 云 PG/云 Redis 接入 + 开发 SQLite/本地 Redis + CI PG 迁移 | Service     | M    | M0-02    | Platform/Service |
 | M0-04 | PG job 表 + worker（替代 Temporal）                       | Service     | M    | M0-02    | Service          |
@@ -68,7 +68,7 @@
 
 ### M0-01 部署拆分：静态 SPA（Nginx）+ FastAPI BFF + Next.js 官网
 
-> ✅ 已完成（2026-10-18）：`apps/web` 保持纯 Vite SPA；新增 `services/bff`（FastAPI，:8007，`/healthz` + `/api/health`，3 个 pytest 用例）；新增 `apps/site`（Next.js App Router，静态导出，Landing/About/Pricing/Docs/Changelog + sitemap/robots/OG）；新增 `deploy/web/nginx.conf`（SPA 深链 + `/api` 反代）；本地 Vite `/api/health` 代理到 BFF 已验证。
+> ✅ 已完成（2026-10-18）：`apps/web` 保持纯 Vite SPA；新增 `services/bff`（FastAPI，:8007，`/healthz` + `/api/health`，3 个 pytest 用例）；新增 `apps/site`（Next.js App Router，静态导出，Landing/About/Pricing/Docs/Changelog + sitemap/robots/OG）；新增 `deploy/web/nginx.conf`（SPA 深链 + `/api` 反代）；本地 Vite `/api/health` 代理到 BFF 已验证；SPA 内重复的 `/landing` 页面已删除，旧深链跳转到 `apps/site`，官网内容单一来源。
 
 **目标**：web 不走 Vercel；`apps/web` 只出静态产物由 Nginx 托管；新增 FastAPI BFF 与独立 Next.js 官网。
 

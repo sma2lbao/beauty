@@ -10,12 +10,13 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 
 import { Button, Field, Input, Tabs } from '@beauty/design';
 
 import { BrandLockup } from '@/components/brand/logo';
 import { accountApi } from '@/lib/account-api';
+import { siteUrl } from '@/lib/site-links';
 import {
   accountLabel,
   authMode,
@@ -64,10 +65,9 @@ export function LoginPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   // 守卫带来的来路(站内路径,防开放重定向);没有来路回对话页
-  const from = (location.state as { from?: { pathname?: string } } | null)
-    ?.from?.pathname;
-  const target =
-    from?.startsWith('/') && !from.startsWith('//') ? from : '/';
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from
+    ?.pathname;
+  const target = from?.startsWith('/') && !from.startsWith('//') ? from : '/';
 
   const [tab, setTab] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -106,14 +106,22 @@ export function LoginPage() {
           email: email.trim(),
           password,
         });
-        setStoredTokens(result.access_token, result.refresh_token, result.subject);
+        setStoredTokens(
+          result.access_token,
+          result.refresh_token,
+          result.subject,
+        );
       } else {
         const result = await accountApi.register({
           email: email.trim(),
           password,
           display_name: displayName.trim() || undefined,
         });
-        setStoredTokens(result.access_token, result.refresh_token, result.subject);
+        setStoredTokens(
+          result.access_token,
+          result.refresh_token,
+          result.subject,
+        );
       }
       await queryClient.invalidateQueries({ queryKey: ACCOUNT_QUERY_KEY });
     }).then((ok) => {
@@ -150,9 +158,9 @@ export function LoginPage() {
     <main className="flex min-h-svh flex-col items-center justify-center bg-ha-bg px-6 py-12 text-ha-text-body">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <Link to="/landing" aria-label="beauty moon 官网首页">
+          <a href={siteUrl('/')} aria-label="beauty moon 官网首页">
             <BrandLockup size={34} textClassName="text-[20px]" />
-          </Link>
+          </a>
           <p className="text-[12px] leading-5 text-ha-muted">
             把任务交给 Agent,过程与产物都在掌握里
           </p>
@@ -190,7 +198,9 @@ export function LoginPage() {
                     { value: 'register', label: '注册' },
                   ]}
                   value={tab}
-                  onValueChange={(value) => setTab(value as 'login' | 'register')}
+                  onValueChange={(value) =>
+                    setTab(value as 'login' | 'register')
+                  }
                 />
 
                 <form
@@ -306,12 +316,12 @@ export function LoginPage() {
           </div>
         </div>
         <p className="mt-5 text-center font-mono text-[11px] text-ha-faint">
-          <Link
-            to="/landing"
+          <a
+            href={siteUrl('/')}
             className="underline-offset-4 hover:text-ha-muted hover:underline"
           >
             返回产品官网
-          </Link>
+          </a>
         </p>
       </div>
     </main>
