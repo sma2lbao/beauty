@@ -26,6 +26,10 @@ npm run dev:reset    # 清空本地 SQLite 与产物
 详见 [docs/local-dev.md](docs/local-dev.md)。BFF(:8007) 现在是必需的,Web 的
 `/api` 统一代理到 BFF。
 
+## 路线图与差距分析
+
+与其他 agent harness 的对比、现状差距与优先级待办见 [docs/gap-2026-10/](./docs/gap-2026-10/)（先读 `00-summary.md`）。
+
 ## 目录结构
 
 ```
