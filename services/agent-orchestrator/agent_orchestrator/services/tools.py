@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from agent_orchestrator.services.calendar import CalendarFeed
+from agent_orchestrator.services.code_tools import code_specs
 from agent_orchestrator.services.connectors import Connector
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import Knowledge
@@ -365,6 +366,7 @@ def build_tools(
     documents: DocumentLibrary | None = None,
     calendar: CalendarFeed | None = None,
     knowledge: Knowledge | None = None,
+    code_roots: list[str] | None = None,
 ) -> ToolRegistry:
     """汇总已配置提供方的工具;未配置的能力不暴露(能力即权限边界)。"""
     specs: list[ToolSpec] = []
@@ -376,4 +378,6 @@ def build_tools(
         specs += calendar_specs(calendar)
     if knowledge is not None:
         specs += knowledge_specs(tenant_id, knowledge)
+    if code_roots:
+        specs += code_specs(code_roots)
     return ToolRegistry(specs)

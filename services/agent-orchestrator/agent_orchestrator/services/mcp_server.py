@@ -135,6 +135,8 @@ def _read_only_tools(toolkit: ToolRegistry | None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for schema in toolkit.schemas():
         name = schema["function"]["name"]
+        if name.startswith("code_"):
+            continue  # 公开 MCP 不暴露服务端本地文件工具
         if toolkit.requires_confirmation(name):
             continue  # 公开面只暴露只读工具;写操作走控制台审批
         out.append(

@@ -138,6 +138,13 @@ curl -s http://127.0.0.1:8002/mcp \
 - 验证:curl -s -H Content-Type:application/json -d {"messages":[{"role":"user","content":"只回复:模型正常"}]} http://127.0.0.1:8003/v1/completions。
 - 真实模型工具名必须匹配 ^[a-zA-Z0-9_-]+$;MCP 工具使用 mcp**<server>**<tool>。
 
+## 3.8 编码 Function Tools
+
+- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组,绝对路径)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(写操作,走确认闸)。
+- 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。
+- 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
+- Skills 的 coding.repo-readonly-review 已绑定只读代码工具。
+
 ## 4.0 Job worker（run 队列）
 
 orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):

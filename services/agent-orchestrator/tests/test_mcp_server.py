@@ -142,7 +142,8 @@ def test_oauth_token_and_protected_resource_metadata(tmp_path: Path) -> None:
             headers={"Authorization": "Bearer bm_oauth_valid"},
         )
         assert tools.status_code == 200
-        assert any(tool["name"] == "beauty.whoami" for tool in tools.json()["result"]["tools"])
+        names = [tool["name"] for tool in tools.json()["result"]["tools"]]
+        assert "beauty.whoami" in names
 
         bad = client.post(
             "/mcp",

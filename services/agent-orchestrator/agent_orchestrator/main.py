@@ -148,6 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             documents=documents,
             calendar=calendar,
             knowledge=knowledge,
+            code_roots=settings.code_workspace_roots,
         )
 
     mcp_tools_factory = None
