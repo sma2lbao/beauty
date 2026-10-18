@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUp, FileText, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowUp,
+  Download,
+  FileText,
+  Sparkles,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 
@@ -8,9 +14,10 @@ import { ConsoleStatusBar } from '@/components/console/status-bar';
 import { ToolCallCard } from '@/components/console/tool-call-card';
 import { ConsoleTopbar } from '@/components/console/topbar';
 import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
-import { CodePreview } from '@/components/console/diff-view';
+import { ArtifactPreview } from '@/components/console/artifact-preview';
 import { Markdown } from '@/components/console/markdown';
 import { useRunEvents } from '@/components/runs/use-run-events';
+import { downloadArtifact } from '@/lib/artifacts';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { ChatMessage, SendMode } from '@/lib/conversations-api';
 import {
@@ -532,19 +539,24 @@ export function ChatPage() {
                           <span className="truncate font-mono text-[12px] text-ha-text-2">
                             {artifactQuery.data.title}
                           </span>
-                          <span className="font-mono text-[11px] text-ha-faint">
-                            {artifactQuery.data.content.length} 字符
-                          </span>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="font-mono text-[11px] text-ha-faint">
+                              {artifactQuery.data.content.length} 字符
+                            </span>
+                            <button
+                              type="button"
+                              aria-label="下载成品"
+                              onClick={() =>
+                                downloadArtifact(artifactQuery.data)
+                              }
+                              className="grid h-6 w-6 place-items-center rounded text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="max-h-72 overflow-auto py-2">
-                          {artifactQuery.data.kind === 'markdown' ? (
-                            <Markdown
-                              content={artifactQuery.data.content}
-                              className="px-3"
-                            />
-                          ) : (
-                            <CodePreview content={artifactQuery.data.content} />
-                          )}
+                        <div className="max-h-72 overflow-auto p-3">
+                          <ArtifactPreview artifact={artifactQuery.data} />
                         </div>
                       </div>
                     ) : (

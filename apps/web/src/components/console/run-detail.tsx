@@ -6,7 +6,7 @@
  * 关键可访问名/testid 保留,便于既有行为测试钉住。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { Download, X } from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -15,9 +15,11 @@ import {
   RunStatusBadge,
   ToneBadge,
 } from '@/components/console/ui';
+import { ArtifactPreview } from '@/components/console/artifact-preview';
 import { Markdown } from '@/components/console/markdown';
 import { RunEvents } from '@/components/runs/run-events';
 import { useRunEvents } from '@/components/runs/use-run-events';
+import { downloadArtifact } from '@/lib/artifacts';
 import {
   RUN_STATUS_LABELS,
   isRunQuiescent,
@@ -369,21 +371,25 @@ export function RunDetail({
                 交付物
               </span>
               {artifactQuery.data ? (
-                <ToneBadge tone="success">{artifactQuery.data.kind}</ToneBadge>
+                <div className="flex items-center gap-2">
+                  <ToneBadge tone="success">{artifactQuery.data.kind}</ToneBadge>
+                  <button
+                    type="button"
+                    aria-label="下载交付物"
+                    onClick={() => downloadArtifact(artifactQuery.data)}
+                    className="grid h-6 w-6 place-items-center rounded text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               ) : null}
             </div>
             {artifactQuery.isError ? (
               <p className="mt-2 text-[12px] text-ha-dim">还没有交付物。</p>
             ) : artifactQuery.data ? (
-              artifactQuery.data.kind === 'markdown' ? (
-                <div className="mt-2 max-h-64 overflow-auto">
-                  <Markdown content={artifactQuery.data.content} />
-                </div>
-              ) : (
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-ha-muted">
-                  {artifactQuery.data.content}
-                </pre>
-              )
+              <div className="mt-2">
+                <ArtifactPreview artifact={artifactQuery.data} />
+              </div>
             ) : (
               <p className="mt-2 text-[12px] text-ha-dim">读取中…</p>
             )}

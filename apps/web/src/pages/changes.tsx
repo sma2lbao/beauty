@@ -9,8 +9,8 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
-import { CodePreview, DiffViewer } from '@/components/console/diff-view';
-import { Markdown } from '@/components/console/markdown';
+import { ArtifactPreview } from '@/components/console/artifact-preview';
+import { DiffViewer } from '@/components/console/diff-view';
 import {
   ConsoleButton,
   ConsolePanel,
@@ -20,6 +20,7 @@ import {
   ToneBadge,
 } from '@/components/console/ui';
 import { consoleButtonClass } from '@/components/console/button-class';
+import { downloadArtifact } from '@/lib/artifacts';
 import {
   diffStats,
   formatBytes,
@@ -92,19 +93,7 @@ export function ChangesPage() {
 
   const download = () => {
     if (!selected) return;
-    const suffix = isDiff ? '.patch' : '.md';
-    const filename = selected.title.replace(/[\\/:*?"<>|]/g, '_') + suffix;
-    try {
-      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      // 非浏览器环境(测试)下不阻塞
-    }
+    downloadArtifact({ title: selected.title, kind: selected.kind, content });
   };
 
   return (
@@ -129,7 +118,7 @@ export function ChangesPage() {
               disabled={!selected || !content}
             >
               <Download className="h-3.5 w-3.5" />
-              下载 Patch
+              下载产物
             </ConsoleButton>
             <Link
               to="/runs"
@@ -298,11 +287,17 @@ export function ChangesPage() {
                     numbers="double"
                     className="py-2"
                   />
-                ) : selected?.kind === 'markdown' ? (
-                  <Markdown content={content} className="px-4 py-3" />
-                ) : (
-                  <CodePreview content={content} numbers />
-                )
+                ) : selected ? (
+                  <div className="p-4">
+                    <ArtifactPreview
+                      artifact={{
+                        title: selected.title,
+                        kind: selected.kind,
+                        content,
+                      }}
+                    />
+                  </div>
+                ) : null
               ) : selected ? (
                 <p className="p-6 text-[12px] text-ha-dim">产物正文为空。</p>
               ) : (

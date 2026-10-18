@@ -15,9 +15,10 @@ import {
   Spin,
 } from '@beauty/design';
 
-import { Markdown } from '@/components/console/markdown';
+import { ArtifactPreview } from '@/components/console/artifact-preview';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
+import { downloadArtifact } from '@/lib/artifacts';
 import type { Artifact } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/http';
@@ -275,20 +276,25 @@ export function WorkspacePage() {
                     ? `${selectedArtifact.title} · ${formatSize(selectedArtifact.size_bytes)}`
                     : '还没选中交付物'}
                 </CardDescription>
+                {selectedArtifact ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => downloadArtifact(selectedArtifact)}
+                  >
+                    下载
+                  </Button>
+                ) : null}
               </CardHeader>
               <CardContent>
                 {openArtifactMutation.isPending ? (
                   <p className="text-sm text-muted-foreground">读取中…</p>
                 ) : selectedArtifact ? (
-                  selectedArtifact.kind === 'markdown' ? (
-                    <div className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3">
-                      <Markdown content={selectedArtifact.content} />
-                    </div>
-                  ) : (
-                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm">
-                      {selectedArtifact.content}
-                    </pre>
-                  )
+                  <ArtifactPreview
+                    artifact={selectedArtifact}
+                    className="max-h-96 bg-muted/40"
+                  />
                 ) : (
                   <p className="text-sm text-muted-foreground">
                     在列表里点「查看」,正文会显示在这里。
