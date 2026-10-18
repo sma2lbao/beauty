@@ -23,6 +23,9 @@ vi.mock('@/lib/conversations-api', () => ({
     get: vi.fn(),
     messages: vi.fn(),
     postMessage: vi.fn(),
+    attachments: vi.fn(async () => []),
+    uploadAttachment: vi.fn(),
+    downloadAttachment: vi.fn(),
   },
   streamMessage: vi.fn(),
 }));
@@ -186,6 +189,7 @@ describe('ChatPage', () => {
         '把本周邮件整理成周报',
         'auto',
         expect.anything(),
+        [],
       ),
     );
     // 返回的 run 立即接管:状态从它读
@@ -209,6 +213,7 @@ describe('ChatPage', () => {
         '顺便看看日历',
         'auto',
         expect.anything(),
+        [],
       ),
     );
     expect(conversationsApi.create).not.toHaveBeenCalled();
@@ -400,6 +405,7 @@ describe('ChatPage', () => {
       '你好',
       'auto',
       expect.anything(),
+      [],
     );
     // 没有 run:不查状态、不显示任务状态
     expect(runsApi.get).not.toHaveBeenCalled();
@@ -420,6 +426,7 @@ describe('ChatPage', () => {
         '你好',
         'chat',
         expect.anything(),
+        [],
       ),
     );
   });
@@ -438,6 +445,7 @@ describe('ChatPage', () => {
         '把本周邮件整理成周报',
         'task',
         expect.anything(),
+        [],
       ),
     );
   });
@@ -491,5 +499,48 @@ describe('ChatPage', () => {
 
     expect(await screen.findByText('网络断了')).toBeTruthy();
     expect(screen.getByLabelText('描述下一步任务')).toHaveValue('你好');
+  });
+});
+
+describe('ChatPage 附件', () => {
+  it('既有会话可上传附件,发送时携带 attachment_ids', async () => {
+    const attachment = {
+      id: 'a1',
+      conversation_id: 'c1',
+      message_id: null,
+      filename: 'note.md',
+      content_type: 'text/markdown',
+      size_bytes: 4,
+      created_at: '2026-10-13T10:00:00+00:00',
+    };
+    vi.mocked(conversationsApi.attachments).mockResolvedValue([]);
+    vi.mocked(conversationsApi.uploadAttachment).mockResolvedValue(attachment);
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(['# hi'], 'note.md', { type: 'text/markdown' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(conversationsApi.uploadAttachment).toHaveBeenCalledWith(
+        'c1',
+        file,
+      ),
+    );
+    expect(await screen.findByText('note.md')).toBeInTheDocument();
+
+    typeAndSend('看看附件');
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        '看看附件',
+        'auto',
+        expect.anything(),
+        ['a1'],
+      ),
+    );
   });
 });

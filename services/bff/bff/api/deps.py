@@ -62,5 +62,6 @@ def require_csrf(
     """double-submit:非 HttpOnly cookie 与请求头一致才放行。"""
     settings: Settings = request.app.state.settings
     cookie = request.cookies.get(settings.csrf_cookie_name)
-    if not cookie or not x_csrf_token or not hmac.compare_digest(cookie, x_csrf_token):
+    token = x_csrf_token or request.headers.get("X-CSRF-Token")
+    if not cookie or not token or not hmac.compare_digest(cookie, token):
         raise PermissionDeniedError("auth.csrf_invalid", "CSRF 校验失败,请刷新页面")

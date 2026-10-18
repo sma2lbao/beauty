@@ -151,7 +151,11 @@ describe('conversationsApi', () => {
     expect(url).toBe('/api/v1/conversations/c1/messages');
     expect(init.method).toBe('POST');
     expect(init.body).toBe(
-      JSON.stringify({ content: '把本周邮件整理成周报', mode: 'auto' }),
+      JSON.stringify({
+        content: '把本周邮件整理成周报',
+        mode: 'auto',
+        attachment_ids: [],
+      }),
     );
   });
 
@@ -166,7 +170,9 @@ describe('conversationsApi', () => {
     await conversationsApi.postMessage('c1', '你好', 'chat');
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init.body).toBe(JSON.stringify({ content: '你好', mode: 'chat' }));
+    expect(init.body).toBe(
+      JSON.stringify({ content: '你好', mode: 'chat', attachment_ids: [] }),
+    );
   });
 
   it('parseSseFrame 解析具名帧,坏帧返回 null', () => {
@@ -209,7 +215,9 @@ describe('conversationsApi', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/v1/conversations/c1/messages/stream');
     expect(init.method).toBe('POST');
-    expect(init.body).toBe(JSON.stringify({ content: '你好', mode: 'auto' }));
+    expect(init.body).toBe(
+      JSON.stringify({ content: '你好', mode: 'auto', attachment_ids: [] }),
+    );
   });
 
   it('streamMessage 把 error 帧交给 onError', async () => {
@@ -252,5 +260,35 @@ describe('conversationsApi', () => {
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(404);
     expect(error.code).toBe('conversation.not_found');
+  });
+});
+
+describe('attachments API', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('列表与上传走会话附件路由', async () => {
+    const fetchMock = mockFetch(200, []);
+    await conversationsApi.attachments('c1');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/conversations/c1/attachments',
+    );
+
+    const uploadMock = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 'a1', filename: 'note.md' }),
+    }));
+    vi.stubGlobal('fetch', uploadMock);
+    const file = new File(['# hello'], 'note.md', { type: 'text/markdown' });
+    const attachment = await conversationsApi.uploadAttachment('c1', file);
+
+    expect(attachment).toMatchObject({ id: 'a1', filename: 'note.md' });
+    const [url, init] = uploadMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/conversations/c1/attachments');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get('file')).toBeInstanceOf(File);
   });
 });

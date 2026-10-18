@@ -7,6 +7,7 @@
  * postMessage 的 mode 告诉页面实际发生了哪种。
  */
 
+import { authHeaders } from '@/lib/auth';
 import { ApiError, jsonHeaders, requestJson } from '@/lib/http';
 import type { Run } from '@/lib/runs-api';
 
@@ -49,6 +50,17 @@ export type ChatMessage = {
 
 /** 发送方式:auto = 服务端自动分流(默认);chat = 直接对话;task = 作为任务。 */
 export type SendMode = 'auto' | 'chat' | 'task';
+
+/** 会话附件元数据;正文走 downloadAttachment(不塞进消息 JSON)。 */
+export type Attachment = {
+  id: string;
+  conversation_id: string;
+  message_id: string | null;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
 
 /**
  * 发消息的结果:
@@ -120,14 +132,66 @@ export const conversationsApi = {
     conversationId: string,
     content: string,
     mode: SendMode = 'auto',
+    attachmentIds: string[] = [],
   ) =>
     request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
       {
         method: 'POST',
-        body: JSON.stringify({ content, mode }),
+        body: JSON.stringify({
+          content,
+          mode,
+          attachment_ids: attachmentIds,
+        }),
       },
     ),
+  attachments: (conversationId: string) =>
+    request<Attachment[]>(
+      `/api/v1/conversations/${conversationId}/attachments`,
+    ),
+  uploadAttachment: async (conversationId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(
+      `${BASE}/api/v1/conversations/${conversationId}/attachments`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: await authHeaders(),
+        body: form,
+      },
+    );
+    if (!response.ok) {
+      let code = 'attachment.upload_failed';
+      let message = `附件上传失败(${response.status})`;
+      try {
+        const body = (await response.json()) as {
+          code?: string;
+          message?: string;
+        };
+        code = body.code ?? code;
+        message = body.message ?? message;
+      } catch {
+        // 非 JSON 错误体保留兜底文案
+      }
+      throw new ApiError(response.status, code, message);
+    }
+    return (await response.json()) as Attachment;
+  },
+  downloadAttachment: async (attachmentId: string) => {
+    const response = await fetch(`${BASE}/api/v1/attachments/${attachmentId}`, {
+      credentials: 'include',
+      headers: await authHeaders(),
+    });
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        'attachment.download_failed',
+        `附件下载失败(${response.status})`,
+      );
+    }
+    return response.blob();
+  },
 };
 
 /**
@@ -183,6 +247,7 @@ export async function streamMessage(
   content: string,
   mode: SendMode,
   handlers: StreamMessageHandlers,
+  attachmentIds: string[] = [],
 ): Promise<void> {
   const response = await fetch(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
@@ -190,7 +255,11 @@ export async function streamMessage(
       method: 'POST',
       credentials: 'include',
       headers: { ...(await jsonHeaders()), Accept: 'text/event-stream' },
-      body: JSON.stringify({ content, mode }),
+      body: JSON.stringify({
+        content,
+        mode,
+        attachment_ids: attachmentIds,
+      }),
       signal: handlers.signal,
     },
   );

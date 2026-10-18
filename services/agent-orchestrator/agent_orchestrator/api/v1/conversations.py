@@ -11,10 +11,20 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from common.errors import AppError
 from database.session import session_scope
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,9 +33,11 @@ from agent_orchestrator.api.deps import (
     get_llm_client,
     get_run_graph,
     get_session,
+    get_settings,
     get_tenant_id,
 )
 from agent_orchestrator.schemas.conversations import (
+    AttachmentRead,
     ConversationCreate,
     ConversationDetail,
     ConversationPage,
@@ -36,11 +48,13 @@ from agent_orchestrator.schemas.conversations import (
     MessageRead,
 )
 from agent_orchestrator.schemas.runs import RunRead
+from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
 from agent_orchestrator.services import triage
 from agent_orchestrator.services.llm import LLMClient
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+attachments_router = APIRouter(prefix="/attachments", tags=["attachments"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
@@ -158,6 +172,72 @@ async def list_messages(
 
 
 @router.post(
+    "/{conversation_id}/attachments",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_attachment(
+    conversation_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    settings: Annotated[Any, Depends(get_settings)],
+    file: Annotated[UploadFile, File()],
+) -> AttachmentRead:
+    """上传附件:本地最小版,内容存 DB;类型/大小在 service 校验。"""
+    data = await file.read()
+    attachment = await attachments_service.create_attachment(
+        session,
+        tenant_id,
+        conversation_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        data=data,
+        max_bytes=settings.max_attachment_bytes,
+    )
+    return AttachmentRead.model_validate(attachment)
+
+
+@router.get(
+    "/{conversation_id}/attachments", response_model=list[AttachmentRead]
+)
+async def list_attachments(
+    conversation_id: str, session: DBSession, tenant_id: TenantId
+) -> list[AttachmentRead]:
+    attachments = await attachments_service.list_attachments(
+        session, tenant_id, conversation_id
+    )
+    return [AttachmentRead.model_validate(item) for item in attachments]
+
+
+@attachments_router.get("/{attachment_id}")
+async def download_attachment(
+    attachment_id: str, session: DBSession, tenant_id: TenantId
+) -> Response:
+    """下载附件:附件接口不内联到消息 JSON,下载单独走这里。"""
+    attachment = await attachments_service.require_attachment(
+        session, tenant_id, attachment_id
+    )
+    filename = quote(attachment.filename)
+    return Response(
+        content=attachment.content,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@attachments_router.delete(
+    "/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_attachment(
+    attachment_id: str, session: DBSession, tenant_id: TenantId
+) -> None:
+    await attachments_service.delete_attachment(session, tenant_id, attachment_id)
+
+
+@router.post(
     "/{conversation_id}/messages",
     response_model=MessagePostResult,
     status_code=status.HTTP_201_CREATED,
@@ -179,6 +259,7 @@ async def post_message(
         conversation_id,
         body.content,
         mode=body.mode,
+        attachment_ids=body.attachment_ids,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -256,6 +337,7 @@ async def stream_message(
                 conversation_id,
                 body.content,
                 mode=body.mode,
+                attachment_ids=body.attachment_ids,
             )
         ),
         media_type="text/event-stream",

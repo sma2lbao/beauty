@@ -40,6 +40,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
@@ -256,6 +257,7 @@ async def post_message(
     content: str,
     *,
     mode: str = triage.AUTO,
+    attachment_ids: list[str] | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -264,6 +266,15 @@ async def post_message(
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     message = await _persist_user_message(session, conversation, content)
+    if attachment_ids:
+        await attachments_service.link_attachments(
+            session,
+            tenant_id,
+            conversation_id,
+            message,
+            attachment_ids,
+            max_count=5,
+        )
     decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
@@ -292,6 +303,7 @@ async def stream_message(
     content: str,
     *,
     mode: str = triage.AUTO,
+    attachment_ids: list[str] | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -309,6 +321,15 @@ async def stream_message(
     async with session_scope(factory) as session:
         conversation = await require_conversation(session, tenant_id, conversation_id)
         message = await _persist_user_message(session, conversation, content)
+        if attachment_ids:
+            await attachments_service.link_attachments(
+                session,
+                tenant_id,
+                conversation_id,
+                message,
+                attachment_ids,
+                max_count=5,
+            )
         decided = await triage.decide(content, llm, mode=mode)
         if decided == triage.CHAT and llm is not None:
             prompt = await chat.prompt(session, message)

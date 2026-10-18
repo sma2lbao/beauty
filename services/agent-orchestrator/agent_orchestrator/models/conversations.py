@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -52,3 +52,23 @@ class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
     role: Mapped[str] = mapped_column(String(16))  # user / assistant
     content: Mapped[str] = mapped_column(Text)
+
+
+class Attachment(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """会话附件(本地最小版):内容存 DB,消息发送时再绑定 message_id。
+
+    M0-12 不引入对象存储;生产多实例前改为共享存储/对象存储。
+    """
+
+    __tablename__ = "attachments"
+
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_messages.id"), index=True, nullable=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary)

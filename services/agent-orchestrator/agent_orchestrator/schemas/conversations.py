@@ -51,6 +51,20 @@ class ConversationDetail(ConversationRead):
     active_run_id: str | None
 
 
+class AttachmentRead(BaseModel):
+    """附件元数据(正文走 /attachments/{id} 下载,不塞进消息 JSON)。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    conversation_id: str
+    message_id: str | None
+    filename: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+
+
 class MessageCreate(BaseModel):
     """发消息:content 即对话内容/任务目标;mode 是"发送方式"。
 
@@ -61,6 +75,7 @@ class MessageCreate(BaseModel):
 
     content: str = Field(min_length=1, max_length=2000)
     mode: Literal["auto", "chat", "task"] = "auto"
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
 
 
 class MessageRead(BaseModel):

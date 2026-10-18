@@ -20,6 +20,9 @@ class Settings(BaseAppSettings):
     # 交付物存储(§7 阶段 B):database = 内容留在 DB 列;filesystem = 落本地目录
     artifact_store: str = "database"
     artifact_root: str = "./.artifacts"
+    # 附件本地最小版(M0-12):内容进 DB;单文件上限与单条消息附件数上限
+    max_attachment_bytes: int = 10 * 1024 * 1024
+    max_attachments_per_message: int = 5
     # 模型网关(架构 §5 唯一出口):enabled=false 时 plan/execute 走确定性桩
     llm_enabled: bool = False
     llm_gateway_url: str = "http://127.0.0.1:8003"

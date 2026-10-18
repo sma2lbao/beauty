@@ -225,10 +225,16 @@ async def proxy(
             content=await request.body(),
             headers=_headers(request, state),
         )
+    passthrough = {}
+    for header in ("content-disposition", "cache-control"):
+        value = upstream.headers.get(header)
+        if value:
+            passthrough[header] = value
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("content-type"),
+        headers=passthrough,
     )
 
 

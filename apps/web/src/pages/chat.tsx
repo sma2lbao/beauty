@@ -4,7 +4,9 @@ import {
   ArrowUp,
   Download,
   FileText,
+  Paperclip,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
@@ -19,7 +21,11 @@ import { Markdown } from '@/components/console/markdown';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { downloadArtifact } from '@/lib/artifacts';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
-import type { ChatMessage, SendMode } from '@/lib/conversations-api';
+import type {
+  Attachment,
+  ChatMessage,
+  SendMode,
+} from '@/lib/conversations-api';
 import {
   RUN_STATUS_LABELS,
   clockTime,
@@ -68,7 +74,12 @@ export function ChatPage() {
     conversationId: string;
     user: string;
     reply: string;
+    attachments: Attachment[];
   } | null>(null);
+  const [draftAttachments, setDraftAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [streamError, setStreamError] = useState<{
     conversationId: string;
     error: Error;
@@ -96,6 +107,19 @@ export function ChatPage() {
     enabled: Boolean(activeConversationId),
   });
   const messages = messagesQuery.data ?? [];
+
+  const attachmentsQuery = useQuery({
+    queryKey: ['conversation-attachments', activeConversationId],
+    queryFn: () => conversationsApi.attachments(activeConversationId as string),
+    enabled: Boolean(activeConversationId),
+  });
+  const attachmentsByMessage = new Map<string, Attachment[]>();
+  for (const attachment of attachmentsQuery.data ?? []) {
+    if (!attachment.message_id) continue;
+    const list = attachmentsByMessage.get(attachment.message_id) ?? [];
+    list.push(attachment);
+    attachmentsByMessage.set(attachment.message_id, list);
+  }
 
   const manualRunId =
     manualRun && manualRun.conversationId === activeConversationId
@@ -157,18 +181,49 @@ export function ChatPage() {
     await queryClient.invalidateQueries({
       queryKey: ['conversation-messages', conversationId],
     });
+    await queryClient.invalidateQueries({
+      queryKey: ['conversation-attachments', conversationId],
+    });
     await queryClient.invalidateQueries({ queryKey: ['conversations'] });
     setPending((previous) =>
       previous && previous.conversationId === conversationId ? null : previous,
     );
   };
 
+  const uploadAttachments = async (files: FileList | null) => {
+    if (!files?.length || !activeConversationId) return;
+    setUploading(true);
+    setAttachmentError(null);
+    const selected = [...draftAttachments];
+    try {
+      for (const file of Array.from(files)) {
+        if (selected.length >= 5) break;
+        if (file.size > 10 * 1024 * 1024) {
+          throw new Error('附件超过 10MB 上限');
+        }
+        selected.push(
+          await conversationsApi.uploadAttachment(activeConversationId, file),
+        );
+      }
+      setDraftAttachments(selected);
+    } catch (failure) {
+      setAttachmentError(
+        failure instanceof Error ? failure.message : '附件上传失败',
+      );
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const sendStreaming = async (text: string) => {
     const controller = new AbortController();
     abortRef.current = controller;
+    const selectedAttachments = draftAttachments;
     setStreamError(null);
     setSending(true);
     setDraft('');
+    setDraftAttachments([]);
     setArtifactFor(null);
     let conversationId = activeConversationId;
     try {
@@ -181,44 +236,52 @@ export function ChatPage() {
         conversationId: targetConversationId,
         user: text,
         reply: '',
+        attachments: selectedAttachments,
       });
-      await streamMessage(targetConversationId, text, sendMode, {
-        signal: controller.signal,
-        onMeta: (meta) => {
-          if (meta.run) {
-            setManualRun({
-              conversationId: targetConversationId,
-              runId: meta.run.id,
+      await streamMessage(
+        targetConversationId,
+        text,
+        sendMode,
+        {
+          signal: controller.signal,
+          onMeta: (meta) => {
+            if (meta.run) {
+              setManualRun({
+                conversationId: targetConversationId,
+                runId: meta.run.id,
+              });
+            }
+            void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+            void queryClient.invalidateQueries({
+              queryKey: ['conversation', targetConversationId],
             });
-          }
-          void queryClient.invalidateQueries({ queryKey: ['conversations'] });
-          void queryClient.invalidateQueries({
-            queryKey: ['conversation', targetConversationId],
-          });
+          },
+          onDelta: (delta) =>
+            setPending((previous) =>
+              previous && previous.conversationId === targetConversationId
+                ? { ...previous, reply: previous.reply + delta }
+                : previous,
+            ),
+          onDone: () => {
+            void settle(targetConversationId);
+          },
+          onError: (failure) => {
+            setStreamError({
+              conversationId: targetConversationId,
+              error: new Error(failure.message),
+            });
+            void settle(targetConversationId);
+          },
         },
-        onDelta: (delta) =>
-          setPending((previous) =>
-            previous && previous.conversationId === targetConversationId
-              ? { ...previous, reply: previous.reply + delta }
-              : previous,
-          ),
-        onDone: () => {
-          void settle(targetConversationId);
-        },
-        onError: (failure) => {
-          setStreamError({
-            conversationId: targetConversationId,
-            error: new Error(failure.message),
-          });
-          void settle(targetConversationId);
-        },
-      });
+        selectedAttachments.map((attachment) => attachment.id),
+      );
     } catch (failure) {
       if ((failure as Error)?.name !== 'AbortError') {
         const error =
           failure instanceof Error ? failure : new Error('发送失败');
         setStreamError({ conversationId: conversationId ?? '', error });
         setDraft(text);
+        setDraftAttachments(selectedAttachments);
       }
     } finally {
       setSending(false);
@@ -360,6 +423,7 @@ export function ChatPage() {
                 <MessageBlock
                   key={message.id}
                   message={message}
+                  attachments={attachmentsByMessage.get(message.id)}
                   run={
                     message.run_id && message.run_id === activeRunId
                       ? run
@@ -375,7 +439,10 @@ export function ChatPage() {
 
               {visiblePending ? (
                 <>
-                  <UserBlock text={visiblePending.user} />
+                  <UserBlock
+                    text={visiblePending.user}
+                    attachments={visiblePending.attachments}
+                  />
                   <AgentBlock
                     meta={
                       toolCalls.length
@@ -607,6 +674,38 @@ export function ChatPage() {
               }}
               className="mx-auto w-full max-w-[820px] rounded-[10px] border border-ha-border-strong bg-ha-panel p-3 transition-colors focus-within:border-ha-accent/70"
             >
+              {draftAttachments.length ? (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {draftAttachments.map((attachment) => (
+                    <span
+                      key={attachment.id}
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
+                    >
+                      <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
+                      <span className="truncate">{attachment.filename}</span>
+                      <button
+                        type="button"
+                        aria-label={`移除附件 ${attachment.filename}`}
+                        onClick={() =>
+                          setDraftAttachments((previous) =>
+                            previous.filter(
+                              (item) => item.id !== attachment.id,
+                            ),
+                          )
+                        }
+                        className="text-ha-dim hover:text-ha-text"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {attachmentError ? (
+                <p className="mb-2 text-[12px] text-ha-danger" role="alert">
+                  {attachmentError}
+                </p>
+              ) : null}
               <label className="sr-only" htmlFor="chat-input">
                 描述下一步任务
               </label>
@@ -634,6 +733,34 @@ export function ChatPage() {
               />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept=".txt,.md,.markdown,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp"
+                    onChange={(event) =>
+                      void uploadAttachments(event.target.files)
+                    }
+                  />
+                  <button
+                    type="button"
+                    aria-label="添加附件"
+                    title={
+                      activeConversationId
+                        ? '添加附件(文本/Markdown/CSV/JSON/PDF/图片,单个 ≤10MB)'
+                        : '先发一条消息创建会话,再添加附件'
+                    }
+                    disabled={
+                      !activeConversationId ||
+                      uploading ||
+                      draftAttachments.length >= 5
+                    }
+                    onClick={() => fileInputRef.current?.click()}
+                    className="grid h-6 w-6 place-items-center rounded text-ha-muted transition-colors hover:bg-ha-panel-2 hover:text-ha-text disabled:opacity-40"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" />
+                  </button>
                   <label
                     htmlFor="send-mode"
                     className="font-mono text-[11px] text-ha-faint"
@@ -735,7 +862,15 @@ export function ChatPage() {
 
 /* ── 消息块 ─────────────────────────────────────────────────────────── */
 
-function UserBlock({ text, createdAt }: { text: string; createdAt?: string }) {
+function UserBlock({
+  text,
+  createdAt,
+  attachments = [],
+}: {
+  text: string;
+  createdAt?: string;
+  attachments?: Attachment[];
+}) {
   return (
     <article>
       <header className="flex items-center gap-2">
@@ -749,8 +884,45 @@ function UserBlock({ text, createdAt }: { text: string; createdAt?: string }) {
       <p className="mt-2 whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-body">
         {text}
       </p>
+      {attachments.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {attachments.map((attachment) => (
+            <button
+              key={attachment.id}
+              type="button"
+              onClick={() => void downloadAttachmentFile(attachment)}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel px-2 py-1 font-mono text-[11px] text-ha-text-2 transition-colors hover:border-ha-border-strong hover:text-ha-text"
+            >
+              <FileText className="h-3 w-3 shrink-0 text-ha-muted" />
+              <span className="truncate">{attachment.filename}</span>
+              <span className="shrink-0 text-ha-faint">
+                {formatAttachmentSize(attachment.size_bytes)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
+}
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+async function downloadAttachmentFile(attachment: Attachment): Promise<void> {
+  try {
+    const blob = await conversationsApi.downloadAttachment(attachment.id);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = attachment.filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    // 下载失败时静默;下次点击可重试
+  }
 }
 
 function AgentBlock({
@@ -782,13 +954,21 @@ function MessageBlock({
   message,
   run,
   steps,
+  attachments,
 }: {
   message: ChatMessage;
   run?: Run;
   steps?: number;
+  attachments?: Attachment[];
 }) {
   if (message.role === 'user') {
-    return <UserBlock text={message.content} createdAt={message.created_at} />;
+    return (
+      <UserBlock
+        text={message.content}
+        createdAt={message.created_at}
+        attachments={attachments}
+      />
+    );
   }
   const meta =
     run && steps

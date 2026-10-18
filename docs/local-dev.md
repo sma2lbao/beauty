@@ -15,7 +15,7 @@ npm install
 ```
 
 各 Python 服务的 .env 由启动脚本自动从 .env.example 复制;需要自定义时再手动编辑
-(services/*/.env 已被 gitignore)。
+(services/\*/.env 已被 gitignore)。
 
 ## 2. 一键启动
 
@@ -29,23 +29,23 @@ npm run dev:status     # 只检查健康状态
 
 - 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
 - 缺 .env 自动创建;
-- 服务日志在 .cache/dev/*.log;
+- 服务日志在 .cache/dev/\*.log;
 - Ctrl+C 停止由脚本启动的全部进程;
 - 任一子进程退出时整体退出,方便发现崩溃。
 
 ## 3. 端口
 
-| 服务 | 端口 | 健康检查 |
-| --- | --- | --- |
-| account-service | 8001 | /healthz |
-| agent-orchestrator | 8002 | /healthz |
-| llm-gateway | 8003 | /healthz |
-| connector-service | 8004 | /healthz |
-| workspace-service | 8005 | /healthz |
-| knowledge-service | 8006 | /healthz |
-| bff | 8007 | /api/health |
-| web | 5173 | / |
-| site(可选) | 3000 | / |
+| 服务               | 端口 | 健康检查    |
+| ------------------ | ---- | ----------- |
+| account-service    | 8001 | /healthz    |
+| agent-orchestrator | 8002 | /healthz    |
+| llm-gateway        | 8003 | /healthz    |
+| connector-service  | 8004 | /healthz    |
+| workspace-service  | 8005 | /healthz    |
+| knowledge-service  | 8006 | /healthz    |
+| bff                | 8007 | /api/health |
+| web                | 5173 | /           |
+| site(可选)         | 3000 | /           |
 
 打开 http://localhost:5173。
 
@@ -101,8 +101,8 @@ npm run dev:reset -- --yes # 不确认
 
 会删除:
 
-- services/*/*.db(SQLite)
-- services/*/.artifacts(本地产物)
+- services/_/_.db(SQLite)
+- services/\*/.artifacts(本地产物)
 - .cache/dev(日志)
 
 保留 .env 与源码。服务运行中会拒绝删除;先 Ctrl+C 停 dev.sh,或加 --force。
@@ -110,15 +110,16 @@ npm run dev:reset -- --yes # 不确认
 
 ## 7. 日志与排障
 
-| 现象 | 处理 |
-| --- | --- |
-| 端口被占用 | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill |
-| 前端 401/502 | 检查 BFF :8007 是否启动;npm run dev:status |
-| 登录后页面空 | 检查 account-service :8001 与 BFF 日志 |
-| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码 |
-| 官网打不开 | 单独 npm run dev:site(SPA 里「官网」跳 :3000) |
-| SQLite 表结构不对 | npm run dev:reset 后重启 |
-| 想用真实模型 | 配 llm-gateway 的 LLM_ENABLED/API_KEY,或用本地 OpenAI 兼容端点 |
+| 现象                | 处理                                                                          |
+| ------------------- | ----------------------------------------------------------------------------- |
+| 端口被占用          | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                      |
+| 前端 401/502        | 检查 BFF :8007 是否启动;npm run dev:status                                    |
+| 登录后页面空        | 检查 account-service :8001 与 BFF 日志                                        |
+| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码                                  |
+| 官网打不开          | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                 |
+| SQLite 表结构不对   | npm run dev:reset 后重启                                                      |
+| 想用真实模型        | 配 llm-gateway 的 LLM_ENABLED/API_KEY,或用本地 OpenAI 兼容端点                |
+| 附件上传失败        | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新 |
 
 ## 8. 测试
 

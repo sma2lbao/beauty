@@ -11,7 +11,11 @@ from datetime import datetime
 from database.repository import TenantRepository
 from sqlalchemy import and_, func, or_, select
 
-from agent_orchestrator.models.conversations import ChatMessage, Conversation
+from agent_orchestrator.models.conversations import (
+    Attachment,
+    ChatMessage,
+    Conversation,
+)
 from agent_orchestrator.models.runs import (
     PendingInstruction,
     Run,
@@ -107,6 +111,22 @@ class ConversationRepository(TenantRepository[Conversation]):
         if conversation is None or conversation.deleted_at is not None:
             raise self._not_found(conversation_id)
         return conversation
+
+
+class AttachmentRepository(TenantRepository[Attachment]):
+    model = Attachment
+    not_found_code = "attachment.not_found"
+    not_found_message = "附件不存在"
+    id_detail_key = "attachment_id"
+
+    async def list_for_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> list[Attachment]:
+        return await self.list_scoped(
+            tenant_id,
+            Attachment.conversation_id == conversation_id,
+            order_by=[Attachment.created_at, Attachment.id],
+        )
 
 
 class MessageRepository(TenantRepository[ChatMessage]):

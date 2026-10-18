@@ -40,6 +40,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def get_settings(request: Request):
+    """当前进程配置(附件大小上限等端点参数)。"""
+    return request.app.state.settings
+
+
 def get_run_graph(request: Request) -> CompiledStateGraph:
     """lifespan 装配的 run 执行图(app.state.run_graph)。"""
     return request.app.state.run_graph
