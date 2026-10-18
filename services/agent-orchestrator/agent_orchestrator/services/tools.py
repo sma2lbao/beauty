@@ -147,6 +147,30 @@ def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
         )
         return json.dumps({"emails": emails}, ensure_ascii=False)
 
+    async def list_attachments(args: dict[str, Any]) -> str:
+        connection_id = str(args.get("connection_id") or "")
+        message_id = str(args.get("message_id") or "")
+        if not connection_id or not message_id:
+            return _error("list_email_attachments 需要 connection_id/message_id")
+        items = await connector.list_attachments(
+            tenant_id, connection_id, message_id
+        )
+        return json.dumps({"attachments": items}, ensure_ascii=False)
+
+    async def attachment_text(args: dict[str, Any]) -> str:
+        connection_id = str(args.get("connection_id") or "")
+        message_id = str(args.get("message_id") or "")
+        attachment_id = str(args.get("attachment_id") or "")
+        if not connection_id or not message_id or not attachment_id:
+            return _error(
+                "fetch_email_attachment_text 需要 "
+                "connection_id/message_id/attachment_id"
+            )
+        result = await connector.attachment_text(
+            tenant_id, connection_id, message_id, attachment_id
+        )
+        return json.dumps(result, ensure_ascii=False)
+
     async def send_email(args: dict[str, Any]) -> str:
         connection_id = str(args.get("connection_id") or "")
         to = str(args.get("to") or "")
@@ -189,6 +213,35 @@ def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
                 "additionalProperties": False,
             },
             handler=fetch_emails,
+        ),
+        ToolSpec(
+            name="list_email_attachments",
+            description="列出某封邮件的附件(只读;附件 id 用于读取文本)",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "message_id": {"type": "string"},
+                },
+                "required": ["connection_id", "message_id"],
+                "additionalProperties": False,
+            },
+            handler=list_attachments,
+        ),
+        ToolSpec(
+            name="fetch_email_attachment_text",
+            description="把邮件附件解析为文本(PDF/docx/xlsx/文本,只读)",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "message_id": {"type": "string"},
+                    "attachment_id": {"type": "string"},
+                },
+                "required": ["connection_id", "message_id", "attachment_id"],
+                "additionalProperties": False,
+            },
+            handler=attachment_text,
         ),
         ToolSpec(
             name="send_email",

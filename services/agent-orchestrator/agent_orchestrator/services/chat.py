@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import MessageRepository
+from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history
 from agent_orchestrator.services.llm import LLMClient
 
@@ -34,7 +35,11 @@ async def prompt(session: AsyncSession, message: ChatMessage) -> list[dict[str, 
     )
     messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     messages.extend(history.to_prompt(rows))
-    messages.append({"role": "user", "content": message.content})
+    attachment_context = await attachments_service.context_for_message(
+        session, message.tenant_id, message.id
+    )
+    content = message.content + attachment_context
+    messages.append({"role": "user", "content": content})
     return messages
 
 

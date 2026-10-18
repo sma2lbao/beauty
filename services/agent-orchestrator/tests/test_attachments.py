@@ -130,3 +130,51 @@ def test_attachment_tenant_isolation(client: TestClient) -> None:
         ).status_code
         == 404
     )
+
+
+def test_docx_attachment_extracted_and_injected(tmp_path: Path) -> None:
+    import sqlite3
+    from io import BytesIO
+
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph('项目周报:本周完成附件解析。')
+    buffer = BytesIO()
+    document.save(buffer)
+
+    app = create_app(
+        _settings(tmp_path, 'attachment-parse.db'),
+        token_verifier=_IDP.verifier(),
+    )
+    with TestClient(app) as client:
+        conversation_id = _conversation(client)
+        uploaded = _upload(
+            client,
+            conversation_id,
+            filename='weekly.docx',
+            content=buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        assert uploaded.status_code == 201
+        attachment_id = uploaded.json()['id']
+
+        conn = sqlite3.connect(tmp_path / 'attachment-parse.db')
+        extracted = conn.execute(
+            'select extracted_text, extraction_error from attachments'
+        ).fetchone()
+        conn.close()
+        assert extracted[1] is None
+        assert '项目周报' in extracted[0]
+
+        posted = client.post(
+            f'/api/v1/conversations/{conversation_id}/messages',
+            json={
+                'content': '总结这个附件',
+                'mode': 'task',
+                'attachment_ids': [attachment_id],
+            },
+            headers=TENANT,
+        )
+        assert posted.status_code == 201
+        assert '附件内容' in posted.json()['run']['goal']

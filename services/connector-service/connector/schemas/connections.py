@@ -88,6 +88,12 @@ class AttachmentRead(BaseModel):
     size_bytes: int
 
 
+class AttachmentTextRead(BaseModel):
+    filename: str
+    content_type: str
+    text: str
+
+
 class TestResultRead(BaseModel):
     ok: bool
     detail: str

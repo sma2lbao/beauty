@@ -229,12 +229,13 @@ async def _task_path(
     *,
     jobs_enabled: bool = False,
     skill: SkillManifest | None = None,
+    attachment_context: str = "",
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
     run = await active_run(session, conversation.tenant_id, conversation.id)
     if run is not None:
         await runs_service.queue_instruction(
-            session, conversation.tenant_id, run.id, content
+            session, conversation.tenant_id, run.id, content + attachment_context
         )
         message.run_id = run.id
         return run, "instruction_queued"
@@ -243,7 +244,7 @@ async def _task_path(
         conversation.tenant_id,
         RunCreate(
             title=title_from_message(content),
-            goal=content,
+            goal=content + attachment_context,
             acceptance_criteria=[],
             conversation_id=conversation.id,
             skill_id=skill.id if skill else None,
@@ -289,6 +290,11 @@ async def post_message(
             attachment_ids,
             max_count=5,
         )
+    attachment_context = ""
+    if attachment_ids:
+        attachment_context = await attachments_service.context_for_message(
+            session, tenant_id, message.id
+        )
     decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
@@ -304,6 +310,7 @@ async def post_message(
         content,
         jobs_enabled=jobs_enabled,
         skill=skill,
+        attachment_context=attachment_context,
     )
     return message, run, None, outcome
 
@@ -354,6 +361,11 @@ async def stream_message(
                 attachment_ids,
                 max_count=5,
             )
+        attachment_context = ""
+        if attachment_ids:
+            attachment_context = await attachments_service.context_for_message(
+                session, tenant_id, message.id
+            )
         decided = await triage.decide(content, llm, mode=mode)
         if decided == triage.CHAT and llm is not None:
             prompt = await chat.prompt(session, message)
@@ -367,6 +379,7 @@ async def stream_message(
                 content,
                 jobs_enabled=jobs_enabled,
                 skill=skill,
+                attachment_context=attachment_context,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:

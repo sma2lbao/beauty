@@ -31,6 +31,18 @@ class Connector(Protocol):
         body: str,
     ) -> str: ...
 
+    async def list_attachments(
+        self, tenant_id: str, connection_id: str, message_id: str
+    ) -> list[dict[str, Any]]: ...
+
+    async def attachment_text(
+        self,
+        tenant_id: str,
+        connection_id: str,
+        message_id: str,
+        attachment_id: str,
+    ) -> dict[str, Any]: ...
+
 
 class ConnectorClient:
     """connector-service HTTP 客户端:服务间 Bearer,租户在 token claim 里。"""
@@ -112,6 +124,31 @@ class ConnectorClient:
                 details={"body": resp.text[:200]},
             )
         return str(resp.json().get("detail") or f"已发送至 {to}")
+
+    async def list_attachments(
+        self, tenant_id: str, connection_id: str, message_id: str
+    ) -> list[dict[str, Any]]:
+        return list(
+            await self._get(
+                f"/v1/connections/{connection_id}/emails/{message_id}/attachments",
+                tenant_id,
+            )
+        )
+
+    async def attachment_text(
+        self,
+        tenant_id: str,
+        connection_id: str,
+        message_id: str,
+        attachment_id: str,
+    ) -> dict[str, Any]:
+        return dict(
+            await self._get(
+                f"/v1/connections/{connection_id}/emails/{message_id}"
+                f"/attachments/{attachment_id}/text",
+                tenant_id,
+            )
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

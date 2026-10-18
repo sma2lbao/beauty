@@ -145,6 +145,14 @@ curl -s http://127.0.0.1:8002/mcp \
 - 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
 - Skills 的 coding.repo-readonly-review 已绑定只读代码工具。
 
+## 3.9 附件解析与上下文注入
+
+- 支持 PDF(pypdf)、docx(python-docx)、xlsx(openpyxl)与文本类;上传时解析,单附件最多保留 20k 字符。
+- 聊天附件:直接对话会把当前消息附件文本附到 user content;任务路径会把附件文本拼进 run goal,plan/execute 可见。
+- 邮件附件:新增工具 list_email_attachments / fetch_email_attachment_text;邮件技能已加入白名单。
+- 解析失败不拒绝附件,只记录 extraction_error;图片暂不 OCR。
+- 解析器在 packages/common/common/documents.py(common 测试覆盖 PDF/docx/xlsx/文本)。
+
 ## 4.0 Job worker（run 队列）
 
 orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):

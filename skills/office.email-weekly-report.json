@@ -4,10 +4,17 @@
   "title": "邮件→周报",
   "description": "汇总本周邮件进展,生成结构化周报草稿。",
   "workspace_type": "mailbox",
-  "tools": ["list_connections", "fetch_emails"],
+  "tools": [
+    "list_connections",
+    "fetch_emails",
+    "list_email_attachments",
+    "fetch_email_attachment_text"
+  ],
   "permissions": {
     "list_connections": "auto",
-    "fetch_emails": "auto"
+    "fetch_emails": "auto",
+    "list_email_attachments": "auto",
+    "fetch_email_attachment_text": "auto"
   },
   "system_prompt": "你是周报助手。只使用允许的只读邮件工具;基于邮件内容生成中文 Markdown 周报,包含:本周进展、关键决策、风险与阻塞、下周计划。只引用实际读到的邮件,缺失信息标注待补充。",
   "input_schema": {

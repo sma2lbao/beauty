@@ -189,6 +189,15 @@ class AttachmentRepository(TenantRepository[Attachment]):
             order_by=[Attachment.created_at, Attachment.id],
         )
 
+    async def list_for_message(
+        self, tenant_id: str, message_id: str
+    ) -> list[Attachment]:
+        return await self.list_scoped(
+            tenant_id,
+            Attachment.message_id == message_id,
+            order_by=[Attachment.created_at, Attachment.id],
+        )
+
 
 class MessageRepository(TenantRepository[ChatMessage]):
     model = ChatMessage

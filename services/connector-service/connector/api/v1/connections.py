@@ -6,6 +6,8 @@ from collections.abc import Callable
 from typing import Annotated
 from urllib.parse import quote
 
+from common.documents import DocumentParseError, extract_text
+from common.errors import AppError
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from connector.core.config import Settings
 from connector.models.connections import Connection
 from connector.schemas.connections import (
     AttachmentRead,
+    AttachmentTextRead,
     ConnectionCreate,
     ConnectionRead,
     EmailRead,
@@ -186,4 +189,33 @@ async def download_attachment(
         content=content,
         media_type=content_type,
         headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get(
+    "/{connection_id}/emails/{message_id}/attachments/{attachment_id}/text",
+    response_model=AttachmentTextRead,
+)
+async def attachment_text(
+    connection_id: str,
+    message_id: str,
+    attachment_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    transport_factory: TransportFactory,
+) -> AttachmentTextRead:
+    conn = await connections_service.require_active_connection(
+        session, tenant_id, connection_id
+    )
+    content, content_type, filename = await transport_factory(
+        conn
+    ).download_attachment(message_id, attachment_id)
+    try:
+        text = extract_text(filename, content_type, content)
+    except DocumentParseError as exc:
+        raise AppError(
+            "connector.attachment_parse_failed", str(exc)
+        ) from exc
+    return AttachmentTextRead(
+        filename=filename, content_type=content_type, text=text
     )

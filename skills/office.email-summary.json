@@ -4,10 +4,17 @@
   "title": "邮件摘要",
   "description": "读取邮箱最近邮件,提炼关键信息、待办与风险,输出 Markdown 摘要。",
   "workspace_type": "mailbox",
-  "tools": ["list_connections", "fetch_emails"],
+  "tools": [
+    "list_connections",
+    "fetch_emails",
+    "list_email_attachments",
+    "fetch_email_attachment_text"
+  ],
   "permissions": {
     "list_connections": "auto",
-    "fetch_emails": "auto"
+    "fetch_emails": "auto",
+    "list_email_attachments": "auto",
+    "fetch_email_attachment_text": "auto"
   },
   "system_prompt": "你是办公邮件助理。只使用允许的只读邮件工具;先列出可用连接,再读取最近邮件。输出中文 Markdown:关键邮件、待办、风险、建议动作。不要编造未读到的内容。",
   "input_schema": {

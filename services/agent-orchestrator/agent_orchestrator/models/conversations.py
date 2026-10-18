@@ -72,3 +72,6 @@ class Attachment(UUIDMixin, TenantMixin, TimestampMixin, Base):
     content_type: Mapped[str] = mapped_column(String(128))
     size_bytes: Mapped[int] = mapped_column(Integer)
     content: Mapped[bytes] = mapped_column(LargeBinary)
+    # 上传时解析出的文本(注入 Agent 上下文);解析失败只记错误,不拒绝附件
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_error: Mapped[str | None] = mapped_column(String(500), nullable=True)

@@ -766,7 +766,7 @@ export function ChatPage() {
                     type="file"
                     multiple
                     className="hidden"
-                    accept=".txt,.md,.markdown,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp"
+                    accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp"
                     onChange={(event) =>
                       void uploadAttachments(event.target.files)
                     }
@@ -776,7 +776,7 @@ export function ChatPage() {
                     aria-label="添加附件"
                     title={
                       activeConversationId
-                        ? '添加附件(文本/Markdown/CSV/JSON/PDF/图片,单个 ≤10MB)'
+                        ? '添加附件(文本/Markdown/CSV/JSON/PDF/docx/xlsx/图片,单个 ≤10MB)'
                         : '先发一条消息创建会话,再添加附件'
                     }
                     disabled={
