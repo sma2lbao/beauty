@@ -1,0 +1,140 @@
+# 本地开发
+
+面向「本地优先」开发:不需要 Docker、云 PG/Redis、Vercel 或真实 OAuth 凭据。
+本地默认使用 SQLite + 文件系统产物 + LLM 桩。
+
+## 1. 前置
+
+- Node.js >= 20.19
+- Python 3.12
+- uv >= 0.5
+- 首次使用先安装 JS 依赖:
+
+```sh
+npm install
+```
+
+各 Python 服务的 .env 由启动脚本自动从 .env.example 复制;需要自定义时再手动编辑
+(services/*/.env 已被 gitignore)。
+
+## 2. 一键启动
+
+```sh
+npm run dev            # 六个业务服务 + BFF + Vite SPA
+npm run dev:site       # 额外启动 Next.js 官网(:3000)
+npm run dev:status     # 只检查健康状态
+```
+
+脚本行为:
+
+- 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
+- 缺 .env 自动创建;
+- 服务日志在 .cache/dev/*.log;
+- Ctrl+C 停止由脚本启动的全部进程;
+- 任一子进程退出时整体退出,方便发现崩溃。
+
+## 3. 端口
+
+| 服务 | 端口 | 健康检查 |
+| --- | --- | --- |
+| account-service | 8001 | /healthz |
+| agent-orchestrator | 8002 | /healthz |
+| llm-gateway | 8003 | /healthz |
+| connector-service | 8004 | /healthz |
+| workspace-service | 8005 | /healthz |
+| knowledge-service | 8006 | /healthz |
+| bff | 8007 | /api/health |
+| web | 5173 | / |
+| site(可选) | 3000 | / |
+
+打开 http://localhost:5173。
+
+**BFF(:8007)是必需的**:Vite 的 /api 已统一代理到 BFF,BFF 再转发
+orchestrator/account/workspace/knowledge。忘记启动 BFF 时前端会表现为 401/502。
+
+## 4. 鉴权模式
+
+本地默认 VITE_AUTH_MODE=token:
+
+- 登录走 account-service 邮箱+密码;
+- 业务请求走 /api → BFF(Bearer 直通兜底);
+- 不依赖 Google/GitHub 凭据。
+
+需要验证 Cookie 会话时,把 apps/web/.env.local 设为:
+
+```env
+VITE_AUTH_MODE=session
+```
+
+然后重启 Vite。session 模式下 BFF 会写加密 httpOnly Cookie,SPA 不接触 token。
+OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
+邮箱+密码登录。
+
+## 5. 演示数据
+
+```sh
+npm run dev:seed
+```
+
+会创建/复用一个本地演示账号,并写入:
+
+- 2 个会话
+- Markdown / Diff / 图片产物
+- 1 个演示 run(LLM 关闭时走确定性桩)
+
+脚本是幂等的:同标题会话/产物已存在会跳过。
+
+默认账号:
+
+```text
+demo@example.com / DemoPass123!
+```
+
+可用环境变量覆盖:SEED_EMAIL、SEED_PASSWORD。
+
+## 6. 重置本地数据
+
+```sh
+npm run dev:reset          # 交互确认
+npm run dev:reset -- --yes # 不确认
+```
+
+会删除:
+
+- services/*/*.db(SQLite)
+- services/*/.artifacts(本地产物)
+- .cache/dev(日志)
+
+保留 .env 与源码。服务运行中会拒绝删除;先 Ctrl+C 停 dev.sh,或加 --force。
+重置后重新 npm run dev,服务会在 AUTO_CREATE_TABLES=true 时自动建表。
+
+## 7. 日志与排障
+
+| 现象 | 处理 |
+| --- | --- |
+| 端口被占用 | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill |
+| 前端 401/502 | 检查 BFF :8007 是否启动;npm run dev:status |
+| 登录后页面空 | 检查 account-service :8001 与 BFF 日志 |
+| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码 |
+| 官网打不开 | 单独 npm run dev:site(SPA 里「官网」跳 :3000) |
+| SQLite 表结构不对 | npm run dev:reset 后重启 |
+| 想用真实模型 | 配 llm-gateway 的 LLM_ENABLED/API_KEY,或用本地 OpenAI 兼容端点 |
+
+## 8. 测试
+
+```sh
+npx nx test @beauty/web -- --run
+npx nx test bff
+npx nx test account-service
+npx nx test agent-orchestrator
+npx nx typecheck @beauty/web
+npx nx lint @beauty/web
+```
+
+注意:不带 -- --run 的 npx nx test 是 vitest watch 模式,会挂住。
+
+## 9. 暂不包含
+
+- 容器化/云 PG/云 Redis/部署
+- 真实 Google/GitHub OAuth 凭据
+- Sentry、对象存储、沙箱执行、MCP

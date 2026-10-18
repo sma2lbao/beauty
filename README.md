@@ -11,6 +11,21 @@
 | Python  | 3.12.x                | uv workspace 共享 venv，由根 `.python-version` 统一锁定 |
 | uv      | >= 0.5                | Python 包管理 / 虚拟环境 / 构建                         |
 
+## 本地开发（推荐）
+
+不依赖 Docker/云服务,本地默认 SQLite + 文件系统产物 + 模型桩:
+
+```sh
+npm install
+npm run dev          # 六个业务服务 + BFF + Vite SPA
+npm run dev:status   # 健康检查
+npm run dev:seed     # 演示账号/会话/产物/run
+npm run dev:reset    # 清空本地 SQLite 与产物
+```
+
+详见 [docs/local-dev.md](docs/local-dev.md)。BFF(:8007) 现在是必需的,Web 的
+`/api` 统一代理到 BFF。
+
 ## 目录结构
 
 ```

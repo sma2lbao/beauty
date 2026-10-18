@@ -3,7 +3,12 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "dev": "bash scripts/dev.sh",
+    "dev:site": "bash scripts/dev.sh --site",
+    "dev:status": "bash scripts/dev.sh --status",
+    "dev:reset": "bash scripts/reset-local.sh",
+    "dev:seed": "bash scripts/seed-local.sh"
   },
   "private": true,
   "devDependencies": {

@@ -34,6 +34,11 @@ npx nx show projects        # 列出所有项目
 npx nx run-many -t lint     # 全仓库 lint(JS/TS 用 ESLint,Python 用 ruff)
 npx nx run-many -t build    # 构建所有可构建项目
 npx nx graph                # 打开项目依赖关系图
+
+npm run dev                 # 本地一键启动(六服务 + BFF + web;详见 docs/local-dev.md)
+npm run dev:status          # 本地健康检查
+npm run dev:seed            # 写入演示数据
+npm run dev:reset           # 清空本地 SQLite/产物
 ```
 
 ### TypeScript / React
