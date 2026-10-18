@@ -17,6 +17,10 @@ class Settings(BaseAppSettings):
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
+    # 通知流(P1-9b):按租户轮询 run 状态变化并推送;扫描间隔与单次查询上限
+    notifications_poll_interval_seconds: float = 2.0
+    notifications_lookback_seconds: int = 120  # 只看最近 N 秒内有状态变更的 run
+    notifications_batch_limit: int = 100
     # 交付物存储(§7 阶段 B):database = 内容留在 DB 列;filesystem = 落本地目录
     artifact_store: str = "database"
     artifact_root: str = "./.artifacts"

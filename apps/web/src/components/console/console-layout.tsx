@@ -19,8 +19,11 @@ import {
 import { Link, Outlet } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
+import { NotificationCenter } from '@/components/console/notification-center';
+import { ToastViewport } from '@/components/console/toast-viewport';
 import { ConsoleNavLink } from '@/components/console/ui';
 import { ConsoleSidebar } from '@/components/console/sidebar';
+import { useRunStatusNotifications } from '@/lib/run-status-watcher';
 import { useUiStore } from '@/stores/ui-store';
 
 const MOBILE_NAV = [
@@ -37,6 +40,9 @@ const MOBILE_NAV = [
 export function ConsoleLayout() {
   const sidebarVisible = useUiStore((state) => state.sidebarVisible);
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  // 通知(M0 交互面):全局状态探测(runs 轮询 diff)+ toast 视口挂在布局层,
+  // 保证侧栏隐藏/页面切换时通知不中断;通知中心入口在侧栏账户区与移动端顶栏。
+  useRunStatusNotifications();
   return (
     <div className="flex h-svh overflow-hidden bg-ha-bg text-ha-text-body">
       {!sidebarVisible ? (
@@ -56,6 +62,9 @@ export function ConsoleLayout() {
           <Link to="/" aria-label="beauty moon 工作台" className="mr-1">
             <BrandLockup size={24} textClassName="text-[14px]" />
           </Link>
+          <div className="ml-auto lg:hidden">
+            <NotificationCenter />
+          </div>
           <nav
             aria-label="移动端导航"
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
@@ -69,6 +78,7 @@ export function ConsoleLayout() {
           <Outlet />
         </main>
       </div>
+      <ToastViewport />
     </div>
   );
 }

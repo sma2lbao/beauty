@@ -39,6 +39,7 @@ import {
 } from '@/lib/presentation';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
+import { useUiStore } from '@/stores/ui-store';
 
 const SUGGESTIONS = [
   '把本周邮件整理成一份周报草稿',
@@ -324,6 +325,15 @@ export function ChatPage() {
       ]);
     },
   });
+
+  // 通知 watcher 用:声明"用户正盯着的会话",该会话的状态变化只记录不弹 toast
+  const setCurrentConversation = useUiStore(
+    (state) => state.setCurrentConversation,
+  );
+  useEffect(() => {
+    setCurrentConversation(activeConversationId);
+    return () => setCurrentConversation(null);
+  }, [activeConversationId, setCurrentConversation]);
 
   useEffect(() => {
     const previous = prevStatusRef.current;

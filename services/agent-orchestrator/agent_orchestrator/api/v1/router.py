@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from agent_orchestrator.api.v1 import (
     conversations,
     mcp,
+    notifications,
     outbox,
     runs,
     skills,
@@ -12,6 +13,7 @@ from agent_orchestrator.api.v1 import (
 
 api_router = APIRouter()
 api_router.include_router(runs.router)
+api_router.include_router(notifications.router)
 api_router.include_router(conversations.router)
 api_router.include_router(conversations.attachments_router)
 api_router.include_router(outbox.router)

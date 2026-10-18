@@ -37,6 +37,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
 import { consoleButtonClass } from '@/components/console/button-class';
+import { NotificationCenter } from '@/components/console/notification-center';
 import { ConsoleNavLink, StatusDot } from '@/components/console/ui';
 import { accountApi } from '@/lib/account-api';
 import { accountLabel } from '@/lib/auth';
@@ -425,6 +426,10 @@ export function ConsoleSidebar() {
           <span className="text-[13px]">官网</span>
         </a>
       </nav>
+
+      <div className="flex items-center justify-end border-b border-ha-border pb-2">
+        <NotificationCenter />
+      </div>
 
       <Link
         to="/settings"

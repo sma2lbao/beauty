@@ -55,6 +55,20 @@ class RunRepository(TenantRepository[Run]):
             order_by=[Run.created_at.desc(), Run.id.desc()],
         )
 
+    async def list_changed_since(
+        self, tenant_id: str, since: datetime, limit: int = 100
+    ) -> list[Run]:
+        """最近有变更的 run(通知流用):updated_at >= since,按变更时间倒序。
+
+        只扫活跃窗口内的行,避免全表扫描;租户隔离由 list_scoped 保证。
+        """
+        return await self.list_scoped(
+            tenant_id,
+            Run.updated_at >= since,
+            limit=limit,
+            order_by=[Run.updated_at.desc(), Run.id.desc()],
+        )
+
 
 class ConversationRepository(TenantRepository[Conversation]):
     model = Conversation
@@ -122,9 +136,7 @@ class MCPServerRepository(TenantRepository[MCPServer]):
     id_detail_key = "mcp_server_id"
 
     async def find_by_name(self, tenant_id: str, name: str) -> MCPServer | None:
-        return await self.session.scalar(
-            self.scoped(tenant_id, MCPServer.name == name)
-        )
+        return await self.session.scalar(self.scoped(tenant_id, MCPServer.name == name))
 
 
 class JobRepository(TenantRepository[Job]):
@@ -133,9 +145,7 @@ class JobRepository(TenantRepository[Job]):
     not_found_message = "任务不存在"
     id_detail_key = "job_id"
 
-    async def find_queued(
-        self, tenant_id: str, kind: str, run_id: str
-    ) -> Job | None:
+    async def find_queued(self, tenant_id: str, kind: str, run_id: str) -> Job | None:
         """同一 run 的同类 job 去重(避免用户连点产生重复执行)。"""
         return await self.session.scalar(
             self.scoped(
