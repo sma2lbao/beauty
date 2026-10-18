@@ -29,6 +29,18 @@ describe('connectorApi', () => {
     );
     expect((testMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
 
+    const providersMock = mockFetch(200, []);
+    await connectorApi.oauthProviders();
+    expect(providersMock.mock.calls[0]?.[0]).toBe(
+      '/api/connector/oauth/providers',
+    );
+
+    const startMock = mockFetch(200, { authorize_url: 'https://x' });
+    await connectorApi.startOAuth('google');
+    expect(startMock.mock.calls[0]?.[0]).toBe(
+      '/api/connector/oauth/google/start',
+    );
+
     const emailsMock = mockFetch(200, []);
     await connectorApi.emails('c1', 5);
     expect(emailsMock.mock.calls[0]?.[0]).toBe(

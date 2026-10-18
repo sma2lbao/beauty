@@ -40,7 +40,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if app.state.transport_factory is None:
         # 生产装配真实传输工厂;测试注入 FakeTransport 走同一属性
         app.state.transport_factory = partial(
-            build_transport, credential_secret=settings.credential_secret
+            build_transport,
+            credential_secret=settings.credential_secret,
+            google_client_id=settings.google_client_id,
+            google_client_secret=settings.google_client_secret,
+            microsoft_client_id=settings.microsoft_client_id,
+            microsoft_client_secret=settings.microsoft_client_secret,
         )
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
@@ -67,12 +72,14 @@ def create_app(
     settings: Settings | None = None,
     transport_factory=None,
     token_verifier: JwtVerifier | None = None,
+    oauth_transport=None,
 ) -> FastAPI:
-    """注入点:transport_factory(假传输)、token_verifier(假 JWKS)供测试使用。"""
+    """注入点:transport_factory/oauth_transport/token_verifier 供测试使用。"""
     app = FastAPI(title="connector-service", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.transport_factory = transport_factory
     app.state.token_verifier = token_verifier
+    app.state.oauth_transport = oauth_transport
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

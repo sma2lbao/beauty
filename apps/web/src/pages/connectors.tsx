@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 
 import {
   Button,
@@ -50,6 +51,9 @@ function formatTime(value: string | null): string {
 
 export function ConnectorsPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const oauthStatus = searchParams.get('oauth');
+  const oauthError = searchParams.get('oauth_error');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -60,6 +64,15 @@ export function ConnectorsPage() {
   const connectionsQuery = useQuery({
     queryKey: ['connector-connections'],
     queryFn: connectorApi.list,
+  });
+  const providersQuery = useQuery({
+    queryKey: ['connector-oauth-providers'],
+    queryFn: connectorApi.oauthProviders,
+    retry: false,
+  });
+  const oauthMutation = useMutation({
+    mutationFn: (provider: string) => connectorApi.startOAuth(provider),
+    onSuccess: (result) => window.location.assign(result.authorize_url),
   });
   const connections = connectionsQuery.data ?? [];
   const selected =
@@ -140,6 +153,46 @@ export function ConnectorsPage() {
         subtitle="邮箱连接(IMAP 收取 / SMTP 发信)· 凭证只在服务端加密保存,读端永不返回"
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
+        {oauthStatus === 'success' ? (
+          <ConsolePanel className="mt-4 p-3 text-[12px] text-ha-success">
+            OAuth 邮箱已连接,可测试/收取/发信。
+          </ConsolePanel>
+        ) : null}
+        {oauthStatus === 'error' ? (
+          <ConsolePanel className="mt-4 p-3 text-[12px] text-ha-danger">
+            OAuth 授权失败:{oauthError || '未知错误'}
+          </ConsolePanel>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[11px] text-ha-faint">
+            OAuth 邮箱
+          </span>
+          {(providersQuery.data ?? []).map((provider) => (
+            <Button
+              key={provider.provider}
+              variant="outline"
+              size="sm"
+              disabled={!provider.enabled || oauthMutation.isPending}
+              title={
+                provider.enabled
+                  ? '跳转 ' + provider.label + ' 授权页'
+                  : '未配置 client id/secret'
+              }
+              onClick={() => oauthMutation.mutate(provider.provider)}
+            >
+              <Mail className="mr-1 h-3.5 w-3.5" />
+              {provider.label}
+              {!provider.enabled ? ' · 未配置' : ''}
+            </Button>
+          ))}
+        </div>
+        {oauthMutation.error ? (
+          <p className="mt-2 text-[12px] text-ha-danger">
+            {(oauthMutation.error as Error).message}
+          </p>
+        ) : null}
+
         <div className="mt-4 grid gap-4 lg:grid-cols-[320px_1fr]">
           <ConsolePanel className="p-3">
             <div className="flex items-center justify-between gap-2">
@@ -390,6 +443,20 @@ export function ConnectorsPage() {
                             <p className="mt-1 truncate font-mono text-[11px] text-ha-dim">
                               {email.sender} · {email.sent_at}
                             </p>
+                            {email.thread_id || email.has_attachments ? (
+                              <p className="mt-1 flex flex-wrap gap-1.5 font-mono text-[10px] text-ha-faint">
+                                {email.thread_id ? (
+                                  <span className="rounded border border-ha-border px-1">
+                                    线程 {email.thread_id.slice(0, 12)}
+                                  </span>
+                                ) : null}
+                                {email.has_attachments ? (
+                                  <span className="rounded border border-ha-border px-1">
+                                    含附件
+                                  </span>
+                                ) : null}
+                              </p>
+                            ) : null}
                             <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-ha-muted">
                               {email.snippet}
                             </p>

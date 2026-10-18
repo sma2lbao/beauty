@@ -19,6 +19,15 @@ export type EmailSummary = {
   sender: string;
   sent_at: string;
   snippet: string;
+  id: string;
+  thread_id: string;
+  has_attachments: boolean;
+};
+
+export type OAuthProvider = {
+  provider: string;
+  label: string;
+  enabled: boolean;
 };
 
 export type ConnectionInput = {
@@ -52,6 +61,9 @@ export const connectorApi = {
     request<{ ok: boolean; detail: string }>('/connections/' + id + '/test', {
       method: 'POST',
     }),
+  oauthProviders: () => request<OAuthProvider[]>('/oauth/providers'),
+  startOAuth: (provider: string) =>
+    request<{ authorize_url: string }>('/oauth/' + provider + '/start'),
   emails: (id: string, limit = 10) =>
     request<EmailSummary[]>(
       '/connections/' + id + '/emails?limit=' + String(limit),

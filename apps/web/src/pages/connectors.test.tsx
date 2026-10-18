@@ -56,6 +56,9 @@ describe('ConnectorsPage', () => {
         sender: 'boss@example.com',
         sent_at: '2026-10-18',
         snippet: '请汇总',
+        id: 'm1',
+        thread_id: 't1',
+        has_attachments: true,
       },
     ]);
     renderPage();

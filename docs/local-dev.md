@@ -83,6 +83,9 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 页面：`/connectors`，支持添加 IMAP 连接、测试连通性、读取最近 10 封邮件、SMTP 发信、撤销连接。
 - 凭证只提交一次，服务端用 `CONNECTOR__CREDENTIAL_SECRET` 做 Fernet 加密后存 DB，读端永不返回。
 - 发信/撤销是写操作，前端二次确认；发信需要连接里填了 SMTP host。
+- Gmail / Microsoft 365 走 OAuth：`CONNECTOR__GOOGLE_CLIENT_ID/SECRET` 或 `CONNECTOR__MICROSOFT_CLIENT_ID/SECRET`；连接页点 OAuth 按钮跳授权，回调到 `/connectors?oauth=success`。
+- OAuth 回调地址：`CONNECTOR__OAUTH_REDIRECT_BASE`（默认 `http://127.0.0.1:8004/v1/oauth`），需在 Google/Microsoft 应用里登记。
+- 邮件列表带 `thread_id` / `has_attachments`；附件下载与日历 CRUD 仍待阶段 3B。
 - 本地没有真实邮箱时可以先建一条假连接验证 UI 与加密存储，连通性测试会如实失败。
 
 ## 3.3 MCP Client（第三方工具）

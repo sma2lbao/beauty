@@ -93,7 +93,8 @@ async def test_imap_fetch_maps_transport_error_to_502(monkeypatch) -> None:
 
 def test_build_transport_rejects_unsupported_provider() -> None:
     class FakeConn:
-        provider = "gmail"
+        provider = "unknown"
+        account = "me@example.com"
         credentials = {}
 
     with pytest.raises(AppError) as exc_info:

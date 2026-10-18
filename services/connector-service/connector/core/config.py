@@ -24,3 +24,11 @@ class Settings(BaseAppSettings):
     auth_tenant_claim: str = "tenant_id"
     # 连接凭证应用层加密密钥(生产必须换随机长密钥/KMS)
     credential_secret: str = "dev-connector-secret-change-me"
+    # OAuth 邮件连接(Gmail/M365;client id/secret 留空即该 provider 关闭)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+    oauth_redirect_base: str = "http://127.0.0.1:8004/v1/oauth"
+    oauth_web_base: str = "http://localhost:5173"
+    oauth_state_secret: str = ""  # 留空回退 credential_secret

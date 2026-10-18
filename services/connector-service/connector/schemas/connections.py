@@ -53,6 +53,9 @@ class EmailRead(BaseModel):
     sender: str
     sent_at: str  # RFC 2822 原文(规范化解析为阶段 B)
     snippet: str
+    id: str = ""
+    thread_id: str = ""
+    has_attachments: bool = False
 
 
 class TestResultRead(BaseModel):

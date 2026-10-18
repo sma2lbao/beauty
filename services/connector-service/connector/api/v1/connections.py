@@ -110,7 +110,13 @@ async def fetch_emails(
     emails = await transport_factory(conn).fetch(limit)
     return [
         EmailRead(
-            subject=e.subject, sender=e.sender, sent_at=e.sent_at, snippet=e.snippet
+            subject=e.subject,
+            sender=e.sender,
+            sent_at=e.sent_at,
+            snippet=e.snippet,
+            id=e.id,
+            thread_id=e.thread_id,
+            has_attachments=e.has_attachments,
         )
         for e in emails
     ]
