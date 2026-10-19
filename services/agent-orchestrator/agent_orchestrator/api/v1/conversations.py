@@ -36,6 +36,7 @@ from agent_orchestrator.api.deps import (
     get_settings,
     get_skills,
     get_tenant_id,
+    get_toolkit_factory,
 )
 from agent_orchestrator.schemas.conversations import (
     AttachmentRead,
@@ -63,6 +64,7 @@ TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
 SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
+ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
 
 
 def _resolve_skill(skills: SkillRegistry, skill_id: str | None):
@@ -264,6 +266,7 @@ async def post_message(
     llm: LLM,
     settings: Annotated[Any, Depends(get_settings)],
     skills: SkillDep,
+    toolkit_factory: ToolkitFactory,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     message, run, reply, mode = await conversations_service.post_message(
@@ -277,6 +280,7 @@ async def post_message(
         attachment_ids=body.attachment_ids,
         jobs_enabled=settings.jobs_enabled,
         skill=_resolve_skill(skills, body.skill_id),
+        toolkit_factory=toolkit_factory,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -308,6 +312,12 @@ def _message_frames(
                 }
             elif name == "delta":
                 data = {"text": payload["text"]}
+            elif name == "tool":
+                data = {
+                    "name": payload["name"],
+                    "arguments": payload["arguments"],
+                    "ok": payload["ok"],
+                }
             elif name == "done":
                 reply = payload.get("reply")
                 data = {
@@ -335,8 +345,9 @@ async def stream_message(
     llm: LLM,
     settings: Annotated[Any, Depends(get_settings)],
     skills: SkillDep,
+    toolkit_factory: ToolkitFactory,
 ) -> StreamingResponse:
-    """SSE 流式发消息:meta(分流结果)→ delta(增量)→ done;失败以 error 帧收尾。
+    """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;失败以 error 帧收尾。
 
     模型没开且显式要 chat 时在开流前就 409(否则只能发一帧错误,状态码已是 200)。
     """
@@ -359,6 +370,7 @@ async def stream_message(
                 attachment_ids=body.attachment_ids,
                 jobs_enabled=settings.jobs_enabled,
                 skill=_resolve_skill(skills, body.skill_id),
+                toolkit_factory=toolkit_factory,
             )
         ),
         media_type="text/event-stream",

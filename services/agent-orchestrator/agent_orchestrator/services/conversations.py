@@ -25,7 +25,7 @@ from __future__ import annotations
 import base64
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.errors import AppError
 from database.session import session_scope
@@ -46,6 +46,12 @@ from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
+from agent_orchestrator.services.tools import ToolRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    ToolkitFactory = Callable[[str], ToolRegistry]
 
 DEFAULT_TITLE = "新对话"
 MAX_TITLE = 40
@@ -273,11 +279,14 @@ async def post_message(
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
     skill: SkillManifest | None = None,
+    toolkit_factory: ToolkitFactory | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
     返回 (用户消息, run|None, assistant 直接回复|None, 处理方式);
     处理方式 ∈ {"chat", "run_created", "instruction_queued"}。
+
+    chat 路径携带只读工具(toolkit_factory):对话内 function-calling(§6.8)。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     message = await _persist_user_message(session, conversation, content)
@@ -298,8 +307,11 @@ async def post_message(
     decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
+        toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
         reply = await _persist_assistant_message(
-            session, message, await chat.answer(session, llm, message)
+            session,
+            message,
+            await chat.answer(session, llm, message, toolkit),
         )
         return message, None, reply, triage.CHAT
     run, outcome = await _task_path(
@@ -335,11 +347,13 @@ async def stream_message(
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
     skill: SkillManifest | None = None,
+    toolkit_factory: ToolkitFactory | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
     - meta:分流结论(含用户消息,chat 时 run 为空);
     - delta:正文增量(仅 chat);
+    - tool:chat 内只读工具调用(对话内 function-calling,§6.8);
     - done:收尾(chat 带落库后的 assistant 回复);
     - error:失败(流已按 200 开头,只能用帧报错)。
 
@@ -391,10 +405,27 @@ async def stream_message(
     parts: list[str] = []
     failure: UpstreamError | None = None
     reply: ChatMessage | None = None
+    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
     try:
-        async for delta in llm.stream(prompt):
-            parts.append(delta)
-            yield "delta", {"text": delta}
+        if toolkit is None or len(toolkit) == 0:
+            # 无工具:保持原路径——真正的流式增量(边产出边显示)
+            async for delta in llm.stream(prompt):
+                parts.append(delta)
+                yield "delta", {"text": delta}
+        else:
+            # 对话内 function-calling:complete 轮次 + 工具事件;
+            # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
+            final = ""
+            async for kind, payload in chat.run_tool_loop(llm, prompt, toolkit):
+                if kind == "tool":
+                    yield "tool", payload
+                elif kind == "content":
+                    final = str(payload)
+            text = final
+            for i in range(len(text)):
+                delta = text[i]
+                parts.append(delta)
+                yield "delta", {"text": delta}
     except UpstreamError as exc:
         failure = exc
     finally:

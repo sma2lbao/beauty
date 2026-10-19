@@ -82,6 +82,8 @@ export function ChatPage() {
     user: string;
     reply: string;
     attachments: Attachment[];
+    /** 对话内只读工具调用(tool 事件流式累积;done 后随消息一起消失) */
+    chatTools: { name: string; arguments: string; ok: boolean }[];
   } | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -249,6 +251,7 @@ export function ChatPage() {
         user: text,
         reply: '',
         attachments: selectedAttachments,
+        chatTools: [],
       });
       const streamHandlers: StreamMessageHandlers = {
         signal: controller.signal,
@@ -268,6 +271,12 @@ export function ChatPage() {
           setPending((previous) =>
             previous && previous.conversationId === targetConversationId
               ? { ...previous, reply: previous.reply + delta }
+              : previous,
+          ),
+        onTool: (call) =>
+          setPending((previous) =>
+            previous && previous.conversationId === targetConversationId
+              ? { ...previous, chatTools: [...previous.chatTools, call] }
               : previous,
           ),
         onDone: () => {
@@ -479,10 +488,31 @@ export function ChatPage() {
                     text={visiblePending.user}
                     attachments={visiblePending.attachments}
                   />
+                  {visiblePending.chatTools.length > 0 ? (
+                    <ol className="space-y-1.5 border-l border-ha-border pl-3">
+                      {visiblePending.chatTools.map((call, index) => (
+                        <li
+                          key={`${call.name}-${index}`}
+                          className="flex items-center gap-2 text-[12px] text-ha-dim"
+                        >
+                          <StatusDot
+                            tone={call.ok ? 'success' : 'danger'}
+                            pulse={
+                              index === visiblePending.chatTools.length - 1 &&
+                              !visiblePending.reply
+                            }
+                          />
+                          {call.ok
+                            ? `调用工具 ${call.name}`
+                            : `工具 ${call.name} 被拒绝(对话中只允许只读操作)`}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
                   <AgentBlock
                     meta={
-                      toolCalls.length
-                        ? `已执行 ${toolCalls.length} 步`
+                      visiblePending.chatTools.length
+                        ? `查询了 ${visiblePending.chatTools.length} 次`
                         : '正在回答'
                     }
                     live

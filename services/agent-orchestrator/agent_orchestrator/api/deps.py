@@ -65,6 +65,14 @@ def get_llm_client(request: Request) -> LLMClient | None:
     return getattr(request.app.state, "llm_client", None)
 
 
+def get_toolkit_factory(request: Request):
+    """lifespan 装配的工具工厂;未启用(TOOLS_ENABLED=false)时为 None。
+
+    run 执行图与 chat 直接对话(§6.8 对话内 function-calling)共用同一工厂。
+    """
+    return getattr(request.app.state, "toolkit_factory", None)
+
+
 def get_workspace_client(request: Request) -> Workspace | None:
     """lifespan 按配置装配的工作区客户端;未开启为 None(不镜像)。"""
     return request.app.state.workspace_client

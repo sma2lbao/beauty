@@ -207,6 +207,8 @@ export type StreamMessageHandlers = {
     run: Run | null;
   }) => void;
   onDelta?: (text: string) => void;
+  /** 对话内只读工具调用(后端已执行完,事件仅为展示过程) */
+  onTool?: (call: { name: string; arguments: string; ok: boolean }) => void;
   onDone?: (result: {
     mode: MessagePostResult['mode'];
     reply: ChatMessage | null;
@@ -308,6 +310,14 @@ export async function streamMessage(
         );
       } else if (name === 'delta') {
         handlers.onDelta?.(typeof data.text === 'string' ? data.text : '');
+      } else if (name === 'tool') {
+        if (typeof data.name === 'string') {
+          handlers.onTool?.({
+            name: data.name,
+            arguments: typeof data.arguments === 'string' ? data.arguments : '',
+            ok: data.ok !== false,
+          });
+        }
       } else if (name === 'done') {
         handlers.onDone?.(
           data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
