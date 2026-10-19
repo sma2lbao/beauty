@@ -39,6 +39,8 @@ beauty-moon/
 │   │   ├── src/                # 页面 / 组件 / 路由
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名
+│   ├── site/                   # Next.js 官网（静态导出）
+│   └── desktop/                # Electron 桌面应用：本地电脑模式（本机会话 / 文件 / 命令 / 本地 Agent）
 ├── packages/
 │   ├── common/                 # Python 共享库：统一错误模型 / 配置 / 日志 / JWT 鉴权基座
 │   ├── database/               # Python 共享库：Base/mixin、Repository、UoW、session
@@ -80,6 +82,19 @@ npx nx test @beauty/web       # vitest + Testing Library 单测
 ```
 
 React 19 + TypeScript SPA：react-router v8 路由、@tanstack/react-query 数据层、Tailwind CSS v4 + shadcn/ui 组件，详见 [apps/web/README.md](apps/web/README.md)。
+
+### 桌面端（本地电脑模式）
+
+```sh
+npx nx run @beauty/desktop:dev       # Vite HMR + Electron
+npx nx build @beauty/desktop         # renderer + main + preload 三端产物
+npx nx typecheck @beauty/desktop     # 渲染进程 + 主进程两套 tsconfig
+npx nx test @beauty/desktop -- --run # vitest（jsdom + node 两套）
+npx nx lint @beauty/desktop
+```
+
+Electron 44 桌面应用:会话、文件读写与命令执行都在用户本机完成,与 `apps/web` 云端控制台并存。
+主进程运行时在 `apps/desktop/src/main/local/`,模型走任意 OpenAI 兼容端点。详见 [apps/desktop/README.md](apps/desktop/README.md)。
 
 ### Python（common / database / events / services）
 

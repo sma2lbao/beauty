@@ -1,0 +1,211 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+/*
+  渲染进程主题入口。
+
+  与 apps/web/src/index.css **同源**:Tailwind v4 宿主引 @beauty/design/tailwind.css
+  拿到组件库令牌与组件样式,再铺一套「Harness 风格控制台」暗色令牌(--ha-*)。
+  这样桌面端与 web 控制台视觉一致,后续可以把 --ha-* 令牌提到 @beauty/design,
+  两个应用改引同一个主题入口即可(本轮先复制,避免改动组件库公共 API)。
+*/
+@import '@beauty/design/tailwind.css';
+
+/*
+  ── Harness 风格控制台主题(暗色) ─────────────────────────────────────────
+  视觉规则(与 apps/web 一致):
+  - 近黑分层:页面 #08090A、侧栏/顶栏 #0B0C0E、卡片 #101113、控件 #16181C、
+    代码块 #0D0F12,分隔线 #1C1C1F / #26292E;
+  - 文字四级:#FAFAFA(标题)/ #E8E8EC(正文)/ #C8C8CF(次级)/ #8B8B95 / #6E6E78 / #55555F;
+  - 唯一强调色是靛蓝 #5E6AD2(按钮、选中态)与 #7C8CF5(链接、图标),
+    状态色只在标签/状态点小面积出现:信息 #2EA7FF、成功 #13DDC4、
+    警告 #FFB454、危险 #FF6B81;
+  - 字体:Inter(界面)+ JetBrains Mono(元信息、编号、代码)。
+  这些值以 --ha-* 命名,映射成 Tailwind 颜色(bg-ha-panel 等),避免与
+  @beauty/design 的 --bd-* 令牌混名。组件库令牌在下面同层覆盖,让
+  @beauty/design 组件(Button/Input/Empty…)自动落到这套暗色 + 靛蓝主色。
+*/
+:root {
+  color-scheme: dark;
+
+  --ha-bg: #08090a;
+  --ha-sidebar: #0b0c0e;
+  --ha-panel: #101113;
+  --ha-panel-2: #16181c;
+  --ha-panel-3: #12141a;
+  --ha-code: #0d0f12;
+  --ha-border: #1c1c1f;
+  --ha-border-strong: #26292e;
+  --ha-text: #fafafa;
+  --ha-text-body: #e8e8ec;
+  --ha-text-2: #c8c8cf;
+  --ha-text-3: #a1a1aa;
+  --ha-muted: #8b8b95;
+  --ha-dim: #6e6e78;
+  --ha-faint: #55555f;
+  --ha-ghost: #3a3a42;
+  --ha-accent: #5e6ad2;
+  --ha-accent-soft: #7c8cf5;
+  --ha-info: #2ea7ff;
+  --ha-success: #13ddc4;
+  --ha-warning: #ffb454;
+  --ha-danger: #ff6b81;
+  --ha-info-bg: #101c26;
+  --ha-info-border: #1f6699;
+  --ha-success-bg: #0f241f;
+  --ha-success-border: #1d4f42;
+  --ha-warning-bg: #211a0e;
+  --ha-warning-border: #6b4f1f;
+  --ha-danger-bg: #241216;
+  --ha-danger-border: #5c2430;
+  --ha-diff-add-bg: #0f241f;
+  --ha-diff-add-text: #7ee0c8;
+  --ha-diff-del-bg: #241216;
+  --ha-diff-del-text: #f8a0a8;
+
+  /* 组件库令牌覆盖:按钮=靛蓝、卡片=侧栏色、边框/输入=控制台灰阶 */
+  --bd-radius: 10px;
+  --bd-background: var(--ha-bg);
+  --bd-foreground: var(--ha-text-body);
+  --bd-card: var(--ha-sidebar);
+  --bd-card-foreground: var(--ha-text);
+  --bd-popover: var(--ha-panel);
+  --bd-popover-foreground: var(--ha-text);
+  --bd-primary: var(--ha-accent);
+  --bd-primary-foreground: #ffffff;
+  --bd-secondary: var(--ha-panel-2);
+  --bd-secondary-foreground: var(--ha-text-body);
+  --bd-muted: var(--ha-panel-2);
+  --bd-muted-foreground: var(--ha-muted);
+  --bd-accent: #1c1d1f;
+  --bd-accent-foreground: var(--ha-text);
+  --bd-destructive: var(--ha-danger);
+  --bd-destructive-foreground: #14080b;
+  --bd-border: var(--ha-border);
+  --bd-input: var(--ha-border-strong);
+  --bd-ring: var(--ha-accent);
+  --bd-success: var(--ha-success);
+  --bd-warning: var(--ha-warning);
+  --bd-info: var(--ha-info);
+  --bd-font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* 显式挂 .dark 时保持同一套值(index.html 已加 class="dark") */
+.dark {
+  color-scheme: dark;
+  --bd-background: var(--ha-bg);
+  --bd-foreground: var(--ha-text-body);
+  --bd-card: var(--ha-sidebar);
+  --bd-card-foreground: var(--ha-text);
+  --bd-popover: var(--ha-panel);
+  --bd-popover-foreground: var(--ha-text);
+  --bd-primary: var(--ha-accent);
+  --bd-primary-foreground: #ffffff;
+  --bd-secondary: var(--ha-panel-2);
+  --bd-secondary-foreground: var(--ha-text-body);
+  --bd-muted: var(--ha-panel-2);
+  --bd-muted-foreground: var(--ha-muted);
+  --bd-accent: #1c1d1f;
+  --bd-accent-foreground: var(--ha-text);
+  --bd-border: var(--ha-border);
+  --bd-input: var(--ha-border-strong);
+  --bd-ring: var(--ha-accent);
+}
+
+@theme inline {
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --color-ha-bg: var(--ha-bg);
+  --color-ha-sidebar: var(--ha-sidebar);
+  --color-ha-panel: var(--ha-panel);
+  --color-ha-panel-2: var(--ha-panel-2);
+  --color-ha-panel-3: var(--ha-panel-3);
+  --color-ha-code: var(--ha-code);
+  --color-ha-border: var(--ha-border);
+  --color-ha-border-strong: var(--ha-border-strong);
+  --color-ha-text: var(--ha-text);
+  --color-ha-text-body: var(--ha-text-body);
+  --color-ha-text-2: var(--ha-text-2);
+  --color-ha-text-3: var(--ha-text-3);
+  --color-ha-muted: var(--ha-muted);
+  --color-ha-dim: var(--ha-dim);
+  --color-ha-faint: var(--ha-faint);
+  --color-ha-ghost: var(--ha-ghost);
+  --color-ha-accent: var(--ha-accent);
+  --color-ha-accent-soft: var(--ha-accent-soft);
+  --color-ha-info: var(--ha-info);
+  --color-ha-success: var(--ha-success);
+  --color-ha-warning: var(--ha-warning);
+  --color-ha-danger: var(--ha-danger);
+  --color-ha-info-bg: var(--ha-info-bg);
+  --color-ha-info-border: var(--ha-info-border);
+  --color-ha-success-bg: var(--ha-success-bg);
+  --color-ha-success-border: var(--ha-success-border);
+  --color-ha-warning-bg: var(--ha-warning-bg);
+  --color-ha-warning-border: var(--ha-warning-border);
+  --color-ha-danger-bg: var(--ha-danger-bg);
+  --color-ha-danger-border: var(--ha-danger-border);
+  --color-ha-diff-add-bg: var(--ha-diff-add-bg);
+  --color-ha-diff-add-text: var(--ha-diff-add-text);
+  --color-ha-diff-del-bg: var(--ha-diff-del-bg);
+  --color-ha-diff-del-text: var(--ha-diff-del-text);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--ha-border-strong) transparent;
+  }
+
+  html {
+    @apply font-sans;
+    background: var(--ha-bg);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ha-bg text-ha-text-body antialiased;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--ha-accent) 45%, transparent);
+    color: #ffffff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: var(--ha-border-strong);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ha-ghost);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ha-accent);
+    outline-offset: 2px;
+  }
+}

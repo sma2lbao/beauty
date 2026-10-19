@@ -78,3 +78,10 @@ htmlcov/
 
 # Playwright MCP 运行时产物（控制台日志、页面快照），非源码
 .playwright-mcp/
+
+# agent 视觉自检产物（DOM 快照、截图），非源码
+.qa/
+
+# Electron/Chromium 运行时产物（单实例锁、socket），非源码
+apps/desktop/Singleton*
+apps/desktop/chrome_debug.log
