@@ -39,6 +39,12 @@ class ToolSpec:
     requires_confirmation: bool = False  # 写操作:执行前必须人工放行(§6.2)
 
 
+#: 外部工具工厂:按租户在调用边界现取(MCP 注册表 / skill_run)。
+#: run 执行图与 chat 直接对话共用同一份——对话里能不能执行由 spec 的
+#: requires_confirmation 决定(chat 没有审批流,§6.7)。
+ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
+
+
 @dataclass(frozen=True)
 class ToolCallRecord:
     """一次工具调用的审计记录(状态里累积,services 层落事件)。"""
@@ -152,9 +158,7 @@ def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
         message_id = str(args.get("message_id") or "")
         if not connection_id or not message_id:
             return _error("list_email_attachments 需要 connection_id/message_id")
-        items = await connector.list_attachments(
-            tenant_id, connection_id, message_id
-        )
+        items = await connector.list_attachments(tenant_id, connection_id, message_id)
         return json.dumps({"attachments": items}, ensure_ascii=False)
 
     async def attachment_text(args: dict[str, Any]) -> str:

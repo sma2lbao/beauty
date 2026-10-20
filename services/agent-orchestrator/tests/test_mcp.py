@@ -104,6 +104,19 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     assert created["image"] is None
     assert created["has_env"] is False
     assert created["env_keys"] == []
+    # 免确认执行默认关:所有 MCP 工具仍逐次进确认闸
+    assert created["auto_approve"] is False
+
+    # PATCH auto_approve:可信 server 的工具不再逐次确认(tool_specs 里体现)
+    patched = client.patch(
+        f"/api/v1/mcp/servers/{created['id']}",
+        json={"auto_approve": True},
+        headers=TENANT,
+    )
+    assert patched.status_code == 200
+    assert patched.json()["auto_approve"] is True
+    listing_after_patch = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+    assert listing_after_patch[0]["auto_approve"] is True
 
     # 测试连接:用假 client,不发真实网络
     from agent_orchestrator.services import mcp as mcp_service
@@ -200,5 +213,10 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
         assert [spec.name for spec in specs] == ["mcp__demo_server__echo"]
         assert specs[0].requires_confirmation is True
         assert await specs[0].handler({"text": "hi"}) == "echo:hi"
+
+        # auto_approve=True 的 server:工具免确认(对话路径才可能执行)
+        server.auto_approve = True
+        trusted = await mcp_service.tool_specs(None, "t", secret="x")  # type: ignore[arg-type]
+        assert [spec.requires_confirmation for spec in trusted] == [False]
 
     asyncio.run(scenario())

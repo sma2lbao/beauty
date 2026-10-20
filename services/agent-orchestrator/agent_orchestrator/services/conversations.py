@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from common.errors import AppError
+from common.logging import get_logger
 from database.session import session_scope
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -53,11 +54,16 @@ from agent_orchestrator.services.tool_context import (
 from agent_orchestrator.services.tools import ToolRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
+
+    from agent_orchestrator.services.tools import ToolSpec
 
     ToolkitFactory = Callable[[str], ToolRegistry]
+    #: 外部工具(MCP/skill_run)工厂:按租户现取,与 run 执行图共用
+    ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 DEFAULT_TITLE = "新对话"
+logger = get_logger(__name__)
 MAX_TITLE = 40
 
 #: 会话内不再接收消息的 run 状态(completed/failed 是终态;
@@ -269,6 +275,33 @@ async def _task_path(
     return run, "run_created"
 
 
+async def _toolkit_for(
+    toolkit_factory: ToolkitFactory | None,
+    extras_factory: ExtrasFactory | None,
+    tenant_id: str,
+) -> ToolRegistry | None:
+    """内置工具 + 外部工具(MCP / skill_run)合并成对话可用的注册表。
+
+    extras 是"按调用现取"的(见 main._load_extras),取失败只降级外部工具,
+    不让一条对话报错——与 run 路径的降级口径一致。
+    """
+    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    if extras_factory is None:
+        return toolkit
+    try:
+        extras = await extras_factory(tenant_id)
+    except Exception as exc:  # noqa: BLE001 - 外部工具故障不阻断对话
+        logger.warning(
+            "chat tool extras failed",
+            tenant_id=tenant_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return toolkit
+    if not extras:
+        return toolkit
+    return toolkit.extended(extras) if toolkit is not None else ToolRegistry(extras)
+
+
 async def post_message(
     session: AsyncSession,
     graph: CompiledStateGraph,
@@ -282,13 +315,16 @@ async def post_message(
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ExtrasFactory | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
     返回 (用户消息, run|None, assistant 直接回复|None, 处理方式);
     处理方式 ∈ {"chat", "run_created", "instruction_queued"}。
 
-    chat 路径携带只读工具(toolkit_factory):对话内 function-calling(§6.8)。
+    chat 路径携带只读工具(toolkit_factory + extras_factory):对话内
+    function-calling(§6.8);外部工具(MCP)里 requires_confirmation 的会被
+    chat.run_tool_loop 拒绝并提示改用「任务」(对话没有审批流,§6.7)。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     message = await _persist_user_message(session, conversation, content)
@@ -309,11 +345,11 @@ async def post_message(
     decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
-        toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
         # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用)
         with bind_tool_context(
             ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
         ):
+            toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
             answer = await chat.answer(session, llm, message, toolkit)
         reply = await _persist_assistant_message(session, message, answer)
         return message, None, reply, triage.CHAT
@@ -351,6 +387,7 @@ async def stream_message(
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ExtrasFactory | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -408,13 +445,13 @@ async def stream_message(
     parts: list[str] = []
     failure: UpstreamError | None = None
     reply: ChatMessage | None = None
-    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
     try:
         # 对话内工具执行的来源上下文(stdio MCP 沙箱按对话复用);
         # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
         with bind_tool_context(
             ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
         ):
+            toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
             if toolkit is None or len(toolkit) == 0:
                 # 无工具:保持原路径——真正的流式增量(边产出边显示)
                 async for delta in llm.stream(prompt):

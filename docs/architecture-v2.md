@@ -301,6 +301,10 @@ packages/console   控制台组件（可选抽出）
     （`ToolContext.conversation_id`，无对话退化为 run），命令白名单 + 参数不经 shell；
     `env/token` 只存密文，读端只回 `has_env/env_keys`；P2 出网 `public`（允许 npx/uvx 安装），
     P4 切 allowlist/凭据注入；
+  - **审批策略**（已落地）：每个 server 一个 `auto_approve` 信任开关（Web `/mcp` 页
+    「免确认执行」，默认关）。关：run 里逐次进确认闸、对话里只回喂「请改用任务」；
+    开：run 不再确认、对话里可直接调用（对话本身没有审批流，见 §6.7）——对齐
+    §6.4「操作策略是配置，不是硬编码」；
 - **安全**：MCP 返回内容视为不可信数据；提示注入过滤；危险工具默认 confirm；凭证只存在服务端；
   stdio 进程只允许在沙箱内运行，沙箱内 env 明文对用户代码可见（最小 scope + P4 凭据代理）；
 - **市场**：后续 MCP server 目录 + 一键安装（M4）。

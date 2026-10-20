@@ -74,6 +74,14 @@ def get_toolkit_factory(request: Request):
     return getattr(request.app.state, "toolkit_factory", None)
 
 
+def get_tool_extras_factory(request: Request):
+    """外部工具(MCP / skill_run)工厂;与 run 执行图共用同一个(§6.8)。
+
+    未启用 MCP/skill 执行时为 None:chat 只有内置工具,行为不变。
+    """
+    return getattr(request.app.state, "tool_extras_factory", None)
+
+
 def get_workspace_client(request: Request) -> Workspace | None:
     """lifespan 按配置装配的工作区客户端;未开启为 None(不镜像)。"""
     return request.app.state.workspace_client

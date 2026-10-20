@@ -96,6 +96,7 @@ def _to_read(server: MCPServer, secret: str) -> MCPServerRead:
         runtime=server.runtime or "python",
         image=server.image,
         enabled=server.enabled,
+        auto_approve=bool(server.auto_approve),
         has_token=bool(server.encrypted_token),
         token_hint=server.token_hint,
         has_env=bool(server.encrypted_env),
@@ -185,6 +186,7 @@ async def create_server(
         token_hint=token[-4:] if token else None,
         encrypted_env=_encrypt_env(secret, env),
         enabled=data.enabled,
+        auto_approve=data.auto_approve,
         tools_allowlist=list(data.tools_allowlist),
         tools_cache=[],
         timeout_seconds=data.timeout_seconds,
@@ -217,6 +219,7 @@ def _merged_payload(
         "runtime": server.runtime or "python",
         "image": server.image,
         "enabled": server.enabled,
+        "auto_approve": bool(server.auto_approve),
         "tools_allowlist": list(server.tools_allowlist or []),
         "timeout_seconds": server.timeout_seconds,
     }
@@ -231,6 +234,7 @@ def _merged_payload(
         "runtime",
         "image",
         "enabled",
+        "auto_approve",
         "tools_allowlist",
         "timeout_seconds",
     ):
@@ -304,6 +308,8 @@ async def update_server(
             server.token_hint = token[-4:] if token else None
     if data.enabled is not None:
         server.enabled = data.enabled
+    if data.auto_approve is not None:
+        server.auto_approve = data.auto_approve
     if data.tools_allowlist is not None:
         server.tools_allowlist = list(data.tools_allowlist)
     if data.timeout_seconds is not None:
@@ -467,7 +473,9 @@ async def tool_specs(
                     description=wrapped.description or f"MCP {server.name} 工具",
                     parameters=wrapped.input_schema or {"type": "object"},
                     handler=handler,
-                    requires_confirmation=True,
+                    # 可信 server(auto_approve)免确认;默认仍逐次确认。
+                    # 对话路径没有审批流,所以只有这里 False 的工具能在 chat 执行
+                    requires_confirmation=not server.auto_approve,
                 )
             )
     return specs

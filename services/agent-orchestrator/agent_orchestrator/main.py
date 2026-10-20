@@ -57,7 +57,12 @@ from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tool_context import current_tool_context
-from agent_orchestrator.services.tools import ToolRegistry, ToolSpec, build_tools
+from agent_orchestrator.services.tools import (
+    ToolExtrasFactory,
+    ToolRegistry,
+    ToolSpec,
+    build_tools,
+)
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
 
 logger = get_logger(__name__)
@@ -161,8 +166,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 外部工具装配(P2 MCP + P3-C skill_run):同一个 extras factory 合并,
     # 在 execute/tool_exec 的工具调用边界被调用——context 已由 services 层
     # 绑定(bind_tool_context),所以这里能读到 run_id。
-    extras_factory = None
-    if settings.mcp_enabled or settings.skill_execution_enabled:
+    # 测试注入优先;否则 MCP / skill 执行子开关打开时才装配。
+    # 装配结果总是发布到 app.state:chat 直接对话(§6.8)与执行图共用同一个工厂。
+    extras_factory: ToolExtrasFactory | None = app.state.tool_extras_factory
+    if extras_factory is None and (
+        settings.mcp_enabled or settings.skill_execution_enabled
+    ):
 
         async def _load_extras(tenant_id: str) -> list[ToolSpec]:
             """run 绑定了可执行技能包 → skill_run;有 MCP → 追加 MCP 工具。
@@ -201,7 +210,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             return specs
 
         extras_factory = _load_extras
-        app.state.tool_extras_factory = extras_factory
+    app.state.tool_extras_factory = extras_factory
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier
@@ -386,6 +395,7 @@ def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    tool_extras_factory: ToolExtrasFactory | None = None,
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
@@ -396,11 +406,12 @@ def create_app(
     api_key_verifier: ApiKeyVerifier | None = None,
     oauth_introspector: OAuthTokenIntrospector | None = None,
 ) -> FastAPI:
-    """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store 等。"""
+    """测试注入:llm_client、toolkit_factory、tool_extras_factory 等。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.llm_client = llm_client
     app.state.toolkit_factory = toolkit_factory
+    app.state.tool_extras_factory = tool_extras_factory
     app.state.token_verifier = token_verifier
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client

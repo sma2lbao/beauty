@@ -116,6 +116,12 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   (`npx/uvx/node/python/python3/bunx`),参数不经 shell;**env 与 token 一样
   只存密文,读端只回 `has_env/env_keys`**。P2 沙箱出网为 `public`(允许
   npx/uvx 安装),P4 再切 allowlist。
+- **MCP 在对话内 + 审批策略(P2 之后补)**:chat 直接对话与执行图共用同一个
+  extras 工厂(`main._load_extras`),所以对话里也能看到并使用 MCP 工具;但对话
+  没有审批流(架构 §6.7),因此**每个 server 一个 `auto_approve` 信任开关**
+  (Web `/mcp` 页「免确认执行」,默认关):关时 `requires_confirmation=True`,
+  对话里只回喂"请改用任务"、run 里逐次确认;开时两者都直接执行——就是架构 §6.4
+  "操作策略是配置,不是硬编码"。extras 取失败只降级外部工具,不影响对话本身。
 
 - **技能包上传(P3)**:用户上传 SKILL.md 包(zip,根目录必须含 SKILL.md,
   允许单一顶层目录;可选 skill.json 描述 id/version/title/description/

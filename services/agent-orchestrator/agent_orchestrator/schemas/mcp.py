@@ -9,6 +9,9 @@
   50 项、单项 ≤500 字符;runtime 只能是 python|node。
 
 读端**永不返回** token/env 值:只回 has_token/token_hint 与 has_env/env_keys。
+
+`auto_approve`(免确认执行,默认 False)是租户对该 server 的信任声明:对话路径
+(chat)不产生审批流,只有置 True 的工具才会被真正执行(§6.4 策略配置化)。
 """
 
 from __future__ import annotations
@@ -52,6 +55,8 @@ class MCPServerCreate(BaseModel):
     runtime: Runtime = "python"
     image: str | None = Field(default=None, max_length=120)
     enabled: bool = True
+    # 免确认执行:信任该 server(默认关,写操作仍在任务里逐次确认)
+    auto_approve: bool = False
     tools_allowlist: list[str] = Field(default_factory=list, max_length=100)
     timeout_seconds: int = Field(default=10, ge=1, le=120)
 
@@ -124,6 +129,7 @@ class MCPServerUpdate(BaseModel):
     runtime: Runtime | None = None
     image: str | None = Field(default=None, max_length=120)
     enabled: bool | None = None
+    auto_approve: bool | None = None
     tools_allowlist: list[str] | None = Field(default=None, max_length=100)
     timeout_seconds: int | None = Field(default=None, ge=1, le=120)
 
@@ -138,6 +144,7 @@ class MCPServerRead(BaseModel):
     runtime: str
     image: str | None
     enabled: bool
+    auto_approve: bool
     has_token: bool
     token_hint: str | None
     has_env: bool

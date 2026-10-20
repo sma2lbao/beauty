@@ -36,6 +36,7 @@ from agent_orchestrator.api.deps import (
     get_settings,
     get_skills,
     get_tenant_id,
+    get_tool_extras_factory,
     get_toolkit_factory,
 )
 from agent_orchestrator.schemas.conversations import (
@@ -66,6 +67,7 @@ RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
 SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
 ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
+ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
 
 
 async def _resolve_skill(
@@ -270,6 +272,7 @@ async def post_message(
     settings: Annotated[Any, Depends(get_settings)],
     skills: SkillDep,
     toolkit_factory: ToolkitFactory,
+    tool_extras_factory: ToolExtrasFactory,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
@@ -285,6 +288,7 @@ async def post_message(
         jobs_enabled=settings.jobs_enabled,
         skill=skill,
         toolkit_factory=toolkit_factory,
+        extras_factory=tool_extras_factory,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -350,6 +354,7 @@ async def stream_message(
     settings: Annotated[Any, Depends(get_settings)],
     skills: SkillDep,
     toolkit_factory: ToolkitFactory,
+    tool_extras_factory: ToolExtrasFactory,
 ) -> StreamingResponse:
     """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;
     失败以 error 帧收尾。
@@ -378,6 +383,7 @@ async def stream_message(
                 jobs_enabled=settings.jobs_enabled,
                 skill=skill,
                 toolkit_factory=toolkit_factory,
+                extras_factory=tool_extras_factory,
             )
         ),
         media_type="text/event-stream",

@@ -28,6 +28,7 @@ const httpServer: MCPServer = {
   transport: 'http',
   url: 'https://example.com/mcp',
   enabled: true,
+  auto_approve: false,
   has_token: true,
   token_hint: '1234',
   command: null,
@@ -60,6 +61,7 @@ const stdioServer: MCPServer = {
   transport: 'stdio',
   url: '',
   enabled: true,
+  auto_approve: true,
   has_token: false,
   token_hint: null,
   command: 'npx',
@@ -153,6 +155,8 @@ describe('McpPage', () => {
     fireEvent.change(screen.getByLabelText('Token(可选)'), {
       target: { value: 'secret' },
     });
+    // 信任该 server:注册时就打开免确认执行(默认关)
+    fireEvent.click(screen.getByRole('switch', { name: '免确认执行(注册)' }));
     fireEvent.click(screen.getByRole('button', { name: '注册 MCP server' }));
 
     await waitFor(() => {
@@ -160,6 +164,7 @@ describe('McpPage', () => {
         transport: 'http',
         name: 'demo',
         url: 'http://127.0.0.1:8010/mcp',
+        auto_approve: true,
         token: 'secret',
       });
     });
@@ -203,6 +208,7 @@ describe('McpPage', () => {
         env: { GITHUB_TOKEN: 'ghp_x', LOG_LEVEL: 'debug' },
         runtime: 'node',
         image: 'node:22-slim',
+        auto_approve: false,
       });
     });
     // 成功后表单关闭;重开时敏感输入不能留在内存里
@@ -259,6 +265,18 @@ describe('McpPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '测试/刷新' }));
 
     expect(await screen.findByText('测试失败:沙箱未启用')).toBeTruthy();
+  });
+
+  it('详情可切换免确认执行:走 PATCH auto_approve', async () => {
+    renderPage();
+    await screen.findAllByText('github');
+
+    // httpServer.auto_approve = false → 打开即 PATCH true
+    expect(screen.getByText(/每次调用需确认/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch', { name: '免确认执行' }));
+    await waitFor(() => {
+      expect(mcpApi.update).toHaveBeenCalledWith('m1', { auto_approve: true });
+    });
   });
 
   it('停用走 PATCH,删除二次确认后调用接口', async () => {
