@@ -91,11 +91,12 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 ## 3.3 MCP Client（第三方工具）
 
-- 设置页「MCP Servers」：注册 Streamable HTTP MCP server、测试/刷新工具、启用/停用、删除。
+- `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互与连接器页一致：左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
+- 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
 - 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，默认按写操作处理（需人工确认）。
-- token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号。
-- 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在设置页注册后点「测试/刷新」。
-- 当前只支持 Streamable HTTP，不支持 stdio；MCP Server 对外暴露（M3）尚未实现。
+- 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
+- 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
+- MCP Server 对外暴露（M3）尚未实现。
 
 ## 3.4 API Key
 

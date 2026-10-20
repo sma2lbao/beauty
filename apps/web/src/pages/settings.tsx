@@ -19,7 +19,6 @@ import {
 
 import { ApiKeysPanel } from '@/components/console/api-keys-panel';
 import { ByokPanel } from '@/components/console/byok-panel';
-import { McpPanel } from '@/components/console/mcp-panel';
 import { OAuthAppsPanel } from '@/components/console/oauth-apps-panel';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
@@ -182,7 +181,6 @@ export function SettingsPage() {
 
         <div className="mt-6 grid gap-6">
           <ByokPanel />
-          <McpPanel />
           <ApiKeysPanel />
           <OAuthAppsPanel />
         </div>

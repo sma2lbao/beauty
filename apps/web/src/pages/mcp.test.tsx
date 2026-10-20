@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MCPServer } from '@/lib/mcp-api';
 import { mcpApi } from '@/lib/mcp-api';
 
-import { McpPanel } from './mcp-panel';
+import { McpPage } from './mcp';
 
 vi.mock('@/lib/mcp-api', async () => {
   const actual =
@@ -37,10 +37,19 @@ const httpServer: MCPServer = {
   has_env: false,
   env_keys: [],
   tools_allowlist: [],
-  tools: [],
+  tools: [
+    {
+      name: 'search_issues',
+      description: '按关键词搜索 issue',
+      input_schema: {
+        type: 'object',
+        properties: { query: { type: 'string' }, repo: { type: 'string' } },
+      },
+    },
+  ],
   timeout_seconds: 10,
   last_status: 'ok',
-  last_checked_at: null,
+  last_checked_at: '2026-10-20T10:00:00+00:00',
   last_error: null,
   created_at: '2026-10-20T00:00:00+00:00',
 };
@@ -68,47 +77,75 @@ const stdioServer: MCPServer = {
   created_at: '2026-10-20T00:00:00+00:00',
 };
 
-function renderPanel() {
+function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <McpPanel />
+      <McpPage />
     </QueryClientProvider>,
   );
+}
+
+async function openForm() {
+  fireEvent.click(screen.getByRole('button', { name: '添加 MCP server' }));
+  await screen.findByLabelText(/名称/);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(mcpApi.list).mockResolvedValue([httpServer, stdioServer]);
+  vi.mocked(mcpApi.update).mockResolvedValue(httpServer);
+  vi.mocked(mcpApi.remove).mockResolvedValue(undefined);
 });
 
-describe('McpPanel', () => {
-  it('列表区分 HTTP 与 stdio:stdio 显示命令/运行时/环境变量个数,不显示 URL', async () => {
-    renderPanel();
+describe('McpPage', () => {
+  it('列表区分 HTTP 与 stdio:stdio 显示命令,不回显环境变量值', async () => {
+    renderPage();
 
-    expect(await screen.findByText('github')).toBeTruthy();
-    expect(screen.getByText('https://example.com/mcp')).toBeTruthy();
+    expect((await screen.findAllByText('github')).length).toBeGreaterThan(0);
     expect(
       screen.getByText(
         'node npx -y @modelcontextprotocol/server-filesystem /tmp',
       ),
     ).toBeTruthy();
-    expect(screen.getByText('运行时 Node')).toBeTruthy();
-    expect(screen.getByText('镜像 node:22-slim')).toBeTruthy();
-    expect(screen.getByText('已配置 2 个环境变量')).toBeTruthy();
-    // 读取接口不返回 env 值:面板也不应该有回显位
-    expect(screen.queryByText(/GITHUB_TOKEN=/)).toBeNull();
+    expect(
+      screen.getAllByText('https://example.com/mcp').length,
+    ).toBeGreaterThan(0);
+    // 默认选中第一个:HTTP server 的传输标签在详情里
+    expect(screen.getAllByText('HTTP').length).toBeGreaterThan(0);
+    // 列表上就带连接失败徽标,不必先选中该 server
+    expect(screen.getByText('连接失败')).toBeTruthy();
+
+    // 切到 stdio server:传输方式与命令定义摊开,错误原因可见
+    fireEvent.click(screen.getByRole('button', { name: /filesystem/ }));
+    expect(await screen.findByText('stdio')).toBeTruthy();
     expect(screen.getByText('连接失败:沙箱未启用')).toBeTruthy();
-    expect(screen.getByText('HTTP')).toBeTruthy();
-    expect(screen.getByText('stdio')).toBeTruthy();
+
+    // 读取接口不返回 env 值:页面也不应该有回显位(只列 key 名)
+    expect(screen.queryByText(/GITHUB_TOKEN=/)).toBeNull();
+    expect(screen.queryByText(/ghp_/)).toBeNull();
+  });
+
+  it('详情把连接定义摊开:地址、Token 尾号、工具清单', async () => {
+    renderPage();
+    await screen.findAllByText('github');
+
+    expect(screen.getByText('••••1234')).toBeTruthy();
+    expect(
+      screen.getAllByText('https://example.com/mcp').length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText('search_issues')).toBeTruthy();
+    expect(screen.getByText('按关键词搜索 issue')).toBeTruthy();
+    expect(screen.getByText('2 个参数')).toBeTruthy();
   });
 
   it('HTTP 传输提交 url/token,不夹带 stdio 字段', async () => {
     vi.mocked(mcpApi.create).mockResolvedValue(httpServer);
-    renderPanel();
-    await screen.findByText('github');
+    renderPage();
+    await screen.findAllByText('github');
+    await openForm();
 
     fireEvent.change(screen.getByLabelText(/名称/), {
       target: { value: 'demo' },
@@ -130,8 +167,9 @@ describe('McpPanel', () => {
 
   it('stdio 传输:参数/环境变量按行解析,提交后清空敏感输入', async () => {
     vi.mocked(mcpApi.create).mockResolvedValue(stdioServer);
-    renderPanel();
-    await screen.findByText('github');
+    renderPage();
+    await screen.findAllByText('github');
+    await openForm();
 
     fireEvent.click(screen.getByRole('tab', { name: 'stdio(本地进程)' }));
     fireEvent.change(screen.getByLabelText(/名称/), {
@@ -167,16 +205,23 @@ describe('McpPanel', () => {
         image: 'node:22-slim',
       });
     });
+    // 成功后表单关闭;重开时敏感输入不能留在内存里
     await waitFor(() => {
       expect(
-        screen.getByLabelText('环境变量(KEY=VALUE,一行一个)'),
-      ).toHaveProperty('value', '');
+        screen.queryByLabelText('环境变量(KEY=VALUE,一行一个)'),
+      ).toBeNull();
     });
+    await openForm();
+    fireEvent.click(screen.getByRole('tab', { name: 'stdio(本地进程)' }));
+    expect(
+      screen.getByLabelText('环境变量(KEY=VALUE,一行一个)'),
+    ).toHaveProperty('value', '');
   });
 
   it('stdio 未填命令或命令含空格时不提交', async () => {
-    renderPanel();
-    await screen.findByText('github');
+    renderPage();
+    await screen.findAllByText('github');
+    await openForm();
 
     fireEvent.click(screen.getByRole('tab', { name: 'stdio(本地进程)' }));
     fireEvent.change(screen.getByLabelText(/名称/), {
@@ -208,13 +253,29 @@ describe('McpPanel', () => {
       detail: '沙箱未启用',
       tools: [],
     });
-    renderPanel();
-    await screen.findByText('github');
+    renderPage();
+    await screen.findAllByText('github');
 
-    fireEvent.click(
-      screen.getAllByRole('button', { name: '测试/刷新' })[0] as HTMLElement,
-    );
+    fireEvent.click(screen.getByRole('button', { name: '测试/刷新' }));
 
     expect(await screen.findByText('测试失败:沙箱未启用')).toBeTruthy();
+  });
+
+  it('停用走 PATCH,删除二次确认后调用接口', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderPage();
+    await screen.findAllByText('github');
+
+    fireEvent.click(screen.getByRole('button', { name: '停用' }));
+    await waitFor(() => {
+      expect(mcpApi.update).toHaveBeenCalledWith('m1', { enabled: false });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => {
+      expect(mcpApi.remove).toHaveBeenCalledWith('m1');
+    });
+    expect(confirm).toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });

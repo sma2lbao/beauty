@@ -12,6 +12,7 @@ import { ConnectorsPage } from '@/pages/connectors';
 import { ChatPage } from '@/pages/chat';
 import { KnowledgePage } from '@/pages/knowledge';
 import { LoginPage } from '@/pages/login';
+import { McpPage } from '@/pages/mcp';
 import { NotFoundPage } from '@/pages/not-found';
 import { OAuthAuthorizePage } from '@/pages/oauth-authorize';
 import { OutboxPage } from '@/pages/outbox';
@@ -46,6 +47,7 @@ export function App() {
           <Route path="runs" element={<RunsPage />} />
           <Route path="changes" element={<ChangesPage />} />
           <Route path="connectors" element={<ConnectorsPage />} />
+          <Route path="mcp" element={<McpPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="skills" element={<SkillsPage />} />
