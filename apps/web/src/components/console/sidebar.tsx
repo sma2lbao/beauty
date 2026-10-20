@@ -429,13 +429,14 @@ export function ConsoleSidebar() {
         </a>
       </nav>
 
-      <div className="flex items-center justify-end border-b border-ha-border pb-2">
-        <NotificationCenter />
+      {/* 通知入口:整行入口 + 面板向上展开(铃铛贴着左下角,向下展开会被视口裁掉) */}
+      <div className="shrink-0 border-b border-ha-border pb-2">
+        <NotificationCenter variant="bar" />
       </div>
 
       <Link
         to="/settings"
-        className="flex items-center gap-2.5 rounded-md border border-ha-border bg-ha-panel p-2.5 transition-colors hover:border-ha-border-strong"
+        className="flex shrink-0 items-center gap-2.5 rounded-md border border-ha-border bg-ha-panel p-2.5 transition-colors hover:border-ha-border-strong"
       >
         <span
           aria-hidden="true"

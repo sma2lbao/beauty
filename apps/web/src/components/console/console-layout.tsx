@@ -64,9 +64,6 @@ export function ConsoleLayout() {
           <Link to="/" aria-label="beauty moon 工作台" className="mr-1">
             <BrandLockup size={24} textClassName="text-[14px]" />
           </Link>
-          <div className="ml-auto lg:hidden">
-            <NotificationCenter />
-          </div>
           <nav
             aria-label="移动端导航"
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
@@ -75,6 +72,10 @@ export function ConsoleLayout() {
               <ConsoleNavLink key={item.to} {...item} compact />
             ))}
           </nav>
+          {/* 通知入口放在顶栏最右:面板向右上展开,贴视口右缘才不会被裁出屏幕 */}
+          <div className="ml-1 flex shrink-0 items-center">
+            <NotificationCenter />
+          </div>
         </div>
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Outlet />

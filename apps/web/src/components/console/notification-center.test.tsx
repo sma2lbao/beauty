@@ -68,6 +68,23 @@ describe('NotificationCenter', () => {
     expect(useNotificationsStore.getState().readCursor).toBe(1_000);
   });
 
+  it('bar 形态(侧栏底部整行入口)同样能展开面板', () => {
+    useNotificationsStore
+      .getState()
+      .push({ tone: 'warning', title: '侧栏通知', ttlMs: 0 });
+    render(
+      <MemoryRouter>
+        <NotificationCenter variant="bar" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('通知')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '通知(1 条未读)' }));
+    expect(
+      screen.getByRole('dialog', { name: '通知面板' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('侧栏通知')).toBeInTheDocument();
+  });
+
   it('Escape 关闭面板并把焦点还给铃铛', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     useNotificationsStore
