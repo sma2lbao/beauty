@@ -30,7 +30,8 @@
 
 - `POST /v1/sandboxes`(201):创建沙箱。body 支持 `kind`(skill|mcp|generic)、
   `image`、`ttl_seconds`、`cpus`、`memory_mb`、`network`(deny|public)、
-  `workspace_id`、`run_id`;不传资源时用服务端默认值;
+  `workspace_id`、`run_id`;不传资源时用服务端默认值。`deny` 完全断网;
+  `public` 只放公网(走 microsandbox `NetworkProfile.PUBLIC`),**不包含宿主/私网**;
 - `GET /v1/sandboxes/{id}`:实例详情;
 - `POST /v1/sandboxes/{id}/exec`:执行命令(`argv` 不经过 shell),
   返回 `exit_code/stdout/stderr/duration_ms/truncated`,成功后滑动续期

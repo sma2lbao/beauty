@@ -96,6 +96,14 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     assert created["token_hint"] == "1234"
     assert "secret-token" not in str(created)
     assert created["tools"] == []
+    # P2 新字段:默认是 http 传输,stdio 专属字段为空
+    assert created["transport"] == "http"
+    assert created["command"] is None
+    assert created["args"] == []
+    assert created["runtime"] == "python"
+    assert created["image"] is None
+    assert created["has_env"] is False
+    assert created["env_keys"] == []
 
     # 测试连接:用假 client,不发真实网络
     from agent_orchestrator.services import mcp as mcp_service
@@ -139,9 +147,7 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     finally:
         mcp_service.build_client = original  # type: ignore[assignment]
 
-    deleted = client.delete(
-        f"/api/v1/mcp/servers/{created['id']}", headers=TENANT
-    )
+    deleted = client.delete(f"/api/v1/mcp/servers/{created['id']}", headers=TENANT)
     assert deleted.status_code == 204
     assert client.get("/api/v1/mcp/servers", headers=TENANT).json() == []
 

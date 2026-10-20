@@ -46,6 +46,7 @@ from agent_orchestrator.services.mcp_server import (
     ApiKeyVerifier,
     OAuthTokenIntrospector,
 )
+from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.outbox import (
     record_run_event,
     register_consumers,
@@ -157,8 +158,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         async def _load_mcp_tools(tenant_id: str):
             async with session_scope(factory) as session:
+                # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
                 return await mcp_service.tool_specs(
-                    session, tenant_id, secret=settings.mcp_secret
+                    session,
+                    tenant_id,
+                    secret=settings.mcp_secret,
+                    pool=getattr(app.state, "mcp_stdio_pool", None),
                 )
 
         mcp_tools_factory = _load_mcp_tools
@@ -199,6 +204,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         owns_sandbox = True
     app.state.sandbox_client = sandbox
+
+    # stdio MCP 沙箱池(P2):沙箱客户端就绪后装配;测试注入优先。
+    # 两个开关都开才建池——没有沙箱就没有"在沙箱里跑 MCP 进程"这回事
+    mcp_stdio_pool: StdioSandboxPool | None = app.state.mcp_stdio_pool
+    if mcp_stdio_pool is None and settings.mcp_stdio_enabled and sandbox is not None:
+        mcp_stdio_pool = StdioSandboxPool(
+            sandbox,
+            ttl_seconds=settings.mcp_stdio_sandbox_ttl_seconds,
+            network=settings.mcp_stdio_network,
+            python_image=settings.mcp_stdio_python_image,
+            node_image=settings.mcp_stdio_node_image,
+            timeout_seconds=int(settings.sandbox_timeout_seconds),
+        )
+    app.state.mcp_stdio_pool = mcp_stdio_pool
 
     # 交付物存储装配(§7 阶段 B):测试注入优先;否则按配置选后端
     # (database 模式为 None——内容留在 run_artifacts.content 列)
@@ -317,6 +336,7 @@ def create_app(
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
     sandbox_client: Sandbox | None = None,
+    mcp_stdio_pool: StdioSandboxPool | None = None,
     event_bus: EventBus | None = None,
     api_key_verifier: ApiKeyVerifier | None = None,
     oauth_introspector: OAuthTokenIntrospector | None = None,
@@ -330,6 +350,7 @@ def create_app(
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client
     app.state.sandbox_client = sandbox_client
+    app.state.mcp_stdio_pool = mcp_stdio_pool
     app.state.event_bus = event_bus
     app.state.api_key_verifier = api_key_verifier
     app.state.oauth_introspector = oauth_introspector

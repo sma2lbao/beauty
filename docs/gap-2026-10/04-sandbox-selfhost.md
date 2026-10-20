@@ -80,13 +80,36 @@ orchestrator(code_tools 改造)
   容器/沙箱里不可写）；拉镜像需要 OCI registry 出网。当前开发机因 DSH 文件/网络策略
   只验证到 provider 适配层，未启动真实 microVM。
 
-**下一阶段**
+**阶段状态**
 
-| 阶段 | 内容 |
-| --- | --- |
-| P2 | stdio MCP：`MCPServer` 增加 transport/command/args/env、沙箱内启动与 JSON-RPC 代理、测试端点、Web 表单 |
-| P3 | 用户上传 SKILL.md 包：对象存储 + 版本表 + 上传校验 + run 固定版本 + 沙箱执行 + 交付物回传 |
-| P4 | 出网 allowlist/凭据注入、配额与 `sandboxMs` 计量、审计事件、快照/预热、E2B/Fly provider |
+| 阶段 | 状态 | 内容 |
+| --- | --- | --- |
+| P2 | ✅ 已落地（2026-10-20） | stdio MCP：`MCPServer` 增加 transport/command/args/env/runtime/image、沙箱内启动与 JSON-RPC 代理、测试端点、Web 表单 |
+| P3 | 待做 | 用户上传 SKILL.md 包：对象存储 + 版本表 + 上传校验 + run 固定版本 + 沙箱执行 + 交付物回传 |
+| P4 | 待做 | 出网 allowlist/凭据注入、配额与 `sandboxMs` 计量、审计事件、快照/预热、E2B/Fly provider |
+
+### P2 实施记录（stdio MCP）
+
+- **orchestrator**（`services/mcp_stdio.py`）：
+  - `StdioSandboxPool` 按 key 常驻沙箱（key = `<conversation_id | run:<id> | anonymous>:<server_id>`），
+    每 key 一把 `asyncio.Lock`，`touch` 失败即重建；probe 只写一次；
+  - `PROBE_PY` / `PROBE_JS` 是沙箱内的**一次性** MCP 客户端：读 stdin 一行 JSON →
+    spawn 命令 → `initialize` → `notifications/initialized` → `tools/list` / `tools/call` →
+    输出 `BEAUTY_MCP_RESULT:{...}`；只用标准库，超时杀进程，stderr 尾随错误回传；
+  - `MCPServer` 新列 `transport/command/args/encrypted_env/runtime/image`（迁移
+    `a8f3c1d6e2b4`）；命令必须命中 allowlist，`env` 整体加密、读端只回 `has_env/env_keys`；
+  - `ToolContext`（contextvars）在 run 的 4 个 `ainvoke` 边界与 chat 工具路径绑定，
+    工具 handler 用它选沙箱作用域——**同一对话复用、不同对话隔离**；
+  - 测试 23 个新用例（含本地 `PROBE_PY` + dummy stdio server 的真实进程测试），
+    全量 orchestrator **196 passed**；alembic head=`a8f3c1d6e2b4` 无漂移。
+- **Web**（`apps/web`）：MCP 面板新增 HTTP/stdio 切换、stdio 表单
+  （command/args/env/runtime/image）、列表显示 transport/command 与 `env_keys` 个数；
+  typecheck / 219 tests / lint 全绿。
+- **已知边界**：probe 是"一次调用一个 MCP 子进程"（npx 冷启动开销，P4 可换常驻
+  process bridge）；沙箱池是 orchestrator 进程内缓存（多实例不复用，P4 落 DB）；
+  P2 出网 `public` 走 microsandbox `NetworkProfile.PUBLIC`（**只放公网，不含宿主/私网**），
+  但仍是"任意公网"而非 allowlist，**P4 前不要向公网租户开放**；probe 只能杀直接子进程，
+  孙进程靠沙箱 TTL 兜底。
 
 **风险**：microsandbox 云侧仍 beta；本地 runtime 依赖宿主虚拟化能力；镜像拉取与
 `npx` 安装需要可控出网——P4 前必须把 egress 策略与包校验补上。

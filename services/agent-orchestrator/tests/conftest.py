@@ -293,6 +293,7 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
         "knowledge_ingest_enabled": False,
         "workspace_enabled": False,
         "sandbox_enabled": False,
+        "mcp_stdio_enabled": False,
         "jobs_enabled": False,
     }
     defaults.update(overrides)

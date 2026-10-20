@@ -23,6 +23,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
@@ -81,6 +82,15 @@ def get_workspace_client(request: Request) -> Workspace | None:
 def get_artifact_store(request: Request) -> ArtifactStore | None:
     """lifespan 按配置装配的交付物存储;database 模式为 None(内容在行里)。"""
     return request.app.state.artifact_store
+
+
+def get_mcp_stdio_pool(request: Request) -> StdioSandboxPool | None:
+    """lifespan 装配的 stdio MCP 沙箱池;未开启(mcp_stdio_enabled=false)为 None。
+
+    为 None 时 test 端点对 stdio server 明确报"需要启用沙箱",tool_specs 跳过
+    stdio server——不静默变成"工具消失"。
+    """
+    return getattr(request.app.state, "mcp_stdio_pool", None)
 
 
 async def get_tenant_id(

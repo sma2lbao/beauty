@@ -103,10 +103,19 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 交付物镜像(`WORKSPACE_ENABLED=true`):交付时**同时**推给 workspace-service
   (§7 里 artifacts 归属 workspace);镜像成败如实记进 `run.delivered.v1` 事件
   (`workspace_artifact_id` / `workspace_error`)——镜像失败不丢交付物。
-- 沙箱客户端(P1,仅基础设施,**未暴露工具**):`services/sandbox.py` 封装
+- 沙箱客户端(P1,仅基础设施):`services/sandbox.py` 封装
   workspace-service 内部 `/v1/sandboxes`(创建/查询/执行/文件读写/续期/销毁),
-  服务间 Bearer 来自 TokenBroker;`SANDBOX_ENABLED=true` 才装配,默认关闭,
-  不改变既有行为——stdio MCP / skill 包执行在 P2 接入。
+  服务间 Bearer 来自 TokenBroker;`SANDBOX_ENABLED=true` 才装配,默认关闭。
+- **stdio MCP(P2)**:`MCP_CLIENT` 注册表新增 `transport=stdio`——命令在沙箱内
+  拉起(`services/mcp_stdio.py` 的 `StdioSandboxPool`),经 stdin/stdout JSON-RPC
+  执行 `tools/list`/`tools/call`;probe 只用标准库,按 `runtime=python|node`
+  写 `/workspace/.mcp/probe.py|.js`。需要 `MCP_STDIO_ENABLED=true` **且**
+  `SANDBOX_ENABLED=true`(否则 test 端点明确报 "需要启用沙箱",tool_specs 跳过
+  stdio server)。沙箱按**对话级**复用(`ToolContext.conversation_id`;无对话退化
+  到 run),进程内缓存;命令必须命中 `MCP_STDIO_COMMAND_ALLOWLIST`
+  (`npx/uvx/node/python/python3/bunx`),参数不经 shell;**env 与 token 一样
+  只存密文,读端只回 `has_env/env_keys`**。P2 沙箱出网为 `public`(允许
+  npx/uvx 安装),P4 再切 allowlist。
 
 后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 

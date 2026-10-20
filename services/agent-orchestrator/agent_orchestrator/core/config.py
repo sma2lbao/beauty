@@ -3,6 +3,16 @@
 from common.config import BaseAppSettings
 from pydantic_settings import SettingsConfigDict
 
+#: stdio MCP 允许拉起的命令(包管理/解释器入口);租户可配置但默认收口在这里
+DEFAULT_MCP_STDIO_COMMAND_ALLOWLIST: list[str] = [
+    "npx",
+    "uvx",
+    "node",
+    "python",
+    "python3",
+    "bunx",
+]
+
 
 class Settings(BaseAppSettings):
     model_config = SettingsConfigDict(
@@ -41,6 +51,16 @@ class Settings(BaseAppSettings):
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
     mcp_timeout_seconds: float = 10.0
+    # stdio 型 MCP(P2):在沙箱内拉起 MCP 进程,经 stdio JSON-RPC 调工具。
+    # 需要 sandbox_enabled 同时为真(没有沙箱客户端时 test 端点明确报错、
+    # tool_specs 跳过 stdio server);network=public 是 P2 的临时口径,
+    # P4 再用出网 allowlist 收口。
+    mcp_stdio_enabled: bool = False
+    mcp_stdio_network: str = "public"
+    mcp_stdio_sandbox_ttl_seconds: int = 1800
+    mcp_stdio_python_image: str = "python"
+    mcp_stdio_node_image: str = "node"
+    mcp_stdio_command_allowlist: list[str] = list(DEFAULT_MCP_STDIO_COMMAND_ALLOWLIST)
     # 公开 MCP Server(M3 本地版):API Key 入口
     mcp_server_enabled: bool = True
     account_service_url: str = "http://127.0.0.1:8001"

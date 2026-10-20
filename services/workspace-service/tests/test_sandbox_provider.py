@@ -155,6 +155,10 @@ class FakeSandboxApi:
             raise self._sdk.remove_error
 
 
+class FakeNetworkProfile:
+    PUBLIC = "public"
+
+
 class FakeNetworkApi:
     def __init__(self, sdk: FakeSdk) -> None:
         self._sdk = sdk
@@ -165,6 +169,10 @@ class FakeNetworkApi:
     def allow_all(self) -> object:
         return self._sdk.network_allow_all
 
+    def from_profiles(self, *profiles: object) -> object:
+        self._sdk.profile_calls.append(profiles)
+        return self._sdk.network_public
+
 
 class FakeSdk:
     """最小假 SDK:只实现 provider 用到的属性,记录所有调用。"""
@@ -174,10 +182,13 @@ class FakeSdk:
     RuntimeNotInstalledError = RuntimeNotInstalledError
     RuntimeIncompleteError = RuntimeIncompleteError
     ExecTimeoutError = ExecTimeoutError
+    NetworkProfile = FakeNetworkProfile
 
     def __init__(self) -> None:
         self.network_none = object()
         self.network_allow_all = object()
+        self.network_public = object()
+        self.profile_calls: list[tuple[object, ...]] = []
         self.created: list[dict[str, Any]] = []
         self.exec_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
@@ -249,12 +260,14 @@ async def test_create_passes_sdk_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert call["idle_timeout"] == 900.0
 
 
-async def test_create_public_network_uses_allow_all(
+async def test_create_public_network_is_public_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """public 只能放公网:不能用 allow_all(会连宿主/私网),必须走 PUBLIC profile。"""
     sdk = _use_fake_sdk(monkeypatch)
     await MicrosandboxProvider().create(_spec(network="public"))
-    assert sdk.created[0]["network"] is sdk.network_allow_all
+    assert sdk.created[0]["network"] is sdk.network_public
+    assert sdk.profile_calls == [(FakeNetworkProfile.PUBLIC,)]
 
 
 async def test_create_detaches_returned_handle(

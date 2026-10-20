@@ -67,14 +67,14 @@
 
 | 能力                                      | 现状                                                        | 目标                                                                      | 里程碑               |
 | ----------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------- |
-| Sandbox（隔离/执行/预览）                 | ⏸ 暂缓                                                     | 先决策替代（Fly Machines/自建 runner/只读）                               | M1 前                |
+| Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP                                    | microsandbox provider；skill 包执行 P3；终端/预览后置                     | M1 前                |
 | GitHub 集成                               | ❌                                                          | GitHub App + 只读仓库/分支/PR                                             | M1                   |
 | 文件系统工具（read/write/edit/glob/grep） | ⏸ 依赖 sandbox                                             | 先只读+补丁建议；执行后置                                                 | M1（条件）           |
 | Shell / 终端                              | ⏸ 依赖 sandbox                                             | 决策后实施                                                                | M1（条件）           |
 | Git 工具（status/diff/commit/branch/PR）  | ⏸ 依赖 sandbox                                             | 只读 diff 先做；写操作后置                                                | M1（条件）           |
 | 工具注册表 + 权限策略                     | ⚠️ 7 个硬编码工具                                           | Tool Registry + auto/confirm/deny                                         | M1                   |
 | Skills                                    | ❌                                                          | 注册表 + 首批 coding/office 技能                                          | M1/M2                |
-| MCP Client                                | ❌                                                          | 租户配置、命名空间、审批                                                  | M1（GitHub 优先）/M3 |
+| MCP Client                                | ✅ HTTP + stdio（P2）                                       | 租户配置、命名空间、审批；stdio 在沙箱内运行                               | M1（GitHub 优先）/M3 |
 | MCP Server / 开放 API                     | ❌                                                          | 对外工具/资源、OAuth、Webhook                                             | M3                   |
 | 计划/Todo/Goal/反问                       | ⚠️ 仅 plan markdown                                         | 运行时工具 + UI                                                           | M1                   |
 | 上下文压缩 / token 计量                   | ❌                                                          | 有界摘要 + token meter + 预算                                             | M1                   |
@@ -121,8 +121,8 @@
 ### M1 Coding（受限，4–6 周）
 
 > 前置：**M1-00 沙箱替代方案拍板**（2026-10-20 已拍板：microsandbox；P1 沙箱底座已落地，见
-> `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录）。P2/P3 接入用户 skill 包与 stdio MCP 前，
-> 仍只交付「只读代码分析 + 补丁建议」，不承诺执行/终端/预览。
+> `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录）。stdio MCP 已在 P2 落地；
+> P3 接入用户上传 skill 包前，coding 仍只交付「只读代码分析 + 补丁建议」，不承诺执行/终端/预览。
 
 | ID    | 任务                                                               | 端             | 验收标准                           | 依赖  | 规模 |
 | ----- | ------------------------------------------------------------------ | -------------- | ---------------------------------- | ----- | ---- |

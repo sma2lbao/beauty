@@ -40,7 +40,22 @@ from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.schemas.skills import SkillManifest
 from agent_orchestrator.services import artifacts, history
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services.tool_context import (
+    ToolContext,
+    bind_tool_context,
+)
 from agent_orchestrator.services.workspace import Workspace
+
+
+def _tool_context(run: Run):
+    """工具 handler 的来源上下文:stdio MCP 据此按对话/run 复用沙箱(P2)。"""
+    return bind_tool_context(
+        ToolContext(
+            tenant_id=run.tenant_id,
+            run_id=run.id,
+            conversation_id=run.conversation_id,
+        )
+    )
 
 
 async def append_event(
@@ -305,7 +320,9 @@ async def _invoke_plan(
     if instructions:
         state["extra_instructions"] = instructions
     try:
-        values = await graph.ainvoke(state, config=_config(run))
+        # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域)
+        with _tool_context(run):
+            values = await graph.ainvoke(state, config=_config(run))
     except Exception as exc:
         await _fail_run(session, run, exc, stage="plan")
         return
@@ -428,19 +445,18 @@ async def approve_run(
     _require_status(run, RunStatus.AWAITING_APPROVAL)
     if emit_approved:
         # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
-        await append_event(
-            session, run, "run.approved.v1", {"attempt": run.attempts}
-        )
+        await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
     if jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "approve", run.id)
         return run
     # §6.5:放行边界消费排队指令,经 resume 载荷由审批闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
-        values = await graph.ainvoke(
-            Command(resume={"action": "approve", "instructions": instructions}),
-            config=_config(run),
-        )
+        with _tool_context(run):
+            values = await graph.ainvoke(
+                Command(resume={"action": "approve", "instructions": instructions}),
+                config=_config(run),
+            )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
@@ -482,16 +498,17 @@ async def confirm_run(
     # §6.5:确认边界消费排队指令,经 resume 载荷由确认闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
-        values = await graph.ainvoke(
-            Command(
-                resume={
-                    "action": action,
-                    "reason": reason,
-                    "instructions": instructions,
-                }
-            ),
-            config=_config(run),
-        )
+        with _tool_context(run):
+            values = await graph.ainvoke(
+                Command(
+                    resume={
+                        "action": action,
+                        "reason": reason,
+                        "instructions": instructions,
+                    }
+                ),
+                config=_config(run),
+            )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run
@@ -507,10 +524,11 @@ async def reject_run(
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_APPROVAL)
-    await graph.ainvoke(
-        Command(resume={"action": "reject", "reason": reason}),
-        config=_config(run),
-    )
+    with _tool_context(run):
+        await graph.ainvoke(
+            Command(resume={"action": "reject", "reason": reason}),
+            config=_config(run),
+        )
     run.status = RunStatus.BLOCKED.value
     run.status_reason = reason
     await append_event(session, run, "run.rejected.v1", {"reason": reason})

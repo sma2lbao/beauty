@@ -46,6 +46,10 @@ from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
+from agent_orchestrator.services.tool_context import (
+    ToolContext,
+    bind_tool_context,
+)
 from agent_orchestrator.services.tools import ToolRegistry
 
 if TYPE_CHECKING:
@@ -259,9 +263,7 @@ async def _task_path(
     )
     message.run_id = run.id
     if jobs_enabled:
-        await jobs_service.enqueue(
-            session, conversation.tenant_id, "plan", run.id
-        )
+        await jobs_service.enqueue(session, conversation.tenant_id, "plan", run.id)
     else:
         await runs_service.plan_run(session, graph, conversation.tenant_id, run.id)
     return run, "run_created"
@@ -308,11 +310,12 @@ async def post_message(
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
         toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
-        reply = await _persist_assistant_message(
-            session,
-            message,
-            await chat.answer(session, llm, message, toolkit),
-        )
+        # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用)
+        with bind_tool_context(
+            ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
+        ):
+            answer = await chat.answer(session, llm, message, toolkit)
+        reply = await _persist_assistant_message(session, message, answer)
         return message, None, reply, triage.CHAT
     run, outcome = await _task_path(
         session,
@@ -407,25 +410,30 @@ async def stream_message(
     reply: ChatMessage | None = None
     toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
     try:
-        if toolkit is None or len(toolkit) == 0:
-            # 无工具:保持原路径——真正的流式增量(边产出边显示)
-            async for delta in llm.stream(prompt):
-                parts.append(delta)
-                yield "delta", {"text": delta}
-        else:
-            # 对话内 function-calling:complete 轮次 + 工具事件;
-            # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
-            final = ""
-            async for kind, payload in chat.run_tool_loop(llm, prompt, toolkit):
-                if kind == "tool":
-                    yield "tool", payload
-                elif kind == "content":
-                    final = str(payload)
-            text = final
-            for i in range(len(text)):
-                delta = text[i]
-                parts.append(delta)
-                yield "delta", {"text": delta}
+        # 对话内工具执行的来源上下文(stdio MCP 沙箱按对话复用);
+        # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
+        with bind_tool_context(
+            ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
+        ):
+            if toolkit is None or len(toolkit) == 0:
+                # 无工具:保持原路径——真正的流式增量(边产出边显示)
+                async for delta in llm.stream(prompt):
+                    parts.append(delta)
+                    yield "delta", {"text": delta}
+            else:
+                # 对话内 function-calling:complete 轮次 + 工具事件;
+                # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
+                final = ""
+                async for kind, payload in chat.run_tool_loop(llm, prompt, toolkit):
+                    if kind == "tool":
+                        yield "tool", payload
+                    elif kind == "content":
+                        final = str(payload)
+                text = final
+                for i in range(len(text)):
+                    delta = text[i]
+                    parts.append(delta)
+                    yield "delta", {"text": delta}
     except UpstreamError as exc:
         failure = exc
     finally:
