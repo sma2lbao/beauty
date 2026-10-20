@@ -17,7 +17,7 @@
 | Redis             | **云 Redis，提供 URL**                                  | **本地 Redis**                               | ✅ 实施（限流/锁/短期缓存；不作为关键队列）              |
 | 对象存储          | **暂不引入**                                            | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）      |
 | 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**             | 同左（SQLite 下用文件/内存 worker）          | ✅ 实施；Temporal / Inngest **暂不做**                   |
-| 沙箱              | **microsandbox provider（P1）**                         | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP；skill 包 P3（见 §11.1）       |
+| 沙箱              | **microsandbox provider（P1）**                         | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.1）        |
 | 身份              | **沿用自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 实施；Logto **不用**                                  |
 | 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                             |
 | 支付              | **不做 Stripe**                                         | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续    |
@@ -53,7 +53,7 @@
 | 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）            |
 | 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 六业务服务跑 Fly/Cloud Run；BFF 为独立 FastAPI 服务      |
 | 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer |
-| 004 | Sandbox 用 microsandbox provider          | ✅ P1 + P2           | 见 §11.1；stdio MCP 已落地，skill 包执行 P3              |
+| 004 | Sandbox 用 microsandbox provider          | ✅ P1 + P2 + P3      | 见 §11.1；stdio MCP、技能包上传/执行已落地               |
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件                          |
 | 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录                              |
 | 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                       |
@@ -114,7 +114,7 @@ Browser
 | services/bff      | 容器        | BFF：认证、代理、下载、限流             | 新增（FastAPI；同域 `/api`）                                                        |
 | apps/site         | Vercel 静态 | Next.js 官网、文档、博客、Changelog     | 新增（静态导出/SEO）                                                                |
 | agent-runtime     | 容器        | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
-| sandbox adapter   | workspace-service 内 | microsandbox provider + 生命周期 | ✅ P1 + P2 stdio MCP（见 §4.4；skill 包 P3）                                        |
+| sandbox adapter   | workspace-service 内 | microsandbox provider + 生命周期 | ✅ P1 + P2 stdio MCP + P3 技能包（见 §4.4）                                          |
 | llm-gateway       | 容器        | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
 | connector-service | 容器        | 邮箱/日历/文档连接器；OAuth、同步       | IMAP 先行；OAuth 双轨后续                                                           |
 | knowledge-service | 容器        | 摄取、检索、重排、引用、记忆            | 增加 rerank/citation/memory                                                         |
@@ -171,9 +171,16 @@ Skill {
 }
 ```
 
-首批：代码审查、仓库问答、补丁建议（**只读、不执行**，见 §11.1）；邮件摘要、回复草稿、分类去噪、邮件→周报、附件归档、日历排期。
+首批：代码审查、仓库问答、补丁建议（内置 manifest，只读）；邮件摘要、回复草稿、分类去噪、邮件→周报、附件归档、日历排期。
 
-### 4.4 Sandbox（P1 底座 + P2 stdio MCP 已落地；skill 包执行 P3）
+P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/）：
+
+- 包在对象存储（workspace-service /v1/objects），DB 只存包/版本 + manifest/SKILL.md 快照；
+- 版本化：租户内 slug + version 不可变；run 创建时冻结版本与执行字段，后传新版本不影响旧 run；
+- 有 entrypoint 的包自动获得 skill_run 工具（需确认闸），在沙箱内执行、产物登记为 run 交付物；
+- 当前仍不开放终端/预览；coding 类内置技能保持只读。
+
+### 4.4 Sandbox（P1 底座 + P2 stdio MCP + P3 技能包执行已落地）
 
 - **P1（2026-10-20）**：`workspace-service` 沙箱模块——`SandboxProvider` 抽象、microsandbox
   实现、`sandboxes` 实例表（租户/TTL/资源/状态）、生命周期 API（create/exec/files/touch/
@@ -182,8 +189,12 @@ Skill {
   **对话级**复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；
   `env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换。详见 §8.2 与
   `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录。
-- **尚未落地（P3/P4）**：用户上传 skill 包执行、出网 allowlist/凭据注入、配额与
-  `sandboxMs` 计量、审计事件、常驻 process bridge / 多实例沙箱池。
+- **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；
+  skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；
+  Web Skills 页支持上传/版本/删除。详见 §4.3 与
+  docs/gap-2026-10/04-sandbox-selfhost.md 实施记录。
+- **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、
+  常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）。
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于
   受控的 MCP/skill 执行，未开放终端与预览。
 
@@ -299,6 +310,10 @@ packages/console   控制台组件（可选抽出）
 - manifest：id/version/description/workspaceType/tools/permissions/deliverables/pricing；
 - 发布/审核/灰度/回滚；运行时按租户启用；
 - 开放平台开发者可提交 Skill；与 MCP server 一起构成插件市场。
+- **P3 已落地（上传包）**：租户上传 SKILL.md zip（可选 skill.json entrypoint），
+  对象存储 + 版本表（slug+version 不可变），run 创建时冻结版本快照；
+  有 entrypoint 的包在沙箱内执行（skill_run 工具，需确认），无 entrypoint 的包作为提示词技能；
+  Web Skills 页支持上传/版本查看/删除。开放平台的审核/灰度/计费仍在 M4。
 
 ---
 
@@ -395,7 +410,7 @@ REDIS_URL=                      # 留空 = 进程内降级
 
 ## 11. 暂缓项与影响（必须显式管理）
 
-### 11.1 沙箱：microsandbox 路线（P1/P2 已落地，skill 包 P3）
+### 11.1 沙箱：microsandbox 路线（P1/P2/P3 已落地）
 
 - **决策（2026-10-20）**：引擎选 **microsandbox**（Apache-2.0，microVM，Python SDK），
   自建的是 **provider 抽象 + 生命周期 + 租户配额**，不自建隔离内核；
@@ -407,9 +422,11 @@ REDIS_URL=                      # 留空 = 进程内降级
 - **P2 已交付**：stdio MCP 在沙箱内拉起（命令白名单、env/token 密文、对话级沙箱池），
   Web MCP 面板支持 HTTP/stdio；共 196 orchestrator tests + 219 web tests。
   出网为 public-only（不含宿主/私网），P4 再切 allowlist/凭据注入。
-- **仍未交付（P3/P4）**：用户上传 SKILL.md 包执行、出网 allowlist/凭据注入、
-  配额计量、Web 上传/注册 UI。在此之前**不对外承诺**终端、预览与任意代码执行；
-  coding agent 仍只提供**只读分析 + 补丁建议**。
+- **P3 已交付**：用户上传 SKILL.md 包（zip 校验、版本化、对象存储、run 快照），
+  skill_run 在一次性沙箱内解包执行、产物登记为交付物，Web Skills 页上传/版本/删除；
+  264 orchestrator tests + 226 web tests。仍不开放终端/预览；coding 内置技能只读。
+- **仍未交付（P4）**：出网 allowlist/凭据注入、配额计量、审计事件、常驻 process bridge、
+  多实例沙箱池；node 技能镜像需含 python3（解包/产物清单脚本）。
 - **已知环境要求**：部署时 `WORKSPACE__SANDBOX_MSB_HOME` 指向可写目录；如需拉镜像，
   沙箱宿主必须能访问 OCI registry（内网可配镜像仓库）。
 

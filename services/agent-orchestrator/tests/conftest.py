@@ -239,11 +239,21 @@ class RecordingBus:
 
 
 class FakeWorkspace:
-    """假工作区:记录交付物镜像调用,可注入失败(零网络)。"""
+    """假工作区:记录交付物镜像与对象读写调用,可注入失败(零网络)。
+
+    P3 技能包:put_object 返回固定 sha(测试拿它断言 run 快照),
+    key 按租户前缀 + 序号生成(与 workspace-service 契约一致);
+    objects 用于 get_object 往返。fail=True 时所有调用都失败。
+    """
 
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.created: list[dict] = []
+        self.objects: dict[str, bytes] = {}
+        self.puts: list[dict] = []
+        self.gets: list[tuple[str, str]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.sha256 = "a" * 64
 
     async def create_artifact(
         self,
@@ -266,6 +276,45 @@ class FakeWorkspace:
         }
         self.created.append(record)
         return record
+
+    async def put_object(
+        self,
+        tenant_id: str,
+        data: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str = "application/zip",
+    ) -> dict:
+        if self.fail:
+            raise RuntimeError("工作区对象存储失败")
+        key = f"{tenant_id}/objects/skill-{len(self.puts) + 1}.zip"
+        self.puts.append(
+            {
+                "tenant_id": tenant_id,
+                "key": key,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": len(data),
+                "sha256": self.sha256,
+                "data": data,
+            }
+        )
+        self.objects[key] = data
+        return {"key": key, "size_bytes": len(data), "sha256": self.sha256}
+
+    async def get_object(self, tenant_id: str, key: str) -> bytes:
+        self.gets.append((tenant_id, key))
+        if self.fail:
+            raise RuntimeError("工作区对象存储失败")
+        if key not in self.objects:
+            raise RuntimeError("对象不存在")
+        return self.objects[key]
+
+    async def delete_object(self, tenant_id: str, key: str) -> None:
+        self.deleted.append((tenant_id, key))
+        if self.fail:
+            raise RuntimeError("工作区对象存储失败")
+        self.objects.pop(key, None)
 
 
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:

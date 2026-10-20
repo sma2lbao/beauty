@@ -40,12 +40,12 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
-from agent_orchestrator.schemas.skills import SkillManifest
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
+from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.tool_context import (
     ToolContext,
     bind_tool_context,
@@ -238,7 +238,7 @@ async def _task_path(
     content: str,
     *,
     jobs_enabled: bool = False,
-    skill: SkillManifest | None = None,
+    skill: SkillDefinition | None = None,
     attachment_context: str = "",
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
@@ -257,7 +257,7 @@ async def _task_path(
             goal=content + attachment_context,
             acceptance_criteria=[],
             conversation_id=conversation.id,
-            skill_id=skill.id if skill else None,
+            skill_id=skill.manifest.id if skill else None,
         ),
         skill=skill,
     )
@@ -280,7 +280,7 @@ async def post_message(
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
-    skill: SkillManifest | None = None,
+    skill: SkillDefinition | None = None,
     toolkit_factory: ToolkitFactory | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
@@ -349,7 +349,7 @@ async def stream_message(
     mode: str = triage.AUTO,
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
-    skill: SkillManifest | None = None,
+    skill: SkillDefinition | None = None,
     toolkit_factory: ToolkitFactory | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。

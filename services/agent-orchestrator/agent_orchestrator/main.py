@@ -14,7 +14,7 @@ from functools import partial
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.errors import AppError
-from common.logging import setup_logging
+from common.logging import get_logger, setup_logging
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
@@ -34,6 +34,7 @@ from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对�
 )
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
+from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed
@@ -52,10 +53,14 @@ from agent_orchestrator.services.outbox import (
     register_consumers,
 )
 from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
+from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
-from agent_orchestrator.services.tools import ToolRegistry, build_tools
+from agent_orchestrator.services.tool_context import current_tool_context
+from agent_orchestrator.services.tools import ToolRegistry, ToolSpec, build_tools
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
+
+logger = get_logger(__name__)
 
 ToolkitFactory = Callable[[str], ToolRegistry]
 
@@ -153,20 +158,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             code_roots=settings.code_workspace_roots,
         )
 
-    mcp_tools_factory = None
-    if settings.mcp_enabled:
+    # 外部工具装配(P2 MCP + P3-C skill_run):同一个 extras factory 合并,
+    # 在 execute/tool_exec 的工具调用边界被调用——context 已由 services 层
+    # 绑定(bind_tool_context),所以这里能读到 run_id。
+    extras_factory = None
+    if settings.mcp_enabled or settings.skill_execution_enabled:
 
-        async def _load_mcp_tools(tenant_id: str):
-            async with session_scope(factory) as session:
-                # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
-                return await mcp_service.tool_specs(
-                    session,
-                    tenant_id,
-                    secret=settings.mcp_secret,
-                    pool=getattr(app.state, "mcp_stdio_pool", None),
-                )
+        async def _load_extras(tenant_id: str) -> list[ToolSpec]:
+            """run 绑定了可执行技能包 → skill_run;有 MCP → 追加 MCP 工具。
 
-        mcp_tools_factory = _load_mcp_tools
+            skill 与 MCP 互不阻断:MCP 故障只降级 MCP 工具(沿用 _load_toolkit
+            的降级口径);chat 路径没有 run_id,自然看不到 skill_run。
+            """
+            specs: list[ToolSpec] = []
+            runner: SkillRunner | None = getattr(app.state, "skill_runner", None)
+            ctx = current_tool_context()
+            if runner is not None and ctx is not None and ctx.run_id:
+                async with session_scope(factory) as session:
+                    run = await session.get(runs_models.Run, ctx.run_id)
+                    if (
+                        run is not None
+                        and run.tenant_id == tenant_id
+                        and run.skill_object_key
+                    ):
+                        specs.append(runner.spec(run))
+            if settings.mcp_enabled:
+                try:
+                    async with session_scope(factory) as session:
+                        # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
+                        specs += await mcp_service.tool_specs(
+                            session,
+                            tenant_id,
+                            secret=settings.mcp_secret,
+                            pool=getattr(app.state, "mcp_stdio_pool", None),
+                        )
+                except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
+                    logger.warning(
+                        "mcp tool specs failed",
+                        tenant_id=tenant_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+            return specs
+
+        extras_factory = _load_extras
+        app.state.tool_extras_factory = extras_factory
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier
@@ -226,6 +261,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = build_store(settings)
     app.state.artifact_store = store
 
+    # 上传技能包执行(P3-C):测试注入优先;否则 skill_execution_enabled 且
+    # sandbox/workspace 都在时才装配(缺任一依赖 → 不暴露 skill_run,
+    # 宁可不给能力也不在 orchestrator 进程里直接跑上传代码)。
+    skill_runner: SkillRunner | None = app.state.skill_runner
+    if (
+        skill_runner is None
+        and settings.skill_execution_enabled
+        and sandbox is not None
+        and workspace is not None
+    ):
+        skill_runner = SkillRunner(
+            factory,
+            sandbox=sandbox,
+            workspace=workspace,
+            store=store,
+            settings=settings,
+        )
+    app.state.skill_runner = skill_runner
+
     # 事务性 outbox(§6.3/§8):测试注入优先 —— recorder 挂在 session.info,
     # dispatcher 后台投递;首个消费者是"交付物自动入知识库"
     bus: EventBus = app.state.event_bus or InMemoryEventBus()
@@ -282,7 +336,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     checkpointer=saver,
                     llm=llm,
                     toolkit_factory=toolkit_factory,
-                    mcp_tools_factory=mcp_tools_factory,
+                    mcp_tools_factory=extras_factory,
                 )
                 if settings.jobs_enabled:
                     worker_task = start_worker(app)
@@ -292,7 +346,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.run_graph = build_run_graph(
                 llm=llm,
                 toolkit_factory=toolkit_factory,
-                mcp_tools_factory=mcp_tools_factory,
+                mcp_tools_factory=extras_factory,
             )
             if settings.jobs_enabled:
                 worker_task = start_worker(app)
@@ -336,6 +390,7 @@ def create_app(
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
     sandbox_client: Sandbox | None = None,
+    skill_runner: SkillRunner | None = None,
     mcp_stdio_pool: StdioSandboxPool | None = None,
     event_bus: EventBus | None = None,
     api_key_verifier: ApiKeyVerifier | None = None,
@@ -350,6 +405,7 @@ def create_app(
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client
     app.state.sandbox_client = sandbox_client
+    app.state.skill_runner = skill_runner
     app.state.mcp_stdio_pool = mcp_stdio_pool
     app.state.event_bus = event_bus
     app.state.api_key_verifier = api_key_verifier

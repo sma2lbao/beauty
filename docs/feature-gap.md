@@ -67,13 +67,13 @@
 
 | 能力                                      | 现状                                                        | 目标                                                                      | 里程碑               |
 | ----------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------- |
-| Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP                                    | microsandbox provider；skill 包执行 P3；终端/预览后置                     | M1 前                |
+| Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP + P3 技能包                         | microsandbox provider；终端/预览后置；P4 出网/计量                        | M1 前                |
 | GitHub 集成                               | ❌                                                          | GitHub App + 只读仓库/分支/PR                                             | M1                   |
 | 文件系统工具（read/write/edit/glob/grep） | ⏸ 依赖 sandbox                                             | 先只读+补丁建议；执行后置                                                 | M1（条件）           |
 | Shell / 终端                              | ⏸ 依赖 sandbox                                             | 决策后实施                                                                | M1（条件）           |
 | Git 工具（status/diff/commit/branch/PR）  | ⏸ 依赖 sandbox                                             | 只读 diff 先做；写操作后置                                                | M1（条件）           |
 | 工具注册表 + 权限策略                     | ⚠️ 7 个硬编码工具                                           | Tool Registry + auto/confirm/deny                                         | M1                   |
-| Skills                                    | ❌                                                          | 注册表 + 首批 coding/office 技能                                          | M1/M2                |
+| Skills                                    | ✅ 内置 + 上传包（P3）                                      | 审核/灰度/市场 P4；首批 coding/office 内置技能                              | M1/M2                |
 | MCP Client                                | ✅ HTTP + stdio（P2）                                       | 租户配置、命名空间、审批；stdio 在沙箱内运行                               | M1（GitHub 优先）/M3 |
 | MCP Server / 开放 API                     | ❌                                                          | 对外工具/资源、OAuth、Webhook                                             | M3                   |
 | 计划/Todo/Goal/反问                       | ⚠️ 仅 plan markdown                                         | 运行时工具 + UI                                                           | M1                   |
@@ -120,14 +120,15 @@
 
 ### M1 Coding（受限，4–6 周）
 
-> 前置：**M1-00 沙箱替代方案拍板**（2026-10-20 已拍板：microsandbox；P1 沙箱底座已落地，见
-> `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录）。stdio MCP 已在 P2 落地；
-> P3 接入用户上传 skill 包前，coding 仍只交付「只读代码分析 + 补丁建议」，不承诺执行/终端/预览。
+> 前置：**M1-00 沙箱替代方案拍板**（2026-10-20 已拍板：microsandbox；P1 底座、P2 stdio MCP、
+> P3 用户技能包上传/执行均已落地，见 `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录）。
+> coding 内置技能仍只交付「只读代码分析 + 补丁建议」；FS/Git/终端工具待 M1-05/06/07，不承诺
+> 终端/预览。
 
 | ID    | 任务                                                               | 端             | 验收标准                           | 依赖  | 规模 |
 | ----- | ------------------------------------------------------------------ | -------------- | ---------------------------------- | ----- | ---- |
 | M1-00 | 沙箱替代决策与 spike：microsandbox / Fly Machines / 自建 gVisor runner | 架构           | 决策：microsandbox + provider 抽象 | —     | S    |
-| M1-01 | Sandbox 实现（按 M1-00 结论）                                      | Service        | P1 底座已完成；执行接入 P2/P3      | M1-00 | L    |
+| M1-01 | Sandbox 实现（按 M1-00 结论）                                      | Service        | P1 底座 + P2/P3 执行已落地         | M1-00 | L    |
 | M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                            | Service        | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
 | M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                   | Service        | 按类型加载工具集；只读文件树       | M1-02 | M    |
 | M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                        | Service        | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |

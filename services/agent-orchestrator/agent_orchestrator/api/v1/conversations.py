@@ -52,8 +52,9 @@ from agent_orchestrator.schemas.conversations import (
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
-from agent_orchestrator.services import triage
+from agent_orchestrator.services import skill_packages, triage
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.skills import SkillRegistry
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -67,14 +68,22 @@ SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
 ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
 
 
-def _resolve_skill(skills: SkillRegistry, skill_id: str | None):
-    """消息可选绑定 Skill:未知 id 在落库前 404,避免建出半残 run。"""
+async def _resolve_skill(
+    session: AsyncSession,
+    tenant_id: str,
+    skills: SkillRegistry,
+    skill_id: str | None,
+) -> SkillDefinition | None:
+    """消息可选绑定 Skill(内置或上传包):未知 id 在落库前 404,不建半残 run。"""
     if not skill_id:
         return None
-    skill = skills.get(skill_id)
-    if skill is None:
+    definition = await skill_packages.resolve_skill(
+        session, tenant_id, skill_id, skills
+    )
+    if definition is None:
         raise NotFoundError("skill.not_found", "Skill 不存在")
-    return skill
+    return definition
+
 
 #: SSE 标准头:不缓存、禁代理缓冲(否则增量会被攒成一坨)
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -152,9 +161,7 @@ async def delete_conversation(
     conversation_id: str, session: DBSession, tenant_id: TenantId
 ) -> None:
     """软删除会话(保留审计数据;列表/详情/消息随即 404)。"""
-    await conversations_service.delete_conversation(
-        session, tenant_id, conversation_id
-    )
+    await conversations_service.delete_conversation(session, tenant_id, conversation_id)
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
@@ -212,9 +219,7 @@ async def upload_attachment(
     return AttachmentRead.model_validate(attachment)
 
 
-@router.get(
-    "/{conversation_id}/attachments", response_model=list[AttachmentRead]
-)
+@router.get("/{conversation_id}/attachments", response_model=list[AttachmentRead])
 async def list_attachments(
     conversation_id: str, session: DBSession, tenant_id: TenantId
 ) -> list[AttachmentRead]:
@@ -243,9 +248,7 @@ async def download_attachment(
     )
 
 
-@attachments_router.delete(
-    "/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@attachments_router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_attachment(
     attachment_id: str, session: DBSession, tenant_id: TenantId
 ) -> None:
@@ -269,6 +272,7 @@ async def post_message(
     toolkit_factory: ToolkitFactory,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
+    skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
     message, run, reply, mode = await conversations_service.post_message(
         session,
         graph,
@@ -279,7 +283,7 @@ async def post_message(
         mode=body.mode,
         attachment_ids=body.attachment_ids,
         jobs_enabled=settings.jobs_enabled,
-        skill=_resolve_skill(skills, body.skill_id),
+        skill=skill,
         toolkit_factory=toolkit_factory,
     )
     return MessagePostResult(
@@ -358,6 +362,8 @@ async def stream_message(
         await conversations_service.require_conversation(  # 404 校验
             session, tenant_id, conversation_id
         )
+        # 技能解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
+        skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
     return StreamingResponse(
         _message_frames(
             conversations_service.stream_message(
@@ -370,7 +376,7 @@ async def stream_message(
                 mode=body.mode,
                 attachment_ids=body.attachment_ids,
                 jobs_enabled=settings.jobs_enabled,
-                skill=_resolve_skill(skills, body.skill_id),
+                skill=skill,
                 toolkit_factory=toolkit_factory,
             )
         ),

@@ -21,11 +21,16 @@ from langgraph.types import interrupt
 from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.services.llm import LLMReply
 
+# ToolRegistry 在 _load_toolkit 里**运行期**构造(base = toolkit or ToolRegistry([])),
+# 不能只放在 TYPE_CHECKING 里——只有外部工具(extras)、没有基础工具工厂时
+# 会抛 NameError(P3-C 的纯 skill_run run 正是这种形态)。
+from agent_orchestrator.services.tools import ToolRegistry
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from agent_orchestrator.services.llm import LLMClient
-    from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
+    from agent_orchestrator.services.tools import ToolSpec
 
     ToolkitFactory = Callable[[str], ToolRegistry]
     ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]

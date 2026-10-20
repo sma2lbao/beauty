@@ -117,6 +117,46 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   只存密文,读端只回 `has_env/env_keys`**。P2 沙箱出网为 `public`(允许
   npx/uvx 安装),P4 再切 allowlist。
 
+- **技能包上传(P3)**:用户上传 SKILL.md 包(zip,根目录必须含 SKILL.md,
+  允许单一顶层目录;可选 skill.json 描述 id/version/title/description/
+  entrypoint/runtime/network/timeout_seconds/tools)。服务端校验:包体 20MB /
+  500 文件 / 解压后 50MB 上限,路径穿越、绝对路径、符号链接、NUL、重复路径、
+  skill.json 非法、缺 SKILL.md 一律 400;zip 存进 workspace-service 通用对象 API
+  (`WORKSPACE_ENABLED=true` 时装配 WorkspaceClient;未装配时上传 503
+  `skill.storage_unavailable`,不静默降级),DB 只存对象引用 + manifest/skill_md
+  快照。按"租户内 slug + version"版本化:
+  - `POST /skills/packages`(multipart 字段 file)→ 201 包详情(含全部 versions);
+  - `GET /skills/packages` / `GET /skills/packages/{id}` / `DELETE /skills/packages/{id}`
+    (删除 DB 包/版本 + best-effort 删对象,对象删除失败不阻塞);
+  - `GET /skills` 内置 + 每个上传包**最新版本**合并(source=builtin|uploaded;
+    上传包带 has_scripts/package_id/version_id,有 entrypoint 自动补 skill_run 工具);
+  - `GET /skills/{skill_id}` 内置优先,其次上传包 slug;
+  - run 创建时把上传包快照冻结进 runs(`skill_version_id/object_key/sha256/
+    entrypoint/runtime/network/timeout_seconds`),之后上传新版本不影响已建 run;
+  - 冲突:同包同版本重复上传 409 `skill.version_exists`,上传 id 与内置技能
+    冲突 409 `skill.id_conflict`。
+
+- **技能包执行(P3-C)**:run 绑定了**有 entrypoint** 的上传包时,execute 的工具
+  注册表额外装配 `skill_run`(`services/skill_runner.py`;写操作,必须过确认闸
+  §6.2)。需要 `SKILL_EXECUTION_ENABLED=true` **且** `SANDBOX_ENABLED=true`
+  与 `WORKSPACE_ENABLED=true`(缺任一不暴露,宁可不给能力也不在本进程跑上传代码):
+  - 一次性沙箱(`kind=skill`,镜像按快照 runtime 取 `SKILL_PYTHON_IMAGE/
+    SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
+    `skill_network`,默认 deny);
+  - 取包后**校验 sha256 与 run 快照一致**,再写 zip + 解包脚本,在沙箱内用
+    `python3` 解包——路径穿越/绝对路径/符号链接/文件数/解压总量按上传同口径
+    **再校验一遍**(双保险);entrypoint 的 argv 来自快照,运行时决定解释器
+    (`python→python3`/`node→node`,首段已是解释器则原样用),cwd=`/workspace/skill`,
+    stdin 传 `{"input","goal","title"}` 的 JSON,超时取快照与
+    `SKILL_EXEC_TIMEOUT_SECONDS` 的小值 +30;
+  - 产物读 `/workspace/output`:最多 `SKILL_MAX_OUTPUT_FILES` 个,单文件正文
+    上限 `SKILL_MAX_OUTPUT_BYTES`(超限/二进制只报元数据),`stdout`/`stderr` 截断后回喂模型;
+  - 文本产物登记为 run 交付物(`run_artifacts` 每 run 一件:单文件 title=相对
+    路径,多文件合并 Markdown 索引);登记失败只写进 summary,不让工具失败;
+    交付阶段覆盖成最终成品(每次执行**必销毁**沙箱);
+  - chat 路径没有 `run_id`,`skill_run` 不会出现在对话直答的工具列表里
+    (能力边界由 ToolContext 决定)。
+
 后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`

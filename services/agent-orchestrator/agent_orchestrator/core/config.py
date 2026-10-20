@@ -101,6 +101,16 @@ class Settings(BaseAppSettings):
     sandbox_enabled: bool = False
     sandbox_service_url: str = "http://127.0.0.1:8005"
     sandbox_timeout_seconds: float = 60.0
+    # 上传技能包执行(P3-C:skill_run 工具在沙箱内跑 entrypoint)。
+    # 需要 sandbox_enabled + workspace_enabled 同时为真;sandbox 内网络默认 deny,
+    # 由 run 快照里的 skill_network 决定(上传校验只允许 deny/public)。
+    skill_execution_enabled: bool = False
+    skill_python_image: str = "python"
+    skill_node_image: str = "node"
+    skill_sandbox_ttl_seconds: int = 900
+    skill_exec_timeout_seconds: int = 600
+    skill_max_output_files: int = 10
+    skill_max_output_bytes: int = 100_000
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

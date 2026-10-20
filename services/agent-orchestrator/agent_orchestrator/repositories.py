@@ -24,6 +24,7 @@ from agent_orchestrator.models.runs import (
     RunArtifact,
     RunEvent,
 )
+from agent_orchestrator.models.skills import SkillPackage, SkillVersion
 
 QUEUED = "queued"
 CONSUMED = "consumed"
@@ -347,6 +348,11 @@ class ArtifactRepository(TenantRepository[RunArtifact]):
     not_found_message = "交付物不存在"
     id_detail_key = "artifact_id"
 
+    async def find_for_run(self, tenant_id: str, run_id: str) -> RunArtifact | None:
+        """按 run 取交付物(每个 run 至多一件);没有返回 None。"""
+        found = await self.list_scoped(tenant_id, RunArtifact.run_id == run_id)
+        return found[0] if found else None
+
     async def require_for_run(self, tenant_id: str, run_id: str) -> RunArtifact:
         """按 run 取交付物(每个 run 至多一件);未交付 → 404。
 
@@ -354,11 +360,68 @@ class ArtifactRepository(TenantRepository[RunArtifact]):
         """
         from common.errors import NotFoundError
 
-        found = await self.list_scoped(tenant_id, RunArtifact.run_id == run_id)
-        if not found:
+        found = await self.find_for_run(tenant_id, run_id)
+        if found is None:
             raise NotFoundError(
                 "artifact.not_found",
                 "交付物不存在",
                 details={"run_id": run_id},
             )
-        return found[0]
+        return found
+
+
+class SkillPackageRepository(TenantRepository[SkillPackage]):
+    """上传技能包(租户内 slug 唯一;跨租户一律 404)。"""
+
+    model = SkillPackage
+    not_found_code = "skill.package_not_found"
+    not_found_message = "技能包不存在"
+    id_detail_key = "package_id"
+
+    async def find_by_slug(self, tenant_id: str, slug: str) -> SkillPackage | None:
+        return await self.session.scalar(
+            self.scoped(tenant_id, SkillPackage.slug == slug)
+        )
+
+    async def list_for_tenant(self, tenant_id: str) -> list[SkillPackage]:
+        """租户内包列表:最近上传/更新在前(id 兜底保证顺序确定)。"""
+        return await self.list_scoped(
+            tenant_id,
+            order_by=[SkillPackage.updated_at.desc(), SkillPackage.id.desc()],
+        )
+
+
+class SkillVersionRepository(TenantRepository[SkillVersion]):
+    """技能包版本:创建后不可变(包内容在对象存储)。"""
+
+    model = SkillVersion
+    not_found_code = "skill.package_not_found"
+    not_found_message = "技能包版本不存在"
+    id_detail_key = "version_id"
+
+    async def list_for_package(
+        self, tenant_id: str, package_id: str
+    ) -> list[SkillVersion]:
+        """包内全部版本:最新在前(列表首项即 latest)。"""
+        return await self.list_scoped(
+            tenant_id,
+            SkillVersion.package_id == package_id,
+            order_by=[SkillVersion.created_at.desc(), SkillVersion.id.desc()],
+        )
+
+    async def find_version(
+        self, tenant_id: str, package_id: str, version: str
+    ) -> SkillVersion | None:
+        return await self.session.scalar(
+            self.scoped(
+                tenant_id,
+                SkillVersion.package_id == package_id,
+                SkillVersion.version == version,
+            )
+        )
+
+    async def latest_for_package(
+        self, tenant_id: str, package_id: str
+    ) -> SkillVersion | None:
+        versions = await self.list_for_package(tenant_id, package_id)
+        return versions[0] if versions else None

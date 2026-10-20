@@ -37,9 +37,9 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
-from agent_orchestrator.schemas.skills import SkillManifest
 from agent_orchestrator.services import artifacts, history
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.tool_context import (
     ToolContext,
     bind_tool_context,
@@ -152,8 +152,15 @@ async def _persist_artifact(
 
     workspace 启用时**同时**把交付物镜像到工作区(§7 归属方向):
     镜像失败不丢交付物,但会把原因如实记进事件 payload。
+
+    P3-C 的 skill_run 可能在 execute 阶段已登记过技能输出(同一 run 的唯一
+    交付物行):这里取到既有行则原地覆盖为最终成品,避免撞 (run_id) 唯一
+    约束把一条本该 completed 的 run 打成 failed。
     """
-    record = await artifacts.persist_artifact(session, run, artifact, store)
+    existing = await ArtifactRepository(session).find_for_run(run.tenant_id, run.id)
+    record = await artifacts.persist_artifact(
+        session, run, artifact, store, existing=existing
+    )
     payload: dict[str, Any] = {
         "artifact_id": record.id,
         "kind": record.kind,
@@ -263,8 +270,14 @@ async def create_run(
     tenant_id: str,
     data: RunCreate,
     *,
-    skill: SkillManifest | None = None,
+    skill: SkillDefinition | None = None,
 ) -> Run:
+    """建 run;skill 定义(内置或上传包)在此**冻结**为快照列。
+
+    上传包额外冻结 version_id/object_key/sha256 与执行字段——之后用户上传
+    新版本不影响本 run(P3-C 的 skill_run 按 run 上的快照取包执行)。
+    """
+    manifest = skill.manifest if skill else None
     run = Run(
         tenant_id=tenant_id,
         title=data.title,
@@ -272,9 +285,16 @@ async def create_run(
         status=RunStatus.PENDING.value,
         acceptance_criteria=data.acceptance_criteria,
         conversation_id=data.conversation_id,
-        skill_id=skill.id if skill else data.skill_id,
-        skill_system_prompt=skill.system_prompt if skill else None,
-        skill_tools=list(skill.tools) if skill else None,
+        skill_id=manifest.id if manifest else data.skill_id,
+        skill_system_prompt=manifest.system_prompt if manifest else None,
+        skill_tools=list(manifest.tools) if manifest else None,
+        skill_version_id=skill.version_id if skill else None,
+        skill_object_key=skill.object_key if skill else None,
+        skill_sha256=skill.sha256 if skill else None,
+        skill_entrypoint=list(skill.entrypoint) if skill and skill.entrypoint else None,
+        skill_runtime=skill.runtime if skill else None,
+        skill_network=skill.network if skill else None,
+        skill_timeout_seconds=skill.timeout_seconds if skill else None,
     )
     await RunRepository(session).add(run)
     await append_event(
@@ -312,6 +332,18 @@ async def _invoke_plan(
         state["skill_system_prompt"] = run.skill_system_prompt
     if run.skill_tools is not None:
         state["allowed_tools"] = list(run.skill_tools)
+    if run.skill_version_id:
+        # 上传技能包快照(P3):P3-C 的 skill_run 工具据此取包/执行;
+        # 不带 package_id(run 行按契约只冻结 version_id 与执行字段)。
+        state["skill_package"] = {
+            "version_id": run.skill_version_id,
+            "object_key": run.skill_object_key,
+            "sha256": run.skill_sha256,
+            "entrypoint": list(run.skill_entrypoint or []),
+            "runtime": run.skill_runtime,
+            "network": run.skill_network,
+            "timeout_seconds": run.skill_timeout_seconds,
+        }
     if run.conversation_id:
         # 对话触发的 run:带上多轮上下文,模型才能理解"接着刚才的做"
         state["conversation_history"] = await _conversation_history(session, run)

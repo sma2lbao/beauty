@@ -14,6 +14,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from database.base import Base
+from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -24,7 +25,7 @@ from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
 )
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
-from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
+from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
 
 config = context.config
 if config.config_file_name is not None:

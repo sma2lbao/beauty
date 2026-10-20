@@ -41,6 +41,7 @@ from agent_orchestrator.schemas.runs import (
 )
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services import skill_packages
 from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
@@ -69,12 +70,13 @@ async def create_run(
 ) -> RunRead:
     skill = None
     if body.skill_id:
-        skill = skills.get(body.skill_id)
+        # 内置优先,其次租户上传包的最新版本;两者都没有 → 404(不建半残 run)
+        skill = await skill_packages.resolve_skill(
+            session, tenant_id, body.skill_id, skills
+        )
         if skill is None:
             raise NotFoundError("skill.not_found", "Skill 不存在")
-    run = await runs_service.create_run(
-        session, tenant_id, body, skill=skill
-    )
+    run = await runs_service.create_run(session, tenant_id, body, skill=skill)
     if settings.jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", run.id)
     return RunRead.model_validate(run)

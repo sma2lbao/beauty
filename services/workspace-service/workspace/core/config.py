@@ -18,6 +18,8 @@ class Settings(BaseAppSettings):
     # 交付物内容存储(§7):database = DB 列;filesystem = 本地对象目录
     artifact_store: str = "filesystem"
     artifact_root: str = "./.artifacts"
+    # 通用二进制对象(P3:skill 包 zip)单对象字节上限;超限返回 400 object.too_large
+    object_max_bytes: int = 20 * 1024 * 1024
     default_workspace_name: str = "默认工作区"
     # 鉴权(架构 §10):默认开启,与其他服务同一套 token→租户约定(自建 IdP)
     auth_enabled: bool = True

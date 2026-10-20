@@ -56,10 +56,35 @@ async def persist_artifact(
     run: Run,
     artifact: dict,
     store: ArtifactStore | None,
+    *,
+    existing: RunArtifact | None = None,
 ) -> RunArtifact:
-    """写交付物:store 为 None 写 DB 列,否则写对象存储并留引用。"""
+    """写交付物:store 为 None 写 DB 列,否则写对象存储并留引用。
+
+    existing 非空时**原地覆盖**(run_artifacts 每 run 一件):P3-C 的 skill_run
+    在 execute 阶段先登记技能输出,交付阶段再覆盖为最终交付物——两条写入路径
+    都走这里,不会撞 (run_id) 唯一约束,也不会因已有行把 run 卡成 failed。
+    """
     text = str(artifact.get("content") or "")
     data = text.encode("utf-8")
+    if existing is not None:
+        existing.kind = str(artifact.get("kind") or "markdown")
+        existing.title = str(artifact.get("title") or run.title)
+        existing.size_bytes = len(data)
+        if store is not None:
+            key = existing.object_key or build_artifact_key(
+                run.tenant_id, run.id, existing.id, suffix=SUFFIX
+            )
+            await store.put(key, data, content_type=CONTENT_TYPE)
+            existing.storage = FILESYSTEM_STORE
+            existing.object_key = key
+            existing.content = None
+        else:
+            existing.storage = DATABASE_STORE
+            existing.object_key = None
+            existing.content = text
+        await session.flush()
+        return existing
     object_id = uuid4().hex
     row = RunArtifact(
         id=object_id,

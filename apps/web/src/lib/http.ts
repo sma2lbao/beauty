@@ -33,21 +33,33 @@ export async function jsonHeaders(): Promise<Record<string, string>> {
   return { 'Content-Type': 'application/json', ...(await authHeaders()) };
 }
 
+/** 请求体是 FormData(文件上传):Content-Type 必须由浏览器带 boundary 生成。 */
+function isFormDataBody(body: BodyInit | null | undefined): boolean {
+  return typeof FormData !== 'undefined' && body instanceof FormData;
+}
+
 /**
  * 发一个 JSON 请求:非 2xx 抛 `ApiError`;204 返回 undefined。
  * `path` 是服务内路径(如 `/v1/knowledge/documents`),`base` 由调用方决定。
+ *
+ * 请求体是 `FormData` 时不写 Content-Type,交给浏览器生成
+ * `multipart/form-data; boundary=…`;鉴权头/CSRF/401 续期逻辑完全一致。
  */
 export async function requestJson<T>(
   base: string,
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const send = async () =>
-    fetch(`${base}${path}`, {
+  const send = async () => {
+    const headers = isFormDataBody(init?.body)
+      ? await authHeaders()
+      : await jsonHeaders();
+    return fetch(`${base}${path}`, {
       ...init,
       credentials: 'include',
-      headers: { ...(await jsonHeaders()), ...init?.headers },
+      headers: { ...headers, ...init?.headers },
     });
+  };
   let response = await send();
   if (response.status === 401 && (await refreshAccessToken())) {
     // 续期成功:换新 access token 重试一次;仍 401 则按错误契约抛出

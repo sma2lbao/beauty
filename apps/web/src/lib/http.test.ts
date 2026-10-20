@@ -46,12 +46,16 @@ describe('requestJson', () => {
   it('非 2xx:抛 ApiError,携带后端错误契约', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        jsonResponse({ code: 'run.not_found', message: 'run 不存在' }, 404),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ code: 'run.not_found', message: 'run 不存在' }, 404),
+        ),
     );
 
-    const error = await requestJson('', '/v1/x').catch((cause: unknown) => cause);
+    const error = await requestJson('', '/v1/x').catch(
+      (cause: unknown) => cause,
+    );
     expect(error).toBeInstanceOf(ApiError);
     expect(isUnauthorized(error)).toBe(false);
     expect((error as ApiError).code).toBe('run.not_found');
@@ -68,7 +72,9 @@ describe('requestJson', () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     vi.stubGlobal('fetch', fetchSpy);
 
-    expect(await requestJson<{ ok: boolean }>('', '/v1/x')).toEqual({ ok: true });
+    expect(await requestJson<{ ok: boolean }>('', '/v1/x')).toEqual({
+      ok: true,
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(1);
   });
@@ -82,7 +88,9 @@ describe('requestJson', () => {
       );
     vi.stubGlobal('fetch', fetchSpy);
 
-    const error = await requestJson('', '/v1/x').catch((cause: unknown) => cause);
+    const error = await requestJson('', '/v1/x').catch(
+      (cause: unknown) => cause,
+    );
     expect(isUnauthorized(error)).toBe(true);
     expect((error as ApiError).status).toBe(401);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -97,10 +105,35 @@ describe('requestJson', () => {
       );
     vi.stubGlobal('fetch', fetchSpy);
 
-    const error = await requestJson('', '/v1/x').catch((cause: unknown) => cause);
+    const error = await requestJson('', '/v1/x').catch(
+      (cause: unknown) => cause,
+    );
     expect(isUnauthorized(error)).toBe(true);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('FormData 请求体:不设置 application/json Content-Type', async () => {
+    mocks.authHeaders.mockResolvedValue({ Authorization: 'Bearer token' });
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({ id: 'p1' }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const form = new FormData();
+    form.append('file', new File(['# skill'], 'demo.zip'));
+    await requestJson('', '/v1/skills/packages', {
+      method: 'POST',
+      body: form,
+    });
+
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe('/v1/skills/packages');
+    expect(init.body).toBe(form);
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer token');
+    expect(headers['Content-Type']).toBeUndefined();
   });
 
   it('非 401 错误不触发续期', async () => {

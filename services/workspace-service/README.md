@@ -20,6 +20,31 @@
   (键 `<租户>/<工作区>/<交付物>.md`),行里只留 `object_key`/`size_bytes`;
 - 换 S3/COS 只需实现该协议,读端契约不变。
 
+## 对象存储 API(P3:skill 包)
+
+通用二进制对象接口,供 agent-orchestrator 存用户上传的 skill 包(zip):内容直接落
+`ArtifactStore`,**不登记 `workspace_artifacts` 行**(本 API 没有 DB 表),
+因此与交付物元数据互不影响。
+
+- `POST /v1/objects`(201):body `{filename?, content_type?, content_base64}`
+  (默认 `application/octet-stream`),返回 `{key, size_bytes, sha256}`。
+  `filename` **只用于安全后缀**(`.zip`/`.skill` 等,默认空),不参与路径;
+  key 形如 `<租户>/objects/<uuid4hex><后缀>`;
+- `GET /v1/objects?key=`:返回 `{key, content_base64, size_bytes, sha256}`;
+- `DELETE /v1/objects?key=`(204):幂等,只删对象,不删任何 DB 行。
+
+错误码:
+
+| 场景                                          | 错误码                   | HTTP |
+| --------------------------------------------- | ------------------------ | ---- |
+| Base64 非法                                   | `object.content_invalid` | 400  |
+| 超过 `OBJECT_MAX_BYTES`                       | `object.too_large`       | 400  |
+| key 不存在或不属于当前租户                    | `object.not_found`       | 404  |
+| 对象存储后端未配置(`ARTIFACT_STORE=database`) | `object.store_missing`   | 503  |
+
+跨租户读取/删除一律 404(与不存在不可区分);`size_bytes`/`sha256` 均对解码后的
+原始字节计算。配置:`WORKSPACE__OBJECT_MAX_BYTES`(默认 `20971520`,即 20MB)。
+
 ## 沙箱(§7 阶段 B / P1)
 
 执行底座是 [microsandbox](https://github.com/superradcompany/microsandbox)(microVM

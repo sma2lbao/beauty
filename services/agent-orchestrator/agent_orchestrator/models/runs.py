@@ -35,11 +35,18 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     # 具体含义由 status 决定,故不叫 blocked_reason
     status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Skill 快照(M1):创建时冻结 manifest,后续技能版本变更不影响已建 run
-    skill_id: Mapped[str | None] = mapped_column(
-        String(80), index=True, nullable=True
-    )
+    skill_id: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
     skill_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     skill_tools: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # 上传技能包快照(P3):冻结版本与执行字段,后续上传新版本不影响本 run。
+    # 内置技能只填上面三列;上传包的 skill_id 是包 slug,版本/对象引用在下面。
+    skill_version_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    skill_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    skill_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    skill_entrypoint: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    skill_runtime: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    skill_network: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    skill_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 重试血缘:本 run 由哪个 failed run 派生(§6.2 failed 的重试语义是新起 run)
     parent_run_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True

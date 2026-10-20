@@ -85,7 +85,7 @@ orchestrator(code_tools 改造)
 | 阶段 | 状态 | 内容 |
 | --- | --- | --- |
 | P2 | ✅ 已落地（2026-10-20） | stdio MCP：`MCPServer` 增加 transport/command/args/env/runtime/image、沙箱内启动与 JSON-RPC 代理、测试端点、Web 表单 |
-| P3 | 待做 | 用户上传 SKILL.md 包：对象存储 + 版本表 + 上传校验 + run 固定版本 + 沙箱执行 + 交付物回传 |
+| P3 | ✅ 已落地（2026-10-20） | 用户上传 SKILL.md 包：对象存储 + 版本表 + 上传校验 + run 固定版本 + 沙箱执行 + 交付物回传 |
 | P4 | 待做 | 出网 allowlist/凭据注入、配额与 `sandboxMs` 计量、审计事件、快照/预热、E2B/Fly provider |
 
 ### P2 实施记录（stdio MCP）
@@ -110,6 +110,29 @@ orchestrator(code_tools 改造)
   P2 出网 `public` 走 microsandbox `NetworkProfile.PUBLIC`（**只放公网，不含宿主/私网**），
   但仍是"任意公网"而非 allowlist，**P4 前不要向公网租户开放**；probe 只能杀直接子进程，
   孙进程靠沙箱 TTL 兜底。
+
+### P3 实施记录（用户上传技能包）
+
+- **存储**：workspace-service 新增通用对象 API（`POST/GET/DELETE /v1/objects`，
+  base64 + sha256，key 租户前缀强校验，默认 20MB 上限）；zip 本体进对象存储，
+  orchestrator 的 `skill_packages`/`skill_versions` 只存引用 + manifest/SKILL.md 快照。
+- **上传/校验**（`services/skill_packages.py`，纯 stdlib）：20MB / 500 文件 / 解压 50MB、
+  路径穿越/绝对路径/符号链接/NUL/重复路径全部拒绝；允许单一顶层目录；`skill.json`
+  可选（entrypoint/runtime/network/timeout/tools）；有 entrypoint 自动补 `skill_run` 工具。
+- **版本化**：租户内 slug + version 不可变；新版本不影响已建 run；内置技能 id 冲突 409。
+- **run 快照**：runs 新增 `skill_version_id/object_key/sha256/entrypoint/runtime/network/
+  timeout_seconds`（迁移 `e4c8b1f7a2d9`），创建 run 时冻结，后续上传不改变语义。
+- **执行**（`services/skill_runner.py`）：`skill_run` 工具（确认闸）→ 一次性沙箱
+  （kind=skill）→ 取包并校验 sha256 → 沙箱内 `python3` 解包（再校验路径/符号链接/规模）→
+  执行 entrypoint（cwd=/workspace/skill，stdin 传 input/goal/title）→ 读 `/workspace/output`
+  文本产物 → 登记 run 交付物 → finally 销毁沙箱；chat 路径无 run_id 不暴露该工具。
+- **Web**：Skills 页支持上传 zip、来源/含脚本徽标、版本展开与删除；FormData 上传。
+- **测试**：workspace-service **60 passed**、orchestrator **264 passed**、web **226 passed**；
+  alembic head=`e4c8b1f7a2d9` 无漂移；另做了 orchestrator→workspace 对象 API 的
+  ASGI 真实契约联调（上传→合并列表→创建 run→快照/对象 sha 校验）。
+- **已知边界**：node runtime 的解包/产物清单脚本仍是 Python，要求镜像含 `python3`；
+  run_artifacts 每 run 一件（文本产物合并登记，交付阶段覆盖）；
+  真实 microVM 未在本机验证（环境限制）；P4 需补 egress allowlist/凭据/计量。
 
 **风险**：microsandbox 云侧仍 beta；本地 runtime 依赖宿主虚拟化能力；镜像拉取与
 `npx` 安装需要可控出网——P4 前必须把 egress 策略与包校验补上。

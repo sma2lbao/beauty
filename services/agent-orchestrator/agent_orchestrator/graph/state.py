@@ -25,6 +25,9 @@ class RunGraphState(TypedDict, total=False):
     conversation_history: list[dict[str, str]]  # 对话多轮上下文(services 层建图时装载)
     skill_id: str  # Skill 绑定(run 创建时快照)
     skill_system_prompt: str  # Skill 的系统提示词
+    # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/
+    # network/timeout_seconds;内置技能无此项
+    skill_package: dict[str, Any]
     allowed_tools: list[str]  # Skill 工具白名单;缺省=不限制
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
