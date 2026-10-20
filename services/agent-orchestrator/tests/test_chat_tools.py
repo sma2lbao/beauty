@@ -9,11 +9,10 @@ import json
 
 from fastapi.testclient import TestClient
 
-from agent_orchestrator.services.llm import LLMReply, ToolCall
-from tests.conftest import TENANT, FakeConnector, FakeLLM, _settings, verifier
-
 from agent_orchestrator.main import create_app
+from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
+from tests.conftest import TENANT, FakeConnector, FakeLLM, _settings, verifier
 
 
 def _tool_client(tmp_path, fake: FakeLLM, connector: FakeConnector) -> TestClient:

@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter
 
-from workspace.api.v1 import artifacts, workspaces
+from workspace.api.v1 import artifacts, sandboxes, workspaces
 
 api_router = APIRouter()
 api_router.include_router(workspaces.router)
 api_router.include_router(artifacts.router)
+api_router.include_router(sandboxes.router)

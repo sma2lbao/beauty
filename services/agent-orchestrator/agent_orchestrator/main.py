@@ -50,6 +50,7 @@ from agent_orchestrator.services.outbox import (
     record_run_event,
     register_consumers,
 )
+from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tools import ToolRegistry, build_tools
@@ -185,6 +186,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     app.state.workspace_client = workspace
 
+    # 沙箱客户端装配(P1:接入 workspace-service 的内部 /v1/sandboxes):
+    # 测试注入优先;未开启时不起客户端、不碰网络——P1 不新增工具,
+    # 也不改变任何既有行为(引擎与生命周期在 workspace-service 侧)
+    sandbox: Sandbox | None = app.state.sandbox_client
+    owns_sandbox = False
+    if sandbox is None and settings.sandbox_enabled:
+        sandbox = SandboxClient(
+            settings.sandbox_service_url,
+            settings.sandbox_timeout_seconds,
+            token_provider=token_provider,
+        )
+        owns_sandbox = True
+    app.state.sandbox_client = sandbox
+
     # 交付物存储装配(§7 阶段 B):测试注入优先;否则按配置选后端
     # (database 模式为 None——内容留在 run_artifacts.content 列)
     store: ArtifactStore | None = app.state.artifact_store
@@ -288,6 +303,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await connector.aclose()
         if knowledge is not None:
             await knowledge.aclose()
+        if owns_sandbox and sandbox is not None:
+            await sandbox.aclose()
         await broker.aclose()
         await factory.engine.dispose()
 
@@ -299,11 +316,12 @@ def create_app(
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
     workspace_client: Workspace | None = None,
+    sandbox_client: Sandbox | None = None,
     event_bus: EventBus | None = None,
     api_key_verifier: ApiKeyVerifier | None = None,
     oauth_introspector: OAuthTokenIntrospector | None = None,
 ) -> FastAPI:
-    """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store。"""
+    """测试注入:llm_client、toolkit_factory、token_verifier、artifact_store 等。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
     app.state.llm_client = llm_client
@@ -311,6 +329,7 @@ def create_app(
     app.state.token_verifier = token_verifier
     app.state.artifact_store = artifact_store
     app.state.workspace_client = workspace_client
+    app.state.sandbox_client = sandbox_client
     app.state.event_bus = event_bus
     app.state.api_key_verifier = api_key_verifier
     app.state.oauth_introspector = oauth_introspector

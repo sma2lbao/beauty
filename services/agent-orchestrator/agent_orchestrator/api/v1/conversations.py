@@ -347,7 +347,8 @@ async def stream_message(
     skills: SkillDep,
     toolkit_factory: ToolkitFactory,
 ) -> StreamingResponse:
-    """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;失败以 error 帧收尾。
+    """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;
+    失败以 error 帧收尾。
 
     模型没开且显式要 chat 时在开流前就 409(否则只能发一帧错误,状态码已是 200)。
     """

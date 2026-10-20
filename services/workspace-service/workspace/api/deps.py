@@ -7,12 +7,13 @@ from typing import Annotated
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
-from common.errors import UnauthorizedError
+from common.errors import UnauthorizedError, UpstreamError
 from database.session import session_scope
 from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workspace.core.config import Settings
+from workspace.services.sandbox_provider import SandboxProvider
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -28,6 +29,16 @@ def get_settings(request: Request) -> Settings:
 def get_artifact_store(request: Request) -> ArtifactStore | None:
     """lifespan 按配置装配的存储;database 模式为 None(内容随行)。"""
     return request.app.state.artifact_store
+
+
+def get_sandbox_provider(request: Request) -> SandboxProvider:
+    """lifespan 装配的沙箱 provider(测试注入优先)。"""
+    provider: SandboxProvider | None = getattr(
+        request.app.state, "sandbox_provider", None
+    )
+    if provider is None:
+        raise UpstreamError("sandbox.provider_unavailable", "沙箱 provider 尚未装配")
+    return provider
 
 
 async def get_tenant_id(

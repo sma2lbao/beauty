@@ -120,12 +120,14 @@
 
 ### M1 Coding（受限，4–6 周）
 
-> 前置：**M1-00 沙箱替代方案拍板**。未拍板前只交付「只读代码分析 + 补丁建议」，不承诺执行/终端/预览。
+> 前置：**M1-00 沙箱替代方案拍板**（2026-10-20 已拍板：microsandbox；P1 沙箱底座已落地，见
+> `docs/gap-2026-10/04-sandbox-selfhost.md` 实施记录）。P2/P3 接入用户 skill 包与 stdio MCP 前，
+> 仍只交付「只读代码分析 + 补丁建议」，不承诺执行/终端/预览。
 
 | ID    | 任务                                                               | 端             | 验收标准                           | 依赖  | 规模 |
 | ----- | ------------------------------------------------------------------ | -------------- | ---------------------------------- | ----- | ---- |
-| M1-00 | 沙箱替代决策与 spike：Fly Machines / 自建 gVisor runner / 只读方案 | 架构           | 安全/成本/工期对比 + 决策记录      | —     | S    |
-| M1-01 | Sandbox 实现（按 M1-00 结论）                                      | Service        | 每次 run 隔离；超时回收；并发上限  | M1-00 | L    |
+| M1-00 | 沙箱替代决策与 spike：microsandbox / Fly Machines / 自建 gVisor runner | 架构           | 决策：microsandbox + provider 抽象 | —     | S    |
+| M1-01 | Sandbox 实现（按 M1-00 结论）                                      | Service        | P1 底座已完成；执行接入 P2/P3      | M1-00 | L    |
 | M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                            | Service        | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
 | M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                   | Service        | 按类型加载工具集；只读文件树       | M1-02 | M    |
 | M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                        | Service        | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |

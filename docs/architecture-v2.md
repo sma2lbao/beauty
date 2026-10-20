@@ -17,7 +17,7 @@
 | Redis             | **云 Redis，提供 URL**                                  | **本地 Redis**                               | ✅ 实施（限流/锁/短期缓存；不作为关键队列）              |
 | 对象存储          | **暂不引入**                                            | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）      |
 | 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**             | 同左（SQLite 下用文件/内存 worker）          | ✅ 实施；Temporal / Inngest **暂不做**                   |
-| 沙箱              | **暂不引入 E2B**                                        | 无                                           | ⏸ 暂缓；**coding agent 执行能力待替代方案（见 §11.1）** |
+| 沙箱              | **microsandbox provider（P1）**                         | 本地 microsandbox / fake provider            | ✅ P1 底座；执行能力 P2/P3（见 §11.1）                   |
 | 身份              | **沿用自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 实施；Logto **不用**                                  |
 | 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                             |
 | 支付              | **不做 Stripe**                                         | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续    |
@@ -53,7 +53,7 @@
 | 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）            |
 | 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 六业务服务跑 Fly/Cloud Run；BFF 为独立 FastAPI 服务      |
 | 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer |
-| 004 | Sandbox 用 E2B                           | ⏸ 暂缓                | 见 §11.1；coding 执行需先定替代                          |
+| 004 | Sandbox 用 microsandbox provider          | ✅ P1 底座            | 见 §11.1；stdio MCP/skill 执行 P2/P3                     |
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件                          |
 | 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录                              |
 | 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                       |
@@ -114,7 +114,7 @@ Browser
 | services/bff      | 容器        | BFF：认证、代理、下载、限流             | 新增（FastAPI；同域 `/api`）                                                        |
 | apps/site         | Vercel 静态 | Next.js 官网、文档、博客、Changelog     | 新增（静态导出/SEO）                                                                |
 | agent-runtime     | 容器        | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
-| sandbox adapter   | —           | E2B 适配                                | ⏸ 暂缓（见 §11.1）                                                                 |
+| sandbox adapter   | workspace-service 内 | microsandbox provider + 生命周期 | ✅ P1（见 §4.4；执行能力 P2/P3）                                                    |
 | llm-gateway       | 容器        | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
 | connector-service | 容器        | 邮箱/日历/文档连接器；OAuth、同步       | IMAP 先行；OAuth 双轨后续                                                           |
 | knowledge-service | 容器        | 摄取、检索、重排、引用、记忆            | 增加 rerank/citation/memory                                                         |
@@ -148,7 +148,7 @@ ToolSpec {
   name, description, inputSchema, outputSchema,
   scopes, risk: read | write | destructive,
   requiresApproval: auto | confirm | deny,
-  executor: connector | knowledge | workspace | sandbox?(暂缓) | mcp,
+  executor: connector | knowledge | workspace | sandbox?(P1 客户端已备) | mcp,
   cost: { tokens?, toolCalls?, sandboxMs? }
 }
 ```
@@ -173,11 +173,16 @@ Skill {
 
 首批：代码审查、仓库问答、补丁建议（**只读、不执行**，见 §11.1）；邮件摘要、回复草稿、分类去噪、邮件→周报、附件归档、日历排期。
 
-### 4.4 Sandbox（暂缓）
+### 4.4 Sandbox（P1 底座已落地，执行能力 P2/P3）
 
-- 本期不引入 E2B；**不提供**代码执行/终端/预览；
-- coding agent 先做**只读代码分析 + 补丁建议**（GitHub API 读文件，LLM 产出 patch，用户本地应用）；
-- 执行能力的替代方案与决策点见 §11.1。
+- **已落地（P1，2026-10-20）**：`workspace-service` 内的沙箱模块——`SandboxProvider` 抽象、
+  microsandbox 实现、`sandboxes` 实例表（租户/TTL/资源/状态）、生命周期 API
+  （create/exec/files/touch/destroy）、过期回收 job 与审计字段；`agent-orchestrator`
+  增加沙箱 HTTP 客户端（`sandbox_enabled` 默认关闭，不向模型暴露工具）。
+- **尚未落地**：用户上传 skill 包执行、stdio MCP 执行、出网 allowlist/凭据注入、
+  配额计量——分别排在 P2/P3，详见 `docs/gap-2026-10/04-sandbox-selfhost.md` 的实施记录。
+- **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱底座只在
+  内部/受控 run 中使用，未开放终端与预览。
 
 ---
 
@@ -274,7 +279,7 @@ packages/console   控制台组件（可选抽出）
 
 ### 8.2 MCP
 
-- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（email/calendar/docs/kb；沙箱工具待 §11.1）与 resources（artifacts/files）；租户隔离、权限策略、审计；
+- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（email/calendar/docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略、审计；
 - **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
 - **安全**：MCP 返回内容视为不可信数据；提示注入过滤；危险工具默认 confirm；凭证只存在服务端；
 - **市场**：后续 MCP server 目录 + 一键安装（M4）。
@@ -293,7 +298,7 @@ packages/console   控制台组件（可选抽出）
 - **日志**：结构化日志 + traceId（沿用 `common.logging`）；OTel/Langfuse 后置；
 - **产品分析**：PostHog 后置（可用 Sentry + 自建事件表过渡）；
 - **Evals**：golden dataset + grader；PR 门禁（M4）；
-- **安全**：沙箱暂缓 → 本期不允许用户代码执行；凭证加密；租户隔离测试；输入/输出审查后置；
+- **安全**：沙箱 P1 仅内部受控使用 → 本期不开放用户代码执行（P2/P3 再开）；凭证加密；租户隔离测试；输入/输出审查后置；
 - **审计**：run_events 即审计流水；导出后置。
 
 ---
@@ -380,14 +385,20 @@ REDIS_URL=                      # 留空 = 进程内降级
 
 ## 11. 暂缓项与影响（必须显式管理）
 
-### 11.1 E2B 沙箱暂缓 → coding agent 执行能力阻塞
+### 11.1 沙箱：microsandbox 路线（P1 已落地，执行能力 P2/P3）
 
-- **影响**：无法安全运行代码、终端、测试、预览；M1 的「执行类」任务不能交付。
-- **可选替代（需拍板，建议 M1 前决定）**：
-  1. **Fly Machines**（同 runtime 平台）每次 run 起一个 microVM，自建生命周期/文件/终端/快照；运维成本中等，隔离性较好；
-  2. **自建 runner**（云主机 + Docker/gVisor/Kata）做命令执行与文件系统；安全评审成本最高；
-  3. **只读代码分析 + 补丁建议**：不执行代码、不提供终端；能最快上线 coding 场景，但能力受限。
-- **当前默认**：先做方案 3；方案 1/2 作为 M1 决策项，未定前不承诺「可执行 coding agent」。
+- **决策（2026-10-20）**：引擎选 **microsandbox**（Apache-2.0，microVM，Python SDK），
+  自建的是 **provider 抽象 + 生命周期 + 租户配额**，不自建隔离内核；
+  备选 E2B / Fly Machines 通过同一 `SandboxProvider` 接口接入。
+- **P1 已交付**：`workspace-service` 沙箱模块（`sandboxes` 表、create/exec/files/touch/destroy、
+  过期回收、错误码与租户隔离）、orchestrator 沙箱 HTTP 客户端（默认关闭、不暴露工具）、
+  假 provider 单测 + 真实 SDK 适配测试。**测试零网络**；真实 microVM 需宿主可写 `MSB_HOME`
+  且允许 OCI registry 出网。
+- **仍未交付（P2/P3）**：用户上传 SKILL.md 包执行、stdio MCP 执行、出网 allowlist/凭据注入、
+  配额计量、Web 上传/注册 UI。在此之前**不对外承诺**终端、预览与任意代码执行；
+  coding agent 仍只提供**只读分析 + 补丁建议**。
+- **已知环境要求**：部署时 `WORKSPACE__SANDBOX_MSB_HOME` 指向可写目录；如需拉镜像，
+  沙箱宿主必须能访问 OCI registry（内网可配镜像仓库）。
 
 ### 11.2 Temporal/Inngest 暂缓
 

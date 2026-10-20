@@ -25,3 +25,19 @@ class Settings(BaseAppSettings):
     auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"
+    # 沙箱(§7 阶段 B / P1):provider=microsandbox 用真 microVM;
+    # provider=unavailable 供没有 runtime 的 dev 使用(调用即得到明确 502,不静默)
+    sandbox_provider: str = "microsandbox"
+    sandbox_default_image: str = "python"  # microsandbox 镜像别名
+    sandbox_default_ttl_seconds: int = 1800
+    sandbox_max_ttl_seconds: int = 7200
+    sandbox_default_cpus: float = 1.0
+    sandbox_default_memory_mb: int = 512
+    sandbox_network: str = "deny"  # deny|public,请求可覆盖
+    sandbox_exec_timeout_seconds: int = 60
+    sandbox_max_output_bytes: int = 262_144  # 单条 stdout/stderr 截断上限
+    sandbox_reaper_enabled: bool = True
+    sandbox_reaper_interval_seconds: int = 60
+    # microsandbox runtime home(空 = 用 SDK 默认 ~/.microsandbox);
+    # 部署时必须指向可写目录,且 runtime 需要能访问 OCI registry
+    sandbox_msb_home: str = ""

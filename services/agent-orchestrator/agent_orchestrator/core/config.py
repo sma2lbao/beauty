@@ -76,6 +76,11 @@ class Settings(BaseAppSettings):
     workspace_enabled: bool = False
     workspace_service_url: str = "http://127.0.0.1:8005"
     workspace_timeout_seconds: float = 30.0
+    # 沙箱(接入 workspace-service 内部 /v1/sandboxes;P1 仅基础设施,
+    # 不向模型暴露工具)。enabled=false 时不起客户端,行为与之前完全一致
+    sandbox_enabled: bool = False
+    sandbox_service_url: str = "http://127.0.0.1:8005"
+    sandbox_timeout_seconds: float = 60.0
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

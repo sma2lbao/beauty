@@ -2303,6 +2303,18 @@ wheels = [
 ]
 
 [[package]]
+name = "microsandbox"
+version = "0.7.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/d0/a738e7092da54b67bc7b1b7572d822e035d1a312deeeb61be348a5f039c6/microsandbox-0.7.8-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:456e10334a0d20c21a1731d8fb1fc8837508b5e397d08ebf17e83bc69d65e075", size = 45555766, upload-time = "2026-10-09T16:58:22.905Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/59/98c3cb6c1d94d38bb322fcbb26ce12c7499a2103b68aa928b7ef685b00d2/microsandbox-0.7.8-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:74a151a7748dc34ac806fe4a17640d6334201201f371d6b585af81351629d53c", size = 48300627, upload-time = "2026-10-09T16:58:28.072Z" },
+    { url = "https://files.pythonhosted.org/packages/93/47/54b66fc7b5fdbb510a55a5ed7f095413e645374f22246095caa2a9790048/microsandbox-0.7.8-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b7a34876693785a664c864b1920bf413d78f3503a74ca39ea06a551c42fa5b62", size = 46229772, upload-time = "2026-10-09T16:58:32.366Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/c1/4dfe280531c584a416bf5c0e199d91fe6cd08197a7407c8ea10fb3809bf0/microsandbox-0.7.8-cp310-abi3-win_amd64.whl", hash = "sha256:88b93927ab5ba94bec43d0fde3fbe7a263646a602a6b6f17350c6c66ef89320d", size = 43192980, upload-time = "2026-10-09T16:58:37.054Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/79/0bcbcaf4f552810ad0cbc534ef45e2d0b42ee88b1cd6cb6964e5d21ee704/microsandbox-0.7.8-cp310-abi3-win_arm64.whl", hash = "sha256:64a9151bba37c4314d62b850dc4d5d2be27ee675c170e322bde4db121ab54509", size = 45530732, upload-time = "2026-10-09T16:58:41.193Z" },
+]
+
+[[package]]
 name = "multidict"
 version = "6.9.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4100,6 +4112,7 @@ dependencies = [
     { name = "common" },
     { name = "database" },
     { name = "fastapi" },
+    { name = "microsandbox" },
     { name = "uvicorn" },
 ]
 
@@ -4117,6 +4130,7 @@ requires-dist = [
     { name = "common", editable = "packages/common" },
     { name = "database", editable = "packages/database" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "microsandbox", specifier = ">=0.7.8" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]
 

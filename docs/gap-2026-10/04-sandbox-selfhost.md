@@ -52,3 +52,41 @@ orchestrator(code_tools 改造)
 - Firecracker 需 KVM/嵌套虚拟化，目标部署环境（Fly VM 内）是否可用需单独验证。
 
 **一句话**：沙箱**服务**应当自建（provider 抽象 + 生命周期 + 租户配额是业务资产）；沙箱**引擎**用开源（首选 microsandbox 或 E2B infra，容器栈可选 gVisor），不要自己维护 microVM 基础设施。
+
+---
+
+## 2026-10-20 实施记录（沙箱 P1：microsandbox 路线）
+
+> 决策：引擎先 **microsandbox**（0.7.8，Python SDK，Apache-2.0，microVM）；托管 HTTP MCP 暂留
+> orchestrator + SSRF 加固；skill 兼容 SKILL.md 包；沙箱按对话级常驻（TTL 滑动）；允许
+> 沙箱内 `npx`/`uvx` 联网安装（后续用出网 allowlist 收口）。
+
+**P1 已交付（本次）**
+
+- `services/workspace-service` 新增沙箱模块：
+  - `SandboxProvider` 协议 + `MicrosandboxProvider`（detached 创建、按名重连执行、
+    `Network.none/allow_all`、cpus int / memory MiB、`max_duration/idle_timeout` TTL 兜底、
+    输出截断、SDK 异常统一收口为 `UpstreamError`）+ `UnavailableSandboxProvider` 工厂；
+  - `sandboxes` 表（tenant/name 唯一/kind/provider/image/cpus/memory/network/status/
+    expires_at/last_used_at/last_error/meta）+ alembic 迁移 `c4d8e6f2a9b1`；
+  - 内部 API：`POST /v1/sandboxes`、`GET /{id}`、`POST /{id}/exec`、`PUT/GET /{id}/files`、
+    `POST /{id}/touch`、`DELETE /{id}`；`/workspace` 路径白名单（拒绝 `..` 与 NUL）；
+  - 生命周期：创建先落库、失败保留 failed 记录；exec 前校验状态/过期；成功滑动续期；
+    reaper 后台任务回收过期实例（失败留 `last_error`，不阻塞其他实例）。
+  - 测试：Fake provider（零网络）+ 假 SDK 适配测试，共 49 passed；`alembic check` 无漂移。
+- `services/agent-orchestrator` 新增 `SandboxClient`（create/get/exec/write_file/read_file/
+  touch/destroy），`sandbox_enabled` 默认关闭，P1 不向模型暴露工具；12 passed。
+- 环境要求：`WORKSPACE__SANDBOX_MSB_HOME` 指向可写目录（默认 `~/.microsandbox` 在受限
+  容器/沙箱里不可写）；拉镜像需要 OCI registry 出网。当前开发机因 DSH 文件/网络策略
+  只验证到 provider 适配层，未启动真实 microVM。
+
+**下一阶段**
+
+| 阶段 | 内容 |
+| --- | --- |
+| P2 | stdio MCP：`MCPServer` 增加 transport/command/args/env、沙箱内启动与 JSON-RPC 代理、测试端点、Web 表单 |
+| P3 | 用户上传 SKILL.md 包：对象存储 + 版本表 + 上传校验 + run 固定版本 + 沙箱执行 + 交付物回传 |
+| P4 | 出网 allowlist/凭据注入、配额与 `sandboxMs` 计量、审计事件、快照/预热、E2B/Fly provider |
+
+**风险**：microsandbox 云侧仍 beta；本地 runtime 依赖宿主虚拟化能力；镜像拉取与
+`npx` 安装需要可控出网——P4 前必须把 egress 策略与包校验补上。

@@ -292,6 +292,7 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
         "outbox_enabled": False,
         "knowledge_ingest_enabled": False,
         "workspace_enabled": False,
+        "sandbox_enabled": False,
         "jobs_enabled": False,
     }
     defaults.update(overrides)

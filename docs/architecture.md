@@ -29,7 +29,7 @@ apps/web (React 19, 画布+时间线+SSE)
                 │ HTTP/gRPC(起步) + 事件(Redis Streams)
 ┌───────────────┴───────────── 数据面 ────────────────────────────┐
 │ connector-service   邮箱适配器 + OAuth/授权码 token vault         │
-│ workspace-service   云沙箱(E2B/容器实例) + artifacts → COS      │
+│ workspace-service   沙箱生命周期(microsandbox provider) + artifacts │
 │ knowledge-service   摄取/检索(pgvector)/记忆                    │
 │ llm-gateway         模型+embedding 唯一出口(LiteLLM)            │
 └──────────────────────────────────────────────────────────────────┘
@@ -52,7 +52,7 @@ apps/web (React 19, 画布+时间线+SSE)
 | `agent-orchestrator` | 会话与运行编排:graph/checkpoint/SSE/技能注册表/简单定时(含 runner) | 8002 |
 | `llm-gateway` | 模型+embedding 路由(LiteLLM):区域路由/降级/预算/限流/缓存 | 8003 |
 | `connector-service` | 邮箱适配器、token vault、以 MCP 暴露工具 | 8004 |
-| `workspace-service` | 云沙箱生命周期(E2B/容器实例)、artifacts → 对象存储 | 8005 |
+| `workspace-service` | 沙箱生命周期(microsandbox provider,P1)、artifacts → 对象存储 | 8005 |
 | `knowledge-service` | 摄取(事件驱动)+ 检索(pgvector)+ 记忆(起步合体) | 8006 |
 
 gRPC 端口规划 `90xx` 与 HTTP 同号对应,引入时机见 §5。

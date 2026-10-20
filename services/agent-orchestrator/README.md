@@ -23,7 +23,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
   `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息、
   `POST /conversations/{id}/messages/stream` **SSE 流式**发消息
-  (`meta` → `delta`* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发);
+  (`meta` → `delta`\* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发);
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
   判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;
@@ -56,8 +56,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   - 日历(`CALENDAR_ENABLED`,ICS):`list_calendar_events`(不展开 RRULE);
   - 企业知识库(`KNOWLEDGE_ENABLED`):`search_knowledge`——经 knowledge-service
     向量检索,让模型"先查资料再回答"(`docs/architecture.md` §9);
-  **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
-  `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
+    **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
+    `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
 - 写操作确认闸(§6.2):写工具(requires_confirmation)**绝不直接执行**——
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
@@ -103,6 +103,10 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 交付物镜像(`WORKSPACE_ENABLED=true`):交付时**同时**推给 workspace-service
   (§7 里 artifacts 归属 workspace);镜像成败如实记进 `run.delivered.v1` 事件
   (`workspace_artifact_id` / `workspace_error`)——镜像失败不丢交付物。
+- 沙箱客户端(P1,仅基础设施,**未暴露工具**):`services/sandbox.py` 封装
+  workspace-service 内部 `/v1/sandboxes`(创建/查询/执行/文件读写/续期/销毁),
+  服务间 Bearer 来自 TokenBroker;`SANDBOX_ENABLED=true` 才装配,默认关闭,
+  不改变既有行为——stdio MCP / skill 包执行在 P2 接入。
 
 后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 

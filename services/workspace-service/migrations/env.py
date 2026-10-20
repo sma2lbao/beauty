@@ -18,7 +18,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from workspace.core.config import Settings
-from workspace.models import workspace as workspace_models  # noqa: F401  注册 ORM
+from workspace.models import (  # noqa: F401  注册 ORM
+    sandbox as sandbox_models,
+    workspace as workspace_models,
+)
 
 config = context.config
 if config.config_file_name is not None:
