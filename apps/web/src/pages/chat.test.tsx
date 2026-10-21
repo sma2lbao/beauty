@@ -259,7 +259,7 @@ describe('ChatPage', () => {
     await waitFor(() => expect(runsApi.approve).toHaveBeenCalledWith('run-1'));
   });
 
-  it('待确认写操作:确认按钮调用 confirm(approve)', async () => {
+  it('待确认危险操作:确认按钮调用 confirm(approve)', async () => {
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_confirmation' }),
     );

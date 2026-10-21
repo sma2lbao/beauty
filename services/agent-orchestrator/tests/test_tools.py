@@ -5,6 +5,7 @@ import json
 from agent_orchestrator.services.tools import (
     MAX_FETCH_LIMIT,
     ToolRegistry,
+    ToolRisk,
     ToolSpec,
     build_tools,
 )
@@ -77,9 +78,13 @@ async def test_build_tools_list_and_fetch() -> None:
         "list_email_attachments",
         "fetch_email_attachment_text",
     }
-    # 写操作必须在执行前被标记为需确认(§6.2)
+    # 只有危险操作(对外不可逆)必须在执行前被标记为需确认(§6.2)
+    assert registry.risk("send_email") is ToolRisk.DANGER
     assert registry.requires_confirmation("send_email") is True
+    assert registry.risk("fetch_emails") is ToolRisk.READ
     assert registry.requires_confirmation("fetch_emails") is False
+    # 未知工具按最严处理:绝不默认放行
+    assert registry.risk("no-such-tool") is ToolRisk.DANGER
 
     listed = json.loads(await registry.execute("list_connections", "{}"))
     assert listed["connections"][0]["id"] == "conn-1"

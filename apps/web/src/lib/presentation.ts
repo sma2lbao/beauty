@@ -88,7 +88,7 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   planning: '规划中',
   awaiting_approval: '待审批',
   running: '执行中',
-  awaiting_confirmation: '待确认写操作',
+  awaiting_confirmation: '待确认危险操作',
   blocked: '已阻塞',
   completed: '已完成',
   failed: '已失败',
@@ -165,7 +165,8 @@ export function relativeTime(value?: string | null): string {
   const abs = Math.abs(diff);
   const format = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' });
   if (abs < 60_000) return '刚刚';
-  if (abs < 3_600_000) return format.format(-Math.round(diff / 60_000), 'minute');
+  if (abs < 3_600_000)
+    return format.format(-Math.round(diff / 60_000), 'minute');
   if (abs < 86_400_000) {
     return format.format(-Math.round(diff / 3_600_000), 'hour');
   }
@@ -198,7 +199,10 @@ export function formatBytes(bytes: number): string {
 
 /** 任务编号:用 run id 尾部派生出设计稿里的 #TASK-311 样式编号。 */
 export function taskCode(runId: string): string {
-  const tail = runId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+  const tail = runId
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(-4)
+    .toUpperCase();
   return `#TASK-${tail || '0000'}`;
 }
 
@@ -217,7 +221,7 @@ export function summarizeArguments(argumentsText: string): string {
         .slice(0, 2)
         .map(([key, value]) => {
           const text =
-            typeof value === 'string' ? value : JSON.stringify(value) ?? '';
+            typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
           const short = text.length > 48 ? `${text.slice(0, 48)}…` : text;
           return `${key}=${short}`;
         })
@@ -273,16 +277,19 @@ export function eventLine(
       return { text: '已放行,开始执行。', tone: 'success' };
     case 'run.confirmation.required.v1':
       return {
-        text: '有写操作需要你确认(例如发信),确认后才会执行。',
+        text: '有危险操作需要你确认(例如发信),确认后才会执行。',
         tone: 'warning',
       };
     case 'run.confirmation.received.v1':
       return {
-        text: `写操作确认:${asText(payload.action, '已回复')}`,
+        text: `危险操作确认:${asText(payload.action, '已回复')}`,
         tone: 'neutral',
       };
     case 'run.instruction.queued.v1':
-      return { text: '已记下你的补充,会在下一个边界并入执行。', tone: 'neutral' };
+      return {
+        text: '已记下你的补充,会在下一个边界并入执行。',
+        tone: 'neutral',
+      };
     case 'run.instruction.consumed.v1':
       return { text: '补充指令已并入本次执行。', tone: 'neutral' };
     case 'run.rejected.v1':

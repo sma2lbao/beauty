@@ -46,14 +46,14 @@ apps/web (React 19, 画布+时间线+SSE)
 
 ## 3. 服务清单(阶段 A:六个)
 
-| 服务 (`services/`) | 职责 | HTTP 端口 |
-|---|---|---|
-| `account-service` | 用户/组织/配额/套餐 + sessions/devices;认证交给 IdP(Logto 自托管) | 8001 |
-| `agent-orchestrator` | 会话与运行编排:graph/checkpoint/SSE/技能注册表/简单定时(含 runner) | 8002 |
-| `llm-gateway` | 模型+embedding 路由(LiteLLM):区域路由/降级/预算/限流/缓存 | 8003 |
-| `connector-service` | 邮箱适配器、token vault、以 MCP 暴露工具 | 8004 |
-| `workspace-service` | 沙箱生命周期(microsandbox provider,P1)、artifacts → 对象存储 | 8005 |
-| `knowledge-service` | 摄取(事件驱动)+ 检索(pgvector)+ 记忆(起步合体) | 8006 |
+| 服务 (`services/`)   | 职责                                                               | HTTP 端口 |
+| -------------------- | ------------------------------------------------------------------ | --------- |
+| `account-service`    | 用户/组织/配额/套餐 + sessions/devices;认证交给 IdP(Logto 自托管)  | 8001      |
+| `agent-orchestrator` | 会话与运行编排:graph/checkpoint/SSE/技能注册表/简单定时(含 runner) | 8002      |
+| `llm-gateway`        | 模型+embedding 路由(LiteLLM):区域路由/降级/预算/限流/缓存          | 8003      |
+| `connector-service`  | 邮箱适配器、token vault、以 MCP 暴露工具                           | 8004      |
+| `workspace-service`  | 沙箱生命周期(microsandbox provider,P1)、artifacts → 对象存储       | 8005      |
+| `knowledge-service`  | 摄取(事件驱动)+ 检索(pgvector)+ 记忆(起步合体)                     | 8006      |
 
 gRPC 端口规划 `90xx` 与 HTTP 同号对应,引入时机见 §5。
 
@@ -102,14 +102,14 @@ beauty-moon/
 
 ## 5. 通信设计
 
-| 通道 | 协议 | 说明 |
-|---|---|---|
-| 对外(web/app) | REST `/api/v1` + SSE | OpenAPI 即契约;SSE 断线用 Last-Event-ID 重放 |
-| 服务间(起步) | HTTP + OpenAPI 生成客户端 | `packages/clients` 由各服务 schema 生成,统一超时/重试 |
-| 服务间(升级) | gRPC(内 gRPC、外 REST) | 触发条件:内部高频/流式/多语言契约;契约集中于 `packages/contracts`(proto+[buf](https://buf.build),`buf breaking` 进 CI);同进程双端口 uvicorn + grpc.aio,业务层 transport 无关 |
-| 异步事件 | Redis Streams(→Kafka) | `events` 包:信封 + outbox;阶段 B 引入 |
-| 工具调用 | MCP(streamable HTTP) | connector/workspace 以 MCP server 暴露工具,内外共用 |
-| 模型访问 | OpenAI 兼容 API | 唯一出口 llm-gateway;按部署区域路由模型 |
+| 通道          | 协议                      | 说明                                                                                                                                                                         |
+| ------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 对外(web/app) | REST `/api/v1` + SSE      | OpenAPI 即契约;SSE 断线用 Last-Event-ID 重放                                                                                                                                 |
+| 服务间(起步)  | HTTP + OpenAPI 生成客户端 | `packages/clients` 由各服务 schema 生成,统一超时/重试                                                                                                                        |
+| 服务间(升级)  | gRPC(内 gRPC、外 REST)    | 触发条件:内部高频/流式/多语言契约;契约集中于 `packages/contracts`(proto+[buf](https://buf.build),`buf breaking` 进 CI);同进程双端口 uvicorn + grpc.aio,业务层 transport 无关 |
+| 异步事件      | Redis Streams(→Kafka)     | `events` 包:信封 + outbox;阶段 B 引入                                                                                                                                        |
+| 工具调用      | MCP(streamable HTTP)      | connector/workspace 以 MCP server 暴露工具,内外共用                                                                                                                          |
+| 模型访问      | OpenAI 兼容 API           | 唯一出口 llm-gateway;按部署区域路由模型                                                                                                                                      |
 
 ## 6. Agent 执行模型(核心)
 
@@ -123,7 +123,7 @@ plan → confirm → execute → verify → deliver
 - **confirm**:人审中断(checkpointer 挂起),用户改完计划确认后再执行;
 - **execute**:工具/MCP/连接器调用,产出 artifacts;
 - **verify**:对 `acceptance_criteria` **逐项校验**,不达标自动返工,**上限 3 轮**(防死循环烧钱);
-- **deliver**:交付物注册;写操作按操作策略执行(见 §6.4)。
+- **deliver**:交付物注册;写操作按风险等级执行(受控写自动、危险操作按策略确认,见 §6.4)。
 
 ### 6.2 Run 状态机(goal 语义)
 
@@ -170,18 +170,18 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 
 ## 7. 数据模型要点
 
-| 表/存储 | 归属 | 说明 |
-|---|---|---|
-| runs / run_events / pending_instructions | orchestrator | §6 状态机、事件溯源、指令队列 |
-| conversations / chat_messages | orchestrator | §6.7 对话消息(user/assistant 持久化 + 多轮上下文) |
-| artifacts | workspace | 交付物元数据;实体文件在对象存储(COS/R2) |
-| connections + credentials | connector | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密 |
-| skills | orchestrator | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化 |
-| schedules | orchestrator(阶段 B 独立) | cron/webhook 触发器 |
-| usage_ledger | 计量消费者 | 模型 token + 沙箱分钟 + 工具调用 → credits |
-| feedback | orchestrator | 点赞/点踩/纠错 → datasets 飞轮 |
-| 知识库(pgvector) | knowledge | 全表 tenant_id,检索同租户过滤 |
-| sessions/devices | account | 多端会话(为 app 预留) |
+| 表/存储                                  | 归属                      | 说明                                                                     |
+| ---------------------------------------- | ------------------------- | ------------------------------------------------------------------------ |
+| runs / run_events / pending_instructions | orchestrator              | §6 状态机、事件溯源、指令队列                                            |
+| conversations / chat_messages            | orchestrator              | §6.7 对话消息(user/assistant 持久化 + 多轮上下文)                        |
+| artifacts                                | workspace                 | 交付物元数据;实体文件在对象存储(COS/R2)                                  |
+| connections + credentials                | connector                 | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密                |
+| skills                                   | orchestrator              | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化 |
+| schedules                                | orchestrator(阶段 B 独立) | cron/webhook 触发器                                                      |
+| usage_ledger                             | 计量消费者                | 模型 token + 沙箱分钟 + 工具调用 → credits                               |
+| feedback                                 | orchestrator              | 点赞/点踩/纠错 → datasets 飞轮                                           |
+| 知识库(pgvector)                         | knowledge                 | 全表 tenant_id,检索同租户过滤                                            |
+| sessions/devices                         | account                   | 多端会话(为 app 预留)                                                    |
 
 ## 8. 知识、记忆与连接器
 
@@ -238,15 +238,15 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 
 对标字节**豆包工作**(2026-09 上线[目标模式/计划模式/任务队列](https://www.chinaz.com/ainews/31298.shtml)、[多任务排队](https://post.smzdm.com/p/aqrmevvp/))与 **DSH**(DeepSeek Harness,一手源码+运行时观察)后沉淀的关键决策:
 
-| 模式 | 来源 | 本架构落点 |
-|---|---|---|
-| 计划先行、确认后执行;计划 = 可编辑 artifact | 豆包计划模式 / DSH plan mode | §6.1 |
-| 验收标准逐项校验 + 自动返工(有界) | 豆包目标模式 | §6.1 verify |
-| 运行中追加指令队列 | 豆包任务队列 | §6.5 |
-| goal 语义(rounds / blocked / resume) | DSH goals | §6.2 |
-| 事件溯源(seq / 回放 / 检索) | DSH session events | §6.3 |
-| approval policy 配置化 | DSH approval/sandbox policy | §6.4 |
-| CAS 任务板多 agent 协调 + 写域 | DSH team task board | 阶段 B runner 拆分时引入 |
+| 模式                                        | 来源                         | 本架构落点               |
+| ------------------------------------------- | ---------------------------- | ------------------------ |
+| 计划先行、确认后执行;计划 = 可编辑 artifact | 豆包计划模式 / DSH plan mode | §6.1                     |
+| 验收标准逐项校验 + 自动返工(有界)           | 豆包目标模式                 | §6.1 verify              |
+| 运行中追加指令队列                          | 豆包任务队列                 | §6.5                     |
+| goal 语义(rounds / blocked / resume)        | DSH goals                    | §6.2                     |
+| 事件溯源(seq / 回放 / 检索)                 | DSH session events           | §6.3                     |
+| approval policy 配置化                      | DSH approval/sandbox policy  | §6.4                     |
+| CAS 任务板多 agent 协调 + 写域              | DSH team task board          | 阶段 B runner 拆分时引入 |
 
 ## 14. 阶段路线
 
@@ -256,14 +256,14 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 
 ## 15. 待定决策
 
-| 决策 | 当前默认 | 决定时机 |
-|---|---|---|
-| 执行引擎 | LangGraph + Postgres checkpointer | 阶段 A 动工即定;复杂编排再议 Temporal |
-| 内部 RPC 化(gRPC) | 不做,HTTP + 生成客户端 | 内部高频/流式出现时 |
-| 自托管 embedding | 不做,API 起步 | 检索质量/成本成为瓶颈时 |
-| k8s | 不做,单云主机 compose | 并发用户量起来后 |
-| guardrails 强度 | 输入过滤起步 | 有真实用户数据前定 |
-| 移动 app | 不做 | 阶段 C |
+| 决策              | 当前默认                          | 决定时机                              |
+| ----------------- | --------------------------------- | ------------------------------------- |
+| 执行引擎          | LangGraph + Postgres checkpointer | 阶段 A 动工即定;复杂编排再议 Temporal |
+| 内部 RPC 化(gRPC) | 不做,HTTP + 生成客户端            | 内部高频/流式出现时                   |
+| 自托管 embedding  | 不做,API 起步                     | 检索质量/成本成为瓶颈时               |
+| k8s               | 不做,单云主机 compose             | 并发用户量起来后                      |
+| guardrails 强度   | 输入过滤起步                      | 有真实用户数据前定                    |
+| 移动 app          | 不做                              | 阶段 C                                |
 
 ## 16. 参考
 

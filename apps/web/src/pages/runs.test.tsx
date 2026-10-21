@@ -153,7 +153,7 @@ describe('RunsPage', () => {
     await waitFor(() => expect(runsApi.approve).toHaveBeenCalledWith('run-1'));
   });
 
-  it('待确认写操作 run:确认按钮调用 confirm(approve)', async () => {
+  it('待确认危险操作 run:确认按钮调用 confirm(approve)', async () => {
     vi.mocked(runsApi.list).mockResolvedValue([
       makeRun({ status: 'awaiting_confirmation' }),
     ]);
@@ -167,10 +167,10 @@ describe('RunsPage', () => {
 
     await selectRun('整理本周邮件成周报');
     expect(await screen.findByTestId('run-status')).toHaveTextContent(
-      '待确认写操作',
+      '待确认危险操作',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '确认执行写操作' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认执行危险操作' }));
     await waitFor(() =>
       expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
     );

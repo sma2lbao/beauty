@@ -22,7 +22,7 @@ from database.session import session_scope
 
 from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.repositories import ArtifactRepository, RunRepository
-from agent_orchestrator.services.tools import ToolRegistry
+from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 
 PROTOCOL_VERSION = "2025-03-26"
 
@@ -137,8 +137,8 @@ def _read_only_tools(toolkit: ToolRegistry | None) -> list[dict[str, Any]]:
         name = schema["function"]["name"]
         if name.startswith("code_"):
             continue  # 公开 MCP 不暴露服务端本地文件工具
-        if toolkit.requires_confirmation(name):
-            continue  # 公开面只暴露只读工具;写操作走控制台审批
+        if toolkit.risk(name) is not ToolRisk.READ:
+            continue  # 公开面只暴露只读工具;受控写/危险操作走控制台(有审批/沙箱)
         out.append(
             {
                 "name": f"beauty.{name}",

@@ -51,7 +51,7 @@ export type MCPServer = {
 type MCPServerCreateBase = {
   name: string;
   timeout_seconds?: number;
-  /** 免确认执行:信任该 server(默认 false,写操作仍在任务里确认) */
+  /** 免确认执行:信任该 server(默认 false,工具按危险操作仍需确认) */
   auto_approve?: boolean;
 };
 

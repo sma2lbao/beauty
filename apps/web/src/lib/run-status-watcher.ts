@@ -32,14 +32,16 @@ export type StatusChange = {
   to: RunStatus;
 };
 
-const NOTIFY_ON: Partial<Record<RunStatus, { tone: NotificationTone; title: string }>> = {
+const NOTIFY_ON: Partial<
+  Record<RunStatus, { tone: NotificationTone; title: string }>
+> = {
   awaiting_approval: {
     tone: 'warning',
     title: '任务待审批',
   },
   awaiting_confirmation: {
     tone: 'warning',
-    title: '任务待确认写操作',
+    title: '任务待确认危险操作',
   },
   completed: { tone: 'success', title: '任务已完成' },
   failed: { tone: 'danger', title: '任务失败' },
@@ -141,10 +143,7 @@ export function useRunStatusNotifications(): void {
   // 去重:SSE 与轮询可能对同一次变化各推一次
   const notifiedRef = useRef<Set<string>>(new Set());
 
-  const notifyOnce = (
-    key: string,
-    emit: () => void,
-  ): void => {
+  const notifyOnce = (key: string, emit: () => void): void => {
     if (notifiedRef.current.has(key)) return;
     notifiedRef.current.add(key);
     emit();

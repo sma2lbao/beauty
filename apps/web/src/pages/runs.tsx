@@ -430,7 +430,7 @@ function cardStatusLine(run: Run): string {
     return '待人工放行 · ' + time;
   }
   if (run.status === 'awaiting_confirmation') {
-    return '待确认写操作 · ' + time;
+    return '待确认危险操作 · ' + time;
   }
   if (run.status === 'completed') {
     return '已完成 · ' + time;

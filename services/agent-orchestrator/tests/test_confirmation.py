@@ -106,7 +106,7 @@ def test_write_tool_rejected_skips_execution(tmp_path) -> None:
         results = next(e for e in events if e["type"] == "run.completed.v1")["payload"][
             "results"
         ]
-        assert any("写操作被拒绝:先别发" in item for item in results)
+        assert any("危险操作被拒绝:先别发" in item for item in results)
         # 只读工具执行了;写操作一次都没执行
         names = [
             e["payload"]["name"] for e in events if e["type"] == "run.tool.called.v1"

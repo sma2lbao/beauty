@@ -280,7 +280,7 @@ function StatusStep({ status, run }: { status: RunStatus; run?: Run }) {
     status === 'awaiting_approval'
       ? '等待你放行计划'
       : status === 'awaiting_confirmation'
-        ? '等待你确认写操作'
+        ? '等待你确认危险操作'
         : status === 'blocked'
           ? '任务中断,需要人工处理'
           : status === 'failed'

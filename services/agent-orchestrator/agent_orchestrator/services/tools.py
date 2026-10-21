@@ -7,7 +7,9 @@
   **没有配置的提供方不暴露工具**(能力即权限边界);
 - 执行失败不抛给图,而是以 ``{"error": ...}`` 回喂模型让它决策(§6.1)——
   工具坏了不该把整条 run 炸掉;
-- 每次调用产出 ToolCallRecord,由 services 层落 ``run.tool.called.v1`` 事件。
+- 每次调用产出 ToolCallRecord,由 services 层落 ``run.tool.called.v1`` 事件;
+- 每个工具带**风险等级**(ToolRisk):只读与受控写自动执行,只有危险操作
+  (对外/不可逆、未信任的第三方工具)才进人工确认闸(§6.2)。
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Any
 
 from agent_orchestrator.services.calendar import CalendarFeed
@@ -30,18 +33,38 @@ MAX_KNOWLEDGE_LIMIT = 10
 MAX_DOC_CHARS = 20_000  # 回喂给模型的正文上限(防提示词爆炸)
 
 
+class ToolRisk(StrEnum):
+    """工具风险等级:决定要不要人工确认(§6.2)。
+
+    - ``READ``:只读、无副作用,直接执行;
+    - ``WRITE``:受控范围内的副作用(工作区文件、沙箱内技能执行、已信任的
+      MCP server),自动执行——每一步都问人会把 agent 退化成人工点击机;
+    - ``DANGER``:对外或不可逆的操作(发邮件、未信任 server 的第三方工具),
+      执行前必须人工放行。
+    """
+
+    READ = "read"
+    WRITE = "write"
+    DANGER = "danger"
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
     handler: Callable[[dict[str, Any]], Awaitable[str]]
-    requires_confirmation: bool = False  # 写操作:执行前必须人工放行(§6.2)
+    risk: ToolRisk = ToolRisk.READ
+
+    @property
+    def requires_confirmation(self) -> bool:
+        """仅危险操作需要人工确认(执行闸的唯一判据)。"""
+        return self.risk is ToolRisk.DANGER
 
 
 #: 外部工具工厂:按租户在调用边界现取(MCP 注册表 / skill_run)。
-#: run 执行图与 chat 直接对话共用同一份——对话里能不能执行由 spec 的
-#: requires_confirmation 决定(chat 没有审批流,§6.7)。
+#: run 执行图与 chat 直接对话共用同一份——对话里能不能执行由 spec 的风险
+#: 等级决定(DANGER 不执行,chat 没有审批流,§6.7)。
 ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 
@@ -91,10 +114,14 @@ class ToolRegistry:
             [spec for name, spec in self._specs.items() if name in allow]
         )
 
-    def requires_confirmation(self, name: str) -> bool:
-        """写操作工具:execute 不得直接执行,必须交确认闸(§6.2)。"""
+    def risk(self, name: str) -> ToolRisk:
+        """工具风险等级;未知工具按最严处理(绝不默认放行)。"""
         spec = self._specs.get(name)
-        return bool(spec and spec.requires_confirmation)
+        return spec.risk if spec is not None else ToolRisk.DANGER
+
+    def requires_confirmation(self, name: str) -> bool:
+        """危险操作:execute 不得直接执行,必须交确认闸(§6.2)。"""
+        return self.risk(name) is ToolRisk.DANGER
 
     def schemas(self) -> list[dict[str, Any]]:
         """OpenAI tools 格式(网关原样透传给 litellm)。"""
@@ -127,7 +154,7 @@ class ToolRegistry:
 
 
 def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
-    """邮件连接器:列连接 / 读邮件(只读)+ 发信(写操作,需人工确认)。"""
+    """邮件连接器:列连接 / 读邮件(只读)+ 发信(危险操作,需人工确认)。"""
 
     async def list_connections(args: dict[str, Any]) -> str:
         conns = await connector.list_connections(tenant_id)
@@ -249,7 +276,9 @@ def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
         ),
         ToolSpec(
             name="send_email",
-            description="通过已有连接发送邮件(写操作,需用户确认后才会执行)",
+            description=(
+                "通过已有连接发送邮件(危险操作:对外不可撤回,需人工确认后才执行)"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -265,7 +294,7 @@ def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
                 "additionalProperties": False,
             },
             handler=send_email,
-            requires_confirmation=True,
+            risk=ToolRisk.DANGER,
         ),
     ]
 

@@ -52,6 +52,7 @@ from agent_orchestrator.services.skill_runner import (
     SkillRunner,
 )
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
+from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import TENANT, FakeLLM, FakeWorkspace, _settings, verifier
 
 MANIFEST: dict[str, Any] = {
@@ -623,7 +624,9 @@ async def test_spec_shape_and_confirmation(tmp_path: Path) -> None:
         assert spec.name == "skill_run"
         assert "沙箱" in spec.description
         assert "team.weekly-report" in spec.description
-        assert spec.requires_confirmation is True
+        # 沙箱内执行属受控写:自动执行,不再逐次人工确认
+        assert spec.risk is ToolRisk.WRITE
+        assert spec.requires_confirmation is False
         assert spec.parameters == {
             "type": "object",
             "properties": {
@@ -790,7 +793,8 @@ def test_extras_exposes_skill_run_for_package_run(skill_client: TestClient) -> N
     run = _create_run(skill_client, skill_id="team.weekly-report")
     specs = _extras(skill_client, ToolContext(tenant_id="t-1", run_id=run["id"]))
     assert [spec.name for spec in specs] == ["skill_run"]
-    assert specs[0].requires_confirmation is True
+    assert specs[0].risk is ToolRisk.WRITE
+    assert specs[0].requires_confirmation is False
 
 
 def test_extras_skips_skill_run_without_package(skill_client: TestClient) -> None:
@@ -843,11 +847,12 @@ def test_runner_not_assembled_without_workspace(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 图路径端到端:skill_run 过确认闸后在沙箱执行
+# 图路径端到端:skill_run 属受控写,approve 后自动执行
 # ---------------------------------------------------------------------------
 
 
-def test_graph_executes_skill_run_after_confirmation(tmp_path: Path) -> None:
+def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
+    """skill_run 是受控写(WRITE):approve 后直接执行,不再弹确认闸(§6.2)。"""
     verify_pass = '{"summary": "已生成", "verdicts": {"邮件已汇总": true}}'
     fake = FakeLLM(
         [
@@ -895,30 +900,11 @@ def test_graph_executes_skill_run_after_confirmation(tmp_path: Path) -> None:
 
         planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=TENANT)
         assert planned.status_code == 200, planned.text
-        stopped = client.post(f"/api/v1/runs/{run['id']}/approve", headers=TENANT)
-        assert stopped.status_code == 200, stopped.text
-        assert stopped.json()["status"] == "awaiting_confirmation"
-        # 确认之前绝不执行上传代码
-        assert sandbox.execs == []
+        assert sandbox.execs == []  # 审批前不执行上传代码
 
-        events = client.get(f"/api/v1/runs/{run['id']}/events", headers=TENANT).json()
-        pending = next(
-            event for event in events if event["type"] == "run.confirmation.required.v1"
-        )
-        assert pending["payload"]["pending_writes"][0]["name"] == "skill_run"
-
-        # execute 的 function-calling schema 里能看到 skill_run
-        schema_names = [
-            tools[0]["function"]["name"] for tools in fake.tools_seen if tools
-        ]
-        assert "skill_run" in schema_names
-
-        done = client.post(
-            f"/api/v1/runs/{run['id']}/confirm",
-            json={"action": "approve"},
-            headers=TENANT,
-        )
+        done = client.post(f"/api/v1/runs/{run['id']}/approve", headers=TENANT)
         assert done.status_code == 200, done.text
+        # 受控写自动执行:不再停在 awaiting_confirmation,直接跑完
         assert done.json()["status"] == "completed"
 
         # 沙箱生命周期:解包 → entrypoint → 列产物 → 销毁
@@ -926,18 +912,25 @@ def test_graph_executes_skill_run_after_confirmation(tmp_path: Path) -> None:
         assert sandbox.destroyed == ["sb-1"]
         assert json.loads(sandbox.execs[1]["stdin"])["input"] == "本周邮件"
 
+        # execute 的 function-calling schema 里能看到 skill_run
+        schema_names = [
+            tools[0]["function"]["name"] for tools in fake.tools_seen if tools
+        ]
+        assert "skill_run" in schema_names
+
         artifact = client.get(
             f"/api/v1/runs/{run['id']}/artifact", headers=TENANT
         ).json()
         assert artifact["content"] == "# 最终交付正文"
 
         events = client.get(f"/api/v1/runs/{run['id']}/events", headers=TENANT).json()
+        types = [event["type"] for event in events]
+        # 没有确认闸事件:受控写不打断
+        assert "run.confirmation.required.v1" not in types
+        assert "run.confirmation.received.v1" not in types
+
         tool_events = [
             event for event in events if event["type"] == "run.tool.called.v1"
         ]
         assert [event["payload"]["name"] for event in tool_events] == ["skill_run"]
         assert tool_events[0]["payload"]["ok"] is True
-        types = [event["type"] for event in events]
-        assert types.index("run.confirmation.received.v1") < types.index(
-            "run.completed.v1"
-        )

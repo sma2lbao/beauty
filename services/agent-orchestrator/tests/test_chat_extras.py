@@ -1,10 +1,10 @@
 """chat 路径接外部工具(MCP):extras factory → 对话工具注册表(§6.8)。
 
-对话没有审批流(§6.7),所以能不能在对话里执行由 ToolSpec.requires_confirmation
-决定(MCP server 的 auto_approve 就在 tool_specs 里映射成它):
+对话没有审批流(§6.7),所以能不能在对话里执行由工具风险等级
+(ToolSpec.risk)决定(MCP server 的 auto_approve 就在 tool_specs 里映射成它):
 
-- requires_confirmation=False 的工具:直接执行并回喂结果;
-- requires_confirmation=True 的工具:不执行,回喂错误引导改用「任务」;
+- READ/WRITE 的工具:直接执行并回喂结果;
+- DANGER 的工具:不执行,回喂错误引导改用「任务」;
 - extras 工厂取失败:只降级外部工具,对话照常回答(与 run 路径同口径)。
 """
 
@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
-from agent_orchestrator.services.tools import ToolSpec, build_tools
+from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 from tests.conftest import TENANT, FakeConnector, FakeLLM, _settings, verifier
 
 
@@ -62,18 +62,19 @@ def _tool_call_reply(name: str, arguments: str) -> LLMReply:
     )
 
 
-def _mcp_spec(handler, *, requires_confirmation: bool) -> ToolSpec:
+def _mcp_spec(handler, *, danger: bool) -> ToolSpec:
     return ToolSpec(
         name="mcp__mock__echo",
         description="回显",
         parameters={"type": "object"},
         handler=handler,
-        requires_confirmation=requires_confirmation,
+        # 未信任 server → DANGER;auto_approve 的 server → WRITE
+        risk=ToolRisk.DANGER if danger else ToolRisk.WRITE,
     )
 
 
 def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
-    """auto_approve 的 MCP 工具(requires_confirmation=False):对话里直接执行。"""
+    """auto_approve 的 MCP 工具(risk=WRITE):对话里直接执行。"""
     seen: list[dict] = []
 
     async def handler(arguments: dict) -> str:
@@ -82,7 +83,7 @@ def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
         assert tenant_id == "t-1"
-        return [_mcp_spec(handler, requires_confirmation=False)]
+        return [_mcp_spec(handler, danger=False)]
 
     fake = FakeLLM(
         [_tool_call_reply("mcp__mock__echo", '{"text": "hi"}'), "工具回了 hi。"]
@@ -114,7 +115,7 @@ def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
         return "不该被调用"
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
-        return [_mcp_spec(handler, requires_confirmation=True)]
+        return [_mcp_spec(handler, danger=True)]
 
     fake = FakeLLM(
         [
@@ -141,7 +142,7 @@ def test_chat_post_message_path_uses_extras(tmp_path) -> None:
         return "echo: " + str(arguments.get("text"))
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
-        return [_mcp_spec(handler, requires_confirmation=False)]
+        return [_mcp_spec(handler, danger=False)]
 
     fake = FakeLLM(
         [_tool_call_reply("mcp__mock__echo", '{"text": "hi"}'), "回显完成。"]

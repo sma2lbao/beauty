@@ -3,7 +3,8 @@
 安全边界:
 - 只允许配置的 roots(为空 = 不暴露任何代码工具);
 - 所有路径 resolve 后必须仍在某个 root 内(防 ../ 与 symlink 逃逸);
-- 写操作 requires_confirmation=True,由确认闸人工放行;
+- 写操作(风险等级 WRITE)在受控 roots 内**自动执行**(只有危险操作才进
+  人工确认闸);敏感路径(.git/.env/node_modules 等)由写前的路径校验挡住;
 - 不提供 shell,避免本地任意命令执行。
 """
 
@@ -83,7 +84,7 @@ def _int_arg(args: dict[str, Any], key: str, default: int, maximum: int) -> int:
 
 
 def code_specs(configured_roots: list[str]):
-    from agent_orchestrator.services.tools import ToolSpec
+    from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 
     roots = _roots(configured_roots)
     if not roots:
@@ -263,7 +264,7 @@ def code_specs(configured_roots: list[str]):
         ),
         ToolSpec(
             name="code_write_file",
-            description="写入 workspace 内文件(写操作,必须人工确认)",
+            description="写入 workspace 内文件(写入受控 workspace,自动执行)",
             parameters={
                 "type": "object",
                 "properties": {
@@ -273,11 +274,11 @@ def code_specs(configured_roots: list[str]):
                 "required": ["path", "content"],
             },
             handler=write_file,
-            requires_confirmation=True,
+            risk=ToolRisk.WRITE,
         ),
         ToolSpec(
             name="code_edit_file",
-            description="精确替换 workspace 内文件的一段文本(写操作,必须人工确认)",
+            description="精确替换 workspace 内文件的一段文本(受控写入,自动执行)",
             parameters={
                 "type": "object",
                 "properties": {
@@ -288,6 +289,6 @@ def code_specs(configured_roots: list[str]):
                 "required": ["path", "old_string", "new_string"],
             },
             handler=edit_file,
-            requires_confirmation=True,
+            risk=ToolRisk.WRITE,
         ),
     ]

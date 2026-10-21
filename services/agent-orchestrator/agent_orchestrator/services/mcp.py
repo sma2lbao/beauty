@@ -37,7 +37,7 @@ from agent_orchestrator.services.mcp_client import MCPClient, MCPError
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.tool_context import current_tool_context
-from agent_orchestrator.services.tools import ToolSpec
+from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 
 logger = get_logger(__name__)
 
@@ -473,9 +473,10 @@ async def tool_specs(
                     description=wrapped.description or f"MCP {server.name} 工具",
                     parameters=wrapped.input_schema or {"type": "object"},
                     handler=handler,
-                    # 可信 server(auto_approve)免确认;默认仍逐次确认。
-                    # 对话路径没有审批流,所以只有这里 False 的工具能在 chat 执行
-                    requires_confirmation=not server.auto_approve,
+                    # 未信任 server 的工具可能对外产生不可逆副作用 → DANGER;
+                    # 用户开了 auto_approve(信任该 server)→ WRITE,自动执行。
+                    # 对话路径没有审批流,所以 DANGER 工具在 chat 里一律不执行。
+                    risk=(ToolRisk.WRITE if server.auto_approve else ToolRisk.DANGER),
                 )
             )
     return specs

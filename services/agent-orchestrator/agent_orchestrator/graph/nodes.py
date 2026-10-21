@@ -258,8 +258,8 @@ def make_execute_node(
 
     - llm=None:确定性桩(dev/测试零外部依赖);
     - 无工具:单轮结果小结;
-    - 有工具:≤MAX_TOOL_ROUNDS 轮。只读工具直接执行并回喂;**写操作工具
-      (requires_confirmation)一律不执行**,收集进 pending_writes 交确认闸
+    - 有工具:≤MAX_TOOL_ROUNDS 轮。只读与受控写工具(READ/WRITE)直接执行
+      并回喂;**危险操作(DANGER)一律不执行**,收集进 pending_writes 交确认闸
       中断等人工放行(§6.2)——放行后由 tool_exec 执行并回喂同一消息流。
     """
 
@@ -294,7 +294,7 @@ def make_execute_node(
                 if toolkit.requires_confirmation(call.name):
                     if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
                         # 确认次数达上限:不再打断,如实告知模型未执行
-                        output = _tool_error("写操作确认次数已达上限,本次未执行")
+                        output = _tool_error("危险操作确认次数已达上限,本次未执行")
                         records.append(_record(call.name, call.arguments, output))
                         messages.append(_tool_message(call.id, output))
                         continue
@@ -324,7 +324,7 @@ def make_execute_node(
 
 
 def confirm_gate_node(state: RunGraphState) -> dict:
-    """写操作确认闸(§6.2):execute 收集到写操作后中断,等人工放行/拒绝。
+    """危险操作确认闸(§6.2):execute 收集到危险操作后中断,等人工放行/拒绝。
 
     注意:interrupt 之前不得有任何副作用——LangGraph 恢复时会重放本节点,
     副作用逻辑必须留在 tool_exec 里。
@@ -333,12 +333,12 @@ def confirm_gate_node(state: RunGraphState) -> dict:
     answer = interrupt({"pending_writes": pending})
     gate = _gate_update(answer)
     if answer.get("action") != "approve":
-        reason = answer.get("reason") or "用户拒绝写操作"
+        reason = answer.get("reason") or "用户拒绝危险操作"
         return {
             **gate,
             "writes_approved": False,
             "pending_writes": [],
-            "results": [f"写操作被拒绝:{reason}"],
+            "results": [f"危险操作被拒绝:{reason}"],
         }
     return {**gate, "writes_approved": True}
 
@@ -347,7 +347,7 @@ def make_tool_exec_node(
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ToolExtrasFactory | None = None,
 ):
-    """执行已确认的写操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
+    """执行已确认的危险操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
 
     async def tool_exec_node(state: RunGraphState) -> dict:
         pending = state.get("pending_writes") or []

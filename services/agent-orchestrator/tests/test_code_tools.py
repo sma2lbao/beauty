@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from agent_orchestrator.services.code_tools import code_specs
-from agent_orchestrator.services.tools import ToolRegistry
+from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 
 
 def _registry(root: Path) -> ToolRegistry:
@@ -53,7 +53,9 @@ def test_code_tools_read_write_edit_search(tmp_path: Path) -> None:
             "code_list_files", json.dumps({"path": "src"})
         )
         assert "src/a.py" in listing
-        assert registry.requires_confirmation("code_write_file") is True
+        # 受控写入自动执行,不再是人工确认闸
+        assert registry.risk("code_write_file") is ToolRisk.WRITE
+        assert registry.requires_confirmation("code_write_file") is False
         assert registry.requires_confirmation("code_read_file") is False
 
     asyncio.run(scenario())

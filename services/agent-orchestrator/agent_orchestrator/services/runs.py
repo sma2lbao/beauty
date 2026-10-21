@@ -404,7 +404,7 @@ async def _apply_graph_result(
 ) -> Run:
     """图调用结果的统一后处理(§6.2/§6.3/§7)。
 
-    顺序即语义:工具审计 → 写操作确认中断 → 交付物 → 终态。
+    顺序即语义:工具审计 → 危险操作确认中断 → 交付物 → 终态。
 
     注意:state.tool_calls 是 add reducer,恢复执行(如确认闸放行)后会带上
     历史累积记录——按已落库条数只发增量,避免事件重复。
@@ -414,7 +414,7 @@ async def _apply_graph_result(
     for record in records[emitted or 0 :]:
         await append_event(session, run, "run.tool.called.v1", record)
     if values.get("__interrupt__"):
-        # 写操作待人工确认:停在 awaiting_confirmation,等 POST /confirm
+        # 危险操作待人工确认:停在 awaiting_confirmation,等 POST /confirm
         run.status = RunStatus.AWAITING_CONFIRMATION.value
         run.rounds = values.get("rounds", 0)
         await append_event(
@@ -508,7 +508,7 @@ async def confirm_run(
     jobs_enabled: bool = False,
     emit_confirmation: bool = True,
 ) -> Run:
-    """写操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
+    """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.AWAITING_CONFIRMATION)
     if emit_confirmation:

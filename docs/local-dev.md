@@ -93,7 +93,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 - `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互与连接器页一致：左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
 - 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
-- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，默认按写操作处理（需人工确认）。
+- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，未信任 server 的工具按危险操作处理（需人工确认），开启「免确认执行」后按受控写自动执行。
 - 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，工具在
   **对话**里可直接调用（对话没有审批流，见架构 §6.7），任务里也不再逐次确认；关着时
   对话里只会回喂「请改用任务」。注册表单与详情页都有这个开关。
@@ -113,7 +113,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 BFF 会话)。
 - 鉴权:`Authorization: Bearer bm_live_...`(API Key)或 OAuth 2.1 access token;也支持 `X-API-Key`。
 - 支持 `initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`。
-- 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及连接器/文档/知识库中非写工具;发信等写操作不暴露。
+- 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及连接器/文档/知识库中的只读工具;受控写(技能执行、工作区文件)与危险操作(发信等)都不暴露。
 - 资源:`beauty://artifacts/{artifact_id}`(仅数据库内联存储的 Markdown)。
 - 本地示例:
 
@@ -146,7 +146,7 @@ curl -s http://127.0.0.1:8002/mcp \
 
 ## 3.8 编码 Function Tools
 
-- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(写操作,走确认闸)。
+- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(受控写,在 roots 内自动执行,敏感路径写前拦截)。
 - 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。
 - 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
 - Skills 的 coding.repo-readonly-review 已绑定只读代码工具。

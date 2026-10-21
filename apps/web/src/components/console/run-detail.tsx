@@ -1,7 +1,7 @@
 /**
  * 运行详情抽屉:任务编排看板点开一张卡后出现。
  *
- * 能力与原 /runs 详情一致(审批计划、确认写操作、resume、retry、追加指令、
+ * 能力与原 /runs 详情一致(审批计划、确认危险操作、resume、retry、追加指令、
  * 取交付物、看事件流),只是换成控制台的暗色面板语言。
  * 关键可访问名/testid 保留,便于既有行为测试钉住。
  */
@@ -220,7 +220,7 @@ export function RunDetail({
                   }
                   disabled={action.isPending}
                 >
-                  确认执行写操作
+                  确认执行危险操作
                 </ConsoleButton>
                 <ConsoleButton
                   variant="danger"
@@ -230,7 +230,7 @@ export function RunDetail({
                   }
                   disabled={action.isPending}
                 >
-                  拒绝写操作
+                  拒绝危险操作
                 </ConsoleButton>
               </>
             ) : null}
@@ -372,7 +372,9 @@ export function RunDetail({
               </span>
               {artifactQuery.data ? (
                 <div className="flex items-center gap-2">
-                  <ToneBadge tone="success">{artifactQuery.data.kind}</ToneBadge>
+                  <ToneBadge tone="success">
+                    {artifactQuery.data.kind}
+                  </ToneBadge>
                   <button
                     type="button"
                     aria-label="下载交付物"

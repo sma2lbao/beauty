@@ -404,7 +404,7 @@ export function ChatPage() {
         onClick={() => action.mutate(() => runsApi.confirm(run.id, 'approve'))}
         disabled={action.isPending}
       >
-        确认写操作
+        确认危险操作
       </ConsoleButton>
     ) : status === 'completed' ? (
       <ConsoleButton
@@ -446,7 +446,7 @@ export function ChatPage() {
                     </h2>
                     <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-ha-muted">
                       描述要完成的事。简单的直接回答;复杂任务会先给计划,
-                      等你放行再执行,写操作会单独确认。
+                      等你放行再执行,危险操作会单独确认。
                     </p>
                   </div>
                   <div className="flex max-w-lg flex-wrap justify-center gap-2">
@@ -603,7 +603,7 @@ export function ChatPage() {
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ha-warning-border bg-ha-warning-bg px-3 py-3">
                   <AlertTriangle className="h-4 w-4 text-ha-warning" />
                   <span className="mr-auto text-[12px] text-ha-text-2">
-                    有写操作需要你确认(例如发信),确认后才会执行。
+                    有危险操作需要你确认(例如发信),确认后才会执行。
                   </span>
                   <ConsoleButton
                     variant="primary"
@@ -623,7 +623,7 @@ export function ChatPage() {
                     }
                     disabled={action.isPending}
                   >
-                    拒绝写操作
+                    拒绝危险操作
                   </ConsoleButton>
                 </div>
               ) : null}

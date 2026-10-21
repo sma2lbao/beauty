@@ -39,7 +39,7 @@ from agent_orchestrator.services.skill_packages import (
     MAX_FILES,
     MAX_UNCOMPRESSED_BYTES,
 )
-from agent_orchestrator.services.tools import ToolSpec
+from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 from agent_orchestrator.services.workspace import Workspace
 
 logger = get_logger(__name__)
@@ -371,7 +371,8 @@ class SkillRunner:
             name=SKILL_RUN_TOOL,
             description=(
                 f"在沙箱内执行技能「{skill_label}」的 entrypoint,"
-                "返回 stdout/stderr 与产物清单(写操作,需用户确认后才会执行)"
+                "返回 stdout/stderr 与产物清单(在沙箱内运行:网络禁用、"
+                "工作区受控,自动执行)"
             ),
             parameters={
                 "type": "object",
@@ -384,7 +385,7 @@ class SkillRunner:
                 "additionalProperties": False,
             },
             handler=handler,
-            requires_confirmation=True,
+            risk=ToolRisk.WRITE,
         )
 
     # ---- 执行 ----

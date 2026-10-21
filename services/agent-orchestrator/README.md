@@ -17,7 +17,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、
   `POST /runs/{id}/retry`(failed → **另起一跑**并继承目标/验收标准/已批准计划,
   返回新 run;血缘见 `parent_run_id` 与 `run.retry.requested.v1`)、
-  `POST /runs/{id}/confirm`(写操作放行/拒绝,§6.2)、
+  `POST /runs/{id}/confirm`(危险操作放行/拒绝,§6.2)、
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
 - 对话垂直切片(§6.7):`POST /api/v1/conversations` 建会话、`GET /conversations`(最近活跃在前)、
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
@@ -58,7 +58,9 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
     向量检索,让模型"先查资料再回答"(`docs/architecture.md` §9);
     **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
     `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
-- 写操作确认闸(§6.2):写工具(requires_confirmation)**绝不直接执行**——
+- 确认闸只拦**危险操作**(§6.2):工具按 `ToolRisk` 分级——`READ` 直接执行;
+  `WRITE`(受控 workspace 文件、沙箱内技能执行、已信任 MCP)在各自权限边界内
+  **自动执行**;`DANGER`(发信等对外不可逆、未信任 MCP)**绝不直接执行**——
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
@@ -78,7 +80,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 
 - 追加指令(§6.5):`POST /runs/{id}/instructions` 排队(终态 run 追加 409),
   在**下一个人工边界**消费——规划(plan/resume)、放行(approve)、
-  写操作确认(confirm);消费即标记 `consumed` 并落
+  危险操作确认(confirm);消费即标记 `consumed` 并落
   `run.instruction.queued.v1` / `run.instruction.consumed.v1`;内容经
   `extra_instructions` 并入 plan/execute/verify/deliver 的提示词(模型必须遵循)。
 
@@ -119,9 +121,10 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - **MCP 在对话内 + 审批策略(P2 之后补)**:chat 直接对话与执行图共用同一个
   extras 工厂(`main._load_extras`),所以对话里也能看到并使用 MCP 工具;但对话
   没有审批流(架构 §6.7),因此**每个 server 一个 `auto_approve` 信任开关**
-  (Web `/mcp` 页「免确认执行」,默认关):关时 `requires_confirmation=True`,
-  对话里只回喂"请改用任务"、run 里逐次确认;开时两者都直接执行——就是架构 §6.4
-  "操作策略是配置,不是硬编码"。extras 取失败只降级外部工具,不影响对话本身。
+  (Web `/mcp` 页「免确认执行」,默认关):关时 `risk=DANGER`(未信任 = 对外不可逆),
+  对话里只回喂"请改用任务"、run 里逐次确认;开时 `risk=WRITE`(受控写),
+  对话与 run 都直接执行——就是架构 §6.4 "操作策略是配置,不是硬编码"。
+  extras 取失败只降级外部工具,不影响对话本身。
 
 - **技能包上传(P3)**:用户上传 SKILL.md 包(zip,根目录必须含 SKILL.md,
   允许单一顶层目录;可选 skill.json 描述 id/version/title/description/
@@ -138,16 +141,16 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
     上传包带 has_scripts/package_id/version_id,有 entrypoint 自动补 skill_run 工具);
   - `GET /skills/{skill_id}` 内置优先,其次上传包 slug;
   - run 创建时把上传包快照冻结进 runs(`skill_version_id/object_key/sha256/
-    entrypoint/runtime/network/timeout_seconds`),之后上传新版本不影响已建 run;
+entrypoint/runtime/network/timeout_seconds`),之后上传新版本不影响已建 run;
   - 冲突:同包同版本重复上传 409 `skill.version_exists`,上传 id 与内置技能
     冲突 409 `skill.id_conflict`。
 
 - **技能包执行(P3-C)**:run 绑定了**有 entrypoint** 的上传包时,execute 的工具
-  注册表额外装配 `skill_run`(`services/skill_runner.py`;写操作,必须过确认闸
-  §6.2)。需要 `SKILL_EXECUTION_ENABLED=true` **且** `SANDBOX_ENABLED=true`
+  注册表额外装配 `skill_run`(`services/skill_runner.py`;受控写 WRITE,在一次性
+  沙箱里自动执行,不打断审批)。需要 `SKILL_EXECUTION_ENABLED=true` **且** `SANDBOX_ENABLED=true`
   与 `WORKSPACE_ENABLED=true`(缺任一不暴露,宁可不给能力也不在本进程跑上传代码):
   - 一次性沙箱(`kind=skill`,镜像按快照 runtime 取 `SKILL_PYTHON_IMAGE/
-    SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
+SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
     `skill_network`,默认 deny);
   - 取包后**校验 sha256 与 run 快照一致**,再写 zip + 解包脚本,在沙箱内用
     `python3` 解包——路径穿越/绝对路径/符号链接/文件数/解压总量按上传同口径
