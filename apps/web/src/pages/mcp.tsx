@@ -15,11 +15,14 @@ import {
   Plus,
   Power,
   RefreshCw,
+  ShieldCheck,
+  ShieldOff,
   Terminal,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 
 import {
   Button,
@@ -95,6 +98,13 @@ function formatTime(value: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
 }
 
+/** OAuth 令牌有效期展示:无过期时间与解析失败都给出可读文案。 */
+function formatDeadline(value: string | null): string {
+  if (!value) return '无固定期限';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
+}
+
 /** 列表副标题:http 给地址,stdio 给「运行时 命令 参数」,一眼看出连的是什么。 */
 function describeEndpoint(server: MCPServer): string {
   if (server.transport === 'stdio') {
@@ -155,6 +165,11 @@ function DefinitionRow({
 
 export function McpPage() {
   const queryClient = useQueryClient();
+  // 浏览器 OAuth 回调:BFF 把授权结果重定向回 /mcp?oauth=success&server=…|?oauth=error&error=…
+  const [searchParams] = useSearchParams();
+  const oauthStatus = searchParams.get('oauth');
+  const oauthServerName = searchParams.get('server');
+  const oauthErrorText = searchParams.get('error');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
@@ -177,6 +192,12 @@ export function McpPage() {
 
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: SERVERS_KEY });
+
+  // 浏览器授权成功回调(带 ?oauth=success):该 server 的授权状态与 token 已变化,重新拉列表
+  useEffect(() => {
+    if (oauthStatus !== 'success') return;
+    void queryClient.invalidateQueries({ queryKey: SERVERS_KEY });
+  }, [oauthStatus, queryClient]);
 
   const buildCreateInput = (): MCPServerCreateInput => {
     const trimmedName = form.name.trim();
@@ -269,6 +290,25 @@ export function McpPage() {
     onError: (failure) => setActionError((failure as Error).message),
   });
 
+  const oauthStartMutation = useMutation({
+    mutationFn: (id: string) => mcpApi.startOAuth(id),
+    onSuccess: (result) => {
+      setActionError(null);
+      // 整页跳到授权服务器;授权完成后由授权服务器 → BFF → 本页 ?oauth=success|error
+      window.location.href = result.authorize_url;
+    },
+    onError: (failure) => setActionError((failure as Error).message),
+  });
+
+  const oauthDisconnectMutation = useMutation({
+    mutationFn: (id: string) => mcpApi.disconnectOAuth(id),
+    onSuccess: async () => {
+      setActionError(null);
+      await refresh();
+    },
+    onError: (failure) => setActionError((failure as Error).message),
+  });
+
   const httpUrlError =
     form.transport === 'http' && form.url.trim() && !isHttpUrl(form.url)
       ? '需以 http:// 或 https:// 开头'
@@ -292,6 +332,16 @@ export function McpPage() {
   const status = selected ? serverStatus(selected) : null;
   const result = selected && testResult?.id === selected.id ? testResult : null;
 
+  // 浏览器授权入口只给 http server,且必须是曾发起过授权(已动态注册 client)的那种
+  const showOAuth = Boolean(
+    selected && selected.transport !== 'stdio' && selected.has_oauth,
+  );
+  const oauthAuthorized = Boolean(selected?.oauth_authorized);
+  // 未授权,或调用期被 401 打回(auth_required):用户需要重新走一遍浏览器授权
+  const oauthNeedsAuthorize =
+    !oauthAuthorized || selected?.last_status === 'auth_required';
+  const oauthScopes = selected?.oauth_scopes ?? [];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
@@ -299,6 +349,25 @@ export function McpPage() {
         subtitle="自定义 MCP server(远程 Streamable HTTP / 沙箱 stdio)· 工具以 mcp.<server>.<tool> 注入任务,Token 与环境变量只写不读"
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
+        {oauthStatus === 'success' ? (
+          <ConsolePanel className="mt-4 p-3">
+            <p className="text-[12px] font-medium text-ha-success">
+              {oauthServerName
+                ? '浏览器授权成功:' + oauthServerName
+                : '浏览器授权成功'}
+            </p>
+            <p className="mt-1 text-[11px] leading-4 text-ha-text-2">
+              授权状态已刷新,可点「测试/刷新」重新拉取该 server
+              的工具。
+            </p>
+          </ConsolePanel>
+        ) : null}
+        {oauthStatus === 'error' ? (
+          <ConsolePanel className="mt-4 p-3 text-[12px] text-ha-danger">
+            浏览器授权失败:{oauthErrorText || '未知错误'}
+          </ConsolePanel>
+        ) : null}
+
         <div className="mt-4 grid gap-4 lg:grid-cols-[320px_1fr]">
           <ConsolePanel className="p-3">
             <div className="flex items-center justify-between gap-2">
@@ -615,9 +684,95 @@ export function McpPage() {
                         需要重新授权:该 server 拒绝了当前凭证(HTTP 401)
                       </p>
                       <p className="mt-1 text-ha-text-2">
-                        请更新该 server 的访问令牌后重新测试
+                        {showOAuth
+                          ? '点下方「去授权」在浏览器里重新授权后重新测试'
+                          : '请更新该 server 的访问令牌后重新测试'}
                         {selected.last_error ? ':' + selected.last_error : ''}
                       </p>
+                    </div>
+                  ) : null}
+                  {selected.oauth_error ? (
+                    <div className="rounded-md border border-ha-warning-border bg-ha-warning-bg px-3 py-2 text-[12px] leading-5">
+                      <p className="font-medium text-ha-warning">
+                        浏览器授权异常
+                      </p>
+                      <p className="mt-1 text-ha-text-2">
+                        {selected.oauth_error}
+                      </p>
+                    </div>
+                  ) : null}
+                  {showOAuth ? (
+                    <div className="rounded-md border border-ha-border bg-ha-panel-2/40 px-3 py-2">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[12px] font-medium text-ha-text-2">
+                              浏览器授权(OAuth)
+                            </span>
+                            <ToneBadge
+                              tone={oauthAuthorized ? 'success' : 'neutral'}
+                            >
+                              {oauthAuthorized ? '已授权' : '未授权'}
+                            </ToneBadge>
+                          </div>
+                          <p className="mt-1 text-[11px] leading-4 text-ha-dim">
+                            {oauthAuthorized
+                              ? '访问令牌有效期至 ' +
+                                formatDeadline(selected.oauth_expires_at)
+                              : '授权在浏览器内完成,凭据只留在服务端,页面不回显 token'}
+                          </p>
+                          {oauthScopes.length ? (
+                            <p className="mt-1 flex flex-wrap items-center gap-1 font-mono text-[10px] text-ha-faint">
+                              范围
+                              {oauthScopes.map((scope) => (
+                                <span
+                                  key={scope}
+                                  className="rounded border border-ha-border bg-ha-panel px-1.5 py-0.5"
+                                >
+                                  {scope}
+                                </span>
+                              ))}
+                            </p>
+                          ) : null}
+                          {selected.oauth_authorization_server ? (
+                            <p className="mt-1 break-all font-mono text-[10px] text-ha-faint">
+                              授权服务器 {selected.oauth_authorization_server}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <Button
+                            size="sm"
+                            variant={oauthNeedsAuthorize ? 'primary' : 'outline'}
+                            disabled={oauthStartMutation.isPending}
+                            onClick={() =>
+                              oauthStartMutation.mutate(selected.id)
+                            }
+                          >
+                            <ShieldCheck className="mr-1 h-3 w-3" />
+                            {oauthStartMutation.isPending
+                              ? '跳转中…'
+                              : oauthNeedsAuthorize
+                                ? '去授权'
+                                : '重新授权'}
+                          </Button>
+                          {oauthAuthorized ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={oauthDisconnectMutation.isPending}
+                              onClick={() =>
+                                oauthDisconnectMutation.mutate(selected.id)
+                              }
+                            >
+                              <ShieldOff className="mr-1 h-3 w-3" />
+                              {oauthDisconnectMutation.isPending
+                                ? '解除中…'
+                                : '解除授权'}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
                   ) : null}
                   {result ? (

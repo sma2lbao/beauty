@@ -23,9 +23,15 @@ from common.logging import get_logger
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_orchestrator.core.config import DEFAULT_MCP_STDIO_COMMAND_ALLOWLIST
-from agent_orchestrator.models.mcp import MCPServer
-from agent_orchestrator.repositories import MCPServerRepository
+from agent_orchestrator.core.config import (
+    DEFAULT_MCP_STDIO_COMMAND_ALLOWLIST,
+    Settings,
+)
+from agent_orchestrator.models.mcp import MCPServer, MCPServerAuth
+from agent_orchestrator.repositories import (
+    MCPServerAuthRepository,
+    MCPServerRepository,
+)
 from agent_orchestrator.schemas.mcp import (
     MCPServerCreate,
     MCPServerRead,
@@ -33,6 +39,7 @@ from agent_orchestrator.schemas.mcp import (
     MCPTestRead,
     MCPToolRead,
 )
+from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.mcp_client import (
     MCPAuthRequired,
     MCPClient,
@@ -47,6 +54,9 @@ logger = get_logger(__name__)
 
 TRANSPORT_HTTP = "http"
 TRANSPORT_STDIO = "stdio"
+
+#: 调用前解析 OAuth token 的回调:第二参为 True 表示强制刷新(401 后重试)
+TokenProvider = Callable[[str, bool], Awaitable[str | None]]
 
 
 def _slug(value: str) -> str:
@@ -89,7 +99,32 @@ def _env_keys(server: MCPServer, secret: str) -> list[str]:
         return []
 
 
-def _to_read(server: MCPServer, secret: str) -> MCPServerRead:
+def _oauth_fields(auth: MCPServerAuth | None, server: MCPServer) -> dict[str, Any]:
+    """授权行 → 读端字段;只回状态与过期时间,绝不含 token/client_secret。
+
+    has_oauth 是"这个 server 支持/需要浏览器授权"的信号:还没发起过授权时,
+    由 401 落下的 auth_required 兜底——否则前端在首次授权前没有入口。
+    """
+    if auth is None:
+        return {
+            "has_oauth": server.last_status == "auth_required",
+            "oauth_authorized": False,
+        }
+    return {
+        "has_oauth": bool(auth.client_id) or server.last_status == "auth_required",
+        "oauth_authorized": bool(
+            auth.encrypted_access_token or auth.encrypted_refresh_token
+        ),
+        "oauth_scopes": list(auth.scopes or []),
+        "oauth_expires_at": auth.expires_at,
+        "oauth_authorization_server": auth.authorization_server,
+        "oauth_error": auth.last_error,
+    }
+
+
+def _to_read(
+    server: MCPServer, secret: str, auth: MCPServerAuth | None = None
+) -> MCPServerRead:
     return MCPServerRead(
         id=server.id,
         name=server.name,
@@ -112,6 +147,7 @@ def _to_read(server: MCPServer, secret: str) -> MCPServerRead:
         last_checked_at=server.last_checked_at,
         last_error=server.last_error,
         created_at=server.created_at,
+        **_oauth_fields(auth, server),
     )
 
 
@@ -119,13 +155,12 @@ def build_client(
     server: MCPServer,
     secret: str,
     *,
+    token: str | None = None,
     transport=None,
 ) -> MCPClient:
-    token = (
-        decrypt_token(secret, server.encrypted_token)
-        if server.encrypted_token
-        else None
-    )
+    """建客户端:显式 token(OAuth 授权行)优先,否则解静态 encrypted_token。"""
+    if token is None and server.encrypted_token:
+        token = decrypt_token(secret, server.encrypted_token)
     return MCPClient(
         server.url,
         token=token,
@@ -153,7 +188,10 @@ async def list_servers(
     servers = await MCPServerRepository(session).list_scoped(
         tenant_id, order_by=[MCPServer.created_at]
     )
-    return [_to_read(server, secret) for server in servers]
+    auths = await MCPServerAuthRepository(session).list_for_servers(
+        tenant_id, [server.id for server in servers]
+    )
+    return [_to_read(server, secret, auths.get(server.id)) for server in servers]
 
 
 async def _require(session: AsyncSession, tenant_id: str, server_id: str) -> MCPServer:
@@ -318,11 +356,16 @@ async def update_server(
         server.tools_allowlist = list(data.tools_allowlist)
     if data.timeout_seconds is not None:
         server.timeout_seconds = data.timeout_seconds
-    return _to_read(server, secret)
+    auth = await MCPServerAuthRepository(session).get_for_server(tenant_id, server_id)
+    return _to_read(server, secret, auth)
 
 
 async def delete_server(session: AsyncSession, tenant_id: str, server_id: str) -> None:
     server = await _require(session, tenant_id, server_id)
+    # 授权行与 server 同事务清理:留着孤儿 token 既不安全也没人再用
+    auth = await MCPServerAuthRepository(session).get_for_server(tenant_id, server_id)
+    if auth is not None:
+        await MCPServerAuthRepository(session).delete(auth)
     await MCPServerRepository(session).delete(server)
 
 
@@ -399,6 +442,52 @@ async def _test_stdio_server(
         await pool.release(tenant_id, key)
 
 
+async def _provider_token(
+    provider: TokenProvider | None, server_id: str, *, force: bool
+) -> str | None:
+    """解析 OAuth token;任何失败都按"无 token"处理(让调用走到 401 语义)。"""
+    if provider is None:
+        return None
+    try:
+        return await provider(server_id, force)
+    except Exception as exc:  # noqa: BLE001 - token 解析失败不阻断调用
+        logger.warning(
+            "mcp oauth token 解析失败",
+            server_id=server_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return None
+
+
+def _client_with_token(
+    server: MCPServer,
+    secret: str,
+    token: str | None,
+    transport=None,
+) -> MCPClient:
+    """token 为 None 时走 build_client(server, secret) 的静态 token 路径。"""
+    if token is not None:
+        return build_client(server, secret, token=token, transport=transport)
+    if transport is not None:
+        return build_client(server, secret, transport=transport)
+    return build_client(server, secret)
+
+
+async def _call_tool_once(
+    server: MCPServer,
+    secret: str,
+    token: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> str:
+    client = _client_with_token(server, secret, token)
+    try:
+        await client.initialize()
+        return await client.call_tool(tool_name, arguments)
+    finally:
+        await client.aclose()
+
+
 async def test_server(
     session: AsyncSession,
     tenant_id: str,
@@ -406,12 +495,31 @@ async def test_server(
     *,
     secret: str,
     pool: StdioSandboxPool | None = None,
+    settings: Settings | None = None,
+    transport=None,
 ) -> MCPTestRead:
     server = await _require(session, tenant_id, server_id)
     now = datetime.now(UTC)
     if (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO:
         return await _test_stdio_server(tenant_id, server, secret, pool, now)
-    client = build_client(server, secret)
+    token: str | None = None
+    if settings is not None:
+        try:
+            token = await mcp_oauth.access_token(
+                session,
+                tenant_id,
+                server_id,
+                settings=settings,
+                secret=secret,
+                transport=transport,
+            )
+        except Exception as exc:  # noqa: BLE001 - 测试端点优先返回可读失败
+            logger.warning(
+                "mcp oauth token 解析失败",
+                server_id=server_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+    client = _client_with_token(server, secret, token, transport)
     try:
         await client.initialize()
         raw_tools = await client.list_tools()
@@ -455,6 +563,7 @@ async def tool_specs(
     secret: str,
     pool: StdioSandboxPool | None = None,
     on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
+    token_provider: TokenProvider | None = None,
 ) -> list[ToolSpec]:
     """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
 
@@ -482,7 +591,11 @@ async def tool_specs(
                 _make_stdio_handler(tenant_id, server, wrapped.name, secret, pool)
                 if stdio
                 else _make_http_handler(
-                    server, wrapped.name, secret, on_auth_required
+                    server,
+                    wrapped.name,
+                    secret,
+                    on_auth_required,
+                    token_provider,
                 )
             )
             specs.append(
@@ -524,20 +637,39 @@ def _make_http_handler(
     tool_name: str,
     secret: str,
     on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
+    token_provider: TokenProvider | None = None,
 ):
     async def handler(args: dict[str, Any]) -> str:
-        client = build_client(server, secret)
+        token = await _provider_token(token_provider, server.id, force=False)
         try:
-            await client.initialize()
-            return await client.call_tool(tool_name, args)
-        except MCPAuthRequired as exc:
-            # 调用期 401:结构化回喂模型(不执行工具),并尽力把 server 标成需要授权
-            await _report_auth_required(on_auth_required, server.id, str(exc))
+            return await _call_tool_once(server, secret, token, tool_name, args)
+        except MCPAuthRequired as first:
+            # 401:若是浏览器授权 server,强制刷新一次 token 再重试(只重试一次)
+            detail = str(first)
+            refreshed = (
+                await _provider_token(token_provider, server.id, force=True)
+                if token_provider is not None
+                else None
+            )
+            if refreshed is not None and refreshed != token:
+                try:
+                    return await _call_tool_once(
+                        server, secret, refreshed, tool_name, args
+                    )
+                except MCPAuthRequired as again:
+                    detail = str(again)
+                except Exception as error:  # noqa: BLE001 - 工具失败回喂错误文本
+                    return json.dumps(
+                        {"error": f"{type(error).__name__}: {error}"},
+                        ensure_ascii=False,
+                    )
+            # 刷新不可用/仍 401:结构化回喂模型(不执行工具),并标记需要授权
+            await _report_auth_required(on_auth_required, server.id, detail)
             return json.dumps(
                 {
                     "error": "该 MCP server 需要重新授权，工具未执行",
                     "code": "mcp.auth_required",
-                    "detail": str(exc),
+                    "detail": detail,
                     "hint": "请重新授权或更新该 server 的访问令牌后重试",
                 },
                 ensure_ascii=False,
@@ -546,8 +678,6 @@ def _make_http_handler(
             return json.dumps(
                 {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
             )
-        finally:
-            await client.aclose()
 
     return handler
 

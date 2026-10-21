@@ -46,6 +46,18 @@ export type MCPServer = {
   last_status: string | null;
   last_checked_at: string | null;
   last_error: string | null;
+  /** 曾发起过浏览器授权(已动态注册 client):仅这类 http server 展示授权入口 */
+  has_oauth: boolean;
+  /** 当前是否持有可用的 OAuth 访问令牌 */
+  oauth_authorized: boolean;
+  /** 授权服务器批准的范围 */
+  oauth_scopes: string[];
+  /** 访问令牌过期时间;null 表示无过期时间或尚未授权 */
+  oauth_expires_at: string | null;
+  /** 动态注册得到的授权服务器标识(issuer) */
+  oauth_authorization_server: string | null;
+  /** 最近一次授权/刷新失败的说明;null 表示无异常 */
+  oauth_error: string | null;
   created_at: string;
 };
 
@@ -80,6 +92,13 @@ export type MCPServerUpdateInput = {
   enabled?: boolean;
   auto_approve?: boolean;
   url?: string | null;
+};
+
+/** 浏览器授权启动结果:前端整页跳到 authorize_url,回调由 BFF 转回 /mcp?oauth=… */
+export type MCPOAuthStartRead = {
+  authorize_url: string;
+  /** authorize_url 的有效期(秒) */
+  expires_in: number;
 };
 
 export type MCPTestRead = {
@@ -145,4 +164,10 @@ export const mcpApi = {
   remove: (id: string) => request<void>('/' + id, { method: 'DELETE' }),
   test: (id: string) =>
     request<MCPTestRead>('/' + id + '/test', { method: 'POST' }),
+  /** 发起浏览器 OAuth 授权:拿到授权页地址,由调用方整页跳转 */
+  startOAuth: (id: string) =>
+    request<MCPOAuthStartRead>('/' + id + '/oauth/start', { method: 'POST' }),
+  /** 解除浏览器授权(丢弃本地 token,server 保留) */
+  disconnectOAuth: (id: string) =>
+    request<void>('/' + id + '/oauth/disconnect', { method: 'POST' }),
 };

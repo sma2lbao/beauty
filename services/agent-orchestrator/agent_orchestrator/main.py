@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agent_orchestrator.api.health import health_router
+from agent_orchestrator.api.internal import router as internal_router
 from agent_orchestrator.api.mcp_server import router as mcp_server_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
@@ -37,6 +38,7 @@ from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 OR
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
 from agent_orchestrator.services import mcp as mcp_service
+from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.connectors import ConnectorClient
@@ -204,6 +206,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         server.last_error = detail[:500]
                         server.last_checked_at = datetime.now(UTC)
 
+                async def _mcp_token(server_id: str, force: bool) -> str | None:
+                    """调用前解析 OAuth token(过期自动刷新;401 时 force 刷新)。"""
+                    if not settings.mcp_oauth_enabled:
+                        return None
+                    async with session_scope(factory) as session:
+                        return await mcp_oauth.access_token(
+                            session,
+                            tenant_id,
+                            server_id,
+                            settings=settings,
+                            secret=settings.mcp_secret,
+                            force_refresh=force,
+                        )
+
                 try:
                     async with session_scope(factory) as session:
                         # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
@@ -213,6 +229,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             secret=settings.mcp_secret,
                             pool=getattr(app.state, "mcp_stdio_pool", None),
                             on_auth_required=_mark_mcp_auth_required,
+                            token_provider=_mcp_token,
                         )
                 except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
                     logger.warning(
@@ -450,6 +467,7 @@ def create_app(
         return JSONResponse(status_code=exc.status, content=exc.to_dict())
 
     app.include_router(health_router)
+    app.include_router(internal_router)
     app.include_router(mcp_server_router)
     app.include_router(api_router, prefix="/api/v1")
     return app

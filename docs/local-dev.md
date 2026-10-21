@@ -98,7 +98,8 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
   **对话**里可直接调用（对话没有审批流，见架构 §6.7），任务里也不再逐次确认；关着时
   对话里只会回喂「请改用任务」。注册表单与详情页都有这个开关。
 - 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
-- http 传输收到 401 时按「需要授权」处理（P0）：测试端点落 `last_status=auth_required`，`/mcp` 页标「需要授权」并提示重新授权；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`）。响应头 `WWW-Authenticate` 会被保留，供后续接 RFC 9728 PRM 发现。浏览器端 OAuth 授权与令牌自动刷新属 P1，当前仍需手动更新该 server 的 token。
+- http 传输收到 401 时按「需要授权」处理：测试端点落 `last_status=auth_required`、`/mcp` 页标「需要授权」；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`），响应头 `WWW-Authenticate` 保留下来作发现线索。
+- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **BFF 同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
 - http 传输按 Streamable HTTP 规范回带会话头：`initialize` 响应里的 `Mcp-Session-Id` 会带到后续每个请求（含 notification），之后请求带协商出的 `MCP-Protocol-Version`；会话失效（服务端回 404）自动重新 initialize 并重试一次，关闭时尽力 `DELETE` 终止会话。
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
 - MCP Server 对外暴露（M3）尚未实现。

@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MCPServer } from '@/lib/mcp-api';
@@ -18,6 +19,8 @@ vi.mock('@/lib/mcp-api', async () => {
       update: vi.fn(),
       remove: vi.fn(),
       test: vi.fn(),
+      startOAuth: vi.fn(),
+      disconnectOAuth: vi.fn(),
     },
   };
 });
@@ -52,6 +55,12 @@ const httpServer: MCPServer = {
   last_status: 'ok',
   last_checked_at: '2026-10-20T10:00:00+00:00',
   last_error: null,
+  has_oauth: false,
+  oauth_authorized: false,
+  oauth_scopes: [],
+  oauth_expires_at: null,
+  oauth_authorization_server: null,
+  oauth_error: null,
   created_at: '2026-10-20T00:00:00+00:00',
 };
 
@@ -76,6 +85,12 @@ const stdioServer: MCPServer = {
   last_status: 'error',
   last_checked_at: null,
   last_error: '沙箱未启用',
+  has_oauth: false,
+  oauth_authorized: false,
+  oauth_scopes: [],
+  oauth_expires_at: null,
+  oauth_authorization_server: null,
+  oauth_error: null,
   created_at: '2026-10-20T00:00:00+00:00',
 };
 
@@ -90,13 +105,33 @@ const authServer: MCPServer = {
   last_error: 'MCPAuthRequired: MCP 服务端要求授权(HTTP 401)',
 };
 
-function renderPage() {
+/** 走过浏览器授权(http)但当前没有有效 token 的 server:详情里应提示「去授权」。 */
+const oauthServer: MCPServer = {
+  ...httpServer,
+  id: 'm4',
+  name: 'linear',
+  url: 'https://mcp.linear.example/mcp',
+  has_token: false,
+  token_hint: null,
+  last_status: null,
+  last_checked_at: null,
+  last_error: null,
+  has_oauth: true,
+  oauth_authorized: false,
+  oauth_scopes: ['mcp:read'],
+  oauth_expires_at: null,
+  oauth_authorization_server: 'https://auth.linear.example',
+};
+
+function renderPage(initialEntry = '/mcp') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <McpPage />
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <McpPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -111,6 +146,12 @@ beforeEach(() => {
   vi.mocked(mcpApi.list).mockResolvedValue([httpServer, stdioServer]);
   vi.mocked(mcpApi.update).mockResolvedValue(httpServer);
   vi.mocked(mcpApi.remove).mockResolvedValue(undefined);
+  // 用 hash 地址模拟授权页跳转:jsdom 只实现了 hash 导航,不污染测试输出
+  vi.mocked(mcpApi.startOAuth).mockResolvedValue({
+    authorize_url: '#oauth',
+    expires_in: 600,
+  });
+  vi.mocked(mcpApi.disconnectOAuth).mockResolvedValue(undefined);
 });
 
 describe('McpPage', () => {
@@ -340,5 +381,53 @@ describe('McpPage', () => {
     });
     expect(confirm).toHaveBeenCalled();
     confirm.mockRestore();
+  });
+
+  it('未授权的 http server 显示「去授权」,点击调用 startOAuth', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([oauthServer]);
+    renderPage();
+    await screen.findAllByText('linear');
+
+    expect(screen.getByText('未授权')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '去授权' }));
+
+    await waitFor(() => {
+      expect(mcpApi.startOAuth).toHaveBeenCalledWith('m4');
+    });
+  });
+
+  it('已授权的 http server 提供「重新授权」与「解除授权」,解除走接口', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([
+      {
+        ...oauthServer,
+        oauth_authorized: true,
+        oauth_expires_at: '2026-10-22T00:00:00+00:00',
+        last_status: 'ok',
+      },
+    ]);
+    renderPage();
+    await screen.findAllByText('linear');
+
+    expect(screen.getByText('已授权')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新授权' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '解除授权' }));
+
+    await waitFor(() => {
+      expect(mcpApi.disconnectOAuth).toHaveBeenCalledWith('m4');
+    });
+  });
+
+  it('?oauth=success 展示成功提示(含 server 名)', async () => {
+    renderPage('/mcp?oauth=success&server=linear');
+
+    expect(await screen.findByText('浏览器授权成功:linear')).toBeTruthy();
+  });
+
+  it('?oauth=error 展示错误提示', async () => {
+    renderPage('/mcp?oauth=error&error=access_denied');
+
+    expect(
+      await screen.findByText('浏览器授权失败:access_denied'),
+    ).toBeTruthy();
   });
 });

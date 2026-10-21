@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from bff.api.auth import router as auth_router
 from bff.api.health import health_router
+from bff.api.mcp_oauth import router as mcp_oauth_router
 from bff.api.proxy import router as proxy_router
 from bff.core.config import Settings
 from bff.core.rate_limit import SlidingWindowLimiter
@@ -91,6 +92,8 @@ def create_app(
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    # 必须在通用 /api/{path} 代理之前注册,否则回调会被代理吃掉
+    app.include_router(mcp_oauth_router)
     app.include_router(proxy_router)
     return app
 

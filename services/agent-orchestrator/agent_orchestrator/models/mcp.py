@@ -52,3 +52,36 @@ class MCPServer(UUIDMixin, TenantMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MCPServerAuth(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """远程 MCP server 的浏览器 OAuth 授权(P1,与 mcp_servers 一对一)。
+
+    云端 agent 不能自己开浏览器:用户在浏览器里完成授权码流程,服务端只保存
+    "授权服务器 + 动态注册的 client + 加密后的 access/refresh token"。
+    token 与 client_secret 一律只存密文(见 services/mcp_crypto.py);
+    读端只回 has_oauth/oauth_authorized/scopes/过期时间,**永不回明文**。
+    """
+
+    __tablename__ = "mcp_server_auth"
+    __table_args__ = (UniqueConstraint("tenant_id", "server_id"),)
+
+    #: 关联 mcp_servers.id(不建 FK:删除 server 时由服务层同事务清理)
+    server_id: Mapped[str] = mapped_column(String(32))
+    #: PRM(RFC 9728)指向的授权服务器 issuer
+    authorization_server: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    token_endpoint: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: DCR(RFC 7591)注册结果:client_id 明文,secret 密文
+    client_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    encrypted_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 注册时声明的回调(经 BFF 同源),换 token 时必须原样回传
+    redirect_uri: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 最近一次授权/刷新失败原因(展示用,不含 token)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

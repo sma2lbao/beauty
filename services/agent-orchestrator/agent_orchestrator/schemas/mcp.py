@@ -157,6 +157,14 @@ class MCPServerRead(BaseModel):
     last_checked_at: datetime | None
     last_error: str | None
     created_at: datetime
+    #: 浏览器 OAuth 授权(P1):是否已建立客户端、是否持有可用 token
+    has_oauth: bool = False
+    oauth_authorized: bool = False
+    oauth_scopes: list[str] = Field(default_factory=list)
+    oauth_expires_at: datetime | None = None
+    oauth_authorization_server: str | None = None
+    #: 最近一次授权/刷新失败原因(不含 token;重新授权成功即清空)
+    oauth_error: str | None = None
 
 
 class MCPTestRead(BaseModel):
@@ -165,3 +173,25 @@ class MCPTestRead(BaseModel):
     tools: list[MCPToolRead]
     #: 服务端要求(重新)授权(HTTP 401):前端据此给出"重新授权"指引,而不是笼统的失败
     auth_required: bool = False
+
+
+class MCPOAuthStartRead(BaseModel):
+    #: 浏览器需要跳转的授权地址(含 PKCE 与一次性 state)
+    authorize_url: str
+    #: state 有效期(秒):前端可据此提示"链接过期请重试"
+    expires_in: int
+
+
+class MCPOAuthCallbackRequest(BaseModel):
+    """BFF → orchestrator 内部回调契约(经 X-Internal-Secret 鉴权)。"""
+
+    state: str = Field(min_length=1, max_length=8192)
+    code: str = Field(min_length=1, max_length=8192)
+
+
+class MCPOAuthCallbackRead(BaseModel):
+    #: 换 token 是否成功;失败时 redirect_path 仍指向 /mcp?oauth=error
+    ok: bool
+    #: 前端要跳转的站内相对路径(由 orchestrator 统一拼,避免 BFF 了解错误文案)
+    redirect_path: str
+    error: str | None = None
