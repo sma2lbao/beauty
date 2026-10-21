@@ -306,7 +306,9 @@ def test_settings_carry_sandbox_knobs() -> None:
     assert settings.sandbox_timeout_seconds == 12.5
 
 
-def test_sandbox_disabled_by_default() -> None:
+def test_sandbox_disabled_by_default(monkeypatch) -> None:
     """默认关闭:P1 不改变既有行为——不开沙箱就不起客户端、不碰网络。"""
+    # 本地 .env 会经 Nx 注入任务环境(Settings(_env_file=None) 挡不住),显式清掉
+    monkeypatch.delenv("AGENT_ORCHESTRATOR__SANDBOX_ENABLED", raising=False)
     settings = Settings(_env_file=None)
     assert settings.sandbox_enabled is False

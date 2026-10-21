@@ -98,6 +98,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
   **对话**里可直接调用（对话没有审批流，见架构 §6.7），任务里也不再逐次确认；关着时
   对话里只会回喂「请改用任务」。注册表单与详情页都有这个开关。
 - 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
+- http 传输按 Streamable HTTP 规范回带会话头：`initialize` 响应里的 `Mcp-Session-Id` 会带到后续每个请求（含 notification），之后请求带协商出的 `MCP-Protocol-Version`；会话失效（服务端回 404）自动重新 initialize 并重试一次，关闭时尽力 `DELETE` 终止会话。
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
 - MCP Server 对外暴露（M3）尚未实现。
 

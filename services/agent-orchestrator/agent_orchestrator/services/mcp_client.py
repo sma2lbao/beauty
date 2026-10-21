@@ -2,6 +2,12 @@
 
 安全口径:返回内容视为不可信数据,由工具调用层作为普通文本回喂模型;
 token 只在服务端解密后放进请求头,绝不进入日志/响应。
+
+传输口径(Streamable HTTP):
+- initialize 响应头里的 Mcp-Session-Id 回填到后续每个请求(含 notification);
+- initialize 协商出的 protocolVersion 之后放进 MCP-Protocol-Version 头;
+- 会话失效(服务端回 404)时清掉本地状态,由 _request 重新 initialize 后重试一次;
+- 关闭时尽力 DELETE 终止会话,服务端不支持/报错都不影响清理。
 """
 
 from __future__ import annotations
@@ -13,12 +19,18 @@ from typing import Any
 import httpx
 
 PROTOCOL_VERSION = "2025-03-26"
+SESSION_HEADER = "Mcp-Session-Id"
+PROTOCOL_HEADER = "MCP-Protocol-Version"
 
 
 class MCPError(Exception):
     def __init__(self, message: str, *, code: int | None = None) -> None:
         super().__init__(message)
         self.code = code
+
+
+class MCPSessionExpired(MCPError):
+    """服务端已不认识当前会话(Streamable HTTP:未知 session 回 404)。"""
 
 
 class MCPClient:
@@ -32,12 +44,17 @@ class MCPClient:
     ) -> None:
         self._url = url
         self._token = token
-        self._client = httpx.AsyncClient(
-            timeout=timeout_seconds, transport=transport
-        )
+        self._client = httpx.AsyncClient(timeout=timeout_seconds, transport=transport)
         self._next_id = 0
+        self._session_id: str | None = None
+        self._protocol_version: str | None = None
 
     async def aclose(self) -> None:
+        # 规范允许客户端 DELETE 终止会话;部分 server 不支持,失败不报错
+        if self._session_id:
+            with suppress(Exception):
+                await self._client.delete(self._url, headers=self._headers())
+            self._session_id = None
         await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
@@ -45,18 +62,37 @@ class MCPClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        # 无状态 server 不返回 session,保持现状即可;有 session 的必须逐请求回带
+        if self._session_id:
+            headers[SESSION_HEADER] = self._session_id
+        if self._protocol_version:
+            headers[PROTOCOL_HEADER] = self._protocol_version
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        had_session = bool(self._session_id)
         response = await self._client.post(
             self._url, json=payload, headers=self._headers()
         )
-        if response.status_code >= 400:
-            raise MCPError(
-                f"MCP HTTP {response.status_code}: {response.text[:200]}"
+        if not self._session_id:
+            session_id = response.headers.get(SESSION_HEADER)
+            if session_id:
+                self._session_id = session_id
+        if (
+            response.status_code == 404
+            and had_session
+            and payload.get("method") != "initialize"
+        ):
+            # 会话被服务端回收(重启/过期):清掉本地状态,交给 _request 重新握手
+            self._session_id = None
+            self._protocol_version = None
+            raise MCPSessionExpired(
+                "MCP 会话已失效(HTTP 404)，需要重新 initialize", code=404
             )
+        if response.status_code >= 400:
+            raise MCPError(f"MCP HTTP {response.status_code}: {response.text[:200]}")
         if response.status_code == 202 or not response.content:
             return None
         content_type = response.headers.get("content-type", "")
@@ -74,7 +110,11 @@ class MCPClient:
         return response.json()
 
     async def _request(
-        self, method: str, params: dict[str, Any] | None = None
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        _retry_on_session_expired: bool = True,
     ) -> Any:
         self._next_id += 1
         payload = {
@@ -83,7 +123,13 @@ class MCPClient:
             "method": method,
             "params": params or {},
         }
-        event = await self._post(payload)
+        try:
+            event = await self._post(payload)
+        except MCPSessionExpired:
+            if not _retry_on_session_expired:
+                raise
+            await self.initialize()
+            return await self._request(method, params, _retry_on_session_expired=False)
         if event is None:
             raise MCPError(f"MCP {method} 没有返回结果")
         if "error" in event:
@@ -95,11 +141,12 @@ class MCPClient:
         return event.get("result")
 
     async def _notify(self, method: str, params: dict[str, Any] | None = None) -> None:
-        await self._post(
-            {"jsonrpc": "2.0", "method": method, "params": params or {}}
-        )
+        await self._post({"jsonrpc": "2.0", "method": method, "params": params or {}})
 
     async def initialize(self) -> dict[str, Any]:
+        # 重新握手前清掉旧会话:旧 session id 不能再出现在 initialize 上
+        self._session_id = None
+        self._protocol_version = None
         result = await self._request(
             "initialize",
             {
@@ -107,7 +154,11 @@ class MCPClient:
                 "capabilities": {},
                 "clientInfo": {"name": "beauty-moon", "version": "0.1.0"},
             },
+            _retry_on_session_expired=False,
         )
+        negotiated = result.get("protocolVersion") if isinstance(result, dict) else None
+        if isinstance(negotiated, str) and negotiated:
+            self._protocol_version = negotiated
         # 通知失败不阻断后续 tools/list(部分 server 可能不实现)
         with suppress(Exception):
             await self._notify("notifications/initialized")
