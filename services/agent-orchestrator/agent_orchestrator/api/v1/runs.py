@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from common.artifacts import ArtifactStore
-from common.errors import AppError, NotFoundError
+from common.errors import AppError, ConflictError, NotFoundError
 from database.session import session_scope
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -40,6 +40,7 @@ from agent_orchestrator.schemas.runs import (
     RunStatus,
 )
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services import skill_packages
 from agent_orchestrator.services.skills import SkillRegistry
@@ -76,6 +77,16 @@ async def create_run(
         )
         if skill is None:
             raise NotFoundError("skill.not_found", "Skill 不存在")
+    if body.mcp_server_ids:
+        # 显式引用的 MCP server 在建 run 前校验:未知 404、停用/未启用 409
+        if not settings.mcp_enabled:
+            raise ConflictError("mcp.disabled", "MCP 能力未启用")
+        servers = await mcp_service.resolve_selected(
+            session, tenant_id, body.mcp_server_ids
+        )
+        body = body.model_copy(
+            update={"mcp_server_ids": [server.id for server in servers]}
+        )
     run = await runs_service.create_run(session, tenant_id, body, skill=skill)
     if settings.jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", run.id)

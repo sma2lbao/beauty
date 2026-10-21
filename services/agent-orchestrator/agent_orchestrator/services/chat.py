@@ -33,10 +33,13 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-async def prompt(session: AsyncSession, message: ChatMessage) -> list[dict[str, str]]:
+async def prompt(
+    session: AsyncSession, message: ChatMessage, *, reference_note: str = ""
+) -> list[dict[str, str]]:
     """直接对话的完整消息序列:系统提示 + 此前全部轮次 + 本轮。
 
     非流式与流式共用——两条路径的上下文口径因此不会漂。
+    reference_note 是本次消息显式引用 MCP server 的约束片段(空则不追加)。
     """
     rows = await MessageRepository(session).list_before(
         message.tenant_id,
@@ -44,7 +47,10 @@ async def prompt(session: AsyncSession, message: ChatMessage) -> list[dict[str, 
         before=message.created_at,
         exclude_id=message.id,
     )
-    messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    system_prompt = CHAT_SYSTEM_PROMPT
+    if reference_note:
+        system_prompt = f"{system_prompt}\n\n{reference_note}"
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(history.to_prompt(rows))
     attachment_context = await attachments_service.context_for_message(
         session, message.tenant_id, message.id
@@ -108,11 +114,14 @@ async def run_tool_loop(
             else:
                 output = await toolkit.execute(call.name, call.arguments)
             messages.append(_tool_message(call.id, output))
-            yield "tool", {
-                "name": call.name,
-                "arguments": call.arguments,
-                "ok": not output.startswith('{"error"'),
-            }
+            yield (
+                "tool",
+                {
+                    "name": call.name,
+                    "arguments": call.arguments,
+                    "ok": not output.startswith('{"error"'),
+                },
+            )
     yield "content", last_text
 
 
@@ -121,12 +130,14 @@ async def answer(
     llm: LLMClient,
     message: ChatMessage,
     toolkit=None,
+    *,
+    reference_note: str = "",
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
     toolkit 为空(未配置工具)时行为与原先完全一致:单轮直答。
     """
-    messages = await prompt(session, message)
+    messages = await prompt(session, message, reference_note=reference_note)
     if toolkit is None or len(toolkit) == 0:
         reply = await llm.complete(messages)
         return reply.content

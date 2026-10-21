@@ -295,6 +295,7 @@ async def create_run(
         skill_runtime=skill.runtime if skill else None,
         skill_network=skill.network if skill else None,
         skill_timeout_seconds=skill.timeout_seconds if skill else None,
+        mcp_server_ids=list(data.mcp_server_ids or []),
     )
     await RunRepository(session).add(run)
     await append_event(

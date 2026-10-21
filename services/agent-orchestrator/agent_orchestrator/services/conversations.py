@@ -202,11 +202,17 @@ async def list_messages(
 
 
 async def _persist_user_message(
-    session: AsyncSession, conversation: Conversation, content: str
+    session: AsyncSession,
+    conversation: Conversation,
+    content: str,
+    *,
+    mcp_server_ids: list[str] | None = None,
 ) -> ChatMessage:
     """落用户消息(首条顺带定题)并顶起会话活跃时间。
 
     created_at 必须早于随后创建的 run / assistant 回复——多轮历史靠它排序。
+    mcp_server_ids 是用户显式引用的 MCP server(空 = 不限制),随消息落库
+    以便历史回放时仍能看到"这条消息引用了谁"。
     """
     messages = MessageRepository(session)
     if not await messages.has_any_message(conversation.tenant_id, conversation.id):
@@ -216,6 +222,7 @@ async def _persist_user_message(
         conversation_id=conversation.id,
         role="user",
         content=content,
+        mcp_server_ids=list(mcp_server_ids or []),
     )
     await messages.add(message)
     conversation.updated_at = datetime.now(UTC)
@@ -246,6 +253,7 @@ async def _task_path(
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
     attachment_context: str = "",
+    mcp_server_ids: list[str] | None = None,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
     run = await active_run(session, conversation.tenant_id, conversation.id)
@@ -264,6 +272,7 @@ async def _task_path(
             acceptance_criteria=[],
             conversation_id=conversation.id,
             skill_id=skill.manifest.id if skill else None,
+            mcp_server_ids=list(mcp_server_ids or []),
         ),
         skill=skill,
     )
@@ -314,6 +323,8 @@ async def post_message(
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
+    mcp_server_ids: list[str] | None = None,
+    mcp_reference_note: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
@@ -327,7 +338,9 @@ async def post_message(
     chat.run_tool_loop 拒绝并提示改用「任务」(对话没有审批流,§6.7)。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
-    message = await _persist_user_message(session, conversation, content)
+    message = await _persist_user_message(
+        session, conversation, content, mcp_server_ids=mcp_server_ids
+    )
     if attachment_ids:
         await attachments_service.link_attachments(
             session,
@@ -345,12 +358,19 @@ async def post_message(
     decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
-        # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用)
+        # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用);
+        # mcp_server_ids 让外部工具工厂只装配被引用的 server
         with bind_tool_context(
-            ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
+            ToolContext(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                mcp_server_ids=tuple(mcp_server_ids or ()),
+            )
         ):
             toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
-            answer = await chat.answer(session, llm, message, toolkit)
+            answer = await chat.answer(
+                session, llm, message, toolkit, reference_note=mcp_reference_note
+            )
         reply = await _persist_assistant_message(session, message, answer)
         return message, None, reply, triage.CHAT
     run, outcome = await _task_path(
@@ -362,6 +382,7 @@ async def post_message(
         jobs_enabled=jobs_enabled,
         skill=skill,
         attachment_context=attachment_context,
+        mcp_server_ids=mcp_server_ids,
     )
     return message, run, None, outcome
 
@@ -386,6 +407,8 @@ async def stream_message(
     attachment_ids: list[str] | None = None,
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
+    mcp_server_ids: list[str] | None = None,
+    mcp_reference_note: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
@@ -405,7 +428,9 @@ async def stream_message(
     prompt: list[dict[str, str]] = []
     async with session_scope(factory) as session:
         conversation = await require_conversation(session, tenant_id, conversation_id)
-        message = await _persist_user_message(session, conversation, content)
+        message = await _persist_user_message(
+            session, conversation, content, mcp_server_ids=mcp_server_ids
+        )
         if attachment_ids:
             await attachments_service.link_attachments(
                 session,
@@ -422,7 +447,9 @@ async def stream_message(
             )
         decided = await triage.decide(content, llm, mode=mode)
         if decided == triage.CHAT and llm is not None:
-            prompt = await chat.prompt(session, message)
+            prompt = await chat.prompt(
+                session, message, reference_note=mcp_reference_note
+            )
             outcome = triage.CHAT
         else:
             run, outcome = await _task_path(
@@ -434,6 +461,7 @@ async def stream_message(
                 jobs_enabled=jobs_enabled,
                 skill=skill,
                 attachment_context=attachment_context,
+                mcp_server_ids=mcp_server_ids,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:
@@ -449,7 +477,11 @@ async def stream_message(
         # 对话内工具执行的来源上下文(stdio MCP 沙箱按对话复用);
         # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
         with bind_tool_context(
-            ToolContext(tenant_id=tenant_id, conversation_id=conversation_id)
+            ToolContext(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                mcp_server_ids=tuple(mcp_server_ids or ()),
+            )
         ):
             toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
             if toolkit is None or len(toolkit) == 0:

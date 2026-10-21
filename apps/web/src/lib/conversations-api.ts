@@ -46,6 +46,11 @@ export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  /**
+   * 这条消息显式引用的 MCP server id(后端保证总是数组,旧数据可能缺省)。
+   * 空数组 = 未指定,沿用全部启用 server 的现状。
+   */
+  mcp_server_ids?: string[];
 };
 
 /** 发送方式:auto = 服务端自动分流(默认);chat = 直接对话;task = 作为任务。 */
@@ -134,6 +139,7 @@ export const conversationsApi = {
     mode: SendMode = 'auto',
     attachmentIds: string[] = [],
     skillId?: string,
+    mcpServerIds: string[] = [],
   ) =>
     request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
@@ -144,6 +150,8 @@ export const conversationsApi = {
           mode,
           attachment_ids: attachmentIds,
           skill_id: skillId,
+          // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
+          mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
         }),
       },
     ),
@@ -253,6 +261,7 @@ export async function streamMessage(
   handlers: StreamMessageHandlers,
   attachmentIds: string[] = [],
   skillId?: string,
+  mcpServerIds: string[] = [],
 ): Promise<void> {
   const response = await fetch(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
@@ -265,6 +274,8 @@ export async function streamMessage(
         mode,
         attachment_ids: attachmentIds,
         skill_id: skillId,
+        // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
+        mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
       }),
       signal: handlers.signal,
     },

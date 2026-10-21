@@ -5,6 +5,7 @@ import {
   Download,
   FileText,
   Paperclip,
+  Plug,
   Sparkles,
   X,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ import { Markdown } from '@/components/console/markdown';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import { downloadArtifact } from '@/lib/artifacts';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
+import { mcpApi } from '@/lib/mcp-api';
 import { skillsApi } from '@/lib/skills-api';
 import type {
   Attachment,
@@ -68,6 +70,10 @@ export function ChatPage() {
   const [skillOverride, setSkillOverride] = useState<string | null>(null);
   // URL 里的 skill 是默认值;用户手动切换后以本地选择为准(不做 effect 同步)
   const selectedSkill = skillOverride ?? skillParam ?? '';
+  const mcpParam = searchParams.get('mcp');
+  const [mcpOverride, setMcpOverride] = useState<string | null>(null);
+  // 与技能同规则:?mcp=<id> 是默认引用,手动切换后以本地选择为准
+  const selectedMcp = mcpOverride ?? mcpParam ?? '';
   // 会话选择以 URL 为唯一来源:侧边栏/新建任务都改地址栏,组件不再另存一份
   const activeConversationId = newFlag ? null : conversationParam;
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
@@ -82,6 +88,8 @@ export function ChatPage() {
     user: string;
     reply: string;
     attachments: Attachment[];
+    /** 本次发送显式引用的 MCP server(展示 chip 用;不选为空数组) */
+    mcpServers: { id: string; name: string }[];
     /** 对话内只读工具调用(tool 事件流式累积;done 后随消息一起消失) */
     chatTools: { name: string; arguments: string; ok: boolean }[];
   } | null>(null);
@@ -107,7 +115,21 @@ export function ChatPage() {
     queryFn: skillsApi.list,
     retry: false,
   });
+  const mcpQuery = useQuery({
+    queryKey: ['mcp-servers'],
+    queryFn: mcpApi.list,
+    retry: false,
+  });
   const conversations = conversationsQuery.data ?? [];
+  // 选择器只列启用的 server;历史消息/URL 里可能引用已停用的 id,用全量列表展示名字
+  const mcpServers = mcpQuery.data ?? [];
+  const enabledMcpServers = mcpServers.filter((server) => server.enabled);
+  const mcpServerName = (id: string) =>
+    mcpServers.find((server) => server.id === id)?.name ?? id;
+  const mcpCatalog = mcpServers.map((server) => ({
+    id: server.id,
+    name: server.name,
+  }));
 
   const conversationQuery = useQuery({
     queryKey: ['conversation', activeConversationId],
@@ -246,11 +268,16 @@ export function ChatPage() {
         setSearchParams({ conversation: conversationId }, { replace: true });
       }
       const targetConversationId = conversationId;
+      const mcpServerIds = selectedMcp ? [selectedMcp] : [];
       setPending({
         conversationId: targetConversationId,
         user: text,
         reply: '',
         attachments: selectedAttachments,
+        mcpServers: mcpServerIds.map((id) => ({
+          id,
+          name: mcpServerName(id),
+        })),
         chatTools: [],
       });
       const streamHandlers: StreamMessageHandlers = {
@@ -293,7 +320,18 @@ export function ChatPage() {
       const attachmentIds = selectedAttachments.map(
         (attachment) => attachment.id,
       );
-      if (selectedSkill) {
+      // 不选的项照旧不传参数,保证原有调用形状(skill 为空、无 MCP 时只有 5 个参数)
+      if (mcpServerIds.length) {
+        await streamMessage(
+          targetConversationId,
+          text,
+          sendMode,
+          streamHandlers,
+          attachmentIds,
+          selectedSkill || undefined,
+          mcpServerIds,
+        );
+      } else if (selectedSkill) {
         await streamMessage(
           targetConversationId,
           text,
@@ -479,6 +517,7 @@ export function ChatPage() {
                       ? toolCalls.length
                       : 0
                   }
+                  mcpCatalog={mcpCatalog}
                 />
               ))}
 
@@ -487,6 +526,7 @@ export function ChatPage() {
                   <UserBlock
                     text={visiblePending.user}
                     attachments={visiblePending.attachments}
+                    mcpServers={visiblePending.mcpServers}
                   />
                   {visiblePending.chatTools.length > 0 ? (
                     <ol className="space-y-1.5 border-l border-ha-border pl-3">
@@ -865,6 +905,35 @@ export function ChatPage() {
                       </option>
                     ))}
                   </select>
+                  <label
+                    htmlFor="send-mcp"
+                    className="font-mono text-[11px] text-ha-faint"
+                  >
+                    MCP
+                  </label>
+                  <select
+                    id="send-mcp"
+                    aria-label="选择 MCP server"
+                    value={selectedMcp}
+                    onChange={(event) => setMcpOverride(event.target.value)}
+                    className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+                  >
+                    <option value="">不使用 MCP</option>
+                    {enabledMcpServers.map((server) => (
+                      <option key={server.id} value={server.id}>
+                        {server.name}
+                      </option>
+                    ))}
+                    {/* URL/草稿引用了已停用或已删除的 server:补一个兜底项,避免 value 失配 */}
+                    {selectedMcp &&
+                    !enabledMcpServers.some(
+                      (server) => server.id === selectedMcp,
+                    ) ? (
+                      <option value={selectedMcp}>
+                        {mcpServerName(selectedMcp)}
+                      </option>
+                    ) : null}
+                  </select>
                   {inFlight ? (
                     <span className="hidden truncate font-mono text-[11px] text-ha-info sm:inline">
                       任务进行中 · 发送会并入追加指令
@@ -952,10 +1021,12 @@ function UserBlock({
   text,
   createdAt,
   attachments = [],
+  mcpServers = [],
 }: {
   text: string;
   createdAt?: string;
   attachments?: Attachment[];
+  mcpServers?: { id: string; name: string }[];
 }) {
   return (
     <article>
@@ -970,6 +1041,19 @@ function UserBlock({
       <p className="mt-2 whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-body">
         {text}
       </p>
+      {mcpServers.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {mcpServers.map((server) => (
+            <span
+              key={server.id}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-0.5 font-mono text-[11px] text-ha-text-2"
+            >
+              <Plug className="h-3 w-3 shrink-0 text-ha-muted" />
+              <span className="truncate">MCP · {server.name}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {attachments.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {attachments.map((attachment) => (
@@ -1041,18 +1125,26 @@ function MessageBlock({
   run,
   steps,
   attachments,
+  mcpCatalog = [],
 }: {
   message: ChatMessage;
   run?: Run;
   steps?: number;
   attachments?: Attachment[];
+  mcpCatalog?: { id: string; name: string }[];
 }) {
   if (message.role === 'user') {
+    // 消息只存 id;名字用当前 server 列表映射,列表里没有(已删除)则退回 id
+    const mcpServers = (message.mcp_server_ids ?? []).map((id) => ({
+      id,
+      name: mcpCatalog.find((server) => server.id === id)?.name ?? id,
+    }));
     return (
       <UserBlock
         text={message.content}
         createdAt={message.created_at}
         attachments={attachments}
+        mcpServers={mcpServers}
       />
     );
   }

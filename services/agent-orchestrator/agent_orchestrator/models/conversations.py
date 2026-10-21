@@ -11,7 +11,15 @@ from __future__ import annotations
 from datetime import datetime
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -52,6 +60,8 @@ class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
     role: Mapped[str] = mapped_column(String(16))  # user / assistant
     content: Mapped[str] = mapped_column(Text)
+    # 用户发消息时显式引用的 MCP server(§6.7):空列表 = 不限制(用全部已启用)
+    mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
 class Attachment(UUIDMixin, TenantMixin, TimestampMixin, Base):

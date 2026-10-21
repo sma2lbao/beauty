@@ -14,6 +14,8 @@ import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { Run, RunEvent } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
+import type { MCPServer } from '@/lib/mcp-api';
+import { mcpApi } from '@/lib/mcp-api';
 import { skillsApi } from '@/lib/skills-api';
 
 import { ChatPage } from './chat';
@@ -34,6 +36,10 @@ vi.mock('@/lib/conversations-api', () => ({
 
 vi.mock('@/lib/skills-api', () => ({
   skillsApi: { list: vi.fn(async () => []), get: vi.fn() },
+}));
+
+vi.mock('@/lib/mcp-api', () => ({
+  mcpApi: { list: vi.fn(async () => []) },
 }));
 
 vi.mock('@/lib/runs-api', async () => {
@@ -77,6 +83,39 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     role: 'user',
     content: '把本周邮件整理成周报',
     created_at: '2026-10-13T10:01:00+00:00',
+    ...overrides,
+  };
+}
+
+function makeMcpServer(overrides: Partial<MCPServer> = {}): MCPServer {
+  return {
+    id: 'mcp-linear',
+    name: 'linear',
+    transport: 'http',
+    url: 'https://mcp.linear.app/mcp',
+    enabled: true,
+    auto_approve: false,
+    has_token: false,
+    token_hint: null,
+    command: null,
+    args: [],
+    runtime: 'node',
+    image: null,
+    has_env: false,
+    env_keys: [],
+    tools_allowlist: [],
+    tools: [],
+    timeout_seconds: 30,
+    last_status: 'ok',
+    last_checked_at: null,
+    last_error: null,
+    has_oauth: false,
+    oauth_authorized: false,
+    oauth_scopes: [],
+    oauth_expires_at: null,
+    oauth_authorization_server: null,
+    oauth_error: null,
+    created_at: '2026-10-13T10:00:00+00:00',
     ...overrides,
   };
 }
@@ -139,6 +178,11 @@ beforeEach(() => {
   );
   vi.mocked(conversationsApi.get).mockResolvedValue(makeConversation());
   vi.mocked(conversationsApi.messages).mockResolvedValue([makeMessage()]);
+  // 一个启用 server + 一个停用 server:选择器只应出现前者
+  vi.mocked(mcpApi.list).mockResolvedValue([
+    makeMcpServer(),
+    makeMcpServer({ id: 'mcp-legacy', name: '旧 server', enabled: false }),
+  ]);
   vi.mocked(runsApi.getPlan).mockResolvedValue({
     run_id: 'run-1',
     status: 'pending',
@@ -584,5 +628,72 @@ describe('ChatPage 技能', () => {
         'office.email-summary',
       ),
     );
+  });
+});
+
+describe('ChatPage MCP 引用', () => {
+  async function waitForMcpOptions() {
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('选择 MCP server').textContent,
+      ).toContain('linear'),
+    );
+  }
+
+  it('选择器只出现启用的 server,不出现停用的', async () => {
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    await waitForMcpOptions();
+
+    const select = screen.getByLabelText('选择 MCP server');
+    const labels = [...(select as HTMLSelectElement).options].map(
+      (option) => option.textContent,
+    );
+    expect(labels).toContain('linear');
+    expect(labels).not.toContain('旧 server');
+  });
+
+  it('选择 MCP server 后发送携带 mcp_server_ids', async () => {
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    await waitForMcpOptions();
+
+    fireEvent.change(screen.getByLabelText('选择 MCP server'), {
+      target: { value: 'mcp-linear' },
+    });
+    typeAndSend('查一下 linear 的 issue');
+
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        '查一下 linear 的 issue',
+        'auto',
+        expect.anything(),
+        [],
+        undefined,
+        ['mcp-linear'],
+      ),
+    );
+  });
+
+  it('URL 的 ?mcp= 作为默认选中', async () => {
+    renderPage('/?conversation=c1&mcp=mcp-linear');
+    await screen.findAllByText('待审批');
+    await waitForMcpOptions();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('选择 MCP server')).toHaveValue(
+        'mcp-linear',
+      ),
+    );
+  });
+
+  it('历史用户消息带 mcp_server_ids 时渲染 MCP chip', async () => {
+    vi.mocked(conversationsApi.messages).mockResolvedValue([
+      makeMessage({ mcp_server_ids: ['mcp-linear'] }),
+    ]);
+    renderPage('/?conversation=c1');
+
+    expect(await screen.findByText(/MCP · linear/)).toBeTruthy();
   });
 });

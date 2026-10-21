@@ -77,6 +77,8 @@ class MessageCreate(BaseModel):
     mode: Literal["auto", "chat", "task"] = "auto"
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
     skill_id: str | None = Field(default=None, max_length=80)
+    # 显式引用的 MCP server(最多 10 个):非空时本次只装配这些 server 的工具
+    mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class MessageRead(BaseModel):
@@ -87,6 +89,7 @@ class MessageRead(BaseModel):
     run_id: str | None
     role: str
     content: str
+    mcp_server_ids: list[str] = Field(default_factory=list)
     created_at: datetime
 
 

@@ -31,6 +31,8 @@ class ToolContext:
     tenant_id: str
     run_id: str | None = None
     conversation_id: str | None = None
+    # 对话消息显式引用的 MCP server:非空时只装配这些 server 的工具
+    mcp_server_ids: tuple[str, ...] = ()
 
     @property
     def sandbox_scope(self) -> str:

@@ -58,6 +58,8 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     conversation_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True
     )
+    # 对话消息显式引用的 MCP server 快照:非空时本 run 只装配这些 server 的工具
+    mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

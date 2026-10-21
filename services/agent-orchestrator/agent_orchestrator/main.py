@@ -185,15 +185,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             specs: list[ToolSpec] = []
             runner: SkillRunner | None = getattr(app.state, "skill_runner", None)
             ctx = current_tool_context()
-            if runner is not None and ctx is not None and ctx.run_id:
+            # 显式引用的 MCP server:对话路径从 contextvar 读;run 路径读 run 快照
+            selected: tuple[str, ...] | None = None
+            if ctx is not None and ctx.mcp_server_ids:
+                selected = ctx.mcp_server_ids
+            if ctx is not None and ctx.run_id:
                 async with session_scope(factory) as session:
                     run = await session.get(runs_models.Run, ctx.run_id)
-                    if (
-                        run is not None
-                        and run.tenant_id == tenant_id
-                        and run.skill_object_key
-                    ):
-                        specs.append(runner.spec(run))
+                    if run is not None and run.tenant_id == tenant_id:
+                        if runner is not None and run.skill_object_key:
+                            specs.append(runner.spec(run))
+                        if run.mcp_server_ids:
+                            selected = tuple(run.mcp_server_ids)
             if settings.mcp_enabled:
 
                 async def _mark_mcp_auth_required(server_id: str, detail: str) -> None:
@@ -230,6 +233,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             pool=getattr(app.state, "mcp_stdio_pool", None),
                             on_auth_required=_mark_mcp_auth_required,
                             token_provider=_mcp_token,
+                            server_ids=selected,
                         )
                 except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
                     logger.warning(

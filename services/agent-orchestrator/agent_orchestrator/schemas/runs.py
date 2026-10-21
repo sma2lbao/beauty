@@ -30,6 +30,8 @@ class RunCreate(BaseModel):
     conversation_id: str | None = Field(default=None, min_length=1, max_length=32)
     # 可选 Skill(M1):创建时快照 manifest,plan/execute 注入约束与工具白名单
     skill_id: str | None = Field(default=None, max_length=80)
+    # 显式引用的 MCP server:非空时只装配这些 server 的工具(空 = 全部已启用)
+    mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class RunRead(BaseModel):
@@ -46,6 +48,7 @@ class RunRead(BaseModel):
     parent_run_id: str | None = None
     conversation_id: str | None = None
     skill_id: str | None = None
+    mcp_server_ids: list[str] = Field(default_factory=list)
     created_at: datetime
 
 

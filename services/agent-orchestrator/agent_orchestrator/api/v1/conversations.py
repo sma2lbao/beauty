@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from common.errors import AppError, NotFoundError
+from common.errors import AppError, ConflictError, NotFoundError
 from database.session import session_scope
 from fastapi import (
     APIRouter,
@@ -53,6 +53,7 @@ from agent_orchestrator.schemas.conversations import (
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
+from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import skill_packages, triage
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.skill_packages import SkillDefinition
@@ -85,6 +86,24 @@ async def _resolve_skill(
     if definition is None:
         raise NotFoundError("skill.not_found", "Skill 不存在")
     return definition
+
+
+async def _resolve_mcp(
+    session: AsyncSession,
+    tenant_id: str,
+    settings: Any,
+    server_ids: list[str],
+) -> tuple[list[str], str]:
+    """解析显式引用的 MCP server → (规范 id 列表, 提示词片段)。
+
+    校验在落库前完成:未知 404、停用 409、MCP 未启用 409,不留半残引用。
+    """
+    if not server_ids:
+        return [], ""
+    if not settings.mcp_enabled:
+        raise ConflictError("mcp.disabled", "MCP 能力未启用")
+    servers = await mcp_service.resolve_selected(session, tenant_id, server_ids)
+    return [server.id for server in servers], mcp_service.reference_note(servers)
 
 
 #: SSE 标准头:不缓存、禁代理缓冲(否则增量会被攒成一坨)
@@ -276,6 +295,9 @@ async def post_message(
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
+    mcp_ids, mcp_note = await _resolve_mcp(
+        session, tenant_id, settings, body.mcp_server_ids
+    )
     message, run, reply, mode = await conversations_service.post_message(
         session,
         graph,
@@ -287,6 +309,8 @@ async def post_message(
         attachment_ids=body.attachment_ids,
         jobs_enabled=settings.jobs_enabled,
         skill=skill,
+        mcp_server_ids=mcp_ids,
+        mcp_reference_note=mcp_note,
         toolkit_factory=toolkit_factory,
         extras_factory=tool_extras_factory,
     )
@@ -367,8 +391,11 @@ async def stream_message(
         await conversations_service.require_conversation(  # 404 校验
             session, tenant_id, conversation_id
         )
-        # 技能解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
+        # 技能/MCP 解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
         skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
+        mcp_ids, mcp_note = await _resolve_mcp(
+            session, tenant_id, settings, body.mcp_server_ids
+        )
     return StreamingResponse(
         _message_frames(
             conversations_service.stream_message(
@@ -382,6 +409,8 @@ async def stream_message(
                 attachment_ids=body.attachment_ids,
                 jobs_enabled=settings.jobs_enabled,
                 skill=skill,
+                mcp_server_ids=mcp_ids,
+                mcp_reference_note=mcp_note,
                 toolkit_factory=toolkit_factory,
                 extras_factory=tool_extras_factory,
             )

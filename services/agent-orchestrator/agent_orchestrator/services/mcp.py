@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from common.errors import AppError, ConflictError
+from common.errors import AppError, ConflictError, NotFoundError
 from common.logging import get_logger
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +61,54 @@ TokenProvider = Callable[[str, bool], Awaitable[str | None]]
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_") or "server"
+
+
+async def resolve_selected(
+    session: AsyncSession, tenant_id: str, server_ids: Sequence[str]
+) -> list[MCPServer]:
+    """解析用户显式引用的 MCP server:去重保序,未知 404、停用 409。
+
+    在消息落库前调用:引用不合法就整条消息不落,不留半残引用。
+    """
+    unique = list(dict.fromkeys(server_ids))
+    if not unique:
+        return []
+    servers = await MCPServerRepository(session).list_scoped(
+        tenant_id, MCPServer.id.in_(unique)
+    )
+    by_id = {server.id: server for server in servers}
+    missing = [server_id for server_id in unique if server_id not in by_id]
+    if missing:
+        raise NotFoundError(
+            "mcp.server_not_found",
+            "MCP server 不存在",
+            details={"mcp_server_ids": missing},
+        )
+    selected = [by_id[server_id] for server_id in unique]
+    disabled = [server for server in selected if not server.enabled]
+    if disabled:
+        raise ConflictError(
+            "mcp.server_disabled",
+            f"MCP server 已停用:{'、'.join(server.name for server in disabled)}",
+            details={"mcp_server_ids": [server.id for server in disabled]},
+        )
+    return selected
+
+
+def reference_note(servers: Sequence[MCPServer]) -> str:
+    """显式引用的提示词片段:告诉模型本次只能用这些 server 的工具。
+
+    命名前缀与 tool_specs 一致(mcp__<slug>__<tool>),模型据此对号入座。
+    """
+    if not servers:
+        return ""
+    refs = "、".join(
+        f"{server.name}(工具名前缀 mcp__{_slug(server.name)}__)" for server in servers
+    )
+    return (
+        f"用户在本次消息里明确引用了 MCP server:{refs}。"
+        "请优先使用这些被引用的 server 提供的工具;未列出的 MCP server 本次不可用。"
+    )
 
 
 def _wrap_tool(tool: dict[str, Any]) -> MCPToolRead:
@@ -564,15 +612,22 @@ async def tool_specs(
     pool: StdioSandboxPool | None = None,
     on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
     token_provider: TokenProvider | None = None,
+    server_ids: Sequence[str] | None = None,
 ) -> list[ToolSpec]:
     """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
 
     tools_cache 只由 test 端点刷新:P2 不在每次 run 前重新 list(冷启动代价高);
     P4 再做 tools_cache 的哈希校验(TODO)。
+
+    server_ids 非空 = 用户显式引用了这些 server(§6.7):只装配它们;
+    None / 空序列维持现状(全部已启用的 server)。
     """
     servers = await MCPServerRepository(session).list_scoped(
         tenant_id, MCPServer.enabled.is_(True), order_by=[MCPServer.created_at]
     )
+    if server_ids:
+        wanted = set(server_ids)
+        servers = [server for server in servers if server.id in wanted]
     specs: list[ToolSpec] = []
     for server in servers:
         stdio = (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO

@@ -125,6 +125,14 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   对话里只回喂"请改用任务"、run 里逐次确认;开时 `risk=WRITE`(受控写),
   对话与 run 都直接执行——就是架构 §6.4 "操作策略是配置,不是硬编码"。
   extras 取失败只降级外部工具,不影响对话本身。
+- **对话/任务的 MCP 显式引用**:`MessageCreate.mcp_server_ids` 与
+  `RunCreate.mcp_server_ids`(≤10,去重保序)让用户逐条收窄外部工具——选中后
+  extras 工厂只装配被引用 server 的工具(`tool_specs(server_ids=...)`),不选仍是
+  全量;引用随消息(`chat_messages.mcp_server_ids`)与 run(`runs.mcp_server_ids`)
+  落库、run 建好后固化为快照,并以提示词片段告诉模型"未列出的本次不可用"。
+  校验在落库前完成:未知 404 `mcp.server_not_found`、停用 409
+  `mcp.server_disabled`、`MCP_ENABLED=false` 时 409 `mcp.disabled`;Web 对话页
+  输入区有「MCP」选择器,历史消息显示引用徽标。
 
 - **技能包上传(P3)**:用户上传 SKILL.md 包(zip,根目录必须含 SKILL.md,
   允许单一顶层目录;可选 skill.json 描述 id/version/title/description/
