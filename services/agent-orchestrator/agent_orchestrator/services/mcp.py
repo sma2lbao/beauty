@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,7 +33,11 @@ from agent_orchestrator.schemas.mcp import (
     MCPTestRead,
     MCPToolRead,
 )
-from agent_orchestrator.services.mcp_client import MCPClient, MCPError
+from agent_orchestrator.services.mcp_client import (
+    MCPAuthRequired,
+    MCPClient,
+    MCPError,
+)
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.tool_context import current_tool_context
@@ -419,6 +423,17 @@ async def test_server(
         return MCPTestRead(
             ok=True, detail=f"连接成功，发现 {len(tools)} 个工具", tools=tools
         )
+    except MCPAuthRequired as exc:
+        # 401 是"需要授权"而非"连接坏了":单独落状态,让 /mcp 页给出重新授权指引
+        server.last_status = "auth_required"
+        server.last_error = f"{type(exc).__name__}: {exc}"[:500]
+        server.last_checked_at = now
+        return MCPTestRead(
+            ok=False,
+            detail="服务端要求授权(HTTP 401)：请重新授权或更新该 server 的 token",
+            tools=[],
+            auth_required=True,
+        )
     except (MCPError, Exception) as exc:  # noqa: BLE001 - 测试端点必须返回可读失败
         server.last_status = "error"
         server.last_error = f"{type(exc).__name__}: {exc}"[:500]
@@ -439,6 +454,7 @@ async def tool_specs(
     *,
     secret: str,
     pool: StdioSandboxPool | None = None,
+    on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> list[ToolSpec]:
     """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
 
@@ -465,7 +481,9 @@ async def tool_specs(
             handler = (
                 _make_stdio_handler(tenant_id, server, wrapped.name, secret, pool)
                 if stdio
-                else _make_http_handler(server, wrapped.name, secret)
+                else _make_http_handler(
+                    server, wrapped.name, secret, on_auth_required
+                )
             )
             specs.append(
                 ToolSpec(
@@ -501,12 +519,29 @@ def _content_text(result: dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-def _make_http_handler(server: MCPServer, tool_name: str, secret: str):
+def _make_http_handler(
+    server: MCPServer,
+    tool_name: str,
+    secret: str,
+    on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
+):
     async def handler(args: dict[str, Any]) -> str:
         client = build_client(server, secret)
         try:
             await client.initialize()
             return await client.call_tool(tool_name, args)
+        except MCPAuthRequired as exc:
+            # 调用期 401:结构化回喂模型(不执行工具),并尽力把 server 标成需要授权
+            await _report_auth_required(on_auth_required, server.id, str(exc))
+            return json.dumps(
+                {
+                    "error": "该 MCP server 需要重新授权，工具未执行",
+                    "code": "mcp.auth_required",
+                    "detail": str(exc),
+                    "hint": "请重新授权或更新该 server 的访问令牌后重试",
+                },
+                ensure_ascii=False,
+            )
         except Exception as exc:  # noqa: BLE001 - 工具失败回喂错误文本
             return json.dumps(
                 {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
@@ -515,6 +550,24 @@ def _make_http_handler(server: MCPServer, tool_name: str, secret: str):
             await client.aclose()
 
     return handler
+
+
+async def _report_auth_required(
+    callback: Callable[[str, str], Awaitable[None]] | None,
+    server_id: str,
+    detail: str,
+) -> None:
+    """调用期 401 上报给上层落 last_status;标记失败绝不影响工具返回。"""
+    if callback is None:
+        return
+    try:
+        await callback(server_id, detail)
+    except Exception as exc:  # noqa: BLE001 - 状态标记是尽力而为
+        logger.warning(
+            "mcp auth_required 状态写库失败",
+            server_id=server_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
 
 def _make_stdio_handler(

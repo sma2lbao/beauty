@@ -79,6 +79,17 @@ const stdioServer: MCPServer = {
   created_at: '2026-10-20T00:00:00+00:00',
 };
 
+/** 服务端回 401 的 server:状态是 auth_required,不是普通连接失败。 */
+const authServer: MCPServer = {
+  ...httpServer,
+  id: 'm3',
+  name: 'notion',
+  url: 'https://mcp.notion.example/mcp',
+  last_status: 'auth_required',
+  last_checked_at: '2026-10-20T11:00:00+00:00',
+  last_error: 'MCPAuthRequired: MCP 服务端要求授权(HTTP 401)',
+};
+
 function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -258,6 +269,7 @@ describe('McpPage', () => {
       ok: false,
       detail: '沙箱未启用',
       tools: [],
+      auth_required: false,
     });
     renderPage();
     await screen.findAllByText('github');
@@ -265,6 +277,39 @@ describe('McpPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '测试/刷新' }));
 
     expect(await screen.findByText('测试失败:沙箱未启用')).toBeTruthy();
+  });
+
+  it('401 不算连接失败:列表与详情都提示需要重新授权', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([authServer]);
+    renderPage();
+
+    expect((await screen.findAllByText('notion')).length).toBeGreaterThan(0);
+    // 列表徽标与详情徽标都是「需要授权」,不是「连接失败」
+    expect(screen.getAllByText('需要授权').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText('需要重新授权:该 server 拒绝了当前凭证(HTTP 401)'),
+    ).toBeTruthy();
+    expect(screen.getByText(/MCP 服务端要求授权/)).toBeTruthy();
+    expect(screen.queryByText('连接失败')).toBeNull();
+  });
+
+  it('测试返回 auth_required 时给重新授权指引', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([authServer]);
+    vi.mocked(mcpApi.test).mockResolvedValue({
+      ok: false,
+      detail:
+        '服务端要求授权(HTTP 401):请重新授权或更新该 server 的 token 后重试',
+      tools: [],
+      auth_required: true,
+    });
+    renderPage();
+    await screen.findAllByText('notion');
+
+    fireEvent.click(screen.getByRole('button', { name: '测试/刷新' }));
+
+    expect(
+      await screen.findByText(/请重新授权或更新该 server 的 token 后重试/),
+    ).toBeTruthy();
   });
 
   it('详情可切换免确认执行:走 PATCH auto_approve', async () => {

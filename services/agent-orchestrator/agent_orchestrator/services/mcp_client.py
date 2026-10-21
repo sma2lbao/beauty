@@ -7,6 +7,8 @@ token 只在服务端解密后放进请求头,绝不进入日志/响应。
 - initialize 响应头里的 Mcp-Session-Id 回填到后续每个请求(含 notification);
 - initialize 协商出的 protocolVersion 之后放进 MCP-Protocol-Version 头;
 - 会话失效(服务端回 404)时清掉本地状态,由 _request 重新 initialize 后重试一次;
+- 凭证失效(服务端回 401)抛 MCPAuthRequired:上层据此提示"需要重新授权",
+  不再当成普通连接失败(P0;浏览器 OAuth 授权流是 P1);
 - 关闭时尽力 DELETE 终止会话,服务端不支持/报错都不影响清理。
 """
 
@@ -31,6 +33,20 @@ class MCPError(Exception):
 
 class MCPSessionExpired(MCPError):
     """服务端已不认识当前会话(Streamable HTTP:未知 session 回 404)。"""
+
+
+class MCPAuthRequired(MCPError):
+    """服务端要求(重新)授权(HTTP 401)。
+
+    `challenge` 保存 `WWW-Authenticate` 头原文:未来的 P1 要用它定位授权服务器
+    (RFC 9728 protected resource metadata),现在只作为排障细节回传。
+    """
+
+    def __init__(
+        self, message: str, *, code: int | None = 401, challenge: str | None = None
+    ) -> None:
+        super().__init__(message, code=code)
+        self.challenge = challenge
 
 
 class MCPClient:
@@ -90,6 +106,15 @@ class MCPClient:
             self._protocol_version = None
             raise MCPSessionExpired(
                 "MCP 会话已失效(HTTP 404)，需要重新 initialize", code=404
+            )
+        if response.status_code == 401:
+            # 401 = 当前凭证不被接受(缺失/过期/scope 不足):区别于普通连接失败,
+            # 上层要据此提示"重新授权"而不是"网络/配置错误"。
+            challenge = (response.headers.get("www-authenticate") or "").strip()
+            detail = challenge or response.text[:200].strip()
+            raise MCPAuthRequired(
+                "MCP 服务端要求授权(HTTP 401)" + (f": {detail}" if detail else ""),
+                challenge=challenge or None,
             )
         if response.status_code >= 400:
             raise MCPError(f"MCP HTTP {response.status_code}: {response.text[:200]}")

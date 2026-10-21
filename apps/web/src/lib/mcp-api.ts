@@ -42,6 +42,7 @@ export type MCPServer = {
   tools_allowlist: string[];
   tools: MCPTool[];
   timeout_seconds: number;
+  /** ok | error | auth_required(服务端回 401,需要重新授权) */
   last_status: string | null;
   last_checked_at: string | null;
   last_error: string | null;
@@ -85,6 +86,8 @@ export type MCPTestRead = {
   ok: boolean;
   detail: string;
   tools: MCPTool[];
+  /** 服务端回 401:需要(重新)授权,页面要给重新授权指引而不是笼统失败 */
+  auth_required: boolean;
 };
 
 function request<T>(path: string, init?: RequestInit): Promise<T> {

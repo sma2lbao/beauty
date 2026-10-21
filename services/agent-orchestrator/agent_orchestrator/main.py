@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from functools import partial
 
 from common.artifacts import ArtifactStore
@@ -192,6 +193,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     ):
                         specs.append(runner.spec(run))
             if settings.mcp_enabled:
+
+                async def _mark_mcp_auth_required(server_id: str, detail: str) -> None:
+                    """调用期 401 落库:/mcp 页不必手动测试也能看到"需要授权"。"""
+                    async with session_scope(factory) as session:
+                        server = await session.get(mcp_models.MCPServer, server_id)
+                        if server is None or server.tenant_id != tenant_id:
+                            return
+                        server.last_status = "auth_required"
+                        server.last_error = detail[:500]
+                        server.last_checked_at = datetime.now(UTC)
+
                 try:
                     async with session_scope(factory) as session:
                         # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
@@ -200,6 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             tenant_id,
                             secret=settings.mcp_secret,
                             pool=getattr(app.state, "mcp_stdio_pool", None),
+                            on_auth_required=_mark_mcp_auth_required,
                         )
                 except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
                     logger.warning(

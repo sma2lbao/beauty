@@ -152,6 +152,7 @@ class MCPServerRead(BaseModel):
     tools_allowlist: list[str]
     tools: list[MCPToolRead]
     timeout_seconds: int
+    #: ok | error | auth_required(最后一次测试/调用时服务端回 401)
     last_status: str | None
     last_checked_at: datetime | None
     last_error: str | None
@@ -162,3 +163,5 @@ class MCPTestRead(BaseModel):
     ok: bool
     detail: str
     tools: list[MCPToolRead]
+    #: 服务端要求(重新)授权(HTTP 401):前端据此给出"重新授权"指引,而不是笼统的失败
+    auth_required: bool = False

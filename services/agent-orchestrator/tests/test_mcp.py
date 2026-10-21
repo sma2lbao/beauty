@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
-from agent_orchestrator.services.mcp_client import MCPClient
+from agent_orchestrator.services.mcp_client import MCPAuthRequired, MCPClient
 from tests.conftest import TENANT
 
 
@@ -210,6 +211,41 @@ def test_mcp_client_reinitializes_on_expired_session() -> None:
     assert tool_calls == ["sess-1", "sess-2"]
 
 
+def test_mcp_client_401_raises_auth_required() -> None:
+    """401 = 需要授权:抛 MCPAuthRequired 并保留 WWW-Authenticate 细节。"""
+    import asyncio
+
+    challenge = (
+        'Bearer resource_metadata="https://mcp.example/'
+        '.well-known/oauth-protected-resource"'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            headers={"WWW-Authenticate": challenge},
+            json={"error": "unauthorized"},
+        )
+
+    async def scenario() -> MCPAuthRequired:
+        client = MCPClient(
+            "http://mcp.local/mcp",
+            timeout_seconds=2,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            with pytest.raises(MCPAuthRequired) as caught:
+                await client.initialize()
+            return caught.value
+        finally:
+            await client.aclose()
+
+    error = asyncio.run(scenario())
+    assert error.code == 401
+    assert error.challenge == challenge
+    assert "HTTP 401" in str(error)
+
+
 def _create_server(client: TestClient) -> dict:
     response = client.post(
         "/api/v1/mcp/servers",
@@ -353,5 +389,108 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
         server.auto_approve = True
         trusted = await mcp_service.tool_specs(None, "t", secret="x")  # type: ignore[arg-type]
         assert [spec.requires_confirmation for spec in trusted] == [False]
+
+    asyncio.run(scenario())
+
+
+def test_test_server_reports_auth_required(client: TestClient) -> None:
+    """401 时测试端点落 last_status=auth_required,并回结构化标记给前端。"""
+    created = _create_server(client)
+    from agent_orchestrator.services import mcp as mcp_service
+
+    class UnauthorizedClient:
+        async def initialize(self) -> dict:
+            raise MCPAuthRequired("MCP 服务端要求授权(HTTP 401)")
+
+        async def list_tools(self) -> list[dict]:
+            raise AssertionError("401 之后不应继续 list_tools")
+
+        async def call_tool(self, name: str, arguments: dict) -> str:
+            raise AssertionError("unreachable")
+
+        async def aclose(self) -> None:
+            return None
+
+    original = mcp_service.build_client
+    mcp_service.build_client = lambda *args, **kwargs: UnauthorizedClient()  # type: ignore[assignment]
+    try:
+        tested = client.post(
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+        )
+        assert tested.status_code == 200
+        body = tested.json()
+        assert body["ok"] is False
+        assert body["auth_required"] is True
+        assert body["tools"] == []
+        assert "401" in body["detail"]
+
+        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        assert listing[0]["last_status"] == "auth_required"
+        assert "MCPAuthRequired" in (listing[0]["last_error"] or "")
+    finally:
+        mcp_service.build_client = original  # type: ignore[assignment]
+
+
+def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> None:
+    """调用期 401:回喂结构化错误(不执行),并尽力上报落 last_status。"""
+    import asyncio
+
+    from agent_orchestrator.models.mcp import MCPServer
+    from agent_orchestrator.services import mcp as mcp_service
+
+    server = MCPServer(
+        id="srv-1",
+        tenant_id="t",
+        name="Demo Server",
+        url="http://mcp.local/mcp",
+        encrypted_token=None,
+        token_hint=None,
+        enabled=True,
+        tools_allowlist=[],
+        tools_cache=[{"name": "echo", "description": "", "inputSchema": {}}],
+        timeout_seconds=2,
+    )
+
+    class FakeRepo:
+        def __init__(self, session) -> None:
+            pass
+
+        async def list_scoped(self, *args, **kwargs):
+            return [server]
+
+    class UnauthorizedClient:
+        async def initialize(self) -> dict:
+            return {}
+
+        async def call_tool(self, name: str, arguments: dict) -> str:
+            raise MCPAuthRequired("MCP 服务端要求授权(HTTP 401)")
+
+        async def aclose(self) -> None:
+            return None
+
+    marks: list[tuple[str, str]] = []
+
+    async def mark(server_id: str, detail: str) -> None:
+        marks.append((server_id, detail))
+        # 标记是尽力而为:即使写库失败也不能影响工具返回
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(mcp_service, "MCPServerRepository", FakeRepo)
+    monkeypatch.setattr(
+        mcp_service, "build_client", lambda *args, **kwargs: UnauthorizedClient()
+    )
+
+    async def scenario() -> None:
+        specs = await mcp_service.tool_specs(
+            None,  # type: ignore[arg-type]
+            "t",
+            secret="x",
+            on_auth_required=mark,
+        )
+        payload = json.loads(await specs[0].handler({}))
+        assert payload["code"] == "mcp.auth_required"
+        assert "401" in payload["detail"]
+        assert payload["hint"]
+        assert marks == [("srv-1", "MCP 服务端要求授权(HTTP 401)")]
 
     asyncio.run(scenario())

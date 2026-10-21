@@ -109,9 +109,31 @@ function describeEndpoint(server: MCPServer): string {
 function serverStatus(server: MCPServer): { tone: Tone; label: string } {
   if (!server.enabled) return { tone: 'neutral', label: '已停用' };
   if (server.last_status === 'ok') return { tone: 'success', label: '已连接' };
+  // 401 不是"连不上":服务端明确要求授权,提示用户去重新授权/换 token
+  if (server.last_status === 'auth_required')
+    return { tone: 'warning', label: '需要授权' };
   if (server.last_status === 'error')
     return { tone: 'danger', label: '连接失败' };
   return { tone: 'info', label: '待测试' };
+}
+
+/** 测试结果文案:401 单独提示"需要授权",不与普通连接失败混在一起。 */
+function testResultText(result: {
+  ok: boolean;
+  authRequired: boolean;
+}): string {
+  if (result.authRequired) return '需要授权';
+  return result.ok ? '测试通过' : '测试失败';
+}
+
+function testResultClass(result: {
+  ok: boolean;
+  authRequired: boolean;
+}): string {
+  if (result.authRequired) return 'text-[12px] text-ha-warning';
+  return result.ok
+    ? 'text-[12px] text-ha-success'
+    : 'text-[12px] text-ha-danger';
 }
 
 function DefinitionRow({
@@ -142,6 +164,7 @@ export function McpPage() {
     id: string;
     ok: boolean;
     detail: string;
+    authRequired: boolean;
   } | null>(null);
 
   const serversQuery = useQuery({
@@ -196,12 +219,22 @@ export function McpPage() {
   const testMutation = useMutation({
     mutationFn: (id: string) => mcpApi.test(id),
     onSuccess: async (result, id) => {
-      setTestResult({ id, ok: result.ok, detail: result.detail });
+      setTestResult({
+        id,
+        ok: result.ok,
+        detail: result.detail,
+        authRequired: result.auth_required,
+      });
       setActionError(null);
       await refresh();
     },
     onError: (failure, id) => {
-      setTestResult({ id, ok: false, detail: (failure as Error).message });
+      setTestResult({
+        id,
+        ok: false,
+        detail: (failure as Error).message,
+        authRequired: false,
+      });
     },
   });
 
@@ -576,15 +609,20 @@ export function McpPage() {
                       连接失败:{selected.last_error}
                     </p>
                   ) : null}
+                  {selected.last_status === 'auth_required' ? (
+                    <div className="rounded-md border border-ha-warning-border bg-ha-warning-bg px-3 py-2 text-[12px] leading-5">
+                      <p className="font-medium text-ha-warning">
+                        需要重新授权:该 server 拒绝了当前凭证(HTTP 401)
+                      </p>
+                      <p className="mt-1 text-ha-text-2">
+                        请更新该 server 的访问令牌后重新测试
+                        {selected.last_error ? ':' + selected.last_error : ''}
+                      </p>
+                    </div>
+                  ) : null}
                   {result ? (
-                    <p
-                      className={
-                        result.ok
-                          ? 'text-[12px] text-ha-success'
-                          : 'text-[12px] text-ha-danger'
-                      }
-                    >
-                      测试{result.ok ? '通过' : '失败'}
+                    <p className={testResultClass(result)}>
+                      {testResultText(result)}
                       {result.detail ? ':' + result.detail : ''}
                     </p>
                   ) : null}
@@ -690,7 +728,8 @@ export function McpPage() {
                 <CardHeader>
                   <CardTitle>工具</CardTitle>
                   <CardDescription>
-                    以 mcp.&lt;server&gt;.&lt;tool&gt; 注入任务;开了「免确认执行」的工具在
+                    以 mcp.&lt;server&gt;.&lt;tool&gt;
+                    注入任务;开了「免确认执行」的工具在
                     对话里也能直接调用,其余仍需人工确认;点「测试/刷新」重新拉取。
                   </CardDescription>
                 </CardHeader>
