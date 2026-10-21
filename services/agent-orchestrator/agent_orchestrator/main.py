@@ -41,6 +41,7 @@ from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.documents import DocumentLibrary
+from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
 from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
@@ -288,6 +289,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if store is None:
         store = build_store(settings)
     app.state.artifact_store = store
+
+    # 外链文件抓取(§7 阶段 B):工具/MCP 返回的 http(s) 文件链接在执行时下载
+    # 成真实交付物。测试注入优先;关闭时不建下载器(只落报告件,不碰网络)。
+    downloader: FileDownloader | None = getattr(app.state, "artifact_downloader", None)
+    if downloader is None and settings.artifact_download_enabled:
+        downloader = HttpFileDownloader(
+            timeout_seconds=settings.artifact_download_timeout_seconds,
+            max_bytes=settings.artifact_download_max_bytes,
+        )
+    app.state.artifact_downloader = downloader
 
     # 上传技能包执行(P3-C):测试注入优先;否则 skill_execution_enabled 且
     # sandbox/workspace 都在时才装配(缺任一依赖 → 不暴露 skill_run,

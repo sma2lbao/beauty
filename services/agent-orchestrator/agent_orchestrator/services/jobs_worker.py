@@ -41,6 +41,8 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
             app.state.workspace_client,
             jobs_enabled=False,
             emit_approved=False,
+            downloader=getattr(app.state, "artifact_downloader", None),
+            max_download_files=app.state.settings.artifact_download_max_files,
         )
         return
     if kind == "confirm":
@@ -55,6 +57,8 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
             app.state.workspace_client,
             jobs_enabled=False,
             emit_confirmation=False,
+            downloader=getattr(app.state, "artifact_downloader", None),
+            max_download_files=app.state.settings.artifact_download_max_files,
         )
         return
     if kind == "resume":

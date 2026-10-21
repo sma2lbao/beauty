@@ -3,8 +3,9 @@
 覆盖:
 - execute 成功链路:create → 取包校验 sha → 写 zip/解包脚本 → 解包 → entrypoint
   → 列产物/读正文 → run_artifacts 登记 → destroy;
-- 失败与边界:无包、sha 不一致、解包失败、entrypoint 退出码非 0、产物超限/二进制、
-  登记失败不让工具失败、entrypoint 路径非法(防御快照被改);
+- 失败与边界:无包、sha 不一致、解包失败、entrypoint 退出码非 0、产物超限、
+  逐文件登记(文本/二进制各一件)、登记失败不让工具失败、entrypoint 路径非法
+  (防御快照被改);
 - UNPACK_PY 本地联调(真实子进程):恶意 zip(../、绝对路径、符号链接、超量)拒绝;
 - main 的 extras factory:run 上下文下暴露 skill_run、无包不暴露、chat 无 run_id
   不暴露、MCP 故障不阻断 skill;
@@ -216,6 +217,11 @@ class Env:
         async with session_scope(self.factory) as session:
             return await ArtifactRepository(session).find_for_run("t-1", self.run_id)
 
+    async def artifacts(self) -> list[Any]:
+        """该 run 的全部交付物(逐文件登记后可能多件)。"""
+        async with session_scope(self.factory) as session:
+            return await ArtifactRepository(session).list_for_run("t-1", self.run_id)
+
     async def close(self) -> None:
         await self.factory.engine.dispose()
 
@@ -356,12 +362,15 @@ async def test_execute_runs_entrypoint_and_registers_artifact(tmp_path: Path) ->
         ]
         assert env.sandbox.reads == [f"{OUTPUT_ROOT}/report.md"]
 
-        # 交付物登记:单文件 title=相对路径,markdown 正文落文件存储
+        # 交付物登记:逐文件一件,filename/title=相对路径,source 标记技能来源
         row = await env.artifact()
         assert row is not None
         assert row.id == result["artifact_id"]
         assert row.title == "report.md"
+        assert row.filename == "report.md"
         assert row.kind == "markdown"
+        assert row.content_type == "text/markdown"
+        assert row.source == "skill"
         assert row.storage == "filesystem"
         assert env.store is not None and row.object_key
         assert await env.store.get(row.object_key) == "# 报告".encode()
@@ -508,12 +517,23 @@ async def test_output_limits_and_binary_are_marked(tmp_path: Path) -> None:
             f"{OUTPUT_ROOT}/a.txt",
             f"{OUTPUT_ROOT}/img.bin",
         ]
-        # 只有文本进交付物
-        row = await env.artifact()
-        assert row is not None and row.title == "a.txt"
+        # 逐文件登记:文本与二进制各一件,超限文件(没读到字节)不登记
+        rows = await env.artifacts()
+        assert {row.title for row in rows} == {"a.txt", "img.bin"}
+        by_title = {row.title: row for row in rows}
+        assert by_title["a.txt"].content_type == "text/plain"
+        assert by_title["a.txt"].source == "skill"
+        assert by_title["img.bin"].kind == "file"
+        assert by_title["img.bin"].content_type == "application/octet-stream"
+        assert by_title["a.txt"].id == by_path["a.txt"]["artifact_id"]
+        assert by_title["img.bin"].id == by_path["img.bin"]["artifact_id"]
+        assert "artifact_id" not in by_path["big.txt"]
+        assert env.store is not None
+        assert await env.store.get(by_title["img.bin"].object_key) == b"\xff\xfe\x00"
 
 
-async def test_multiple_outputs_merged_into_single_artifact(tmp_path: Path) -> None:
+async def test_multiple_outputs_registered_per_file(tmp_path: Path) -> None:
+    """多文件逐件登记:每个文件一件交付物,各带自己的 artifact_id。"""
     sandbox = FakeSandbox()
     sandbox.listing = {
         "files": [
@@ -525,26 +545,44 @@ async def test_multiple_outputs_merged_into_single_artifact(tmp_path: Path) -> N
     sandbox.output_files = {"report.md": "# 报告".encode(), "notes.txt": b"abc"}
     async with make_env(tmp_path, sandbox=sandbox) as env:
         result = json.loads(await env.runner.execute("t-1", env.run_id, None))
-        row = await env.artifact()
-        assert row is not None
-        assert "2 个文件" in row.title
-        assert row.kind == "markdown"
-        assert env.store is not None and row.object_key
-        content = (await env.store.get(row.object_key)).decode()
-        assert "# 报告" in content and "abc" in content
-        assert "report.md" in content and "notes.txt" in content
-        assert {item["artifact_id"] for item in result["outputs"]} == {row.id}
+        rows = await env.artifacts()
+        assert {row.title for row in rows} == {"report.md", "notes.txt"}
+        by_title = {row.title: row for row in rows}
+        assert by_title["report.md"].kind == "markdown"
+        assert by_title["report.md"].content_type == "text/markdown"
+        assert by_title["notes.txt"].kind == "text"
+        assert by_title["notes.txt"].content_type == "text/plain"
+        assert env.store is not None
+        contents = {row.title: await env.store.get(row.object_key) for row in rows}
+        assert contents == {"report.md": "# 报告".encode(), "notes.txt": b"abc"}
+        result_ids = {item["path"]: item["artifact_id"] for item in result["outputs"]}
+        assert result_ids == {
+            "report.md": by_title["report.md"].id,
+            "notes.txt": by_title["notes.txt"].id,
+        }
+        assert len(set(result_ids.values())) == 2  # 不再合并成同一件
+        assert result["artifact_id"] == by_title["report.md"].id
+        assert "已登记 2 个文件" in result["summary"]
 
 
-async def test_no_text_outputs_skips_artifact(tmp_path: Path) -> None:
+async def test_binary_outputs_are_registered(tmp_path: Path) -> None:
+    """二进制产物不再被丢弃:落对象存储,content_type 按扩展名兜底。"""
     sandbox = FakeSandbox()
     sandbox.listing = {"files": [{"path": "blob.bin", "size": 2}], "truncated": False}
     sandbox.output_files = {"blob.bin": b"\xff\x00"}
     async with make_env(tmp_path, sandbox=sandbox) as env:
         result = json.loads(await env.runner.execute("t-1", env.run_id, None))
-        assert "artifact_id" not in result
+        rows = await env.artifacts()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.filename == "blob.bin"
+        assert row.kind == "file"
+        assert row.content_type == "application/octet-stream"
+        assert row.source == "skill"
         assert result["outputs"][0]["binary"] is True
-        assert await env.artifact() is None
+        assert result["outputs"][0]["artifact_id"] == row.id
+        assert env.store is not None
+        assert await env.store.get(row.object_key) == b"\xff\x00"
 
 
 async def test_listing_failure_does_not_fail_tool(tmp_path: Path) -> None:
@@ -554,7 +592,7 @@ async def test_listing_failure_does_not_fail_tool(tmp_path: Path) -> None:
         result = json.loads(await env.runner.execute("t-1", env.run_id, None))
         assert result["exit_code"] == 0
         assert result["outputs"] == []
-        assert await env.artifact() is None
+        assert await env.artifacts() == []
 
 
 async def test_read_failure_marks_single_output_truncated(tmp_path: Path) -> None:
@@ -563,7 +601,7 @@ async def test_read_failure_marks_single_output_truncated(tmp_path: Path) -> Non
     async with make_env(tmp_path, sandbox=sandbox) as env:
         result = json.loads(await env.runner.execute("t-1", env.run_id, None))
         assert result["outputs"][0]["truncated"] is True
-        assert await env.artifact() is None
+        assert await env.artifacts() == []
 
 
 async def test_artifact_persist_failure_does_not_fail_tool(
@@ -572,12 +610,13 @@ async def test_artifact_persist_failure_does_not_fail_tool(
     async def boom(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("存储挂了")
 
-    monkeypatch.setattr(skill_runner.artifacts, "persist_artifact", boom)
+    monkeypatch.setattr(skill_runner.artifacts, "persist_file_artifact", boom)
     async with make_env(tmp_path) as env:
         result = json.loads(await env.runner.execute("t-1", env.run_id, None))
         assert result["exit_code"] == 0
         assert "产物登记失败" in result["summary"]
         assert "artifact_id" not in result
+        assert all("artifact_id" not in item for item in result["outputs"])
         assert env.sandbox.destroyed == ["sb-1"]
 
 
@@ -588,11 +627,30 @@ async def test_database_store_keeps_content_in_row(tmp_path: Path) -> None:
         assert row is not None and result["artifact_id"] == row.id
         assert row.storage == "database"
         assert row.object_key is None
+        assert row.filename == "report.md"
+        assert row.content_type == "text/markdown"
         assert row.content == "# 报告"
 
 
-async def test_delivery_replaces_skill_artifact(tmp_path: Path) -> None:
-    """交付阶段覆盖 execute 阶段的技能输出,不撞 (run_id) 唯一约束。"""
+async def test_database_store_keeps_binary_in_content_bytes(tmp_path: Path) -> None:
+    """database 模式:二进制件进 content_bytes(文本列为空),kind 按类型推导。"""
+    sandbox = FakeSandbox()
+    sandbox.listing = {"files": [{"path": "chart.png", "size": 4}], "truncated": False}
+    sandbox.output_files = {"chart.png": b"\x89PNG"}
+    async with make_env(tmp_path, sandbox=sandbox, store=None) as env:
+        result = json.loads(await env.runner.execute("t-1", env.run_id, None))
+        row = await env.artifact()
+        assert row is not None
+        assert row.id == result["artifact_id"]
+        assert row.storage == "database"
+        assert row.content is None
+        assert row.content_bytes == b"\x89PNG"
+        assert row.content_type == "image/png"
+        assert row.kind == "image"
+
+
+async def test_delivery_adds_report_alongside_skill_outputs(tmp_path: Path) -> None:
+    """交付阶段新增 report 件并成为主交付物;技能产物保留,不再被原地覆盖。"""
     async with make_env(tmp_path) as env:
         first = json.loads(await env.runner.execute("t-1", env.run_id, None))
         async with session_scope(env.factory) as session:
@@ -602,15 +660,16 @@ async def test_delivery_replaces_skill_artifact(tmp_path: Path) -> None:
                 run,
                 {"title": "最终交付物", "kind": "markdown", "content": "# 最终"},
             )
-        row = await env.artifact()
-        assert row is not None
-        assert row.id == first["artifact_id"]  # 原地覆盖,还是同一件
-        assert row.title == "最终交付物"
-        async with session_scope(env.factory) as session:
-            rows = await ArtifactRepository(session).list_scoped(
-                "t-1", runs_models.RunArtifact.run_id == env.run_id
-            )
-        assert len(rows) == 1
+        rows = await env.artifacts()
+        assert len(rows) == 2  # 技能产物 + 报告各一件
+        report = await env.artifact()  # 主交付物优先 report
+        assert report is not None
+        assert report.id != first["artifact_id"]
+        assert report.title == "最终交付物"
+        assert report.source == "report"
+        skill_row = next(row for row in rows if row.id == first["artifact_id"])
+        assert skill_row.source == "skill"
+        assert skill_row.title == "report.md"
 
 
 # ---------------------------------------------------------------------------

@@ -9,9 +9,10 @@
   不依赖外部上下文**就能自洽处理;
 - **投递**:lifespan 起 `OutboxDispatcher` 后台轮询,经进程内总线路由;
   失败退避重试,超过上限落 failed 留痕(可查、可人工重放);
-- **消费**(`KnowledgeIngestConsumer`):首个真实消费者——run 交付后把成品
-  写进 knowledge-service(§8 摄取),之后 agent 的 search_knowledge 就能查到。
-  至少一次投递 + `source=run:<id>` 去重,避免重投导致重复入库。
+- **消费**(`KnowledgeIngestConsumer`):首个真实消费者——run 交付后把它名下
+  **全部文本交付物**逐件写进 knowledge-service(§8 摄取),二进制件跳过,
+  之后 agent 的 search_knowledge 就能查到。
+  至少一次投递 + 逐件 `source=run:<id>:<artifact 前缀>` 去重,避免重投重复入库。
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ from events.envelope import EventEnvelope
 from events.outbox import OutboxRepository, is_processed, mark_processed
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_orchestrator.models.runs import Run
-from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.models.runs import Run, RunArtifact
+from agent_orchestrator.services import artifacts as artifacts_service
 from agent_orchestrator.services.knowledge import Knowledge
 
 DELIVERED_EVENT = "run.delivered.v1"
@@ -48,14 +49,22 @@ async def record_run_event(
     await OutboxRepository(session).record(run.tenant_id, outbox_envelope)
 
 
+def artifact_source(run_id: str, artifact: RunArtifact) -> str:
+    """逐件入库的 source 标识:run 前缀 + artifact id 前缀(稳定、≤64 字符)。"""
+    return f"run:{run_id}:{artifact.id[:8]}"
+
+
 class KnowledgeIngestConsumer:
     """交付物入库消费者:`run.delivered.v1` → knowledge-service(§8)。
+
+    一个 run 可能有多件交付物:文本件**逐件**入库(标题取各自 title),
+    二进制件(截图/PDF 等)跳过——知识库只收可检索文本。
 
     幂等策略(至少一次投递下必须的):
 
     1. 事件级去重:`processed_events` 记 (租户, 消费者, 事件 id);
-    2. 内容级去重:入库前先按 `source=run:<id>` 查一次,已存在就跳过——
-       覆盖"投递成功但进程在登记已处理前崩溃"的窗口。
+    2. 内容级去重:入库前先按 source 查一次,已存在就跳过——覆盖
+       "投递成功但进程在登记已处理前崩溃"的窗口。
     """
 
     name = KNOWLEDGE_CONSUMER
@@ -82,28 +91,42 @@ class KnowledgeIngestConsumer:
 
         if await self._already_processed(tenant_id, envelope.id):
             return
-        if await self._already_ingested(tenant_id, run_id):
-            await self._remember(tenant_id, envelope.id)
-            return
 
-        async with session_scope(self._factory) as session:
-            artifact = await runs_service.get_artifact(
-                session, tenant_id, run_id, self._store
-            )
-        source = f"run:{run_id}"
-        await self._knowledge.ingest_document(
-            tenant_id,
-            title=artifact.title,
-            content=artifact.content,
-            source=source,
-        )
+        pending = await self._pending_artifacts(tenant_id, run_id)
+        if pending:
+            ingested_sources = await self._ingested_sources(tenant_id)
+            for artifact, text, source in pending:
+                if source in ingested_sources:
+                    continue
+                await self._knowledge.ingest_document(
+                    tenant_id,
+                    title=artifact.title,
+                    content=text,
+                    source=source,
+                )
+                self._log.info(
+                    "artifact_ingested",
+                    run_id=run_id,
+                    artifact_id=artifact.id,
+                    title=artifact.title,
+                    chars=len(text),
+                )
         await self._remember(tenant_id, envelope.id)
-        self._log.info(
-            "artifact_ingested",
-            run_id=run_id,
-            title=artifact.title,
-            chars=len(artifact.content),
-        )
+        self._log.info("run_artifacts_ingested", run_id=run_id, count=len(pending))
+
+    async def _pending_artifacts(
+        self, tenant_id: str, run_id: str
+    ) -> list[tuple[RunArtifact, str, str]]:
+        """该 run 名下需要入库的文本交付物(二进制件与空正文跳过)。"""
+        async with session_scope(self._factory) as session:
+            rows = await artifacts_service.list_artifacts(session, tenant_id, run_id)
+            pending: list[tuple[RunArtifact, str, str]] = []
+            for row in rows:
+                text = await artifacts_service.read_artifact_text(row, self._store)
+                if text is None:
+                    continue
+                pending.append((row, text, artifact_source(run_id, row)))
+            return pending
 
     async def _already_processed(self, tenant_id: str, event_id: str) -> bool:
         async with session_scope(self._factory) as session:
@@ -114,12 +137,12 @@ class KnowledgeIngestConsumer:
                 event_id=event_id,
             )
 
-    async def _already_ingested(self, tenant_id: str, run_id: str) -> bool:
+    async def _ingested_sources(self, tenant_id: str) -> set[str]:
+        """已入库文档的 source 集合(逐件去重;也兼容旧版 `run:<id>`)。"""
         documents = await self._knowledge.list_documents(
             tenant_id, limit=INGEST_LIST_LIMIT
         )
-        source = f"run:{run_id}"
-        return any(document.get("source") == source for document in documents)
+        return {str(document.get("source") or "") for document in documents}
 
     async def _remember(self, tenant_id: str, event_id: str) -> None:
         async with session_scope(self._factory) as session:

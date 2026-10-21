@@ -22,6 +22,7 @@ from database.session import session_scope
 
 from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.repositories import ArtifactRepository, RunRepository
+from agent_orchestrator.services import artifacts as artifacts_service
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 
 PROTOCOL_VERSION = "2025-03-26"
@@ -150,9 +151,7 @@ def _read_only_tools(toolkit: ToolRegistry | None) -> list[dict[str, Any]]:
     return out
 
 
-async def _run_tools(
-    factory, tenant_id: str, limit: int = 10
-) -> list[dict[str, Any]]:
+async def _run_tools(factory, tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
     async with session_scope(factory) as session:
         runs = await RunRepository(session).list_recent(tenant_id, limit)
     return [
@@ -168,22 +167,22 @@ async def _run_tools(
 
 
 async def _artifact_read(
-    factory, tenant_id: str, artifact_id: str
+    factory, tenant_id: str, artifact_id: str, store: Any = None
 ) -> dict[str, Any]:
+    """按 id 取交付物并装载文本;二进制件不返回正文(MCP 只承载文本)。"""
     async with session_scope(factory) as session:
         artifact = await ArtifactRepository(session).require_for_tenant(
             tenant_id, artifact_id
         )
-        if not artifact.content:
-            raise AppError(
-                "mcp.artifact_not_inline",
-                "该交付物不在数据库内联存储,暂不支持 MCP 读取",
-            )
-        return {
-            "uri": f"beauty://artifacts/{artifact.id}",
-            "mimeType": "text/markdown",
-            "text": artifact.content,
-        }
+        text = await artifacts_service.read_artifact_text(artifact, store)
+        mime_type = artifact.content_type or "text/markdown"
+        uri = f"beauty://artifacts/{artifact.id}"
+    if text is None:
+        raise AppError(
+            "mcp.artifact_not_inline",
+            "该交付物是二进制文件,不支持 MCP 文本读取;请通过下载端点获取",
+        )
+    return {"uri": uri, "mimeType": mime_type, "text": text}
 
 
 async def _list_resources(factory, tenant_id: str, limit: int = 20):
@@ -196,7 +195,7 @@ async def _list_resources(factory, tenant_id: str, limit: int = 20):
             "uri": f"beauty://artifacts/{artifact.id}",
             "name": artifact.title,
             "title": artifact.title,
-            "mimeType": "text/markdown",
+            "mimeType": artifact.content_type or "text/markdown",
         }
         for artifact in artifacts
     ]
@@ -235,7 +234,12 @@ async def call_tool(
         if not artifact_id:
             return _tool_result("缺少 artifact_id", is_error=True)
         try:
-            content = await _artifact_read(factory, principal.tenant_id, artifact_id)
+            content = await _artifact_read(
+                factory,
+                principal.tenant_id,
+                artifact_id,
+                getattr(request.app.state, "artifact_store", None),
+            )
         except AppError as exc:
             return _tool_result(exc.message, is_error=True)
         return _tool_result(content["text"])
@@ -289,9 +293,7 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
     if method == "tools/list":
         _require_scope(principal, "mcp:tools:read")
         toolkit_factory = getattr(request.app.state, "toolkit_factory", None)
-        toolkit = (
-            toolkit_factory(principal.tenant_id) if toolkit_factory else None
-        )
+        toolkit = toolkit_factory(principal.tenant_id) if toolkit_factory else None
         return {"tools": [*_builtin_tools(), *_read_only_tools(toolkit)]}
     if method == "tools/call":
         _require_scope(principal, "mcp:tools:call")
@@ -320,6 +322,7 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
                         request.app.state.session_factory,
                         principal.tenant_id,
                         artifact_id,
+                        getattr(request.app.state, "artifact_store", None),
                     )
                 ]
             }

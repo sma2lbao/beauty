@@ -31,6 +31,30 @@ QUEUED = "queued"
 CONSUMED = "consumed"
 TOOL_CALLED_EVENT = "run.tool.called.v1"
 
+# 报告件的来源标记:与 services.artifacts.ARTIFACT_REPORT_SOURCE 同值,
+# 仓储不反向 import service 层(artifact service 已依赖本模块,反向会循环)。
+REPORT_ARTIFACT_SOURCE = "report"
+_TEXT_CONTENT_TYPE_EXTRA = frozenset(
+    {
+        "application/json",
+        "application/xml",
+        "application/x-yaml",
+        "application/yaml",
+        "application/javascript",
+        "application/x-ndjson",
+    }
+)
+
+
+def _is_text_artifact_row(row: RunArtifact) -> bool:
+    """文本交付物判定(二进制件不当主文本件);旧行没有 content_type 视为文本。"""
+    if row.content_bytes is not None:
+        return False
+    content_type = str(row.content_type or "").split(";", 1)[0].strip().lower()
+    if not content_type:
+        return True
+    return content_type.startswith("text/") or content_type in _TEXT_CONTENT_TYPE_EXTRA
+
 
 class RunRepository(TenantRepository[Run]):
     model = Run
@@ -371,18 +395,39 @@ class InstructionRepository(TenantRepository[PendingInstruction]):
 
 
 class ArtifactRepository(TenantRepository[RunArtifact]):
+    """交付物:一个 run 可以有多件(文本报告 + 技能/工具产出的文件)。
+
+    主交付物(旧 `/artifact` 契约)优先取报告,其次第一条文本件,再次第一条;
+    报告件的来源标记见 `services.artifacts.ARTIFACT_REPORT_SOURCE`(同为 "report",
+    这里不反向 import service 层以免循环依赖)。
+    """
+
     model = RunArtifact
     not_found_code = "artifact.not_found"
     not_found_message = "交付物不存在"
     id_detail_key = "artifact_id"
 
+    async def list_for_run(self, tenant_id: str, run_id: str) -> list[RunArtifact]:
+        """该 run 的全部交付物(created_at, id 升序;未交付返回空列表)。"""
+        return await self.list_scoped(
+            tenant_id,
+            RunArtifact.run_id == run_id,
+            order_by=[RunArtifact.created_at, RunArtifact.id],
+        )
+
     async def find_for_run(self, tenant_id: str, run_id: str) -> RunArtifact | None:
-        """按 run 取交付物(每个 run 至多一件);没有返回 None。"""
-        found = await self.list_scoped(tenant_id, RunArtifact.run_id == run_id)
+        """按 run 取**主交付物**:优先报告,否则第一条文本件,否则第一条。"""
+        found = await self.list_for_run(tenant_id, run_id)
+        for row in found:
+            if (row.source or "") == REPORT_ARTIFACT_SOURCE:
+                return row
+        for row in found:
+            if _is_text_artifact_row(row):
+                return row
         return found[0] if found else None
 
     async def require_for_run(self, tenant_id: str, run_id: str) -> RunArtifact:
-        """按 run 取交付物(每个 run 至多一件);未交付 → 404。
+        """按 run 取主交付物;未交付 → 404。
 
         details 用 `run_id`:取件入口是 run,调用方关心的是"这个 run 有没有件"。
         """
@@ -396,6 +441,30 @@ class ArtifactRepository(TenantRepository[RunArtifact]):
                 details={"run_id": run_id},
             )
         return found
+
+    async def find_artifact(
+        self, tenant_id: str, run_id: str, artifact_id: str
+    ) -> RunArtifact | None:
+        """取该 run 下的指定交付物;不属于该 run/租户返回 None(调用方统一 404)。"""
+        return await self.session.scalar(
+            self.scoped(
+                tenant_id,
+                RunArtifact.run_id == run_id,
+                RunArtifact.id == artifact_id,
+            )
+        )
+
+    async def find_by_source_url(
+        self, tenant_id: str, run_id: str, source_url: str
+    ) -> RunArtifact | None:
+        """按来源 URL 找已登记的交付物(抓取类工具重跑时去重,不重复落件)。"""
+        return await self.session.scalar(
+            self.scoped(
+                tenant_id,
+                RunArtifact.run_id == run_id,
+                RunArtifact.source_url == source_url,
+            )
+        )
 
 
 class SkillPackageRepository(TenantRepository[SkillPackage]):

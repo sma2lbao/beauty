@@ -82,14 +82,27 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `run.instruction.queued.v1` / `run.instruction.consumed.v1`;内容经
   `extra_instructions` 并入 plan/execute/verify/deliver 的提示词(模型必须遵循)。
 
-- 交付物(§7):deliver 由 LLM 合成最终成品,落 `run_artifacts`(每 run 一件);
-  取件 `GET /runs/{id}/artifact`,事件流记 `run.delivered.v1`
-  (artifact_id/kind/title/chars/size_bytes/storage);
-  未交付取件 404 `artifact.not_found`,failed 终态不产交付物;
-- 交付物存储后端(§7 阶段 B):`ARTIFACT_STORE=database`(默认,正文存 DB 列)或
-  `filesystem`(正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;
-  键按 `<租户>/<run>/<交付物>.md` 分层,拒绝目录穿越);对象丢失 → 500
-  `artifact.object_missing`。换 S3 兼容存储只需实现 `common.artifacts.ArtifactStore`;
+- 交付物(§7):一个 run 可以有**多件**交付物(`run_artifacts` 已去唯一约束)。
+  deliver 合成的成品报告是一件(`source=report`),技能产物每个文件一件
+  (`source=skill`),工具产出的外链文件每件一个(`source=mcp`,见下);
+  取件 `GET /runs/{id}/artifacts`(列表)/ `GET /runs/{id}/artifacts/{id}/download`
+  (原始字节 + 附件头;旧的 `GET /runs/{id}/artifact` 仍返回主交付物文本,兼容保留);
+  事件 `run.delivered.v1` 记 `artifact_ids` 与逐件的 source/filename/content_type/
+  size_bytes。未交付取件 404 `artifact.not_found`,failed 终态不产交付物、也不抓外链;
+- 交付物内容:文本类(`text/*`、JSON/YAML/XML 等)进 `content` 列,二进制进
+  `content_bytes`;存储后端 `ARTIFACT_STORE=database`(默认)或 `filesystem`
+  (正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;键按
+  `<租户>/<run>/<交付物>` 分层,后缀取 MIME 对应扩展名,拒绝目录穿越);对象丢失
+  → 500 `artifact.object_missing`。换 S3 兼容存储只需实现
+  `common.artifacts.ArtifactStore`;
+- 工具产物落成文件(§7,MCP 外链):工具返回的记录里出现白名单扩展名的 http(s)
+  链接(`services/file_capture.py`,`.png/.pdf/.xlsx/.docx/.zip/.csv/.md` 等 18 种)
+  时,执行期就把它**下载成真实交付物**,而不是只留一段链接文本——带签名链接会过期,
+  模型交付后再下载往往已经失效。约束:`ARTIFACT_DOWNLOAD_ENABLED`(默认 true)、
+  `ARTIFACT_DOWNLOAD_MAX_FILES`(默认 10,按 run 去重)/`MAX_BYTES`(10MB)/
+  `TIMEOUT_SECONDS`(20s);私网与回环地址直接拒绝(SSRF)、不跟随重定向、
+  `Content-Disposition` 的 `filename*` 优先取名;抓取失败如实记进
+  `run.delivered.v1` 的 `download_errors`,**不拖垮交付**(报告照常落库);
 - outbox 运维面:`GET /outbox/events`(可按 `status` 过滤)、`GET /outbox/stats`、
   `POST /outbox/events/{id}/retry`、`POST /outbox/retry-failed`——失败事件可见、
   可人工重放(重放回 pending 并清零尝试数;下次投递成功才清 `last_error`);
@@ -100,9 +113,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   留痕);`KNOWLEDGE_INGEST_ENABLED=true` 时挂上首个真实消费者
   **交付物自动入库**:`run.delivered.v1` → knowledge-service(§8 摄取),
   之后 agent 的 `search_knowledge` 就能查到刚交付的成品;
-- 交付物镜像(`WORKSPACE_ENABLED=true`):交付时**同时**推给 workspace-service
-  (§7 里 artifacts 归属 workspace);镜像成败如实记进 `run.delivered.v1` 事件
-  (`workspace_artifact_id` / `workspace_error`)——镜像失败不丢交付物。
+- 交付物镜像(`WORKSPACE_ENABLED=true`):交付时逐件推给 workspace-service
+  (§7 里 artifacts 归属 workspace),文本走 `content`、二进制走 `content_base64`;
+  回写的 `workspace_artifact_id` 存在行上,**重复镜像直接复用**(幂等);
+  成败记进 `run.delivered.v1` 的 `workspace_artifact_ids` / `workspace_errors`
+  ——镜像失败不丢交付物。
 - 沙箱客户端(P1,仅基础设施):`services/sandbox.py` 封装
   workspace-service 内部 `/v1/sandboxes`(创建/查询/执行/文件读写/续期/销毁),
   服务间 Bearer 来自 TokenBroker;`SANDBOX_ENABLED=true` 才装配,默认关闭。
@@ -166,9 +181,10 @@ SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
     `SKILL_EXEC_TIMEOUT_SECONDS` 的小值 +30;
   - 产物读 `/workspace/output`:最多 `SKILL_MAX_OUTPUT_FILES` 个,单文件正文
     上限 `SKILL_MAX_OUTPUT_BYTES`(超限/二进制只报元数据),`stdout`/`stderr` 截断后回喂模型;
-  - 文本产物登记为 run 交付物(`run_artifacts` 每 run 一件:单文件 title=相对
-    路径,多文件合并 Markdown 索引);登记失败只写进 summary,不让工具失败;
-    交付阶段覆盖成最终成品(每次执行**必销毁**沙箱);
+  - `/workspace/output` 里**每个文件独立登记**为一件交付物(`source=skill`,
+    title=相对路径,二进制一并留字节、不再只报元数据);登记失败只写进 summary,
+    不让工具失败;交付阶段另落报告件(与技能产物并存,不覆盖);每次执行
+    **必销毁**沙箱;
   - chat 路径没有 `run_id`,`skill_run` 不会出现在对话直答的工具列表里
     (能力边界由 ToolContext 决定)。
 

@@ -1,8 +1,9 @@
-"""交付物端点:登记/列表/读取/删除(§7)。"""
+"""交付物端点:登记/列表/读取/下载/删除(§7)。"""
 
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import quote
 
 from common.artifacts import ArtifactStore
 from fastapi import APIRouter, Depends, Response, status
@@ -15,6 +16,7 @@ from workspace.api.deps import (
     get_tenant_id,
 )
 from workspace.core.config import Settings
+from workspace.models.workspace import WorkspaceArtifact
 from workspace.schemas.workspace import (
     ArtifactCreate,
     ArtifactMeta,
@@ -40,7 +42,7 @@ async def create_artifact(
     settings: SettingsDep,
     store: StoreDep,
 ) -> ArtifactRead:
-    """登记交付物:不传 workspace_id 则落默认工作区。"""
+    """登记交付物:文本走 content,二进制走 content_base64;缺省落默认工作区。"""
     record = await artifacts_service.create_artifact(
         session, tenant_id, body, store, settings.default_workspace_name
     )
@@ -52,7 +54,7 @@ async def create_artifact(
 async def list_artifacts(
     workspace_id: str, session: DBSession, tenant_id: TenantId
 ) -> list[ArtifactMeta]:
-    """工作区内的交付物元数据(倒序,不含正文)。"""
+    """工作区内的交付物元数据(倒序,不含正文;含 filename/content_type)。"""
     records = await artifacts_service.list_artifacts(session, tenant_id, workspace_id)
     return [ArtifactMeta.model_validate(record) for record in records]
 
@@ -61,10 +63,30 @@ async def list_artifacts(
 async def get_artifact(
     artifact_id: str, session: DBSession, tenant_id: TenantId, store: StoreDep
 ) -> ArtifactRead:
-    """读交付物:元数据 + 正文(按存储后端装载)。"""
+    """读交付物:元数据 + 正文(按存储后端装载);二进制交付物 content 为 null。"""
     record = await artifacts_service.require_artifact(session, tenant_id, artifact_id)
     content = await artifacts_service.load_content(record, store)
     return _to_read(record, content)
+
+
+@router.get("/artifacts/{artifact_id}/download")
+async def download_artifact(
+    artifact_id: str, session: DBSession, tenant_id: TenantId, store: StoreDep
+) -> Response:
+    """下载交付物原始字节(二进制原样,文本按 UTF-8),带附件文件名与私有缓存头。"""
+    record = await artifacts_service.require_artifact(session, tenant_id, artifact_id)
+    data = await artifacts_service.load_bytes(record, store)
+    filename = artifacts_service.artifact_filename(record)
+    media_type = record.content_type or artifacts_service.BINARY_CONTENT_TYPE
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={
+            # RFC 5987 编码:中文/空格等非 ASCII 文件名也能安全出现在头里
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.delete("/artifacts/{artifact_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -76,13 +98,15 @@ async def delete_artifact(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _to_read(record, content: str) -> ArtifactRead:
+def _to_read(record: WorkspaceArtifact, content: str | None) -> ArtifactRead:
     return ArtifactRead(
         id=record.id,
         workspace_id=record.workspace_id,
         run_id=record.run_id,
         kind=record.kind,
         title=record.title,
+        filename=record.filename,
+        content_type=record.content_type,
         storage=record.storage,
         size_bytes=record.size_bytes,
         created_at=record.created_at,

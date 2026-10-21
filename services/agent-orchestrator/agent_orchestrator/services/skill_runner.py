@@ -12,15 +12,16 @@ workspace-service(P1)。三条边界:
 3. **能力即权限边界**:本工具只在 run 绑定了可执行技能包时装配(main 的
    extras factory 按 ToolContext.run_id 判断),chat 路径(run_id 为空)不可见。
 
-产物登记:run_artifacts 每 run 一件(唯一约束),因此把一次执行的文本产物
-**合并登记为一件交付物**——单文件时 title=包内相对路径(契约逐字),
-多文件时合并成 Markdown 索引;登记失败只写进 summary,不让工具本身失败。
+产物登记:run 交付物可以有**多件**,因此每个产出文件**逐件登记**——
+filename/source=skill 标记来源,文本与二进制都保留字节(二进制进
+content_bytes 或对象存储);登记失败只写进 summary,不让工具本身失败。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -31,8 +32,8 @@ from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.models.runs import Run
-from agent_orchestrator.repositories import ArtifactRepository, RunRepository
+from agent_orchestrator.models.runs import Run, RunArtifact
+from agent_orchestrator.repositories import RunRepository
 from agent_orchestrator.services import artifacts
 from agent_orchestrator.services.sandbox import Sandbox, SandboxExecResult
 from agent_orchestrator.services.skill_packages import (
@@ -59,8 +60,6 @@ DEFAULT_TIMEOUT_SECONDS = 300
 #: 回喂模型的 stdout/stderr 上限(防提示词爆炸)
 STDOUT_LIMIT = 20_000
 STDERR_LIMIT = 4_000
-#: 登记为交付物时的正文上限(文本产物已逐文件限长,这里兜住合计)
-ARTIFACT_CHARS_LIMIT = 200_000
 #: 执行器视为"已是解释器"的首段(命中则不拼 runtime 解释器)
 INTERPRETERS = frozenset(
     {
@@ -240,13 +239,14 @@ class SkillRunError(Exception):
 
 @dataclass
 class OutputFile:
-    """产物目录里的一个文件(正文仅在文本、未超限时装载)。"""
+    """产物目录里的一个文件(未超限时读到字节,文本额外解码出正文)。"""
 
     path: str
     size: int
     text: str | None = None
     binary: bool = False
     truncated: bool = False
+    data: bytes | None = None
     artifact_id: str | None = None
 
     def as_payload(self) -> dict[str, Any]:
@@ -294,21 +294,14 @@ def _entrypoint_argv(entrypoint: list[str] | None, runtime: str) -> list[str]:
     return [RUNTIME_BINS.get(runtime, "python3"), *argv]
 
 
-def _artifact_payload(outputs: list[OutputFile]) -> dict[str, Any]:
-    """把文本产物合成一件 run_artifacts 记录(每 run 至多一件的既有契约)。"""
-    if len(outputs) == 1:
-        item = outputs[0]
-        kind = "markdown" if item.path.lower().endswith(MARKDOWN_SUFFIXES) else "text"
-        return {"title": item.path[:200], "kind": kind, "content": item.text or ""}
-    parts: list[str] = []
-    for item in outputs:
-        parts.append(f"## {item.path}\n\n{item.text or ''}")
-    content = "\n\n".join(parts)
-    content, truncated = _truncate(content, ARTIFACT_CHARS_LIMIT)
-    if truncated:
-        content += "\n\n(产物合计超过上限,正文已截断)"
-    title = f"技能输出({len(outputs)} 个文件)"
-    return {"title": title[:200], "kind": "markdown", "content": content}
+def _content_type_for(item: OutputFile) -> str:
+    """产物 MIME:文本按 .md/其他区分,二进制按扩展名猜,兜底二进制流。"""
+    if not item.binary:
+        if item.path.lower().endswith(MARKDOWN_SUFFIXES):
+            return "text/markdown"
+        return "text/plain"
+    guessed, _encoding = mimetypes.guess_type(item.path)
+    return guessed or artifacts.DEFAULT_CONTENT_TYPE
 
 
 def _unpack_failure_summary(result: SandboxExecResult) -> str:
@@ -416,11 +409,11 @@ class SkillRunner:
             outputs, listing_truncated = await self._collect_outputs(
                 tenant_id, sandbox_id
             )
-            artifact_id, summary = await self._register_outputs(
+            registered, summary = await self._register_outputs(
                 tenant_id, run_id, outputs
             )
             return self._result_payload(
-                result, outputs, listing_truncated, artifact_id, summary
+                result, outputs, listing_truncated, registered, summary
             )
         except SkillRunError as exc:
             logger.info(
@@ -567,9 +560,13 @@ class SkillRunner:
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError:
-                outputs.append(OutputFile(path=path, size=len(data), binary=True))
+                outputs.append(
+                    OutputFile(path=path, size=len(data), binary=True, data=data)
+                )
             else:
-                outputs.append(OutputFile(path=path, size=len(data), text=text))
+                outputs.append(
+                    OutputFile(path=path, size=len(data), text=text, data=data)
+                )
         return outputs, bool(listing.get("truncated"))
 
     def _parse_listing(self, result: SandboxExecResult) -> dict[str, Any]:
@@ -593,52 +590,60 @@ class SkillRunner:
 
     async def _register_outputs(
         self, tenant_id: str, run_id: str, outputs: list[OutputFile]
-    ) -> tuple[str | None, str]:
-        """把文本产物登记为 run 交付物;失败写进 summary,不让工具失败。
+    ) -> tuple[list[RunArtifact], str]:
+        """把每个读到字节的产物**逐件**登记为 run 交付物(文本/二进制都留字节)。
 
-        run_artifacts 每 run 一件(唯一约束),所以一次执行的文本产物合并成
-        一件:单文件保留 title=相对路径 的契约,多文件合成 Markdown 索引。
-        已有交付物时原地覆盖(execute 阶段先登记技能输出,交付阶段再覆盖成
-        最终成品,不会撞唯一约束)。
+        逐文件独立事务:单件登记失败只记进 summary,不影响其余文件,也不让
+        工具本身失败;登记成功的行 id 写回 OutputFile.artifact_id。
         """
-        texts = [item for item in outputs if item.text is not None]
-        if not texts:
-            return None, "产物目录里没有可登记的文本文件"
-        payload = _artifact_payload(texts)
-        try:
-            async with session_scope(self._session_factory) as session:
-                run = await RunRepository(session).require_for_tenant(tenant_id, run_id)
-                existing = await ArtifactRepository(session).find_for_run(
-                    tenant_id, run_id
+        registrable = [item for item in outputs if item.data is not None]
+        if not registrable:
+            return [], "产物目录里没有可登记的文件"
+        saved: list[RunArtifact] = []
+        failures: list[str] = []
+        for item in registrable:
+            content_type = _content_type_for(item)
+            try:
+                async with session_scope(self._session_factory) as session:
+                    run = await RunRepository(session).require_for_tenant(
+                        tenant_id, run_id
+                    )
+                    row = await artifacts.persist_file_artifact(
+                        session,
+                        run,
+                        filename=item.path,
+                        content_type=content_type,
+                        data=item.data or b"",
+                        store=self._store,
+                        kind=artifacts.infer_kind(content_type),
+                        source=artifacts.ARTIFACT_SKILL_SOURCE,
+                        title=item.path,
+                    )
+                    item.artifact_id = row.id
+                saved.append(row)
+            except Exception as exc:  # noqa: BLE001 - 单件登记失败不改变执行结果
+                logger.warning(
+                    "skill output artifact persist failed",
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    path=item.path,
+                    error=f"{type(exc).__name__}: {exc}",
                 )
-                row = await artifacts.persist_artifact(
-                    session, run, payload, self._store, existing=existing
-                )
-                artifact_id = row.id
-        except Exception as exc:  # noqa: BLE001 - 登记失败不改变执行结果
-            logger.warning(
-                "skill output artifact persist failed",
-                tenant_id=tenant_id,
-                run_id=run_id,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            return None, f"产物登记失败:{type(exc).__name__}: {exc}"
-        for item in texts:
-            item.artifact_id = artifact_id
-        note = "文本产物已登记为 run 交付物"
-        if len(texts) > 1:
-            note += f"(合并 {len(texts)} 个文件为一件)"
-        return artifact_id, note
+                failures.append(f"{item.path}: {type(exc).__name__}: {exc}")
+        note = f"已登记 {len(saved)} 个文件为 run 交付物"
+        if failures:
+            note += f";产物登记失败 {len(failures)} 个:" + ";".join(failures)
+        return saved, note
 
     def _result_payload(
         self,
         result: SandboxExecResult,
         outputs: list[OutputFile],
         listing_truncated: bool,
-        artifact_id: str | None,
+        registered: list[RunArtifact],
         summary: str,
     ) -> str:
-        """组装回喂模型的 JSON:stdout/stderr 截断,产物只给路径/大小/标记。"""
+        """组装回喂模型的 JSON:stdout/stderr 截断,产物逐件带自己的 artifact_id。"""
         stdout, stdout_truncated = _truncate(result.stdout or "", STDOUT_LIMIT)
         stderr, stderr_truncated = _truncate(result.stderr or "", STDERR_LIMIT)
         payload: dict[str, Any] = {
@@ -655,6 +660,7 @@ class SkillRunner:
             ),
             "summary": summary,
         }
-        if artifact_id is not None:
-            payload["artifact_id"] = artifact_id
+        if registered:
+            # 顶层 artifact_id 取第一件(兼容只认单件的旧前端);多件看 outputs
+            payload["artifact_id"] = registered[0].id
         return json.dumps(payload, ensure_ascii=False)

@@ -105,6 +105,56 @@ describe('runsApi', () => {
     });
   });
 
+  it('交付物列表走 /artifacts 端点并返回文件元数据', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          id: 'a1',
+          run_id: 'r1',
+          kind: 'markdown',
+          title: '周报',
+          filename: 'weekly.md',
+          content_type: 'text/markdown',
+          size_bytes: 12,
+          storage: 'filesystem',
+          source: 'report',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const artifacts = await runsApi.artifacts('r1');
+
+    expect(artifacts[0]).toMatchObject({
+      id: 'a1',
+      filename: 'weekly.md',
+      content_type: 'text/markdown',
+    });
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/artifacts');
+  });
+
+  it('下载交付物返回 Blob(走二进制端点,不解析 JSON)', async () => {
+    setStoredToken('test-jwt');
+    const blob = new Blob(['PNG'], { type: 'image/png' });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => blob,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const downloaded = await runsApi.downloadArtifact('r1', 'a1');
+
+    expect(downloaded).toBe(blob);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/artifacts/a1/download');
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer test-jwt',
+    );
+  });
+
   it('非 JSON 错误体回退通用文案', async () => {
     vi.stubGlobal(
       'fetch',

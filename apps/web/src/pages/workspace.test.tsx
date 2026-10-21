@@ -20,6 +20,7 @@ vi.mock('@/lib/workspace-api', async () => {
       createWorkspace: vi.fn(),
       artifacts: vi.fn(),
       artifact: vi.fn(),
+      downloadArtifact: vi.fn(),
       removeArtifact: vi.fn(),
     },
   };
@@ -117,6 +118,47 @@ describe('WorkspacePage', () => {
       await screen.findByRole('heading', { name: '本周周报(成品)' }),
     ).toBeTruthy();
     expect(screen.getByText('邮件已汇总')).toBeInTheDocument();
+  });
+
+  it('展示后端文件名/MIME,下载走 Blob 端点', async () => {
+    vi.mocked(workspaceApi.artifacts).mockResolvedValue([
+      {
+        ...artifact,
+        kind: 'file',
+        title: '周报',
+        filename: 'weekly-report.md',
+        content_type: 'text/markdown',
+      },
+    ]);
+    vi.mocked(workspaceApi.artifact).mockResolvedValue({
+      ...artifact,
+      filename: 'weekly-report.md',
+      content_type: 'text/markdown',
+      content: '# 本周周报',
+    });
+    const blob = new Blob(['# 本周周报'], { type: 'text/markdown' });
+    vi.mocked(workspaceApi.downloadArtifact).mockResolvedValue(blob);
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:mock');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+      () => {},
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('weekly-report.md')).toBeTruthy();
+    expect(screen.getByText(/text\/markdown/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看' }));
+    await screen.findByRole('heading', { name: '本周周报' });
+    fireEvent.click(screen.getByRole('button', { name: '下载' }));
+
+    await waitFor(() => {
+      expect(workspaceApi.downloadArtifact).toHaveBeenCalledWith('a1');
+    });
+    expect(createObjectURL).toHaveBeenCalled();
   });
 
   it('点「删除」调用删除接口', async () => {

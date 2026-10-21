@@ -103,7 +103,10 @@ class PlanRead(BaseModel):
 
 
 class ArtifactRead(BaseModel):
-    """交付物读取契约(§7):内容已装载,附存储后端与体量。"""
+    """交付物读取契约(§7):内容已装载,附存储后端与体量。
+
+    二进制交付物(截图/PDF 等)content 为空串,按 `content_type` 调用下载端点取字节。
+    """
 
     id: str
     run_id: str
@@ -112,4 +115,23 @@ class ArtifactRead(BaseModel):
     content: str
     storage: str
     size_bytes: int
+    created_at: datetime
+    # 文件名/内容类型/来源:旧客户端不传也能解析(有默认)
+    filename: str | None = None
+    content_type: str | None = None
+    source: str = "report"
+
+
+class ArtifactMetaRead(BaseModel):
+    """交付物清单项(不含正文):列表页/下载入口用。"""
+
+    id: str
+    run_id: str
+    kind: str
+    title: str
+    filename: str | None = None
+    content_type: str | None = None
+    size_bytes: int
+    storage: str
+    source: str = "report"
     created_at: datetime

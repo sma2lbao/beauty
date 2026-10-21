@@ -34,6 +34,13 @@ class Settings(BaseAppSettings):
     # 交付物存储(§7 阶段 B):database = 内容留在 DB 列;filesystem = 落本地目录
     artifact_store: str = "database"
     artifact_root: str = "./.artifacts"
+    # 外链文件抓取:工具/MCP 返回的 http(s) 文件链接(按扩展名白名单识别)下载成
+    # 真实交付物,而不是只留一段 URL 文本。三个上限即内存/耗时边界:
+    # 单文件字节、单个 URL 请求超时、一次最多抓几个(超出部分忽略)。
+    artifact_download_enabled: bool = True
+    artifact_download_max_bytes: int = 10 * 1024 * 1024
+    artifact_download_timeout_seconds: float = 20.0
+    artifact_download_max_files: int = 10
     # 附件本地最小版(M0-12):内容进 DB;单文件上限与单条消息附件数上限
     max_attachment_bytes: int = 10 * 1024 * 1024
     max_attachments_per_message: int = 5

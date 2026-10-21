@@ -176,7 +176,7 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 | ---------------------------------------- | ------------------------- | ------------------------------------------------------------------------ |
 | runs / run_events / pending_instructions | orchestrator              | §6 状态机、事件溯源、指令队列                                            |
 | conversations / chat_messages            | orchestrator              | §6.7 对话消息(user/assistant 持久化 + 多轮上下文)                        |
-| artifacts                                | workspace                 | 交付物元数据;实体文件在对象存储(COS/R2)                                  |
+| artifacts                                | workspace                 | 交付物元数据(一个 run 多件:报告/技能产物/工具外链文件);实体文件在对象存储或 DB |
 | connections + credentials                | connector                 | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密                |
 | skills                                   | orchestrator              | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化 |
 | schedules                                | orchestrator(阶段 B 独立) | cron/webhook 触发器                                                      |
@@ -184,6 +184,25 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 | feedback                                 | orchestrator              | 点赞/点踩/纠错 → datasets 飞轮                                           |
 | 知识库(pgvector)                         | knowledge                 | 全表 tenant_id,检索同租户过滤                                            |
 | sessions/devices                         | account                   | 多端会话(为 app 预留)                                                    |
+
+### 7.1 交付物(run artifacts)
+
+用户要的是**能打开的文件**,不是一段 Markdown 正文——所以交付物是"一个 run 多件":
+
+- **多件**:报告件(`source=report`,deliver 合成的成品)之外,技能产物按输出文件
+  逐件登记(`source=skill`),工具返回的外链文件在执行期下载落库(`source=mcp`);
+  `run_artifacts` 不再对 `run_id` 唯一;
+- **文本与二进制分流**:文本类(`text/*`、JSON/YAML/XML 等)存 `content`,
+  二进制存 `content_bytes`(DB)或对象存储(行里留 `object_key`/`size_bytes`),
+  并记 `filename`/`content_type`;下载端点 `GET /api/v1/runs/{id}/artifacts/{aid}/download`
+  返回原始字节 + 附件头;
+- **外链在执行时抓**:MCP/工具返回带签名链接会过期,交付后再抓往往已失效,因此
+  执行期就按白名单扩展名识别 http(s) 文件并下载(SSRF 拦截私网/回环、不跟随
+  重定向、单文件 10MB / 20s / 每 run 10 件上限);抓取失败只进 `download_errors`,
+  不拖垮交付;
+- **幂等与镜像**:workspace-service 侧同构(`content` 或 `content_base64`),
+  orchestrator 逐件镜像并回写 `workspace_artifact_id`;重复交付复用该 id,
+  事件 `run.delivered.v1` 记 `artifact_ids`/`artifacts`/`download_errors`。
 
 ## 8. 知识、记忆与连接器
 

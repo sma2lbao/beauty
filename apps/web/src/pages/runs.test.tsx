@@ -28,6 +28,8 @@ vi.mock('@/lib/runs-api', async () => {
       resume: vi.fn(),
       retry: vi.fn(),
       artifact: vi.fn(),
+      artifacts: vi.fn(),
+      downloadArtifact: vi.fn(),
       instructions: vi.fn(),
       queueInstruction: vi.fn(),
     },
@@ -176,26 +178,115 @@ describe('RunsPage', () => {
     );
   });
 
-  it('已完成 run:按需取交付物并展示正文', async () => {
+  it('已完成 run:列出多件交付物(报告 + 文件)', async () => {
     vi.mocked(runsApi.list).mockResolvedValue([
       makeRun({ status: 'completed' }),
     ]);
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
-    vi.mocked(runsApi.artifact).mockResolvedValue({
-      id: 'a1',
-      run_id: 'run-1',
-      kind: 'markdown',
-      title: '周报',
-      content: '# 本周周报\n\n已汇总。',
-      created_at: '2026-10-12T11:00:00+00:00',
-    });
+    vi.mocked(runsApi.artifacts).mockResolvedValue([
+      {
+        id: 'a1',
+        run_id: 'run-1',
+        kind: 'markdown',
+        title: '周报',
+        filename: 'weekly.md',
+        content_type: 'text/markdown',
+        size_bytes: 2048,
+        storage: 'filesystem',
+        source: 'report',
+        created_at: '2026-10-12T11:00:00+00:00',
+      },
+      {
+        id: 'a2',
+        run_id: 'run-1',
+        kind: 'attachment',
+        title: '运行截图',
+        filename: 'screen.png',
+        content_type: 'image/png',
+        size_bytes: 512,
+        storage: 'filesystem',
+        source: 'tool',
+        created_at: '2026-10-12T11:01:00+00:00',
+      },
+    ]);
     renderPage();
 
     await selectRun('整理本周邮件成周报');
     fireEvent.click(await screen.findByRole('button', { name: '查看交付物' }));
 
-    expect(await screen.findByText(/已汇总。/)).toBeInTheDocument();
-    expect(runsApi.artifact).toHaveBeenCalledWith('run-1');
+    expect(await screen.findByText('weekly.md')).toBeInTheDocument();
+    expect(screen.getByText('screen.png')).toBeInTheDocument();
+    expect(screen.getByText('2 件')).toBeInTheDocument();
+    expect(screen.getByText(/2\.0 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/512 B/)).toBeInTheDocument();
+    expect(runsApi.artifacts).toHaveBeenCalledWith('run-1');
+  });
+
+  it('交付物:文本可预览、图片用 blob URL、文件可下载', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ status: 'completed' }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
+    vi.mocked(runsApi.artifacts).mockResolvedValue([
+      {
+        id: 'a1',
+        run_id: 'run-1',
+        kind: 'markdown',
+        title: '周报',
+        filename: 'weekly.md',
+        content_type: 'text/markdown',
+        size_bytes: 2048,
+        storage: 'filesystem',
+        created_at: '2026-10-12T11:00:00+00:00',
+      },
+      {
+        id: 'a2',
+        run_id: 'run-1',
+        kind: 'attachment',
+        title: '运行截图',
+        filename: 'screen.png',
+        content_type: 'image/png',
+        size_bytes: 512,
+        storage: 'filesystem',
+        created_at: '2026-10-12T11:01:00+00:00',
+      },
+    ]);
+    vi.mocked(runsApi.downloadArtifact).mockImplementation(async (_, id) =>
+      id === 'a2'
+        ? new Blob(['PNG'], { type: 'image/png' })
+        : new Blob(['# 本周周报\n\n已汇总。'], { type: 'text/markdown' }),
+    );
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:mock-image');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    fireEvent.click(await screen.findByRole('button', { name: '查看交付物' }));
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '预览 weekly.md' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: '本周周报' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('已汇总。')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '预览 screen.png' }));
+    expect(
+      await screen.findByRole('img', { name: '运行截图' }),
+    ).toHaveAttribute('src', 'blob:mock-image');
+
+    fireEvent.click(screen.getByRole('button', { name: '下载 screen.png' }));
+    await waitFor(() =>
+      expect(runsApi.downloadArtifact).toHaveBeenCalledWith('run-1', 'a2'),
+    );
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(click).toHaveBeenCalled();
   });
 
   it('blocked run:展示中断原因,可重新进闸(resume)', async () => {

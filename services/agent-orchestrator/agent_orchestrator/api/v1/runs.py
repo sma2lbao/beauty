@@ -6,17 +6,19 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated
+from urllib.parse import quote
 
 from common.artifacts import ArtifactStore
 from common.errors import AppError, ConflictError, NotFoundError
 from database.session import session_scope
 from fastapi import APIRouter, Depends, Header, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.api.deps import (
     get_artifact_store,
+    get_file_downloader,
     get_run_graph,
     get_session,
     get_settings,
@@ -25,8 +27,9 @@ from agent_orchestrator.api.deps import (
     get_workspace_client,
 )
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.models.runs import RunEvent
+from agent_orchestrator.models.runs import RunArtifact, RunEvent
 from agent_orchestrator.schemas.runs import (
+    ArtifactMetaRead,
     ArtifactRead,
     ConfirmRequest,
     InstructionCreate,
@@ -39,10 +42,12 @@ from agent_orchestrator.schemas.runs import (
     RunRead,
     RunStatus,
 )
+from agent_orchestrator.services import artifacts as artifacts_service
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services import skill_packages
+from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
@@ -53,6 +58,7 @@ TenantId = Annotated[str, Depends(get_tenant_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
+FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SkillsDep = Annotated[SkillRegistry, Depends(get_skills)]
 
@@ -128,6 +134,21 @@ async def get_run_plan(
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
 
+def _artifact_meta(row: RunArtifact) -> ArtifactMetaRead:
+    return ArtifactMetaRead(
+        id=row.id,
+        run_id=row.run_id,
+        kind=row.kind,
+        title=row.title,
+        filename=row.filename,
+        content_type=row.content_type,
+        size_bytes=row.size_bytes,
+        storage=row.storage,
+        source=row.source,
+        created_at=row.created_at,
+    )
+
+
 @router.get("/{run_id}/artifact", response_model=ArtifactRead)
 async def get_run_artifact(
     run_id: str,
@@ -135,7 +156,10 @@ async def get_run_artifact(
     tenant_id: TenantId,
     store: ArtifactStoreDep,
 ) -> ArtifactRead:
-    """取交付物(§7):completed 后取件;未交付 → 404 artifact.not_found。"""
+    """取主交付物(§7,旧契约):completed 后取件;未交付 → 404 artifact.not_found。
+
+    主交付物优先文本报告;二进制件的 content 为空串,按 `content_type` 走下载端点。
+    """
     await runs_service.require_run(session, tenant_id, run_id)
     view = await runs_service.get_artifact(session, tenant_id, run_id, store)
     return ArtifactRead(
@@ -147,6 +171,48 @@ async def get_run_artifact(
         storage=view.storage,
         size_bytes=view.size_bytes,
         created_at=view.created_at,
+        filename=view.filename,
+        content_type=view.content_type,
+        source=view.source,
+    )
+
+
+@router.get("/{run_id}/artifacts", response_model=list[ArtifactMetaRead])
+async def list_run_artifacts(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> list[ArtifactMetaRead]:
+    """该 run 的全部交付物(元数据,不含正文):run 不存在 → 404,未交付 → []。"""
+    await runs_service.require_run(session, tenant_id, run_id)
+    rows = await artifacts_service.list_artifacts(session, tenant_id, run_id)
+    return [_artifact_meta(row) for row in rows]
+
+
+@router.get("/{run_id}/artifacts/{artifact_id}/download")
+async def download_run_artifact(
+    run_id: str,
+    artifact_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    store: ArtifactStoreDep,
+) -> Response:
+    """下载交付物原始字节(文本/二进制同一入口)。
+
+    不属于该 run/租户的 artifact 一律 404 `artifact.not_found`;
+    缺失对象由 service 抛 `artifact.object_missing`(500,存储配置问题)。
+    """
+    await runs_service.require_run(session, tenant_id, run_id)
+    row = await artifacts_service.require_artifact(
+        session, tenant_id, run_id, artifact_id
+    )
+    data = await artifacts_service.read_artifact_bytes(row, store)
+    filename = quote(artifacts_service.artifact_download_name(row), safe="")
+    return Response(
+        content=data,
+        media_type=row.content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "Cache-Control": "private, no-store",
+        },
     )
 
 
@@ -188,6 +254,7 @@ async def approve_run(
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
     settings: SettingsDep,
 ) -> RunRead:
     """放行审批闸,执行到完成(§6.2 awaiting_approval → completed)。"""
@@ -199,6 +266,8 @@ async def approve_run(
         store,
         workspace,
         jobs_enabled=settings.jobs_enabled,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return RunRead.model_validate(run)
 
@@ -255,6 +324,7 @@ async def confirm_run(
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
     settings: SettingsDep,
 ) -> RunRead:
     """确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。"""
@@ -268,6 +338,8 @@ async def confirm_run(
         store,
         workspace,
         jobs_enabled=settings.jobs_enabled,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return RunRead.model_validate(run)
 

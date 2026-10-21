@@ -46,7 +46,8 @@ def test_artifact_is_mirrored_to_workspace(tmp_path: Path) -> None:
 
         # 镜像成功:事件里带上工作区交付物 id,内容是最终成品
         assert payload["workspace_artifact_id"] == "ws-art-1"
-        assert "workspace_error" not in payload
+        assert payload["workspace_artifact_ids"] == ["ws-art-1"]
+        assert "workspace_errors" not in payload
         mirrored = workspace.created[0]
         assert mirrored["tenant_id"] == "t-1"
         assert mirrored["run_id"] == run_id
@@ -72,7 +73,11 @@ def test_mirror_failure_keeps_artifact_and_records_reason(tmp_path: Path) -> Non
         payload = _delivered(client, run_id)
 
         assert "workspace_artifact_id" not in payload
-        assert "工作区镜像失败" in payload["workspace_error"]
+        # 多件交付物逐件镜像:失败按件记账,原因原样保留
+        errors = payload["workspace_errors"]
+        assert len(errors) == 1
+        assert errors[0]["artifact_id"] == payload["artifact_id"]
+        assert "工作区镜像失败" in errors[0]["error"]
         # 交付物本身没丢
         artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
         assert artifact["content"] == DELIVERY

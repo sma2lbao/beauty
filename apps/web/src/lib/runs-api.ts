@@ -6,7 +6,13 @@
  * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
  */
 
-import { ApiError, isUnauthorized, jsonHeaders, requestJson } from '@/lib/http';
+import {
+  ApiError,
+  isUnauthorized,
+  jsonHeaders,
+  requestBlob,
+  requestJson,
+} from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -49,14 +55,25 @@ export type Plan = {
   plan_markdown: string;
 };
 
-export type Artifact = {
+/** 一个 run 的交付物元数据(多件:报告 + 真实文件)。 */
+export type ArtifactMeta = {
   id: string;
   run_id: string;
   kind: string;
   title: string;
-  content: string;
+  /** 后端给出的落盘文件名(含扩展名);旧数据可能为空。 */
+  filename?: string | null;
+  /** 后端给出的 MIME;旧数据可能为空。 */
+  content_type?: string | null;
+  size_bytes?: number;
+  storage?: string;
+  /** 产物来源(如 report/tool/output);用于展示来源,缺省不影响渲染。 */
+  source?: string;
   created_at: string;
 };
+
+/** 旧 `GET /runs/{id}/artifact`(主文本交付物)仍附带正文,保留兼容。 */
+export type Artifact = ArtifactMeta & { content: string };
 
 /** 运行中追加指令(§6.5):queued 表示等下一个边界消费。 */
 export type Instruction = {
@@ -114,8 +131,15 @@ export const runsApi = {
   /** failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。 */
   retry: (runId: string) =>
     request<Run>(`/api/v1/runs/${runId}/retry`, { method: 'POST' }),
+  /** 旧端点:主文本交付物(带 content),仅为兼容保留。 */
   artifact: (runId: string) =>
     request<Artifact>(`/api/v1/runs/${runId}/artifact`),
+  /** 交付物列表:报告 + 真实文件(截图/文档等),只有元数据。 */
+  artifacts: (runId: string) =>
+    request<ArtifactMeta[]>(`/api/v1/runs/${runId}/artifacts`),
+  /** 下载交付物二进制:返回 Blob,文件名/MIME 由列表元数据决定。 */
+  downloadArtifact: (runId: string, artifactId: string): Promise<Blob> =>
+    requestBlob(BASE, `/api/v1/runs/${runId}/artifacts/${artifactId}/download`),
   instructions: (runId: string) =>
     request<Instruction[]>(`/api/v1/runs/${runId}/instructions`),
   queueInstruction: (runId: string, content: string) =>

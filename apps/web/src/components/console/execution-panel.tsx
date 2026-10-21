@@ -10,15 +10,15 @@ import { Check, Circle, Loader2, Terminal, X } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { RunArtifacts } from '@/components/console/run-artifacts';
 import { ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import {
   RUN_STATUS_LABELS,
-  relativeTime,
   runStatusTone,
   summarizeArguments,
   type ToolCall,
 } from '@/lib/presentation';
-import type { Artifact, Run, RunEvent, RunStatus } from '@/lib/runs-api';
+import type { Run, RunEvent, RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
 type PanelTab = 'steps' | 'changes' | 'terminal';
@@ -30,7 +30,7 @@ export function ExecutionPanel({
   toolCalls,
   connected,
   reconnecting = false,
-  artifact,
+  runId,
   footerAction,
 }: {
   run?: Run;
@@ -39,7 +39,8 @@ export function ExecutionPanel({
   toolCalls: readonly ToolCall[];
   connected: boolean;
   reconnecting?: boolean;
-  artifact?: Artifact | null;
+  /** 交付物统一走多件列表(报告 + 真实文件);没有 run 时给空态。 */
+  runId?: string | null;
   footerAction?: ReactNode;
 }) {
   const [tab, setTab] = useState<PanelTab>('steps');
@@ -133,32 +134,11 @@ export function ExecutionPanel({
 
       {tab === 'changes' ? (
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="text-[11px] font-semibold text-ha-dim">
-              交付物
-            </span>
-            <ToneBadge tone={artifact ? 'success' : 'neutral'}>
-              {artifact ? '1 个' : '0 个'}
-            </ToneBadge>
-          </div>
-          {artifact ? (
-            <div className="rounded-md border border-ha-border bg-ha-panel p-3">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[12px] font-medium text-ha-text-body">
-                  {artifact.title}
-                </span>
-                <ToneBadge tone="accent">{artifact.kind}</ToneBadge>
-              </div>
-              <p className="mt-1 font-mono text-[11px] text-ha-dim">
-                {relativeTime(artifact.created_at)}
-                {' · '}
-                {artifact.content.length} 字符
-              </p>
-              <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-ha-muted">
-                {artifact.content.slice(0, 1200)}
-                {artifact.content.length > 1200 ? '…' : ''}
-              </pre>
-            </div>
+          {runId ? (
+            <RunArtifacts
+              runId={runId}
+              className="border-0 bg-transparent p-0"
+            />
           ) : (
             <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] leading-5 text-ha-dim">
               本次运行还没有交付物。任务完成时会在这里出现。

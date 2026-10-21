@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowUp,
-  Download,
   FileText,
   Paperclip,
   Plug,
@@ -17,10 +16,9 @@ import { ConsoleStatusBar } from '@/components/console/status-bar';
 import { ToolCallCard } from '@/components/console/tool-call-card';
 import { ConsoleTopbar } from '@/components/console/topbar';
 import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
-import { ArtifactPreview } from '@/components/console/artifact-preview';
 import { Markdown } from '@/components/console/markdown';
+import { RunArtifacts } from '@/components/console/run-artifacts';
 import { useRunEvents } from '@/components/runs/use-run-events';
-import { downloadArtifact } from '@/lib/artifacts';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import { mcpApi } from '@/lib/mcp-api';
 import { skillsApi } from '@/lib/skills-api';
@@ -183,12 +181,6 @@ export function ChatPage() {
   });
   const showArtifact =
     Boolean(activeConversationId) && artifactFor === activeConversationId;
-  const artifactQuery = useQuery({
-    queryKey: ['artifact', activeRunId],
-    queryFn: () => runsApi.artifact(activeRunId as string),
-    enabled: Boolean(activeRunId) && showArtifact,
-    retry: false,
-  });
 
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
@@ -697,44 +689,9 @@ export function ChatPage() {
                       <FileText className="h-3.5 w-3.5" />
                       {showArtifact ? '收起成品' : '查看成品'}
                     </ConsoleButton>
-                    {artifactQuery.data ? (
-                      <ToneBadge tone="success">
-                        {artifactQuery.data.kind}
-                      </ToneBadge>
-                    ) : null}
                   </div>
-                  {showArtifact ? (
-                    artifactQuery.isLoading ? (
-                      <p className="text-[12px] text-ha-dim">读取中…</p>
-                    ) : artifactQuery.data ? (
-                      <div className="overflow-hidden rounded-lg border border-ha-border bg-ha-code">
-                        <div className="flex items-center justify-between gap-3 border-b border-ha-border px-3 py-2">
-                          <span className="truncate font-mono text-[12px] text-ha-text-2">
-                            {artifactQuery.data.title}
-                          </span>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <span className="font-mono text-[11px] text-ha-faint">
-                              {artifactQuery.data.content.length} 字符
-                            </span>
-                            <button
-                              type="button"
-                              aria-label="下载成品"
-                              onClick={() =>
-                                downloadArtifact(artifactQuery.data)
-                              }
-                              className="grid h-6 w-6 place-items-center rounded text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="max-h-72 overflow-auto p-3">
-                          <ArtifactPreview artifact={artifactQuery.data} />
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-[12px] text-ha-dim">还没有交付物。</p>
-                    )
+                  {showArtifact && activeRunId ? (
+                    <RunArtifacts runId={activeRunId} />
                   ) : null}
                 </div>
               ) : null}
@@ -974,7 +931,7 @@ export function ChatPage() {
           toolCalls={toolCalls}
           connected={connected}
           reconnecting={reconnecting}
-          artifact={artifactQuery.data ?? null}
+          runId={activeRunId}
           footerAction={footerAction}
         />
       </div>

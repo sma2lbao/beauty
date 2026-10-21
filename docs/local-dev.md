@@ -142,6 +142,7 @@ curl -s http://127.0.0.1:8002/mcp \
 - 在 services/llm-gateway/.env 配 LLM_GATEWAY**API_KEY,可选 LLM_GATEWAY**API_BASE 与 DEFAULT_MODEL。
 - orchestrator 侧设 AGENT_ORCHESTRATOR\_\_LLM_ENABLED=true;需要工具调用时再开 TOOLS_ENABLED=true 与 MCP_ENABLED=true。
 - `.env.example` 已把其余开发侧能力开关(工具/文档/知识库/outbox/交付物镜像/沙箱/技能执行/stdio MCP)默认置 true;唯一需要自己补的是模型密钥与本条的 `LLM_ENABLED=true`。
+- 交付物(架构 §7.1):一个 run 可有多件,报告/技能产物/MCP 外链文件都算;工具返回的外链文件在**执行期**下载落库,开关与上限是 `AGENT_ORCHESTRATOR__ARTIFACT_DOWNLOAD_ENABLED` / `_MAX_FILES` / `_MAX_BYTES` / `_TIMEOUT_SECONDS`(默认 true / 10 件 / 10MB / 20s)。取件点:`GET /api/v1/runs/{id}/artifacts`(列表)与 `GET /api/v1/runs/{id}/artifacts/{aid}/download`(原始字节),工作区侧对应 `/api/v1/artifacts/{id}/download`;运行详情与「变更与产物」页可直接预览/下载。
 - 验证:curl -s -H Content-Type:application/json -d {"messages":[{"role":"user","content":"只回复:模型正常"}]} http://127.0.0.1:8003/v1/completions。
 - 真实模型工具名必须匹配 ^[a-zA-Z0-9_-]+$;MCP 工具使用 mcp**<server>**<tool>。
 

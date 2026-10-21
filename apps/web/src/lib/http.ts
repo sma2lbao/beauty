@@ -38,6 +38,53 @@ function isFormDataBody(body: BodyInit | null | undefined): boolean {
   return typeof FormData !== 'undefined' && body instanceof FormData;
 }
 
+/** 带鉴权/CSRF 头发一次请求(不处理 401 续期)。 */
+async function sendWithAuth(
+  base: string,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers = isFormDataBody(init?.body)
+    ? await authHeaders()
+    : await jsonHeaders();
+  return fetch(`${base}${path}`, {
+    ...init,
+    credentials: 'include',
+    headers: { ...headers, ...init?.headers },
+  });
+}
+
+/** 401 时用 refresh token 续期并重试一次;返回最终响应。 */
+async function sendWithRetry(
+  base: string,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  let response = await sendWithAuth(base, path, init);
+  if (response.status === 401 && (await refreshAccessToken())) {
+    // 续期成功:换新 access token 重试一次;仍 401 则按错误契约抛出
+    response = await sendWithAuth(base, path, init);
+  }
+  return response;
+}
+
+/** 把非 2xx 响应映射成统一 `ApiError`(错误体可能是 JSON,也可能是空)。 */
+async function throwResponseError(response: Response): Promise<never> {
+  let code = 'request_failed';
+  let message = `请求失败(${response.status})`;
+  try {
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+    };
+    code = body.code ?? code;
+    message = body.message ?? message;
+  } catch {
+    // 非 JSON 错误体:保留兜底文案
+  }
+  throw new ApiError(response.status, code, message);
+}
+
 /**
  * 发一个 JSON 请求:非 2xx 抛 `ApiError`;204 返回 undefined。
  * `path` 是服务内路径(如 `/v1/knowledge/documents`),`base` 由调用方决定。
@@ -50,38 +97,30 @@ export async function requestJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const send = async () => {
-    const headers = isFormDataBody(init?.body)
-      ? await authHeaders()
-      : await jsonHeaders();
-    return fetch(`${base}${path}`, {
-      ...init,
-      credentials: 'include',
-      headers: { ...headers, ...init?.headers },
-    });
-  };
-  let response = await send();
-  if (response.status === 401 && (await refreshAccessToken())) {
-    // 续期成功:换新 access token 重试一次;仍 401 则按错误契约抛出
-    response = await send();
-  }
+  const response = await sendWithRetry(base, path, init);
   if (!response.ok) {
-    let code = 'request_failed';
-    let message = `请求失败(${response.status})`;
-    try {
-      const body = (await response.json()) as {
-        code?: string;
-        message?: string;
-      };
-      code = body.code ?? code;
-      message = body.message ?? message;
-    } catch {
-      // 非 JSON 错误体:保留兜底文案
-    }
-    throw new ApiError(response.status, code, message);
+    await throwResponseError(response);
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+/**
+ * 发一个二进制下载请求:返回 `Blob`(响应体原样,不解析 JSON)。
+ *
+ * 下载端点可能是同源 BFF 代理或直连服务;鉴权头/CSRF/401 续期与
+ * `requestJson` 完全一致,失败时同样映射成 `ApiError`。
+ */
+export async function requestBlob(
+  base: string,
+  path: string,
+  init?: RequestInit,
+): Promise<Blob> {
+  const response = await sendWithRetry(base, path, init);
+  if (!response.ok) {
+    await throwResponseError(response);
+  }
+  return response.blob();
 }

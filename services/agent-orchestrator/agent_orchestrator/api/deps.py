@@ -92,6 +92,11 @@ def get_artifact_store(request: Request) -> ArtifactStore | None:
     return request.app.state.artifact_store
 
 
+def get_file_downloader(request: Request):
+    """执行时抓取工具外链文件的下载器;未开启(artifact_download_enabled)为 None。"""
+    return getattr(request.app.state, "artifact_downloader", None)
+
+
 def get_mcp_stdio_pool(request: Request) -> StdioSandboxPool | None:
     """lifespan 装配的 stdio MCP 沙箱池;未开启(mcp_stdio_enabled=false)为 None。
 

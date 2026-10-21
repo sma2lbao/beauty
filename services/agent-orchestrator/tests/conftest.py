@@ -231,8 +231,11 @@ class FakeWorkspace:
         *,
         title: str,
         kind: str,
-        content: str,
+        content: str | None = None,
         run_id: str | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        data: bytes | None = None,
     ) -> dict:
         if self.fail:
             raise RuntimeError("工作区镜像失败")
@@ -243,6 +246,9 @@ class FakeWorkspace:
             "kind": kind,
             "content": content,
             "run_id": run_id,
+            "filename": filename,
+            "content_type": content_type,
+            "data": data,
         }
         self.created.append(record)
         return record

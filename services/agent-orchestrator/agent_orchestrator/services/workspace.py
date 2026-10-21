@@ -28,8 +28,11 @@ class Workspace(Protocol):
         *,
         title: str,
         kind: str,
-        content: str,
+        content: str | None = None,
         run_id: str | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        data: bytes | None = None,
     ) -> dict[str, Any]: ...
 
     async def put_object(
@@ -71,10 +74,26 @@ class WorkspaceClient:
         *,
         title: str,
         kind: str,
-        content: str,
+        content: str | None = None,
         run_id: str | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        data: bytes | None = None,
     ) -> dict[str, Any]:
-        payload = {"title": title, "kind": kind, "content": content, "run_id": run_id}
+        """登记交付物:文本走 content,二进制走 content_base64(二选一)。
+
+        文件名/类型是给下载端点的元数据(workspace-service 侧 filename/content_type);
+        镜像二进制件时传 data,文本报告仍传 content,两者不会同时出现。
+        """
+        payload: dict[str, Any] = {"title": title, "kind": kind, "run_id": run_id}
+        if data is not None:
+            payload["content_base64"] = base64.b64encode(data).decode("ascii")
+            payload["content_type"] = content_type or "application/octet-stream"
+            payload["filename"] = filename
+        else:
+            payload["content"] = content or ""
+            payload["content_type"] = content_type
+            payload["filename"] = filename
         try:
             response = await self._client.post(
                 "/v1/artifacts",

@@ -18,10 +18,15 @@ import {
 import { ArtifactPreview } from '@/components/console/artifact-preview';
 import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
-import { downloadArtifact } from '@/lib/artifacts';
+import {
+  artifactFileName,
+  isImageArtifact,
+  saveBlob,
+} from '@/lib/artifacts';
 import type { Artifact } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/http';
+import { useBlobUrl } from '@/lib/use-blob-url';
 import { cn } from '@/lib/utils';
 
 const WORKSPACES_KEY = ['workspaces'];
@@ -99,6 +104,13 @@ export function WorkspacePage() {
     onSuccess: (artifact) => setSelectedArtifact(artifact),
   });
 
+  const downloadMutation = useMutation({
+    mutationFn: async (artifact: Artifact) => {
+      const blob = await workspaceApi.downloadArtifact(artifact.id);
+      saveBlob(blob, artifactFileName(artifact));
+    },
+  });
+
   const removeMutation = useMutation({
     mutationFn: (artifactId: string) => workspaceApi.removeArtifact(artifactId),
     onSuccess: async (_, artifactId) => {
@@ -110,12 +122,25 @@ export function WorkspacePage() {
   });
 
   const artifacts = artifactsQuery.data ?? [];
+  const selectedIsImage = selectedArtifact
+    ? isImageArtifact(selectedArtifact)
+    : false;
+  const imageQuery = useQuery({
+    queryKey: ['workspace-artifact-blob', selectedArtifact?.id],
+    queryFn: () =>
+      workspaceApi.downloadArtifact(selectedArtifact?.id as string),
+    enabled: Boolean(selectedArtifact?.id) && selectedIsImage,
+    retry: false,
+  });
+  const imageUrl = useBlobUrl(imageQuery.data ?? null);
   const errors = [
     workspacesQuery.error,
     artifactsQuery.error,
     createMutation.error,
     openArtifactMutation.error,
     removeMutation.error,
+    downloadMutation.error,
+    imageQuery.error,
   ].filter(Boolean);
   const unauthorized = errors.some(isUnauthorized);
   const canCreate = name.trim().length > 0;
@@ -210,7 +235,7 @@ export function WorkspacePage() {
               <CardHeader>
                 <CardTitle>交付物</CardTitle>
                 <CardDescription>
-                  当前工作区共 {artifacts.length} 件;点「查看」读正文。
+                  当前工作区共 {artifacts.length} 件;点「查看」打开正文或预览文件。
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -225,10 +250,16 @@ export function WorkspacePage() {
                         key={artifact.id}
                         className="flex flex-wrap items-center justify-between gap-3 py-3"
                       >
-                        <div>
-                          <p className="font-medium">{artifact.title}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {artifact.kind} · {artifact.storage} ·{' '}
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">
+                            {artifact.filename ?? artifact.title}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                            {artifact.kind}
+                            {artifact.content_type
+                              ? ` · ${artifact.content_type}`
+                              : null}{' '}
+                            · {artifact.storage} ·{' '}
                             {formatSize(artifact.size_bytes)} ·{' '}
                             {artifact.run_id
                               ? `run ${artifact.run_id.slice(0, 8)}…`
@@ -270,10 +301,10 @@ export function WorkspacePage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>正文预览</CardTitle>
+                <CardTitle>产物预览</CardTitle>
                 <CardDescription>
                   {selectedArtifact
-                    ? `${selectedArtifact.title} · ${formatSize(selectedArtifact.size_bytes)}`
+                    ? `${artifactFileName(selectedArtifact)} · ${formatSize(selectedArtifact.size_bytes)}`
                     : '还没选中交付物'}
                 </CardDescription>
                 {selectedArtifact ? (
@@ -281,9 +312,10 @@ export function WorkspacePage() {
                     variant="outline"
                     size="sm"
                     className="mt-2"
-                    onClick={() => downloadArtifact(selectedArtifact)}
+                    onClick={() => downloadMutation.mutate(selectedArtifact)}
+                    disabled={downloadMutation.isPending}
                   >
-                    下载
+                    {downloadMutation.isPending ? '下载中…' : '下载'}
                   </Button>
                 ) : null}
               </CardHeader>
@@ -291,13 +323,29 @@ export function WorkspacePage() {
                 {openArtifactMutation.isPending ? (
                   <p className="text-sm text-muted-foreground">读取中…</p>
                 ) : selectedArtifact ? (
-                  <ArtifactPreview
-                    artifact={selectedArtifact}
-                    className="max-h-96 bg-muted/40"
-                  />
+                  selectedIsImage ? (
+                    imageUrl ? (
+                      <ArtifactPreview
+                        artifact={selectedArtifact}
+                        src={imageUrl}
+                        className="max-h-96 bg-muted/40"
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        {imageQuery.isPending
+                          ? '读取中…'
+                          : (imageQuery.error?.message ?? '图片读取失败。')}
+                      </p>
+                    )
+                  ) : (
+                    <ArtifactPreview
+                      artifact={selectedArtifact}
+                      className="max-h-96 bg-muted/40"
+                    />
+                  )
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    在列表里点「查看」,正文会显示在这里。
+                    在列表里点「查看」,正文或图片会显示在这里。
                   </p>
                 )}
                 {openArtifactMutation.isError ? (

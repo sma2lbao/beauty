@@ -7,7 +7,7 @@
  */
 
 import { authMode } from '@/lib/auth';
-import { requestJson } from '@/lib/http';
+import { requestBlob, requestJson } from '@/lib/http';
 
 const BASE =
   (import.meta.env.VITE_WORKSPACE_API_URL as string | undefined) ?? '';
@@ -28,12 +28,19 @@ export type ArtifactMeta = {
   run_id: string | null;
   kind: string;
   title: string;
+  /** 后端给出的落盘文件名(含扩展名);旧数据可能为空。 */
+  filename?: string | null;
+  /** 后端给出的 MIME;旧数据可能为空。 */
+  content_type?: string | null;
   storage: string;
   size_bytes: number;
+  /** 产物来源(如 report/tool/output);展示用,缺省不影响渲染。 */
+  source?: string;
   created_at: string;
 };
 
-export type Artifact = ArtifactMeta & { content: string };
+/** 详情响应:文本产物仍带 content;二进制文件可能没有正文。 */
+export type Artifact = ArtifactMeta & { content?: string | null };
 
 function request<T>(path: string, init?: RequestInit): Promise<T> {
   return requestJson<T>(BASE, `${PREFIX}${path}`, init);
@@ -51,6 +58,9 @@ export const workspaceApi = {
     request<ArtifactMeta[]>(`/v1/workspaces/${workspaceId}/artifacts`),
   artifact: (artifactId: string) =>
     request<Artifact>(`/v1/artifacts/${artifactId}`),
+  /** 下载产物二进制(文本/图片/文档统一走这个端点,返回 Blob)。 */
+  downloadArtifact: (artifactId: string): Promise<Blob> =>
+    requestBlob(BASE, `${PREFIX}/v1/artifacts/${artifactId}/download`),
   removeArtifact: (artifactId: string) =>
     request<void>(`/v1/artifacts/${artifactId}`, { method: 'DELETE' }),
 };

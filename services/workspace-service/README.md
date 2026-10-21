@@ -8,16 +8,23 @@
   工作区(团队资料空间);
 - `GET /v1/workspaces/default`:当前租户的默认工作区(**幂等建档**),
   agent-orchestrator 交付时往这里推;
-- `POST /v1/artifacts`(标题/类型/正文,可带 `run_id`)、
-  `GET /v1/workspaces/{id}/artifacts`(元数据列表)、
-  `GET /v1/artifacts/{id}`(元数据 + 正文)、`DELETE /v1/artifacts/{id}`;
+- `POST /v1/artifacts`(标题/类型 + 正文或二进制,可带 `run_id`):body 里
+  `content`(文本)与 `content_base64`(二进制)**恰好给一个**(都给/都不给 422),
+  可带 `filename`/`content_type`;
+- `GET /v1/workspaces/{id}/artifacts`(元数据列表)、`GET /v1/artifacts/{id}`
+  (元数据 + 文本正文)、`GET /v1/artifacts/{id}/download`(原始字节 + 附件头
+  `Content-Disposition: attachment; filename*=UTF-8''…` + `Cache-Control: private, no-store`)、
+  `DELETE /v1/artifacts/{id}`;
 - `/healthz` `/readyz`:存活/就绪探针。
 
 交付物内容通过 `common.artifacts.ArtifactStore` 落盘:
 
-- `ARTIFACT_STORE=database`:正文存 `workspace_artifacts.content` 列;
-- `ARTIFACT_STORE=filesystem`(默认):正文落 `ARTIFACT_ROOT`
-  (键 `<租户>/<工作区>/<交付物>.md`),行里只留 `object_key`/`size_bytes`;
+- 文本类(`text/*`、JSON/YAML/XML 等)进 `content` 列;二进制进 `content_bytes`
+  列(下载端点按 MIME 取原始字节,不再假设"交付物一定是 Markdown");
+- `ARTIFACT_STORE=database`:上述两列即正文;
+- `ARTIFACT_STORE=filesystem`(默认):字节直接写 `ARTIFACT_ROOT`
+  (键 `<租户>/<工作区>/<交付物><安全后缀>`,后缀由 MIME 推导、bin 兜底),
+  行里只留 `object_key`/`size_bytes`/`filename`/`content_type`;
 - 换 S3/COS 只需实现该协议,读端契约不变。
 
 ## 对象存储 API(P3:skill 包)

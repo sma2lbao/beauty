@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from agent_orchestrator.main import create_app
+from agent_orchestrator.models.runs import Run
+from agent_orchestrator.services.artifacts import persist_file_artifact
 from agent_orchestrator.services.outbox import KnowledgeIngestConsumer, record_run_event
 from tests.conftest import (
     TENANT,
@@ -186,7 +188,8 @@ def test_knowledge_ingest_consumer_ingests_delivery(tmp_path: Path) -> None:
         assert len(knowledge.ingested) == 1
         assert knowledge.ingested[0]["title"] == "周报"
         assert knowledge.ingested[0]["content"] == DELIVERY
-        assert knowledge.ingested[0]["source"] == f"run:{run_id}"
+        # 逐件去重键 = run 前缀 + artifact id 前缀(一个 run 可以多件)
+        assert knowledge.ingested[0]["source"].startswith(f"run:{run_id}:")
         assert knowledge.ingested[0]["tenant_id"] == "t-1"
 
         # 重投(至少一次语义):事件级去重 + 内容级去重都不该重复入库
@@ -203,6 +206,79 @@ def test_knowledge_ingest_consumer_ingests_delivery(tmp_path: Path) -> None:
                 return len(rows)
 
         assert asyncio.run(_processed_count()) == 1
+        asyncio.run(factory.engine.dispose())
+
+
+async def _add_multi_artifacts(settings, run_id: str) -> None:
+    """给 run 追加一件文本件与一件二进制件(报告已由交付阶段写入)。"""
+    factory = create_session_factory(settings.database_url)
+    try:
+        async with session_scope(factory) as session:
+            run = await session.get(Run, run_id)
+            assert run is not None
+            await persist_file_artifact(
+                session,
+                run,
+                store=None,
+                filename="notes.md",
+                content_type="text/markdown",
+                data="# 会议笔记\n\n- 结论 A\n".encode(),
+                title="会议笔记",
+                source="mcp",
+            )
+            await persist_file_artifact(
+                session,
+                run,
+                store=None,
+                filename="shot.png",
+                content_type="image/png",
+                data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 8,
+                title="截图",
+                source="skill",
+            )
+    finally:
+        await factory.engine.dispose()
+
+
+def test_knowledge_ingest_consumer_ingests_all_text_artifacts(
+    tmp_path: Path,
+) -> None:
+    """多件交付物:文本件逐件入库,二进制件跳过;重投不重复入库。"""
+    import asyncio
+
+    settings = _settings(tmp_path, "ingest-multi.db", llm_enabled=True)
+    app = create_app(
+        settings,
+        llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
+        token_verifier=verifier(),
+    )
+    knowledge = FakeKnowledge()
+    with TestClient(app) as client:
+        run_id = _complete_run(client)
+        asyncio.run(_add_multi_artifacts(settings, run_id))
+        factory = create_session_factory(settings.database_url)
+        consumer = KnowledgeIngestConsumer(knowledge, factory, None)
+        envelope = EventEnvelope(
+            id="e-multi",
+            type="run.delivered.v1",
+            occurred_at="2026-10-13T00:00:00+00:00",
+            payload={"run_id": run_id},
+            tenant_id="t-1",
+        )
+        asyncio.run(consumer(envelope))
+
+        titles = {item["title"] for item in knowledge.ingested}
+        assert titles == {"周报", "会议笔记"}  # 截图是二进制件,不入库
+        contents = {item["content"] for item in knowledge.ingested}
+        assert DELIVERY in contents
+        assert "# 会议笔记\n\n- 结论 A\n" in contents
+        sources = [item["source"] for item in knowledge.ingested]
+        assert all(source.startswith(f"run:{run_id}:") for source in sources)
+        assert len(set(sources)) == len(sources)
+
+        # 至少一次重投:事件级去重,不重复入库
+        asyncio.run(consumer(envelope))
+        assert len(knowledge.ingested) == 2
         asyncio.run(factory.engine.dispose())
 
 

@@ -65,6 +65,23 @@ describe('workspaceApi', () => {
     expect(init.method).toBe('DELETE');
   });
 
+  it('下载产物走二进制端点并返回 Blob', async () => {
+    const blob = new Blob(['hello'], { type: 'text/markdown' });
+    const fetchMock = vi.fn(async (..._args: unknown[]) => ({
+      ok: true,
+      status: 200,
+      blob: async () => blob,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const downloaded = await workspaceApi.downloadArtifact('a1');
+
+    expect(downloaded).toBe(blob);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/workspace-api/v1/artifacts/a1/download',
+    );
+  });
+
   it('对象丢失映射为 500 的 ApiError(内部存储问题)', async () => {
     mockFetch(500, {
       code: 'artifact.object_missing',

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Check,
   Copy,
@@ -20,7 +20,12 @@ import {
   ToneBadge,
 } from '@/components/console/ui';
 import { consoleButtonClass } from '@/components/console/button-class';
-import { downloadArtifact } from '@/lib/artifacts';
+import {
+  artifactFileName,
+  isImageArtifact,
+  isTextArtifact,
+  saveBlob,
+} from '@/lib/artifacts';
 import {
   diffStats,
   formatBytes,
@@ -29,6 +34,7 @@ import {
 } from '@/lib/presentation';
 import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/runs-api';
+import { useBlobUrl } from '@/lib/use-blob-url';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'inline' | 'split';
@@ -65,12 +71,22 @@ export function ChangesPage() {
   const selected =
     artifacts.find((item) => item.id === selectedId) ?? artifacts[0] ?? null;
 
+  const isImage = selected ? isImageArtifact(selected) : false;
+  const isText = selected ? isTextArtifact(selected) : false;
+
   const contentQuery = useQuery({
     queryKey: ['workspace-artifact', selected?.id],
     queryFn: () => workspaceApi.artifact(selected?.id as string),
-    enabled: Boolean(selected?.id),
+    enabled: Boolean(selected?.id) && !isImage,
   });
   const content = contentQuery.data?.content ?? '';
+  const imageQuery = useQuery({
+    queryKey: ['workspace-artifact-blob', selected?.id],
+    queryFn: () => workspaceApi.downloadArtifact(selected?.id as string),
+    enabled: Boolean(selected?.id) && isImage,
+    retry: false,
+  });
+  const imageUrl = useBlobUrl(imageQuery.data ?? null);
   const isDiff = Boolean(parseUnifiedDiff(content));
   const stats = diffStats(content);
   const totalBytes = artifacts.reduce((sum, item) => sum + item.size_bytes, 0);
@@ -91,10 +107,14 @@ export function ChangesPage() {
     }
   };
 
-  const download = () => {
-    if (!selected) return;
-    downloadArtifact({ title: selected.title, kind: selected.kind, content });
-  };
+  const downloadMutation = useMutation({
+    mutationFn: async () => {
+      if (!selected) return;
+      const blob = await workspaceApi.downloadArtifact(selected.id);
+      saveBlob(blob, artifactFileName(selected));
+    },
+  });
+  const download = () => downloadMutation.mutate();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -115,7 +135,7 @@ export function ChangesPage() {
               variant="secondary"
               size="md"
               onClick={download}
-              disabled={!selected || !content}
+              disabled={!selected || downloadMutation.isPending}
             >
               <Download className="h-3.5 w-3.5" />
               下载产物
@@ -215,10 +235,13 @@ export function ChangesPage() {
                             : 'text-ha-text-2',
                         )}
                       >
-                        {artifact.title}
+                        {artifact.filename ?? artifact.title}
                       </span>
-                      <span className="mt-0.5 block font-mono text-[10px] text-ha-faint">
+                      <span className="mt-0.5 block truncate font-mono text-[10px] text-ha-faint">
                         {artifact.kind} · {formatBytes(artifact.size_bytes)}
+                        {artifact.content_type
+                          ? ' · ' + artifact.content_type
+                          : null}
                       </span>
                     </span>
                     {artifact.run_id ? (
@@ -277,7 +300,19 @@ export function ChangesPage() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto">
-              {contentQuery.isPending ? (
+              {isImage ? (
+                imageQuery.isPending ? (
+                  <p className="p-6 text-[12px] text-ha-dim">读取图片…</p>
+                ) : imageUrl && selected ? (
+                  <div className="p-4">
+                    <ArtifactPreview artifact={selected} src={imageUrl} />
+                  </div>
+                ) : (
+                  <p className="p-6 text-[12px] text-ha-danger">
+                    {imageQuery.error?.message ?? '图片读取失败。'}
+                  </p>
+                )
+              ) : contentQuery.isPending ? (
                 <p className="p-6 text-[12px] text-ha-dim">读取产物正文…</p>
               ) : content ? (
                 isDiff ? (
@@ -294,12 +329,18 @@ export function ChangesPage() {
                         title: selected.title,
                         kind: selected.kind,
                         content,
+                        filename: selected.filename,
+                        content_type: selected.content_type,
                       }}
                     />
                   </div>
                 ) : null
               ) : selected ? (
-                <p className="p-6 text-[12px] text-ha-dim">产物正文为空。</p>
+                <p className="p-6 text-[12px] text-ha-dim">
+                  {isText
+                    ? '产物正文为空。'
+                    : '该文件不支持在线预览，请下载后查看。'}
+                </p>
               ) : (
                 <p className="p-6 text-[12px] text-ha-dim">
                   从左侧选择一个产物查看内容。
@@ -338,7 +379,7 @@ export function ChangesPage() {
                   variant="secondary"
                   size="sm"
                   onClick={download}
-                  disabled={!content}
+                  disabled={!selected || downloadMutation.isPending}
                 >
                   <Download className="h-3.5 w-3.5" />
                   下载

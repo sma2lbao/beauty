@@ -53,7 +53,8 @@ vi.mock('@/lib/runs-api', async () => {
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),
-      artifact: vi.fn(),
+      artifacts: vi.fn(async () => []),
+      downloadArtifact: vi.fn(),
     },
   };
 });
@@ -362,26 +363,43 @@ describe('ChatPage', () => {
     );
   });
 
-  it('完成后按需取回成品正文', async () => {
+  it('完成后按需列出全部交付物文件', async () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
-    vi.mocked(runsApi.artifact).mockResolvedValue({
-      id: 'a1',
-      run_id: 'run-1',
-      kind: 'markdown',
-      title: '周报',
-      content: '# 本周周报\n\n- 日程已汇总',
-      created_at: '2026-10-13T10:05:00+00:00',
-    });
+    vi.mocked(runsApi.artifacts).mockResolvedValue([
+      {
+        id: 'a1',
+        run_id: 'run-1',
+        kind: 'markdown',
+        title: '周报',
+        filename: '本周周报.md',
+        content_type: 'text/markdown',
+        size_bytes: 120,
+        source: 'report',
+        created_at: '2026-10-13T10:05:00+00:00',
+      },
+      {
+        id: 'a2',
+        run_id: 'run-1',
+        kind: 'pdf',
+        title: 'report.pdf',
+        filename: 'report.pdf',
+        content_type: 'application/pdf',
+        size_bytes: 2048,
+        source: 'mcp',
+        created_at: '2026-10-13T10:05:01+00:00',
+      },
+    ]);
     renderPage('/?conversation=c1');
 
     fireEvent.click(
       (await screen.findAllByRole('button', { name: '查看成品' }))[0],
     );
 
-    await waitFor(() => expect(runsApi.artifact).toHaveBeenCalledWith('run-1'));
-    expect(
-      await screen.findByRole('heading', { name: '本周周报' }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(runsApi.artifacts).toHaveBeenCalledWith('run-1'),
+    );
+    expect(await screen.findByText('本周周报.md')).toBeInTheDocument();
+    expect(await screen.findByText('report.pdf')).toBeInTheDocument();
   });
 
   it('会话选择以 URL 为准:直接打开某个会话就去拉它的详情', async () => {

@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -116,14 +117,17 @@ class Job(UUIDMixin, TenantMixin, TimestampMixin, Base):
 
 
 class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """run 交付物:completed 时的成品(§7),阶段 A 每个 run 一件。
+    """run 交付物:一个 run 可以有多件(文本报告 + 技能/工具产出的文件)。
 
-    内容位置由 storage 决定:`database` 存本表 content 列;
-    `filesystem`(阶段 B)存对象存储,本表只留 object_key 引用 + 元数据。
+    内容位置由 storage 决定:`database` 存本表 `content`(文本)或
+    `content_bytes`(二进制);`filesystem`(阶段 B)存对象存储,本表只留
+    `object_key` 引用 + 元数据。
+
+    `source` 标记产出来源(report / skill / mcp):主交付物优先取 report,
+    二进制件不参与主文本交付。
     """
 
     __tablename__ = "run_artifacts"
-    __table_args__ = (UniqueConstraint("run_id"),)
 
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     kind: Mapped[str] = mapped_column(String(32), default="markdown")
@@ -132,3 +136,14 @@ class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
     object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 多件交付物的展示/下载元数据;旧行由迁移补 source='report'
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(32), default="report", server_default="report"
+    )
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # 二进制正文(database 模式):content 只放文本,二进制单独一列
+    content_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # 与 workspace-service 产物的镜像幂等键(集成层按它判断"已同步过")
+    workspace_artifact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
