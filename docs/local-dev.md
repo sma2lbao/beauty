@@ -139,12 +139,13 @@ curl -s http://127.0.0.1:8002/mcp \
 
 - 在 services/llm-gateway/.env 配 LLM_GATEWAY**API_KEY,可选 LLM_GATEWAY**API_BASE 与 DEFAULT_MODEL。
 - orchestrator 侧设 AGENT_ORCHESTRATOR\_\_LLM_ENABLED=true;需要工具调用时再开 TOOLS_ENABLED=true 与 MCP_ENABLED=true。
+- `.env.example` 已把其余开发侧能力开关(工具/文档/日历/知识库/outbox/交付物镜像/沙箱/技能执行/stdio MCP)默认置 true;唯一需要自己补的是模型密钥与本条的 `LLM_ENABLED=true`。
 - 验证:curl -s -H Content-Type:application/json -d {"messages":[{"role":"user","content":"只回复:模型正常"}]} http://127.0.0.1:8003/v1/completions。
 - 真实模型工具名必须匹配 ^[a-zA-Z0-9_-]+$;MCP 工具使用 mcp**<server>**<tool>。
 
 ## 3.8 编码 Function Tools
 
-- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组,绝对路径)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(写操作,走确认闸)。
+- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(写操作,走确认闸)。
 - 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。
 - 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
 - Skills 的 coding.repo-readonly-review 已绑定只读代码工具。
