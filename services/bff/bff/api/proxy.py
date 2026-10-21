@@ -210,10 +210,10 @@ async def proxy(
     target = _resolve_upstream(settings, path)
     if target is None:
         raise NotFoundError("bff.route_not_found", "BFF 未配置该路由")
-    stream = (
-        "text/event-stream" in request.headers.get("accept", "")
-        or path.endswith("/events/stream")
-        or path.endswith("/messages/stream")
+    # SSE 端点一律流式转发:客户端的 Accept 可能只是 application/json
+    # (手写 fetch 的 SSE 客户端),只按 Accept 判断会把长连接缓冲到读超时。
+    stream = "text/event-stream" in request.headers.get("accept", "") or path.endswith(
+        "/stream"
     )
     if stream:
         return await _proxy_stream(

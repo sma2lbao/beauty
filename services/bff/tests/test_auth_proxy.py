@@ -38,9 +38,7 @@ def test_refresh_and_logout_require_csrf(client: TestClient) -> None:
     assert rotated
     assert client.post("/api/auth/logout").status_code == 403
     assert (
-        client.post(
-            "/api/auth/logout", headers={"X-CSRF-Token": rotated}
-        ).status_code
+        client.post("/api/auth/logout", headers={"X-CSRF-Token": rotated}).status_code
         == 204
     )
     assert client.get("/api/auth/session").status_code == 401
@@ -84,9 +82,7 @@ def test_stream_token_requires_session(client: TestClient) -> None:
 
 
 def test_oauth_start_redirects_to_provider(client: TestClient) -> None:
-    response = client.get(
-        "/api/auth/oauth/google/start", follow_redirects=False
-    )
+    response = client.get("/api/auth/oauth/google/start", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"].startswith(
         "https://accounts.google.com/o/oauth2/v2/auth"
@@ -110,3 +106,12 @@ def test_proxy_streams_sse(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "stream.end" in response.text
+
+
+def test_proxy_streams_sse_by_path_without_accept(client: TestClient) -> None:
+    """客户端没声明 Accept 也要流式转发:否则长连接被缓冲到读超时 → 500。"""
+    login(client)
+    response = client.get("/api/v1/notifications/stream")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "ready" in response.text

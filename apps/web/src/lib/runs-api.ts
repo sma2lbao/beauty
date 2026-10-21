@@ -179,6 +179,8 @@ export async function streamRunEvents(
   },
 ): Promise<void> {
   const headers = await jsonHeaders();
+  // SSE 必须显式声明:BFF 据此选择流式转发而非缓冲(缓冲会在读超时后 500)
+  headers.Accept = 'text/event-stream';
   if (handlers.lastEventId) {
     headers['Last-Event-ID'] = String(handlers.lastEventId);
   }

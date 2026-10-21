@@ -40,7 +40,9 @@ export async function streamNotifications(handlers: {
 }): Promise<void> {
   const response = await fetch(`${BASE}/api/v1/notifications/stream`, {
     credentials: 'include',
-    headers: await jsonHeaders(),
+    // 必须显式声明要 SSE:BFF 只有看到 Accept: text/event-stream 才会流式转发,
+    // 否则会按普通请求缓冲整条响应,poll 循环永不结束 → 上游读超时 → 500。
+    headers: { ...(await jsonHeaders()), Accept: 'text/event-stream' },
     signal: handlers.signal,
   });
   if (!response.ok || !response.body) {

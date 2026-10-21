@@ -96,6 +96,12 @@ def handler(request: httpx.Request) -> httpx.Response:
             headers={"content-type": "text/event-stream"},
             content=b"event: stream.end\ndata: {}\n\n",
         )
+    if path == "/api/v1/notifications/stream":
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b": ready\n\n",
+        )
     return httpx.Response(404, json={"code": "not_found", "message": "not found"})
 
 
