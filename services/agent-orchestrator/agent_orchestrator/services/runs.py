@@ -2,8 +2,8 @@
 
 graph 生命周期(架构 §6.2):
 
-- plan:新 attempt 起图(thread = ``<run_id>#<attempt>``),跑到审批闸中断
-  → awaiting_approval;
+- plan:新 attempt 起图(thread = ``<run_id>#<attempt>``)。审批闸按工具风险
+  判定:无 DANGER 工具自动放行,一次跑到终态;有危险工具才中断 → awaiting_approval;
 - approve:放行闸门,execute → verify(返工上限见 builder)→ deliver → completed;
 - reject:拒绝计划,图终结 → blocked;resume:新 attempt 重新进闸,保留已编辑计划;
 - 状态守卫:非法迁移 ConflictError(409),资源不存在 NotFoundError(404),
@@ -55,6 +55,8 @@ def _tool_context(run: Run):
             tenant_id=run.tenant_id,
             run_id=run.id,
             conversation_id=run.conversation_id,
+            # run 创建时快照的 MCP 引用:工具装配(execution/extras)只暴露这些 server
+            mcp_server_ids=tuple(run.mcp_server_ids or ()),
         )
     )
 
@@ -476,9 +478,21 @@ async def list_runs(
 
 
 async def _invoke_plan(
-    session: AsyncSession, graph: CompiledStateGraph, run: Run
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    run: Run,
+    *,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> None:
-    """起图跑到审批闸;resume 场景保留用户已编辑的计划。"""
+    """起图跑到审批闸;resume 场景保留用户已编辑的计划。
+
+    审批闸可能**不中断**(无 DANGER 工具时自动放行,见 graph/nodes):那种情况
+    图会一路跑到终态,这里补记"计划 + 放行"事件后按统一终态处理收尾
+    (交付物落库/工作区镜像/外链抓取与 completed/failed 投影)。
+    """
     state: dict[str, Any] = {
         "run_id": run.id,
         "tenant_id": run.tenant_id,
@@ -521,8 +535,30 @@ async def _invoke_plan(
         await _fail_run(session, run, exc, stage="plan")
         return
     run.plan_markdown = values.get("plan_markdown", "")
-    run.status = RunStatus.AWAITING_APPROVAL.value
-    await append_event(session, run, "run.planned.v1", {"attempt": run.attempts})
+    if values.get("__interrupt__"):
+        run.status = RunStatus.AWAITING_APPROVAL.value
+        await append_event(session, run, "run.planned.v1", {"attempt": run.attempts})
+        return
+    # 无危险工具:审批闸自动放行,图已跑到终态。事件仍按"计划 → 放行"两条记录,
+    # 审计上能看出这次没有人工参与(auto_approved / auto 标记)。
+    await append_event(
+        session,
+        run,
+        "run.planned.v1",
+        {"attempt": run.attempts, "auto_approved": True},
+    )
+    await append_event(
+        session, run, "run.approved.v1", {"attempt": run.attempts, "auto": True}
+    )
+    await _apply_graph_result(
+        session,
+        run,
+        values,
+        store,
+        workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+    )
 
 
 async def plan_run(
@@ -532,13 +568,25 @@ async def plan_run(
     run_id: str,
     *,
     jobs_enabled: bool = False,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     _require_status(run, RunStatus.PENDING)
     if jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", run.id)
         return run
-    await _invoke_plan(session, graph, run)
+    await _invoke_plan(
+        session,
+        graph,
+        run,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+    )
     return run
 
 
@@ -789,6 +837,10 @@ async def retry_run(
     run_id: str,
     *,
     jobs_enabled: bool = False,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> Run:
     """failed → **另起一跑**并继承上下文(§6.2:failed 是终态,不重放旧图)。
 
@@ -824,11 +876,20 @@ async def retry_run(
         "run.retry.requested.v1",
         {"new_run_id": child.id, "failures": 1, "reason": parent.status_reason},
     )
-    # 继承计划 → 直接进审批闸(人工再确认后才执行;已产生的外部副作用不会被自动撤销)
+    # 继承计划 → 直接进审批闸:按同一判据放行(无危险工具自动、有危险工具人工;
+    # 已产生的外部副作用不会被自动撤销)
     if jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", child.id)
     else:
-        await _invoke_plan(session, graph, child)
+        await _invoke_plan(
+            session,
+            graph,
+            child,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_download_files=max_download_files,
+        )
     return child
 
 
@@ -839,6 +900,10 @@ async def resume_run(
     run_id: str,
     *,
     jobs_enabled: bool = False,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> Run:
     """blocked → 新 attempt 重新进审批闸,计划保留(§6.2 goal 语义)。"""
     run = await require_run(session, tenant_id, run_id)
@@ -850,7 +915,15 @@ async def resume_run(
     if jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", run.id)
         return run
-    await _invoke_plan(session, graph, run)
+    await _invoke_plan(
+        session,
+        graph,
+        run,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+    )
     return run
 
 

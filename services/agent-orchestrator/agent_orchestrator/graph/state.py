@@ -18,6 +18,7 @@ class RunGraphState(TypedDict, total=False):
     goal: str
     acceptance_criteria: list[str]
     plan_markdown: str
+    auto_approved: bool  # 审批闸自动放行(工具面里没有 DANGER 级工具)
     results: Annotated[list[str], add]
     rounds: Annotated[int, add]
     tool_calls: Annotated[list[dict[str, Any]], add]  # 工具调用审计(services 层落事件)
@@ -28,7 +29,7 @@ class RunGraphState(TypedDict, total=False):
     # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/
     # network/timeout_seconds;内置技能无此项
     skill_package: dict[str, Any]
-    allowed_tools: list[str]  # Skill 工具白名单;缺省=不限制
+    allowed_tools: list[str]  # Skill 工具白名单;缺省=不限制,空表=不用工具
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
     writes_approved: bool  # 确认闸的判定结果

@@ -131,7 +131,7 @@ Browser
 
 ```text
 message → triage → (chat | run)
-run: pending → planning → awaiting_approval → running
+run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自动放行) → running
      → awaiting_confirmation → completed / failed / blocked
 ```
 

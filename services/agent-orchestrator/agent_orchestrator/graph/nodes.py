@@ -159,18 +159,65 @@ def make_plan_node(llm: LLMClient | None):
     return plan_node
 
 
-def approval_gate_node(state: RunGraphState) -> dict:
-    """审批闸门:plan 之后中断,等待 approve/reject(§6.2 人工确认)。
+def _scoped_toolkit(
+    toolkit: ToolRegistry | None, allowed_tools: list[str] | None
+) -> ToolRegistry | None:
+    """按 Skill 的 tools 白名单裁剪(与 execute 的口径一致)。
 
-    放行时把 resume 载荷里携带的追加指令(§6.5)并入 state,后续节点遵循。
+    缺省(None)=不限制;空列表=技能声明不用任何工具(与 execute 的
+    ``allowed is not None`` 口径对齐,否则空白名单技能会多一次无谓审批)。
     """
-    answer = interrupt({"plan_markdown": state.get("plan_markdown", "")})
-    if answer.get("action") != "approve":
-        return {
-            "final_status": "blocked",
-            "status_reason": answer.get("reason") or "用户拒绝",
-        }
-    return _gate_update(answer)
+    if toolkit is None:
+        return None
+    return toolkit.restricted(allowed_tools) if allowed_tools is not None else toolkit
+
+
+async def _has_dangerous_tools(
+    state: RunGraphState,
+    toolkit_factory: ToolkitFactory | None,
+    extras_factory: ToolExtrasFactory | None,
+) -> bool:
+    """本 run 实际可用的工具里有没有危险操作(决定审批闸要不要中断)。
+
+    口径 = 与该 run 执行阶段相同的完整工具面:基础工具 + 引用的 MCP 工具,
+    再按技能 tools 白名单裁剪。工厂缺失(没有工具可调)视为无危险——
+    执行阶段也就不可能产生未经确认的对外副作用。
+    """
+    toolkit = await _load_toolkit(
+        state.get("tenant_id", ""), toolkit_factory, extras_factory
+    )
+    scoped = _scoped_toolkit(toolkit, state.get("allowed_tools"))
+    return scoped is not None and scoped.has_dangerous
+
+
+def make_approval_gate_node(
+    toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ToolExtrasFactory | None = None,
+    *,
+    auto_approve: bool = True,
+):
+    """审批闸门工厂:plan 之后按工具风险决定"自动放行"还是"中断等人"(§6.2)。
+
+    - 无 DANGER 工具:不中断,标记 auto_approved 直接进 execute——没有危险动作
+      可做,逐步点审批只会把 agent 退化成人工点击机;
+    - 有 DANGER 工具(未信任 MCP 的对外/不可逆操作):interrupt 等 approve/reject;
+      放行时把 resume 载荷里的追加指令(§6.5)并入 state,后续节点遵循。
+    """
+
+    async def approval_gate_node(state: RunGraphState) -> dict:
+        if auto_approve and not await _has_dangerous_tools(
+            state, toolkit_factory, extras_factory
+        ):
+            return {"auto_approved": True}
+        answer = interrupt({"plan_markdown": state.get("plan_markdown", "")})
+        if answer.get("action") != "approve":
+            return {
+                "final_status": "blocked",
+                "status_reason": answer.get("reason") or "用户拒绝",
+            }
+        return _gate_update(answer)
+
+    return approval_gate_node
 
 
 def _gate_update(answer: dict[str, Any]) -> dict[str, Any]:

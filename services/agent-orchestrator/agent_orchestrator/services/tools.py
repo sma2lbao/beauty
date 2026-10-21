@@ -99,6 +99,11 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._specs)
 
+    @property
+    def has_dangerous(self) -> bool:
+        """注册表里是否有 DANGER 级工具(计划审批闸据此决定是否自动放行)。"""
+        return any(spec.risk is ToolRisk.DANGER for spec in self._specs.values())
+
     def extended(self, specs: list[ToolSpec]) -> ToolRegistry:
         """合并外部工具(如 MCP);同名后者覆盖前者。"""
         return ToolRegistry([*self._specs.values(), *specs])

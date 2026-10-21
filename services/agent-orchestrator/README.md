@@ -9,10 +9,14 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
   断线续传,run 终态(completed/failed)自动 `stream.end` 收线;
-- LangGraph 执行图(`agent_orchestrator/graph/`):plan → 审批闸(interrupt 人工确认)
-  → execute → verify(返工 ≤3 轮)→ deliver;checkpointer 按 DATABASE_URL 自动选择:
+- LangGraph 执行图(`agent_orchestrator/graph/`):plan → 审批闸(按需 interrupt)
+  → execute → verify(返工 ≤3 轮)→ deliver;审批闸按**装配工具的风险**自动开关:
+  工具里没有 DANGER 级(未信任 MCP、对外不可逆操作)时计划生成后**自动放行**
+  (`run.planned.v1` 带 `auto_approved=true`,并补一条 `run.approved.v1`),
+  `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE=false` 可关回"每跑必审";有 DANGER
+  工具才 interrupt 人工放行。checkpointer 按 DATABASE_URL 自动选择:
   postgres → `langgraph-checkpoint-postgres`(图线程跨进程可恢复),sqlite/dev → InMemorySaver;
-- 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(审批前编辑计划)、
+- 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(等待人工审批时编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、
   `POST /runs/{id}/retry`(failed → **另起一跑**并继承目标/验收标准/已批准计划,
@@ -31,8 +35,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是
   审计凭据,不能被"重试"改写。重试派生新 run 继承已批准计划(计划节点检测到
-  已有计划会短路,所以只重走审批闸、不重复调用模型);重试后仍需人工放行,
-  已产生的外部副作用不会被自动撤销;
+  已有计划会短路,所以只重走审批闸、不重复调用模型);重试后仍按同一判据放行
+  (无危险工具自动放行,有危险工具才需人工),已产生的外部副作用不会被自动撤销;
 - `/healthz` `/readyz`:存活/就绪探针;
 - schema 管理:alembic(async env,DB URL 与运行服务同源,见 `migrations/env.py`);
   `uv run alembic upgrade head` / `uv run alembic downgrade base`,命名约定保证回滚无损;
@@ -62,6 +66,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
+- 计划自动放行(§6.2):审批闸默认只在**装配了 DANGER 工具**时拦截——基础工具 +
+  该 run 引用的 MCP 工具经技能 tools 白名单裁剪后无 DANGER 级,则 plan 之后直接进
+  execute(事件 `run.planned.v1` 的 `auto_approved=true`,并补 `run.approved.v1`);
+  开关 `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`(默认 true,关闭即回到每跑必审)。
+  执行期危险操作确认闸(`awaiting_confirmation`)不受影响,危险动作永远人工确认。
 
 - 鉴权(架构 §10):默认开启——校验 `Authorization: Bearer <IdP access token>`
   (OIDC 发现 + JWKS,RS256;自建 IdP 即 account-service :8001),租户取自
@@ -135,7 +144,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   extras 工厂(`main._load_extras`),所以对话里也能看到并使用 MCP 工具;但对话
   没有审批流(架构 §6.7),因此**每个 server 一个 `auto_approve` 信任开关**
   (Web `/mcp` 页「免确认执行」,默认关):关时 `risk=DANGER`(未信任 = 对外不可逆),
-  对话里只回喂"请改用任务"、run 里逐次确认;开时 `risk=WRITE`(受控写),
+  对话里只回喂"请改用任务"、run 里计划需人工审批且工具逐次确认;开时 `risk=WRITE`(受控写),
   对话与 run 都直接执行——就是架构 §6.4 "操作策略是配置,不是硬编码"。
   extras 取失败只降级外部工具,不影响对话本身。
 - **对话/任务的 MCP 显式引用**:`MessageCreate.mcp_server_ids` 与

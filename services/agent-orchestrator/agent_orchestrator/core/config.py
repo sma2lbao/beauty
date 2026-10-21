@@ -47,6 +47,9 @@ class Settings(BaseAppSettings):
     # 本地 worker(M0-04):run 的 plan/approve/resume/retry 入队执行。
     # 测试夹具显式关闭以保留同步语义。
     jobs_enabled: bool = True
+    # 计划审批(§6.2):本 run 可用的工具里没有任何 DANGER 级工具时自动放行,
+    # 有危险工具才中断等人工审批;执行阶段的危险动作确认闸不受此开关影响。
+    plan_auto_approve: bool = True
     jobs_poll_interval_seconds: float = 0.5
     jobs_lease_seconds: int = 60
     jobs_max_attempts: int = 3

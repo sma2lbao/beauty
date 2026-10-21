@@ -28,7 +28,15 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
     payload: dict[str, Any] = job.payload or {}
     if kind == "plan":
         await runs_service.plan_run(
-            session, graph, job.tenant_id, job.run_id, jobs_enabled=False
+            session,
+            graph,
+            job.tenant_id,
+            job.run_id,
+            jobs_enabled=False,
+            store=app.state.artifact_store,
+            workspace=app.state.workspace_client,
+            downloader=getattr(app.state, "artifact_downloader", None),
+            max_download_files=app.state.settings.artifact_download_max_files,
         )
         return
     if kind == "approve":
@@ -63,12 +71,28 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
         return
     if kind == "resume":
         await runs_service.resume_run(
-            session, graph, job.tenant_id, job.run_id, jobs_enabled=False
+            session,
+            graph,
+            job.tenant_id,
+            job.run_id,
+            jobs_enabled=False,
+            store=app.state.artifact_store,
+            workspace=app.state.workspace_client,
+            downloader=getattr(app.state, "artifact_downloader", None),
+            max_download_files=app.state.settings.artifact_download_max_files,
         )
         return
     if kind == "retry":
         await runs_service.retry_run(
-            session, graph, job.tenant_id, job.run_id, jobs_enabled=False
+            session,
+            graph,
+            job.tenant_id,
+            job.run_id,
+            jobs_enabled=False,
+            store=app.state.artifact_store,
+            workspace=app.state.workspace_client,
+            downloader=getattr(app.state, "artifact_downloader", None),
+            max_download_files=app.state.settings.artifact_download_max_files,
         )
         return
     raise ValueError(f"unknown job kind: {kind}")
@@ -106,7 +130,7 @@ async def process_one(app: FastAPI) -> bool:
             else:
                 job.status = "queued"
                 job.run_at = datetime.now(UTC) + timedelta(
-                    seconds=min(2 ** job.attempts, 30)
+                    seconds=min(2**job.attempts, 30)
                 )
         return True
 

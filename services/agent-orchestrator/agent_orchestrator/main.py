@@ -376,6 +376,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     llm=llm,
                     toolkit_factory=toolkit_factory,
                     mcp_tools_factory=extras_factory,
+                    plan_auto_approve=settings.plan_auto_approve,
                 )
                 if settings.jobs_enabled:
                     worker_task = start_worker(app)
@@ -386,6 +387,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 llm=llm,
                 toolkit_factory=toolkit_factory,
                 mcp_tools_factory=extras_factory,
+                plan_auto_approve=settings.plan_auto_approve,
             )
             if settings.jobs_enabled:
                 worker_task = start_worker(app)

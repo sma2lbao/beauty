@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from urllib.parse import quote
 
+from common.artifacts import ArtifactStore
 from common.errors import AppError, ConflictError, NotFoundError
 from database.session import session_scope
 from fastapi import (
@@ -30,6 +31,8 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.api.deps import (
+    get_artifact_store,
+    get_file_downloader,
     get_llm_client,
     get_run_graph,
     get_session,
@@ -38,6 +41,7 @@ from agent_orchestrator.api.deps import (
     get_tenant_id,
     get_tool_extras_factory,
     get_toolkit_factory,
+    get_workspace_client,
 )
 from agent_orchestrator.schemas.conversations import (
     AttachmentRead,
@@ -55,9 +59,11 @@ from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import skill_packages, triage
+from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.skills import SkillRegistry
+from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 attachments_router = APIRouter(prefix="/attachments", tags=["attachments"])
@@ -69,6 +75,10 @@ LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
 SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
 ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
 ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
+# 自动放行的 run 会在 plan 里跑到终态,交付物落库/镜像/外链抓取需要同样依赖
+ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
+WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
+FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
 
 
 async def _resolve_skill(
@@ -292,6 +302,9 @@ async def post_message(
     skills: SkillDep,
     toolkit_factory: ToolkitFactory,
     tool_extras_factory: ToolExtrasFactory,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
@@ -313,6 +326,10 @@ async def post_message(
         mcp_reference_note=mcp_note,
         toolkit_factory=toolkit_factory,
         extras_factory=tool_extras_factory,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -379,6 +396,9 @@ async def stream_message(
     skills: SkillDep,
     toolkit_factory: ToolkitFactory,
     tool_extras_factory: ToolExtrasFactory,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
 ) -> StreamingResponse:
     """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;
     失败以 error 帧收尾。
@@ -413,6 +433,10 @@ async def stream_message(
                 mcp_reference_note=mcp_note,
                 toolkit_factory=toolkit_factory,
                 extras_factory=tool_extras_factory,
+                store=store,
+                workspace=workspace,
+                downloader=downloader,
+                max_download_files=settings.artifact_download_max_files,
             )
         ),
         media_type="text/event-stream",

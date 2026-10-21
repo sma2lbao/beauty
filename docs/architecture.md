@@ -118,11 +118,11 @@ beauty-moon/
 ### 6.1 Graph 固定骨架
 
 ```text
-plan → confirm → execute → verify → deliver
+plan → confirm(按需) → execute → verify → deliver
 ```
 
 - **plan**:产出**可编辑的 Markdown 计划 artifact**(存对象存储,画布上直接改),不是 yes/no 门;
-- **confirm**:人审中断(checkpointer 挂起),用户改完计划确认后再执行;
+- **confirm**:按需人审中断(checkpointer 挂起)——装配工具(基础工具 + 该 run 引用的 MCP 工具,按技能 tools 白名单裁剪)里**没有 DANGER 级**(未信任 MCP、对外不可逆写)时,计划生成后自动放行:事件 `run.planned.v1` 带 `auto_approved=true`,并补一条 `run.approved.v1`;有 DANGER 工具才挂起,用户改完计划确认后再执行(`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`,默认 true;关闭即回到每跑必审);
 - **execute**:工具/MCP/连接器调用,产出 artifacts;
 - **verify**:对 `acceptance_criteria` **逐项校验**,不达标自动返工,**上限 3 轮**(防死循环烧钱);
 - **deliver**:交付物注册;写操作按风险等级执行(受控写自动、危险操作按策略确认,见 §6.4)。
@@ -135,6 +135,7 @@ pending → planning → awaiting_approval → running → awaiting_confirmation
                         └── resume ── blocked(reason)                  ├→ completed / failed
 ```
 
+- 其中 `awaiting_approval` 只在装配了 DANGER 级工具时出现:没有 DANGER 工具时 planning 后**自动放行**直接进 running(`run.planned.v1` 带 `auto_approved=true`,并补 `run.approved.v1`);判据是 run 装配的工具集(基础工具 + 引用的 MCP 工具,按技能 tools 白名单裁剪),执行期危险操作确认闸(`awaiting_confirmation`)不变;开关 `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`(默认 true,关闭即每跑必审);
 - `rounds` 计数:支持跨轮续跑与有界返工;
 - `blocked(reason) → resume`:覆盖"等邮件回复/等外部事件"类场景;
 - 即时问答走轻路径,不建 run。
@@ -151,7 +152,8 @@ pending → planning → awaiting_approval → running → awaiting_confirmation
 per-connector / per-tenant 配置,每个动作分级 `auto | confirm | deny`:
 
 - 读操作默认 auto;写/发/删默认 confirm;危险删除默认 deny;
-- 用户可按连接器调档到"全自动"——策略是配置,不是硬编码。
+- 用户可按连接器调档到"全自动"——策略是配置,不是硬编码;
+- 计划审批与执行策略是两个层次:是否需要人工放行看 run 装配的工具里有无 DANGER 级(见 §6.2),执行期动作仍逐个按本节分级。
 
 ### 6.5 指令追加队列
 

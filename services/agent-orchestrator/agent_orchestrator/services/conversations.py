@@ -27,6 +27,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from common.artifacts import ArtifactStore
 from common.errors import AppError
 from common.logging import get_logger
 from database.session import session_scope
@@ -45,6 +46,7 @@ from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
 from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.tool_context import (
@@ -52,6 +54,7 @@ from agent_orchestrator.services.tool_context import (
     bind_tool_context,
 )
 from agent_orchestrator.services.tools import ToolRegistry
+from agent_orchestrator.services.workspace import Workspace
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -254,6 +257,10 @@ async def _task_path(
     skill: SkillDefinition | None = None,
     attachment_context: str = "",
     mcp_server_ids: list[str] | None = None,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
     run = await active_run(session, conversation.tenant_id, conversation.id)
@@ -280,7 +287,17 @@ async def _task_path(
     if jobs_enabled:
         await jobs_service.enqueue(session, conversation.tenant_id, "plan", run.id)
     else:
-        await runs_service.plan_run(session, graph, conversation.tenant_id, run.id)
+        # 自动放行(无 DANGER 工具)时 plan 一次跑到终态,交付物同样要落库
+        await runs_service.plan_run(
+            session,
+            graph,
+            conversation.tenant_id,
+            run.id,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_download_files=max_download_files,
+        )
     return run, "run_created"
 
 
@@ -327,6 +344,10 @@ async def post_message(
     mcp_reference_note: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -383,6 +404,10 @@ async def post_message(
         skill=skill,
         attachment_context=attachment_context,
         mcp_server_ids=mcp_server_ids,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
     )
     return message, run, None, outcome
 
@@ -411,6 +436,10 @@ async def stream_message(
     mcp_reference_note: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -462,6 +491,10 @@ async def stream_message(
                 skill=skill,
                 attachment_context=attachment_context,
                 mcp_server_ids=mcp_server_ids,
+                store=store,
+                workspace=workspace,
+                downloader=downloader,
+                max_download_files=max_download_files,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:

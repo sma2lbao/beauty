@@ -169,7 +169,9 @@ orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
 - 失败按 attempts 指数退避,超过 `max_attempts` 落 failed 并记录 last_error;
 - 测试夹具显式 `jobs_enabled=false`,保留同步语义。
 
-前端提交审批后会短暂看到原状态,worker 执行完下一次轮询即更新;这是队列化的预期行为。
+- 计划审批默认自动放行:`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`(默认 true)——run 装配的工具(基础工具 + 引用的 MCP 工具,按技能 tools 白名单裁剪)没有 DANGER 级时,计划生成后自动放行直接执行(`run.planned.v1` 带 `auto_approved=true`,并补 `run.approved.v1`);装配了 DANGER 工具(未信任 MCP、对外不可逆操作)仍停在 `awaiting_approval` 等放行/拒绝。设为 false 回到"每次 plan 都人工审批";执行阶段危险操作前的确认闸(`awaiting_confirmation`)不受影响。
+
+前端提交审批后会短暂看到原状态(自动放行的 run 没有这一步),worker 执行完下一次轮询即更新;这是队列化的预期行为。
 
 ## 4.1 用量 / 模型 / BYOK
 

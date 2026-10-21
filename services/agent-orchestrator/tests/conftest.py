@@ -320,6 +320,9 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
         "sandbox_enabled": False,
         "mcp_stdio_enabled": False,
         "jobs_enabled": False,
+        # 计划审批:关掉自动放行——既有用例覆盖的是"人工审批"路径;
+        # 自动放行由 tests/test_plan_auto_approve.py 显式开启。
+        "plan_auto_approve": False,
     }
     defaults.update(overrides)
     return Settings(**defaults)

@@ -222,11 +222,25 @@ async def plan_run(
     session: DBSession,
     tenant_id: TenantId,
     graph: RunGraph,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
     settings: SettingsDep,
 ) -> PlanRead:
-    """生成计划并进入人工审批(§6.2 pending → awaiting_approval)。"""
+    """生成计划;无 DANGER 工具时自动放行并执行到终态(§6.2)。
+
+    有危险工具(未信任 MCP 的对外操作)时仍停在 awaiting_approval 等人工放行。
+    """
     run = await runs_service.plan_run(
-        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        jobs_enabled=settings.jobs_enabled,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -291,11 +305,22 @@ async def resume_run(
     session: DBSession,
     tenant_id: TenantId,
     graph: RunGraph,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
     settings: SettingsDep,
 ) -> PlanRead:
     """blocked → 重新进审批闸,保留已编辑计划(§6.2 goal 语义)。"""
     run = await runs_service.resume_run(
-        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        jobs_enabled=settings.jobs_enabled,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -306,11 +331,22 @@ async def retry_run(
     session: DBSession,
     tenant_id: TenantId,
     graph: RunGraph,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
     settings: SettingsDep,
 ) -> RunRead:
     """failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。"""
     run = await runs_service.retry_run(
-        session, graph, tenant_id, run_id, jobs_enabled=settings.jobs_enabled
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        jobs_enabled=settings.jobs_enabled,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
     )
     return RunRead.model_validate(run)
 

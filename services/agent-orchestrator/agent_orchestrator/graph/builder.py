@@ -21,9 +21,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agent_orchestrator.graph.nodes import (
-    approval_gate_node,
     confirm_gate_node,
     fail_node,
+    make_approval_gate_node,
     make_deliver_node,
     make_execute_node,
     make_plan_node,
@@ -77,11 +77,18 @@ def build_run_graph(
     llm: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
     mcp_tools_factory: ToolExtrasFactory | None = None,
+    *,
+    plan_auto_approve: bool = True,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
     builder.add_node("plan", make_plan_node(llm))
-    builder.add_node("approval_gate", approval_gate_node)
+    builder.add_node(
+        "approval_gate",
+        make_approval_gate_node(
+            toolkit_factory, mcp_tools_factory, auto_approve=plan_auto_approve
+        ),
+    )
     builder.add_node(
         "execute",
         make_execute_node(llm, toolkit_factory, mcp_tools_factory),
