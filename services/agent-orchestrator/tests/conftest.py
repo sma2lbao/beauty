@@ -1,10 +1,10 @@
-"""测试装配:共享 fakes(FakeLLM/FakeConnector)与应用装配助手。
+"""测试装配:共享 fakes(FakeLLM/FakeKnowledge/FakeDangerTool)与应用装配助手。
 
 - 每个测试独立 sqlite 文件库,建表走 lifespan(auto_create_tables);
 - LLM 与工具全部注入 fake:零网络、零 token;
 - 鉴权开且验真 token(架构 §10):TestIdP 本地密钥,JWKS 走 MockTransport,
   测试请求一律带 Bearer(租户在 claim 里),不再用 X-Tenant-Id 临时头;
-- 契约由 duck typing 满足(见 services/llm.py、services/connectors.py 的 Protocol)。
+- 契约由 duck typing 满足(见 services/llm.py、services/knowledge.py 的 Protocol)。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply
-from agent_orchestrator.services.tools import build_tools
+from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
@@ -81,65 +81,35 @@ class FakeLLM:
             yield char
 
 
-class FakeConnector:
-    """假连接器:内存连接与邮件,记录调用(工具测试零网络)。"""
+class FakeDangerTool:
+    """合成 DANGER 工具:对外不可逆写操作(验证确认闸,不绑定具体产品能力)。"""
 
-    def __init__(
-        self,
-        connections: list[dict] | None = None,
-        emails: list[dict] | None = None,
-        fail: bool = False,
-    ):
-        self.connections = (
-            connections
-            if connections is not None
-            else [
-                {
-                    "id": "conn-1",
-                    "account": "me@qq.com",
-                    "provider": "imap",
-                    "status": "active",
-                }
-            ]
-        )
-        self.emails = (
-            emails
-            if emails is not None
-            else [
-                {"subject": "周报", "sender": "a@b.c", "sent_at": "D", "snippet": "s"}
-            ]
-        )
+    name = "external_publish"
+
+    def __init__(self, fail: bool = False) -> None:
         self.fail = fail
-        self.calls: list[tuple] = []
-        self.sent: list[tuple[str, str, str]] = []
+        self.calls: list[dict[str, Any]] = []
+        self.sent: list[dict[str, Any]] = []
 
-    async def list_connections(self, tenant_id: str) -> list[dict]:
-        self.calls.append(("list_connections", tenant_id))
+    async def _handle(self, args: dict[str, Any]) -> str:
+        self.calls.append(args)
         if self.fail:
-            raise RuntimeError("连接器挂了")
-        return self.connections
+            raise RuntimeError("发布通道挂了")
+        self.sent.append(args)
+        return f"已发布:{args.get('title', '')}"
 
-    async def fetch_emails(
-        self, tenant_id: str, connection_id: str, limit: int
-    ) -> list[dict]:
-        self.calls.append(("fetch_emails", tenant_id, connection_id, limit))
-        if self.fail:
-            raise RuntimeError("连接器挂了")
-        return self.emails[:limit]
-
-    async def send_email(
-        self,
-        tenant_id: str,
-        connection_id: str,
-        to: str,
-        subject: str,
-        body: str,
-    ) -> str:
-        self.calls.append(("send_email", tenant_id, connection_id, to))
-        if self.fail:
-            raise RuntimeError("连接器挂了")
-        self.sent.append((to, subject, body))
-        return f"已发送至 {to}"
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name=self.name,
+            description="对外不可逆写操作(测试用)",
+            parameters={
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+            },
+            handler=self._handle,
+            risk=ToolRisk.DANGER,
+        )
 
 
 class FakeKnowledge:
@@ -359,21 +329,30 @@ def _client(tmp_path: Path, fake: FakeLLM) -> TestClient:
     return TestClient(app)
 
 
-def _tool_client(tmp_path: Path, fake: FakeLLM, connector: FakeConnector) -> TestClient:
-    """LLM + 工具路径:execute 的 function-calling 打到假连接器。"""
+def _tool_client(
+    tmp_path: Path,
+    fake: FakeLLM,
+    knowledge: FakeKnowledge | None = None,
+    *,
+    extras: tuple[ToolSpec, ...] = (),
+) -> TestClient:
+    """LLM + 工具路径:execute 的 function-calling 打到假知识库(+ 合成工具)。"""
+    knowledge = knowledge or FakeKnowledge()
     app = create_app(
         _settings(tmp_path, "tools.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(tenant, connector=connector),
+        toolkit_factory=lambda tenant: build_tools(
+            tenant, knowledge=knowledge
+        ).extended(list(extras)),
         token_verifier=_IDP.verifier(),
     )
     return TestClient(app)
 
 
-def _create_run(client: TestClient, goal: str = "汇总本周邮件") -> str:
+def _create_run(client: TestClient, goal: str = "整理本周日程") -> str:
     resp = client.post(
         "/api/v1/runs",
-        json={"title": "周报", "goal": goal, "acceptance_criteria": ["邮件已汇总"]},
+        json={"title": "周报", "goal": goal, "acceptance_criteria": ["日程已整理"]},
         headers=TENANT,
     )
     return resp.json()["id"]

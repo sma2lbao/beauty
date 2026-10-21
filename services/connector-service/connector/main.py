@@ -2,13 +2,15 @@
 
 启动(项目目录内):uv run uvicorn connector.main:app --port 8004
 Nx(仓库根):npx nx run connector-service:serve
+
+服务本身是连接器框架:当前没有内置连接器(邮件、日历能力均已下线),
+只保留连接存储/凭证加密/租户隔离与健康探针。
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import partial
 
 from common.auth import JwtVerifier
 from common.errors import AppError
@@ -24,8 +26,6 @@ from connector.core.config import Settings
 from connector.models import (
     connections as connections_models,  # noqa: F401  注册 ORM 元数据
 )
-from connector.services.mail import build_transport
-from connector.services.oauth_calendar import build_calendar
 
 
 @asynccontextmanager
@@ -38,24 +38,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # dev/test 直建表;生产一律 alembic 迁移
         async with factory.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    if app.state.transport_factory is None:
-        # 生产装配真实传输工厂;测试注入 FakeTransport 走同一属性
-        app.state.transport_factory = partial(
-            build_transport,
-            credential_secret=settings.credential_secret,
-            google_client_id=settings.google_client_id,
-            google_client_secret=settings.google_client_secret,
-            microsoft_client_id=settings.microsoft_client_id,
-            microsoft_client_secret=settings.microsoft_client_secret,
-        )
-        app.state.calendar_factory = partial(
-            build_calendar,
-            credential_secret=settings.credential_secret,
-            google_client_id=settings.google_client_id,
-            google_client_secret=settings.google_client_secret,
-            microsoft_client_id=settings.microsoft_client_id,
-            microsoft_client_secret=settings.microsoft_client_secret,
-        )
 
     # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
     verifier: JwtVerifier | None = app.state.token_verifier
@@ -79,18 +61,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(
     settings: Settings | None = None,
-    transport_factory=None,
     token_verifier: JwtVerifier | None = None,
-    oauth_transport=None,
-    calendar_factory=None,
 ) -> FastAPI:
-    """注入点:transport_factory/oauth_transport/token_verifier 供测试使用。"""
+    """注入点:token_verifier 供测试使用。"""
     app = FastAPI(title="connector-service", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
-    app.state.transport_factory = transport_factory
     app.state.token_verifier = token_verifier
-    app.state.oauth_transport = oauth_transport
-    app.state.calendar_factory = calendar_factory
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:

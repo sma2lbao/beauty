@@ -119,9 +119,9 @@ describe('RunsPage', () => {
 
     await waitFor(() =>
       expect(runsApi.create).toHaveBeenCalledWith({
-        title: '整理本周邮件成周报',
-        goal: '汇总本周邮件,生成周报草稿',
-        acceptance_criteria: ['覆盖 5 个工作日', '不超过 300 字'],
+        title: '整理本周文档成周报',
+        goal: '汇总本周文档,生成周报草稿',
+        acceptance_criteria: ['覆盖本周主要进展', '不超过 300 字'],
       }),
     );
   });

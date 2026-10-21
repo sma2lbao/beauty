@@ -29,7 +29,7 @@ from tests.conftest import _settings as base_settings
 
 _ECHO_TOOL = {"name": "echo", "description": "回显", "inputSchema": {}}
 _PING_TOOL = {"name": "ping", "description": "探活", "inputSchema": {}}
-VERIFY_PASS = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
+VERIFY_PASS = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
 
 
 def _settings(tmp_path: Path, **overrides: Any):
@@ -385,7 +385,7 @@ def test_run_execution_uses_snapshotted_mcp_references(tmp_path) -> None:
     with _client(settings, fake) as client:
         created = client.post(
             "/api/v1/runs",
-            json={"title": "周报", "goal": "汇总本周邮件", "mcp_server_ids": [alpha]},
+            json={"title": "周报", "goal": "整理本周日程", "mcp_server_ids": [alpha]},
             headers=TENANT,
         )
         run_id = created.json()["id"]

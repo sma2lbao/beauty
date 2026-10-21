@@ -8,7 +8,9 @@
 
 **替用户在真实账号里把活干完**的 AI 办公 harness,对标腾讯 WorkBuddy 与字节豆包工作:
 
-- 第一连接器:**邮箱**(Gmail API / Microsoft 365 Graph / 国内 IMAP+授权码),服务国内+海外双市场;
+- 第一连接器:~~邮箱~~(Gmail API / Microsoft 365 Graph / 国内 IMAP+授权码)——**2026-10 起邮箱与日历连接器整体下线**,
+  connector-service 收敛为空框架(健康探针、连接列表/详情/撤销、凭证加密);能力重心转向知识库 + 文档 + 代码库,
+  服务国内 + 海外双市场;
 - 渠道:**web 独立站先行**,移动 app 后置,共用同一套 `/api/v1` 契约;
 - 双模式交互:**即时问答**(轻路径,单次 LLM 调用,不建 run)与**长任务执行**(重路径,durable run);
 - 差异化:邮箱场景纵深 + 数据驻留/自托管可控性,不拼通用办公广度;
@@ -186,8 +188,11 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 ## 8. 知识、记忆与连接器
 
 - **knowledge-service**(阶段 A 合体):ingestion 消费 `email.received.v1` 等事件 → embedding(**经 llm-gateway 走 API**,自托管 bge-m3 后置)→ pgvector;retrieval 提供检索+重排入口;memory 以表起步(事实/偏好/会话摘要);
-- **邮箱连接器**:Gmail API(OAuth)、M365 Graph(OAuth,日历将来顺手)、国内 IMAP/SMTP(授权码);同步 = 游标增量 + 轮询起步,实时推送阶段 B;附件不进库,落 COS 由沙箱按需解析;
-- 首批技能:邮件摘要、智能回复草稿、分类去噪、邮件→周报、附件归档检索;写/发类动作默认人审。
+- **连接器现状(2026-10)**:邮箱(IMAP/SMTP、Gmail、M365)与日历(OAuth + 事件 CRUD)能力**已下线**,
+  connector-service 只剩连接器空框架:健康探针、`GET /v1/connections`、`GET /v1/connections/{id}`、
+  `DELETE /v1/connections/{id}`(撤销留痕)与凭证加密;存量连接由迁移统一置 `revoked`;
+  orchestrator 侧不再有邮件/日历工具;
+- 首批技能:知识库检索与汇总、文档整理成周报、只读代码审查;写/发类动作默认人审。
 
 ## 9. 安全与合规
 

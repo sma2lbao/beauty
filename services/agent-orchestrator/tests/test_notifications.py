@@ -21,7 +21,7 @@ def _run(run_id: str, status: str, conversation_id: str | None = None):
         id=run_id,
         status=status,
         title="周报",
-        goal="把邮件整理成周报",
+        goal="把日程整理成周报",
         conversation_id=conversation_id,
         updated_at=None,
     )

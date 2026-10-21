@@ -7,8 +7,8 @@ TENANT_HEADERS = TENANT
 
 def _create_run(client: TestClient, tenant: str = "t-1") -> dict:
     body = {
-        "title": "整理本周邮件成周报",
-        "goal": "汇总本周邮件,生成周报草稿",
+        "title": "整理本周日程成周报",
+        "goal": "整理本周日程,生成周报草稿",
         "acceptance_criteria": ["覆盖 5 个工作日", "不超过 300 字"],
     }
     resp = client.post("/api/v1/runs", json=body, headers=bearer(tenant))
@@ -25,7 +25,7 @@ def test_create_and_get_run(client: TestClient) -> None:
 
     got = client.get(f"/api/v1/runs/{created['id']}", headers=TENANT_HEADERS)
     assert got.status_code == 200
-    assert got.json()["goal"] == "汇总本周邮件,生成周报草稿"
+    assert got.json()["goal"] == "整理本周日程,生成周报草稿"
 
 
 def test_events_replay_in_seq_order(client: TestClient) -> None:

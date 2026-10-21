@@ -1,7 +1,10 @@
 """鉴权(架构 §10):connector-service 与 orchestrator 同一套 token→租户约定。"""
 
+from __future__ import annotations
+
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import jwt
@@ -12,21 +15,11 @@ from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
 from connector.main import create_app
-from tests.conftest import FakeTransport
+from tests.conftest import insert_connection
 
 ISSUER = "https://idp.example.com/oidc"
 KID = "key-1"
-
-BODY = {
-    "provider": "imap",
-    "account": "me@qq.com",
-    "credentials": {
-        "host": "imap.qq.com",
-        "port": 993,
-        "username": "me@qq.com",
-        "password": "fake-auth-code-16chars",
-    },
-}
+AUTH_DB = "auth.db"
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +41,7 @@ def _token(private_key, tenant: str = "t-1") -> str:
     )
 
 
-def _auth_client(tmp_path, private_key) -> TestClient:
+def _auth_client(tmp_path: Path, private_key) -> TestClient:
     document = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     document.update({"kid": KID, "alg": "RS256", "use": "sig"})
 
@@ -64,37 +57,35 @@ def _auth_client(tmp_path, private_key) -> TestClient:
     )
     settings = Settings(
         env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/auth.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path}/{AUTH_DB}",
         auto_create_tables=True,
         auth_enabled=True,
     )
-    app = create_app(
-        settings,
-        transport_factory=lambda conn: FakeTransport(),
-        token_verifier=verifier,
-    )
+    app = create_app(settings, token_verifier=verifier)
     return TestClient(app)
 
 
-def test_connection_requires_token(tmp_path, private_key) -> None:
+def test_connection_requires_token(tmp_path: Path, private_key) -> None:
     with _auth_client(tmp_path, private_key) as client:
-        resp = client.post("/v1/connections", json=BODY)
+        resp = client.get("/v1/connections")
         assert resp.status_code == 401
         assert resp.json()["code"] == "auth.token_missing"
 
 
-def test_connection_scoped_to_token_tenant(tmp_path, private_key) -> None:
+def test_connection_scoped_to_token_tenant(tmp_path: Path, private_key) -> None:
     with _auth_client(tmp_path, private_key) as client:
+        conn = insert_connection(tmp_path / AUTH_DB, tenant_id="t-1")
         headers = {"Authorization": f"Bearer {_token(private_key, tenant='t-1')}"}
-        created = client.post("/v1/connections", json=BODY, headers=headers)
-        assert created.status_code == 201
-        connection_id = created.json()["id"]
+        assert [
+            row["id"] for row in client.get("/v1/connections", headers=headers).json()
+        ] == [conn["id"]]
 
         other = {
             "Authorization": f"Bearer {_token(private_key, tenant='t-2')}",
             "X-Tenant-Id": "t-1",  # 鉴权开启时伪造请求头无效
         }
+        assert client.get("/v1/connections", headers=other).json() == []
         assert (
-            client.get(f"/v1/connections/{connection_id}", headers=other).status_code
+            client.get(f"/v1/connections/{conn['id']}", headers=other).status_code
             == 404
         )

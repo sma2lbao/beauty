@@ -49,9 +49,9 @@ export function RunsPage() {
   const setFilter = useRunBoardStore((state) => state.setFilter);
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [title, setTitle] = useState('整理本周邮件成周报');
-  const [goal, setGoal] = useState('汇总本周邮件,生成周报草稿');
-  const [criteria, setCriteria] = useState('覆盖 5 个工作日\n不超过 300 字');
+  const [title, setTitle] = useState('整理本周文档成周报');
+  const [goal, setGoal] = useState('汇总本周文档,生成周报草稿');
+  const [criteria, setCriteria] = useState('覆盖本周主要进展\n不超过 300 字');
 
   const runsQuery = useQuery({
     queryKey: ['runs'],

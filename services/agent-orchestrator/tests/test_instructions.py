@@ -87,7 +87,7 @@ def test_instruction_consumed_at_plan_boundary(tmp_path) -> None:
 
 def test_instruction_consumed_at_approve_boundary(tmp_path) -> None:
     """审批前排队 → 放行时消费:execute 提示词带上指令,且只消费一次。"""
-    verify_pass = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
+    verify_pass = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
     fake = FakeLLM(["# 计划", "执行结果", verify_pass, "# 交付物"])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)

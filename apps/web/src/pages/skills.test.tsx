@@ -87,12 +87,12 @@ describe('SkillsPage', () => {
   it('展示技能与工具白名单,并标出来源与含脚本', async () => {
     vi.mocked(skillsApi.list).mockResolvedValue([
       {
-        id: 'office.email-summary',
+        id: 'coding.repo-readonly-review',
         version: '1.0.0',
-        title: '邮件摘要',
+        title: '只读代码审查',
         description: '提炼关键信息',
-        workspace_type: 'mailbox',
-        tools: ['list_connections', 'fetch_emails'],
+        workspace_type: 'local',
+        tools: ['code_read_file'],
         permissions: {},
         system_prompt: 'x',
         input_schema: {},
@@ -121,8 +121,8 @@ describe('SkillsPage', () => {
     ]);
     renderPage();
 
-    expect(await screen.findByText('邮件摘要')).toBeInTheDocument();
-    expect(screen.getByText('fetch_emails')).toBeInTheDocument();
+    expect(await screen.findByText('只读代码审查')).toBeInTheDocument();
+    expect(screen.getByText('code_read_file')).toBeInTheDocument();
     expect(screen.getAllByText('用此技能开始')).toHaveLength(2);
     expect(screen.getByText('内置')).toBeInTheDocument();
     expect(screen.getByText('上传')).toBeInTheDocument();

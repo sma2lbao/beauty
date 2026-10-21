@@ -15,13 +15,13 @@ export function AboutPage() {
 
       <div className="mt-8 space-y-5 text-[14px] leading-7 text-ha-text-3">
         <p>
-          beauty moon 是一个 AI 办公助手:把邮件、日程、文档、周报这类重复活 交给
-          Agent,你只需要在关键的地方点个头。
+          beauty moon 是一个 AI 办公助手:把知识库、文档、周报这类重复活
+          交给 Agent,你只需要在关键的地方点个头。
         </p>
         <p>
           它的干活方式固定,不靠「许愿」:先给出计划 → 你放行才执行 →
           该用的工具自己调 → 结果自己验收,不合格就返工 → 最后交出成品。
-          危险操作(比如发邮件)还会
+          危险操作(比如删除文档)还会
           <span className="font-medium text-ha-text-body">再确认一次</span>
           ,不会先斩后奏。
         </p>

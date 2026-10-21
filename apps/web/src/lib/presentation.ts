@@ -210,7 +210,7 @@ export function asText(value: unknown, fallback = ''): string {
   return typeof value === 'string' && value ? value : fallback;
 }
 
-/** 从工具参数 JSON 里提炼一行摘要(read_file 的路径、发信的收件人…)。 */
+/** 从工具参数 JSON 里提炼一行摘要(read_file 的路径、对外发布的目标…)。 */
 export function summarizeArguments(argumentsText: string): string {
   try {
     const parsed = JSON.parse(argumentsText || '{}') as unknown;
@@ -277,7 +277,7 @@ export function eventLine(
       return { text: '已放行,开始执行。', tone: 'success' };
     case 'run.confirmation.required.v1':
       return {
-        text: '有危险操作需要你确认(例如发信),确认后才会执行。',
+        text: '有危险操作需要你确认(例如对外发布),确认后才会执行。',
         tone: 'warning',
       };
     case 'run.confirmation.received.v1':

@@ -23,8 +23,8 @@ from tests.conftest import (
     verifier,
 )
 
-VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
-DELIVERY = "# 周报(成品)\n\n- 邮件已汇总\n"
+VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
+DELIVERY = "# 周报(成品)\n\n- 日程已整理\n"
 
 
 def _complete_run(client: TestClient) -> str:

@@ -17,7 +17,7 @@ from tests.conftest import (
     verifier,
 )
 
-VERIFY_PASS = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
+VERIFY_PASS = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
 
 
 async def test_search_knowledge_tool_formats_hits() -> None:

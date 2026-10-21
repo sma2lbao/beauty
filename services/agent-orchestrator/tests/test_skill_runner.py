@@ -64,7 +64,7 @@ MANIFEST: dict[str, Any] = {
     "network": "deny",
     "timeout_seconds": 120,
 }
-SKILL_MD = "# 周报生成\n\n按模板汇总本周邮件。\n"
+SKILL_MD = "# 周报生成\n\n按模板整理本周日程。\n"
 PACKAGE_KEY = "t-1/objects/skill-1.zip"
 
 
@@ -853,7 +853,7 @@ def test_runner_not_assembled_without_workspace(tmp_path: Path) -> None:
 
 def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
     """skill_run 是受控写(WRITE):approve 后直接执行,不再弹确认闸(§6.2)。"""
-    verify_pass = '{"summary": "已生成", "verdicts": {"邮件已汇总": true}}'
+    verify_pass = '{"summary": "已生成", "verdicts": {"日程已整理": true}}'
     fake = FakeLLM(
         [
             "# 计划",
@@ -863,7 +863,7 @@ def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
                     ToolCall(
                         id="call_skill",
                         name="skill_run",
-                        arguments='{"input": "本周邮件"}',
+                        arguments='{"input": "本周日程"}',
                     ),
                 ),
             ),
@@ -895,7 +895,7 @@ def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
         run = _create_run(
             client,
             skill_id="team.weekly-report",
-            acceptance_criteria=["邮件已汇总"],
+            acceptance_criteria=["日程已整理"],
         )
 
         planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=TENANT)
@@ -910,7 +910,7 @@ def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
         # 沙箱生命周期:解包 → entrypoint → 列产物 → 销毁
         assert [item["argv"][1] for item in sandbox.execs][0] == UNPACK_PATH
         assert sandbox.destroyed == ["sb-1"]
-        assert json.loads(sandbox.execs[1]["stdin"])["input"] == "本周邮件"
+        assert json.loads(sandbox.execs[1]["stdin"])["input"] == "本周日程"
 
         # execute 的 function-calling schema 里能看到 skill_run
         schema_names = [

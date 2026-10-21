@@ -116,7 +116,7 @@ Browser
 | agent-runtime     | 容器                 | 会话/run/tool registry/skill/MCP/worker | 由 agent-orchestrator 演进；工具面抽离；队列改为 PG job 表                          |
 | sandbox adapter   | workspace-service 内 | microsandbox provider + 生命周期        | ✅ P1 + P2 stdio MCP + P3 技能包（见 §4.4）                                         |
 | llm-gateway       | 容器                 | 模型出口、路由、降级、预算、usage       | 增加 BYOK、计量、预算                                                               |
-| connector-service | 容器                 | 邮箱/日历/文档连接器；OAuth、同步       | IMAP 先行；OAuth 双轨后续                                                           |
+| connector-service | 容器                 | 连接器框架（当前无内置连接器）           | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密                           |
 | knowledge-service | 容器                 | 摄取、检索、重排、引用、记忆            | 增加 rerank/citation/memory                                                         |
 | workspace-service | 容器                 | 工作区、产物、附件元数据                | 暂用 DB/本地文件；对象存储后置                                                      |
 | account-service   | 容器                 | 租户/成员/配额/usage/API Key            | 增加社交 OAuth、用量账本（Stripe 后置）                                             |

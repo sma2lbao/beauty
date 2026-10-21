@@ -44,9 +44,9 @@ import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { useUiStore } from '@/stores/ui-store';
 
 const SUGGESTIONS = [
-  '把本周邮件整理成一份周报草稿',
+  '把本周文档整理成一份周报草稿',
   '帮我理一下这周的待办,给出优先级',
-  '起草一封给合作方的项目进度同步邮件',
+  '基于知识库整理一份项目背景资料',
 ];
 
 /**
@@ -643,7 +643,7 @@ export function ChatPage() {
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ha-warning-border bg-ha-warning-bg px-3 py-3">
                   <AlertTriangle className="h-4 w-4 text-ha-warning" />
                   <span className="mr-auto text-[12px] text-ha-text-2">
-                    有危险操作需要你确认(例如发信),确认后才会执行。
+                    有危险操作需要你确认(例如对外发布),确认后才会执行。
                   </span>
                   <ConsoleButton
                     variant="primary"

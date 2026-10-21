@@ -10,7 +10,7 @@ describe('Markdown', () => {
         content={[
           '# 周报',
           '',
-          '- 邮件已汇总',
+          '- 日程已汇总',
           '',
           '| 项目 | 状态 |',
           '| --- | --- |',
@@ -22,7 +22,7 @@ describe('Markdown', () => {
     );
 
     expect(screen.getByRole('heading', { name: '周报' })).toBeInTheDocument();
-    expect(screen.getByText('邮件已汇总')).toBeInTheDocument();
+    expect(screen.getByText('日程已汇总')).toBeInTheDocument();
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByText('完成')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: '文档' });

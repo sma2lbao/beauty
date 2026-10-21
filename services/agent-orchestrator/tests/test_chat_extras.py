@@ -15,15 +15,14 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
-from tests.conftest import TENANT, FakeConnector, FakeLLM, _settings, verifier
+from tests.conftest import TENANT, FakeKnowledge, FakeLLM, _settings, verifier
 
 
 def _client(tmp_path, fake: FakeLLM, extras_factory) -> TestClient:
-    connector = FakeConnector()
     app = create_app(
         _settings(tmp_path, "chat-extras.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(tenant, connector=connector),
+        toolkit_factory=lambda tenant: build_tools(tenant, knowledge=FakeKnowledge()),
         tool_extras_factory=extras_factory,
         token_verifier=verifier(),
     )

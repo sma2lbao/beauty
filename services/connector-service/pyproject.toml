@@ -1,7 +1,7 @@
 [project]
 name = "connector-service"
 version = "0.1.0"
-description = "连接器服务:外部系统(邮件优先)的账号连接与凭证管理(架构 §8)"
+description = "连接器服务:外部系统连接器框架(连接存储/凭证加密/租户隔离;当前无内置连接器,架构 §8)"
 readme = "README.md"
 requires-python = ">=3.11,<4"
 dependencies = [

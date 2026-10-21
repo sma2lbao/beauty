@@ -47,6 +47,8 @@ npm run dev:status     # 只检查健康状态
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
+connector-service(:8004)是连接器框架,当前无内置连接器(邮件与日历能力均已下线),端口保留。
+
 打开 http://localhost:5173。
 
 **BFF(:8007)是必需的**:Vite 的 /api 已统一代理到 BFF,BFF 再转发
@@ -75,23 +77,19 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 内置 manifest 在仓库根 `skills/*.json`（id/version/title/workspace_type/tools/system_prompt 等）。
 - orchestrator 启动时加载，暴露 `GET /v1/skills`、`GET /v1/skills/{id}`。
 - `POST /v1/runs` 或发消息时可带 `skill_id`：创建 run 时冻结 skill 快照（系统提示词 + 工具白名单），后续改 manifest 不影响已建 run。
-- 执行时只暴露白名单内工具；例如邮件类技能只能 `list_connections`/`fetch_emails`，不能发信。
+- 执行时只暴露白名单内工具；例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `code_list_files`/`code_read_file`/`code_search_text`，不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
-## 3.2 连接器（邮箱）
+## 3.2 连接器（空框架）
 
-- 页面：`/connectors`，支持添加 IMAP 连接、测试连通性、读取最近 10 封邮件、SMTP 发信、撤销连接。
-- 凭证只提交一次，服务端用 `CONNECTOR__CREDENTIAL_SECRET` 做 Fernet 加密后存 DB，读端永不返回。
-- 发信/撤销是写操作，前端二次确认；发信需要连接里填了 SMTP host。
-- Gmail / Microsoft 365 走 OAuth：`CONNECTOR__GOOGLE_CLIENT_ID/SECRET` 或 `CONNECTOR__MICROSOFT_CLIENT_ID/SECRET`；连接页点 OAuth 按钮跳授权，回调到 `/connectors?oauth=success`。
-- OAuth 回调地址：`CONNECTOR__OAUTH_REDIRECT_BASE`（默认 `http://127.0.0.1:8004/v1/oauth`），需在 Google/Microsoft 应用里登记。
-- 邮件列表带 `thread_id` / `has_attachments`；邮件可展开附件并下载（IMAP/Gmail/Graph）。
-- Gmail/M365 OAuth 连接还支持日历 CRUD：`GET/POST /v1/connections/{id}/events`、`PATCH/DELETE .../events/{event_id}`；OAuth scope 已包含 Gmail Calendar / Microsoft Calendars.ReadWrite，老连接需重新授权。
-- 本地没有真实邮箱时可以先建一条假连接验证 UI 与加密存储，连通性测试会如实失败。
+- connector-service(:8004)只保留连接器框架：邮件与日历能力均已下线，当前无内置连接器；Web 端也不再有连接器页面。
+- 保留接口：`GET /v1/connections`（列表）、`GET /v1/connections/{id}`（详情）、`DELETE /v1/connections/{id}`（撤销：留痕不物理删，重复撤销 409）、`GET /healthz`。
+- 已删除：IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD。
+- 不再需要 Google / Microsoft client id/secret 与 OAuth 回调配置；存量连接已由迁移统一撤销。
 
 ## 3.3 MCP Client（第三方工具）
 
-- `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互与连接器页一致：左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
+- `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互是左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
 - 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
 - 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，未信任 server 的工具按危险操作处理（需人工确认），开启「免确认执行」后按受控写自动执行。
 - 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，工具在
@@ -116,7 +114,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 BFF 会话)。
 - 鉴权:`Authorization: Bearer bm_live_...`(API Key)或 OAuth 2.1 access token;也支持 `X-API-Key`。
 - 支持 `initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`。
-- 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及连接器/文档/知识库中的只读工具;受控写(技能执行、工作区文件)与危险操作(发信等)都不暴露。
+- 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及文档/知识库中的只读工具;受控写(技能执行、工作区文件)与危险操作(对外不可逆写)都不暴露。
 - 资源:`beauty://artifacts/{artifact_id}`(仅数据库内联存储的 Markdown)。
 - 本地示例:
 
@@ -143,7 +141,7 @@ curl -s http://127.0.0.1:8002/mcp \
 
 - 在 services/llm-gateway/.env 配 LLM_GATEWAY**API_KEY,可选 LLM_GATEWAY**API_BASE 与 DEFAULT_MODEL。
 - orchestrator 侧设 AGENT_ORCHESTRATOR\_\_LLM_ENABLED=true;需要工具调用时再开 TOOLS_ENABLED=true 与 MCP_ENABLED=true。
-- `.env.example` 已把其余开发侧能力开关(工具/文档/日历/知识库/outbox/交付物镜像/沙箱/技能执行/stdio MCP)默认置 true;唯一需要自己补的是模型密钥与本条的 `LLM_ENABLED=true`。
+- `.env.example` 已把其余开发侧能力开关(工具/文档/知识库/outbox/交付物镜像/沙箱/技能执行/stdio MCP)默认置 true;唯一需要自己补的是模型密钥与本条的 `LLM_ENABLED=true`。
 - 验证:curl -s -H Content-Type:application/json -d {"messages":[{"role":"user","content":"只回复:模型正常"}]} http://127.0.0.1:8003/v1/completions。
 - 真实模型工具名必须匹配 ^[a-zA-Z0-9_-]+$;MCP 工具使用 mcp**<server>**<tool>。
 
@@ -158,7 +156,6 @@ curl -s http://127.0.0.1:8002/mcp \
 
 - 支持 PDF(pypdf)、docx(python-docx)、xlsx(openpyxl)与文本类;上传时解析,单附件最多保留 20k 字符。
 - 聊天附件:直接对话会把当前消息附件文本附到 user content;任务路径会把附件文本拼进 run goal,plan/execute 可见。
-- 邮件附件:新增工具 list_email_attachments / fetch_email_attachment_text;邮件技能已加入白名单。
 - 解析失败不拒绝附件,只记录 extraction_error;图片暂不 OCR。
 - 解析器在 packages/common/common/documents.py(common 测试覆盖 PDF/docx/xlsx/文本)。
 

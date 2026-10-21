@@ -3,13 +3,12 @@
 import json
 
 from agent_orchestrator.services.tools import (
-    MAX_FETCH_LIMIT,
     ToolRegistry,
     ToolRisk,
     ToolSpec,
     build_tools,
 )
-from tests.conftest import FakeConnector
+from tests.conftest import FakeDangerTool, FakeKnowledge
 
 
 async def _echo(args: dict) -> str:
@@ -67,43 +66,29 @@ async def test_handler_exception_becomes_error_text() -> None:
     assert "RuntimeError: 炸了" in payload["error"]
 
 
-async def test_build_tools_list_and_fetch() -> None:
-    connector = FakeConnector()
-    registry = build_tools("t-1", connector=connector)
+async def test_build_tools_exposes_only_configured_providers() -> None:
+    """能力即权限边界:没配置的提供方不暴露工具(§6.2)。"""
+    assert len(build_tools("t-1")) == 0
+
+    knowledge = FakeKnowledge()
+    registry = build_tools("t-1", knowledge=knowledge)
     names = {schema["function"]["name"] for schema in registry.schemas()}
-    assert names == {
-        "list_connections",
-        "fetch_emails",
-        "send_email",
-        "list_email_attachments",
-        "fetch_email_attachment_text",
-    }
-    # 只有危险操作(对外不可逆)必须在执行前被标记为需确认(§6.2)
-    assert registry.risk("send_email") is ToolRisk.DANGER
-    assert registry.requires_confirmation("send_email") is True
-    assert registry.risk("fetch_emails") is ToolRisk.READ
-    assert registry.requires_confirmation("fetch_emails") is False
+    assert names == {"search_knowledge"}
+    assert registry.risk("search_knowledge") is ToolRisk.READ
+    assert registry.requires_confirmation("search_knowledge") is False
+
+    result = json.loads(
+        await registry.execute("search_knowledge", '{"query": "本周日程"}')
+    )
+    assert result["hits"][0]["title"] == "客户 A 合同"
+    assert knowledge.queries == [("t-1", "本周日程", 5)]
+
+
+async def test_build_tools_extended_keeps_custom_specs() -> None:
+    """extended():在已配置提供方之上追加自定义工具(测试/扩展用)。"""
+    danger = FakeDangerTool()
+    registry = build_tools("t-1", knowledge=FakeKnowledge()).extended([danger.spec()])
+    assert registry.risk("external_publish") is ToolRisk.DANGER
+    assert registry.requires_confirmation("external_publish") is True
     # 未知工具按最严处理:绝不默认放行
     assert registry.risk("no-such-tool") is ToolRisk.DANGER
-
-    listed = json.loads(await registry.execute("list_connections", "{}"))
-    assert listed["connections"][0]["id"] == "conn-1"
-    assert "credentials" not in json.dumps(listed)  # 即便连接器误返回也不外泄
-
-    fetched = json.loads(
-        await registry.execute(
-            "fetch_emails", '{"connection_id": "conn-1", "limit": 1}'
-        )
-    )
-    assert fetched["emails"][0]["subject"] == "周报"
-    assert connector.calls[-1] == ("fetch_emails", "t-1", "conn-1", 1)
-
-
-async def test_fetch_emails_requires_id_and_clamps_limit() -> None:
-    connector = FakeConnector()
-    registry = build_tools("t-1", connector=connector)
-    missing = json.loads(await registry.execute("fetch_emails", "{}"))
-    assert "缺少 connection_id" in missing["error"]
-
-    await registry.execute("fetch_emails", '{"connection_id": "c", "limit": 999}')
-    assert connector.calls[-1][-1] == MAX_FETCH_LIMIT

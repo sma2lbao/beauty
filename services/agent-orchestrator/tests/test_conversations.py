@@ -47,7 +47,7 @@ def _detail(client: TestClient, conversation_id: str) -> dict:
 def test_first_message_creates_run_and_autoplans(client: TestClient) -> None:
     conversation_id = _create_conversation(client)
 
-    result = _post_message(client, conversation_id, "把本周邮件整理成周报")
+    result = _post_message(client, conversation_id, "把本周日程整理成周报")
 
     assert result["mode"] == "run_created"
     run = result["run"]
@@ -59,11 +59,11 @@ def test_first_message_creates_run_and_autoplans(client: TestClient) -> None:
 
     detail = _detail(client, conversation_id)
     assert detail["active_run_id"] == run["id"]
-    assert detail["title"] == "把本周邮件整理成周报"  # 首条消息自动定题
+    assert detail["title"] == "把本周日程整理成周报"  # 首条消息自动定题
 
     messages = _messages(client, conversation_id)
     assert [m["role"] for m in messages] == ["user"]
-    assert messages[0]["content"] == "把本周邮件整理成周报"
+    assert messages[0]["content"] == "把本周日程整理成周报"
 
 
 def test_create_conversation_defaults_placeholder_title(
@@ -83,7 +83,7 @@ def test_message_while_run_in_flight_becomes_instruction(
     client: TestClient,
 ) -> None:
     conversation_id = _create_conversation(client)
-    first = _post_message(client, conversation_id, "把本周邮件整理成周报")
+    first = _post_message(client, conversation_id, "把本周日程整理成周报")
 
     second = _post_message(client, conversation_id, "顺便看看日历")
 
@@ -104,7 +104,7 @@ def test_approve_persists_assistant_message_with_artifact(
     client: TestClient,
 ) -> None:
     conversation_id = _create_conversation(client)
-    run_id = _post_message(client, conversation_id, "把本周邮件整理成周报")["run"]["id"]
+    run_id = _post_message(client, conversation_id, "把本周日程整理成周报")["run"]["id"]
 
     done = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
     assert done["status"] == "completed"
@@ -123,7 +123,7 @@ def test_reject_persists_assistant_message_then_new_run(
     client: TestClient,
 ) -> None:
     conversation_id = _create_conversation(client)
-    run_id = _post_message(client, conversation_id, "把本周邮件整理成周报")["run"]["id"]
+    run_id = _post_message(client, conversation_id, "把本周日程整理成周报")["run"]["id"]
 
     blocked = client.post(
         f"/api/v1/runs/{run_id}/reject", json={"reason": "先别发"}, headers=TENANT
@@ -147,7 +147,7 @@ def test_plan_failure_persists_assistant_message(tmp_path) -> None:
     with _client(tmp_path, fake) as client:
         conversation_id = _create_conversation(client)
 
-        result = _post_message(client, conversation_id, "汇总本周邮件")
+        result = _post_message(client, conversation_id, "整理本周日程")
 
         assert result["run"]["status"] == "failed"
         messages = _messages(client, conversation_id)
@@ -162,14 +162,14 @@ def test_conversation_history_reaches_plan_prompt(tmp_path) -> None:
             '{"mode": "task"}',  # 1 分流(第一条消息)
             "# 执行计划(第一轮)\n- [ ] 汇总",
             "执行结果:第一轮完成",
-            "# 第一轮周报\n\n- 邮件已汇总",
+            "# 第一轮周报\n\n- 日程已整理",
             '{"mode": "task"}',  # 5 分流(第二条消息)
             "# 执行计划(第二轮)\n- [ ] 加上日历",
         ]
     )
     with _client(tmp_path, fake) as client:
         conversation_id = _create_conversation(client)
-        first = _post_message(client, conversation_id, "把本周邮件整理成周报")
+        first = _post_message(client, conversation_id, "把本周日程整理成周报")
         client.post(f"/api/v1/runs/{first['run']['id']}/approve", headers=TENANT)
 
         second = _post_message(client, conversation_id, "接着把日历也汇总进来")
@@ -178,7 +178,7 @@ def test_conversation_history_reaches_plan_prompt(tmp_path) -> None:
         # 第 6 次调用是第二轮的 plan:必须带上第一轮的对话上下文
         plan_prompt = fake.calls[5][1]["content"]
         assert "之前的对话" in plan_prompt
-        assert "把本周邮件整理成周报" in plan_prompt
+        assert "把本周日程整理成周报" in plan_prompt
         assert "第一轮周报" in plan_prompt  # 交付物也在上下文里
         # 触发消息本身是 goal/标题(标题由它派生),不会重复出现在历史块里
         history_block = plan_prompt.split("之前的对话", 1)[1]
@@ -256,9 +256,9 @@ def test_archive_and_unarchive_conversation(client: TestClient) -> None:
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
     assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
-    listing = client.get(
-        "/api/v1/conversations?archived=true", headers=TENANT
-    ).json()["items"]
+    listing = client.get("/api/v1/conversations?archived=true", headers=TENANT).json()[
+        "items"
+    ]
     assert [c["id"] for c in listing] == [conversation_id]
     # 归档不删除:详情仍可访问
     assert _detail(client, conversation_id)["id"] == conversation_id
@@ -269,9 +269,10 @@ def test_archive_and_unarchive_conversation(client: TestClient) -> None:
         headers=TENANT,
     )
     assert restored.json()["archived_at"] is None
-    assert [c["id"] for c in client.get(
-        "/api/v1/conversations", headers=TENANT
-    ).json()["items"]] == [conversation_id]
+    assert [
+        c["id"]
+        for c in client.get("/api/v1/conversations", headers=TENANT).json()["items"]
+    ] == [conversation_id]
 
 
 def test_soft_delete_conversation(client: TestClient) -> None:
@@ -285,26 +286,28 @@ def test_soft_delete_conversation(client: TestClient) -> None:
         == 204
     )
     assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
-    assert client.get(
-        f"/api/v1/conversations/{conversation_id}", headers=TENANT
-    ).status_code == 404
-    assert client.get(
-        f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
-    ).status_code == 404
+    assert (
+        client.get(
+            f"/api/v1/conversations/{conversation_id}", headers=TENANT
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+        ).status_code
+        == 404
+    )
 
 
 def test_search_conversations_by_title(client: TestClient) -> None:
     weekly = client.post(
-        "/api/v1/conversations", json={"title": "本周邮件周报"}, headers=TENANT
+        "/api/v1/conversations", json={"title": "本周日程周报"}, headers=TENANT
     ).json()["id"]
-    client.post(
-        "/api/v1/conversations", json={"title": "合同评审"}, headers=TENANT
-    )
+    client.post("/api/v1/conversations", json={"title": "合同评审"}, headers=TENANT)
     client.post("/api/v1/conversations", json={"title": "周报模板"}, headers=TENANT)
 
-    listing = client.get(
-        "/api/v1/conversations?q=周报", headers=TENANT
-    ).json()["items"]
+    listing = client.get("/api/v1/conversations?q=周报", headers=TENANT).json()["items"]
     assert weekly in [item["id"] for item in listing]
     assert all("周报" in item["title"] for item in listing)
 
@@ -317,9 +320,7 @@ def test_conversation_pagination_cursor(client: TestClient) -> None:
         for i in range(3)
     ]
 
-    first = client.get(
-        "/api/v1/conversations?limit=2", headers=TENANT
-    ).json()
+    first = client.get("/api/v1/conversations?limit=2", headers=TENANT).json()
     assert len(first["items"]) == 2
     assert first["next_cursor"]
     second = client.get(
@@ -398,7 +399,7 @@ def test_chat_during_inflight_run_does_not_queue_instruction(tmp_path) -> None:
     )
     with _client(tmp_path, fake) as client:
         conversation_id = _create_conversation(client)
-        run_id = _post_message(client, conversation_id, "把本周邮件整理成周报")["run"][
+        run_id = _post_message(client, conversation_id, "把本周日程整理成周报")["run"][
             "id"
         ]
 
@@ -539,7 +540,7 @@ def test_stream_task_sends_meta_without_deltas(tmp_path) -> None:
     with _client(tmp_path, fake) as client:
         conversation_id = _create_conversation(client)
 
-        _, events = _stream_message(client, conversation_id, "把本周邮件整理成周报")
+        _, events = _stream_message(client, conversation_id, "把本周日程整理成周报")
 
         # 任务路径只发 meta + done,进展由 run 自己的事件流呈现
         assert [name for name, _ in events] == ["meta", "done"]

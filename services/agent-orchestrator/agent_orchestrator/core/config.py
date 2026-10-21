@@ -80,16 +80,13 @@ class Settings(BaseAppSettings):
     llm_gateway_url: str = "http://127.0.0.1:8003"
     llm_model: str | None = None  # None:走网关默认路由
     llm_timeout_seconds: float = 60.0
-    # 工具(架构 §8):execute 走 function-calling 调 connector-service
+    # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库/代码库)
     tools_enabled: bool = False
-    connector_service_url: str = "http://127.0.0.1:8004"
     tool_timeout_seconds: float = 30.0
     # 技能提供方:未开启的能力不暴露给模型(能力即权限边界)
     documents_enabled: bool = False
     documents_root: str = "./.documents"
     documents_max_bytes: int = 200_000
-    calendar_enabled: bool = False
-    calendar_ics_path: str = "./.calendar.ics"
     # 企业知识库(§9):search_knowledge 工具经 knowledge-service 检索
     knowledge_enabled: bool = False
     knowledge_service_url: str = "http://127.0.0.1:8006"

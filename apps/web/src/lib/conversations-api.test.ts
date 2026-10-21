@@ -134,7 +134,7 @@ describe('conversationsApi', () => {
         conversation_id: 'c1',
         run_id: 'r1',
         role: 'user',
-        content: '把本周邮件整理成周报',
+        content: '把本周日程整理成周报',
         created_at: '2026-10-15T10:00:00+00:00',
       },
       run: { id: 'r1' },
@@ -144,7 +144,7 @@ describe('conversationsApi', () => {
     const fetchMock = mockFetch(201, result);
 
     await expect(
-      conversationsApi.postMessage('c1', '把本周邮件整理成周报'),
+      conversationsApi.postMessage('c1', '把本周日程整理成周报'),
     ).resolves.toEqual(result);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -152,7 +152,7 @@ describe('conversationsApi', () => {
     expect(init.method).toBe('POST');
     expect(init.body).toBe(
       JSON.stringify({
-        content: '把本周邮件整理成周报',
+        content: '把本周日程整理成周报',
         mode: 'auto',
         attachment_ids: [],
       }),

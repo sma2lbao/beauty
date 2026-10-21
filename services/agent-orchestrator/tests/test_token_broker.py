@@ -8,7 +8,7 @@ import httpx
 import pytest
 from common.errors import UpstreamError
 
-from agent_orchestrator.services.connectors import ConnectorClient
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.token_broker import TokenBroker
 
 ISSUE_BODY = {"access_token": "tok-1", "expires_in": 3600, "tenant_id": "t-a"}
@@ -77,20 +77,20 @@ async def test_broker_requires_internal_secret() -> None:
     await broker.aclose()
 
 
-async def test_connector_client_injects_bearer_only() -> None:
+async def test_downstream_client_injects_bearer_only() -> None:
     """注入:下游请求只带 Bearer——租户在 token claim 里,不再发租户头。"""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"query": "q", "hits": []})
 
-    client = ConnectorClient(
-        "http://connector.local",
+    client = KnowledgeClient(
+        "http://knowledge.local",
         transport=httpx.MockTransport(handler),
         token_provider=_stub_token,
     )
-    await client.list_connections("t-a")
+    await client.search("t-a", "q", 3)
     assert "X-Tenant-Id" not in seen[0].headers
     assert seen[0].headers["Authorization"] == "Bearer tok-for-t-a"
     await client.aclose()

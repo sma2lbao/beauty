@@ -1,7 +1,10 @@
-"""测试装配:每用例独立 sqlite 库;传输工厂注入 FakeTransport;鉴权开 + 真 token。"""
+"""测试装配:每用例独立 sqlite 库;连接行直接落库(服务无创建端点);鉴权开 + 真 token。"""
 
 from __future__ import annotations
 
+import json
+import sqlite3
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -10,52 +13,22 @@ from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
+from connector.core.crypto import encrypt_credentials
 from connector.main import create_app
-from connector.services.mail import AttachmentInfo, EmailSummary, TestResult
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
 OTHER = _IDP.bearer("t-2")
 
+# 与 Settings.credential_secret 默认值保持一致,便于测试解密直落库的凭证
+CREDENTIAL_SECRET = "dev-connector-secret-change-me"
 
-def verifier():
-    """与 _IDP 配套的校验器——自建 app 的测试用它注入 create_app。"""
-    return _IDP.verifier()
-
-
-class FakeTransport:
-    """假传输:固定探活结果与邮件列表,记录 fetch 的 limit 与 send 调用。"""
-
-    def __init__(
-        self,
-        test_result: TestResult | None = None,
-        emails: list[EmailSummary] | None = None,
-    ):
-        self.test_result = test_result or TestResult(ok=True, detail="假连接正常")
-        self.emails = emails or []
-        self.fetch_limits: list[int] = []
-        self.sent: list[tuple[str, str, str]] = []
-        self.attachment_list: list[AttachmentInfo] = []
-        self.attachment_content = b"attachment-bytes"
-
-    async def test(self) -> TestResult:
-        return self.test_result
-
-    async def fetch(self, limit: int) -> list[EmailSummary]:
-        self.fetch_limits.append(limit)
-        return self.emails[:limit]
-
-    async def send(self, to: str, subject: str, body: str) -> str:
-        self.sent.append((to, subject, body))
-        return f"已发送至 {to}"
-
-    async def list_attachments(self, message_id: str) -> list[AttachmentInfo]:
-        return list(self.attachment_list)
-
-    async def download_attachment(
-        self, message_id: str, attachment_id: str
-    ) -> tuple[bytes, str, str]:
-        return self.attachment_content, "text/plain", "note.txt"
+DEFAULT_CREDENTIALS = {
+    "email": "me@gmail.com",
+    "access_token": "access-1",
+    "refresh_token": "refresh-1",
+    "expires_at": 0,
+}
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -66,12 +39,47 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
+def insert_connection(
+    db_path: Path,
+    *,
+    tenant_id: str = "t-1",
+    provider: str = "gmail",
+    account: str = "me@gmail.com",
+    status: str = "active",
+    credentials: dict | None = None,
+) -> dict:
+    """直接落一行连接:服务当前没有创建端点,用历史数据模拟读/撤销端点。"""
+    connection_id = uuid.uuid4().hex
+    payload = encrypt_credentials(
+        CREDENTIAL_SECRET,
+        DEFAULT_CREDENTIALS if credentials is None else credentials,
+    )
+    with sqlite3.connect(db_path) as raw:
+        raw.execute(
+            "INSERT INTO connections "
+            "(id, tenant_id, provider, account, display_name, status, credentials) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                connection_id,
+                tenant_id,
+                provider,
+                account,
+                None,
+                status,
+                json.dumps(payload),
+            ),
+        )
+    return {
+        "id": connection_id,
+        "tenant_id": tenant_id,
+        "provider": provider,
+        "account": account,
+        "status": status,
+    }
+
+
 @pytest.fixture()
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(
-        _settings(tmp_path),
-        transport_factory=lambda conn: FakeTransport(),
-        token_verifier=_IDP.verifier(),
-    )
+    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
     with TestClient(app) as test_client:
         yield test_client

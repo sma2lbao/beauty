@@ -67,7 +67,7 @@ vi.mock('@/components/runs/use-run-events', () => ({
 function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 'c1',
-    title: '整理本周邮件成周报',
+    title: '整理本周日程成周报',
     created_at: '2026-10-13T10:00:00+00:00',
     updated_at: '2026-10-13T10:05:00+00:00',
     active_run_id: 'run-1',
@@ -81,7 +81,7 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     conversation_id: 'c1',
     run_id: 'run-1',
     role: 'user',
-    content: '把本周邮件整理成周报',
+    content: '把本周日程整理成周报',
     created_at: '2026-10-13T10:01:00+00:00',
     ...overrides,
   };
@@ -123,8 +123,8 @@ function makeMcpServer(overrides: Partial<MCPServer> = {}): MCPServer {
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: 'run-1',
-    title: '整理本周邮件成周报',
-    goal: '汇总本周邮件,生成周报草稿',
+    title: '整理本周日程成周报',
+    goal: '汇总本周日程,生成周报草稿',
     status: 'awaiting_approval',
     rounds: 0,
     attempts: 1,
@@ -197,7 +197,7 @@ beforeEach(() => {
           id: 'm9',
           conversation_id: 'c-new',
           run_id: 'run-9',
-          content: '把本周邮件整理成周报',
+          content: '把本周日程整理成周报',
         }),
         run: makeRun({
           id: 'run-9',
@@ -230,13 +230,13 @@ describe('ChatPage', () => {
   it('发送首条消息:先建会话再发消息,消息与状态出现在对话里', async () => {
     renderPage();
 
-    typeAndSend('把本周邮件整理成周报');
+    typeAndSend('把本周日程整理成周报');
 
     await waitFor(() => expect(conversationsApi.create).toHaveBeenCalled());
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '把本周邮件整理成周报',
+        '把本周日程整理成周报',
         'auto',
         expect.anything(),
         [],
@@ -275,16 +275,16 @@ describe('ChatPage', () => {
       makeMessage({
         id: 'a1',
         role: 'assistant',
-        content: '# 周报\n\n- 邮件已汇总',
+        content: '# 周报\n\n- 日程已汇总',
       }),
     ]);
     renderPage('/?conversation=c1');
 
-    expect(await screen.findByText('把本周邮件整理成周报')).toBeTruthy();
+    expect(await screen.findByText('把本周日程整理成周报')).toBeTruthy();
     expect(
       await screen.findByRole('heading', { name: '周报' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('邮件已汇总')).toBeInTheDocument();
+    expect(screen.getByText('日程已汇总')).toBeInTheDocument();
   });
 
   it('待审批:显示放行/拒绝,放行调用 approve', async () => {
@@ -318,11 +318,11 @@ describe('ChatPage', () => {
 
   it('把 run 事件翻成工具卡与状态播报', async () => {
     currentEvents = [
-      event(1, 'run.created.v1', { title: '整理本周邮件成周报' }),
+      event(1, 'run.created.v1', { title: '整理本周日程成周报' }),
       event(2, 'run.planned.v1', { attempt: 1 }),
       event(3, 'run.tool.called.v1', {
-        name: 'fetch_emails',
-        arguments: '{"limit":5}',
+        name: 'search_knowledge',
+        arguments: '{"query":"本周日程"}',
         ok: true,
       }),
       event(4, 'run.delivered.v1', { title: '周报' }),
@@ -331,7 +331,7 @@ describe('ChatPage', () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     renderPage('/?conversation=c1');
 
-    expect((await screen.findAllByText('fetch_emails')).length).toBeGreaterThan(
+    expect((await screen.findAllByText('search_knowledge')).length).toBeGreaterThan(
       0,
     );
     expect(screen.getByText(/已交付《周报》/)).toBeTruthy();
@@ -369,7 +369,7 @@ describe('ChatPage', () => {
       run_id: 'run-1',
       kind: 'markdown',
       title: '周报',
-      content: '# 本周周报\n\n- 邮件已汇总',
+      content: '# 本周周报\n\n- 日程已汇总',
       created_at: '2026-10-13T10:05:00+00:00',
     });
     renderPage('/?conversation=c1');
@@ -487,12 +487,12 @@ describe('ChatPage', () => {
     fireEvent.change(screen.getByLabelText('发送方式'), {
       target: { value: 'task' },
     });
-    typeAndSend('把本周邮件整理成周报');
+    typeAndSend('把本周日程整理成周报');
 
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '把本周邮件整理成周报',
+        '把本周日程整理成周报',
         'task',
         expect.anything(),
         [],
@@ -599,11 +599,11 @@ describe('ChatPage 技能', () => {
   it('选择技能后发送携带 skill_id', async () => {
     vi.mocked(skillsApi.list).mockResolvedValue([
       {
-        id: 'office.email-summary',
+        id: 'coding.repo-readonly-review',
         version: '1.0.0',
-        title: '邮件摘要',
+        title: '只读代码审查',
         description: 'x',
-        workspace_type: 'mailbox',
+        workspace_type: 'local',
         tools: [],
         permissions: {},
         system_prompt: 'x',
@@ -615,7 +615,7 @@ describe('ChatPage 技能', () => {
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
     fireEvent.change(screen.getByLabelText('选择技能'), {
-      target: { value: 'office.email-summary' },
+      target: { value: 'coding.repo-readonly-review' },
     });
     typeAndSend('用技能汇总');
     await waitFor(() =>
@@ -625,7 +625,7 @@ describe('ChatPage 技能', () => {
         'auto',
         expect.anything(),
         [],
-        'office.email-summary',
+        'coding.repo-readonly-review',
       ),
     );
   });

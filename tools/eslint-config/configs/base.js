@@ -10,6 +10,9 @@ import tseslint from 'typescript-eslint';
 export const ignores = [
   '**/dist/**',
   '**/out-tsc/**',
+  // Next.js 静态导出与构建产物(apps/site 的 out/ 与 .next/)
+  '**/out/**',
+  '**/.next/**',
   '**/doc_build/**',
   '**/coverage/**',
   '**/reports/**',

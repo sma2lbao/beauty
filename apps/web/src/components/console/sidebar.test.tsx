@@ -41,7 +41,7 @@ vi.mock('@/lib/auth', () => ({
 
 const conversation = {
   id: 'c1',
-  title: '整理本周邮件成周报',
+  title: '整理本周日程成周报',
   created_at: '2026-10-13T10:00:00+00:00',
   updated_at: '2026-10-13T10:05:00+00:00',
   archived_at: null,
@@ -77,7 +77,7 @@ afterEach(() => {
 describe('ConsoleSidebar 会话管理', () => {
   it('搜索/归档切换传给分页接口', async () => {
     renderSidebar();
-    await screen.findByText('整理本周邮件成周报');
+    await screen.findByText('整理本周日程成周报');
 
     fireEvent.change(screen.getByLabelText('搜索会话'), {
       target: { value: '周报' },
@@ -98,7 +98,7 @@ describe('ConsoleSidebar 会话管理', () => {
 
   it('重命名会话调用 PATCH', async () => {
     renderSidebar();
-    await screen.findByText('整理本周邮件成周报');
+    await screen.findByText('整理本周日程成周报');
 
     fireEvent.click(screen.getByRole('button', { name: '会话操作' }));
     fireEvent.click(screen.getByRole('button', { name: '重命名' }));
@@ -115,7 +115,7 @@ describe('ConsoleSidebar 会话管理', () => {
 
   it('底部通知入口能就地展开通知面板', async () => {
     renderSidebar();
-    await screen.findByText('整理本周邮件成周报');
+    await screen.findByText('整理本周日程成周报');
 
     fireEvent.click(screen.getByRole('button', { name: '通知' }));
     expect(
@@ -126,7 +126,7 @@ describe('ConsoleSidebar 会话管理', () => {
   it('归档与删除调用对应接口', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderSidebar();
-    await screen.findByText('整理本周邮件成周报');
+    await screen.findByText('整理本周日程成周报');
 
     fireEvent.click(screen.getByRole('button', { name: '会话操作' }));
     fireEvent.click(screen.getByRole('button', { name: '归档' }));

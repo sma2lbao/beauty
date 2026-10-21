@@ -1,7 +1,7 @@
 """连接 ORM:外部系统账号连接(租户隔离,凭证只进不出)。
 
-凭证阶段 A 明文存 JSON 列(读端永不返回,由 schema 层保证);
-密文存储(信封加密)为阶段 B(架构 §10 密钥库)。
+凭证经 connector.core.crypto 信封加密后存 JSON 列(读端永不返回,
+由 schema 层保证);密钥见配置 credential_secret(架构 §10 密钥库)。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
     )
 
     provider: Mapped[str] = mapped_column(
-        String(32), comment="imap(阶段 A);gmail/outlook 阶段 B"
+        String(32), comment="历史数据;无内置 provider"
     )
     account: Mapped[str] = mapped_column(String(320), comment="账号标识(邮箱地址)")
     display_name: Mapped[str | None] = mapped_column(String(200))

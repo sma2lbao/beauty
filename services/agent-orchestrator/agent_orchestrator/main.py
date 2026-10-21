@@ -40,8 +40,6 @@ from agent_orchestrator.models import skills as skills_models  # noqa: F401  注
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.artifacts import build_store
-from agent_orchestrator.services.calendar import CalendarFeed
-from agent_orchestrator.services.connectors import ConnectorClient
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.knowledge import KnowledgeClient
@@ -123,7 +121,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 工具装配(架构 §8):测试注入 toolkit_factory 优先;
     # 否则 tools_enabled 时按子开关装配各能力提供方(未开启的不暴露)
     toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
-    connector: ConnectorClient | None = None
     knowledge: KnowledgeClient | None = None
     # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
     # 签名 claim,不再有 X-Tenant-Id 裸调路径;密钥未配置时在换发处明确报错
@@ -133,19 +130,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     token_provider = broker.token
     if toolkit_factory is None and settings.tools_enabled:
-        connector = ConnectorClient(
-            settings.connector_service_url,
-            settings.tool_timeout_seconds,
-            token_provider=token_provider,
-        )
         documents = (
             DocumentLibrary(settings.documents_root, settings.documents_max_bytes)
             if settings.documents_enabled
-            else None
-        )
-        calendar = (
-            CalendarFeed(settings.calendar_ics_path)
-            if settings.calendar_enabled
             else None
         )
         knowledge = (
@@ -159,9 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         toolkit_factory = partial(
             build_tools,
-            connector=connector,
             documents=documents,
-            calendar=calendar,
             knowledge=knowledge,
             code_roots=settings.code_workspace_roots,
         )
@@ -415,8 +400,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await key_verifier.aclose()
         if owns_oauth_introspector and oauth_introspector is not None:
             await oauth_introspector.aclose()
-        if connector is not None:
-            await connector.aclose()
         if knowledge is not None:
             await knowledge.aclose()
         if owns_sandbox and sandbox is not None:

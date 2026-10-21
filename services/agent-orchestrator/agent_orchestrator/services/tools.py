@@ -3,7 +3,7 @@
 约定:
 
 - 工具是模型接触外部世界的**唯一**通道;能力按**提供方(provider)**分组——
-  连接器(邮件)、本地文档库、日历、知识库各产出一组 `ToolSpec`,`build_tools` 汇总;
+  本地文档库、企业知识库、代码库各产出一组 `ToolSpec`,`build_tools` 汇总;
   **没有配置的提供方不暴露工具**(能力即权限边界);
 - 执行失败不抛给图,而是以 ``{"error": ...}`` 回喂模型让它决策(§6.1)——
   工具坏了不该把整条 run 炸掉;
@@ -20,15 +20,11 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
-from agent_orchestrator.services.calendar import CalendarFeed
 from agent_orchestrator.services.code_tools import code_specs
-from agent_orchestrator.services.connectors import Connector
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import Knowledge
 
-MAX_FETCH_LIMIT = 20
 MAX_DOC_LIMIT = 50
-MAX_EVENT_LIMIT = 50
 MAX_KNOWLEDGE_LIMIT = 10
 MAX_DOC_CHARS = 20_000  # 回喂给模型的正文上限(防提示词爆炸)
 
@@ -39,7 +35,7 @@ class ToolRisk(StrEnum):
     - ``READ``:只读、无副作用,直接执行;
     - ``WRITE``:受控范围内的副作用(工作区文件、沙箱内技能执行、已信任的
       MCP server),自动执行——每一步都问人会把 agent 退化成人工点击机;
-    - ``DANGER``:对外或不可逆的操作(发邮件、未信任 server 的第三方工具),
+    - ``DANGER``:对外或不可逆的操作(未信任 MCP server 的第三方工具),
       执行前必须人工放行。
     """
 
@@ -153,152 +149,6 @@ class ToolRegistry:
             return _error(f"{type(exc).__name__}: {exc}")
 
 
-def connector_specs(tenant_id: str, connector: Connector) -> list[ToolSpec]:
-    """邮件连接器:列连接 / 读邮件(只读)+ 发信(危险操作,需人工确认)。"""
-
-    async def list_connections(args: dict[str, Any]) -> str:
-        conns = await connector.list_connections(tenant_id)
-        brief = [
-            {
-                "id": conn.get("id"),
-                "account": conn.get("account"),
-                "provider": conn.get("provider"),
-                "status": conn.get("status"),
-            }
-            for conn in conns
-        ]
-        return json.dumps({"connections": brief}, ensure_ascii=False)
-
-    async def fetch_emails(args: dict[str, Any]) -> str:
-        connection_id = str(args.get("connection_id") or "")
-        if not connection_id:
-            return _error("缺少 connection_id(可先调 list_connections 获取)")
-        emails = await connector.fetch_emails(
-            tenant_id,
-            connection_id,
-            _int_arg(args, "limit", 5, maximum=MAX_FETCH_LIMIT),
-        )
-        return json.dumps({"emails": emails}, ensure_ascii=False)
-
-    async def list_attachments(args: dict[str, Any]) -> str:
-        connection_id = str(args.get("connection_id") or "")
-        message_id = str(args.get("message_id") or "")
-        if not connection_id or not message_id:
-            return _error("list_email_attachments 需要 connection_id/message_id")
-        items = await connector.list_attachments(tenant_id, connection_id, message_id)
-        return json.dumps({"attachments": items}, ensure_ascii=False)
-
-    async def attachment_text(args: dict[str, Any]) -> str:
-        connection_id = str(args.get("connection_id") or "")
-        message_id = str(args.get("message_id") or "")
-        attachment_id = str(args.get("attachment_id") or "")
-        if not connection_id or not message_id or not attachment_id:
-            return _error(
-                "fetch_email_attachment_text 需要 "
-                "connection_id/message_id/attachment_id"
-            )
-        result = await connector.attachment_text(
-            tenant_id, connection_id, message_id, attachment_id
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    async def send_email(args: dict[str, Any]) -> str:
-        connection_id = str(args.get("connection_id") or "")
-        to = str(args.get("to") or "")
-        subject = str(args.get("subject") or "")
-        body = str(args.get("body") or "")
-        if not connection_id or not to or not subject or not body:
-            return _error("send_email 需要 connection_id/to/subject/body")
-        detail = await connector.send_email(tenant_id, connection_id, to, subject, body)
-        return json.dumps({"sent": True, "detail": detail}, ensure_ascii=False)
-
-    return [
-        ToolSpec(
-            name="list_connections",
-            description="列出当前租户已连接的外部账号(id/account/provider/status)",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-            handler=list_connections,
-        ),
-        ToolSpec(
-            name="fetch_emails",
-            description="读取指定连接的收件箱最近邮件(只读)",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "connection_id": {
-                        "type": "string",
-                        "description": "list_connections 返回的连接 id",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": MAX_FETCH_LIMIT,
-                        "description": "读取封数,默认 5",
-                    },
-                },
-                "required": ["connection_id"],
-                "additionalProperties": False,
-            },
-            handler=fetch_emails,
-        ),
-        ToolSpec(
-            name="list_email_attachments",
-            description="列出某封邮件的附件(只读;附件 id 用于读取文本)",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "connection_id": {"type": "string"},
-                    "message_id": {"type": "string"},
-                },
-                "required": ["connection_id", "message_id"],
-                "additionalProperties": False,
-            },
-            handler=list_attachments,
-        ),
-        ToolSpec(
-            name="fetch_email_attachment_text",
-            description="把邮件附件解析为文本(PDF/docx/xlsx/文本,只读)",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "connection_id": {"type": "string"},
-                    "message_id": {"type": "string"},
-                    "attachment_id": {"type": "string"},
-                },
-                "required": ["connection_id", "message_id", "attachment_id"],
-                "additionalProperties": False,
-            },
-            handler=attachment_text,
-        ),
-        ToolSpec(
-            name="send_email",
-            description=(
-                "通过已有连接发送邮件(危险操作:对外不可撤回,需人工确认后才执行)"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "connection_id": {
-                        "type": "string",
-                        "description": "list_connections 返回的连接 id",
-                    },
-                    "to": {"type": "string", "description": "收件人邮箱"},
-                    "subject": {"type": "string", "description": "主题"},
-                    "body": {"type": "string", "description": "正文"},
-                },
-                "required": ["connection_id", "to", "subject", "body"],
-                "additionalProperties": False,
-            },
-            handler=send_email,
-            risk=ToolRisk.DANGER,
-        ),
-    ]
-
-
 def document_specs(documents: DocumentLibrary) -> list[ToolSpec]:
     """本地文档库:列文档 / 读文档(只读,目录受限)。"""
 
@@ -362,38 +212,6 @@ def document_specs(documents: DocumentLibrary) -> list[ToolSpec]:
     ]
 
 
-def calendar_specs(calendar: CalendarFeed) -> list[ToolSpec]:
-    """日历:列事件(只读;不展开 RRULE,重复事件只出现一次)。"""
-
-    async def list_calendar_events(args: dict[str, Any]) -> str:
-        events = await calendar.events(
-            limit=_int_arg(args, "limit", 20, maximum=MAX_EVENT_LIMIT)
-        )
-        return json.dumps(
-            {"events": [asdict(event) for event in events]}, ensure_ascii=False
-        )
-
-    return [
-        ToolSpec(
-            name="list_calendar_events",
-            description="列出日历事件(按开始时间排序,只读;重复规则不展开)",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": MAX_EVENT_LIMIT,
-                        "description": "返回条数,默认 20",
-                    }
-                },
-                "additionalProperties": False,
-            },
-            handler=list_calendar_events,
-        )
-    ]
-
-
 def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
     """企业知识库检索(只读):让模型先查资料再回答。"""
 
@@ -448,20 +266,14 @@ def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
 def build_tools(
     tenant_id: str,
     *,
-    connector: Connector | None = None,
     documents: DocumentLibrary | None = None,
-    calendar: CalendarFeed | None = None,
     knowledge: Knowledge | None = None,
     code_roots: list[str] | None = None,
 ) -> ToolRegistry:
     """汇总已配置提供方的工具;未配置的能力不暴露(能力即权限边界)。"""
     specs: list[ToolSpec] = []
-    if connector is not None:
-        specs += connector_specs(tenant_id, connector)
     if documents is not None:
         specs += document_specs(documents)
-    if calendar is not None:
-        specs += calendar_specs(calendar)
     if knowledge is not None:
         specs += knowledge_specs(tenant_id, knowledge)
     if code_roots:

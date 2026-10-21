@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
 
-VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
+VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
 
 
 def _make_failed_run(client: TestClient) -> str:
@@ -19,7 +19,7 @@ def _make_failed_run(client: TestClient) -> str:
 
 
 def _failing_llm() -> FakeLLM:
-    return FakeLLM(["# 计划:汇总邮件", "执行"], fail_on_call=2)
+    return FakeLLM(["# 计划:整理日程", "执行"], fail_on_call=2)
 
 
 def test_retry_creates_child_run_with_inherited_context(tmp_path: Path) -> None:

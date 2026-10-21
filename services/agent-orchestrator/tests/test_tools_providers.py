@@ -10,7 +10,7 @@ from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
 from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
 
-VERIFY_PASS = '{"summary": "ok", "verdicts": {"邮件已汇总": true}}'
+VERIFY_PASS = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
 
 
 def _doc_app(tmp_path: Path, fake: FakeLLM, library: DocumentLibrary) -> TestClient:

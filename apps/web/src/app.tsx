@@ -8,7 +8,6 @@ import { siteUrl } from '@/lib/site-links';
 import { AboutPage } from '@/pages/about';
 import { CallbackPage } from '@/pages/callback';
 import { ChangesPage } from '@/pages/changes';
-import { ConnectorsPage } from '@/pages/connectors';
 import { ChatPage } from '@/pages/chat';
 import { KnowledgePage } from '@/pages/knowledge';
 import { LoginPage } from '@/pages/login';
@@ -46,7 +45,6 @@ export function App() {
           <Route index element={<ChatPage />} />
           <Route path="runs" element={<RunsPage />} />
           <Route path="changes" element={<ChangesPage />} />
-          <Route path="connectors" element={<ConnectorsPage />} />
           <Route path="mcp" element={<McpPage />} />
           <Route path="knowledge" element={<KnowledgePage />} />
           <Route path="settings" element={<SettingsPage />} />

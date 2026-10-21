@@ -140,29 +140,33 @@ def test_tool_role_message_shape_passthrough(client: TestClient, monkeypatch) ->
         "/v1/completions",
         json={
             "messages": [
-                {"role": "user", "content": "看邮件"},
+                {"role": "user", "content": "看文档"},
                 {
                     "role": "assistant",
                     "tool_calls": [
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "fetch_emails", "arguments": "{}"},
+                            "function": {"name": "list_documents", "arguments": "{}"},
                         }
                     ],
                 },
-                {"role": "tool", "tool_call_id": "call_1", "content": '{"emails":[]}'},
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": '{"documents":[]}',
+                },
             ]
         },
     )
     assert resp.status_code == 200
     sent = captured["messages"]
-    assert sent[1]["tool_calls"][0]["function"]["name"] == "fetch_emails"
+    assert sent[1]["tool_calls"][0]["function"]["name"] == "list_documents"
     assert "content" not in sent[1]  # None 字段不落进请求
     assert sent[2] == {
         "role": "tool",
         "tool_call_id": "call_1",
-        "content": '{"emails":[]}',
+        "content": '{"documents":[]}',
     }
 
 

@@ -626,7 +626,7 @@ async def retry_run(
         "run.retry.requested.v1",
         {"new_run_id": child.id, "failures": 1, "reason": parent.status_reason},
     )
-    # 继承计划 → 直接进审批闸(人工再确认后才执行;副作用如已发邮件不会被自动撤销)
+    # 继承计划 → 直接进审批闸(人工再确认后才执行;已产生的外部副作用不会被自动撤销)
     if jobs_enabled:
         await jobs_service.enqueue(session, tenant_id, "plan", child.id)
     else:

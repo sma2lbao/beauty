@@ -22,12 +22,12 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services import skill_packages
 from tests.conftest import OTHER, TENANT, FakeWorkspace, _settings, verifier
 
-SKILL_MD = "# 周报生成\n\n按模板汇总本周邮件。\n"
+SKILL_MD = "# 周报生成\n\n按模板整理本周日程。\n"
 BASE_MANIFEST: dict[str, Any] = {
     "id": "team.weekly-report",
     "version": "1.0.0",
     "title": "周报生成",
-    "description": "汇总本周邮件并生成周报",
+    "description": "整理本周日程并生成周报",
     "entrypoint": ["python", "scripts/run.py"],
     "runtime": "python",
     "network": "deny",
@@ -145,7 +145,7 @@ def test_skills_list_merges_builtin_and_uploaded(
     assert "skill_run" in uploaded["tools"]
     assert "code_read_file" in uploaded["tools"]
     assert uploaded["system_prompt"].startswith("# 周报生成")
-    builtin = by_id["office.email-summary"]
+    builtin = by_id["coding.repo-readonly-review"]
     assert builtin["source"] == "builtin"
     assert builtin["has_scripts"] is False
 
@@ -184,7 +184,7 @@ def test_duplicate_version_conflict(pkg_client: TestClient) -> None:
 
 
 def test_builtin_id_conflict(pkg_client: TestClient) -> None:
-    data = plain_zip({**BASE_MANIFEST, "id": "office.email-summary"})
+    data = plain_zip({**BASE_MANIFEST, "id": "coding.repo-readonly-review"})
     response = upload(pkg_client, data)
     assert response.status_code == 409
     assert response.json()["code"] == "skill.id_conflict"

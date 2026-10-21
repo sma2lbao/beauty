@@ -32,7 +32,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是
   审计凭据,不能被"重试"改写。重试派生新 run 继承已批准计划(计划节点检测到
   已有计划会短路,所以只重走审批闸、不重复调用模型);重试后仍需人工放行,
-  已产生的副作用(如已发邮件)不会被自动撤销;
+  已产生的外部副作用不会被自动撤销;
 - `/healthz` `/readyz`:存活/就绪探针;
 - schema 管理:alembic(async env,DB URL 与运行服务同源,见 `migrations/env.py`);
   `uv run alembic upgrade head` / `uv run alembic downgrade base`,命名约定保证回滚无损;
@@ -48,19 +48,17 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
 - 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
   耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
 - 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——
-  模型请求工具 → 工具注册表(`services/tools.py`)执行 → 结果回喂模型,≤3 轮;
+  模型请求工具 → 工具注册表(`services/tools.py`)执行 → 结果回喂模型,≤5 轮;
   **能力按提供方分组,未开启的不暴露**(能力即权限边界):
-  - 连接器:`list_connections`/`fetch_emails`(只读)、`send_email`(写操作);
   - 本地文档库(`DOCUMENTS_ENABLED`):`list_documents`/`read_document`
     (受限目录只读,后缀白名单、越界/绝对路径拒绝、超限拒读);
-  - 日历(`CALENDAR_ENABLED`,ICS):`list_calendar_events`(不展开 RRULE);
   - 企业知识库(`KNOWLEDGE_ENABLED`):`search_knowledge`——经 knowledge-service
     向量检索,让模型"先查资料再回答"(`docs/architecture.md` §9);
     **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
     `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
 - 确认闸只拦**危险操作**(§6.2):工具按 `ToolRisk` 分级——`READ` 直接执行;
   `WRITE`(受控 workspace 文件、沙箱内技能执行、已信任 MCP)在各自权限边界内
-  **自动执行**;`DANGER`(发信等对外不可逆、未信任 MCP)**绝不直接执行**——
+  **自动执行**;`DANGER`(对外不可逆写操作、未信任 MCP)**绝不直接执行**——
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
@@ -69,7 +67,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   (OIDC 发现 + JWKS,RS256;自建 IdP 即 account-service :8001),租户取自
   token claim(默认 `tenant_id`)——**开启时伪造 `X-Tenant-Id` 无效**;显式
   关闭鉴权(仅特殊部署)才沿用临时头,缺失即 401 `auth.header_missing`;
-- 服务间调用 token(§5):本服务对下游(connector/knowledge/workspace)的内部
+- 服务间调用 token(§5):本服务对下游(knowledge/workspace)的内部
   调用**一律**经 `TokenBroker`(`services/token_broker.py`)用共享内部密钥
   (`INTERNAL_AUTH_SECRET`,配置 `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,
   与 account 的 `ACCOUNT__INTERNAL_SECRET` 一致)向 account 的

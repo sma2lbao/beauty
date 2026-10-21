@@ -318,7 +318,7 @@ export function RunDetail({
           <textarea
             aria-label="追加指令"
             rows={2}
-            placeholder="例如:顺便把日历也汇总一下"
+            placeholder="例如:顺便把文档要点也汇总一下"
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             className={cn(CONSOLE_TEXTAREA, 'mt-2')}

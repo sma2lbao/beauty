@@ -19,7 +19,7 @@ const diff = [
 
 describe('parseUnifiedDiff', () => {
   it('普通正文不当作 diff', () => {
-    expect(parseUnifiedDiff('# 周报\n\n- 邮件已汇总')).toBeNull();
+    expect(parseUnifiedDiff('# 周报\n\n- 日程已汇总')).toBeNull();
   });
 
   it('解析 hunk 与增删行,并维护两侧行号', () => {

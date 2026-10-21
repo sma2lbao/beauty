@@ -33,9 +33,9 @@ describe('skillsApi', () => {
       'application/json',
     );
 
-    const getMock = mockFetch(200, { id: 'office.email-summary' });
-    await skillsApi.get('office.email-summary');
-    expect(callOf(getMock)[0]).toBe('/api/v1/skills/office.email-summary');
+    const getMock = mockFetch(200, { id: 'coding.repo-readonly-review' });
+    await skillsApi.get('coding.repo-readonly-review');
+    expect(callOf(getMock)[0]).toBe('/api/v1/skills/coding.repo-readonly-review');
   });
 
   it('上传技能包:multipart 字段 file,不设置 JSON Content-Type', async () => {

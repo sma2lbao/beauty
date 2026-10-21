@@ -13,8 +13,8 @@ from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.services.artifacts import build_store
 from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
 
-VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
-DELIVERY = "# 本周周报\n\n邮件已汇总。\n"
+VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
+DELIVERY = "# 本周周报\n\n日程已整理。\n"
 
 
 def _fake_llm() -> FakeLLM:

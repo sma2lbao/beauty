@@ -6,9 +6,9 @@ from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
 
 
 def test_llm_delivery_persisted_with_event(tmp_path) -> None:
-    verify_pass = '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}'
-    delivery = "# 本周周报\n\n- 邮件已汇总\n"
-    fake = FakeLLM(["# 计划", "执行结果:邮件已汇总", verify_pass, delivery])
+    verify_pass = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
+    delivery = "# 本周周报\n\n- 日程已整理\n"
+    fake = FakeLLM(["# 计划", "执行结果:日程已整理", verify_pass, delivery])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
         client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
@@ -65,7 +65,7 @@ def test_artifact_missing_and_tenant_isolation(client: TestClient) -> None:
 
 def test_failed_run_has_no_artifact(tmp_path) -> None:
     """failed 终态不产交付物:取件 404,事件流也无 delivered(诚实语义)。"""
-    fail_json = '{"summary": "仍未达标", "verdicts": {"邮件已汇总": false}}'
+    fail_json = '{"summary": "仍未达标", "verdicts": {"日程已整理": false}}'
     fake = FakeLLM(["# 计划", "执行", fail_json, "执行", fail_json, "执行", fail_json])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)

@@ -8,7 +8,7 @@ from tests.conftest import TENANT
 def _create(client: TestClient) -> dict:
     body = {
         "title": "周报",
-        "goal": "汇总本周邮件生成周报",
+        "goal": "整理本周日程生成周报",
         "acceptance_criteria": ["覆盖 5 个工作日", "不超过 300 字"],
     }
     resp = client.post("/api/v1/runs", json=body, headers=TENANT)
@@ -29,7 +29,7 @@ def test_plan_then_approve_full_lifecycle(client: TestClient) -> None:
     assert resp.status_code == 200
     planned = resp.json()
     assert planned["status"] == "awaiting_approval"
-    assert "汇总本周邮件生成周报" in planned["plan_markdown"]
+    assert "整理本周日程生成周报" in planned["plan_markdown"]
     assert "- [ ] 覆盖 5 个工作日" in planned["plan_markdown"]
     assert _event_types(client, run_id) == ["run.created.v1", "run.planned.v1"]
 

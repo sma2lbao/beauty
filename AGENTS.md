@@ -15,7 +15,7 @@
 | `packages/events`             | `events`                | Python 库    | 事件信封(含租户)、进程内总线、事务性 outbox(仓储/dispatcher)、消费幂等;hatchling + pytest + ruff                                                                                        |
 | `services/agent-orchestrator` | `agent-orchestrator`    | Python 服务  | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A)                                                                                                                     |
 | `services/llm-gateway`        | `llm-gateway`           | Python 服务  | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                                                                                                                     |
-| `services/connector-service`  | `connector-service`     | Python 服务  | FastAPI + uvicorn(:8004):外部系统连接器(邮件优先,IMAP 授权码)与凭证管理                                                                                                                 |
+| `services/connector-service`  | `connector-service`     | Python 服务  | FastAPI + uvicorn(:8004):连接器框架(当前无内置连接器:保留健康探针、连接列表/详情/撤销与凭证加密;邮件与日历能力均已下线)                                                                                                                 |
 | `services/knowledge-service`  | `knowledge-service`     | Python 服务  | FastAPI + uvicorn(:8006):文档知识库(分块/嵌入/检索;嵌入提供方可插拔)                                                                                                                    |
 | `services/account-service`    | `account-service`       | Python 服务  | FastAPI + uvicorn(:8001):用户/组织/配额/套餐 + sessions/devices(自建认证:注册/邮箱密码登录/旋转式刷新令牌/内部签发 + OIDC 发现/JWKS,签名密钥可经 `SIGNING_KEY_PATH` 持久化,见其 README) |
 | `services/workspace-service`  | `workspace-service`     | Python 服务  | FastAPI + uvicorn(:8005):工作区/交付物元数据/对象存储(沙箱生命周期阶段 B)                                                                                                               |
@@ -80,7 +80,7 @@ npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 npx nx run bff:serve                 # uvicorn :8007(FastAPI BFF,同源 /api)
 ```
 
-`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`bff` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试注入 FakeTransport(传输工厂可注入),零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
+`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`bff` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB;`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试只覆盖连接列表/撤销与鉴权,零网络;`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 

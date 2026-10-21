@@ -8,7 +8,7 @@
 
 为什么不做成持久化的通知表:当前诉求是"页面开着也能跨标签页/跨会话及时提醒",
 事件本身已经在 run_events 里可回放,通知只是它的一个"提醒投影"。
-真需要"关页面也能收"时(邮件/桌面推送),再落 notifications 表接 outbox。
+真需要"关页面也能收"时(系统通知/桌面推送),再落 notifications 表接 outbox。
 """
 
 from __future__ import annotations

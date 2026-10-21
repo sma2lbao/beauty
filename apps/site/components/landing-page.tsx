@@ -364,13 +364,13 @@ const PREVIEW_NAV = [
 
 const PREVIEW_STEPS = [
   {
-    title: '扫描收件箱与线程关系',
-    meta: '完成 · 1.8s · 42 封邮件',
+    title: '检索知识库与关联文档',
+    meta: '完成 · 1.8s · 12 篇文档',
     done: true,
   },
-  { title: '汇总邮件要点与待办', meta: '完成 · 2.1s', done: true },
+  { title: '整理文档要点与待办', meta: '完成 · 2.1s', done: true },
   { title: '生成周报草稿', meta: '完成 · 0.9s', done: true },
-  { title: '等待确认发送邮件', meta: '运行中 · 3.2s', active: true },
+  { title: '等待确认对外发布', meta: '运行中 · 3.2s', active: true },
   { title: '归档并交付周报', meta: '排队中', done: false },
 ];
 
@@ -418,7 +418,7 @@ function ProductPreview() {
             </span>
             {[
               {
-                title: '整理本周邮件成周报',
+                title: '把本周文档整理成周报',
                 meta: '运行中 · 12 分钟前',
                 tone: 'bg-ha-info',
               },
@@ -437,7 +437,7 @@ function ProductPreview() {
                 key={item.title}
                 className={cn(
                   'flex items-start gap-1.5 rounded-md px-1.5 py-1.5',
-                  item.title === '整理本周邮件成周报' && 'bg-[#1c1d1f]',
+                  item.title === '把本周文档整理成周报' && 'bg-[#1c1d1f]',
                 )}
               >
                 <span
@@ -487,7 +487,7 @@ function ProductPreview() {
                 你 · 12:04
               </span>
               <p className="mt-1 text-[10px] leading-4 text-ha-text-body sm:text-[11px]">
-                把本周邮件整理成周报,顺带列出需要我回复的邮件。
+                把本周文档整理成周报,顺带列出需要我确认的待办。
               </p>
             </div>
             <div className="flex flex-col gap-2">
@@ -503,16 +503,16 @@ function ProductPreview() {
                 </span>
               </span>
               <p className="text-[10px] leading-4 text-ha-text-2">
-                已读完 42
-                封邮件,按项目归了三类;周报草稿在生成,发信前会等你确认。
+                已读完本周 12
+                篇文档,按项目归了三类;周报草稿在生成,对外写入前会等你确认。
               </p>
               <div className="flex items-center gap-2 rounded-md border border-ha-border bg-ha-panel px-2 py-1.5">
                 <Terminal className="h-2.5 w-2.5 text-ha-muted" />
                 <span className="font-mono text-[8px] font-medium text-ha-text-body">
-                  fetch_emails
+                  search_knowledge
                 </span>
                 <span className="truncate font-mono text-[8px] text-ha-dim">
-                  limit=20
+                  top_k=8
                 </span>
                 <span className="ml-auto font-mono text-[8px] font-medium text-ha-success">
                   完成 · 0.6s

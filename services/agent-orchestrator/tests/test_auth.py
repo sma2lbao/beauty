@@ -79,7 +79,7 @@ def test_tenant_from_token_and_isolation(tmp_path, jwks, private_key) -> None:
     with _auth_client(tmp_path, jwks) as client:
         created = client.post(
             "/api/v1/runs",
-            json={"title": "周报", "goal": "汇总邮件"},
+            json={"title": "周报", "goal": "整理日程"},
             headers=_bearer(_token(private_key, tenant="t-1")),
         )
         assert created.status_code == 201

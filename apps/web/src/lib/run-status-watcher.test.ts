@@ -10,8 +10,8 @@ import {
 function run(id: string, status: RunStatus, conversationId: string | null): Run {
   return {
     id,
-    title: '整理本周邮件为周报',
-    goal: '整理本周邮件为周报',
+    title: '整理本周日程为周报',
+    goal: '整理本周日程为周报',
     status,
     rounds: 0,
     attempts: 1,
@@ -97,7 +97,7 @@ describe('pushRunNotifications', () => {
     expect(pushed[0]).toMatchObject({
       tone: 'danger',
       title: '任务失败',
-      description: '整理本周邮件为周报',
+      description: '整理本周日程为周报',
       to: '/?conversation=c9',
       ttlMs: 0,
     });
@@ -135,7 +135,7 @@ describe('pushServerNotification', () => {
       run_id: 'r1',
       conversation_id: 'c1',
       title: '周报',
-      goal: '把邮件整理成周报',
+      goal: '把日程整理成周报',
       updated_at: null,
     };
     expect(pushServerNotification({ ...base, status: 'running' }, push, null))
@@ -157,7 +157,7 @@ describe('pushServerNotification', () => {
         run_id: 'r1',
         conversation_id: 'c9',
         title: '周报',
-        goal: '把邮件整理成周报',
+        goal: '把日程整理成周报',
         status: 'failed',
         updated_at: null,
       },

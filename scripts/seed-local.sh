@@ -97,7 +97,7 @@ seed_artifacts() {
 }
 seed_artifacts "【本地演示】本周周报" "# 本周周报
 
-- 邮件已汇总
+- 文档已汇总
 - 待办已排优先级
 - 下周计划已生成" "markdown"
 seed_artifacts "【本地演示】周报改动" "--- a/weekly.md
@@ -111,11 +111,11 @@ seed_artifacts "【本地演示】预览图" "data:image/png;base64,iVBORw0KGgoA
 
 # 4) 一个演示 run(幂等;失败不阻塞 seed)
 runs=$(curl -sS "$ORCHESTRATOR_URL/api/v1/runs?limit=100" -H "Authorization: Bearer $TOKEN")
-run_exists=$(printf '%s' "$runs" | python3 -c 'import json,sys; title="【本地演示】整理本周邮件"; print(any(item.get("title")==title for item in json.load(sys.stdin)))')
+run_exists=$(printf '%s' "$runs" | python3 -c 'import json,sys; title="【本地演示】整理本周文档"; print(any(item.get("title")==title for item in json.load(sys.stdin)))')
 if [ "$run_exists" = "True" ]; then
   echo "演示 run 已存在,跳过"
 else
-  status=$(auth_request POST "$ORCHESTRATOR_URL/api/v1/runs" '{"title":"【本地演示】整理本周邮件","goal":"把本周邮件整理成周报","acceptance_criteria":["有周报正文"]}')
+  status=$(auth_request POST "$ORCHESTRATOR_URL/api/v1/runs" '{"title":"【本地演示】整理本周文档","goal":"把本周文档整理成周报草稿","acceptance_criteria":["有周报草稿正文"]}')
   if [ "$status" = "201" ] || [ "$status" = "200" ]; then
     run_id=$(json_get id < "$tmp/response.json")
     echo "已创建 run:$run_id"
