@@ -22,7 +22,7 @@ from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history
 from agent_orchestrator.services.llm import LLMClient
 
-MAX_CHAT_TOOL_ROUNDS = 3  # 对话内 function-calling 轮次上限
+MAX_CHAT_TOOL_ROUNDS = 5  # 对话内 function-calling 轮次上限
 
 CHAT_SYSTEM_PROMPT = (
     "你是对话助手。可以调用提供的只读工具查询信息(如邮件、文档、日历、"
@@ -94,7 +94,8 @@ async def run_tool_loop(
     产出 ("tool", {name, arguments, ok}) 事件供流式层转发;最终一轮产出
     ("content", 正文)。只读与受控写工具自动执行;**危险操作(DANGER)不执行**,
     回喂错误文本引导走任务路径(对话没有审批流)。
-    轮次达上限仍无正文时,用最后收到的模型输出兜底(可能为空)。
+    轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
+    工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底。
     """
     schemas = toolkit.schemas()
     last_text = ""
@@ -122,6 +123,9 @@ async def run_tool_loop(
                     "ok": not output.startswith('{"error"'),
                 },
             )
+    # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里
+    reply = await llm.complete(messages)
+    last_text = reply.content or last_text
     yield "content", last_text
 
 

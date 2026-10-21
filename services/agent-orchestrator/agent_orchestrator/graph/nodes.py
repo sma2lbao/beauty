@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     ToolkitFactory = Callable[[str], ToolRegistry]
     ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
-MAX_TOOL_ROUNDS = 3  # execute 内 function-calling 轮次上限
+MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
 
 PLAN_SYSTEM_PROMPT = (
@@ -258,7 +258,8 @@ def make_execute_node(
 
     - llm=None:确定性桩(dev/测试零外部依赖);
     - 无工具:单轮结果小结;
-    - 有工具:≤MAX_TOOL_ROUNDS 轮。只读与受控写工具(READ/WRITE)直接执行
+    - 有工具:≤MAX_TOOL_ROUNDS 轮;轮次用尽再补一次不带工具的收束调用。
+      只读与受控写工具(READ/WRITE)直接执行
       并回喂;**危险操作(DANGER)一律不执行**,收集进 pending_writes 交确认闸
       中断等人工放行(§6.2)——放行后由 tool_exec 执行并回喂同一消息流。
     """
@@ -284,9 +285,11 @@ def make_execute_node(
         schemas = toolkit.schemas()
         records: list[dict[str, Any]] = []
         reply = LLMReply(content="")
+        exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
             reply = await llm.complete(messages, tools=schemas)
             if not reply.tool_calls:
+                exhausted = False
                 break
             messages.append(_assistant_tool_message(reply))
             pending: list[dict[str, Any]] = []
@@ -311,6 +314,10 @@ def make_execute_node(
                     "pending_writes": pending,
                     "tool_calls": records,
                 }
+        if exhausted and records:
+            # 轮次用尽仍在要工具:再给一次"不带工具"的收束调用,把已拿到的
+            # 工具结果收敛成正文;否则下游只能拿到空正文,误报成"没读到内容"。
+            reply = await llm.complete(messages)
         text = reply.content or f"(调用工具 {len(records)} 次后模型未给出结论)"
         return {
             "results": [text],

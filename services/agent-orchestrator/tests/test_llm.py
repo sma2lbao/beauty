@@ -280,6 +280,43 @@ def test_execute_tool_loop_feeds_result_back(tmp_path) -> None:
         assert types.index("run.tool.called.v1") < types.index("run.completed.v1")
 
 
+def test_execute_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
+    """execute 轮次用尽仍在要工具:补一次不带工具的收束,别把成功读到的结果丢掉。"""
+    tool_reply = LLMReply(
+        content="",
+        tool_calls=(ToolCall(id="call_1", name="list_connections", arguments="{}"),),
+    )
+    # 每一轮都只要工具(不收敛):execute 会用满 MAX_TOOL_ROUNDS 轮
+    fake = FakeLLM(
+        [
+            "# 执行计划(LLM)",
+            tool_reply,
+            tool_reply,
+            tool_reply,
+            tool_reply,
+            tool_reply,
+            "已读取:4 个画板",
+            '{"summary": "验收通过", "verdicts": {"邮件已汇总": true}}',
+            "# 交付物",
+        ]
+    )
+    connector = FakeConnector()
+    with _tool_client(tmp_path, fake, connector) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        assert run["status"] == "completed"
+
+        # 第 6 次调用(index 6)是收束调用:没有下发工具
+        assert fake.tools_seen[6] is None
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        tool_events = [e for e in events if e["type"] == "run.tool.called.v1"]
+        assert len(tool_events) == 5
+        completed = next(e for e in events if e["type"] == "run.completed.v1")
+        assert completed["payload"]["results"][0] == "已读取:4 个画板"
+        assert "未给出结论" not in str(completed["payload"]["results"])
+
+
 def test_tool_error_fed_back_to_model(tmp_path) -> None:
     """工具执行失败不炸图:错误文本回喂模型,事件记为 ok=false。"""
     tool_reply = LLMReply(

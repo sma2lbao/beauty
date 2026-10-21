@@ -43,9 +43,9 @@ def _stream(client: TestClient, conversation_id: str, content: str, mode="chat")
         name = data = None
         for line in frame.split("\n"):
             if line.startswith("event: "):
-                name = line[len("event: "):]
+                name = line[len("event: ") :]
             elif line.startswith("data: "):
-                data = line[len("data: "):]
+                data = line[len("data: ") :]
         if name and data:
             events.append((name, json.loads(data)))
     return resp, events
@@ -145,27 +145,35 @@ def test_chat_without_toolkit_is_plain_answer(tmp_path) -> None:
         assert fake.tools_seen[0] is None
 
 
-def test_chat_tool_rounds_cap_falls_back_to_last_text(tmp_path) -> None:
-    """轮次达上限仍在要工具:用最后收到的正文兜底,不再调模型。"""
+def test_chat_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
+    """轮次达上限仍在要工具:补一次不带工具的收束调用,不把空正文当答案。"""
     connector = FakeConnector()
     # 每一轮都请求工具(不收敛),但带上正文
     replies = [
         LLMReply(
             content=f"第 {i} 轮小结",
-            tool_calls=(ToolCall(id=f"call-{i}", name="fetch_emails",
-                                 arguments='{"connection_id": "conn-1"}'),),
+            tool_calls=(
+                ToolCall(
+                    id=f"call-{i}",
+                    name="fetch_emails",
+                    arguments='{"connection_id": "conn-1"}',
+                ),
+            ),
         )
-        for i in range(1, 4)
+        for i in range(1, 6)
     ]
+    replies.append("收束:邮件已读取,共 1 封")
     fake = FakeLLM(replies)
     for client in _tool_client(tmp_path, fake, connector):
         conversation_id = _create_conversation(client)
 
         _, events = _stream(client, conversation_id, "查邮件")
 
-        # 模型只被调了 3 轮(上限),tool 事件 3 个,delta 拼出最后正文
-        assert len(fake.calls) == 3
+        # 5 轮工具调用(上限)+ 1 次不带工具的收束调用
+        assert len(fake.calls) == 6
         tool_events = [data for name, data in events if name == "tool"]
-        assert len(tool_events) == 3
+        assert len(tool_events) == 5
+        # 收束那次不下发工具,逼模型用已有结果写结论
+        assert fake.tools_seen[-1] is None
         deltas = "".join(data["text"] for name, data in events if name == "delta")
-        assert deltas == "第 3 轮小结"
+        assert deltas == "收束:邮件已读取,共 1 封"
