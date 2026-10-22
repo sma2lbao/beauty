@@ -17,6 +17,7 @@ from common.middleware import (
     inject_request_headers,
     install_app_error_handler,
 )
+from common.observability import install_observability
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -34,6 +35,8 @@ from bff.core.security import SessionCodec
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
+    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
+    install_observability(app, settings)
     transport = app.state.transport
     app.state.upstream_client = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=5.0),

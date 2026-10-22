@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
+from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 
@@ -57,6 +58,12 @@ def _extra(data: CompletionRequest) -> dict[str, Any]:
     return extra
 
 
+def _observe_upstream(model: str, code: str) -> None:
+    """网关是模型上游的唯一出口:失败按 provider(模型前缀)+ code 计数。"""
+    provider = str(model).split("/", 1)[0] or "unknown"
+    metrics.observe_llm_error(provider=provider, code=code)
+
+
 def _provider_kwargs(settings: Settings) -> dict[str, Any]:
     """把平台配置的模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。"""
     extra: dict[str, Any] = {}
@@ -100,6 +107,7 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
             **extra,
         )
     except Exception as exc:
+        _observe_upstream(model, "llm.upstream_error")
         raise UpstreamError(
             "llm.upstream_error",
             f"模型调用失败:{exc}",
@@ -145,6 +153,7 @@ async def stream(
             **extra,
         )
     except Exception as exc:
+        _observe_upstream(model, "llm.upstream_error")
         yield CompletionChunk(
             error=StreamError(code="llm.upstream_error", message=f"模型调用失败:{exc}")
         )
@@ -161,6 +170,7 @@ async def stream(
                 parts.append(delta)
                 yield CompletionChunk(delta=delta)
     except Exception as exc:
+        _observe_upstream(model, "llm.upstream_error")
         yield CompletionChunk(
             error=StreamError(code="llm.upstream_error", message=f"流式调用中断:{exc}")
         )

@@ -16,6 +16,7 @@ from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.logging import get_logger, setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
+from common.observability import install_observability
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
@@ -76,6 +77,8 @@ ToolkitFactory = Callable[[str], ToolRegistry]
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
+    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
+    install_observability(app, settings)
     app.state.skills = load_skills(settings.skills_dir or None)
 
     key_verifier: ApiKeyVerifier | None = app.state.api_key_verifier

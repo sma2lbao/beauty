@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from common import metrics
 from common.logging import bind_request_context, clear_request_context
 from database.session import session_scope
 from fastapi import FastAPI
@@ -127,6 +128,7 @@ async def process_one(app: FastAPI) -> bool:
             async with session_scope(factory) as session:
                 repo = JobRepository(session)
                 job = await repo.require_for_tenant(tenant_id, job_id)
+                metrics.observe_job_failure(kind=job.kind)
                 job.last_error = f"{type(exc).__name__}: {exc}"[:1000]
                 job.lease_until = None
                 if job.attempts >= job.max_attempts:

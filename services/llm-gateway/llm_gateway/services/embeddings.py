@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import litellm
+from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 
@@ -34,6 +35,10 @@ async def embed(settings: Settings, data: EmbeddingRequest) -> EmbeddingResponse
             timeout=settings.request_timeout_seconds,
         )
     except Exception as exc:
+        metrics.observe_llm_error(
+            provider=str(model).split("/", 1)[0] or "unknown",
+            code="llm.embedding_error",
+        )
         raise UpstreamError(
             "llm.embedding_error",
             f"嵌入调用失败:{exc}",

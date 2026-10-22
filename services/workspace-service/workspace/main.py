@@ -15,6 +15,7 @@ from common.artifacts import ArtifactStore, build_artifact_store
 from common.auth import JwtVerifier
 from common.logging import setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
+from common.observability import install_observability
 from database.base import Base
 from database.session import create_session_factory
 from fastapi import FastAPI
@@ -52,6 +53,8 @@ async def _sandbox_reaper_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
+    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
+    install_observability(app, settings)
     factory = create_session_factory(settings.database_url)
     app.state.session_factory = factory
     if settings.auto_create_tables:

@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from common import metrics
 from common.artifacts import ArtifactStore
 from common.errors import ConflictError
 from events.envelope import EventEnvelope
@@ -219,6 +220,7 @@ async def _fail_run(
     """
     run.status = RunStatus.FAILED.value
     run.status_reason = f"{type(exc).__name__}: {exc}"[:500]
+    metrics.observe_run_outcome(status=RunStatus.FAILED.value)
     await append_event(
         session,
         run,
@@ -756,6 +758,7 @@ async def _apply_graph_result(
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
         run.status = RunStatus.FAILED.value
         run.status_reason = (values.get("status_reason") or "验收未通过")[:500]
+        metrics.observe_run_outcome(status=RunStatus.FAILED.value)
         await append_event(
             session,
             run,
@@ -769,6 +772,7 @@ async def _apply_graph_result(
         await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
         return run
     run.status = RunStatus.COMPLETED.value
+    metrics.observe_run_outcome(status=RunStatus.COMPLETED.value)
     await append_event(
         session,
         run,

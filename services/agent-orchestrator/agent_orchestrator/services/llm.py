@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 from common.middleware import inject_request_headers
@@ -24,6 +25,15 @@ class ToolCall:
     id: str
     name: str
     arguments: str = "{}"
+
+
+def _upstream_error(
+    code: str, message: str, *, status: int | None = None
+) -> UpstreamError:
+    """构造上游错误并计数(P2 指标:按 provider/code 统计网关失败)。"""
+    metrics.observe_llm_error(provider="llm-gateway", code=code)
+    details = {"status": status} if status is not None else None
+    return UpstreamError(code, message, details=details)
 
 
 @dataclass(frozen=True)
@@ -118,13 +128,15 @@ class GatewayClient:
         try:
             resp = await self._client.post("/v1/completions", json=payload)
         except httpx.HTTPError as exc:
-            raise UpstreamError("llm.upstream_error", f"模型网关不可达:{exc}") from exc
+            raise _upstream_error(
+                "llm.upstream_error", f"模型网关不可达:{exc}"
+            ) from exc
         if resp.status_code != 200:
             detail = _error_detail(resp)
-            raise UpstreamError(
+            raise _upstream_error(
                 detail["code"],
                 detail["message"],
-                details={"status": resp.status_code},
+                status=resp.status_code,
             )
         data = resp.json()
         calls = _parse_tool_calls(data.get("tool_calls"))
@@ -161,10 +173,10 @@ class GatewayClient:
             if resp.status_code != 200:
                 await resp.aread()
                 detail = _error_detail(resp)
-                raise UpstreamError(
+                raise _upstream_error(
                     detail["code"],
                     detail["message"],
-                    details={"status": resp.status_code},
+                    status=resp.status_code,
                 )
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -175,7 +187,7 @@ class GatewayClient:
                     continue
                 error = data.get("error")
                 if error:
-                    raise UpstreamError(
+                    raise _upstream_error(
                         str(error.get("code") or "llm.upstream_error"),
                         str(error.get("message") or "模型流式调用失败"),
                     )

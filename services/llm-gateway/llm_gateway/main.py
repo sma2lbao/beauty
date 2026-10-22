@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from common.logging import setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
+from common.observability import install_observability
 from fastapi import FastAPI
 
 from llm_gateway.api.health import health_router
@@ -18,6 +19,8 @@ from llm_gateway.core.config import Settings
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     setup_logging(settings)
+    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
+    install_observability(app, settings)
     yield
 
 
