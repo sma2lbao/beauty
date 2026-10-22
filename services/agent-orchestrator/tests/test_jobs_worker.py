@@ -81,9 +81,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
         def wait_status(expected: str) -> dict:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                run = client.get(
-                    f"/api/v1/runs/{run_id}", headers=TENANT
-                ).json()
+                run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
                 if run["status"] == expected:
                     return run
                 time.sleep(0.02)
@@ -91,9 +89,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
 
         planned = wait_status("awaiting_approval")
         assert planned["status"] == "awaiting_approval"
-        approved = client.post(
-            f"/api/v1/runs/{run_id}/approve", headers=TENANT
-        )
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
         assert approved.status_code == 200
         completed = wait_status("completed")
         assert completed["status"] == "completed"

@@ -67,9 +67,7 @@ def test_initialize_tools_and_whoami(tmp_path: Path) -> None:
         assert "beauty.whoami" in names
         assert "beauty.list_runs" in names
 
-        whoami = _rpc(
-            client, "tools/call", {"name": "beauty.whoami", "arguments": {}}
-        )
+        whoami = _rpc(client, "tools/call", {"name": "beauty.whoami", "arguments": {}})
         assert whoami.status_code == 200
         assert "bm_live" not in whoami.text
         assert "mcp:tools:call" in whoami.text

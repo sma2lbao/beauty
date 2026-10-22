@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from common.artifacts import ArtifactStore
-from common.errors import AppError
+from common.errors import AppError, NotFoundError
 from common.logging import get_logger
 from database.session import session_scope
 from langgraph.graph.state import CompiledStateGraph
@@ -87,10 +87,86 @@ def title_from_message(content: str) -> str:
     return f"{title[:MAX_TITLE]}…" if len(title) > MAX_TITLE else title
 
 
+async def _default_workspace_id(
+    workspace: Workspace | None, tenant_id: str, *, warn: bool = True
+) -> str | None:
+    """租户默认工作区 id;客户端未启用/取不到/上游故障 → None(不阻断对话)。
+
+    warn=False 用于列表接口的懒回填:未启用工作区是合法部署形态,不必每次
+    拉列表都刷警告;建对话时(WARN)则要留下"归属缺失"的唯一线索。
+    """
+    if workspace is None:
+        if warn:
+            logger.warning(
+                "workspace client disabled, conversation has no workspace",
+                tenant_id=tenant_id,
+            )
+        return None
+    try:
+        default = await workspace.default_workspace(tenant_id)
+    except Exception as exc:  # noqa: BLE001 - 工作区故障只降级,不阻断建对话
+        if warn:
+            logger.warning(
+                "default workspace resolution failed",
+                tenant_id=tenant_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        return None
+    if not default:
+        if warn:
+            logger.warning(
+                "workspace service returned no default workspace",
+                tenant_id=tenant_id,
+            )
+        return None
+    resolved = default.get("id")
+    return str(resolved) if resolved else None
+
+
+async def resolve_workspace_id(
+    workspace: Workspace | None,
+    tenant_id: str,
+    workspace_id: str | None = None,
+) -> str | None:
+    """确定对话所属工作区:显式 id 先校验,未给则取租户默认工作区。
+
+    - 显式 id:经 workspace 客户端校验存在性,不存在 → 404 workspace.not_found;
+      客户端不可达 → 502 workspace.upstream_error(显式指定就不静默改归属);
+    - 显式 id + 客户端未启用:无法校验存在性,按原样接受并记 warning——
+      "工作区集成没开"不应该让建对话失败;
+    - 未给 id:落租户默认工作区;客户端未启用/上游故障 → None + warning 降级,
+      对话照常建(归属缺失由列表接口的懒回填兜底)。
+    """
+    if workspace_id:
+        if workspace is None:
+            logger.warning(
+                "workspace client disabled, workspace_id accepted unverified",
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+            )
+            return workspace_id
+        found = await workspace.get_workspace(tenant_id, workspace_id)
+        if found is None:
+            raise NotFoundError("workspace.not_found", "工作区不存在")
+        return workspace_id
+    return await _default_workspace_id(workspace, tenant_id)
+
+
 async def create_conversation(
-    session: AsyncSession, tenant_id: str, title: str | None = None
+    session: AsyncSession,
+    tenant_id: str,
+    title: str | None = None,
+    *,
+    workspace_id: str | None = None,
+    workspace: Workspace | None = None,
 ) -> Conversation:
-    conversation = Conversation(tenant_id=tenant_id, title=title or DEFAULT_TITLE)
+    """建对话:标题可空;workspace_id 显式给就校验,不给落租户默认工作区。"""
+    resolved = await resolve_workspace_id(workspace, tenant_id, workspace_id)
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        title=title or DEFAULT_TITLE,
+        workspace_id=resolved,
+    )
     await ConversationRepository(session).add(conversation)
     return conversation
 
@@ -110,6 +186,29 @@ def decode_cursor(cursor: str) -> str:
         raise AppError("conversation.bad_cursor", "分页游标无效") from exc
 
 
+async def _backfill_legacy_workspace(
+    repo: ConversationRepository, tenant_id: str, workspace_id: str
+) -> None:
+    """把归属为空的存量会话补到该工作区;失败只记 warning(兼容性补丁)。"""
+    try:
+        filled = await repo.backfill_workspace_id(tenant_id, workspace_id)
+    except Exception as exc:  # noqa: BLE001 - 回填失败不影响列表
+        logger.warning(
+            "conversation workspace backfill failed",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return
+    if filled:
+        logger.info(
+            "conversations backfilled with default workspace",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            count=filled,
+        )
+
+
 async def list_conversations(
     session: AsyncSession,
     tenant_id: str,
@@ -118,18 +217,33 @@ async def list_conversations(
     q: str | None = None,
     archived: bool = False,
     cursor: str | None = None,
+    workspace_id: str | None = None,
+    workspace: Workspace | None = None,
 ) -> tuple[list[Conversation], str | None]:
     """租户内最近活跃在前的对话列表(消息会顶 updated_at)。
 
     keyset 分页:多取一条判断 has_more,用最后一条 id 作下一页游标。
+
+    存量空归属的回填(一次 UPDATE,失败只记 warning,不拖挂列表):旧会话按
+    "属于租户默认工作区"处理。未给 workspace_id 时总是回填;给了过滤时只在
+    过滤的就是默认工作区时回填——默认工作区首屏因此能看到历史会话,而按其他
+    工作区过滤时既不动归属、也不会把会话泄漏到别的过滤结果里。
     """
+    repo = ConversationRepository(session)
+    # 空串按“未给”处理:?workspace_id= 不应变成“过滤一个空工作区”
+    workspace_id = workspace_id or None
+    # 尽力解析默认工作区:失败只是 None(仅影响回填,不影响过滤结果)
+    default_id = await _default_workspace_id(workspace, tenant_id, warn=False)
+    if default_id is not None and (workspace_id is None or workspace_id == default_id):
+        await _backfill_legacy_workspace(repo, tenant_id, default_id)
     before_id = decode_cursor(cursor) if cursor else None
-    rows = await ConversationRepository(session).list_recent(
+    rows = await repo.list_recent(
         tenant_id,
         limit + 1,
         q=q,
         archived=archived,
         before_id=before_id,
+        workspace_id=workspace_id,
     )
     has_more = len(rows) > limit
     items = rows[:limit]
@@ -278,6 +392,7 @@ async def _task_path(
             goal=content + attachment_context,
             acceptance_criteria=[],
             conversation_id=conversation.id,
+            workspace_id=conversation.workspace_id,
             skill_id=skill.manifest.id if skill else None,
             mcp_server_ids=list(mcp_server_ids or []),
         ),

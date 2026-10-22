@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 
 from database.repository import TenantRepository
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 
 from agent_orchestrator.models.conversations import (
     Attachment,
@@ -110,11 +110,13 @@ class ConversationRepository(TenantRepository[Conversation]):
         q: str | None = None,
         archived: bool = False,
         before_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[Conversation]:
         """租户内最近活跃在前的对话列表(活跃 = updated_at,消息会顶上去)。
 
         - 默认排除已归档/已软删;
         - q 按标题模糊搜索;
+        - workspace_id 非空时只取该工作区的会话(归属为空的历史行不混进来);
         - before_id 是游标锚点(按 updated_at + id 做 keyset,避免 offset 漂移)。
         """
         criteria: list = [Conversation.deleted_at.is_(None)]
@@ -123,6 +125,8 @@ class ConversationRepository(TenantRepository[Conversation]):
             if archived
             else Conversation.archived_at.is_(None)
         )
+        if workspace_id is not None:
+            criteria.append(Conversation.workspace_id == workspace_id)
         if q and q.strip():
             criteria.append(Conversation.title.ilike(f"%{q.strip()}%"))
         if before_id:
@@ -144,6 +148,22 @@ class ConversationRepository(TenantRepository[Conversation]):
             limit=limit,
             order_by=[Conversation.updated_at.desc(), Conversation.id.desc()],
         )
+
+    async def backfill_workspace_id(self, tenant_id: str, workspace_id: str) -> int:
+        """把租户内 workspace_id 仍为空的会话一次性归入默认工作区。
+
+        历史数据(本次改造前建的会话,以及工作区集成未启用期间建的会话)没有
+        归属,列表接口首次访问时补一次;单条 UPDATE,不逐行处理。返回更新行数。
+        """
+        result = await self.session.execute(
+            update(Conversation)
+            .where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.workspace_id.is_(None),
+            )
+            .values(workspace_id=workspace_id)
+        )
+        return int(result.rowcount or 0)
 
     async def require_active_for_tenant(
         self, tenant_id: str, conversation_id: str

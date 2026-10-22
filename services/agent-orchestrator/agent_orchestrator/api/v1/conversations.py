@@ -127,11 +127,23 @@ def _sse(name: str, data: dict[str, Any]) -> str:
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
 async def create_conversation(
-    body: ConversationCreate | None, session: DBSession, tenant_id: TenantId
+    body: ConversationCreate | None,
+    session: DBSession,
+    tenant_id: TenantId,
+    workspace: WorkspaceDep,
 ) -> ConversationRead:
-    """建对话:标题可空(首条消息自动定题)。"""
+    """建对话:标题可空(首条消息自动定题)。
+
+    工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),
+    不给则落租户默认工作区——"对话必须在工作区中"由服务层兜底。
+    """
+    data = body or ConversationCreate()
     conversation = await conversations_service.create_conversation(
-        session, tenant_id, (body or ConversationCreate()).title
+        session,
+        tenant_id,
+        data.title,
+        workspace_id=data.workspace_id,
+        workspace=workspace,
     )
     return ConversationRead.model_validate(conversation)
 
@@ -140,14 +152,18 @@ async def create_conversation(
 async def list_conversations(
     session: DBSession,
     tenant_id: TenantId,
+    workspace: WorkspaceDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     q: Annotated[str | None, Query(max_length=100)] = None,
     archived: bool = False,
     cursor: str | None = None,
+    workspace_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> ConversationPage:
     """租户内对话列表,最近活跃在前(对话页侧栏)。
 
-    q 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor。
+    q 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor;
+    workspace_id 给出时只看该工作区的会话(不给则全租户,并顺手把历史空归属
+    会话回填到默认工作区)。
     """
     conversations, next_cursor = await conversations_service.list_conversations(
         session,
@@ -156,6 +172,8 @@ async def list_conversations(
         q=q,
         archived=archived,
         cursor=cursor,
+        workspace_id=workspace_id,
+        workspace=workspace,
     )
     return ConversationPage(
         items=[ConversationRead.model_validate(item) for item in conversations],
@@ -207,6 +225,7 @@ async def get_conversation(
     return ConversationDetail(
         id=conversation.id,
         title=conversation.title,
+        workspace_id=conversation.workspace_id,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         active_run_id=active.id if active else None,

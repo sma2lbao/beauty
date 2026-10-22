@@ -70,9 +70,7 @@ def _app(
     app = create_app(
         _settings(tmp_path, name, llm_enabled=True, tools_enabled=True, **overrides),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(
-            tenant, knowledge=_knowledge()
-        ),
+        toolkit_factory=lambda tenant: build_tools(tenant, knowledge=_knowledge()),
         token_verifier=verifier(),
     )
     if downloader is not None:
@@ -100,7 +98,9 @@ def test_tool_file_url_is_captured_as_artifact(tmp_path: Path) -> None:
         run_id = _deliver(client)
 
         assert downloader.calls == [FILE_URL]
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT).json()
+        artifacts = client.get(
+            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+        ).json()
         assert [row["source"] for row in artifacts] == ["report", "mcp"]
         pdf = artifacts[1]
         assert pdf["filename"] == "report.pdf"
@@ -126,7 +126,9 @@ def test_download_failure_is_recorded_not_fatal(tmp_path: Path) -> None:
         run_id = _deliver(client)
 
         # 抓取失败不拖垮交付:run 仍 completed,报告件照常有,失败如实记账
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT).json()
+        artifacts = client.get(
+            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+        ).json()
         assert [row["source"] for row in artifacts] == ["report"]
         payload = _delivered(client, run_id)
         errors = payload["download_errors"]
@@ -142,6 +144,8 @@ def test_download_disabled_skips_capture(tmp_path: Path) -> None:
     ) as client:
         run_id = _deliver(client)
 
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT).json()
+        artifacts = client.get(
+            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+        ).json()
         assert [row["source"] for row in artifacts] == ["report"]
         assert _delivered(client, run_id)["download_errors"] == []

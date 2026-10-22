@@ -115,9 +115,7 @@ def code_specs(configured_roots: list[str]):
                 key=lambda p: str(p),
             )[:limit]
         lines = [
-            _relative(root, path)
-            + ("/" if path.is_dir() else "")
-            for path in files
+            _relative(root, path) + ("/" if path.is_dir() else "") for path in files
         ]
         return "\n".join(lines) if lines else "(空)"
 
@@ -176,9 +174,7 @@ def code_specs(configured_roots: list[str]):
                 continue
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if regex.search(line):
-                    matches.append(
-                        f"{_relative(root, path)}:{lineno}:{line[:300]}"
-                    )
+                    matches.append(f"{_relative(root, path)}:{lineno}:{line[:300]}")
                     if len(matches) >= MAX_RESULTS:
                         return "\n".join(matches)
         return "\n".join(matches) if matches else "(无匹配)"

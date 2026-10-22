@@ -59,6 +59,9 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     conversation_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True
     )
+    # 工作区归属:取自所属对话(直建的 run 为空)。同样是弱引用——
+    # workspace-service 的实体不在本库,强约束由服务层在创建时保证。
+    workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 对话消息显式引用的 MCP server 快照:非空时本 run 只装配这些 server 的工具
     mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
 

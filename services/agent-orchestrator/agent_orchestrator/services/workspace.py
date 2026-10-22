@@ -14,13 +14,24 @@ from __future__ import annotations
 import base64
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import quote
 
 import httpx
 from common.errors import UpstreamError
 
 
 class Workspace(Protocol):
-    """工作区接口:登记交付物 + 通用对象读写(skill 包二进制)。"""
+    """工作区接口:工作区解析 + 登记交付物 + 通用对象读写(skill 包二进制)。"""
+
+    async def default_workspace(self, tenant_id: str) -> dict[str, Any] | None:
+        """租户默认工作区(服务端幂等建档);取不到返回 None。"""
+        ...
+
+    async def get_workspace(
+        self, tenant_id: str, workspace_id: str
+    ) -> dict[str, Any] | None:
+        """按 id 取工作区;不存在(404)返回 None。"""
+        ...
 
     async def create_artifact(
         self,
@@ -33,6 +44,7 @@ class Workspace(Protocol):
         filename: str | None = None,
         content_type: str | None = None,
         data: bytes | None = None,
+        workspace_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def put_object(
@@ -68,6 +80,39 @@ class WorkspaceClient:
     async def _headers(self, tenant_id: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._token_provider(tenant_id)}"}
 
+    async def _workspace_or_none(
+        self, tenant_id: str, path: str
+    ) -> dict[str, Any] | None:
+        """GET 一个工作区资源:200 → 字典,404 → None,其余(含不可达)→ 502。"""
+        try:
+            response = await self._client.get(
+                path, headers=await self._headers(tenant_id)
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                "workspace.upstream_error", f"工作区服务不可达:{exc}"
+            ) from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise UpstreamError(
+                "workspace.upstream_error",
+                f"工作区服务返回 {response.status_code}",
+                details={"body": response.text[:200]},
+            )
+        return dict(response.json())
+
+    async def default_workspace(self, tenant_id: str) -> dict[str, Any] | None:
+        """租户默认工作区(workspace-service 幂等建档);不可达 → 502。"""
+        return await self._workspace_or_none(tenant_id, "/v1/workspaces/default")
+
+    async def get_workspace(
+        self, tenant_id: str, workspace_id: str
+    ) -> dict[str, Any] | None:
+        """按 id 取工作区;不存在(404)→ None,由调用方转业务 404。"""
+        quoted = quote(workspace_id, safe="")
+        return await self._workspace_or_none(tenant_id, f"/v1/workspaces/{quoted}")
+
     async def create_artifact(
         self,
         tenant_id: str,
@@ -79,13 +124,20 @@ class WorkspaceClient:
         filename: str | None = None,
         content_type: str | None = None,
         data: bytes | None = None,
+        workspace_id: str | None = None,
     ) -> dict[str, Any]:
         """登记交付物:文本走 content,二进制走 content_base64(二选一)。
 
         文件名/类型是给下载端点的元数据(workspace-service 侧 filename/content_type);
         镜像二进制件时传 data,文本报告仍传 content,两者不会同时出现。
+        workspace_id 是交付物归属(取 run 的工作区);为空时由服务端落默认工作区。
         """
-        payload: dict[str, Any] = {"title": title, "kind": kind, "run_id": run_id}
+        payload: dict[str, Any] = {
+            "title": title,
+            "kind": kind,
+            "run_id": run_id,
+            "workspace_id": workspace_id,
+        }
         if data is not None:
             payload["content_base64"] = base64.b64encode(data).decode("ascii")
             payload["content_type"] = content_type or "application/octet-stream"

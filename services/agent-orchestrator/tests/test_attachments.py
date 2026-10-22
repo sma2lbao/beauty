@@ -47,21 +47,15 @@ def test_upload_list_download_delete(client: TestClient) -> None:
     assert listing.status_code == 200
     assert [item["id"] for item in listing.json()] == [attachment["id"]]
 
-    downloaded = client.get(
-        f"/api/v1/attachments/{attachment['id']}", headers=TENANT
-    )
+    downloaded = client.get(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
     assert downloaded.status_code == 200
     assert downloaded.content == b"# hello"
     assert downloaded.headers["content-type"].startswith("text/markdown")
     assert "attachment" in downloaded.headers["content-disposition"]
 
-    deleted = client.delete(
-        f"/api/v1/attachments/{attachment['id']}", headers=TENANT
-    )
+    deleted = client.delete(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
     assert deleted.status_code == 204
-    missing = client.get(
-        f"/api/v1/attachments/{attachment['id']}", headers=TENANT
-    )
+    missing = client.get(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
     assert missing.status_code == 404
 
 
@@ -119,9 +113,7 @@ def test_attachment_tenant_isolation(client: TestClient) -> None:
     attachment_id = _upload(client, conversation_id).json()["id"]
 
     assert (
-        client.get(
-            f"/api/v1/attachments/{attachment_id}", headers=OTHER
-        ).status_code
+        client.get(f"/api/v1/attachments/{attachment_id}", headers=OTHER).status_code
         == 404
     )
     assert (
@@ -139,12 +131,12 @@ def test_docx_attachment_extracted_and_injected(tmp_path: Path) -> None:
     from docx import Document
 
     document = Document()
-    document.add_paragraph('项目周报:本周完成附件解析。')
+    document.add_paragraph("项目周报:本周完成附件解析。")
     buffer = BytesIO()
     document.save(buffer)
 
     app = create_app(
-        _settings(tmp_path, 'attachment-parse.db'),
+        _settings(tmp_path, "attachment-parse.db"),
         token_verifier=_IDP.verifier(),
     )
     with TestClient(app) as client:
@@ -152,29 +144,29 @@ def test_docx_attachment_extracted_and_injected(tmp_path: Path) -> None:
         uploaded = _upload(
             client,
             conversation_id,
-            filename='weekly.docx',
+            filename="weekly.docx",
             content=buffer.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         assert uploaded.status_code == 201
-        attachment_id = uploaded.json()['id']
+        attachment_id = uploaded.json()["id"]
 
-        conn = sqlite3.connect(tmp_path / 'attachment-parse.db')
+        conn = sqlite3.connect(tmp_path / "attachment-parse.db")
         extracted = conn.execute(
-            'select extracted_text, extraction_error from attachments'
+            "select extracted_text, extraction_error from attachments"
         ).fetchone()
         conn.close()
         assert extracted[1] is None
-        assert '项目周报' in extracted[0]
+        assert "项目周报" in extracted[0]
 
         posted = client.post(
-            f'/api/v1/conversations/{conversation_id}/messages',
+            f"/api/v1/conversations/{conversation_id}/messages",
             json={
-                'content': '总结这个附件',
-                'mode': 'task',
-                'attachment_ids': [attachment_id],
+                "content": "总结这个附件",
+                "mode": "task",
+                "attachment_ids": [attachment_id],
             },
             headers=TENANT,
         )
         assert posted.status_code == 201
-        assert '附件内容' in posted.json()['run']['goal']
+        assert "附件内容" in posted.json()["run"]["goal"]

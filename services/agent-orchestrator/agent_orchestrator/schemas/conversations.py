@@ -11,9 +11,14 @@ from agent_orchestrator.schemas.runs import RunRead
 
 
 class ConversationCreate(BaseModel):
-    """建对话:标题可空(首条消息会自动定题)。"""
+    """建对话:标题可空(首条消息会自动定题)。
+
+    workspace_id 显式指定对话所属工作区(不存在 → 404 workspace.not_found);
+    不传则落租户默认工作区(workspace 客户端未启用/不可达时降级为空,不阻断建对话)。
+    """
 
     title: str | None = Field(default=None, max_length=200)
+    workspace_id: str | None = Field(default=None, max_length=32)
 
 
 class ConversationRead(BaseModel):
@@ -21,6 +26,7 @@ class ConversationRead(BaseModel):
 
     id: str
     title: str
+    workspace_id: str | None = None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None

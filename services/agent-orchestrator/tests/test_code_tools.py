@@ -49,9 +49,7 @@ def test_code_tools_read_write_edit_search(tmp_path: Path) -> None:
         )
         assert "已编辑" in edit
 
-        listing = await registry.execute(
-            "code_list_files", json.dumps({"path": "src"})
-        )
+        listing = await registry.execute("code_list_files", json.dumps({"path": "src"}))
         assert "src/a.py" in listing
         # 受控写入自动执行,不再是人工确认闸
         assert registry.risk("code_write_file") is ToolRisk.WRITE
@@ -79,21 +77,21 @@ def test_code_tools_reject_escape_and_deny_git(tmp_path: Path) -> None:
 
 
 def test_code_tools_deny_sensitive_paths(tmp_path: Path) -> None:
-    (tmp_path / '.env').write_text('SECRET=1')
-    (tmp_path / '.cache').mkdir()
-    (tmp_path / '.cache' / 'x').write_text('cached')
+    (tmp_path / ".env").write_text("SECRET=1")
+    (tmp_path / ".cache").mkdir()
+    (tmp_path / ".cache" / "x").write_text("cached")
     registry = _registry(tmp_path)
 
     async def scenario() -> None:
         env_read = await registry.execute(
-            'code_read_file', json.dumps({'path': '.env'})
+            "code_read_file", json.dumps({"path": ".env"})
         )
-        assert _json(env_read).get('error')
-        listing = await registry.execute('code_list_files', json.dumps({}))
-        assert '.cache' not in listing and '.env' not in listing
+        assert _json(env_read).get("error")
+        listing = await registry.execute("code_list_files", json.dumps({}))
+        assert ".cache" not in listing and ".env" not in listing
         search = await registry.execute(
-            'code_search_text', json.dumps({'pattern': 'SECRET'})
+            "code_search_text", json.dumps({"pattern": "SECRET"})
         )
-        assert search == '(无匹配)'
+        assert search == "(无匹配)"
 
     asyncio.run(scenario())

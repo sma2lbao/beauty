@@ -31,6 +31,7 @@ from agent_orchestrator.models.runs import (
 from agent_orchestrator.repositories import (
     TOOL_CALLED_EVENT,
     ArtifactRepository,
+    ConversationRepository,
     InstructionRepository,
     MessageRepository,
     RunEventRepository,
@@ -259,6 +260,7 @@ async def _mirror_artifacts(
                     filename=row.filename,
                     content_type=content_type,
                     run_id=run.id,
+                    workspace_id=run.workspace_id,
                 )
             else:
                 mirrored = await workspace.create_artifact(
@@ -269,6 +271,7 @@ async def _mirror_artifacts(
                     filename=row.filename or artifacts.artifact_download_name(row),
                     content_type=content_type,
                     run_id=run.id,
+                    workspace_id=run.workspace_id,
                 )
         except Exception as exc:  # 镜像失败:run 照常交付,但如实记账
             errors.append(
@@ -439,8 +442,16 @@ async def create_run(
 
     上传包额外冻结 version_id/object_key/sha256 与执行字段——之后用户上传
     新版本不影响本 run(P3-C 的 skill_run 按 run 上的快照取包执行)。
+    工作区归属:显式给的就用,否则从所属对话继承(对话在哪个工作区,run 就在哪)。
     """
     manifest = skill.manifest if skill else None
+    workspace_id = data.workspace_id
+    if workspace_id is None and data.conversation_id:
+        conversation = await ConversationRepository(session).get_for_tenant(
+            tenant_id, data.conversation_id
+        )
+        if conversation is not None:
+            workspace_id = conversation.workspace_id
     run = Run(
         tenant_id=tenant_id,
         title=data.title,
@@ -448,6 +459,7 @@ async def create_run(
         status=RunStatus.PENDING.value,
         acceptance_criteria=data.acceptance_criteria,
         conversation_id=data.conversation_id,
+        workspace_id=workspace_id,
         skill_id=manifest.id if manifest else data.skill_id,
         skill_system_prompt=manifest.system_prompt if manifest else None,
         skill_tools=list(manifest.tools) if manifest else None,
@@ -862,6 +874,7 @@ async def retry_run(
         plan_markdown=parent.plan_markdown,
         parent_run_id=parent.id,
         conversation_id=parent.conversation_id,
+        workspace_id=parent.workspace_id,
     )
     await RunRepository(session).add(child)
     await append_event(

@@ -169,23 +169,24 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - **先分流**:消息先判 `chat`(简单对话)还是 `task`(复杂任务)——显式指定(自动/对话/任务)优先,其次由模型判别,**判别失败或无模型时退回 task**;chat 由模型直接答一条,不建 run、不需审批,只有 task 才进 §6 任务流程;
 - **流式**:发消息走 SSE(`meta` 分流结论 → `delta` 正文增量 → `done`),chat 的正文**边产出边显示**;模型出口是 llm-gateway 的 `POST /v1/completions/stream`,失败以 `error` 帧收尾(开流后状态码改不了);中途断连时已产出的片段仍落库,不丢半截回复;
 - 对话(`conversations`)是消息容器:task 消息在没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
+- **对话必须归属工作区**:`conversations.workspace_id` 为归属字段(跨服务弱引用,无 FK)——显式传入时经 workspace-service 校验(不存在 404 `workspace.not_found`、上游不可达 502 `workspace.upstream_error`),不传则落租户**默认工作区**;历史 `workspace_id IS NULL` 的旧会话在默认工作区列表时**懒回填**,非默认工作区过滤不回填、不泄漏;run 建时从对话继承 `workspace_id`,交付物镜像(`create_artifact`)带着它落库;
 - user/assistant 消息都持久化(`chat_messages`):assistant 消息既可能是 run 终态(交付物正文/失败原因/拒绝原因)的投影,也可能是 chat 的直接回复(`run_id` 为空)——历史双向完整,作为多轮上下文注入(chat 带此前全部轮次,规划排除本 run 自己的消息);
 - blocked 视为对话停点(需人工 resume):新消息另开一跑,不挂旧图;重试继承会话归属。
 
 ## 7. 数据模型要点
 
-| 表/存储                                  | 归属                      | 说明                                                                     |
-| ---------------------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| runs / run_events / pending_instructions | orchestrator              | §6 状态机、事件溯源、指令队列                                            |
-| conversations / chat_messages            | orchestrator              | §6.7 对话消息(user/assistant 持久化 + 多轮上下文)                        |
+| 表/存储                                  | 归属                      | 说明                                                                           |
+| ---------------------------------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| runs / run_events / pending_instructions | orchestrator              | §6 状态机、事件溯源、指令队列                                                  |
+| conversations / chat_messages            | orchestrator              | §6.7 对话消息(user/assistant 持久化 + 多轮上下文;**必须归属工作区**)           |
 | artifacts                                | workspace                 | 交付物元数据(一个 run 多件:报告/技能产物/工具外链文件);实体文件在对象存储或 DB |
-| connections + credentials                | connector                 | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密                |
-| skills                                   | orchestrator              | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化 |
-| schedules                                | orchestrator(阶段 B 独立) | cron/webhook 触发器                                                      |
-| usage_ledger                             | 计量消费者                | 模型 token + 沙箱分钟 + 工具调用 → credits                               |
-| feedback                                 | orchestrator              | 点赞/点踩/纠错 → datasets 飞轮                                           |
-| 知识库(pgvector)                         | knowledge                 | 全表 tenant_id,检索同租户过滤                                            |
-| sessions/devices                         | account                   | 多端会话(为 app 预留)                                                    |
+| connections + credentials                | connector                 | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密                      |
+| skills                                   | orchestrator              | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化       |
+| schedules                                | orchestrator(阶段 B 独立) | cron/webhook 触发器                                                            |
+| usage_ledger                             | 计量消费者                | 模型 token + 沙箱分钟 + 工具调用 → credits                                     |
+| feedback                                 | orchestrator              | 点赞/点踩/纠错 → datasets 飞轮                                                 |
+| 知识库(pgvector)                         | knowledge                 | 全表 tenant_id,检索同租户过滤                                                  |
+| sessions/devices                         | account                   | 多端会话(为 app 预留)                                                          |
 
 ### 7.1 交付物(run artifacts)
 
@@ -204,7 +205,9 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
   不拖垮交付;
 - **幂等与镜像**:workspace-service 侧同构(`content` 或 `content_base64`),
   orchestrator 逐件镜像并回写 `workspace_artifact_id`;重复交付复用该 id,
-  事件 `run.delivered.v1` 记 `artifact_ids`/`artifacts`/`download_errors`。
+  事件 `run.delivered.v1` 记 `artifact_ids`/`artifacts`/`download_errors`;
+- **归属随对话**:镜像时带 run 的 `workspace_id`(run 从对话继承,见 §6.7),
+  交付物因此落在发起它的对话所属工作区,而不是散在租户根下。
 
 ## 8. 知识、记忆与连接器
 

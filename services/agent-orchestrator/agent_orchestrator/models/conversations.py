@@ -34,6 +34,10 @@ class Conversation(UUIDMixin, TenantMixin, TimestampMixin, Base):
     __tablename__ = "conversations"
 
     title: Mapped[str] = mapped_column(String(200), default="新对话")
+    # 工作区归属:对话必须落在某个工作区里(前端按工作区过滤会话)。
+    # 弱引用(同 runs.conversation_id 惯例):workspace-service 的实体不在本库,
+    # 加不了跨服务外键;归属正确性由服务层在创建时保证。
+    workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

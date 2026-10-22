@@ -59,6 +59,40 @@ def test_artifact_is_mirrored_to_workspace(tmp_path: Path) -> None:
         assert artifact["content"] == DELIVERY
 
 
+def test_mirror_carries_run_workspace_id(tmp_path: Path) -> None:
+    """镜像带上 run 的工作区归属,工作区才能把产物挂回对话所在工作区。"""
+    workspace = FakeWorkspace()
+    app = create_app(
+        _settings(tmp_path, "mirror-ws.db", llm_enabled=True),
+        llm_client=FakeLLM(["# 计划", "执行", VERIFY_PASS, DELIVERY]),
+        workspace_client=workspace,
+        token_verifier=verifier(),
+    )
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/v1/runs",
+            json={
+                "title": "周报",
+                "goal": "整理本周日程",
+                "acceptance_criteria": ["日程已整理"],
+                "workspace_id": "ws-1",
+            },
+            headers=TENANT,
+        )
+        assert resp.status_code == 201
+        run_id = resp.json()["id"]
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        assert (
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()[
+                "status"
+            ]
+            == "completed"
+        )
+
+        assert workspace.created[0]["workspace_id"] == "ws-1"
+
+
 def test_mirror_failure_keeps_artifact_and_records_reason(tmp_path: Path) -> None:
     """工作区不可用时:run 照常交付,但把失败原因如实写进事件。"""
     app = create_app(
