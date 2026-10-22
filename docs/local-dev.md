@@ -246,6 +246,7 @@ npm run dev:reset -- --yes # 不确认
 | 想看指标            | 抓 `GET /internal/metrics`(Prometheus 文本,只在服务进程内,不经 BFF);关掉用 `<SERVICE>__METRICS_ENABLED=false`,要令牌用 `<SERVICE>__METRICS_TOKEN`                                                                     |
 | 想接 Sentry         | 配 `<SERVICE>__SENTRY_DSN`(+可选 `SERVICE__SENTRY_RELEASE`);不配则完全不初始化,内网形态零副作用                                                                                                                       |
 | 想看链路追踪        | 配 `<SERVICE>__OTLP_ENDPOINT`(完整 `…/v1/traces`,OTLP/HTTP)才会导出;不配则 span 只在进程内,日志里用 `trace_id`/`span_id` 串联。采样 `<SERVICE>__TRACE_SAMPLE_RATIO`(默认 0.1),关掉 `<SERVICE>__TRACING_ENABLED=false` |
+| 想看模型请求/正文   | 网关日志里 `llm_request`/`llm_response` 带 provider、model、token 用量与耗时；要看 prompt/响应正文置 `LLM_GATEWAY__LOG_CONTENT=true`（各截断 2KB，含用户数据，仅本地开）                                              |
 
 ## 8. 测试
 

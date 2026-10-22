@@ -1,7 +1,7 @@
 # 服务可观测方案（监控日志）
 
 > 状态：**P0 日志与请求上下文、P1 Sentry（服务端）、P2 指标与 OTel 追踪均已实施**（2026-10-22）。
-> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending`/`llm_tokens_total` 两个派生指标、GenAI semconv 的模型 span 语义。
+> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending` 派生指标、GenAI semconv 的模型 span 语义。
 > 对齐 `docs/architecture-v2.md` §9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
 
@@ -211,11 +211,11 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 - 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，BFF 不代理它。
 - 公网入口（BFF）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
 - 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `tenant_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
-- 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total`，provider 取模型前缀）。
+- 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total` 记失败，provider 取模型前缀；`llm_tokens_total`/`llm_request_duration_seconds` 记用量与耗时）。
 - 业务代码调用 `metrics.observe_*` 时不必传 service：默认从日志上下文（启动时绑定的 `service`）取。
 - 若暂时不部署 Prometheus，也可用 `metrics_payload()` 定时落 `event=metrics_snapshot` 的 info 日志，效果等价。
 
-指标设计如下（前 5 个已实施；`outbox_pending`、`llm_tokens_total` 仍从日志/运维端点派生，待后续补）：
+指标设计如下（除 `outbox_pending` 外均已实施；它仍从运维端点 `/api/v1/outbox/*` 派生）：
 
 | 指标                            | 类型      | 标签                           | 来源                                                                                    |
 | ------------------------------- | --------- | ------------------------------ | --------------------------------------------------------------------------------------- |
@@ -225,7 +225,8 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 | `job_failures_total`            | counter   | kind                           | jobs worker（`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`） |
 | `outbox_pending`                | gauge     | —                              | outbox 计数（已有运维端点 `/api/v1/outbox/*`）                                          |
 | `llm_upstream_errors_total`     | counter   | provider, code                 | llm-gateway                                                                             |
-| `llm_tokens_total`              | counter   | model, direction               | orchestrator/llm-gateway（与用量计量同源）                                              |
+| `llm_tokens_total`              | counter   | model, direction               | llm-gateway 响应使用量（input=提示 / output=补全）                                      |
+| `llm_request_duration_seconds`  | histogram | provider, model                | llm-gateway（complete 与 stream 收尾各记一次）                                          |
 
 ### 9.2 追踪（OTel）
 
@@ -247,7 +248,7 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 全部               | `http_request`、`http_request_slow`、`sse_opened`/`sse_closed`、`app_error`、`unhandled_exception`                                                                                                                                                                                                                       | 新中间件（P0）                                                                                                                                                                                                                                       |
 | agent-orchestrator | `run_created`、`run_planned`、`run_approved`、`run_completed`、`run_failed`、`run_blocked`、`job_enqueued`、`job_finished`、`tool_invoked`（tool、duration、status）、`llm_call`（model、phase、latency_ms、tokens_in/out）、`sse_opened`（channel=run_events/notifications）、`outbox_dispatch`（event_type、attempts） | `services/agent-orchestrator/agent_orchestrator/services/runs.py`、`graph/nodes.py`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`、`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`、`events` 消费处 |
-| llm-gateway        | `upstream_call`（provider、model、latency_ms、status、tokens）、`upstream_error`（code、retryable）                                                                                                                                                                                                                      | `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/llm-gateway/llm_gateway/services/embeddings.py:29`                                                                                                                          |
+| llm-gateway        | `llm_request`（provider、model、stream、message_count、roles、prompt_chars、tool_count、temperature）、`llm_response`（model、finish_reason、prompt/completion/total_tokens、tool_calls、chars、duration_ms）、`llm_content`（`LOG_CONTENT=true` 才出：direction、payload 截断 2KB）、`llm_upstream_error`（code）       | `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/llm-gateway/llm_gateway/services/embeddings.py:29`                                                                                                                          |
 | bff                | `proxy_call`（target、status、latency_ms、stream）、`rate_limited`、`session_refresh_failed`                                                                                                                                                                                                                             | `services/bff/bff/main.py:60`、`services/bff/bff/api/proxy.py:215`、`services/bff/bff/api/mcp_oauth.py:21`                                                                                                                                           |
 | account-service    | `auth_login`（result）、`token_refresh`（result、reuse_detected）、`device_registered`                                                                                                                                                                                                                                   | `services/account-service/account/`（登录/刷新路由）                                                                                                                                                                                                 |
 | workspace-service  | `sandbox_lifecycle`（state、duration）、`artifact_put`/`artifact_get`（bytes）、`workspace_created`/`renamed`/`deleted`                                                                                                                                                                                                  | `services/workspace-service/workspace/services/sandbox.py:38`、`services/workspace-service/workspace/services/workspaces.py:17`                                                                                                                      |
