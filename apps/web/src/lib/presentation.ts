@@ -94,6 +94,14 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   failed: '已失败',
 };
 
+/** 任务执行阶段标签(token.delta.v1 的 phase):未知阶段由调用方兜底成「执行中」。 */
+export const RUN_PHASE_LABELS: Record<string, string> = {
+  plan: '规划中',
+  execute: '执行中',
+  verify: '验收中',
+  deliver: '整理交付物',
+};
+
 export function runStatusTone(status: RunStatus): Tone {
   switch (status) {
     case 'running':
@@ -255,6 +263,32 @@ export function toolCallsFrom(events: readonly RunEvent[]): ToolCall[] {
       detail: asText(event.payload.detail),
       occurredAt: event.occurred_at,
     }));
+}
+
+/**
+ * run 事件流 → 任务执行期的实时正文(会话里唯一的正文增量来源)。
+ *
+ * 后端把模型正文写成 `token.delta.v1` 事件(payload = `{ text, phase }`,text 是
+ * **增量**片段),这里只认这类事件,按事件顺序拼接;phase 一变就视为进入新阶段、
+ * 丢掉上一段累积文本——每个阶段都是一次新的正文输出,旧阶段的字不该再挂在新气泡上。
+ * 事件顺序由订阅层保证(`mergeEvents` 按 seq 升序合并),本函数不再排序。
+ * 没有任何增量时返回 null,页面对应渲染「正在执行…」的兜底。
+ */
+export function liveRunText(
+  events: readonly RunEvent[],
+): { phase: string; text: string } | null {
+  let phase: string | null = null;
+  let text = '';
+  for (const event of events) {
+    if (event.type !== 'token.delta.v1') continue;
+    const nextPhase = asText(event.payload.phase, 'execute');
+    if (nextPhase !== phase) {
+      phase = nextPhase;
+      text = '';
+    }
+    text += asText(event.payload.text);
+  }
+  return phase === null ? null : { phase, text };
 }
 
 /** 事件流 → 会话里的一行系统播报(只做展示映射,不改状态语义)。 */

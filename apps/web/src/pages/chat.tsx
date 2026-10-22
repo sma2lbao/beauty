@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 
 import { Select } from '@beauty/design';
@@ -38,10 +39,12 @@ import type {
   StreamMessageHandlers,
 } from '@/lib/conversations-api';
 import {
+  RUN_PHASE_LABELS,
   RUN_STATUS_LABELS,
   clockTime,
   eventLine,
   isRunTerminal,
+  liveRunText,
   runMetaLine,
   runStatusTone,
   toolCallsFrom,
@@ -221,6 +224,15 @@ export function ChatPage() {
     if (!line || line.tone === 'neutral') return [];
     return [{ event, line }];
   });
+  // 任务执行期的实时正文:正文增量只在 run 事件流里(token.delta.v1),
+  // 不能依赖 pending——任务模式收到 done 帧时 pending 就被清掉了。
+  const liveRun = liveRunText(events);
+  // 等审批/等工具确认/blocked 时 run 并没有在跑,实时正文要收起来交给下面的审批卡片;
+  // 执行期 run 状态一直是 pending(不在终态里),所以判据是「排除等待态」而不是 running。
+  const runPaused =
+    status === 'awaiting_approval' ||
+    status === 'awaiting_confirmation' ||
+    status === 'blocked';
   const visiblePending =
     pending && pending.conversationId === activeConversationId ? pending : null;
   const visibleError =
@@ -479,6 +491,7 @@ export function ChatPage() {
     messages.length,
     eventLines.length,
     toolCalls.length,
+    liveRun?.text.length,
     visiblePending?.reply.length,
   ]);
 
@@ -709,6 +722,28 @@ export function ChatPage() {
                     {visiblePending.reply || '正在回答…'}
                   </AgentBlock>
                 </>
+              ) : null}
+
+              {/* 任务执行期的实时正文气泡:phase 变一段、run 终态(inFlight 变 false)
+                  就整块消失,此时落库的 assistant 消息已通过 invalidate 出现,避免正文重复。 */}
+              {inFlight && run && !runPaused ? (
+                <div
+                  role="status"
+                  aria-label="任务实时输出"
+                  className="flex flex-col gap-3"
+                >
+                  <AgentBlock
+                    meta="实时输出"
+                    live
+                    badge={
+                      <ToneBadge tone="info">
+                        {RUN_PHASE_LABELS[liveRun?.phase ?? ''] ?? '执行中'}
+                      </ToneBadge>
+                    }
+                  >
+                    {liveRun?.text || '正在执行…'}
+                  </AgentBlock>
+                </div>
               ) : null}
 
               {eventLines.length > 0 ? (
@@ -1214,10 +1249,13 @@ async function downloadAttachmentFile(attachment: Attachment): Promise<void> {
 function AgentBlock({
   meta,
   live = false,
+  badge,
   children,
 }: {
   meta: string;
   live?: boolean;
+  /** 头部附加标签(如任务阶段),与 meta 同行展示。 */
+  badge?: ReactNode;
   children: string;
 }) {
   return (
@@ -1230,6 +1268,7 @@ function AgentBlock({
           beauty moon Agent
         </span>
         <span className="font-mono text-[11px] text-ha-dim">{meta}</span>
+        {badge}
       </header>
       <Markdown content={children} streaming={live} />
     </article>

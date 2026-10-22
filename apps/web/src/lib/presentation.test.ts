@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   diffStats,
   eventLine,
+  liveRunText,
   parseUnifiedDiff,
   sideBySide,
   taskCode,
@@ -25,7 +26,13 @@ describe('parseUnifiedDiff', () => {
   it('解析 hunk 与增删行,并维护两侧行号', () => {
     const rows = parseUnifiedDiff(diff);
     expect(rows).not.toBeNull();
-    expect(rows?.map((row) => row.kind)).toEqual(['hunk', 'context', 'del', 'add', 'context']);
+    expect(rows?.map((row) => row.kind)).toEqual([
+      'hunk',
+      'context',
+      'del',
+      'add',
+      'context',
+    ]);
     const del = rows?.find((row) => row.kind === 'del');
     const add = rows?.find((row) => row.kind === 'add');
     // hunk 从 -42/+42 起;第一行上下文各占一行号,所以删除行是 43
@@ -50,7 +57,12 @@ describe('toolCallsFrom', () => {
       {
         seq: 2,
         type: 'run.tool.called.v1',
-        payload: { name: 'read_file', arguments: '{"path":"a.ts"}', ok: true, detail: 'done' },
+        payload: {
+          name: 'read_file',
+          arguments: '{"path":"a.ts"}',
+          ok: true,
+          detail: 'done',
+        },
       },
     ]);
     expect(calls).toHaveLength(1);
@@ -59,10 +71,70 @@ describe('toolCallsFrom', () => {
   });
 });
 
+describe('liveRunText', () => {
+  it('没有 token.delta.v1 事件时返回 null', () => {
+    expect(liveRunText([])).toBeNull();
+    expect(
+      liveRunText([
+        { seq: 1, type: 'run.created.v1', payload: { attempt: 1 } },
+        { seq: 2, type: 'run.planned.v1', payload: { attempt: 1 } },
+      ]),
+    ).toBeNull();
+  });
+
+  it('同一阶段按事件顺序拼接增量', () => {
+    expect(
+      liveRunText([
+        {
+          seq: 1,
+          type: 'token.delta.v1',
+          payload: { text: '正在', phase: 'execute' },
+        },
+        {
+          seq: 2,
+          type: 'token.delta.v1',
+          payload: { text: '汇总', phase: 'execute' },
+        },
+      ]),
+    ).toEqual({ phase: 'execute', text: '正在汇总' });
+  });
+
+  it('阶段切换只保留最后一段累积文本', () => {
+    expect(
+      liveRunText([
+        {
+          seq: 1,
+          type: 'token.delta.v1',
+          payload: { text: '规划草稿', phase: 'plan' },
+        },
+        {
+          seq: 2,
+          type: 'run.tool.called.v1',
+          payload: { name: 'read_file', ok: true },
+        },
+        {
+          seq: 3,
+          type: 'token.delta.v1',
+          payload: { text: '执行', phase: 'execute' },
+        },
+        {
+          seq: 4,
+          type: 'token.delta.v1',
+          payload: { text: '完成', phase: 'execute' },
+        },
+      ]),
+    ).toEqual({ phase: 'execute', text: '执行完成' });
+  });
+});
+
 describe('eventLine', () => {
   it('失败事件给危险语气,普通规划事件给中性语气', () => {
     expect(
-      eventLine({ seq: 1, type: 'run.failed.v1', payload: { stage: 'execute', reason: 'boom' } }),
+      eventLine({
+        seq: 1,
+        type: 'run.failed.v1',
+        payload: { stage: 'execute', reason: 'boom' },
+      }),
     ).toMatchObject({ tone: 'danger' });
     expect(
       eventLine({ seq: 2, type: 'run.planned.v1', payload: { attempt: 1 } }),

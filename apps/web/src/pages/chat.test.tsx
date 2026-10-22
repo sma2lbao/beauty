@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import type { ReactNode } from 'react';
@@ -184,7 +185,7 @@ function renderPage(initialEntry = '/', extra?: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <ChatPage />
@@ -192,6 +193,8 @@ function renderPage(initialEntry = '/', extra?: ReactNode) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  // queryClient 供需要手动推进缓存(如 run 终态)的用例使用
+  return { ...view, queryClient };
 }
 
 function typeAndSend(text: string) {
@@ -431,6 +434,9 @@ describe('ChatPage', () => {
   });
 
   it('待审批:显示放行/拒绝,放行调用 approve', async () => {
+    currentEvents = [
+      event(1, 'token.delta.v1', { text: '# 执行计划', phase: 'plan' }),
+    ];
     vi.mocked(runsApi.getPlan).mockResolvedValue({
       run_id: 'run-1',
       status: 'awaiting_approval',
@@ -441,6 +447,8 @@ describe('ChatPage', () => {
     const approveButtons = await screen.findAllByRole('button', {
       name: '放行执行',
     });
+    // 等审批时 run 并没有在跑:实时正文气泡收起,正文交给审批卡片
+    expect(screen.queryByRole('status', { name: '任务实时输出' })).toBeNull();
     fireEvent.click(approveButtons[0]);
 
     await waitFor(() => expect(runsApi.approve).toHaveBeenCalledWith('run-1'));
@@ -479,6 +487,40 @@ describe('ChatPage', () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText(/已交付《周报》/)).toBeTruthy();
     expect(screen.getByText('任务完成 ✅')).toBeTruthy();
+  });
+
+  it('任务执行时按 token.delta 渲染实时正文,run 终态后让位给落库消息', async () => {
+    currentEvents = [
+      event(1, 'token.delta.v1', { text: '正在汇总', phase: 'execute' }),
+      event(2, 'token.delta.v1', { text: '本周日程…', phase: 'execute' }),
+    ];
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'running' }));
+    const { queryClient } = renderPage('/?conversation=c1');
+
+    // 任务模式收不到 delta 帧,正文只能来自 run 事件;阶段标签跟着 phase 走
+    const live = await screen.findByRole('status', {
+      name: '任务实时输出',
+    });
+    expect(within(live).getByText('正在汇总本周日程…')).toBeTruthy();
+    expect(within(live).getByText('执行中')).toBeTruthy();
+
+    // run 进入终态:落库的 assistant 消息经 invalidate 出现,实时气泡必须消失,正文不重复
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
+    vi.mocked(conversationsApi.messages).mockResolvedValue([
+      makeMessage(),
+      makeMessage({
+        id: 'm2',
+        role: 'assistant',
+        content: '本周日程已汇总成周报',
+      }),
+    ]);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['run', 'run-1'] });
+    });
+
+    expect(await screen.findByText('本周日程已汇总成周报')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: '任务实时输出' })).toBeNull();
+    expect(screen.queryByText('正在汇总本周日程…')).toBeNull();
   });
 
   it('失败事件以错误语气展示,并提示去任务编排处理', async () => {
