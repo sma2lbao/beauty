@@ -439,15 +439,23 @@ export function ChatPage() {
   ]);
 
   // 会话的 workspace_id 是归属的权威来源:旧链接或跨工作区打开会话时,把 URL 对齐过去。
+  // 但工作区被删除后会话会落到「未分组」(workspace_id 已不在清单里):
+  // 此时不能把 URL 改回那个已不存在的工作区,会话应当留在当前工作区继续用。
   useEffect(() => {
     if (
-      conversationWorkspaceId &&
-      activeWorkspaceId &&
-      conversationWorkspaceId !== activeWorkspaceId
+      !conversationWorkspaceId ||
+      !activeWorkspaceId ||
+      conversationWorkspaceId === activeWorkspaceId
     ) {
-      selectWorkspace(conversationWorkspaceId, { keepConversation: true });
+      return;
     }
-  }, [conversationWorkspaceId, activeWorkspaceId, selectWorkspace]);
+    if (
+      !workspaces.some((workspace) => workspace.id === conversationWorkspaceId)
+    ) {
+      return;
+    }
+    selectWorkspace(conversationWorkspaceId, { keepConversation: true });
+  }, [conversationWorkspaceId, activeWorkspaceId, selectWorkspace, workspaces]);
 
   useEffect(() => {
     const previous = prevStatusRef.current;

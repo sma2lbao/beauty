@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { conversationsApi, type Conversation } from '@/lib/conversations-api';
@@ -24,6 +25,8 @@ vi.mock('@/lib/workspace-api', async () => {
       artifact: vi.fn(),
       downloadArtifact: vi.fn(),
       removeArtifact: vi.fn(),
+      renameWorkspace: vi.fn(),
+      removeWorkspace: vi.fn(),
     },
   };
 });
@@ -44,7 +47,16 @@ const workspace: Workspace = {
   name: '默认工作区',
   description: '自动创建:租户默认工作区',
   status: 'active',
+  is_default: true,
   created_at: '2026-10-13T00:00:00+00:00',
+};
+
+const studiesWorkspace: Workspace = {
+  id: 'ws-2',
+  name: '研究组',
+  description: '行业研究与竞品资料',
+  status: 'active',
+  created_at: '2026-10-14T00:00:00+00:00',
 };
 
 const conversation: Conversation = {
@@ -67,7 +79,15 @@ const artifact: ArtifactMeta = {
   created_at: '2026-10-13T01:00:00+00:00',
 };
 
-function renderPage(initialEntry = '/workspace') {
+/** 把当前地址渲染出来,供「点菜单不改当前工作区」这类断言使用。 */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <span data-testid="location">{location.pathname + location.search}</span>
+  );
+}
+
+function renderPage(initialEntry = '/workspace', extra?: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -75,6 +95,7 @@ function renderPage(initialEntry = '/workspace') {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <WorkspacePage />
+        {extra}
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -277,5 +298,96 @@ describe('WorkspacePage', () => {
     expect(
       await screen.findByText(/未登录或令牌失效:先在上方面板完成鉴权/),
     ).toBeTruthy();
+  });
+
+  it('工作区行「⋯」菜单展开显示重命名/删除,且不切换当前工作区', async () => {
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([
+      workspace,
+      studiesWorkspace,
+    ]);
+
+    renderPage('/workspace', <LocationProbe />);
+    await screen.findByRole('button', { name: '工作区操作:研究组' });
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/workspace?workspace=ws-1',
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '工作区操作:研究组' }));
+
+    expect(screen.getByRole('menu')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '重命名工作区' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '删除工作区' })).toBeTruthy();
+    // 菜单是行内操作入口:展开/点开不会把当前工作区切到 ws-2
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/workspace?workspace=ws-1',
+    );
+    expect(conversationsApi.list).toHaveBeenCalledWith({
+      workspace_id: 'ws-1',
+      limit: 20,
+    });
+  });
+
+  it('重命名工作区:预填当前名字,提交前 trim 并调 PATCH', async () => {
+    vi.mocked(workspaceApi.renameWorkspace).mockResolvedValue({
+      ...workspace,
+      name: '销售资料',
+    });
+
+    renderPage();
+    await screen.findByRole('heading', { name: '默认工作区' });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '工作区操作:默认工作区' }),
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名工作区' }));
+
+    const input = (await screen.findByLabelText(
+      '工作区名称',
+    )) as HTMLInputElement;
+    expect(input).toHaveValue('默认工作区');
+
+    fireEvent.change(input, { target: { value: '  销售资料  ' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(workspaceApi.renameWorkspace).toHaveBeenCalledWith('ws-1', {
+        name: '销售资料',
+      }),
+    );
+  });
+
+  it('删除工作区:确认文案说明会话移入「未分组」,提交调 DELETE', async () => {
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([
+      workspace,
+      studiesWorkspace,
+    ]);
+    vi.mocked(workspaceApi.removeWorkspace).mockResolvedValue(undefined);
+
+    renderPage();
+    await screen.findByRole('button', { name: '工作区操作:研究组' });
+
+    fireEvent.click(screen.getByRole('button', { name: '工作区操作:研究组' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除工作区' }));
+
+    expect(await screen.findByText(/并移入「未分组」/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '删除工作区' }));
+
+    await waitFor(() =>
+      expect(workspaceApi.removeWorkspace).toHaveBeenCalledWith('ws-2'),
+    );
+  });
+
+  it('默认工作区:「删除工作区」禁用并说明不能删除的原因', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: '工作区操作:默认工作区' });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '工作区操作:默认工作区' }),
+    );
+
+    expect(screen.getByRole('menuitem', { name: '删除工作区' })).toBeDisabled();
+    expect(screen.getByText('默认工作区不能删除,可重命名')).toBeTruthy();
   });
 });

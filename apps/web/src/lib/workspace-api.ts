@@ -19,6 +19,8 @@ export type Workspace = {
   name: string;
   description: string | null;
   status: string;
+  /** 租户默认工作区:系统维护,可改名但不可删除。 */
+  is_default?: boolean;
   created_at: string;
 };
 
@@ -54,6 +56,15 @@ export const workspaceApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** 重命名工作区(只传 name 时不改描述)。 */
+  renameWorkspace: (workspaceId: string, body: { name: string }) =>
+    request<Workspace>(`/v1/workspaces/${workspaceId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  /** 删除工作区:交付物一并删除;默认工作区后端拒绝(409)。 */
+  removeWorkspace: (workspaceId: string) =>
+    request<void>(`/v1/workspaces/${workspaceId}`, { method: 'DELETE' }),
   artifacts: (workspaceId: string) =>
     request<ArtifactMeta[]>(`/v1/workspaces/${workspaceId}/artifacts`),
   artifact: (artifactId: string) =>

@@ -21,6 +21,7 @@ import {
   EmptyPanel,
   PageHeader,
 } from '@/components/console/ui';
+import { WorkspaceActions } from '@/components/console/workspace-actions';
 import { AuthBar } from '@/components/runs/auth-bar';
 import { artifactFileName, isImageArtifact, saveBlob } from '@/lib/artifacts';
 import { conversationsApi } from '@/lib/conversations-api';
@@ -302,8 +303,11 @@ export function WorkspacePage() {
           </div>
         ) : (
           <div className="mt-6 grid gap-6 lg:grid-cols-[260px_1fr]">
-            {/* 左列:工作区清单 + 内联新建表单 */}
-            <ConsolePanel className="flex h-fit flex-col overflow-hidden lg:sticky lg:top-0">
+            {/*
+              左列:工作区清单 + 内联新建表单。
+              这里不能加 overflow-hidden:行尾「⋯」菜单是绝对定位,面板会把它裁掉。
+            */}
+            <ConsolePanel className="flex h-fit flex-col lg:sticky lg:top-0">
               <SectionHeading
                 icon={<FolderKanban />}
                 title="工作区"
@@ -313,15 +317,20 @@ export function WorkspacePage() {
                 {workspaces.map((workspace) => {
                   const selected = workspace.id === activeWorkspaceId;
                   return (
-                    <li key={workspace.id}>
+                    <li
+                      key={workspace.id}
+                      className="group/workspace flex items-center"
+                    >
+                      {/* 选中区与操作入口是并列的两个按钮,避免 button 套 button */}
                       <button
                         type="button"
+                        aria-current={selected ? 'true' : undefined}
                         onClick={() => {
                           selectWorkspace(workspace.id);
                           setSelectedArtifact(null);
                         }}
                         className={cn(
-                          'w-full border-l-2 px-3 py-2.5 text-left transition-colors',
+                          'min-w-0 flex-1 border-l-2 px-3 py-2.5 text-left transition-colors',
                           selected
                             ? 'border-ha-accent-soft/60 bg-ha-accent-soft/20'
                             : 'border-transparent hover:bg-ha-panel-2/60',
@@ -337,6 +346,11 @@ export function WorkspacePage() {
                           创建于 {formatTime(workspace.created_at)}
                         </span>
                       </button>
+                      <WorkspaceActions
+                        workspace={workspace}
+                        className="mr-2"
+                        triggerClassName="opacity-0 transition-opacity group-hover/workspace:opacity-100 group-focus-within/workspace:opacity-100 focus-visible:opacity-100"
+                      />
                     </li>
                   );
                 })}

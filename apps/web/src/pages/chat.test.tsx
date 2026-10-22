@@ -320,6 +320,50 @@ describe('ChatPage', () => {
     expect(await screen.findByText('会话将保存在「研究组」中。')).toBeTruthy();
   });
 
+  it('打开属于其它工作区的会话:URL 按会话归属对齐并保留会话', async () => {
+    const anotherWorkspace: Workspace = {
+      ...workspace,
+      id: 'ws-2',
+      name: '研究组',
+    };
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([
+      workspace,
+      anotherWorkspace,
+    ]);
+
+    renderPage('/?workspace=ws-2&conversation=c1', <LocationProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?workspace=ws-1&conversation=c1',
+      ),
+    );
+  });
+
+  it('会话指向已删除的工作区时:URL 不被改回那个工作区', async () => {
+    const anotherWorkspace: Workspace = {
+      ...workspace,
+      id: 'ws-2',
+      name: '研究组',
+    };
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([
+      workspace,
+      anotherWorkspace,
+    ]);
+    vi.mocked(conversationsApi.get).mockResolvedValue(
+      makeConversation({ workspace_id: 'ws-gone' }),
+    );
+
+    renderPage('/?workspace=ws-2&conversation=c1', <LocationProbe />);
+
+    // 等会话正文渲染完,确认「归属对齐」effect 已经跑过
+    await screen.findByText('把本周日程整理成周报');
+    // 遗留会话留在当前工作区(未分组),地址栏不被改到已删除的 ws-gone
+    expect(screen.getByTestId('location').textContent).toBe(
+      '/?workspace=ws-2&conversation=c1',
+    );
+  });
+
   it('发送首条消息:先建会话再发消息,消息与状态出现在会话里', async () => {
     renderPage();
     // 等工作区解析完成,确保 create 带上 workspace_id

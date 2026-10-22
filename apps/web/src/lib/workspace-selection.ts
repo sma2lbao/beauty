@@ -8,7 +8,7 @@
  *   按会话归属对齐 URL 的场景(旧链接/详情返回)用 keepConversation。
  */
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { workspaceApi, type Workspace } from '@/lib/workspace-api';
@@ -67,8 +67,15 @@ export function useWorkspaceSelection(): WorkspaceSelection {
   const listQuery = useWorkspaceList();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const workspaces = listQuery.data?.workspaces ?? [];
-  const defaultWorkspace = listQuery.data?.defaultWorkspace ?? null;
+  // 冻结引用,避免 fallback effect 因数组字面量每轮渲染都变而反复触发。
+  const workspaces = useMemo(
+    () => listQuery.data?.workspaces ?? [],
+    [listQuery.data],
+  );
+  const defaultWorkspace = useMemo(
+    () => listQuery.data?.defaultWorkspace ?? null,
+    [listQuery.data],
+  );
   const paramWorkspaceId = searchParams.get('workspace');
   const activeWorkspaceId =
     paramWorkspaceId ?? defaultWorkspace?.id ?? workspaces[0]?.id ?? null;
@@ -89,6 +96,38 @@ export function useWorkspaceSelection(): WorkspaceSelection {
       { replace: true },
     );
   }, [activeWorkspaceId, searchParams, setSearchParams]);
+
+  // URL 里的工作区已不存在(被删除/权限收回/旧链接)时回落到默认或第一个:
+  // 否则页面会停在「当前没有工作区」,用户还得手动切一次。
+  useEffect(() => {
+    if (listQuery.isLoading || !paramWorkspaceId) {
+      return;
+    }
+    if (workspaces.length === 0) {
+      return;
+    }
+    if (workspaces.some((workspace) => workspace.id === paramWorkspaceId)) {
+      return;
+    }
+    const fallbackId = defaultWorkspace?.id ?? workspaces[0]?.id;
+    if (!fallbackId) {
+      return;
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('workspace', fallbackId);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [
+    defaultWorkspace,
+    listQuery.isLoading,
+    paramWorkspaceId,
+    setSearchParams,
+    workspaces,
+  ]);
 
   const selectWorkspace = useCallback(
     (workspaceId: string, options?: { keepConversation?: boolean }) => {

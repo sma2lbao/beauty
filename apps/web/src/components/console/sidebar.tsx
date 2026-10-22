@@ -1,11 +1,14 @@
 /**
- * 控制台侧边栏:品牌 + 新会话 + 主导航 + 按工作区分组的会话 + 账户。
+ * 控制台侧边栏:品牌 + 新会话 + 工作区切换器 + 主导航 + 当前工作区会话 + 账户。
  *
  * 交互对齐 dsh 侧栏的「工作区 / 会话」心智:
  * - URL ?workspace=<id> 是当前工作区的唯一真源,切换工作区只改 URL;
- * - 会话区直接按工作区分组列出会话(分组逻辑在 lib/session-groups),
- *   组头点击切换当前工作区,组头右侧「+」在该工作区新建会话;
- * - 列表取租户全部会话(不按工作区过滤),客户端分组;搜索/归档仍走服务端分页;
+ * - 工作区由一行的切换器(触发器 + 下拉菜单,见 WorkspaceSwitcher)切换与管理,
+ *   侧栏不再平铺全部工作区;
+ * - 会话区只列当前工作区的会话,标题为「<工作区> 的会话」;
+ *   归属为空、或指向已删除工作区的会话收进「未分组」一段,不丢可见性;
+ * - 列表仍取租户全部会话(不按工作区过滤),这里只做客户端过滤:
+ *   搜索/归档语义不变,「未分组」会话也依然可达;
  * - 重命名 / 归档 / 软删除就地操作,成功后失效会话查询并同步当前选中会话;
  * - 分页用 keyset 游标,加载更多不丢不重。
  */
@@ -43,6 +46,7 @@ import { BrandLockup } from '@/components/brand/logo';
 import { consoleButtonClass } from '@/components/console/button-class';
 import { NotificationCenter } from '@/components/console/notification-center';
 import { ConsoleNavLink, StatusDot } from '@/components/console/ui';
+import { WorkspaceSwitcher } from '@/components/console/workspace-switcher';
 import { accountApi } from '@/lib/account-api';
 import { accountLabel } from '@/lib/auth';
 import type { Conversation } from '@/lib/conversations-api';
@@ -54,8 +58,6 @@ import {
 } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
-import type { SessionGroup } from '@/lib/session-groups';
-import { groupSessionsByWorkspace } from '@/lib/session-groups';
 import { siteUrl } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
@@ -85,10 +87,10 @@ export function ConsoleSidebar() {
   const setSidebarVisible = useUiStore((state) => state.setSidebarVisible);
   const {
     workspaces: workspaceList,
+    activeWorkspace,
     activeWorkspaceId,
     isLoading: workspacesLoading,
     error: workspacesError,
-    selectWorkspace,
   } = useWorkspaceSelection();
   const workspaces = workspaceList.filter(Boolean);
   const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
@@ -102,7 +104,7 @@ export function ConsoleSidebar() {
     title: string;
   } | null>(null);
 
-  // 取租户内全部会话(不传 workspace_id),客户端再按工作区分组;
+  // 取租户内全部会话(不传 workspace_id),客户端再按当前工作区过滤;
   // 搜索与归档视图仍交给服务端分页。
   const conversationsQuery = useInfiniteQuery({
     queryKey: ['conversations', 'all', showArchived, deferredQuery],
@@ -135,7 +137,34 @@ export function ConsoleSidebar() {
   const conversations =
     conversationsQuery.data?.pages.flatMap((page) => page.items ?? []) ?? [];
   const searching = deferredQuery.trim().length > 0;
-  const sessionGroups = groupSessionsByWorkspace(conversations, workspaces);
+
+  // 会话区只展示当前工作区的会话;归属为空或指向已删工作区的收进「未分组」。
+  const activeSessions = conversations.filter(
+    (conversation) => conversation.workspace_id === activeWorkspaceId,
+  );
+  const ungroupedSessions = conversations.filter(
+    (conversation) =>
+      !conversation.workspace_id ||
+      !workspaceIds.has(conversation.workspace_id),
+  );
+
+  // 切换器菜单里的会话数:按已加载的会话统计(与菜单同源,不额外发请求)。
+  const sessionCountByWorkspace = new Map<string, number>();
+  for (const conversation of conversations) {
+    const workspaceId = conversation.workspace_id;
+    if (workspaceId) {
+      sessionCountByWorkspace.set(
+        workspaceId,
+        (sessionCountByWorkspace.get(workspaceId) ?? 0) + 1,
+      );
+    }
+  }
+  const workspaceCounts = Object.fromEntries(
+    workspaces.map((workspace) => [
+      workspace.id,
+      sessionCountByWorkspace.get(workspace.id) ?? 0,
+    ]),
+  );
 
   const invalidateConversations = () => {
     void queryClient.invalidateQueries({ queryKey: ['conversations'] });
@@ -243,6 +272,8 @@ export function ConsoleSidebar() {
     return (
       <div
         key={conversation.id}
+        role="listitem"
+        aria-label={conversation.title}
         className={cn(
           'group relative flex items-center gap-[9px] rounded-md px-2.5 py-[9px] transition-colors',
           selected ? 'bg-[#1c1d1f]' : 'hover:bg-ha-panel-2/60',
@@ -360,74 +391,6 @@ export function ConsoleSidebar() {
     );
   };
 
-  /** 一个工作区分组:可点击的组头(含「+」新建会话)+ 组内会话行。 */
-  const renderSessionGroup = (group: SessionGroup) => {
-    const workspaceId = group.workspaceId;
-    const active = workspaceId !== null && workspaceId === activeWorkspaceId;
-    const count = group.sessions.length;
-
-    return (
-      <div
-        key={group.key}
-        role="group"
-        aria-label={group.name}
-        className="space-y-0.5"
-      >
-        {workspaceId ? (
-          <div
-            className={cn(
-              'group/workspace flex items-center gap-0.5 rounded-md pr-1 transition-colors',
-              active ? 'bg-ha-accent-soft/20' : 'hover:bg-ha-panel-2/40',
-            )}
-          >
-            <button
-              type="button"
-              aria-current={active ? 'true' : undefined}
-              onClick={() =>
-                selectWorkspace(workspaceId, { keepConversation: true })
-              }
-              className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left outline-none focus-visible:bg-ha-panel-2/60"
-            >
-              <FolderKanban
-                aria-hidden="true"
-                className={cn(
-                  'h-3 w-3 shrink-0',
-                  active ? 'text-ha-accent-soft' : 'text-ha-faint',
-                )}
-              />
-              <span
-                className={cn(
-                  'truncate text-[11px] font-medium',
-                  active ? 'text-ha-text' : 'text-ha-dim',
-                )}
-              >
-                {group.name}
-              </span>
-              {count > 0 ? (
-                <span className="shrink-0 font-mono text-[10px] text-ha-faint">
-                  {count} 个会话
-                </span>
-              ) : null}
-            </button>
-            <Link
-              to={workspaceHref(workspaceId, { new: true })}
-              aria-label={'在「' + group.name + '」中新建会话'}
-              title={'在「' + group.name + '」中新建会话'}
-              className="grid h-5 w-5 shrink-0 place-items-center rounded text-ha-faint opacity-0 transition-opacity hover:bg-ha-panel-2 hover:text-ha-text-2 focus-visible:opacity-100 group-hover/workspace:opacity-100"
-            >
-              <Plus className="h-3 w-3" />
-            </Link>
-          </div>
-        ) : (
-          <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ha-dim">
-            {group.name}
-          </div>
-        )}
-        {group.sessions.map(sessionRow)}
-      </div>
-    );
-  };
-
   const listLoading = workspacesLoading || conversationsQuery.isPending;
   const listFailed = Boolean(workspacesError) || conversationsQuery.isError;
 
@@ -467,6 +430,9 @@ export function ConsoleSidebar() {
         新会话
       </Link>
 
+      {/* 工作区:一行切换器 + 下拉菜单(切换/添加/管理) */}
+      <WorkspaceSwitcher counts={workspaceCounts} />
+
       <nav aria-label="主导航" className="flex flex-col gap-0.5">
         {PRIMARY_NAV.map((item) => (
           <ConsoleNavLink key={item.to} {...item} />
@@ -489,8 +455,19 @@ export function ConsoleSidebar() {
         </div>
 
         <div className="flex items-center justify-between px-2.5">
-          <span className="text-[11px] font-semibold text-ha-dim">
-            {showArchived ? '已归档' : '会话'}
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-ha-dim">
+            <span className="truncate">
+              {showArchived
+                ? '已归档'
+                : activeWorkspace
+                  ? `${activeWorkspace.name} 的会话`
+                  : '会话'}
+            </span>
+            {!showArchived && activeSessions.length > 0 ? (
+              <span className="shrink-0 font-mono text-[10px] font-normal text-ha-faint">
+                {activeSessions.length}
+              </span>
+            ) : null}
           </span>
           <button
             type="button"
@@ -545,42 +522,87 @@ export function ConsoleSidebar() {
                   搜索结果
                 </div>
                 {conversations.length > 0 ? (
-                  conversations.map(sessionRow)
+                  <div
+                    role="list"
+                    aria-label="搜索结果"
+                    className="space-y-0.5"
+                  >
+                    {conversations.map(sessionRow)}
+                  </div>
                 ) : (
                   <p className="px-2.5 py-2 text-[12px] leading-5 text-ha-dim">
                     无匹配会话
                   </p>
                 )}
               </>
-            ) : conversations.length === 0 ? (
+            ) : showArchived ? (
+              activeSessions.length > 0 ? (
+                <div
+                  role="list"
+                  aria-label={
+                    activeWorkspace
+                      ? `${activeWorkspace.name} 的已归档会话`
+                      : '已归档会话'
+                  }
+                  className="space-y-0.5"
+                >
+                  {activeSessions.map(sessionRow)}
+                </div>
+              ) : (
+                <p className="px-2.5 py-2 text-[12px] leading-5 text-ha-dim">
+                  暂无已归档会话
+                </p>
+              )
+            ) : activeSessions.length === 0 &&
+              ungroupedSessions.length === 0 ? (
               <div className="px-2.5 py-2">
-                {showArchived ? (
-                  <p className="text-[12px] leading-5 text-ha-dim">
-                    暂无已归档会话
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-[12px] leading-5 text-ha-dim">
-                      暂无会话
-                    </p>
-                    <Link
-                      to={newSessionHref}
-                      className={cn(
-                        consoleButtonClass({
-                          variant: 'secondary',
-                          size: 'sm',
-                        }),
-                        'mt-2 w-full',
-                      )}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      开始新会话
-                    </Link>
-                  </>
-                )}
+                <p className="text-[12px] leading-5 text-ha-dim">
+                  这个工作区还没有会话
+                </p>
+                <Link
+                  to={newSessionHref}
+                  className={cn(
+                    consoleButtonClass({
+                      variant: 'secondary',
+                      size: 'sm',
+                    }),
+                    'mt-2 w-full',
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  开始新会话
+                </Link>
               </div>
             ) : (
-              sessionGroups.map(renderSessionGroup)
+              <>
+                {activeSessions.length > 0 ? (
+                  <div
+                    role="list"
+                    aria-label={
+                      activeWorkspace
+                        ? `${activeWorkspace.name} 的会话`
+                        : '会话'
+                    }
+                    className="space-y-0.5"
+                  >
+                    {activeSessions.map(sessionRow)}
+                  </div>
+                ) : null}
+                {ungroupedSessions.length > 0 ? (
+                  <div className="pt-2">
+                    <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ha-dim">
+                      未分组
+                    </div>
+                    <div
+                      role="list"
+                      aria-label="未分组会话"
+                      className="space-y-0.5"
+                    >
+                      {ungroupedSessions.map(sessionRow)}
+                    </div>
+                  </div>
+                ) : null}
+              </>
             )
           ) : null}
 
@@ -595,14 +617,6 @@ export function ConsoleSidebar() {
             </button>
           ) : null}
         </div>
-
-        <Link
-          to="/workspace?new=1"
-          className="flex h-7 shrink-0 items-center gap-2 rounded-md px-2.5 text-[12px] text-ha-dim transition-colors hover:bg-ha-panel-2/60 hover:text-ha-text-2"
-        >
-          <FolderPlus aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-          添加工作区
-        </Link>
       </div>
 
       <nav aria-label="更多" className="flex flex-col gap-0.5">

@@ -60,6 +60,8 @@ vi.mock('@/lib/workspace-api', async () => {
     workspaceApi: {
       workspaces: vi.fn(),
       defaultWorkspace: vi.fn(),
+      renameWorkspace: vi.fn(),
+      removeWorkspace: vi.fn(),
     },
   };
 });
@@ -70,6 +72,7 @@ const workspace: Workspace = {
   description: '自动创建:租户默认工作区',
   status: 'active',
   created_at: '2026-10-13T00:00:00+00:00',
+  is_default: true,
 };
 
 const otherWorkspace: Workspace = {
@@ -77,6 +80,7 @@ const otherWorkspace: Workspace = {
   id: 'ws-2',
   name: '销售资料',
   description: null,
+  is_default: false,
 };
 
 const conversation: Conversation = {
@@ -147,9 +151,9 @@ function sessionLink(title: string) {
   return screen.getByRole('link', { name: new RegExp(title) });
 }
 
-/** 「默认工作区」组里第一条会话的操作菜单按钮(每组各有一个同名按钮)。 */
-function defaultGroupMenuButton() {
-  return within(screen.getByRole('group', { name: '默认工作区' })).getByRole(
+/** 当前工作区列表里某条会话的操作菜单按钮。 */
+function sessionMenuButton(title: string) {
+  return within(screen.getByRole('listitem', { name: title })).getByRole(
     'button',
     { name: '会话操作' },
   );
@@ -167,6 +171,8 @@ beforeEach(() => {
   });
   vi.mocked(conversationsApi.update).mockResolvedValue(conversation);
   vi.mocked(conversationsApi.remove).mockResolvedValue(undefined);
+  vi.mocked(workspaceApi.renameWorkspace).mockResolvedValue(otherWorkspace);
+  vi.mocked(workspaceApi.removeWorkspace).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -185,62 +191,38 @@ describe('ConsoleSidebar 工作区/会话', () => {
     expect(params?.workspace_id).toBeUndefined();
   });
 
-  it('按工作区分组:组顺序跟随工作区清单,未分组排最后', async () => {
+  it('会话区只列当前工作区的会话,未分组单独一段', async () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
-    const groupNames = screen
-      .getAllByRole('group')
-      .map((group) => group.getAttribute('aria-label'));
-    expect(groupNames).toEqual(['默认工作区', '销售资料', '未分组']);
-
-    const defaultGroup = screen.getByRole('group', { name: '默认工作区' });
+    // 标题标明当前工作区
+    expect(screen.getByText('默认工作区 的会话')).toBeInTheDocument();
+    const activeList = screen.getByRole('list', {
+      name: '默认工作区 的会话',
+    });
     expect(
-      within(defaultGroup).getByText('整理本周日程成周报'),
+      within(activeList).getByText('整理本周日程成周报'),
     ).toBeInTheDocument();
-    expect(within(defaultGroup).getByText('1 个会话')).toBeInTheDocument();
-    expect(within(defaultGroup).queryByText('销售话术复盘')).toBeNull();
 
-    const salesGroup = screen.getByRole('group', { name: '销售资料' });
-    expect(within(salesGroup).getByText('销售话术复盘')).toBeInTheDocument();
-
-    // 组头标出当前工作区
-    expect(screen.getByRole('button', { name: /默认工作区/ })).toHaveAttribute(
-      'aria-current',
-      'true',
-    );
+    // 其他工作区的会话不进入当前工作区列表
+    expect(within(activeList).queryByText('销售话术复盘')).toBeNull();
+    // 归属为空的历史会话收进「未分组」,仍然可见
+    const ungroupedList = screen.getByRole('list', { name: '未分组会话' });
     expect(
-      screen.getByRole('button', { name: /销售资料/ }),
-    ).not.toHaveAttribute('aria-current');
+      within(ungroupedList).getByText('未归属的历史会话'),
+    ).toBeInTheDocument();
   });
 
-  it('组头的「+」带该工作区新建会话链接', async () => {
-    renderSidebar();
-    await screen.findByText('整理本周日程成周报');
-
-    expect(
-      screen.getByRole('link', { name: '在「销售资料」中新建会话' }),
-    ).toHaveAttribute('href', '/?workspace=ws-2&new=1');
-    expect(
-      screen.getByRole('link', { name: '在「默认工作区」中新建会话' }),
-    ).toHaveAttribute('href', '/?workspace=ws-1&new=1');
-
-    // 未分组组头是纯标题,没有新建入口
-    const ungrouped = screen.getByRole('group', { name: '未分组' });
-    expect(
-      within(ungrouped).queryByRole('link', { name: /新建会话/ }),
-    ).toBeNull();
-  });
-
-  it('点组头切换到该工作区,保留当前会话', async () => {
+  it('下拉菜单切换工作区:只改 workspace 参数', async () => {
     renderSidebar('/?workspace=ws-1&conversation=c1');
     await screen.findByText('整理本周日程成周报');
 
-    fireEvent.click(screen.getByRole('button', { name: /销售资料/ }));
+    fireEvent.click(screen.getByRole('button', { name: '切换工作区' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /销售资料/ }));
 
     await waitFor(() =>
       expect(screen.getByTestId('location').textContent).toBe(
-        '/?workspace=ws-2&conversation=c1',
+        '/?workspace=ws-2',
       ),
     );
   });
@@ -253,10 +235,6 @@ describe('ConsoleSidebar 工作区/会话', () => {
       'href',
       '/?workspace=ws-1&conversation=c1',
     );
-    expect(sessionLink('销售话术复盘')).toHaveAttribute(
-      'href',
-      '/?workspace=ws-2&conversation=c2',
-    );
     // 归属为空的历史会话回落到当前工作区
     expect(sessionLink('未归属的历史会话')).toHaveAttribute(
       'href',
@@ -267,7 +245,7 @@ describe('ConsoleSidebar 工作区/会话', () => {
       'aria-current',
       'page',
     );
-    expect(sessionLink('销售话术复盘')).not.toHaveAttribute('aria-current');
+    expect(sessionLink('未归属的历史会话')).not.toHaveAttribute('aria-current');
   });
 
   it('搜索走服务端并改成扁平结果,无匹配时给提示', async () => {
@@ -290,8 +268,8 @@ describe('ConsoleSidebar 工作区/会话', () => {
     );
     expect(lastPageParams()?.workspace_id).toBeUndefined();
     expect(await screen.findByText('搜索结果')).toBeInTheDocument();
-    // 搜索态不再分组
-    expect(screen.queryByRole('group')).toBeNull();
+    // 搜索态是扁平结果,不受当前工作区过滤
+    expect(screen.getByRole('list', { name: '搜索结果' })).toBeInTheDocument();
     expect(screen.getByText('销售话术复盘')).toBeInTheDocument();
 
     vi.mocked(conversationsApi.page).mockResolvedValue({
@@ -339,8 +317,11 @@ describe('ConsoleSidebar 工作区/会话', () => {
       'href',
       '/workspace?new=1',
     );
-    // 此时不渲染分组
-    expect(screen.queryByRole('group')).toBeNull();
+    // 切换器退化成「选择工作区…」占位,点击去创建工作区
+    expect(screen.getByRole('link', { name: '选择工作区…' })).toHaveAttribute(
+      'href',
+      '/workspace?new=1',
+    );
   });
 
   it('有工作区但没有会话时给空态与开始新会话入口', async () => {
@@ -350,14 +331,14 @@ describe('ConsoleSidebar 工作区/会话', () => {
     });
     renderSidebar();
 
-    expect(await screen.findByText('暂无会话')).toBeInTheDocument();
+    expect(await screen.findByText('这个工作区还没有会话')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '开始新会话' })).toHaveAttribute(
       'href',
       '/?workspace=ws-1&new=1',
     );
   });
 
-  it('底部入口:新会话、添加工作区与工作区导航', async () => {
+  it('入口:新会话常驻,添加工作区收进切换器菜单', async () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
@@ -365,10 +346,12 @@ describe('ConsoleSidebar 工作区/会话', () => {
       'href',
       '/?workspace=ws-1&new=1',
     );
-    expect(screen.getByRole('link', { name: '添加工作区' })).toHaveAttribute(
-      'href',
-      '/workspace?new=1',
-    );
+    // 「添加工作区」不再是常驻入口,而在下拉菜单里
+    expect(screen.queryByRole('link', { name: '添加工作区' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '切换工作区' }));
+    expect(
+      screen.getByRole('menuitem', { name: '添加工作区…' }),
+    ).toHaveAttribute('href', '/workspace?new=1');
     expect(screen.getByRole('link', { name: '工作区' })).toHaveAttribute(
       'href',
       '/workspace',
@@ -379,7 +362,8 @@ describe('ConsoleSidebar 工作区/会话', () => {
     vi.mocked(conversationsApi.page)
       .mockResolvedValueOnce({ items: [conversation], next_cursor: 'next-1' })
       .mockResolvedValueOnce({
-        items: [otherConversation],
+        // 第二页同样是当前工作区的会话;别的工作区的会话不进入列表
+        items: [{ ...conversation, id: 'c4', title: '第二页的会话' }],
         next_cursor: null,
       });
     renderSidebar();
@@ -387,7 +371,7 @@ describe('ConsoleSidebar 工作区/会话', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
 
-    expect(await screen.findByText('销售话术复盘')).toBeInTheDocument();
+    expect(await screen.findByText('第二页的会话')).toBeInTheDocument();
     expect(conversationsApi.page).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'next-1' }),
     );
@@ -397,7 +381,7 @@ describe('ConsoleSidebar 工作区/会话', () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
-    fireEvent.click(defaultGroupMenuButton());
+    fireEvent.click(sessionMenuButton('整理本周日程成周报'));
     fireEvent.click(screen.getByRole('button', { name: '重命名会话' }));
     const input = screen.getByLabelText('会话标题');
     fireEvent.change(input, { target: { value: '新的周报会话' } });
@@ -415,7 +399,7 @@ describe('ConsoleSidebar 工作区/会话', () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
-    fireEvent.click(defaultGroupMenuButton());
+    fireEvent.click(sessionMenuButton('整理本周日程成周报'));
     fireEvent.click(screen.getByRole('button', { name: '归档会话' }));
     await waitFor(() =>
       expect(conversationsApi.update).toHaveBeenCalledWith('c1', {
@@ -423,7 +407,7 @@ describe('ConsoleSidebar 工作区/会话', () => {
       }),
     );
 
-    fireEvent.click(defaultGroupMenuButton());
+    fireEvent.click(sessionMenuButton('整理本周日程成周报'));
     fireEvent.click(screen.getByRole('button', { name: '删除会话' }));
     await waitFor(() =>
       expect(conversationsApi.remove).toHaveBeenCalledWith('c1'),
