@@ -7,6 +7,7 @@ from typing import Annotated
 
 from common.auth import JwtVerifier
 from common.errors import UnauthorizedError
+from common.logging import bind_request_context
 from database.session import session_scope
 from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,8 +43,10 @@ async def get_tenant_id(
                 "auth.header_missing",
                 "缺少 X-Tenant-Id(鉴权未开启时的临时租户头)",
             )
+        bind_request_context(tenant_id=x_tenant_id)
         return x_tenant_id
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthorizedError("auth.token_missing", "缺少 Bearer token")
     principal = await verifier.verify(authorization.split(" ", 1)[1].strip())
+    bind_request_context(tenant_id=principal.tenant_id, user_id=principal.subject)
     return principal.tenant_id

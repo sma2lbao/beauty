@@ -57,7 +57,7 @@
     "serve": {
       "executor": "@nxlv/python:run-commands",
       "options": {
-        "command": "uv run uvicorn workspace.main:app --port 8005",
+        "command": "uv run uvicorn workspace.main:app --port 8005 --no-access-log",
         "cwd": "{projectRoot}"
       }
     }

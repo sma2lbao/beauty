@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 from common.errors import UpstreamError
+from common.middleware import inject_request_headers
 
 REFRESH_MARGIN_SECONDS = 60  # 剩余寿命低于该值就提前换新,避免临界过期
 
@@ -37,6 +38,7 @@ class TokenBroker:
             base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,
             transport=transport,
+            event_hooks={"request": [inject_request_headers]},
         )
         self._secret = internal_secret
         self._cache: dict[str, tuple[str, float]] = {}  # tenant -> (token, 到期时刻)

@@ -13,12 +13,11 @@ from contextlib import asynccontextmanager, suppress
 import structlog
 from common.artifacts import ArtifactStore, build_artifact_store
 from common.auth import JwtVerifier
-from common.errors import AppError
 from common.logging import setup_logging
+from common.middleware import RequestContextMiddleware, install_app_error_handler
 from database.base import Base
 from database.session import create_session_factory
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 
 from workspace.api.health import health_router
 from workspace.api.v1.router import api_router
@@ -119,10 +118,8 @@ def create_app(
     app.state.token_verifier = token_verifier
     app.state.sandbox_provider = sandbox_provider
 
-    @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        """common 统一错误模型 → {"code","message","details"}(架构 §11)。"""
-        return JSONResponse(status_code=exc.status, content=exc.to_dict())
+    install_app_error_handler(app)
+    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
 
     app.include_router(health_router)
     app.include_router(api_router, prefix="/v1")

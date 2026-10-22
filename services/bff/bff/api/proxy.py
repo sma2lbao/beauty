@@ -16,6 +16,12 @@ from urllib.parse import quote
 
 import httpx
 from common.errors import NotFoundError, UnauthorizedError, UpstreamError
+from common.logging import current_context
+from common.middleware import (
+    REQUEST_ID_HEADER,
+    TRACEPARENT_HEADER,
+    current_traceparent,
+)
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -86,6 +92,14 @@ def _headers(request: Request, state: dict[str, Any]) -> dict[str, str]:
         value = request.headers.get(name)
         if value:
             headers[name] = value
+    # 观测链路透传(docs/observability.md §5):request_id 与 traceparent
+    context = current_context()
+    request_id = context.get("request_id")
+    if request_id:
+        headers[REQUEST_ID_HEADER] = str(request_id)
+    traceparent = current_traceparent()
+    if traceparent:
+        headers[TRACEPARENT_HEADER] = str(traceparent)
     return headers
 
 

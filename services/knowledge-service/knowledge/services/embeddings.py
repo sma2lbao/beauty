@@ -14,6 +14,7 @@ from typing import Protocol
 
 import httpx
 from common.errors import UpstreamError
+from common.middleware import inject_request_headers
 
 LOCAL_PROVIDER = "local"
 GATEWAY_PROVIDER = "gateway"
@@ -73,7 +74,10 @@ class GatewayEmbeddingProvider:
     ) -> None:
         self.model = model
         self._client = httpx.AsyncClient(
-            base_url=base_url, timeout=timeout_seconds, transport=transport
+            base_url=base_url,
+            timeout=timeout_seconds,
+            transport=transport,
+            event_hooks={"request": [inject_request_headers]},
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:

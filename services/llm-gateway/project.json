@@ -57,7 +57,7 @@
     "serve": {
       "executor": "@nxlv/python:run-commands",
       "options": {
-        "command": "uv run uvicorn llm_gateway.main:app --port 8003",
+        "command": "uv run uvicorn llm_gateway.main:app --port 8003 --no-access-log",
         "cwd": "{projectRoot}"
       }
     }

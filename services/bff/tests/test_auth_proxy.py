@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import httpx
 from fastapi.testclient import TestClient
 
-from tests.conftest import login
+from bff.main import create_app
+from tests.conftest import handler as upstream_handler
+from tests.conftest import login, settings
+
+TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 
 def test_login_sets_httponly_cookie_and_hides_tokens(client: TestClient) -> None:
@@ -115,3 +120,26 @@ def test_proxy_streams_sse_by_path_without_accept(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "ready" in response.text
+
+
+def test_proxy_forwards_request_id_and_traceparent() -> None:
+    """观测链路:入站 request_id/traceparent 透传给下游,并在响应头回写。"""
+    seen: list[httpx.Request] = []
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return upstream_handler(request)
+
+    app = create_app(settings(), transport=httpx.MockTransport(recording))
+    with TestClient(app) as client:
+        login(client)
+        response = client.get(
+            "/api/v1/runs",
+            headers={"X-Request-ID": "req-abc-123", "traceparent": TRACEPARENT},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "req-abc-123"
+    proxied = next(item for item in seen if item.url.path.endswith("/v1/runs"))
+    assert proxied.headers["x-request-id"] == "req-abc-123"
+    assert proxied.headers["traceparent"] == TRACEPARENT

@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 import httpx
 from common.errors import UpstreamError
+from common.middleware import inject_request_headers
 
 
 class Knowledge(Protocol):
@@ -46,7 +47,10 @@ class KnowledgeClient:
         token_provider: Callable[[str], Awaitable[str]],
     ) -> None:
         self._client = httpx.AsyncClient(
-            base_url=base_url, timeout=timeout_seconds, transport=transport
+            base_url=base_url,
+            timeout=timeout_seconds,
+            transport=transport,
+            event_hooks={"request": [inject_request_headers]},
         )
         self._token_provider = token_provider
 

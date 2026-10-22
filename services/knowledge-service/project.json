@@ -57,7 +57,7 @@
     "serve": {
       "executor": "@nxlv/python:run-commands",
       "options": {
-        "command": "uv run uvicorn knowledge.main:app --port 8006",
+        "command": "uv run uvicorn knowledge.main:app --port 8006 --no-access-log",
         "cwd": "{projectRoot}"
       }
     }

@@ -14,6 +14,7 @@ from typing import Any, Protocol
 import httpx
 from common.errors import UpstreamError
 from common.logging import get_logger
+from common.middleware import inject_request_headers
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,10 @@ class GatewayClient:
     ) -> None:
         self.model = model  # None:走网关默认路由
         self._client = httpx.AsyncClient(
-            base_url=base_url, timeout=timeout_seconds, transport=transport
+            base_url=base_url,
+            timeout=timeout_seconds,
+            transport=transport,
+            event_hooks={"request": [inject_request_headers]},
         )
 
     async def complete(

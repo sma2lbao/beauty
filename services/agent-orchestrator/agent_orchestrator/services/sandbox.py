@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 import httpx
 from common.errors import UpstreamError
+from common.middleware import inject_request_headers
 
 #: 下游错误响应体截断长度(避免把整段 HTML/堆栈塞进 details)
 ERROR_BODY_LIMIT = 200
@@ -185,7 +186,10 @@ class SandboxClient:
         token_provider: Callable[[str], Awaitable[str]],
     ) -> None:
         self._client = httpx.AsyncClient(
-            base_url=base_url, timeout=timeout_seconds, transport=transport
+            base_url=base_url,
+            timeout=timeout_seconds,
+            transport=transport,
+            event_hooks={"request": [inject_request_headers]},
         )
         self._token_provider = token_provider
 

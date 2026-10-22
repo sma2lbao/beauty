@@ -11,8 +11,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
-from common.errors import AppError
 from common.logging import setup_logging
+from common.middleware import (
+    RequestContextMiddleware,
+    inject_request_headers,
+    install_app_error_handler,
+)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -35,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=httpx.Timeout(30.0, connect=5.0),
         transport=transport,
         follow_redirects=False,
+        event_hooks={"request": [inject_request_headers]},
     )
     try:
         yield
@@ -53,9 +58,7 @@ def create_app(
         app.state.settings.rate_limit_per_minute
     )
 
-    @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status, content=exc.to_dict())
+    install_app_error_handler(app)
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -68,9 +71,7 @@ def create_app(
         tenant = (state or {}).get("user", {}).get("tenant_id")
         client_host = request.client.host if request.client else "unknown"
         group = "/".join(path.split("/")[:4])
-        if not await app.state.rate_limiter.allow(
-            f"{tenant or client_host}:{group}"
-        ):
+        if not await app.state.rate_limiter.allow(f"{tenant or client_host}:{group}"):
             return JSONResponse(
                 status_code=429,
                 headers={"Retry-After": "60"},
@@ -89,6 +90,9 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # 最后注册 => 最外层:限流 429 也要有 request_id 与访问日志
+    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
 
     app.include_router(health_router)
     app.include_router(auth_router)

@@ -14,16 +14,15 @@ from functools import partial
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
-from common.errors import AppError
 from common.logging import get_logger, setup_logging
+from common.middleware import RequestContextMiddleware, install_app_error_handler
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 from events.bus import EventBus, InMemoryEventBus
 from events.outbox import OutboxDispatcher
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from agent_orchestrator.api.health import health_router
 from agent_orchestrator.api.internal import router as internal_router
@@ -468,10 +467,8 @@ def create_app(
             allow_headers=["*"],
         )
 
-    @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        """common 统一错误模型 → {"code","message","details"}(架构 §11)。"""
-        return JSONResponse(status_code=exc.status, content=exc.to_dict())
+    install_app_error_handler(app)
+    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
 
     app.include_router(health_router)
     app.include_router(internal_router)

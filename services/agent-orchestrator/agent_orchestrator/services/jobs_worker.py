@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from common.logging import bind_request_context, clear_request_context
 from database.session import session_scope
 from fastapi import FastAPI
 
@@ -114,32 +115,37 @@ async def process_one(app: FastAPI) -> bool:
         job_id = job.id
     assert tenant_id is not None and job_id is not None
 
+    # 后台任务没有 HTTP 请求:用 job id 作种子,让同一 job 的日志可串联
+    bind_request_context(request_id=f"job-{job_id}", tenant_id=tenant_id, job_id=job_id)
     try:
+        try:
+            async with session_scope(factory) as session:
+                job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
+                await _dispatch(app, session, job)
+        except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
+            logger.exception("job failed", job_id=job_id)
+            async with session_scope(factory) as session:
+                repo = JobRepository(session)
+                job = await repo.require_for_tenant(tenant_id, job_id)
+                job.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+                job.lease_until = None
+                if job.attempts >= job.max_attempts:
+                    job.status = "failed"
+                else:
+                    job.status = "queued"
+                    job.run_at = datetime.now(UTC) + timedelta(
+                        seconds=min(2**job.attempts, 30)
+                    )
+            return True
+
         async with session_scope(factory) as session:
             job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
-            await _dispatch(app, session, job)
-    except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
-        logger.exception("job failed", job_id=job_id)
-        async with session_scope(factory) as session:
-            repo = JobRepository(session)
-            job = await repo.require_for_tenant(tenant_id, job_id)
-            job.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+            job.status = "succeeded"
             job.lease_until = None
-            if job.attempts >= job.max_attempts:
-                job.status = "failed"
-            else:
-                job.status = "queued"
-                job.run_at = datetime.now(UTC) + timedelta(
-                    seconds=min(2**job.attempts, 30)
-                )
+            job.locked_by = None
         return True
-
-    async with session_scope(factory) as session:
-        job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
-        job.status = "succeeded"
-        job.lease_until = None
-        job.locked_by = None
-    return True
+    finally:
+        clear_request_context()
 
 
 async def worker_loop(app: FastAPI) -> None:
