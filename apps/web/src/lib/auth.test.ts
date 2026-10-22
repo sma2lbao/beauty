@@ -223,7 +223,7 @@ describe('登录来路记忆', () => {
     expect(auth.takeLoginRedirect()).toBe('/');
   });
 
-  it('非站内路径一律回对话页(防开放重定向)', async () => {
+  it('非站内路径一律回会话页(防开放重定向)', async () => {
     const auth = await loadAuth('token');
     auth.rememberLoginRedirect('//evil.example');
     expect(auth.takeLoginRedirect()).toBe('/');

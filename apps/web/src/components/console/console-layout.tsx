@@ -9,6 +9,7 @@ import {
   BarChart3,
   BookOpen,
   Columns3,
+  FolderKanban,
   GitCompareArrows,
   LayoutGrid,
   PanelLeft,
@@ -28,6 +29,7 @@ import { useUiStore } from '@/stores/ui-store';
 
 const MOBILE_NAV = [
   { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
+  { to: '/workspace', icon: <FolderKanban />, label: '工作区' },
   { to: '/runs', icon: <Columns3 />, label: '任务编排' },
   { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
   { to: '/mcp', icon: <Plug />, label: 'MCP' },

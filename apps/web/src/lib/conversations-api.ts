@@ -1,8 +1,8 @@
 /**
- * 对话页的数据层:agent-orchestrator 的 conversation API 契约。
+ * 会话页的数据层:agent-orchestrator 的 conversation API 契约。
  *
  * 与 runs-api 同一服务(BASE 同源,Vite dev 由 vite.config.ts 代理到 :8002);
- * 对话语义:一条用户消息先由服务端**分流**——简单对话直接答(reply,不建 run),
+ * 会话语义:一条用户消息先由服务端**分流**——简单会话直接回答(reply,不建 run),
  * 复杂任务才建 run(自动规划)或并入当前 run 的追加指令队列;
  * postMessage 的 mode 告诉页面实际发生了哪种。
  */
@@ -16,6 +16,11 @@ const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 export type Conversation = {
   id: string;
   title: string;
+  /**
+   * 会话归属的工作区;旧后端/旧数据可能缺省(null/未返回)。
+   * 列表与详情都由服务端按 workspace_id 过滤或回填。
+   */
+  workspace_id?: string | null;
   created_at: string;
   updated_at: string;
   /** 仅详情返回:当前进行中的 run(接 SSE 用);列表项不带该字段 */
@@ -31,6 +36,8 @@ export type ConversationPage = {
 
 export type ConversationListParams = {
   limit?: number;
+  /** 只看该工作区的会话;不传由服务端按默认工作区解析 */
+  workspace_id?: string;
   /** 标题搜索(服务端模糊匹配) */
   q?: string;
   /** 只看已归档 */
@@ -53,7 +60,7 @@ export type ChatMessage = {
   mcp_server_ids?: string[];
 };
 
-/** 发送方式:auto = 服务端自动分流(默认);chat = 直接对话;task = 作为任务。 */
+/** 发送方式:auto = 服务端自动分流(默认);chat = 直接回答;task = 作为任务。 */
 export type SendMode = 'auto' | 'chat' | 'task';
 
 /** 会话附件元数据;正文走 downloadAttachment(不塞进消息 JSON)。 */
@@ -87,6 +94,7 @@ function request<T>(path: string, init?: RequestInit): Promise<T> {
 function listPath(params: ConversationListParams = {}): string {
   const search = new URLSearchParams();
   search.set('limit', String(params.limit ?? 50));
+  if (params.workspace_id) search.set('workspace_id', params.workspace_id);
   const q = params.q?.trim();
   if (q) search.set('q', q);
   if (params.archived) search.set('archived', 'true');
@@ -124,11 +132,20 @@ export const conversationsApi = {
     request<void>(`/api/v1/conversations/${conversationId}`, {
       method: 'DELETE',
     }),
-  create: () =>
-    request<Conversation>('/api/v1/conversations', {
+  /**
+   * 建会话:workspace_id 决定会话归属(不传由服务端落租户默认工作区);
+   * title 留空则等首条消息自动定题。空调用仍发 `{}`,保持旧契约。
+   */
+  create: (input: { title?: string; workspace_id?: string | null } = {}) => {
+    const body: { title?: string; workspace_id?: string } = {};
+    const title = input.title?.trim();
+    if (title) body.title = title;
+    if (input.workspace_id) body.workspace_id = input.workspace_id;
+    return request<Conversation>('/api/v1/conversations', {
       method: 'POST',
-      body: JSON.stringify({}),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
   get: (conversationId: string) =>
     request<Conversation>(`/api/v1/conversations/${conversationId}`),
   messages: (conversationId: string) =>
@@ -215,7 +232,7 @@ export type StreamMessageHandlers = {
     run: Run | null;
   }) => void;
   onDelta?: (text: string) => void;
-  /** 对话内只读工具调用(后端已执行完,事件仅为展示过程) */
+  /** 会话内只读工具调用(后端已执行完,事件仅为展示过程) */
   onTool?: (call: { name: string; arguments: string; ok: boolean }) => void;
   onDone?: (result: {
     mode: MessagePostResult['mode'];

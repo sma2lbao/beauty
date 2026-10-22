@@ -26,7 +26,7 @@ export type MCPServer = {
   /** http server 的地址;stdio 恒为空字符串(后端读取契约) */
   url: string;
   enabled: boolean;
-  /** 免确认执行:置 true 后工具在对话里可直接执行(任务里也不再逐次确认) */
+  /** 免确认执行:置 true 后工具在会话里可直接执行(任务里也不再逐次确认) */
   auto_approve: boolean;
   has_token: boolean;
   token_hint: string | null;

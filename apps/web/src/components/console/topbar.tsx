@@ -5,7 +5,13 @@
  * 平台统一走 llm-gateway 路由,前端没有逐会话换模型的接口,不伪造下拉能力。
  */
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Cpu, PanelLeft, Share2 } from 'lucide-react';
+import {
+  ChevronRight,
+  Cpu,
+  FolderKanban,
+  PanelLeft,
+  Share2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { siteUrl } from '@/lib/site-links';
 
@@ -20,9 +26,12 @@ import { cn } from '@/lib/utils';
 export function ConsoleTopbar({
   title,
   status,
+  workspace,
 }: {
   title: string;
   status?: RunStatus | null;
+  /** 当前工作区名(数据层字段是 workspace_id):面包屑里落在「工作台」与会话标题之间 */
+  workspace?: string | null;
 }) {
   const accountQuery = useQuery({
     queryKey: ['auth-account'],
@@ -44,7 +53,7 @@ export function ConsoleTopbar({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
-      // 剪贴板不可用(非安全上下文)时静默:不打断对话
+      // 剪贴板不可用(非安全上下文)时静默:不打断会话
     }
   };
 
@@ -69,6 +78,24 @@ export function ConsoleTopbar({
           aria-hidden="true"
           className="h-3 w-3 shrink-0 text-ha-ghost"
         />
+        {workspace ? (
+          <>
+            <span
+              className="flex max-w-[180px] shrink-0 items-center gap-1 text-ha-dim"
+              title={'工作区:' + workspace}
+            >
+              <FolderKanban
+                aria-hidden="true"
+                className="h-3 w-3 shrink-0 text-ha-ghost"
+              />
+              <span className="truncate">{workspace}</span>
+            </span>
+            <ChevronRight
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 text-ha-ghost"
+            />
+          </>
+        ) : null}
         <span className="truncate text-[13px] font-semibold text-ha-text">
           {title}
         </span>

@@ -37,7 +37,7 @@ export type Run = {
   status_reason: string | null;
   /** 重试血缘:本 run 由哪个 failed run 派生(§6.2)。 */
   parent_run_id: string | null;
-  /** 对话归属:由对话消息触发的 run 带;控制台直建为空。 */
+  /** 会话归属:由会话消息触发的 run 带;控制台直建为空。 */
   conversation_id: string | null;
   created_at: string;
 };

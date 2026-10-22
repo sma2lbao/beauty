@@ -257,7 +257,7 @@ export function toolCallsFrom(events: readonly RunEvent[]): ToolCall[] {
     }));
 }
 
-/** 事件流 → 对话里的一行系统播报(只做展示映射,不改状态语义)。 */
+/** 事件流 → 会话里的一行系统播报(只做展示映射,不改状态语义)。 */
 export function eventLine(
   event: RunEvent,
 ): { text: string; tone: Tone } | null {

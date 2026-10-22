@@ -74,7 +74,7 @@ function renderLogin(options?: { from?: string }) {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/runs" element={<div>运行控制台占位</div>} />
-          <Route path="/" element={<div>对话页占位</div>} />
+          <Route path="/" element={<div>会话页占位</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -169,7 +169,7 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(setStoredToken).toHaveBeenCalledWith('pasted-jwt');
     });
-    expect(await screen.findByText('对话页占位')).toBeInTheDocument();
+    expect(await screen.findByText('会话页占位')).toBeInTheDocument();
   });
 
   it('logto 模式:未登录时跳 IdP 并记下来路', async () => {

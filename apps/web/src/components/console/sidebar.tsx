@@ -1,8 +1,11 @@
 /**
- * 控制台侧边栏:品牌 + 新建任务 + 主导航 + 最近会话 + 账户。
+ * 控制台侧边栏:品牌 + 新会话 + 主导航 + 按工作区分组的会话 + 账户。
  *
- * 会话管理(M0-09):
- * - 标题搜索(q)与归档视图(archived)走服务端分页;
+ * 交互对齐 dsh 侧栏的「工作区 / 会话」心智:
+ * - URL ?workspace=<id> 是当前工作区的唯一真源,切换工作区只改 URL;
+ * - 会话区直接按工作区分组列出会话(分组逻辑在 lib/session-groups),
+ *   组头点击切换当前工作区,组头右侧「+」在该工作区新建会话;
+ * - 列表取租户全部会话(不按工作区过滤),客户端分组;搜索/归档仍走服务端分页;
  * - 重命名 / 归档 / 软删除就地操作,成功后失效会话查询并同步当前选中会话;
  * - 分页用 keyset 游标,加载更多不丢不重。
  */
@@ -18,6 +21,7 @@ import {
   BookOpen,
   Columns3,
   FolderKanban,
+  FolderPlus,
   GitCompareArrows,
   Globe,
   Inbox,
@@ -43,7 +47,6 @@ import { accountApi } from '@/lib/account-api';
 import { accountLabel } from '@/lib/auth';
 import type { Conversation } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
-import { siteUrl } from '@/lib/site-links';
 import {
   RUN_STATUS_LABELS,
   relativeTime,
@@ -51,8 +54,12 @@ import {
 } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
-import { useUiStore } from '@/stores/ui-store';
+import type { SessionGroup } from '@/lib/session-groups';
+import { groupSessionsByWorkspace } from '@/lib/session-groups';
+import { siteUrl } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
+import { useWorkspaceSelection } from '@/lib/workspace-selection';
+import { useUiStore } from '@/stores/ui-store';
 
 const PRIMARY_NAV = [
   { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
@@ -76,6 +83,15 @@ export function ConsoleSidebar() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const setSidebarVisible = useUiStore((state) => state.setSidebarVisible);
+  const {
+    workspaces: workspaceList,
+    activeWorkspaceId,
+    isLoading: workspacesLoading,
+    error: workspacesError,
+    selectWorkspace,
+  } = useWorkspaceSelection();
+  const workspaces = workspaceList.filter(Boolean);
+  const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
 
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -86,8 +102,10 @@ export function ConsoleSidebar() {
     title: string;
   } | null>(null);
 
+  // 取租户内全部会话(不传 workspace_id),客户端再按工作区分组;
+  // 搜索与归档视图仍交给服务端分页。
   const conversationsQuery = useInfiniteQuery({
-    queryKey: ['conversations', 'page', deferredQuery, showArchived],
+    queryKey: ['conversations', 'all', showArchived, deferredQuery],
     queryFn: ({ pageParam }) =>
       conversationsApi.page({
         limit: 20,
@@ -116,10 +134,41 @@ export function ConsoleSidebar() {
 
   const conversations =
     conversationsQuery.data?.pages.flatMap((page) => page.items ?? []) ?? [];
+  const searching = deferredQuery.trim().length > 0;
+  const sessionGroups = groupSessionsByWorkspace(conversations, workspaces);
 
   const invalidateConversations = () => {
     void queryClient.invalidateQueries({ queryKey: ['conversations'] });
     void queryClient.invalidateQueries({ queryKey: ['conversation'] });
+  };
+
+  /** 控制台内所有会话链接都带上工作区:刷新/分享都能还原同一视图。 */
+  const workspaceHref = (
+    workspaceId: string | null,
+    options: { conversation?: string; new?: boolean } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (workspaceId) search.set('workspace', workspaceId);
+    if (options.conversation) search.set('conversation', options.conversation);
+    if (options.new) search.set('new', '1');
+    const serialized = search.toString();
+    return serialized ? '/?' + serialized : '/';
+  };
+
+  const newSessionHref = activeWorkspaceId
+    ? workspaceHref(activeWorkspaceId, { new: true })
+    : '/workspace?new=1';
+
+  /**
+   * 会话链接归属的工作区:会话自身的归属优先;
+   * 归属为空或已不在工作区清单里(工作区被删)时回落到当前工作区,避免死链。
+   */
+  const sessionWorkspaceId = (conversation: Conversation): string | null => {
+    const workspaceId = conversation.workspace_id;
+    if (workspaceId && workspaceIds.has(workspaceId)) {
+      return workspaceId;
+    }
+    return activeWorkspaceId;
   };
 
   const renameMutation = useMutation({
@@ -137,7 +186,9 @@ export function ConsoleSidebar() {
     onSuccess: (_data, input) => {
       invalidateConversations();
       if (input.archived && input.id === selectedConversation) {
-        navigate('/?new=1', { replace: true });
+        navigate(workspaceHref(activeWorkspaceId, { new: true }), {
+          replace: true,
+        });
       }
     },
   });
@@ -147,7 +198,9 @@ export function ConsoleSidebar() {
     onSuccess: (_data, id) => {
       invalidateConversations();
       if (id === selectedConversation) {
-        navigate('/?new=1', { replace: true });
+        navigate(workspaceHref(activeWorkspaceId, { new: true }), {
+          replace: true,
+        });
       }
     },
   });
@@ -176,6 +229,208 @@ export function ConsoleSidebar() {
     if (ok) removeMutation.mutate(conversation.id);
   };
 
+  /** 单条会话:状态点 + 标题/元信息 + 就地操作菜单(重命名/归档/删除)。 */
+  const sessionRow = (conversation: Conversation) => {
+    const run = latestRunByConversation.get(conversation.id);
+    const tone = run ? runStatusTone(run.status) : 'neutral';
+    const meta = run
+      ? RUN_STATUS_LABELS[run.status] +
+        ' · ' +
+        relativeTime(conversation.updated_at)
+      : relativeTime(conversation.updated_at);
+    const selected = conversation.id === selectedConversation;
+
+    return (
+      <div
+        key={conversation.id}
+        className={cn(
+          'group relative flex items-center gap-[9px] rounded-md px-2.5 py-[9px] transition-colors',
+          selected ? 'bg-[#1c1d1f]' : 'hover:bg-ha-panel-2/60',
+        )}
+      >
+        <StatusDot tone={tone} pulse={run?.status === 'running'} />
+
+        {renaming?.id === conversation.id ? (
+          <form
+            className="min-w-0 flex-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const title = renaming.title.trim();
+              if (title) {
+                renameMutation.mutate({ id: conversation.id, title });
+              }
+            }}
+          >
+            <input
+              aria-label="会话标题"
+              autoFocus
+              value={renaming.title}
+              onChange={(event) =>
+                setRenaming({
+                  id: conversation.id,
+                  title: event.target.value,
+                })
+              }
+              onBlur={() => setRenaming(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setRenaming(null);
+              }}
+              className="h-6 w-full rounded border border-ha-accent bg-ha-panel px-1.5 text-[12px] text-ha-text outline-none"
+            />
+          </form>
+        ) : (
+          <Link
+            to={workspaceHref(sessionWorkspaceId(conversation), {
+              conversation: conversation.id,
+            })}
+            aria-current={selected ? 'page' : undefined}
+            className="min-w-0 flex-1"
+          >
+            <span
+              className={cn(
+                'block truncate text-[13px]',
+                selected
+                  ? 'font-medium text-ha-text'
+                  : 'font-normal text-ha-text-2',
+              )}
+            >
+              {conversation.title}
+            </span>
+            <span className="mt-[3px] block truncate font-mono text-[11px] text-ha-dim">
+              {meta}
+            </span>
+          </Link>
+        )}
+
+        <button
+          type="button"
+          aria-label="会话操作"
+          aria-expanded={menuFor === conversation.id}
+          onClick={() =>
+            setMenuFor((value) =>
+              value === conversation.id ? null : conversation.id,
+            )
+          }
+          className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded text-ha-dim opacity-0 transition-opacity hover:bg-ha-panel-2 hover:text-ha-text group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+
+        {menuFor === conversation.id ? (
+          <div className="absolute right-1 top-7 z-20 w-32 rounded-md border border-ha-border bg-ha-sidebar p-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuFor(null);
+                setRenaming({
+                  id: conversation.id,
+                  title: conversation.title,
+                });
+              }}
+              className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-text-2 hover:bg-ha-panel-2"
+            >
+              <Pencil className="h-3 w-3" />
+              重命名会话
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuFor(null);
+                archiveMutation.mutate({
+                  id: conversation.id,
+                  archived: !showArchived,
+                });
+              }}
+              className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-text-2 hover:bg-ha-panel-2"
+            >
+              <Archive className="h-3 w-3" />
+              {showArchived ? '取消归档' : '归档会话'}
+            </button>
+            <button
+              type="button"
+              onClick={() => confirmDelete(conversation)}
+              className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-danger hover:bg-ha-danger-bg"
+            >
+              <Trash2 className="h-3 w-3" />
+              删除会话
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  /** 一个工作区分组:可点击的组头(含「+」新建会话)+ 组内会话行。 */
+  const renderSessionGroup = (group: SessionGroup) => {
+    const workspaceId = group.workspaceId;
+    const active = workspaceId !== null && workspaceId === activeWorkspaceId;
+    const count = group.sessions.length;
+
+    return (
+      <div
+        key={group.key}
+        role="group"
+        aria-label={group.name}
+        className="space-y-0.5"
+      >
+        {workspaceId ? (
+          <div
+            className={cn(
+              'group/workspace flex items-center gap-0.5 rounded-md pr-1 transition-colors',
+              active ? 'bg-ha-accent-soft/20' : 'hover:bg-ha-panel-2/40',
+            )}
+          >
+            <button
+              type="button"
+              aria-current={active ? 'true' : undefined}
+              onClick={() =>
+                selectWorkspace(workspaceId, { keepConversation: true })
+              }
+              className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left outline-none focus-visible:bg-ha-panel-2/60"
+            >
+              <FolderKanban
+                aria-hidden="true"
+                className={cn(
+                  'h-3 w-3 shrink-0',
+                  active ? 'text-ha-accent-soft' : 'text-ha-faint',
+                )}
+              />
+              <span
+                className={cn(
+                  'truncate text-[11px] font-medium',
+                  active ? 'text-ha-text' : 'text-ha-dim',
+                )}
+              >
+                {group.name}
+              </span>
+              {count > 0 ? (
+                <span className="shrink-0 font-mono text-[10px] text-ha-faint">
+                  {count} 个会话
+                </span>
+              ) : null}
+            </button>
+            <Link
+              to={workspaceHref(workspaceId, { new: true })}
+              aria-label={'在「' + group.name + '」中新建会话'}
+              title={'在「' + group.name + '」中新建会话'}
+              className="grid h-5 w-5 shrink-0 place-items-center rounded text-ha-faint opacity-0 transition-opacity hover:bg-ha-panel-2 hover:text-ha-text-2 focus-visible:opacity-100 group-hover/workspace:opacity-100"
+            >
+              <Plus className="h-3 w-3" />
+            </Link>
+          </div>
+        ) : (
+          <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ha-dim">
+            {group.name}
+          </div>
+        )}
+        {group.sessions.map(sessionRow)}
+      </div>
+    );
+  };
+
+  const listLoading = workspacesLoading || conversationsQuery.isPending;
+  const listFailed = Boolean(workspacesError) || conversationsQuery.isError;
+
   return (
     <aside
       aria-label="控制台导航"
@@ -202,14 +457,14 @@ export function ConsoleSidebar() {
       </div>
 
       <Link
-        to="/?new=1"
+        to={newSessionHref}
         className={cn(
           consoleButtonClass({ variant: 'primary', size: 'lg' }),
           'w-full',
         )}
       >
         <Plus className="h-3.5 w-3.5" />
-        新建任务
+        新会话
       </Link>
 
       <nav aria-label="主导航" className="flex flex-col gap-0.5">
@@ -228,14 +483,14 @@ export function ConsoleSidebar() {
             aria-label="搜索会话"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索会话…"
+            placeholder="搜索会话"
             className="h-7 w-full rounded-md border border-ha-border bg-ha-panel pl-6 pr-2 text-[12px] text-ha-text-body outline-none placeholder:text-ha-faint focus:border-ha-accent"
           />
         </div>
 
         <div className="flex items-center justify-between px-2.5">
           <span className="text-[11px] font-semibold text-ha-dim">
-            {showArchived ? '已归档' : '最近会话'}
+            {showArchived ? '已归档' : '会话'}
           </span>
           <button
             type="button"
@@ -250,7 +505,7 @@ export function ConsoleSidebar() {
         </div>
 
         <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
-          {conversationsQuery.isPending ? (
+          {listLoading ? (
             <div className="space-y-2 px-2.5 py-2">
               {[0, 1, 2].map((key) => (
                 <div key={key} className="space-y-1.5">
@@ -261,143 +516,73 @@ export function ConsoleSidebar() {
             </div>
           ) : null}
 
-          {!conversationsQuery.isPending && conversations.length === 0 ? (
-            <p className="px-2.5 py-2 text-[12px] leading-5 text-ha-dim">
-              {showArchived
-                ? '没有已归档的会话。'
-                : query.trim()
-                  ? '没有匹配的会话。'
-                  : '还没有会话。点上方「新建任务」开始。'}
+          {!listLoading && listFailed ? (
+            <p className="px-2.5 py-2 text-[12px] leading-5 text-ha-danger">
+              工作区或会话加载失败,稍后再试。
             </p>
           ) : null}
 
-          {conversations.map((conversation) => {
-            const run = latestRunByConversation.get(conversation.id);
-            const tone = run ? runStatusTone(run.status) : 'neutral';
-            const meta = run
-              ? RUN_STATUS_LABELS[run.status] +
-                ' · ' +
-                relativeTime(conversation.updated_at)
-              : relativeTime(conversation.updated_at);
-            const selected = conversation.id === selectedConversation;
-
-            return (
-              <div
-                key={conversation.id}
-                className={cn(
-                  'group relative flex items-center gap-[9px] rounded-md px-2.5 py-[9px] transition-colors',
-                  selected ? 'bg-[#1c1d1f]' : 'hover:bg-ha-panel-2/60',
-                )}
-              >
-                <StatusDot tone={tone} pulse={run?.status === 'running'} />
-
-                {renaming?.id === conversation.id ? (
-                  <form
-                    className="min-w-0 flex-1"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const title = renaming.title.trim();
-                      if (title) {
-                        renameMutation.mutate({ id: conversation.id, title });
-                      }
-                    }}
-                  >
-                    <input
-                      aria-label="会话标题"
-                      autoFocus
-                      value={renaming.title}
-                      onChange={(event) =>
-                        setRenaming({
-                          id: conversation.id,
-                          title: event.target.value,
-                        })
-                      }
-                      onBlur={() => setRenaming(null)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape') setRenaming(null);
-                      }}
-                      className="h-6 w-full rounded border border-ha-accent bg-ha-panel px-1.5 text-[12px] text-ha-text outline-none"
-                    />
-                  </form>
+          {!listLoading && !listFailed ? (
+            workspaces.length === 0 ? (
+              <div className="px-2.5 py-2">
+                <p className="text-[12px] leading-5 text-ha-dim">
+                  还没有工作区,先到工作区页新建一个。
+                </p>
+                <Link
+                  to="/workspace?new=1"
+                  className={cn(
+                    consoleButtonClass({ variant: 'secondary', size: 'sm' }),
+                    'mt-2 w-full',
+                  )}
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                  创建工作区
+                </Link>
+              </div>
+            ) : searching ? (
+              <>
+                <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-ha-dim">
+                  搜索结果
+                </div>
+                {conversations.length > 0 ? (
+                  conversations.map(sessionRow)
                 ) : (
-                  <Link
-                    to={'/?conversation=' + conversation.id}
-                    aria-current={selected ? 'page' : undefined}
-                    className="min-w-0 flex-1"
-                  >
-                    <span
+                  <p className="px-2.5 py-2 text-[12px] leading-5 text-ha-dim">
+                    无匹配会话
+                  </p>
+                )}
+              </>
+            ) : conversations.length === 0 ? (
+              <div className="px-2.5 py-2">
+                {showArchived ? (
+                  <p className="text-[12px] leading-5 text-ha-dim">
+                    暂无已归档会话
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[12px] leading-5 text-ha-dim">
+                      暂无会话
+                    </p>
+                    <Link
+                      to={newSessionHref}
                       className={cn(
-                        'block truncate text-[13px]',
-                        selected
-                          ? 'font-medium text-ha-text'
-                          : 'font-normal text-ha-text-2',
+                        consoleButtonClass({
+                          variant: 'secondary',
+                          size: 'sm',
+                        }),
+                        'mt-2 w-full',
                       )}
                     >
-                      {conversation.title}
-                    </span>
-                    <span className="mt-[3px] block truncate font-mono text-[11px] text-ha-dim">
-                      {meta}
-                    </span>
-                  </Link>
+                      <Plus className="h-3.5 w-3.5" />
+                      开始新会话
+                    </Link>
+                  </>
                 )}
-
-                <button
-                  type="button"
-                  aria-label="会话操作"
-                  aria-expanded={menuFor === conversation.id}
-                  onClick={() =>
-                    setMenuFor((value) =>
-                      value === conversation.id ? null : conversation.id,
-                    )
-                  }
-                  className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded text-ha-dim opacity-0 transition-opacity hover:bg-ha-panel-2 hover:text-ha-text group-hover:opacity-100 focus-visible:opacity-100"
-                >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </button>
-
-                {menuFor === conversation.id ? (
-                  <div className="absolute right-1 top-7 z-20 w-32 rounded-md border border-ha-border bg-ha-sidebar p-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuFor(null);
-                        setRenaming({
-                          id: conversation.id,
-                          title: conversation.title,
-                        });
-                      }}
-                      className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-text-2 hover:bg-ha-panel-2"
-                    >
-                      <Pencil className="h-3 w-3" />
-                      重命名
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuFor(null);
-                        archiveMutation.mutate({
-                          id: conversation.id,
-                          archived: !showArchived,
-                        });
-                      }}
-                      className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-text-2 hover:bg-ha-panel-2"
-                    >
-                      <Archive className="h-3 w-3" />
-                      {showArchived ? '取消归档' : '归档'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => confirmDelete(conversation)}
-                      className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-[12px] text-ha-danger hover:bg-ha-danger-bg"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      删除
-                    </button>
-                  </div>
-                ) : null}
               </div>
-            );
-          })}
+            ) : (
+              sessionGroups.map(renderSessionGroup)
+            )
+          ) : null}
 
           {conversationsQuery.hasNextPage ? (
             <button
@@ -410,6 +595,14 @@ export function ConsoleSidebar() {
             </button>
           ) : null}
         </div>
+
+        <Link
+          to="/workspace?new=1"
+          className="flex h-7 shrink-0 items-center gap-2 rounded-md px-2.5 text-[12px] text-ha-dim transition-colors hover:bg-ha-panel-2/60 hover:text-ha-text-2"
+        >
+          <FolderPlus aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+          添加工作区
+        </Link>
       </div>
 
       <nav aria-label="更多" className="flex flex-col gap-0.5">

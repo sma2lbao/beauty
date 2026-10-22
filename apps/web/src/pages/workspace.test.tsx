@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { conversationsApi, type Conversation } from '@/lib/conversations-api';
 import { ApiError } from '@/lib/http';
 import type { ArtifactMeta, Workspace } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
@@ -26,6 +28,13 @@ vi.mock('@/lib/workspace-api', async () => {
   };
 });
 
+vi.mock('@/lib/conversations-api', () => ({
+  conversationsApi: {
+    list: vi.fn(),
+    page: vi.fn(),
+  },
+}));
+
 vi.mock('@/components/runs/auth-bar', () => ({
   AuthBar: () => <div data-testid="auth-bar" />,
 }));
@@ -36,6 +45,15 @@ const workspace: Workspace = {
   description: '自动创建:租户默认工作区',
   status: 'active',
   created_at: '2026-10-13T00:00:00+00:00',
+};
+
+const conversation: Conversation = {
+  id: 'c1',
+  title: '整理本周日程成周报',
+  workspace_id: 'ws-1',
+  created_at: '2026-10-13T02:00:00+00:00',
+  updated_at: '2026-10-13T02:30:00+00:00',
+  archived_at: null,
 };
 
 const artifact: ArtifactMeta = {
@@ -49,13 +67,15 @@ const artifact: ArtifactMeta = {
   created_at: '2026-10-13T01:00:00+00:00',
 };
 
-function renderPage() {
+function renderPage(initialEntry = '/workspace') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <WorkspacePage />
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <WorkspacePage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -65,27 +85,59 @@ beforeEach(() => {
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([workspace]);
   vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(workspace);
   vi.mocked(workspaceApi.artifacts).mockResolvedValue([artifact]);
+  vi.mocked(conversationsApi.list).mockResolvedValue([]);
 });
 
 describe('WorkspacePage', () => {
-  it('展示工作区与交付物元数据(含 run 溯源)', async () => {
+  it('以「工作区」呈现清单、当前工作区头部与交付物元数据(含 run 溯源)', async () => {
     renderPage();
 
-    expect(await screen.findByText('默认工作区')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '工作区' })).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { name: '默认工作区' }),
+    ).toBeTruthy();
+    // 清单项与右列头部都展示同一个工作区名/描述
+    expect(screen.getAllByText('默认工作区').length).toBeGreaterThan(1);
+    expect(
+      screen.getAllByText('自动创建:租户默认工作区').length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/创建于 2026\/10\/13/).length).toBeGreaterThan(
+      0,
+    );
+
     expect(await screen.findByText('周报')).toBeTruthy();
     expect(
       screen.getByText(/markdown · filesystem · 61 B · run run-1234…/),
     ).toBeTruthy();
   });
 
-  it('工作区为空时用默认工作区兜底', async () => {
-    vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
+  it('展示当前工作区的会话并能跳回会话页', async () => {
+    vi.mocked(conversationsApi.list).mockResolvedValue([conversation]);
 
     renderPage();
 
     expect(
-      await screen.findByText('自动创建:租户默认工作区 · 2026/10/13 08:00:00'),
+      await screen.findByRole('link', { name: /整理本周日程成周报/ }),
+    ).toHaveAttribute('href', '/?workspace=ws-1&conversation=c1');
+    await waitFor(() =>
+      expect(conversationsApi.list).toHaveBeenCalledWith({
+        workspace_id: 'ws-1',
+        limit: 20,
+      }),
+    );
+  });
+
+  it('工作区没有会话时给出新建入口', async () => {
+    renderPage();
+
+    expect(
+      await screen.findByText('在「默认工作区」里开始第一段会话'),
     ).toBeTruthy();
+    const links = await screen.findAllByRole('link', { name: '新建会话' });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', '/?workspace=ws-1&new=1');
+    }
   });
 
   it('没有交付物时给出引导文案', async () => {
@@ -93,11 +145,7 @@ describe('WorkspacePage', () => {
 
     renderPage();
 
-    expect(
-      await screen.findByText(
-        '这个工作区还没有交付物:先在上面建个 run 并批准执行。',
-      ),
-    ).toBeTruthy();
+    expect(await screen.findByText('这个工作区还没有交付物')).toBeTruthy();
   });
 
   it('点「查看」拉取正文并展示', async () => {
@@ -142,9 +190,7 @@ describe('WorkspacePage', () => {
       .spyOn(URL, 'createObjectURL')
       .mockReturnValue('blob:mock');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
-      () => {},
-    );
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 
     renderPage();
 
@@ -174,7 +220,7 @@ describe('WorkspacePage', () => {
     });
   });
 
-  it('新建工作区后切到该工作区', async () => {
+  it('新建工作区后切到该工作区的交付物', async () => {
     vi.mocked(workspaceApi.createWorkspace).mockResolvedValue({
       ...workspace,
       id: 'ws-2',
@@ -182,12 +228,13 @@ describe('WorkspacePage', () => {
     });
 
     renderPage();
-    await screen.findByText('默认工作区');
+    await screen.findByRole('heading', { name: '默认工作区' });
 
-    fireEvent.change(screen.getByLabelText('新建工作区'), {
+    fireEvent.click(screen.getByRole('button', { name: '新建工作区' }));
+    fireEvent.change(screen.getByLabelText(/工作区名称/), {
       target: { value: '销售资料' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '创建' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建工作区' }));
 
     await waitFor(() => {
       expect(workspaceApi.createWorkspace).toHaveBeenCalledWith({
@@ -198,6 +245,26 @@ describe('WorkspacePage', () => {
     await waitFor(() => {
       expect(workspaceApi.artifacts).toHaveBeenCalledWith('ws-2');
     });
+  });
+
+  it('/workspace?new=1 直接展开并聚焦工作区名输入', async () => {
+    renderPage('/workspace?new=1');
+
+    const nameInput = await screen.findByLabelText(/工作区名称/);
+    await waitFor(() => expect(nameInput).toHaveFocus());
+  });
+
+  it('没有任何工作区时整页给空态与创建入口', async () => {
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
+    vi.mocked(workspaceApi.defaultWorkspace).mockRejectedValue(
+      new ApiError(404, 'workspace.not_found', '默认工作区不存在'),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('还没有工作区')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '创建第一个工作区' }));
+    expect(await screen.findByLabelText(/工作区名称/)).toBeTruthy();
   });
 
   it('401 时提示先去鉴权', async () => {

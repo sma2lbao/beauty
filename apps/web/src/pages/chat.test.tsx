@@ -6,13 +6,17 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Conversation, ChatMessage } from '@/lib/conversations-api';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
+import { ApiError } from '@/lib/http';
 import type { Run, RunEvent } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
+import type { Workspace } from '@/lib/workspace-api';
+import { workspaceApi } from '@/lib/workspace-api';
 
 import type { MCPServer } from '@/lib/mcp-api';
 import { mcpApi } from '@/lib/mcp-api';
@@ -42,6 +46,19 @@ vi.mock('@/lib/mcp-api', () => ({
   mcpApi: { list: vi.fn(async () => []) },
 }));
 
+vi.mock('@/lib/workspace-api', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/workspace-api')>(
+    '@/lib/workspace-api',
+  );
+  return {
+    ...actual,
+    workspaceApi: {
+      workspaces: vi.fn(),
+      defaultWorkspace: vi.fn(),
+    },
+  };
+});
+
 vi.mock('@/lib/runs-api', async () => {
   const actual =
     await vi.importActual<typeof import('@/lib/runs-api')>('@/lib/runs-api');
@@ -59,16 +76,25 @@ vi.mock('@/lib/runs-api', async () => {
   };
 });
 
-// SSE 管道由控制台测试覆盖;这里只测"事件 → 对话"的映射与就地动作
+// SSE 管道由控制台测试覆盖;这里只测"事件 → 会话"的映射与就地动作
 let currentEvents: RunEvent[] = [];
 vi.mock('@/components/runs/use-run-events', () => ({
   useRunEvents: () => ({ events: currentEvents, connected: true }),
 }));
 
+const workspace: Workspace = {
+  id: 'ws-1',
+  name: '默认工作区',
+  description: '自动创建:租户默认工作区',
+  status: 'active',
+  created_at: '2026-10-13T00:00:00+00:00',
+};
+
 function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 'c1',
     title: '整理本周日程成周报',
+    workspace_id: workspace.id,
     created_at: '2026-10-13T10:00:00+00:00',
     updated_at: '2026-10-13T10:05:00+00:00',
     active_run_id: 'run-1',
@@ -146,7 +172,15 @@ function event(
   return { seq, type, payload };
 }
 
-function renderPage(initialEntry = '/') {
+/** 把当前地址渲染出来,供「切工作区后 URL 是否保留 new=1」这类断言使用。 */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <span data-testid="location">{location.pathname + location.search}</span>
+  );
+}
+
+function renderPage(initialEntry = '/', extra?: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -154,6 +188,7 @@ function renderPage(initialEntry = '/') {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <ChatPage />
+        {extra}
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -169,11 +204,13 @@ function typeAndSend(text: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   currentEvents = [];
+  vi.mocked(workspaceApi.workspaces).mockResolvedValue([workspace]);
+  vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(workspace);
   vi.mocked(conversationsApi.list).mockResolvedValue([makeConversation()]);
   vi.mocked(conversationsApi.create).mockResolvedValue(
     makeConversation({
       id: 'c-new',
-      title: '新对话',
+      title: '新会话',
       active_run_id: undefined,
     }),
   );
@@ -217,23 +254,84 @@ afterEach(() => {
 });
 
 describe('ChatPage', () => {
-  it('空态:给出引导且没有内容时不能发送', () => {
+  it('空态:给出引导、标出归属工作区且没有内容时不能发送', async () => {
     renderPage();
 
     expect(
-      screen.getByRole('heading', { name: '开始一个新任务' }),
+      screen.getByRole('heading', { name: '开始一个新会话' }),
     ).toBeTruthy();
     expect(screen.getByText(/描述要完成的事/)).toBeTruthy();
+    // 会话必须归属工作区:空态直接告诉用户会存到哪
+    expect(
+      await screen.findByText('会话将保存在「默认工作区」中。'),
+    ).toBeTruthy();
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
     expect(screen.getByLabelText('描述下一步任务')).toHaveValue('');
   });
 
-  it('发送首条消息:先建会话再发消息,消息与状态出现在对话里', async () => {
+  it('没有工作区时引导先创建工作区,不渲染空态 hero 与输入区', async () => {
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
+    vi.mocked(workspaceApi.defaultWorkspace).mockRejectedValue(
+      new ApiError(404, 'workspace.not_found', '默认工作区不存在'),
+    );
+
     renderPage();
+
+    expect(await screen.findByText('还没有工作区')).toBeTruthy();
+    expect(
+      screen.getByText('会话必须归属于工作区:先创建一个工作区'),
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: '去创建工作区' })).toHaveAttribute(
+      'href',
+      '/workspace?new=1',
+    );
+    expect(
+      screen.queryByRole('heading', { name: '开始一个新会话' }),
+    ).toBeNull();
+    expect(screen.queryByLabelText('描述下一步任务')).toBeNull();
+  });
+
+  it('hero 里切换工作区:地址栏留在新会话,归属跟着切', async () => {
+    const anotherWorkspace: Workspace = {
+      ...workspace,
+      id: 'ws-2',
+      name: '研究组',
+    };
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([
+      workspace,
+      anotherWorkspace,
+    ]);
+
+    renderPage('/?workspace=ws-1&new=1', <LocationProbe />);
+
+    const selector = (await screen.findByLabelText(
+      '选择工作区',
+    )) as HTMLSelectElement;
+    expect(selector).toHaveValue('ws-1');
+
+    fireEvent.change(selector, { target: { value: 'ws-2' } });
+
+    // 切工作区不能掉回旧会话:conversation 清掉、new=1 保留
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/?workspace=ws-2&new=1',
+      ),
+    );
+    expect(await screen.findByText('会话将保存在「研究组」中。')).toBeTruthy();
+  });
+
+  it('发送首条消息:先建会话再发消息,消息与状态出现在会话里', async () => {
+    renderPage();
+    // 等工作区解析完成,确保 create 带上 workspace_id
+    await screen.findByText('会话将保存在「默认工作区」中。');
 
     typeAndSend('把本周日程整理成周报');
 
-    await waitFor(() => expect(conversationsApi.create).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(conversationsApi.create).toHaveBeenCalledWith({
+        workspace_id: 'ws-1',
+      }),
+    );
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
@@ -332,9 +430,9 @@ describe('ChatPage', () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     renderPage('/?conversation=c1');
 
-    expect((await screen.findAllByText('search_knowledge')).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      (await screen.findAllByText('search_knowledge')).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText(/已交付《周报》/)).toBeTruthy();
     expect(screen.getByText('任务完成 ✅')).toBeTruthy();
   });
@@ -407,16 +505,16 @@ describe('ChatPage', () => {
       makeConversation(),
       makeConversation({
         id: 'c2',
-        title: '第二个对话',
+        title: '第二个会话',
         active_run_id: null,
       }),
     ]);
     vi.mocked(conversationsApi.get).mockResolvedValue(
-      makeConversation({ id: 'c2', title: '第二个对话', active_run_id: null }),
+      makeConversation({ id: 'c2', title: '第二个会话', active_run_id: null }),
     );
     renderPage('/?conversation=c2');
 
-    expect(await screen.findByText('第二个对话')).toBeTruthy();
+    expect(await screen.findByText('第二个会话')).toBeTruthy();
     expect(conversationsApi.get).toHaveBeenCalledWith('c2');
     expect(runsApi.get).not.toHaveBeenCalled(); // 无进行中的 run,不挂状态/事件流
   });
@@ -425,17 +523,17 @@ describe('ChatPage', () => {
     renderPage('/?new=1');
 
     expect(
-      screen.getByRole('heading', { name: '开始一个新任务' }),
+      screen.getByRole('heading', { name: '开始一个新会话' }),
     ).toBeTruthy();
     expect(conversationsApi.get).not.toHaveBeenCalled();
   });
 
-  it('简单对话:只回一条,不建任务、不查状态', async () => {
+  it('简单会话:只回一条,不建任务、不查状态', async () => {
     vi.mocked(conversationsApi.create).mockResolvedValue(
-      makeConversation({ id: 'c-new', title: '新对话', active_run_id: null }),
+      makeConversation({ id: 'c-new', title: '新会话', active_run_id: null }),
     );
     vi.mocked(conversationsApi.get).mockResolvedValue(
-      makeConversation({ id: 'c-new', title: '新对话', active_run_id: null }),
+      makeConversation({ id: 'c-new', title: '新会话', active_run_id: null }),
     );
     vi.mocked(streamMessage).mockImplementation(
       async (_conversationId, _content, _mode, handlers) => {
@@ -480,7 +578,7 @@ describe('ChatPage', () => {
     expect(screen.queryByText('待审批')).toBeNull();
   });
 
-  it('发送方式选「对话」时按 chat 发送', async () => {
+  it('发送方式选「直接回答」时按 chat 发送', async () => {
     renderPage();
 
     fireEvent.change(screen.getByLabelText('发送方式'), {
@@ -652,9 +750,9 @@ describe('ChatPage 技能', () => {
 describe('ChatPage MCP 引用', () => {
   async function waitForMcpOptions() {
     await waitFor(() =>
-      expect(
-        screen.getByLabelText('选择 MCP server').textContent,
-      ).toContain('linear'),
+      expect(screen.getByLabelText('选择 MCP server').textContent).toContain(
+        'linear',
+      ),
     );
   }
 

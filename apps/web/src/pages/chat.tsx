@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowUp,
   FileText,
+  FolderKanban,
   Paperclip,
   Plug,
   Sparkles,
@@ -11,11 +12,19 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 
+import { Select } from '@beauty/design';
+
 import { ExecutionPanel } from '@/components/console/execution-panel';
 import { ConsoleStatusBar } from '@/components/console/status-bar';
 import { ToolCallCard } from '@/components/console/tool-call-card';
 import { ConsoleTopbar } from '@/components/console/topbar';
-import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
+import { consoleButtonClass } from '@/components/console/button-class';
+import {
+  ConsoleButton,
+  EmptyPanel,
+  StatusDot,
+  ToneBadge,
+} from '@/components/console/ui';
 import { Markdown } from '@/components/console/markdown';
 import { RunArtifacts } from '@/components/console/run-artifacts';
 import { useRunEvents } from '@/components/runs/use-run-events';
@@ -39,19 +48,20 @@ import {
 } from '@/lib/presentation';
 import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
+import { useWorkspaceSelection } from '@/lib/workspace-selection';
 import { useUiStore } from '@/stores/ui-store';
 
 const SUGGESTIONS = [
   '把本周文档整理成一份周报草稿',
   '帮我理一下这周的待办,给出优先级',
-  '基于知识库整理一份项目背景资料',
+  '基于知识库整理一份产品背景资料',
 ];
 
 /**
  * 工作台(首页):设计稿《01 主控台 · 会话工作台》。
  *
  * 行为保持原样(不为了换皮改协议):
- * - 发送走 SSE 流:**meta** 告知分流结果,**delta** 让直接对话的正文边产出边渲染;
+ * - 发送走 SSE 流:**meta** 告知分流结果,**delta** 让直接回答的正文边产出边渲染;
  * - 复杂任务才建 run:进行中则并入追加指令;任务的实时行动来自 run 的 SSE;
  * - 右侧执行面板把 run 事件翻成「执行步骤 / 变更 / 终端」;
  * - 实时过程与工具调用都是**读**事件流水,不改变任何状态语义。
@@ -61,6 +71,16 @@ export function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const conversationParam = searchParams.get('conversation');
   const newFlag = searchParams.get('new') === '1';
+  // 会话必须归属工作区:当前工作区由 URL ?workspace 决定,缺省回落到租户默认工作区
+  const {
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    isLoading: workspacesLoading,
+    selectWorkspace,
+  } = useWorkspaceSelection();
+  // 会话必须归属于工作区:还没有工作区时主区改为引导创建,不渲染空态 hero 与输入区
+  const hasNoWorkspaces = !workspacesLoading && workspaces.length === 0;
 
   const [draft, setDraft] = useState('');
   const [sendMode, setSendMode] = useState<SendMode>('auto');
@@ -88,7 +108,7 @@ export function ChatPage() {
     attachments: Attachment[];
     /** 本次发送显式引用的 MCP server(展示 chip 用;不选为空数组) */
     mcpServers: { id: string; name: string }[];
-    /** 对话内只读工具调用(tool 事件流式累积;done 后随消息一起消失) */
+    /** 会话内只读工具调用(tool 事件流式累积;done 后随消息一起消失) */
     chatTools: { name: string; arguments: string; ok: boolean }[];
   } | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<Attachment[]>([]);
@@ -105,8 +125,12 @@ export function ChatPage() {
   const prevStatusRef = useRef<RunStatus | null>(null);
 
   const conversationsQuery = useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => conversationsApi.list(),
+    queryKey: ['conversations', activeWorkspaceId],
+    queryFn: () =>
+      conversationsApi.list({
+        workspace_id: activeWorkspaceId ?? undefined,
+      }),
+    enabled: Boolean(activeWorkspaceId),
   });
   const skillsQuery = useQuery({
     queryKey: ['skills'],
@@ -134,6 +158,7 @@ export function ChatPage() {
     queryFn: () => conversationsApi.get(activeConversationId as string),
     enabled: Boolean(activeConversationId),
   });
+  const conversationWorkspaceId = conversationQuery.data?.workspace_id ?? null;
 
   const messagesQuery = useQuery({
     queryKey: ['conversation-messages', activeConversationId],
@@ -256,8 +281,12 @@ export function ChatPage() {
     let conversationId = activeConversationId;
     try {
       if (!conversationId) {
-        conversationId = (await conversationsApi.create()).id;
-        setSearchParams({ conversation: conversationId }, { replace: true });
+        const created = await conversationsApi.create({
+          workspace_id: activeWorkspaceId,
+        });
+        conversationId = created.id;
+        // 新会话 id 由下方 effect 写进 URL(单点负责,避免与工作区写回互相覆盖)
+        setFreshConversationId(created.id);
       }
       const targetConversationId = conversationId;
       const mcpServerIds = selectedMcp ? [selectedMcp] : [];
@@ -374,6 +403,52 @@ export function ChatPage() {
     return () => setCurrentConversation(null);
   }, [activeConversationId, setCurrentConversation]);
 
+  // 新会话创建后把 id 写进 URL。两个约束:
+  // 1) 必须在 effect 里:useSearchParams 的函数式 updater 读的是"当次渲染"的
+  //    searchParams,异步回调里读到的是发送前的旧值,会与"默认工作区写回 URL"
+  //    的 effect 互相覆盖(表现为新会话冒出来又消失);
+  // 2) 用独立 state 记住这个 id 而不是 pending——流很快结束时 pending 会被清掉,
+  //    此时若 URL 被同批渲染里另一个 effect 覆盖,就没机会补回来。
+  // effect 每次渲染都拿到最新 searchParams,双方各补自己缺的参数,最多两轮收敛。
+  const [freshConversationId, setFreshConversationId] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!freshConversationId) {
+      return;
+    }
+    if (conversationParam === freshConversationId) {
+      setFreshConversationId(null);
+      return;
+    }
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (activeWorkspaceId) next.set('workspace', activeWorkspaceId);
+        next.set('conversation', freshConversationId);
+        next.delete('new');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [
+    activeWorkspaceId,
+    conversationParam,
+    freshConversationId,
+    setSearchParams,
+  ]);
+
+  // 会话的 workspace_id 是归属的权威来源:旧链接或跨工作区打开会话时,把 URL 对齐过去。
+  useEffect(() => {
+    if (
+      conversationWorkspaceId &&
+      activeWorkspaceId &&
+      conversationWorkspaceId !== activeWorkspaceId
+    ) {
+      selectWorkspace(conversationWorkspaceId, { keepConversation: true });
+    }
+  }, [conversationWorkspaceId, activeWorkspaceId, selectWorkspace]);
+
   useEffect(() => {
     const previous = prevStatusRef.current;
     prevStatusRef.current = status;
@@ -415,6 +490,24 @@ export function ChatPage() {
     const text = draft.trim();
     if (!text || sending) return;
     void sendStreaming(text);
+  };
+
+  // hero 里的工作区切换:hero 只在「新会话」场景出现,切完不能掉回旧会话。
+  // 直接调 selectWorkspace 默认会删掉 new;而在同一次事件里连续两次 setSearchParams,
+  // 后一次的函数式 updater 读到的是本次渲染的旧参数,会把前一次写入覆盖掉。
+  // 所以这里只用一个 updater,一次写好 workspace 与 new。
+  const changeNewSessionWorkspace = (workspaceId: string) => {
+    if (!workspaceId) return;
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('workspace', workspaceId);
+        next.delete('conversation');
+        next.set('new', '1');
+        return next;
+      },
+      { replace: true },
+    );
   };
 
   const footerAction =
@@ -459,25 +552,81 @@ export function ChatPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ConsoleTopbar title={title} status={activeRunId ? status : null} />
+      <ConsoleTopbar
+        title={title}
+        status={activeRunId ? status : null}
+        workspace={activeWorkspace?.name ?? null}
+      />
 
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col bg-ha-bg">
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-7 sm:px-8 lg:px-12">
             <div className="mx-auto flex w-full max-w-[820px] flex-col gap-6">
-              {!activeConversationId && !visiblePending ? (
+              {hasNoWorkspaces ? (
+                <div className="flex min-h-[52vh] items-center justify-center">
+                  <EmptyPanel
+                    className="w-full max-w-xl"
+                    icon={<FolderKanban className="h-7 w-7" />}
+                    title="还没有工作区"
+                    description="会话必须归属于工作区:先创建一个工作区"
+                    action={
+                      <Link
+                        to="/workspace?new=1"
+                        className={consoleButtonClass({
+                          variant: 'primary',
+                          size: 'sm',
+                        })}
+                      >
+                        去创建工作区
+                      </Link>
+                    }
+                  />
+                </div>
+              ) : null}
+
+              {!hasNoWorkspaces && !activeConversationId && !visiblePending ? (
                 <div className="flex flex-col items-center gap-4 py-12 text-center">
                   <span className="grid h-11 w-11 place-items-center rounded-xl border border-ha-border bg-[#1f2333]">
                     <Sparkles className="h-5 w-5 text-ha-accent-soft" />
                   </span>
                   <div>
                     <h2 className="text-[17px] font-semibold text-ha-text">
-                      开始一个新任务
+                      开始一个新会话
                     </h2>
                     <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-ha-muted">
                       描述要完成的事。简单的直接回答;复杂任务会先给计划,
                       等你放行再执行,危险操作会单独确认。
                     </p>
+                    {activeWorkspace ? (
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                        <label
+                          htmlFor="session-workspace"
+                          className="font-mono text-[11px] text-ha-faint"
+                        >
+                          保存到
+                        </label>
+                        <Select
+                          id="session-workspace"
+                          size="sm"
+                          aria-label="选择工作区"
+                          value={activeWorkspace.id}
+                          onChange={(event) =>
+                            changeNewSessionWorkspace(event.target.value)
+                          }
+                        >
+                          {workspaces.map((workspace) => (
+                            <option key={workspace.id} value={workspace.id}>
+                              {workspace.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    ) : null}
+                    {activeWorkspace ? (
+                      <p className="mx-auto mt-2 max-w-md text-[12px] leading-5 text-ha-dim">
+                        会话将保存在「{activeWorkspace.name}」中。
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex max-w-lg flex-wrap justify-center gap-2">
                     {SUGGESTIONS.map((suggestion) => (
@@ -536,7 +685,7 @@ export function ChatPage() {
                           />
                           {call.ok
                             ? `调用工具 ${call.name}`
-                            : `工具 ${call.name} 被拒绝(对话中只允许只读操作)`}
+                            : `工具 ${call.name} 被拒绝(会话中只允许只读操作)`}
                         </li>
                       ))}
                     </ol>
@@ -721,7 +870,7 @@ export function ChatPage() {
                   <Link className="mx-1 underline" to="/login">
                     登录
                   </Link>
-                  再开始对话。
+                  再开始会话。
                 </p>
               ) : null}
 
@@ -729,199 +878,201 @@ export function ChatPage() {
             </div>
           </div>
 
-          <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                submit();
-              }}
-              className="mx-auto w-full max-w-[820px] rounded-[10px] border border-ha-border-strong bg-ha-panel p-3 transition-colors focus-within:border-ha-accent/70"
-            >
-              {draftAttachments.length ? (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {draftAttachments.map((attachment) => (
-                    <span
-                      key={attachment.id}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
-                    >
-                      <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
-                      <span className="truncate">{attachment.filename}</span>
-                      <button
-                        type="button"
-                        aria-label={`移除附件 ${attachment.filename}`}
-                        onClick={() =>
-                          setDraftAttachments((previous) =>
-                            previous.filter(
-                              (item) => item.id !== attachment.id,
-                            ),
-                          )
-                        }
-                        className="text-ha-dim hover:text-ha-text"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {attachmentError ? (
-                <p className="mb-2 text-[12px] text-ha-danger" role="alert">
-                  {attachmentError}
-                </p>
-              ) : null}
-              <label className="sr-only" htmlFor="chat-input">
-                描述下一步任务
-              </label>
-              <textarea
-                id="chat-input"
-                rows={2}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    event.key === 'Enter' &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault();
-                    submit();
-                  }
+          {hasNoWorkspaces ? null : (
+            <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submit();
                 }}
-                placeholder={
-                  inFlight
-                    ? '补充一句,会并入当前任务的追加指令…'
-                    : '描述下一步任务,或直接说说你想做什么…'
-                }
-                className="block w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-6 text-ha-text-body outline-none placeholder:text-ha-dim"
-              />
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp"
-                    onChange={(event) =>
-                      void uploadAttachments(event.target.files)
-                    }
-                  />
-                  <button
-                    type="button"
-                    aria-label="添加附件"
-                    title={
-                      activeConversationId
-                        ? '添加附件(文本/Markdown/CSV/JSON/PDF/docx/xlsx/图片,单个 ≤10MB)'
-                        : '先发一条消息创建会话,再添加附件'
-                    }
-                    disabled={
-                      !activeConversationId ||
-                      uploading ||
-                      draftAttachments.length >= 5
-                    }
-                    onClick={() => fileInputRef.current?.click()}
-                    className="grid h-6 w-6 place-items-center rounded text-ha-muted transition-colors hover:bg-ha-panel-2 hover:text-ha-text disabled:opacity-40"
-                  >
-                    <Paperclip className="h-3.5 w-3.5" />
-                  </button>
-                  <label
-                    htmlFor="send-mode"
-                    className="font-mono text-[11px] text-ha-faint"
-                  >
-                    发送方式
-                  </label>
-                  <select
-                    id="send-mode"
-                    value={sendMode}
-                    onChange={(event) =>
-                      setSendMode(event.target.value as SendMode)
-                    }
-                    className="h-[22px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-                  >
-                    <option value="auto">自动分流</option>
-                    <option value="chat">直接对话</option>
-                    <option value="task">作为任务</option>
-                  </select>
-                  <label
-                    htmlFor="send-skill"
-                    className="font-mono text-[11px] text-ha-faint"
-                  >
-                    技能
-                  </label>
-                  <select
-                    id="send-skill"
-                    aria-label="选择技能"
-                    value={selectedSkill}
-                    onChange={(event) => setSkillOverride(event.target.value)}
-                    className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-                  >
-                    <option value="">不使用技能</option>
-                    {(skillsQuery.data ?? []).map((skill) => (
-                      <option key={skill.id} value={skill.id}>
-                        {skill.title}
-                      </option>
+                className="mx-auto w-full max-w-[820px] rounded-[10px] border border-ha-border-strong bg-ha-panel p-3 transition-colors focus-within:border-ha-accent/70"
+              >
+                {draftAttachments.length ? (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {draftAttachments.map((attachment) => (
+                      <span
+                        key={attachment.id}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
+                      >
+                        <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
+                        <span className="truncate">{attachment.filename}</span>
+                        <button
+                          type="button"
+                          aria-label={`移除附件 ${attachment.filename}`}
+                          onClick={() =>
+                            setDraftAttachments((previous) =>
+                              previous.filter(
+                                (item) => item.id !== attachment.id,
+                              ),
+                            )
+                          }
+                          className="text-ha-dim hover:text-ha-text"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
                     ))}
-                  </select>
-                  <label
-                    htmlFor="send-mcp"
-                    className="font-mono text-[11px] text-ha-faint"
-                  >
-                    MCP
-                  </label>
-                  <select
-                    id="send-mcp"
-                    aria-label="选择 MCP server"
-                    value={selectedMcp}
-                    onChange={(event) => setMcpOverride(event.target.value)}
-                    className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-                  >
-                    <option value="">不使用 MCP</option>
-                    {enabledMcpServers.map((server) => (
-                      <option key={server.id} value={server.id}>
-                        {server.name}
-                      </option>
-                    ))}
-                    {/* URL/草稿引用了已停用或已删除的 server:补一个兜底项,避免 value 失配 */}
-                    {selectedMcp &&
-                    !enabledMcpServers.some(
-                      (server) => server.id === selectedMcp,
-                    ) ? (
-                      <option value={selectedMcp}>
-                        {mcpServerName(selectedMcp)}
-                      </option>
-                    ) : null}
-                  </select>
-                  {inFlight ? (
-                    <span className="hidden truncate font-mono text-[11px] text-ha-info sm:inline">
-                      任务进行中 · 发送会并入追加指令
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {sending ? (
+                  </div>
+                ) : null}
+                {attachmentError ? (
+                  <p className="mb-2 text-[12px] text-ha-danger" role="alert">
+                    {attachmentError}
+                  </p>
+                ) : null}
+                <label className="sr-only" htmlFor="chat-input">
+                  描述下一步任务
+                </label>
+                <textarea
+                  id="chat-input"
+                  rows={2}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      submit();
+                    }
+                  }}
+                  placeholder={
+                    inFlight
+                      ? '补充一句,会并入当前任务的追加指令…'
+                      : '描述下一步任务,或直接说说你想做什么…'
+                  }
+                  className="block w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-6 text-ha-text-body outline-none placeholder:text-ha-dim"
+                />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp"
+                      onChange={(event) =>
+                        void uploadAttachments(event.target.files)
+                      }
+                    />
                     <button
                       type="button"
-                      onClick={() => abortRef.current?.abort()}
-                      className="font-mono text-[11px] text-ha-dim hover:text-ha-text-2"
+                      aria-label="添加附件"
+                      title={
+                        activeConversationId
+                          ? '添加附件(文本/Markdown/CSV/JSON/PDF/docx/xlsx/图片,单个 ≤10MB)'
+                          : '先发一条消息创建会话,再添加附件'
+                      }
+                      disabled={
+                        !activeConversationId ||
+                        uploading ||
+                        draftAttachments.length >= 5
+                      }
+                      onClick={() => fileInputRef.current?.click()}
+                      className="grid h-6 w-6 place-items-center rounded text-ha-muted transition-colors hover:bg-ha-panel-2 hover:text-ha-text disabled:opacity-40"
                     >
-                      停止生成
+                      <Paperclip className="h-3.5 w-3.5" />
                     </button>
-                  ) : null}
-                  <button
-                    type="submit"
-                    aria-label="发送"
-                    disabled={!canSend}
-                    className="grid h-7 w-7 place-items-center rounded-md bg-ha-accent text-white transition-colors hover:bg-[#6b77e2] disabled:opacity-40"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </button>
+                    <label
+                      htmlFor="send-mode"
+                      className="font-mono text-[11px] text-ha-faint"
+                    >
+                      发送方式
+                    </label>
+                    <select
+                      id="send-mode"
+                      value={sendMode}
+                      onChange={(event) =>
+                        setSendMode(event.target.value as SendMode)
+                      }
+                      className="h-[22px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+                    >
+                      <option value="auto">自动分流</option>
+                      <option value="chat">直接回答</option>
+                      <option value="task">作为任务</option>
+                    </select>
+                    <label
+                      htmlFor="send-skill"
+                      className="font-mono text-[11px] text-ha-faint"
+                    >
+                      技能
+                    </label>
+                    <select
+                      id="send-skill"
+                      aria-label="选择技能"
+                      value={selectedSkill}
+                      onChange={(event) => setSkillOverride(event.target.value)}
+                      className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+                    >
+                      <option value="">不使用技能</option>
+                      {(skillsQuery.data ?? []).map((skill) => (
+                        <option key={skill.id} value={skill.id}>
+                          {skill.title}
+                        </option>
+                      ))}
+                    </select>
+                    <label
+                      htmlFor="send-mcp"
+                      className="font-mono text-[11px] text-ha-faint"
+                    >
+                      MCP
+                    </label>
+                    <select
+                      id="send-mcp"
+                      aria-label="选择 MCP server"
+                      value={selectedMcp}
+                      onChange={(event) => setMcpOverride(event.target.value)}
+                      className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+                    >
+                      <option value="">不使用 MCP</option>
+                      {enabledMcpServers.map((server) => (
+                        <option key={server.id} value={server.id}>
+                          {server.name}
+                        </option>
+                      ))}
+                      {/* URL/草稿引用了已停用或已删除的 server:补一个兜底项,避免 value 失配 */}
+                      {selectedMcp &&
+                      !enabledMcpServers.some(
+                        (server) => server.id === selectedMcp,
+                      ) ? (
+                        <option value={selectedMcp}>
+                          {mcpServerName(selectedMcp)}
+                        </option>
+                      ) : null}
+                    </select>
+                    {inFlight ? (
+                      <span className="hidden truncate font-mono text-[11px] text-ha-info sm:inline">
+                        任务进行中 · 发送会并入追加指令
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {sending ? (
+                      <button
+                        type="button"
+                        onClick={() => abortRef.current?.abort()}
+                        className="font-mono text-[11px] text-ha-dim hover:text-ha-text-2"
+                      >
+                        停止生成
+                      </button>
+                    ) : null}
+                    <button
+                      type="submit"
+                      aria-label="发送"
+                      disabled={!canSend}
+                      className="grid h-7 w-7 place-items-center rounded-md bg-ha-accent text-white transition-colors hover:bg-[#6b77e2] disabled:opacity-40"
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </form>
-            <p className="mx-auto mt-2 max-w-[820px] text-center font-mono text-[11px] text-ha-faint">
-              Enter 发送 · Shift + Enter 换行
-            </p>
-          </div>
+              </form>
+              <p className="mx-auto mt-2 max-w-[820px] text-center font-mono text-[11px] text-ha-faint">
+                Enter 发送 · Shift + Enter 换行
+              </p>
+            </div>
+          )}
         </section>
 
         <ExecutionPanel

@@ -269,7 +269,7 @@ export function rememberLoginRedirect(path: string): void {
   window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, path);
 }
 
-/** 取出并清掉登录来路:无记录或非站内路径一律回对话页。 */
+/** 取出并清掉登录来路:无记录或非站内路径一律回会话页。 */
 export function takeLoginRedirect(): string {
   const value = window.sessionStorage.getItem(LOGIN_REDIRECT_KEY);
   window.sessionStorage.removeItem(LOGIN_REDIRECT_KEY);

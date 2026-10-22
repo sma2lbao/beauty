@@ -5,8 +5,8 @@
  * - http:远程 Streamable HTTP server(URL/Token);
  * - stdio:本地进程(命令/参数/环境变量/运行时/镜像),由 orchestrator 沙箱拉起。
  * Token 与环境变量只写不读:读端只返回尾号与变量名,提交成功后清空敏感输入。
- * 「免确认执行」是每个 server 的信任开关:对话没有审批流(§6.7),只有开了它的
- * 工具才能在对话里直接被调用;关闭时工具仍可在「任务」路径按确认流程使用。
+ * 「免确认执行」是每个 server 的信任开关:会话没有审批流(§6.7),只有开了它的
+ * 工具才能在会话里直接被调用;关闭时工具仍可在「任务」路径按确认流程使用。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -535,7 +535,7 @@ export function McpPage() {
                       免确认执行
                     </p>
                     <p className="text-[10px] leading-4 text-ha-dim">
-                      信任该 server:工具在对话里可直接执行,任务里也不再逐次确认
+                      信任该 server:工具在会话里可直接执行,任务里也不再逐次确认
                     </p>
                   </div>
                   <Switch
@@ -856,8 +856,8 @@ export function McpPage() {
                       <span className="flex items-center gap-2">
                         <span>
                           {selected.auto_approve
-                            ? '免确认执行 · 对话里可直接调用'
-                            : '每次调用需确认 · 对话里只引导改用「任务」'}
+                            ? '免确认执行 · 会话里可直接调用'
+                            : '每次调用需确认 · 会话里只引导改用「任务」'}
                         </span>
                         <Switch
                           aria-label="免确认执行"
@@ -885,7 +885,7 @@ export function McpPage() {
                   <CardDescription>
                     以 mcp.&lt;server&gt;.&lt;tool&gt;
                     注入任务;开了「免确认执行」的工具在
-                    对话里也能直接调用,其余仍需人工确认;点「测试/刷新」重新拉取。
+                    会话里也能直接调用,其余仍需人工确认;点「测试/刷新」重新拉取。
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

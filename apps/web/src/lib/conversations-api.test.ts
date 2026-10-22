@@ -68,6 +68,32 @@ describe('conversationsApi', () => {
     );
   });
 
+  it('列表可按 workspace_id 过滤(会话归属工作区)', async () => {
+    const fetchMock = mockFetch(200, { items: [], next_cursor: null });
+
+    await conversationsApi.list({ workspace_id: 'ws-1' });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/conversations?limit=50&workspace_id=ws-1',
+    );
+  });
+
+  it('分页列表的 workspace_id 与 q/archived/cursor 同时生效', async () => {
+    const fetchMock = mockFetch(200, { items: [], next_cursor: null });
+
+    await conversationsApi.page({
+      limit: 10,
+      workspace_id: 'ws-1',
+      q: '周报',
+      archived: true,
+      cursor: 'abc',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/conversations?limit=10&workspace_id=ws-1&q=%E5%91%A8%E6%8A%A5&archived=true&cursor=abc',
+    );
+  });
+
   it('兼容旧版后端的数组响应(滚动升级不崩)', async () => {
     mockFetch(200, [{ id: 'c1' }]);
 
@@ -99,7 +125,7 @@ describe('conversationsApi', () => {
   });
 
   it('create 用 POST 空对象(标题由首条消息自动定题)', async () => {
-    const fetchMock = mockFetch(201, { id: 'c1', title: '新对话' });
+    const fetchMock = mockFetch(201, { id: 'c1', title: '新会话' });
 
     await conversationsApi.create();
 
@@ -107,6 +133,17 @@ describe('conversationsApi', () => {
     expect(url).toBe('/api/v1/conversations');
     expect(init.method).toBe('POST');
     expect(init.body).toBe(JSON.stringify({}));
+  });
+
+  it('create 可指定 workspace_id(新会话写入当前工作区)', async () => {
+    const fetchMock = mockFetch(201, { id: 'c1', title: '新会话' });
+
+    await conversationsApi.create({ workspace_id: 'ws-1' });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/conversations');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ workspace_id: 'ws-1' }));
   });
 
   it('get 按会话 id 取详情', async () => {
@@ -251,7 +288,7 @@ describe('conversationsApi', () => {
     expect(error.code).toBe('chat.llm_disabled');
   });
   it('跨租户探测返回 404 conversation.not_found 映射为 ApiError', async () => {
-    mockFetch(404, { code: 'conversation.not_found', message: '对话不存在' });
+    mockFetch(404, { code: 'conversation.not_found', message: '会话不存在' });
 
     const error = (await conversationsApi
       .get('nope')

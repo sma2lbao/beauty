@@ -1,6 +1,6 @@
 # web
 
-beauty moon 的 Web 端（包名 `@beauty/web`）：对话页 + 运行控制台 + 知识库 / 工作区 / 事件队列 / 账号。React + TypeScript SPA，位于
+beauty moon 的 Web 端（包名 `@beauty/web`）：工作区内的会话页 + 工作区中心 + 运行控制台 + 知识库 / 事件队列 / 账号。React + TypeScript SPA，位于
 monorepo 的 `apps/web` 目录下，由 npm workspaces 管理、Nx 识别。
 
 ## 技术栈
@@ -10,7 +10,7 @@ monorepo 的 `apps/web` 目录下，由 npm workspaces 管理、Nx 识别。
 | 框架 | React 19 + TypeScript                                                 |
 | 路由 | react-router v8（`BrowserRouter` + 嵌套路由）                         |
 | 数据 | @tanstack/react-query（服务端状态）                                   |
-| 状态 | zustand（客户端 UI/看板状态，侧栏偏好持久化）                          |
+| 状态 | zustand（客户端 UI/看板状态，侧栏偏好持久化）                         |
 | 样式 | Tailwind CSS v4（`@tailwindcss/vite` 插件，CSS 变量主题）             |
 | 组件 | `@beauty/design`（monorepo 内组件库，源码直连 `packages/design/src`） |
 | 测试 | Vitest + Testing Library（jsdom 环境，`vitest.config.mts`）           |
@@ -57,6 +57,15 @@ apps/web/
 测试文件与源码同目录（*.test.ts / *.test.tsx），覆盖 lib、ui 组件、
 布局、路由与各页面。
 ```
+
+## 工作区与会话（交互契约）
+
+交互参照 dsh（DeepSeek Harness）的「工作区 / 会话」模型：**会话必须归属于某个工作区**（服务端也强制：不传工作区时落租户默认工作区）。
+
+- `?workspace=<id>` 是当前工作区的**唯一真源**（`src/lib/workspace-selection.ts` 的 `useWorkspaceSelection`）：URL 没带时用默认工作区补上并 `replace` 回 URL；切换工作区会清掉当前会话/新建标记。
+- `/`：会话页。`/?workspace=<id>&conversation=<id>` 打开某段会话，`/?workspace=<id>&new=1` 直接进新会话输入态；新会话空态里可以「选择工作区」，文案提示「会话将保存在「X」中」。
+- `/workspace`：工作区中心。左侧工作区清单内联新建表单，右侧是选中工作区的会话、交付物与产物预览；`/workspace?new=1` 会展开并聚焦新建工作区表单。
+- 侧栏按工作区分组列出会话（组头是工作区名 + 会话数，右侧 `+` 在该工作区新建会话，点击组头切换当前工作区）；没有归属的存量会话落在「未分组」；搜索时改为扁平结果；底部有「添加工作区」。
 
 ## 约定
 

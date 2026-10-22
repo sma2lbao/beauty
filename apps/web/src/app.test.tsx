@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accessToken } from '@/lib/auth';
+import type { Workspace } from '@/lib/workspace-api';
+import { workspaceApi } from '@/lib/workspace-api';
 
 import { App } from './app';
 
@@ -60,6 +62,20 @@ vi.mock('@/lib/runs-api', async () => {
   };
 });
 
+vi.mock('@/lib/workspace-api', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/workspace-api')>(
+    '@/lib/workspace-api',
+  );
+  return {
+    ...actual,
+    workspaceApi: {
+      workspaces: vi.fn(),
+      defaultWorkspace: vi.fn(),
+      artifacts: vi.fn(async () => []),
+    },
+  };
+});
+
 vi.mock('@/lib/account-api', () => ({
   accountApi: {
     organization: vi.fn(async () => {
@@ -67,6 +83,19 @@ vi.mock('@/lib/account-api', () => ({
     }),
   },
 }));
+
+const workspace: Workspace = {
+  id: 'ws-1',
+  name: '默认工作区',
+  description: '自动创建:租户默认工作区',
+  status: 'active',
+  created_at: '2026-10-13T00:00:00+00:00',
+};
+
+beforeEach(() => {
+  vi.mocked(workspaceApi.workspaces).mockResolvedValue([workspace]);
+  vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(workspace);
+});
 
 function renderApp(path: string) {
   const queryClient = new QueryClient({
@@ -90,7 +119,7 @@ describe('App 路由', () => {
 
   it('/ 渲染工作台', async () => {
     renderApp('/');
-    expect(await screen.findByText('开始一个新任务')).toBeInTheDocument();
+    expect(await screen.findByText('开始一个新会话')).toBeInTheDocument();
   });
 
   it('/landing 旧链接跳转到独立官网', async () => {
@@ -153,7 +182,7 @@ describe('登录门（§10）', () => {
   it('已登录：受保护页正常渲染', async () => {
     vi.mocked(accessToken).mockResolvedValue('access-jwt');
     renderApp('/');
-    expect(await screen.findByText('开始一个新任务')).toBeInTheDocument();
+    expect(await screen.findByText('开始一个新会话')).toBeInTheDocument();
   });
 
   it('公开页（/about）不受守卫影响', async () => {
