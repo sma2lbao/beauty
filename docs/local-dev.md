@@ -231,16 +231,18 @@ npm run dev:reset -- --yes # 不确认
 
 ## 7. 日志与排障
 
-| 现象                | 处理                                                                          |
-| ------------------- | ----------------------------------------------------------------------------- |
-| 端口被占用          | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                      |
-| 前端 401/502        | 检查 BFF :8007 是否启动;npm run dev:status                                    |
-| 登录后页面空        | 检查 account-service :8001 与 BFF 日志                                        |
-| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码                                  |
-| 官网打不开          | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                 |
-| SQLite 表结构不对   | npm run dev:reset 后重启                                                      |
-| 想用真实模型        | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                   |
-| 附件上传失败        | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新 |
+| 现象                | 处理                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 端口被占用          | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                                                     |
+| 前端 401/502        | 检查 BFF :8007 是否启动;npm run dev:status                                                                   |
+| 登录后页面空        | 检查 account-service :8001 与 BFF 日志                                                                       |
+| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码                                                                 |
+| 官网打不开          | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                |
+| SQLite 表结构不对   | npm run dev:reset 后重启                                                                                     |
+| 想用真实模型        | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                  |
+| 附件上传失败        | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                |
+| 要串一条请求链路    | 浏览器 Network 看响应头 `X-Request-ID`,再在服务日志里筛 `request_id="..."`;规则见 `docs/observability.md` §5 |
+| 想强开 JSON 日志    | `LOG_JSON=true`(dev 默认人读格式);关访问日志用 `ACCESS_LOG_ENABLED=false`,慢请求阈值 `SLOW_REQUEST_MS`       |
 
 ## 8. 测试
 

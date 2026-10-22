@@ -245,6 +245,7 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 ## 10. 可观测与质量
 
 - 全链路 OTel(GenAI 语义约定仍在演进,用 openllmetry instrumentation 起步),trace 贯穿 web → orchestrator → 工具 → 模型;
+- 观测落地规范(日志字段字典、`request_id` 跨服务贯穿、访问/异常日志、Sentry、指标与告警草案)见 [observability.md](./observability.md);
 - [Langfuse](https://github.com/langfuse/langfuse) self-host(trace/prompt 管理/datasets/evals;OTel 原生备选 Arize Phoenix),按租户/功能打标;
 - **evals 是发布门禁**:golden datasets + [ragas](https://github.com/explodinggradients/ragas) 挂 CI,改 prompt/模型/图结构必须过基线;
 - 用户反馈入库,周期性回灌 datasets;

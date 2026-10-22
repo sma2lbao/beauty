@@ -23,6 +23,12 @@ class BaseAppSettings(BaseSettings):
     service_name: str = "unknown"
     env: str = Field(default="dev", pattern="^(dev|staging|prod)$")
     log_level: str = "INFO"
+    # 观测开关(docs/observability.md §4/§6):access_log_enabled 关掉每请求
+    # 一行访问日志;slow_request_ms 慢请求阈值;log_json 显式覆盖渲染器
+    # (None = staging/prod 用 JSON,其余 Console)。
+    access_log_enabled: bool = True
+    slow_request_ms: int = 1500
+    log_json: bool | None = None
 
     @property
     def is_prod(self) -> bool:
