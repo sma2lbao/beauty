@@ -1,7 +1,8 @@
 # 服务可观测方案（监控日志）
 
-> 状态：**P0 已实施**（2026-10-22），P1 Sentry / P2 指标与追踪未开始。
-> 对齐 `docs/architecture-v2.md` §9：可观测 = **结构化日志 + traceId + Sentry（前端/服务）**，OTel/Langfuse 后置。
+> 状态：**P0 日志与请求上下文、P1 Sentry（服务端）、P2 指标与 OTel 追踪均已实施**（2026-10-22）。
+> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending`/`llm_tokens_total` 两个派生指标、GenAI semconv 的模型 span 语义。
+> 对齐 `docs/architecture-v2.md` §9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
 
 ---
@@ -17,7 +18,7 @@
 
 **非目标（本期）**
 
-- 不做分布式追踪（OTel span）与指标端点（Prometheus）；见 §9 与 §11 的 P2；
+- ~~不做分布式追踪（OTel span）与指标端点（Prometheus）~~ → **已实施**（见 §9）：OTel span（FastAPI 原生 telemetry + httpx 插桩、OTLP/HTTP 可选导出）与 `/internal/metrics`；前端追踪仍未做；
 - 不做日志平台自建（Loki/ELK）；服务只写 stdout，采集归部署侧；
 - 不做 prompt/response 回放与 LLM 成本归因（属于 §11 的 P2 之后）。
 
@@ -43,12 +44,12 @@
 
 ## 3. 分层与职责
 
-| 层         | 承担                              | 本仓库落点                                     | 阶段   |
-| ---------- | --------------------------------- | ---------------------------------------------- | ------ |
-| 结构化日志 | 请求/任务生命周期、错误、慢路径   | `packages/common/common/logging.py` + 新中间件 | **P0** |
-| 错误聚合   | 异常栈、影响面、告警              | `sentry-sdk`（服务 + Web），可选依赖           | **P1** |
-| 指标       | RED（量/错/延迟）、队列与上游健康 | 先由日志派生；独立指标端点                     | P2     |
-| 链路追踪   | 跨服务 span、模型调用             | OTel + GenAI semconv（v2 后置）                | P2     |
+| 层         | 承担                              | 本仓库落点                                                 | 阶段                                |
+| ---------- | --------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| 结构化日志 | 请求/任务生命周期、错误、慢路径   | `packages/common/common/logging.py` + 新中间件             | **P0**                              |
+| 错误聚合   | 异常栈、影响面、告警              | `sentry-sdk`（服务 + Web），可选依赖                       | **P1**                              |
+| 指标       | RED（量/错/延迟）、队列与上游健康 | `packages/common/common/metrics.py` + `/internal/metrics`  | **P2 已实施**                       |
+| 链路追踪   | 跨服务 span、出站调用             | `packages/common/common/tracing.py` + OTel 官方 httpx 插桩 | **P2 已实施**（GenAI semconv 未做） |
 
 原则：**日志是主线**（Sentry 只做异常聚合，指标与追踪后置）。日志字段一旦定下就是契约，后续接 Sentry/OTel 时不改字段名，只加 `trace_id`/`span_id`。
 
@@ -128,10 +129,11 @@
 - 所有出站 HTTP 调用带上该头（BFF 代理、orchestrator 的 `TokenBroker`/workspace/knowledge/llm-gateway 客户端、jobs worker 的下游调用）。
 - 后台任务（jobs worker）没有入站请求：以 `job_id` 为种子生成 `request_id`，并记 `job_kind`、`run_id`，让 worker 日志与触发它的 API 日志能对上（API 侧 `job_enqueued` 记同一个 `job_id`）。
 
-### 5.2 `traceparent` 透传
+### 5.2 `traceparent` 与 span
 
-- 若请求带 W3C `traceparent`（`00-<trace-id>-<span-id>-<flags>`），解析出 `trace_id` 绑定到日志上下文并原样透传给下游；不带则不生成（P0 不伪造 trace，避免与真实追踪系统冲突）。
-- P2 接 OTel 后，由 instrumentation 接管生成与透传，日志字段名不变。
+- 有 OTel span 时（P2 起默认如此）：`trace_id`/`span_id` 取自当前 span 并写入日志上下文，出站 `traceparent` 用当前 span 的 W3C 头，**日志、span、Sentry 事件三边同 id**。
+- 没有 span 时（追踪关闭）：退回解析入站 `traceparent` 得到 `trace_id` 并原样透传；入站没带就不生成（不伪造 trace）。
+- 只透传不改写：跨服务链路里下游 span 的父级来自上游 header，采样位跟随上游（`ParentBased`）。
 
 ### 5.3 绑定与清理
 
@@ -200,7 +202,9 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 ---
 
-## 9. 指标（P2）
+## 9. 指标与追踪（P2）
+
+### 9.1 指标
 
 **状态：已实施（进程内 Prometheus）**——`packages/common/common/metrics.py`；请求级 RED 指标由中间件自动记录，业务指标在各自边界上报。
 
@@ -222,6 +226,18 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 | `outbox_pending`                | gauge     | —                              | outbox 计数（已有运维端点 `/api/v1/outbox/*`）                                          |
 | `llm_upstream_errors_total`     | counter   | provider, code                 | llm-gateway                                                                             |
 | `llm_tokens_total`              | counter   | model, direction               | orchestrator/llm-gateway（与用量计量同源）                                              |
+
+### 9.2 追踪（OTel）
+
+**状态：已实施（`packages/common/common/tracing.py`）**——服务端 span 用 FastAPI 原生 telemetry（FastAPI ≥ 0.143），出站用官方 httpx 插桩；默认零网络出口。
+
+- 装配：7 个服务在 `lifespan` 里 `install_observability(app, settings)` 即完成（`init_tracing` 建进程级 `TracerProvider`，`Resource` 带 `service.name`/`deployment.environment`/可选 `service.version`）。
+- 服务端 span：`create_app` 里 `FastAPI(..., telemetry={"exclude": exclude_telemetry})` —— `/healthz`、`/readyz`、`/internal/metrics` 不产生 span；路由 span 带 `http.route`/`url.path`/`http.request.method`，依赖/序列化子 span 由 FastAPI 原生能力给出。
+- 出站 span：`HTTPXClientInstrumentor` 全局插桩，自动注入 `traceparent` 并建 client span；BFF 代理与 orchestrator 内部客户端因此天然连成一条链（既有的 `inject_request_headers` 继续补 `X-Request-ID`）。
+- 导出：`<SERVICE>__OTLP_ENDPOINT`（完整 `.../v1/traces` 地址，OTLP/HTTP + protobuf）配了才导出（`BatchSpanProcessor`）；不配则 span 只留在进程内用于日志 `trace_id` 串联，**零网络请求**。
+- 采样：`<SERVICE>__TRACE_SAMPLE_RATIO`（默认 0.1）走 `ParentBased(TraceIdRatioBased)`——入口（BFF）决定是否采样，下游跟随，避免半截链路。
+- 开关：`<SERVICE>__TRACING_ENABLED=false` 完全关闭（不建 provider、不插桩）。
+- 注意：FastAPI 原生 telemetry 自带 `metrics`/`logs` 能力；本仓库指标仍以 `/internal/metrics` 为准（Prometheus），OTel 侧未接 meter/logger provider，保持单一口径。
 
 ---
 
@@ -272,7 +288,8 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 ### P2 指标与追踪
 
-**状态：指标已完成，追踪未做**。指标见 §9（`common/metrics.py`，`/internal/metrics`）；追踪仍按 `architecture-v2.md` §9 的“OTel 后置”再评估（GenAI semconv 仍实验性，埋点前先封一层属性映射，避免返工）。
+**状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
+待办：GenAI semconv 的模型调用 span（`llm_call` 目前是日志与计数，未建 span）、`apps/web` 前端追踪。
 
 ---
 
@@ -305,3 +322,6 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 - [x] 内网形态（`<SERVICE>__LOG_JSON=true`、无 Sentry）可启动：真机冒烟通过
 - [x] `/internal/metrics` 可被抓取，指标标签无高基数字段
 - [x] 业务 4xx 不进 Sentry；5xx/未捕获异常进 Sentry 且请求数据已脱敏
+- [x] 每个请求的 `http_request` 带 `trace_id`/`span_id`，与 span、Sentry tag 同 id（真机冒烟）
+- [x] `/healthz`、`/readyz`、`/internal/metrics` 不产生 span
+- [x] 配 `<SERVICE>__OTLP_ENDPOINT` 时 OTLP/HTTP 收到 span（本地 collector 验收集合与 `service.name`）；不配时零出口

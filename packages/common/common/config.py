@@ -41,6 +41,13 @@ class BaseAppSettings(BaseSettings):
     # 指标端点可选访问令牌:配了就先比 `X-Metrics-Token`(或 Bearer),不符返回 404;
     # 未配时仅靠网络边界(内网抓取)——公网入口(BFF)建议配一个。
     metrics_token: str | None = None
+    # 追踪(P2,docs/observability.md §9):OTel 分布式追踪。没配 OTLP_ENDPOINT
+    # 时不挂导出器(零网络出口),span 只用于日志 trace_id 串联与本地排查;
+    # trace_sample_ratio 走父级采样(入口决定下游是否采样,默认 0.1)。
+    tracing_enabled: bool = True
+    otlp_endpoint: str | None = None
+    otlp_headers: dict[str, str] | None = None
+    trace_sample_ratio: float = 0.1
 
     @property
     def is_prod(self) -> bool:

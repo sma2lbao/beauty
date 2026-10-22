@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from common import metrics
+from common import metrics, tracing
 from common.config import BaseAppSettings
 from common.errors import AppError
 from common.logging import bind_request_context, clear_request_context, get_logger
@@ -51,8 +51,8 @@ _traceparent_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 
 def current_traceparent() -> str | None:
-    """当前请求的 traceparent 原文(出站透传用;未携带时为 None)。"""
-    return _traceparent_var.get()
+    """出站透传用的 traceparent:优先当前 OTel span,其次入站头原文。"""
+    return tracing.current_traceparent() or _traceparent_var.get()
 
 
 def _request_id_from(headers: Headers) -> str | None:
@@ -121,9 +121,24 @@ class RequestContextMiddleware:
         path = scope.get("path", "")
         began = time.perf_counter()
 
-        bind_request_context(request_id=request_id, method=method, path=path)
-        if trace_id:
-            bind_request_context(trace_id=trace_id)
+        # 追踪:OTel 插桩在更外层建了服务端 span 就用它的 trace_id/span_id
+        # (日志 ↔ 追踪 ↔ 下游同一条链路);没有 span 时退回入站 traceparent。
+        span_context = tracing.current_span_context()
+        if span_context is not None:
+            trace_id = f"{span_context.trace_id:032x}"
+            span_id = f"{span_context.span_id:016x}"
+            traceparent = tracing.format_traceparent(span_context)
+            bind_request_context(
+                request_id=request_id,
+                method=method,
+                path=path,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+        else:
+            bind_request_context(request_id=request_id, method=method, path=path)
+            if trace_id:
+                bind_request_context(trace_id=trace_id)
         token = _traceparent_var.set(traceparent)
         state = _ResponseState()
         try:

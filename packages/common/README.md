@@ -23,8 +23,13 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
 - `common.sentry`:错误聚合装配(docs/observability.md P1)——`<SERVICE>__SENTRY_DSN` 为空
   即完全不初始化;`before_send` 丢弃业务 4xx、脱敏请求头/cookie/query/body,
   并把 `request_id`/`trace_id`/`tenant_id`/`user_id` 写进 tags;
+- `common.tracing`:链路追踪装配(docs/observability.md P2)——`init_tracing` 建进程级
+  provider(资源属性 service.name/deployment.environment/version、`<SERVICE>__TRACE_SAMPLE_RATIO`
+  默认 0.1 父级采样);`<SERVICE>__OTLP_ENDPOINT` 空则零出口(span 只用于日志串联),
+  配了才挂 OTLP/HTTP 批量导出;服务端 span 由 FastAPI 原生 telemetry 产生,探针与
+  `/internal/metrics` 经 `exclude_telemetry` 排除,出站用 httpx 插桩自动注入 `traceparent`;
 - `common.observability`:`install_observability(app, settings)`——一行同时装
-  Sentry 与指标端点(7 个服务的 `create_app` 统一调用);
+  Sentry、指标端点与追踪(7 个服务的 `create_app` 统一调用);
 - `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与租户提取:
   OIDC 发现 + JWKS 拉取(TTL 缓存、未知 kid 触发刷新以支持密钥轮换)、
   RS256 签名 + `iss`/`aud`/`exp` 校验;租户来自可配置 claim,缺失即拒绝
@@ -33,7 +38,7 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   (put/get/delete)与 `FilesystemArtifactStore`(本地目录,键只允许安全字符、
   落盘前校验不越出存储根以防目录穿越,IO 走 `to_thread`);换 S3/MinIO 只需实现协议。
 
-已落地:结构化日志(P0)、Sentry 服务端(P1)、进程内指标(P2)。
-随实现逐步补齐:Web 侧 Sentry、OTel 追踪、FastAPI 公共依赖(分页/DB session 复用)、SSE 工具。
+已落地:结构化日志(P0)、Sentry 服务端(P1)、进程内指标(P2)、OTel 追踪(P2)。
+随实现逐步补齐:Web 侧 Sentry、GenAI 模型 span(semconv 稳定后)、FastAPI 公共依赖(分页/DB session 复用)、SSE 工具。
 
 命令(仓库根执行):`npx nx lint common` / `npx nx format common` / `npx nx test common` / `npx nx run common:sync`
