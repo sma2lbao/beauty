@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from io import BytesIO
 from pathlib import Path
 
@@ -100,8 +101,6 @@ def _xlsx_text(data: bytes) -> str:
     except Exception as exc:  # noqa: BLE001
         raise DocumentParseError(f"xlsx 解析失败:{exc}") from exc
     finally:
-        try:
+        with contextlib.suppress(Exception):
             workbook.close()  # type: ignore[possibly-undefined]
-        except Exception:  # noqa: BLE001
-            pass
     return "\n".join(lines)
