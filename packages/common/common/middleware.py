@@ -9,6 +9,7 @@
   打一条 error_code 日志(5xx 带栈)。替换各服务同构的 handler。
 - `inject_request_headers`:httpx 出站事件钩子,把 request_id/traceparent
   透传给下游服务。
+- 每个响应结束前顺手记 RED 指标(common.metrics,见 §9),业务指标由各服务自报。
 """
 
 from __future__ import annotations
@@ -26,9 +27,11 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from common import metrics
 from common.config import BaseAppSettings
 from common.errors import AppError
 from common.logging import bind_request_context, clear_request_context, get_logger
+from common.metrics import METRICS_PATH
 
 REQUEST_ID_HEADER = "x-request-id"
 TRACEPARENT_HEADER = "traceparent"
@@ -39,7 +42,7 @@ _TRACEPARENT_RE = re.compile(
     r"^(?P<version>[0-9a-f]{2})-(?P<trace_id>[0-9a-f]{32})-"
     r"(?P<span_id>[0-9a-f]{16})-(?P<flags>[0-9a-f]{2})$"
 )
-_PROBE_PATHS = frozenset({"/healthz", "/readyz"})
+_PROBE_PATHS = frozenset({"/healthz", "/readyz", METRICS_PATH})
 _ALERT_STATUSES = frozenset({401, 403, 409, 429})
 # 出站透传用:当前请求的 traceparent 原文(不进日志上下文,避免噪声)。
 _traceparent_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -151,11 +154,14 @@ class RequestContextMiddleware:
             # 响应还没开始 => 外层 ServerErrorMiddleware 会兜底 500,
             # 这里补一条访问日志,保证"每请求一行"不缺口。
             if not state.started:
+                duration = time.perf_counter() - began
+                self._observe(scope, route, 500, duration)
                 self._log_access(
                     500,
                     route,
                     scope.get("path", ""),
-                    _ms(time.perf_counter() - began),
+                    _ms(duration),
+                    scope.get("method", ""),
                 )
             raise
         finally:
@@ -186,21 +192,24 @@ class RequestContextMiddleware:
         message["headers"] = raw
         if state.route != "unmatched":
             bind_request_context(route=state.route)
+        duration = state.started - began
+        self._observe(scope, state.route, state.status, duration)
         if state.is_sse:
             self.log.info(
                 "sse_opened",
                 route=state.route,
                 status=state.status,
-                duration_ms=_ms(state.started - began),
+                duration_ms=_ms(duration),
             )
             return
         self._log_access(
             state.status,
             state.route,
             scope.get("path", ""),
-            _ms(state.started - began),
+            _ms(duration),
+            scope.get("method", ""),
         )
-        duration_ms = _ms(state.started - began)
+        duration_ms = _ms(duration)
         if (
             duration_ms >= self.settings.slow_request_ms
             and self.settings.access_log_enabled
@@ -213,8 +222,22 @@ class RequestContextMiddleware:
                 threshold_ms=self.settings.slow_request_ms,
             )
 
+    def _observe(self, scope: Scope, route: str, status: int, duration: float) -> None:
+        metrics.observe_http(
+            service=self.settings.service_name,
+            method=scope.get("method", ""),
+            route=route,
+            status=status,
+            duration_seconds=duration,
+        )
+
     def _log_access(
-        self, status: int, route: str, path: str, duration_ms: float
+        self,
+        status: int,
+        route: str,
+        path: str,
+        duration_ms: float,
+        method: str = "",
     ) -> None:
         if not self.settings.access_log_enabled:
             return

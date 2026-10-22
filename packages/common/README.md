@@ -15,6 +15,16 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   慢请求、SSE 建连/关闭、未捕获异常带栈、上下文清理)、
   `install_app_error_handler`(AppError → JSON + error_code 日志)、
   `inject_request_headers`(httpx 出站透传);
+- `common.metrics`:指标装配(docs/observability.md P2)——进程内 Prometheus
+  计数器/直方图(`http_requests_total`、`http_request_duration_seconds`、
+  `run_outcomes_total`、`job_failures_total`、`llm_upstream_errors_total`)、
+  `observe_*` 业务上报(service 默认取日志上下文)、
+  `install_metrics_endpoint`(挂 `GET /internal/metrics`,`<SERVICE>__METRICS_ENABLED=false` 不注册);
+- `common.sentry`:错误聚合装配(docs/observability.md P1)——`<SERVICE>__SENTRY_DSN` 为空
+  即完全不初始化;`before_send` 丢弃业务 4xx、脱敏请求头/cookie/query/body,
+  并把 `request_id`/`trace_id`/`tenant_id`/`user_id` 写进 tags;
+- `common.observability`:`install_observability(app, settings)`——一行同时装
+  Sentry 与指标端点(7 个服务的 `create_app` 统一调用);
 - `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与租户提取:
   OIDC 发现 + JWKS 拉取(TTL 缓存、未知 kid 触发刷新以支持密钥轮换)、
   RS256 签名 + `iss`/`aud`/`exp` 校验;租户来自可配置 claim,缺失即拒绝
@@ -23,6 +33,7 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   (put/get/delete)与 `FilesystemArtifactStore`(本地目录,键只允许安全字符、
   落盘前校验不越出存储根以防目录穿越,IO 走 `to_thread`);换 S3/MinIO 只需实现协议。
 
-随实现逐步补齐:FastAPI 公共依赖(分页/DB session 复用)、Sentry(P1)、指标与 OTel(P2)、SSE 工具。
+已落地:结构化日志(P0)、Sentry 服务端(P1)、进程内指标(P2)。
+随实现逐步补齐:Web 侧 Sentry、OTel 追踪、FastAPI 公共依赖(分页/DB session 复用)、SSE 工具。
 
 命令(仓库根执行):`npx nx lint common` / `npx nx format common` / `npx nx test common` / `npx nx run common:sync`

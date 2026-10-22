@@ -54,8 +54,12 @@ def setup_logging(settings: BaseAppSettings) -> None:
 
 
 def bind_request_context(**fields: Any) -> None:
-    """绑定请求级字段(request_id/tenant_id/error_code…),随日志自动输出。"""
-    structlog.contextvars.bind_contextvars(**fields)
+    """绑定请求级字段(request_id/tenant_id/error_code…),随日志自动输出。
+
+    进程级身份(service/env)一并绑定:`setup_logging` 里的 contextvars 绑定发生在
+    lifespan 任务里,uvicorn 的请求任务不一定继承得到,所以每次绑定都补一遍。
+    """
+    structlog.contextvars.bind_contextvars(**{**_BASE_CONTEXT, **fields})
 
 
 def clear_request_context() -> None:

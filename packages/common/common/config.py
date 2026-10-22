@@ -29,6 +29,18 @@ class BaseAppSettings(BaseSettings):
     access_log_enabled: bool = True
     slow_request_ms: int = 1500
     log_json: bool | None = None
+    # Sentry(P1,docs/observability.md §8):DSN 为空即完全关闭;release 建议
+    # 由部署侧注入镜像 tag 或 git sha;traces_sample_rate 默认 0(错误聚合优先,
+    # 性能追踪等指标层稳定后再开)。
+    sentry_dsn: str | None = None
+    sentry_release: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    # 指标(P2,docs/observability.md §9):进程内 Prometheus 计数,
+    # 只在 /internal/metrics 暴露,不进 /api/v1 公共契约。
+    metrics_enabled: bool = True
+    # 指标端点可选访问令牌:配了就先比 `X-Metrics-Token`(或 Bearer),不符返回 404;
+    # 未配时仅靠网络边界(内网抓取)——公网入口(BFF)建议配一个。
+    metrics_token: str | None = None
 
     @property
     def is_prod(self) -> bool:

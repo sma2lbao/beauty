@@ -164,7 +164,7 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 - `route` 用 **路由模板**：`request.scope["route"].path`（如 `/api/v1/conversations/{conversation_id}/messages/stream`）；未命中路由（404）用 `method` + 固定占位 `unmatched`，不落原始 path 里可能带 id 的片段——这是控制日志基数的关键。
 - 分级：`status >= 500` → `error`；`status in (401,403,409,429)` → `warning`；其余 2xx/3xx → `info`；探针路径 → `debug`。
-- 慢请求：`duration_ms > SLOW_REQUEST_MS`（默认 1500，SSE 除外）额外打 `event=http_request_slow`（`warning`），带 route 与耗时，便于直接 grep 慢接口。
+- 慢请求：`duration_ms > <SERVICE>__SLOW_REQUEST_MS`（默认 1500，SSE 除外）额外打 `event=http_request_slow`（`warning`），带 route 与耗时，便于直接 grep 慢接口。
 - SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/bff/bff/api/proxy.py:123`。
 - 限流命中（BFF `services/bff/bff/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`tenant_id`、`group`），访问日志本身仍是 429。
 
@@ -187,17 +187,31 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 ## 8. 错误聚合：Sentry（P1，可选依赖）
 
-- 依赖：`sentry-sdk[fastapi]`，只在 `services/*/pyproject.toml` 按需加；**默认关闭**（`SENTRY_DSN` 为空即不初始化，内网形态天然关闭）。
-- 初始化放在 `create_app` 的 `setup_logging` 之后：`environment=settings.env`、`release=<镜像 tag 或 git sha>`、`send_default_pii=False`、`traces_sample_rate=0`（P2 再说）、`before_send` 脱敏（删掉 headers/cookies/request body、抹掉 token 字段）。
-- 忽略：`/healthz`、`/readyz`、`AppError` 的 4xx（只报 5xx 与未捕获异常）。
-- Web 侧：`@sentry/react` 接入 `apps/web/src/main.tsx`，上传 sourcemap；与 BFF 共用 `release`。
-- 与日志的衔接：Sentry event 里塞 `request_id`（`tags.request_id`），排查时 Sentry → 日志按 id 串。
+**状态：服务端已实施**（`packages/common/common/sentry.py`，由 `install_observability` 在 7 个服务的 `create_app` 统一调用）。Web 侧尚未接入（见本节末）。
+
+- 依赖：`sentry-sdk[fastapi]` 收在 `packages/common`（7 个服务共用），**默认关闭**——`<SERVICE>__SENTRY_DSN` 为空直接 `return False`，不 `init`、不发任何网络请求，内网形态零副作用。
+- 初始化参数：`environment=env`、`release=sentry_release`（部署侧注入镜像 tag 或 git sha）、`server_name=service_name`、`traces_sample_rate=sentry_traces_sample_rate`（默认 0）、FastAPI/Starlette 集成（`transaction_style="endpoint"`，路由模板而非原始路径）。
+- 数据采集用 SDK 2.7x 的 `data_collection` 显式收紧（替代已弃用的 `send_default_pii`）：`user_info=False`、`cookies=off`、`http_bodies=[]`、`url_query_params=off`、`stack_frame_variables=False`。
+- `before_send` 三道处理：① `AppError` 且 `status < 500` 直接丢弃（业务分支不占错误配额）；② 请求体/cookie 删除、敏感头（Authorization/Cookie/X-Api-Key…）值替换为 `***`、敏感 query 参数（token/code/password…）抹值；③ 把 `request_id`/`trace_id`/`tenant_id`/`user_id`/`route`/`error_code` 写进 `tags`——Sentry → 日志按同一个 id 串。
+- 忽略：`/healthz`、`/readyz`（探针不产生异常事件；无需额外过滤）。
+- 测试：`packages/common/tests/test_sentry.py`——无 DSN 时 no-op、4xx 丢弃、5xx 保留且脱敏、自定义 transport 实收事件验证 tag 与脱敏。
+- 环境变量（`BaseAppSettings` 字段，按服务前缀生效，如 `WORKSPACE__SENTRY_DSN`）：`SENTRY_DSN`、`SENTRY_RELEASE`、`SENTRY_TRACES_SAMPLE_RATE`。
+- **Web 侧（未做）**：`@sentry/react` 接入 `apps/web/src/main.tsx`，`beforeSend` 脱敏 + 上传 sourcemap + 与 BFF 共用 `release`；需要时按同一条规则落地。
 
 ---
 
-## 9. 指标（P2，后置）
+## 9. 指标（P2）
 
-先由日志派生（对 access log 做聚合即可得 RED），量级上来后再上独立指标：
+**状态：已实施（进程内 Prometheus）**——`packages/common/common/metrics.py`；请求级 RED 指标由中间件自动记录，业务指标在各自边界上报。
+
+- 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，BFF 不代理它。
+- 公网入口（BFF）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
+- 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `tenant_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
+- 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total`，provider 取模型前缀）。
+- 业务代码调用 `metrics.observe_*` 时不必传 service：默认从日志上下文（启动时绑定的 `service`）取。
+- 若暂时不部署 Prometheus，也可用 `metrics_payload()` 定时落 `event=metrics_snapshot` 的 info 日志，效果等价。
+
+指标设计如下（前 5 个已实施；`outbox_pending`、`llm_tokens_total` 仍从日志/运维端点派生，待后续补）：
 
 | 指标                            | 类型      | 标签                           | 来源                                                                                    |
 | ------------------------------- | --------- | ------------------------------ | --------------------------------------------------------------------------------------- |
@@ -208,9 +222,6 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 | `outbox_pending`                | gauge     | —                              | outbox 计数（已有运维端点 `/api/v1/outbox/*`）                                          |
 | `llm_upstream_errors_total`     | counter   | provider, code                 | llm-gateway                                                                             |
 | `llm_tokens_total`              | counter   | model, direction               | orchestrator/llm-gateway（与用量计量同源）                                              |
-
-- 暴露方式：内部端口（如 `:9xxx`）或 `/internal/metrics` + 内网鉴权，**不放进 `/api/v1` 公共契约**；标签禁止放 `tenant_id`/`run_id`（基数爆炸），租户维度靠日志与用量账本。
-- 若决定不引入 Prometheus，退而求其次：定时任务把 §9 表格的计数打到 `info` 日志（`event=metrics_snapshot`），一样能出图。
 
 ---
 
@@ -256,11 +267,12 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 ### P1 错误聚合 Sentry（可选依赖）
 
-`SENTRY_DSN` 驱动的初始化 + `before_send` 脱敏 + Web 接入 + sourcemap；验收：故意抛错的服务端事件在 Sentry 可见并带 `request_id` 标签；`SENTRY_DSN` 为空时零副作用（内网形态）。
+**状态：服务端已完成**（`common/sentry.py` + `common/observability.py` 装配；7 服务 `create_app` 一行接入）。落地内容见 §8：DSN 为空 no-op、4xx 丢弃、`data_collection` 收紧、`before_send` 脱敏 + 上下文 tag。
+待办：Web 侧 `@sentry/react` + sourcemap（`apps/web`，需要单独排期）。
 
-### P2 指标与追踪（v2 后置，先不做）
+### P2 指标与追踪
 
-指标见 §9；追踪按 `architecture-v2.md` §9 的“OTel 后置”再评估（GenAI semconv 仍实验性，埋点前先封一层属性映射，避免返工）。
+**状态：指标已完成，追踪未做**。指标见 §9（`common/metrics.py`，`/internal/metrics`）；追踪仍按 `architecture-v2.md` §9 的“OTel 后置”再评估（GenAI semconv 仍实验性，埋点前先封一层属性映射，避免返工）。
 
 ---
 
@@ -289,5 +301,7 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 - [x] 未捕获异常 / `UpstreamError` / job 终态失败都有一条带 `exception` 的 `error` 日志
 - [x] `/healthz`、`/readyz` 在 prod 级别下不产生 info 日志
 - [x] 日志里没有 token/cookie/密码/请求体全文（抽样审计 100 行）
-- [ ] `SENTRY_DSN` 为空时无网络请求、无初始化副作用
-- [ ] 内网形态（`LOG_JSON=true`、无 Sentry）启动与排障流程演练通过
+- [x] `<SERVICE>__SENTRY_DSN` 为空时无网络请求、无初始化副作用（`init_sentry` 直接返回 False，测试覆盖）
+- [x] 内网形态（`<SERVICE>__LOG_JSON=true`、无 Sentry）可启动：真机冒烟通过
+- [x] `/internal/metrics` 可被抓取，指标标签无高基数字段
+- [x] 业务 4xx 不进 Sentry；5xx/未捕获异常进 Sentry 且请求数据已脱敏

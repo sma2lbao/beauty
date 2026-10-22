@@ -93,6 +93,9 @@ def test_access_log_carries_request_context() -> None:
     assert entry["status"] == 200
     assert entry["method"] == "GET"
     assert entry["request_id"] == "abc12345"
+    # 进程级身份随每次绑定补回(uvicorn 请求任务不一定继承 lifespan 的 contextvars)
+    assert entry["service"] == "svc"
+    assert entry["env"] == "dev"
     assert entry["log_level"] == "info"
     assert isinstance(entry["duration_ms"], float)
 
