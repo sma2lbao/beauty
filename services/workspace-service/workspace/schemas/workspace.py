@@ -19,6 +19,17 @@ class WorkspaceCreate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
 
 
+class WorkspaceUpdate(BaseModel):
+    """工作区部分更新:未传字段不改;description 显式 null 表示清空。
+
+    区分"未传"与"显式 null"用 `model_fields_set`:name 只在非 None 时改,
+    description 只要出现在请求体里就改(含 `null` 清空)。
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+
 class WorkspaceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -26,6 +37,7 @@ class WorkspaceRead(BaseModel):
     name: str
     description: str | None
     status: str
+    is_default: bool
     created_at: datetime
 
 

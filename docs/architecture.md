@@ -209,6 +209,17 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 - **归属随对话**:镜像时带 run 的 `workspace_id`(run 从对话继承,见 §6.7),
   交付物因此落在发起它的对话所属工作区,而不是散在租户根下。
 
+### 7.2 工作区(workspaces)
+
+- 工作区是**会话与交付物的归属容器**(workspace-service 的表,UI 交互对齐 dsh:
+  侧栏用一行切换器 + 下拉菜单切换工作区,会话区只列当前工作区的会话);`workspaces.is_default` 标记系统维护的默认工作区——
+  **默认工作区可改名、不可删除**(交付与编排默认往它落,删掉也会被下一次懒建重建);
+- `PATCH /v1/workspaces/{id}` 改名/改描述(同租户重名 409 `workspace.exists`);
+  `DELETE /v1/workspaces/{id}` 级联清理该工作区的交付物(对象存储 + 行),
+  默认工作区返回 409 `workspace.default_protected`;
+- 跨服务引用(orchestrator 的会话/run、沙箱实例)是**弱引用**,不做跨服务级联:
+  删工作区后遗留会话落「未分组」继续可用,再跑 run 时交付物镜像只记错误、不打断执行。
+
 ## 8. 知识、记忆与连接器
 
 - **knowledge-service**(阶段 A 合体):ingestion 消费 `email.received.v1` 等事件 → embedding(**经 llm-gateway 走 API**,自托管 bge-m3 后置)→ pgvector;retrieval 提供检索+重排入口;memory 以表起步(事实/偏好/会话摘要);

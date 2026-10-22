@@ -7,12 +7,26 @@
 from __future__ import annotations
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 
 class Workspace(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """工作区:团队的资料空间(同租户内名称唯一)。"""
+    """工作区:团队的资料空间(同租户内名称唯一)。
+
+    `is_default` 标记系统维护的默认工作区:重命名后仍靠它识别,避免
+    "默认工作区被改名→按名称找不到→又建一个同名默认工作区"。默认工作区
+    允许改名,但不允许删除(交付物与编排侧的弱引用都指向它)。
+    """
 
     __tablename__ = "workspaces"
     __table_args__ = (UniqueConstraint("tenant_id", "name"),)
@@ -20,6 +34,9 @@ class Workspace(UUIDMixin, TenantMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
 
 class WorkspaceArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):

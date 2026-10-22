@@ -5,9 +5,15 @@
 §7 数据模型要点把 `artifacts` 归属到本服务(实体文件在对象存储,COS/R2 阶段 B)。
 
 - `POST /v1/workspaces`、`GET /v1/workspaces`、`GET /v1/workspaces/{id}`:
-  工作区(团队资料空间);
+  工作区(团队资料空间;返回体带 `is_default` 标记);
 - `GET /v1/workspaces/default`:当前租户的默认工作区(**幂等建档**),
   agent-orchestrator 交付时往这里推;
+- `PATCH /v1/workspaces/{id}`:改名/改描述(部分更新):未传字段不改,
+  `description` 显式传 `null` 清空;同租户重名 409 `workspace.exists`,
+  未知/跨租户 404 `workspace.not_found`;默认工作区**可以改名**;
+- `DELETE /v1/workspaces/{id}`(204):删除工作区并**级联清理其交付物**
+  (对象存储里的对象 + `workspace_artifacts` 行);默认工作区不可删,
+  返回 409 `workspace.default_protected`;未知/跨租户 404;
 - `POST /v1/artifacts`(标题/类型 + 正文或二进制,可带 `run_id`):body 里
   `content`(文本)与 `content_base64`(二进制)**恰好给一个**(都给/都不给 422),
   可带 `filename`/`content_type`;
@@ -16,6 +22,26 @@
   `Content-Disposition: attachment; filename*=UTF-8''…` + `Cache-Control: private, no-store`)、
   `DELETE /v1/artifacts/{id}`;
 - `/healthz` `/readyz`:存活/就绪探针。
+
+### 默认工作区与删除语义
+
+- `is_default`:每个租户有且只有一个系统维护的默认工作区。解析顺序是
+  `is_default` 标记 → 历史名称兜底(老数据命中后补标记)→ 新建;因此
+  **默认工作区被改名后仍然认得出**,不会在下一次交付时重复建档
+  (迁移 `b9d4e6f1a2c3` 把既有的「自动创建:租户默认工作区」行置为默认);
+- 默认工作区**只可改名、不可删除**:编排/会话默认往它落交付物,删掉会让
+  大量弱引用悬空;要换落点请另建工作区;
+- 删除非默认工作区是**本服务内的级联**:先删对象存储中的对象(单个失败只记
+  warning,不阻塞删除,行仍会删掉),再删 `workspace_artifacts` 行,最后删
+  工作区行。跨服务引用(agent-orchestrator 的会话/run、沙箱实例)只有 id、
+  没有外键,**本服务不越权清理**:编排侧删除后会话落「未分组」,交付物的
+  run 溯源随之失效——这是弱引用有意接受的代价。
+
+| 场景                           | 错误码                        | HTTP |
+| ------------------------------ | ----------------------------- | ---- |
+| 同租户工作区重名(创建/改名)    | `workspace.exists`            | 409  |
+| 删除默认工作区                 | `workspace.default_protected` | 409  |
+| 工作区不存在或跨租户(读/改/删) | `workspace.not_found`         | 404  |
 
 交付物内容通过 `common.artifacts.ArtifactStore` 落盘:
 
