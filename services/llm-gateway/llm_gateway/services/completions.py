@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -64,6 +65,54 @@ def _observe_upstream(model: str, code: str) -> None:
     metrics.observe_llm_error(provider=provider, code=code)
 
 
+_CONTENT_LIMIT = 2000
+
+
+def _provider(model: str) -> str:
+    """模型 id 的 provider 前缀(litellm 路由格式 provider/model)。"""
+    return str(model).split("/", 1)[0] or "unknown"
+
+
+def _prompt_chars(data: CompletionRequest) -> int:
+    return sum(len(str(m.content or "")) for m in data.messages)
+
+
+def _roles(data: CompletionRequest) -> str:
+    """消息角色组合,如 `system+user`(只做低基数标签,不含正文)。"""
+    seen: list[str] = []
+    for message in data.messages:
+        role = str(message.role)
+        if role not in seen:
+            seen.append(role)
+    return "+".join(seen)
+
+
+def _clip(text: str) -> str:
+    text = str(text or "")
+    return text if len(text) <= _CONTENT_LIMIT else text[:_CONTENT_LIMIT] + "…(截断)"
+
+
+def _record_usage(usage: UsageOut | None, model: str) -> None:
+    """token 用量按 input/output 两个方向计入 llm_tokens_total。"""
+    if usage is None:
+        return
+    metrics.observe_llm_tokens(
+        model=model, direction="input", tokens=usage.prompt_tokens
+    )
+    metrics.observe_llm_tokens(
+        model=model, direction="output", tokens=usage.completion_tokens
+    )
+
+
+def _log_content(settings: Settings, log: Any, direction: str, payload: Any) -> None:
+    """`LOG_CONTENT=true` 时的正文快照(默认关:prompt 可能含用户数据)。
+
+    显式开启即视为"要看正文",所以用 info(不必再叠 LOG_LEVEL=DEBUG)。
+    """
+    if settings.log_content:
+        log.info("llm_content", direction=direction, payload=payload)
+
+
 def _provider_kwargs(settings: Settings) -> dict[str, Any]:
     """把平台配置的模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。"""
     extra: dict[str, Any] = {}
@@ -97,6 +146,25 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
     model = data.model or settings.default_model
     log = get_logger("llm_gateway.completions")
     extra = _extra(data)
+    provider = _provider(model)
+    started = time.perf_counter()
+    log.info(
+        "llm_request",
+        provider=provider,
+        model=model,
+        stream=False,
+        message_count=len(data.messages),
+        roles=_roles(data),
+        prompt_chars=_prompt_chars(data),
+        tool_count=len(data.tools or []),
+        temperature=data.temperature,
+    )
+    _log_content(
+        settings,
+        log,
+        "request",
+        [{"role": m.role, "content": _clip(m.content or "")} for m in data.messages],
+    )
     try:
         resp = await litellm.acompletion(
             model=model,
@@ -113,15 +181,29 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
             f"模型调用失败:{exc}",
             details={"model": model},
         ) from exc
+    duration_seconds = time.perf_counter() - started
     usage_obj = _usage(getattr(resp, "usage", None))
     message = resp.choices[0].message
+    content = getattr(message, "content", None) or ""
     tool_calls = _normalize_tool_calls(message)
-    log.info(
-        "llm_call",
-        model=model,
-        has_usage=usage_obj is not None,
-        tool_calls=len(tool_calls),
+    resolved_model = str(getattr(resp, "model", None) or model)
+    _record_usage(usage_obj, resolved_model)
+    metrics.observe_llm_latency(
+        provider=provider, model=resolved_model, seconds=duration_seconds
     )
+    log.info(
+        "llm_response",
+        provider=provider,
+        model=resolved_model,
+        finish_reason=str(_get(resp.choices[0], "finish_reason") or "stop"),
+        prompt_tokens=usage_obj.prompt_tokens if usage_obj else 0,
+        completion_tokens=usage_obj.completion_tokens if usage_obj else 0,
+        total_tokens=usage_obj.total_tokens if usage_obj else 0,
+        tool_calls=len(tool_calls),
+        chars=len(content),
+        duration_ms=round(duration_seconds * 1000, 1),
+    )
+    _log_content(settings, log, "response", _clip(content))
     return CompletionResponse(
         model=getattr(resp, "model", None) or model,
         content=getattr(message, "content", None) or "",
@@ -142,6 +224,25 @@ async def stream(
     model = data.model or settings.default_model
     log = get_logger("llm_gateway.completions")
     extra = _extra(data)
+    provider = _provider(model)
+    started = time.perf_counter()
+    log.info(
+        "llm_request",
+        provider=provider,
+        model=model,
+        stream=True,
+        message_count=len(data.messages),
+        roles=_roles(data),
+        prompt_chars=_prompt_chars(data),
+        tool_count=len(data.tools or []),
+        temperature=data.temperature,
+    )
+    _log_content(
+        settings,
+        log,
+        "request",
+        [{"role": m.role, "content": _clip(m.content or "")} for m in data.messages],
+    )
     try:
         resp = await litellm.acompletion(
             model=model,
@@ -176,7 +277,24 @@ async def stream(
         )
         return
     content = "".join(parts)
-    log.info("llm_stream", model=resolved_model, chars=len(content))
+    duration_seconds = time.perf_counter() - started
+    _record_usage(usage_out, resolved_model)
+    metrics.observe_llm_latency(
+        provider=provider, model=resolved_model, seconds=duration_seconds
+    )
+    log.info(
+        "llm_response",
+        provider=provider,
+        model=resolved_model,
+        stream=True,
+        finish_reason="stop",
+        prompt_tokens=usage_out.prompt_tokens if usage_out else 0,
+        completion_tokens=usage_out.completion_tokens if usage_out else 0,
+        total_tokens=usage_out.total_tokens if usage_out else 0,
+        chars=len(content),
+        duration_ms=round(duration_seconds * 1000, 1),
+    )
+    _log_content(settings, log, "response", _clip(content))
     yield CompletionChunk(
         done=True, content=content, model=resolved_model, usage=usage_out
     )

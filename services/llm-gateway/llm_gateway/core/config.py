@@ -20,5 +20,8 @@ class Settings(BaseAppSettings):
     # 提供商凭据:显式传给 litellm(不依赖 os.environ 注入)
     api_key: str = ""
     api_base: str = ""
+    # 联调开关:开启后把 messages 与响应正文(各截断 2000 字)按 debug 落
+    # `llm_content`。默认关——prompt 可能含用户数据与工具结果,只应本地临时开。
+    log_content: bool = False
     # 嵌入路由(§9):知识库等服务经此向量化,不直连模型提供商
     default_embedding_model: str = "bge-m3"

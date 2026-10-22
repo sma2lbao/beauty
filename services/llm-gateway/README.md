@@ -17,6 +17,11 @@
   `EMBEDDING_MODEL`);条数与输入不一致按 502 `llm.embedding_error` 处理——
   knowledge-service 等经此向量化,不直连模型提供商(§5);
 - `/healthz` `/readyz`:存活/就绪探针(默认模型已配置即就绪,提供商连通性在调用时校验);
+- 观测:每次调用打 `llm_request`(provider/model/stream/消息数/角色/提示字数/tool 数/温度)
+  与 `llm_response`(解析后的 model/finish_reason/token 用量/字符数/耗时);
+  指标 `llm_tokens_total{direction}` 与 `llm_request_duration_seconds` 见
+  `GET /internal/metrics`。正文默认不落日志,联调要看去 `.env` 里开
+  `LLM_GATEWAY__LOG_CONTENT=true`(messages 与响应各截断 2KB,含用户数据,别在生产开);
 - 密钥由 litellm 直接读进程环境变量,网关不落盘(密钥库方案见架构 §10)。
 
 阶段 B 补齐:embeddings 端点、租户级配额与限流、模型路由按区域切换(§9)、
