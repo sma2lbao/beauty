@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from langgraph.types import interrupt
 
+from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.services.llm import LLMReply
 
@@ -60,6 +61,24 @@ DELIVER_SYSTEM_PROMPT = (
     "你是交付助手。依据目标、计划与执行结果,产出**最终交付物正文**(Markdown):"
     "直接给成品,不要解释过程、不要寒暄、不要重复计划本身。"
 )
+
+
+async def _text_reply(
+    llm: LLMClient, messages: list[dict[str, Any]], *, phase: str
+) -> str:
+    """取一段模型正文:有增量通道时边流边报(§6.3 token.delta.v1)。
+
+    节点仍然只上报文本、不碰数据库——落库在 services 层的图调用边界。
+    注入实现(测试假客户端等)不一定支持 stream,没有就退回 complete,
+    行为与不流式时完全一致。
+    """
+    if not delta.active() or not hasattr(llm, "stream"):
+        return (await llm.complete(messages)).content
+    parts: list[str] = []
+    async for piece in llm.stream(messages):
+        parts.append(piece)
+        await delta.emit_text(piece, phase)
+    return "".join(parts)
 
 
 def _skill_block(state: RunGraphState) -> str:
@@ -136,7 +155,8 @@ def make_plan_node(llm: LLMClient | None):
         if llm is None:
             return _stub_plan(state)
         criteria = state.get("acceptance_criteria") or []
-        reply = await llm.complete(
+        plan_markdown = await _text_reply(
+            llm,
             [
                 {
                     "role": "system",
@@ -152,9 +172,10 @@ def make_plan_node(llm: LLMClient | None):
                         f"{_instructions_block(state)}"
                     ),
                 },
-            ]
+            ],
+            phase=delta.PHASE_PLAN,
         )
-        return {"plan_markdown": reply.content}
+        return {"plan_markdown": plan_markdown}
 
     return plan_node
 
@@ -326,8 +347,8 @@ def make_execute_node(
         if toolkit is not None and allowed is not None:
             toolkit = toolkit.restricted(allowed)
         if toolkit is None or len(toolkit) == 0:
-            reply = await llm.complete(messages)
-            return {"results": [reply.content], "rounds": 1}
+            text = await _text_reply(llm, messages, phase=delta.PHASE_EXECUTE)
+            return {"results": [text], "rounds": 1}
 
         schemas = toolkit.schemas()
         records: list[dict[str, Any]] = []
@@ -364,7 +385,9 @@ def make_execute_node(
         if exhausted and records:
             # 轮次用尽仍在要工具:再给一次"不带工具"的收束调用,把已拿到的
             # 工具结果收敛成正文;否则下游只能拿到空正文,误报成"没读到内容"。
-            reply = await llm.complete(messages)
+            reply = LLMReply(
+                content=await _text_reply(llm, messages, phase=delta.PHASE_EXECUTE)
+            )
         text = reply.content or f"(调用工具 {len(records)} 次后模型未给出结论)"
         return {
             "results": [text],
@@ -461,7 +484,8 @@ def make_verify_node(llm: LLMClient | None):
         if llm is None or not criteria:
             return {"verified": {c: True for c in criteria}}
         done = "\n".join(state.get("results") or []) or "(尚无)"
-        reply = await llm.complete(
+        verdict_text = await _text_reply(
+            llm,
             [
                 {
                     "role": "system",
@@ -477,9 +501,10 @@ def make_verify_node(llm: LLMClient | None):
                         f"{_instructions_block(state)}"
                     ),
                 },
-            ]
+            ],
+            phase=delta.PHASE_VERIFY,
         )
-        verdicts, summary = _parse_verdicts(reply.content, criteria)
+        verdicts, summary = _parse_verdicts(verdict_text, criteria)
         update: dict = {"verified": verdicts}
         if summary:
             update["results"] = [f"验收小结:{summary}"]
@@ -531,7 +556,8 @@ def make_deliver_node(llm: LLMClient | None):
         if llm is None:
             return _stub_deliver(state)
         results = "\n\n".join(state.get("results") or []) or "(无执行结果)"
-        reply = await llm.complete(
+        content = await _text_reply(
+            llm,
             [
                 {
                     "role": "system",
@@ -548,11 +574,12 @@ def make_deliver_node(llm: LLMClient | None):
                         f"{_instructions_block(state)}"
                     ),
                 },
-            ]
+            ],
+            phase=delta.PHASE_DELIVER,
         )
         return {
             "final_status": "completed",
-            "artifact": _artifact(state, reply.content),
+            "artifact": _artifact(state, content),
         }
 
     return deliver_node

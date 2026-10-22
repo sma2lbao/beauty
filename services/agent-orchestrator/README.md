@@ -9,6 +9,14 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
   断线续传,run 终态(completed/failed)自动 `stream.end` 收线;
+- **正文增量流**(`graph/delta.py` + `services/runs.py`):plan/execute/verify/deliver
+  四个阶段的模型正文以 `token.delta.v1` 事件落 `run_events`(payload `{text, phase}`,
+  text 是**增量**片段,按 seq 拼接即全文),执行期前端订阅 run 事件流即可看到正文
+  边产出边显示——任务路径的会话 SSE 不重复下发正文,只给 `meta`/`done`。攒批落库
+  (`RUN_DELTA_FLUSH_CHARS=240` / `RUN_DELTA_FLUSH_SECONDS=0.25`,阶段切换一定切批),
+  增量事件**不进 outbox**(属于实时展示,不是跨服务事实);开关
+  `RUN_DELTA_STREAMING=false` 可关回"每阶段只在终态落一条";节点仍是纯函数:
+  只把文本推给 contextvar 绑定的 sink,落库发生在 services 层的图调用边界;
 - LangGraph 执行图(`agent_orchestrator/graph/`):plan → 审批闸(按需 interrupt)
   → execute → verify(返工 ≤3 轮)→ deliver;审批闸按**装配工具的风险**自动开关:
   工具里没有 DANGER 级(未信任 MCP、对外不可逆操作)时计划生成后**自动放行**
@@ -27,7 +35,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
   `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息、
   `POST /conversations/{id}/messages/stream` **SSE 流式**发消息
-  (`meta` → `delta`\* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发);
+  (`meta` → `delta`\* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发;
+  任务是建 run,正文走 run 事件流的 `token.delta.v1`,所以这里只有 `meta`/`done`);
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
   判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;

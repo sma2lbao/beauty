@@ -12,6 +12,9 @@ graph 生命周期(架构 §6.2):
 
 from __future__ import annotations
 
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from common.artifacts import ArtifactStore
@@ -21,6 +24,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.graph import delta
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import (
     PendingInstruction,
@@ -63,9 +67,18 @@ def _tool_context(run: Run):
 
 
 async def append_event(
-    session: AsyncSession, run: Run, type_: str, payload: dict[str, Any]
+    session: AsyncSession,
+    run: Run,
+    type_: str,
+    payload: dict[str, Any],
+    *,
+    record_outbox: bool = True,
 ) -> RunEvent:
-    """追加 run 事件:seq 每 run 单调递增;信封负责命名/版本校验(§6.3)。"""
+    """追加 run 事件:seq 每 run 单调递增;信封负责命名/版本校验(§6.3)。
+
+    ``record_outbox=False`` 用于纯展示的瞬时事件(正文增量):它们只走
+    DB 回放,不必再进 outbox 投递给外部消费方。
+    """
     env = EventEnvelope.create(type_, payload)
     events = RunEventRepository(session)
     event = RunEvent(
@@ -80,10 +93,80 @@ async def append_event(
     await events.add(event)
     # 事务性 outbox(§6.3):与 run_events 同事务登记待投递事件;
     # recorder 由 API 层挂在 session.info 上(见 api/deps.get_session)
-    recorder = session.info.get("outbox")
+    recorder = session.info.get("outbox") if record_outbox else None
     if recorder is not None:
         await recorder(session, run, env)
     return event
+
+
+class _RunDeltaSink:
+    """把节点上报的正文增量攒成 ``token.delta.v1`` 事件(§6.3)。
+
+    与图调用共用同一个 session 并逐批提交:每批因此有各自可见的 seq 时刻,
+    SSE 回放能按序拼回整段正文,前端也能边收边渲染。攒批口径是"字数或时长
+    先到者"(默认 240 字 / 0.25 秒)——逐字写库会把一次 run 变成成百上千行
+    事件,轮询回放也扛不住。
+    """
+
+    def __init__(self, session: AsyncSession, run: Run) -> None:
+        self._session = session
+        self._run = run
+        self._flush_chars = delta.flush_chars()
+        self._flush_seconds = delta.flush_seconds()
+        self._buffer: list[str] = []
+        self._phase = delta.PHASE_EXECUTE
+        self._chars = 0
+        self._last_flush = time.monotonic()
+
+    async def push(self, text: str, phase: str) -> None:
+        if phase != self._phase and self._buffer:
+            # 阶段切换先吐干净上一段:前端按 phase 分组,不能混在一段里
+            await self._flush()
+        self._phase = phase
+        self._buffer.append(text)
+        self._chars += len(text)
+        if (
+            self._chars >= self._flush_chars
+            or time.monotonic() - self._last_flush >= self._flush_seconds
+        ):
+            await self._flush()
+
+    async def close(self) -> None:
+        await self._flush()
+
+    async def _flush(self) -> None:
+        if not self._buffer:
+            return
+        text = "".join(self._buffer)
+        self._buffer.clear()
+        self._chars = 0
+        self._last_flush = time.monotonic()
+        await append_event(
+            self._session,
+            self._run,
+            delta.EVENT_TYPE,
+            {"text": text, "phase": self._phase},
+            record_outbox=False,
+        )
+        await self._session.commit()
+
+
+@asynccontextmanager
+async def _delta_stream(session: AsyncSession, run: Run) -> AsyncIterator[None]:
+    """图调用边界:把正文增量通道绑到本次 run(未开启时原样透传)。"""
+    if not delta.enabled():
+        yield
+        return
+    sink = _RunDeltaSink(session, run)
+    # 开跑前的写入(计划/放行/指令消费)先落库:增量事件才有独立的可见时刻,
+    # 也避免同一 session 里未提交的旧事务挡住 flush 提交。
+    await session.commit()
+    token = delta.bind(sink)
+    try:
+        yield
+    finally:
+        delta.unbind(token)
+        await sink.close()
 
 
 def _config(run: Run) -> dict[str, Any]:
@@ -540,9 +623,11 @@ async def _invoke_plan(
     if instructions:
         state["extra_instructions"] = instructions
     try:
-        # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域)
+        # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
+        # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
         with _tool_context(run):
-            values = await graph.ainvoke(state, config=_config(run))
+            async with _delta_stream(session, run):
+                values = await graph.ainvoke(state, config=_config(run))
     except Exception as exc:
         await _fail_run(session, run, exc, stage="plan")
         return
@@ -726,10 +811,11 @@ async def approve_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            values = await graph.ainvoke(
-                Command(resume={"action": "approve", "instructions": instructions}),
-                config=_config(run),
-            )
+            async with _delta_stream(session, run):
+                values = await graph.ainvoke(
+                    Command(resume={"action": "approve", "instructions": instructions}),
+                    config=_config(run),
+                )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
@@ -782,16 +868,17 @@ async def confirm_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            values = await graph.ainvoke(
-                Command(
-                    resume={
-                        "action": action,
-                        "reason": reason,
-                        "instructions": instructions,
-                    }
-                ),
-                config=_config(run),
-            )
+            async with _delta_stream(session, run):
+                values = await graph.ainvoke(
+                    Command(
+                        resume={
+                            "action": action,
+                            "reason": reason,
+                            "instructions": instructions,
+                        }
+                    ),
+                    config=_config(run),
+                )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run

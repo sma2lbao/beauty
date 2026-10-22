@@ -342,6 +342,9 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
         "database_url": f"sqlite+aiosqlite:///{tmp_path}/{name}",
         "auto_create_tables": True,
         "sse_poll_interval_seconds": 0.05,
+        # 正文增量流:默认关——既有用例断言的是事件类型序列,打开会多出
+        # token.delta.v1;要覆盖流式路径的用例显式传 True(tests/test_run_delta.py)
+        "run_delta_streaming": False,
         # 外部副作用开关:默认全关,测试要开就显式传
         "llm_enabled": False,
         "tools_enabled": False,

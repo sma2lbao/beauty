@@ -30,6 +30,7 @@ from agent_orchestrator.api.internal import router as internal_router
 from agent_orchestrator.api.mcp_server import router as mcp_server_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
     conversations as conversations_models,
@@ -439,6 +440,12 @@ def create_app(
     """测试注入:llm_client、toolkit_factory、tool_extras_factory 等。"""
     app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings or Settings()
+    # 正文增量流是进程级通道配置(节点→services 的 sink),按启动时的 settings 固定
+    delta.configure(
+        enabled=app.state.settings.run_delta_streaming,
+        flush_chars=app.state.settings.run_delta_flush_chars,
+        flush_seconds=app.state.settings.run_delta_flush_seconds,
+    )
     app.state.llm_client = llm_client
     app.state.toolkit_factory = toolkit_factory
     app.state.tool_extras_factory = tool_extras_factory

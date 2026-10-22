@@ -27,6 +27,12 @@ class Settings(BaseAppSettings):
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
+    # 正文增量流(§6.3 token.delta.v1):run 执行时把模型正文边产出边落成事件,
+    # 会话页据此显示实时进度。攒批口径是"字数或时长先到者",逐字写库会把
+    # 一次 run 变成成百上千行事件。
+    run_delta_streaming: bool = True
+    run_delta_flush_chars: int = 240
+    run_delta_flush_seconds: float = 0.25
     # 通知流(P1-9b):按租户轮询 run 状态变化并推送;扫描间隔与单次查询上限
     notifications_poll_interval_seconds: float = 2.0
     notifications_lookback_seconds: int = 120  # 只看最近 N 秒内有状态变更的 run

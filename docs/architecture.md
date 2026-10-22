@@ -145,6 +145,10 @@ pending → planning → awaiting_approval → running → awaiting_confirmation
 - `run_events` 表:append-only、`seq` 单调编号、`type` + `payload`(JSONB),**落 Postgres**;
 - Redis Streams 只做实时分发;**SSE 断线回放从 Postgres 读**;
 - 事件名复用 `events` 信封约定:`run.started.v1` / `token.delta.v1` / `tool.invoked.v1` / `run.completed.v1` …;
+- `token.delta.v1` 是**正文增量**(payload `{text, phase}`,phase ∈ plan/execute/verify/deliver):
+  执行图的四个正文节点把模型流式输出攒批落成事件(按 seq 拼接即该阶段全文,阶段切换切批),
+  前端订阅 run 事件流就能在 run 还没终态时看到正文——任务对话没有别的正文通道,
+  chat 路径才走会话 SSE 的 `delta` 帧;增量事件不进 outbox,开关 `RUN_DELTA_STREAMING`(默认 true);
 - 价值:审计流水 + 断线/多端回放 + 全文检索——"AI 工作记录可回放可检索"是产品功能。
 
 ### 6.4 操作策略
@@ -168,6 +172,7 @@ run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完�
 
 - **先分流**:消息先判 `chat`(简单对话)还是 `task`(复杂任务)——显式指定(自动/对话/任务)优先,其次由模型判别,**判别失败或无模型时退回 task**;chat 由模型直接答一条,不建 run、不需审批,只有 task 才进 §6 任务流程;
 - **流式**:发消息走 SSE(`meta` 分流结论 → `delta` 正文增量 → `done`),chat 的正文**边产出边显示**;模型出口是 llm-gateway 的 `POST /v1/completions/stream`,失败以 `error` 帧收尾(开流后状态码改不了);中途断连时已产出的片段仍落库,不丢半截回复;
+- **任务正文**:task 走的是 run,正文不在会话 SSE 的 `delta` 帧里——它作为 `token.delta.v1` 事件落 `run_events`(见 §6.3),前端边执行边订阅 run 事件流渲染,run 终态后由落库的 assistant 消息接管(正文不重复);
 - 对话(`conversations`)是消息容器:task 消息在没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
 - **对话必须归属工作区**:`conversations.workspace_id` 为归属字段(跨服务弱引用,无 FK)——显式传入时经 workspace-service 校验(不存在 404 `workspace.not_found`、上游不可达 502 `workspace.upstream_error`),不传则落租户**默认工作区**;历史 `workspace_id IS NULL` 的旧会话在默认工作区列表时**懒回填**,非默认工作区过滤不回填、不泄漏;run 建时从对话继承 `workspace_id`,交付物镜像(`create_artifact`)带着它落库;
 - user/assistant 消息都持久化(`chat_messages`):assistant 消息既可能是 run 终态(交付物正文/失败原因/拒绝原因)的投影,也可能是 chat 的直接回复(`run_id` 为空)——历史双向完整,作为多轮上下文注入(chat 带此前全部轮次,规划排除本 run 自己的消息);
