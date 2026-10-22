@@ -99,6 +99,8 @@ def _headers(request: Request, state: dict[str, Any]) -> dict[str, str]:
         headers[REQUEST_ID_HEADER] = str(request_id)
     traceparent = current_traceparent()
     if traceparent:
+        # 开追踪时 httpx 插桩会把这里换成下游 client span 的 traceparent
+        # (trace-id 不变、span-id 换新);这里保留的是追踪关闭时的透传兜底。
         headers[TRACEPARENT_HEADER] = str(traceparent)
     return headers
 

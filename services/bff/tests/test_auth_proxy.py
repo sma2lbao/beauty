@@ -142,4 +142,10 @@ def test_proxy_forwards_request_id_and_traceparent() -> None:
     assert response.headers["x-request-id"] == "req-abc-123"
     proxied = next(item for item in seen if item.url.path.endswith("/v1/runs"))
     assert proxied.headers["x-request-id"] == "req-abc-123"
-    assert proxied.headers["traceparent"] == TRACEPARENT
+    # 开追踪时 httpx 插桩用当前 client span 的 traceparent 覆盖代理头:
+    # trace-id 沿用入站(同一条链路),span-id 换成下游调用的 client span。
+    version, trace_id, span_id, flags = proxied.headers["traceparent"].split("-")
+    assert version == "00"
+    assert trace_id == TRACEPARENT.split("-")[1]
+    assert len(span_id) == 16
+    assert flags == "01"

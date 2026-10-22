@@ -18,6 +18,7 @@ from common.middleware import (
     install_app_error_handler,
 )
 from common.observability import install_observability
+from common.tracing import exclude_telemetry
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -53,7 +54,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(
     settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None
 ) -> FastAPI:
-    app = FastAPI(title="bff", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="bff",
+        version="0.1.0",
+        lifespan=lifespan,
+        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
+        telemetry={"exclude": exclude_telemetry},
+    )
     app.state.settings = settings or Settings()
     app.state.transport = transport
     app.state.session_codec = SessionCodec(app.state.settings.session_secret)

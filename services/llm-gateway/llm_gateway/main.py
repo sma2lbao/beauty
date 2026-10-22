@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from common.logging import setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
 from common.observability import install_observability
+from common.tracing import exclude_telemetry
 from fastapi import FastAPI
 
 from llm_gateway.api.health import health_router
@@ -25,7 +26,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    app = FastAPI(title="llm-gateway", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="llm-gateway",
+        version="0.1.0",
+        lifespan=lifespan,
+        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
+        telemetry={"exclude": exclude_telemetry},
+    )
     app.state.settings = settings or Settings()
 
     install_app_error_handler(app)

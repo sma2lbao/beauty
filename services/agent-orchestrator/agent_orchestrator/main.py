@@ -17,6 +17,7 @@ from common.auth import JwtVerifier
 from common.logging import get_logger, setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
 from common.observability import install_observability
+from common.tracing import exclude_telemetry
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
@@ -440,7 +441,13 @@ def create_app(
     oauth_introspector: OAuthTokenIntrospector | None = None,
 ) -> FastAPI:
     """测试注入:llm_client、toolkit_factory、tool_extras_factory 等。"""
-    app = FastAPI(title="agent-orchestrator", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="agent-orchestrator",
+        version="0.1.0",
+        lifespan=lifespan,
+        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
+        telemetry={"exclude": exclude_telemetry},
+    )
     app.state.settings = settings or Settings()
     # 正文增量流是进程级通道配置(节点→services 的 sink),按启动时的 settings 固定
     delta.configure(

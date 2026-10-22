@@ -13,6 +13,7 @@ from common.auth import JwtVerifier
 from common.logging import setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
 from common.observability import install_observability
+from common.tracing import exclude_telemetry
 from database.base import Base
 from database.session import create_session_factory
 from fastapi import FastAPI
@@ -78,7 +79,13 @@ def create_app(
     token_verifier: JwtVerifier | None = None,
 ) -> FastAPI:
     """测试注入:embedder(假嵌入/本地提供方)、token_verifier(假 JWKS)。"""
-    app = FastAPI(title="knowledge-service", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="knowledge-service",
+        version="0.1.0",
+        lifespan=lifespan,
+        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
+        telemetry={"exclude": exclude_telemetry},
+    )
     app.state.settings = settings or Settings()
     app.state.embedder = embedder
     app.state.token_verifier = token_verifier
