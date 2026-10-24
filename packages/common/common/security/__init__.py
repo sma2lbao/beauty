@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from common.security.internal_secret import (
+    SECRET_HEADER,
     make_internal_secret_dependency,
     require_internal_secret,
 )
@@ -14,6 +15,7 @@ from common.security.rate_limit import SlidingWindowLimiter
 from common.security.secret_box import SecretBox, derive_key
 
 __all__ = [
+    "SECRET_HEADER",
     "SecretBox",
     "SlidingWindowLimiter",
     "derive_key",

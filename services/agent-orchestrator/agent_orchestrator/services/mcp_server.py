@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from common.security import SECRET_HEADER
 from common.errors import (
     AppError,
     NotFoundError,
@@ -60,7 +61,7 @@ class OAuthTokenIntrospector:
             response = await self._client.post(
                 "/v1/oauth/introspect",
                 json={"token": token},
-                headers={"X-Internal-Secret": self._secret},
+                headers={SECRET_HEADER: self._secret},
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
@@ -106,7 +107,7 @@ class ApiKeyVerifier:
             response = await self._client.post(
                 "/v1/api-keys/verify",
                 json={"key": key},
-                headers={"X-Internal-Secret": self._secret},
+                headers={SECRET_HEADER: self._secret},
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(

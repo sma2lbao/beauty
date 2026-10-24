@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from common.security import SECRET_HEADER
 from common.logging import get_logger
 from common.middleware import inject_request_headers
 
@@ -87,7 +88,7 @@ class QuotaClient:
             response = await self._client.get(
                 "/v1/usage/quota",
                 headers={
-                    "X-Internal-Secret": self._secret,
+                    SECRET_HEADER: self._secret,
                     "X-Tenant-Id": tenant_id,
                 },
             )

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from common.security import SECRET_HEADER
 from common.logging import get_logger
 from common.metrics import observe_job_failure
 from common.middleware import inject_request_headers
@@ -113,7 +114,7 @@ class UsageReporter:
                 resp = await self._client.post(
                     "/v1/usage/events",
                     json=body,
-                    headers={"X-Internal-Secret": self._secret},
+                    headers={SECRET_HEADER: self._secret},
                 )
             except httpx.HTTPError as exc:
                 self._failed(log, tenant_id, run_id, sample, str(exc))

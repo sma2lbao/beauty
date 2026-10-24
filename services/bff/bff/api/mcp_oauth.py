@@ -12,6 +12,7 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 import httpx
+from common.security import SECRET_HEADER
 from common.logging import get_logger
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
@@ -53,7 +54,7 @@ async def mcp_oauth_callback(
         response = await client.post(
             f"{settings.runtime_base_url}/internal/mcp/oauth/callback",
             json={"state": state, "code": code},
-            headers={"X-Internal-Secret": settings.internal_secret},
+            headers={SECRET_HEADER: settings.internal_secret},
             timeout=CALLBACK_TIMEOUT_SECONDS,
         )
     except httpx.HTTPError as exc:

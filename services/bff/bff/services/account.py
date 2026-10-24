@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+from common.security import SECRET_HEADER
 from common.errors import (
     AppError,
     ConflictError,
@@ -206,7 +207,7 @@ async def issue_stream_token(
         "POST",
         "/v1/auth/issue",
         json={"tenant_id": tenant_id, "subject": subject},
-        headers={"X-Internal-Secret": settings.internal_secret},
+        headers={SECRET_HEADER: settings.internal_secret},
     )
     return {
         "token": payload["access_token"],

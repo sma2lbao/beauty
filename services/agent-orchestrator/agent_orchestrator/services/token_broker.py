@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 import httpx
+from common.security import SECRET_HEADER
 from common.errors import UpstreamError
 from common.middleware import inject_request_headers
 
@@ -66,7 +67,7 @@ class TokenBroker:
             resp = await self._client.post(
                 "/v1/auth/issue",
                 json={"tenant_id": tenant_id, "subject": "svc-orchestrator"},
-                headers={"X-Internal-Secret": self._secret},
+                headers={SECRET_HEADER: self._secret},
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
