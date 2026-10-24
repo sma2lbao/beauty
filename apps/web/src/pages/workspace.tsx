@@ -26,6 +26,7 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import { artifactFileName, isImageArtifact, saveBlob } from '@/lib/artifacts';
 import { conversationsApi } from '@/lib/conversations-api';
 import { isUnauthorized } from '@/lib/http';
+import { formatDateTime, formatSize } from '@/lib/presentation';
 import { useBlobUrl } from '@/lib/use-blob-url';
 import { cn } from '@/lib/utils';
 import type { Artifact } from '@/lib/workspace-api';
@@ -35,20 +36,6 @@ import {
   useWorkspaceSelection,
   type WorkspaceList,
 } from '@/lib/workspace-selection';
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-function formatTime(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : parsed.toLocaleString('zh-CN');
-}
 
 /** 工作区中心的区块标题:图标 + 文案 + 右侧计数。 */
 function SectionHeading({
@@ -343,7 +330,7 @@ export function WorkspacePage() {
                           {workspace.description?.split('\n')[0] ?? '无描述'}
                         </span>
                         <span className="mt-0.5 block truncate font-mono text-[11px] text-ha-dim">
-                          创建于 {formatTime(workspace.created_at)}
+                          创建于 {formatDateTime(workspace.created_at)}
                         </span>
                       </button>
                       <WorkspaceActions
@@ -379,7 +366,7 @@ export function WorkspacePage() {
                         {activeWorkspace.description ?? '无描述'}
                       </p>
                       <p className="mt-1 font-mono text-[11px] text-ha-dim">
-                        创建于 {formatTime(activeWorkspace.created_at)} · 会话{' '}
+                        创建于 {formatDateTime(activeWorkspace.created_at)} · 会话{' '}
                         {workspaceConversations.length} 个 · 交付物{' '}
                         {artifacts.length} 个
                       </p>
@@ -458,7 +445,7 @@ export function WorkspacePage() {
                             {conversation.title}
                           </span>
                           <span className="shrink-0 font-mono text-[11px] text-ha-dim">
-                            {formatTime(conversation.updated_at)}
+                            {formatDateTime(conversation.updated_at)}
                           </span>
                         </Link>
                       </li>
@@ -505,7 +492,7 @@ export function WorkspacePage() {
                             {artifact.run_id
                               ? `run ${artifact.run_id.slice(0, 8)}…`
                               : '无 run'}{' '}
-                            · {formatTime(artifact.created_at)}
+                            · {formatDateTime(artifact.created_at)}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">

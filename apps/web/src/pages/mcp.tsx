@@ -46,7 +46,7 @@ import {
   PageHeader,
   ToneBadge,
 } from '@/components/console/ui';
-import type { Tone } from '@/lib/presentation';
+import { formatDateTime, type Tone } from '@/lib/presentation';
 import {
   isHttpUrl,
   isStdioCommand,
@@ -91,12 +91,6 @@ const EMPTY_FORM: FormState = {
   image: '',
   autoApprove: false,
 };
-
-function formatTime(value: string | null): string {
-  if (!value) return '未测试';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
-}
 
 /** OAuth 令牌有效期展示:无过期时间与解析失败都给出可读文案。 */
 function formatDeadline(value: string | null): string {
@@ -615,7 +609,7 @@ export function McpPage() {
                         {selected.transport === 'stdio'
                           ? 'stdio · 沙箱内本地进程'
                           : 'HTTP · 远程 Streamable HTTP'}{' '}
-                        · 注册于 {formatTime(selected.created_at)}
+                        · 注册于 {formatDateTime(selected.created_at, '未测试')}
                       </CardDescription>
                     </div>
                     <div className="flex shrink-0 gap-2">
@@ -666,7 +660,7 @@ export function McpPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <ToneBadge tone={status.tone}>{status.label}</ToneBadge>
                     <span className="font-mono text-[11px] text-ha-dim">
-                      最近测试 {formatTime(selected.last_checked_at)}
+                      最近测试 {formatDateTime(selected.last_checked_at, '未测试')}
                     </span>
                     {selected.last_status === 'ok' ? (
                       <Mono>{selected.tools.length} 个工具可用</Mono>

@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   diffStats,
   eventLine,
+  formatBytes,
+  formatDateTime,
+  formatSize,
   liveRunText,
   parseUnifiedDiff,
   sideBySide,
@@ -147,5 +150,34 @@ describe('taskCode', () => {
   it('从 run id 派生出稳定的任务编号', () => {
     expect(taskCode('run-1234')).toBe('#TASK-1234');
     expect(taskCode('')).toBe('#TASK-0000');
+  });
+});
+
+describe('formatDateTime', () => {
+  it('空值返回默认空串或调用方给的占位文案', () => {
+    expect(formatDateTime(null)).toBe('');
+    expect(formatDateTime(undefined)).toBe('');
+    expect(formatDateTime(null, '—')).toBe('—');
+    expect(formatDateTime('', '未测试')).toBe('未测试');
+  });
+
+  it('非法字符串原样返回,合法时间用 zh-CN 本地化', () => {
+    expect(formatDateTime('not-a-date')).toBe('not-a-date');
+    // 与实现同源计算,避免断言依赖测试环境的时区
+    expect(formatDateTime('2026-10-13T12:00:00Z')).toBe(
+      new Date('2026-10-13T12:00:00Z').toLocaleString('zh-CN'),
+    );
+  });
+});
+
+describe('formatBytes / formatSize', () => {
+  it('formatBytes 一路到 MB,formatSize 沿用页面只到 KB 的旧语义', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(2048)).toBe('2.0 KB');
+    expect(formatBytes(1024 * 1024)).toBe('1.0 MB');
+    // 页面可见文案要求逐字不变:≥1MB 仍是 KB(后续统一单位时同步改)
+    expect(formatSize(2048)).toBe('2.0 KB');
+    expect(formatSize(1024 * 1024)).toBe('1024.0 KB');
   });
 });

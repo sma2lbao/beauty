@@ -25,20 +25,11 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import type { Role } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { isUnauthorized } from '@/lib/http';
+import { formatDateTime } from '@/lib/presentation';
 
 const ORG_KEY = ['account-organization'];
 const MEMBERS_KEY = ['account-members'];
 const SESSIONS_KEY = ['account-sessions'];
-
-function formatTime(value: string | null): string {
-  if (!value) {
-    return '—';
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : parsed.toLocaleString('zh-CN');
-}
 
 /** 账号控制台:组织档案/配额、成员、多端会话(§3/§7)。 */
 export function SettingsPage() {
@@ -336,7 +327,7 @@ export function SettingsPage() {
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {member.email} · {member.subject} · 加入于{' '}
-                        {formatTime(member.created_at)}
+                        {formatDateTime(member.created_at, '—')}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -446,7 +437,7 @@ export function SettingsPage() {
                       <p className="font-medium">{session.device}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {session.status} · 成员 {session.user_id.slice(0, 8)}… ·{' '}
-                        {formatTime(session.created_at)}
+                        {formatDateTime(session.created_at, '—')}
                       </p>
                     </div>
                     <Button

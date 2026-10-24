@@ -20,21 +20,10 @@ import { PageHeader } from '@/components/console/ui';
 import { AuthBar } from '@/components/runs/auth-bar';
 import type { SearchResult } from '@/lib/knowledge-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
+import { formatDateTime, formatSize } from '@/lib/presentation';
 import { isUnauthorized } from '@/lib/runs-api';
 
 const DOCUMENTS_KEY = ['knowledge-documents'];
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-function formatTime(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN');
-}
 
 /** 知识库管理台:资料入库、已入库清单、检索预览(§9)。 */
 export function KnowledgePage() {
@@ -244,7 +233,7 @@ export function KnowledgePage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       {document.chunk_count} 个片段 · {formatSize(document.size_bytes)} ·{' '}
                       {document.embedding_model} · {document.source} ·{' '}
-                      {formatTime(document.created_at)}
+                      {formatDateTime(document.created_at)}
                     </p>
                   </div>
                   <Button

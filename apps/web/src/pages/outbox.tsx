@@ -20,6 +20,7 @@ import { AuthBar } from '@/components/runs/auth-bar';
 import { ApiError, isUnauthorized } from '@/lib/http';
 import type { OutboxStatus } from '@/lib/outbox-api';
 import { outboxApi } from '@/lib/outbox-api';
+import { formatDateTime } from '@/lib/presentation';
 
 const STATUS_LABELS: Record<OutboxStatus, string> = {
   pending: '待投递',
@@ -35,11 +36,6 @@ const STATUS_COLORS: Record<OutboxStatus, 'warning' | 'success' | 'danger'> = {
 
 const EVENTS_KEY = ['outbox-events'];
 const STATS_KEY = ['outbox-stats'];
-
-function formatTime(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN');
-}
 
 /** 事件队列运维页:看 outbox 状态、人工重放失败事件(§6.3)。 */
 export function OutboxPage() {
@@ -186,9 +182,9 @@ export function OutboxPage() {
                         ) : null}
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {formatTime(event.created_at)}
+                        {formatDateTime(event.created_at)}
                         {event.dispatched_at
-                          ? ` · 投递于 ${formatTime(event.dispatched_at)}`
+                          ? ` · 投递于 ${formatDateTime(event.dispatched_at)}`
                           : ''}
                       </p>
                       {event.last_error ? (
