@@ -23,11 +23,13 @@ for arg in "$@"; do
   esac
 done
 
-# 服务运行时删 SQLite 可能导致状态错乱
+# 服务运行时删 SQLite 可能导致状态错乱;lsof 不可用时用 TCP 探测回退。
 running=0
 for port in 8001 8002 8003 8004 8005 8006 8007; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
-    running=1
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1 && running=1
+  else
+    (exec 3<>/dev/tcp/127.0.0.1/"$port") 2>/dev/null && { running=1; exec 3>&- 3<&-; }
   fi
 done
 if [ "$running" = "1" ] && [ "$FORCE" = "0" ]; then
@@ -39,6 +41,7 @@ fi
 echo "将删除以下本地数据:"
 find services -maxdepth 2 -name '*.db' -print | sed 's/^/  /'
 find services -maxdepth 2 -type d -name '.artifacts' -print | sed 's/^/  /'
+find services -maxdepth 2 -type d -name '.cache' -print | sed 's/^/  /'
 echo "  .cache/dev"
 
 if [ "$YES" = "0" ]; then
@@ -51,6 +54,9 @@ fi
 
 find services -maxdepth 2 -name '*.db' -delete
 find services -maxdepth 2 -type d -name '.artifacts' -prune -exec rm -rf {} +
+# W1 R-15:同时清 services/*/.cache(account-service 签名密钥持久化在此,
+# 旧实现漏删会导致重置后旧密钥仍被使用)。
+find services -maxdepth 2 -type d -name '.cache' -prune -exec rm -rf {} +
 rm -rf "$ROOT/.cache/dev"
 
 echo "已重置。重新执行 scripts/dev.sh 启动;AUTO_CREATE_TABLES=true 会自动建表。"

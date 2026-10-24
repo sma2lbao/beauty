@@ -56,8 +56,19 @@ if [ -d "$ROOT/.uv-python" ] && [ -z "${UV_PYTHON_INSTALL_DIR:-}" ]; then
   export UV_PYTHON_INSTALL_DIR="$ROOT/.uv-python"
 fi
 
+# 端口探测:lsof 缺失或不可用时回退 curl(探测者只判断"是否被占",不区分占用者);
+# 输出 pid 供日志,无 lsof 时输出空串。macOS/Linux 通用。
 port_pid() {
-  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+  else
+    # 回退:TCP 可连即视为已占用(拿不到 pid,但能避免重复启动)
+    if curl -fsS --max-time 1 "http://127.0.0.1:$port/" >/dev/null 2>&1 \
+      || nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+      echo "(lsof 不可用,端口被占)"
+    fi
+  fi
 }
 
 healthy() {
@@ -116,24 +127,71 @@ cleanup() {
   echo "停止本地开发进程..."
   if [ ${#PIDS[@]} -gt 0 ]; then
     for pid in "${PIDS[@]}"; do
-      kill "$pid" 2>/dev/null || true
+      # 先温和终止;进程可能已退出(正常或超时被 kill)。
+      if kill -0 "$pid" 2>/dev/null; then
+        # 杀整个子进程组(负 pid):nx/npx 会派生 uvicorn/vite 子进程,
+        # 只杀父进程会留孤儿继续占端口(已知问题:kill nx 父进程不清理子进程)。
+        # 后台任务以本 shell 为组长,kill -- -pid 对脚本自启进程有效;
+        # 若进程组不可用(非组长)则退化为只杀 pid,再 pkill 兜底。
+        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      fi
+    done
+    # 兜底:按命令行特征清掉本脚本拉起的 uvicorn/vite 孤儿(仅限我们的端口)。
+    sleep 1
+    for port in 8001 8002 8003 8004 8005 8006 8007 5173 3000; do
+      local orphan
+      orphan="$(port_pid "$port")"
+      # 空 = 未占用;含「lsof 不可用」= 探测回退模式拿不到 pid,跳过。
+      if [ -z "$orphan" ] || [ "${orphan#*lsof}" != "$orphan" ]; then
+        continue
+      fi
+      # 端口仍被占:若是 uvicorn/vite/node(nx run 启动的服务进程),补杀。
+      if command -v lsof >/dev/null 2>&1; then
+        if lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | grep -qE 'uvicorn|vite|node'; then
+          kill "$orphan" 2>/dev/null || true
+          echo "  已清理 :$port 残留进程(pid $orphan)"
+        fi
+      fi
     done
   fi
   wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
 
+# 首次启动前同步共享 venv(根 .venv 缺失或 uv.lock 较新时);
+# 失败不阻断(已同步过的环境 sync 很快,失败会在服务启动时再暴露)。
+if [ ! -d "$ROOT/.venv" ] || [ "$ROOT/uv.lock" -nt "$ROOT/.venv" ]; then
+  echo "▶ 同步共享 venv(首次启动或 uv.lock 有更新)…"
+  if ! (cd "$ROOT" && npx nx run agent-orchestrator:sync); then
+    echo "⚠️  uv sync 失败,继续尝试启动(若服务报缺依赖,重跑前先手动 npx nx run <服务>:sync)" >&2
+  fi
+fi
+
+# 本脚本记录已启动的端口(区分"我们启动的"与"外部占用的")。
+# 用空格分隔字符串而非关联数组:macOS 自带 bash 3.2 无 declare -A,
+# 在 set -e 下会直接中止脚本。
+STARTED_PORTS=" "
+
 for spec in "${SERVICES[@]}"; do
   IFS="|" read -r name port path <<< "$spec"
   ensure_env "$name"
   existing="$(port_pid "$port")"
   if [ -n "$existing" ]; then
-    echo "⚠️  $name 已在 :$port 运行(pid $existing),跳过"
+    case "$STARTED_PORTS" in
+      *" $port "*) is_started=1 ;;
+      *) is_started=0 ;;
+    esac
+    if [ "$is_started" = "1" ]; then
+      echo "⚠️  $name 的 :$port 是本脚本先前启动的实例,跳过"
+    else
+      echo "⚠️  $name 端口 :$port 已被外部进程(pid $existing)占用,跳过(不属于本脚本,不会清理)"
+    fi
     continue
   fi
   echo "▶ 启动 $name(:$port)"
   (cd "$ROOT" && npx nx run "$name:serve") > "$LOG_DIR/$name.log" 2>&1 &
   PIDS+=("$!")
+  STARTED_PORTS="$STARTED_PORTS$port "
 done
 
 if [ "$WITH_WEB" = "1" ]; then
