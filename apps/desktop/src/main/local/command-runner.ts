@@ -117,7 +117,6 @@ export function runCommand(command: string, options: RunCommandOptions): Command
   const stdout = new OutputCollector(maxOutputBytes);
   const stderr = new OutputCollector(maxOutputBytes);
 
-  let childAlive = false;
   let settled = false;
   let cancelled = false;
   let timedOut = false;
@@ -167,7 +166,6 @@ export function runCommand(command: string, options: RunCommandOptions): Command
       resolve(buildResult(EXIT_CODE_SPAWN_FAILED));
       return;
     }
-    childAlive = true;
 
     const finish = (exitCode: number, note = ''): void => {
       if (settled) return;
@@ -237,12 +235,10 @@ export function runCommand(command: string, options: RunCommandOptions): Command
       stderr.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     });
     child.on('error', (error) => {
-      childAlive = false;
       spawnFailed = true;
       finish(EXIT_CODE_SPAWN_FAILED, `无法启动命令:${error.message}`);
     });
     child.on('close', (code, signal) => {
-      childAlive = false;
       if (settled) return;
       if (timedOut) {
         finish(EXIT_CODE_TIMEOUT, `\n[命令执行超时(${timeoutMs}ms),已被终止]`);
