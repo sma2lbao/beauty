@@ -273,6 +273,7 @@ jobs:
         run: npm ci --dry-run --ignore-scripts
 
   # ------------------------------------------------------------------
+  # ------------------------------------------------------------------
   # Job 7/7：alembic-check——5 个有迁移的服务模型与迁移一致
   # ------------------------------------------------------------------
   alembic-check:
@@ -293,6 +294,23 @@ jobs:
             db_env: ACCOUNT__DATABASE_URL
           - service: workspace-service
             db_env: WORKSPACE__DATABASE_URL
+    # 用真 Postgres 而不是 sqlite：AO/account 的迁移含 PG 专有 DDL（ALTER ... USING 等），
+    # 在 sqlite 上 upgrade 直接 SyntaxError（W2 实测）；生产也跑 PG，这里才是最权威的门。
+    # 每个 matrix job 各自一个容器，因此 5 个服务共用一个库名不会互相污染。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: beauty
+          POSTGRES_PASSWORD: beauty
+          POSTGRES_DB: beauty
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready -U beauty
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -323,14 +341,13 @@ jobs:
 
       - name: Alembic check (${{ matrix.service }})
         # alembic check 会连接数据库比对版本，空库直接跑必红
-        # （"Target database is not up to date." EXIT 255，W2 R-24 实测）。
-        # 因此先在 runner 临时 sqlite 上 upgrade head，再 check 模型与迁移一致；
-        # 不读服务自己的 .env/本地库，避免污染与"看起来绿"的假象（playbook §6.1）。
+        # （"Target database is not up to date." EXIT 255，W2 R-24 实测），
+        # 因此先在一次性空库上 upgrade head，再 check 模型与迁移一致。
+        # 不读服务自己的 .env / 本地库，避免污染与"看起来绿"的假象（playbook §6.1）。
         working-directory: services/${{ matrix.service }}
         env:
           DB_ENV: ${{ matrix.db_env }}
-          SVC: ${{ matrix.service }}
         run: |
-          export "${DB_ENV}=sqlite+aiosqlite:///${RUNNER_TEMP}/alembic-${SVC}.db"
+          export "${DB_ENV}=postgresql+asyncpg://beauty:beauty@localhost:5432/beauty"
           uv run alembic upgrade head
           uv run alembic check
