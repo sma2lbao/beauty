@@ -59,18 +59,18 @@
 - 门禁（§10.3 W2）：W1 全部门禁 + Python service-kit 试点服务 lint/test + 全仓 TS 测试；指标：chat.tsx ≤400、console-ui 被两端引用、connector/knowledge 启动路径一致；复盘重点：拆分等价性（黄金路径人工核对）
 - 体积例外（§10.4）：R-17 / R-19 / R-22 先合 characterization 或契约快照 PR，再逐 PR 拆。
 
-| ID   | 重构项                                                  | 规模 | 风险 | 依赖              | 状态                                  |
-| ---- | ------------------------------------------------------- | ---- | ---- | ----------------- | ------------------------------------- |
-| R-17 | chat.tsx 1320 行拆 features/chat/\*（+ 901 行测试重写） | L    | 高   | R-08/09/11/12 ✅  | 🚧 A 批（w1-api，task-13）            |
-| R-18 | mcp 936 / sidebar 666 / workspace 598 / settings 461    | M    | 中   | R-13              | 🚧 A 批（audit-ts，task-14）          |
-| R-19 | 抽 @beauty/console-ui（web + desktop 共享）             | L    | 中   | R-17、R-18 完成   | B 批（待派）                          |
-| R-20 | site 去重（utils、brand 副本、About 页壳）              | S    | 低   | R-26（logo 归位） | 🚧 A 批（lead，task-18，阻塞于 R-26） |
-| R-21 | tsconfig/vitest 收敛 + site/console 测试盲区            | M    | 中   | R-14              | 🚧 A 批（w0-ci，task-16）             |
-| R-22 | Python service-kit 试点（connector + knowledge）        | L    | 中   | R-25              | B 批（w0-gate，blocked_by R-25）      |
-| R-23 | service_testkit（统一 conftest / 零网络默认）           | M    | 中   | R-22              | B 批（audit-python）                  |
-| R-24 | alembic 共享 env 模板 + 迁移 smoke                      | M    | 中   | R-22              | B 批（audit-ops）                     |
-| R-25 | 收编 Fernet×4 / SlidingWindowLimiter×2 / 内部密钥校验   | S    | 低   | 无                | 🚧 A 批（audit-python，task-15）      |
-| R-26 | design 令牌单一来源 + Dialog/Button 合一 + logo 归位    | M    | 中   | 无                | 🚧 A 批（w0-docs，task-17）           |
+| ID   | 重构项                                                  | 规模 | 风险 | 依赖              | 状态                              |
+| ---- | ------------------------------------------------------- | ---- | ---- | ----------------- | --------------------------------- |
+| R-17 | chat.tsx 1320 行拆 features/chat/\*（+ 901 行测试重写） | L    | 高   | R-08/09/11/12 ✅  | 🚧 A 批（w1-api，task-13）        |
+| R-18 | mcp 936 / sidebar 666 / workspace 598 / settings 461    | M    | 中   | R-13              | 🚧 A 批（audit-ts，task-14）      |
+| R-19 | 抽 @beauty/console-ui（web + desktop 共享）             | L    | 中   | R-17、R-18 完成   | B 批（task-18，blocked_by 13/14） |
+| R-20 | site 去重（utils、brand 副本、About 页壳）              | S    | 低   | R-26（logo 归位） | 🚧 A 批（lead，阻塞于 R-26）      |
+| R-21 | tsconfig/vitest 收敛 + site/console 测试盲区            | M    | 中   | R-14              | 🚧 A 批（w0-ci，task-16）         |
+| R-22 | Python service-kit 试点（connector + knowledge）        | L    | 中   | R-25              | B 批（task-19，blocked_by 15）    |
+| R-23 | service_testkit（统一 conftest / 零网络默认）           | M    | 中   | R-22              | B 批（task-20，blocked_by 19）    |
+| R-24 | alembic 共享 env 模板 + 迁移 smoke                      | M    | 中   | R-22              | B 批（task-21，blocked_by 19）    |
+| R-25 | 收编 Fernet×4 / SlidingWindowLimiter×2 / 内部密钥校验   | S    | 低   | 无                | 🚧 A 批（audit-python，task-15）  |
+| R-26 | design 令牌单一来源 + Dialog/Button 合一 + logo 归位    | M    | 中   | 无                | 🚧 A 批（w0-docs，task-17）       |
 
 ## 波次总览
 
