@@ -123,6 +123,7 @@ export function runCommand(command: string, options: RunCommandOptions): Command
   let timedOut = false;
   let spawnFailed = false;
   let timer: NodeJS.Timeout | undefined;
+  let forcedFinish: NodeJS.Timeout | undefined;
   let externalAbortListener: (() => void) | undefined;
   let killImpl: () => void = () => undefined;
 
@@ -155,6 +156,8 @@ export function runCommand(command: string, options: RunCommandOptions): Command
         env: { ...process.env, ...options.env },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        // posix 下单独成组,取消时按进程组杀,连带 sh 的孙进程一起结束。
+        detached: platform !== 'win32',
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
     } catch (error) {
@@ -170,6 +173,7 @@ export function runCommand(command: string, options: RunCommandOptions): Command
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forcedFinish) clearTimeout(forcedFinish);
       if (externalAbortListener && options.signal) {
         options.signal.removeEventListener('abort', externalAbortListener);
       }
@@ -177,13 +181,37 @@ export function runCommand(command: string, options: RunCommandOptions): Command
     };
 
     const terminate = (): void => {
-      if (!childAlive || settled) return;
+      if (settled) return;
       try {
-        // SIGKILL 在 Windows 上等价于 TerminateProcess;这里不追求优雅退出。
-        child.kill('SIGKILL');
+        // posix 下 detached 成组,按 -pid 杀掉整个进程组(含 sh 的孙进程);
+        // SIGKILL 在 Windows 上等价于 TerminateProcess,不追求优雅退出。
+        if (platform !== 'win32' && typeof child.pid === 'number') {
+          process.kill(-child.pid, 'SIGKILL');
+        } else {
+          child.kill('SIGKILL');
+        }
       } catch {
-        // 进程可能已经退出,忽略即可。
+        // 进程组可能已消失(或 Windows 不支持 -pid),退回单进程 kill。
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // 进程可能已经退出,忽略即可。
+        }
       }
+      // 兜底:孙进程若继承了 stdout/stderr 管道,'close' 可能被拖到它退出之后;
+      // 超时后主动销毁管道并按取消/超时结算,避免界面一直挂在“运行中”。
+      if (forcedFinish) return;
+      forcedFinish = setTimeout(() => {
+        if (settled) return;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        if (timedOut) {
+          finish(EXIT_CODE_TIMEOUT, `\n[命令执行超时(${timeoutMs}ms),已被终止]`);
+          return;
+        }
+        finish(EXIT_CODE_CANCELLED, '\n[命令已被取消]');
+      }, 300);
+      forcedFinish.unref?.();
     };
 
     timer = setTimeout(() => {

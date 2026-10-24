@@ -58,6 +58,14 @@ describe('runCommand', () => {
     expect(result.durationMs).toBeLessThan(4000);
   });
 
+  it('超时会连带杀掉 sh 的孙进程(按进程组)', async () => {
+    // 孙进程继承了 stdout/stderr 管道时,'close' 会被拖到它自己退出之后;
+    // 这里要求事件在 timeout 附近就结算,而不是等 sleep 5 跑完。
+    const result = await runCommand("/bin/sh -c 'sleep 5'", { cwd, timeoutMs: 100 }).promise;
+    expect(result.exitCode).toBe(124);
+    expect(result.durationMs).toBeLessThan(2000);
+  });
+
   it('AbortSignal 取消后标记 cancelled', async () => {
     const controller = new AbortController();
     const handle = runCommand('sleep 5', { cwd, signal: controller.signal });
