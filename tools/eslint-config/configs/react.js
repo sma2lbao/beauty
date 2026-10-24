@@ -1,7 +1,7 @@
 import reactPlugin from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
-import { base } from './base.js';
+import { base, webLayerBoundary } from './base.js';
 
 /**
  * React 配置:在 base() 之上叠加 React 19 + React Hooks + react-refresh 规则。
@@ -25,6 +25,9 @@ export function react() {
 
   return [
     ...base(),
+    // W1 R-14:apps/web 分层边界(lib/components/stores 不得反向 import pages 等)。
+    // 规则片段自带 files 钉死 apps/web/src/**,design/desktop 不命中,自动 no-op。
+    ...webLayerBoundary,
     {
       files: ['**/*.{js,jsx,ts,tsx}'],
       plugins: {
