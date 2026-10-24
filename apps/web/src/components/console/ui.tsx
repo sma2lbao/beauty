@@ -4,19 +4,25 @@
  * 这些是「设计稿语言」的零件,集中在一处而不是散落在页面里:
  * - 尺寸/圆角/边框/字重都对齐 ardot 设计稿(按钮 h28~36、面板 radius 8~12);
  * - 状态色只来自 @/lib/presentation 的 tone,页面不写死色值;
- * - 与 @beauty/design 的分工:表单控件/对话框继续用组件库(已跟随 --bd-* 暗色令牌),
- *   这里只补控制台特有的面板、状态标签、工具栏按钮。
+ * - 与 @beauty/design 的分工(R-26):Button/Dialog 等交互原语一律用组件库,
+ *   本文件只做「控制台 prop 名 → 组件库 prop」的薄适配,并补面板、状态标签等
+ *   控制台特有的展示件;不再自建按钮/对话框的视觉与行为。
  */
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 
-import {
-  consoleButtonClass,
-  type ConsoleButtonSize,
-  type ConsoleButtonVariant,
+import { Button } from '@beauty/design';
+
+import type {
+  ConsoleButtonSize,
+  ConsoleButtonVariant,
 } from '@/components/console/button-class';
 import type { Tone } from '@/lib/presentation';
-import { RUN_STATUS_LABELS, runStatusTone, toneClasses } from '@/lib/presentation';
+import {
+  RUN_STATUS_LABELS,
+  runStatusTone,
+  toneClasses,
+} from '@/lib/presentation';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +48,11 @@ export function ConsolePanel({
 
 /* ── 按钮 ─────────────────────────────────────────────────────────────── */
 
+/**
+ * 控制台按钮:纯适配层,行为/可访问性/视觉全部来自 @beauty/design 的 Button
+ * (含 disabled/loading/asChild/ref)。变体名与尺寸名是控制台历史 API 的子集,
+ * 直通组件库同名变体;Link 版按钮用 button-class.ts 的同一份配方保持视觉一致。
+ */
 export function ConsoleButton({
   variant = 'secondary',
   size = 'md',
@@ -54,13 +65,15 @@ export function ConsoleButton({
   size?: ConsoleButtonSize;
 }) {
   return (
-    <button
+    <Button
       type={type}
-      className={consoleButtonClass({ variant, size, className })}
+      variant={variant}
+      size={size}
+      className={className}
       {...rest}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -200,10 +213,7 @@ export function ConsoleTabs<T extends string>({
   className?: string;
 }) {
   return (
-    <div
-      role="tablist"
-      className={cn('flex items-center gap-1', className)}
-    >
+    <div role="tablist" className={cn('flex items-center gap-1', className)}>
       {items.map((item) => {
         const selected = item.value === value;
         return (

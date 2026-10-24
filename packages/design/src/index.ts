@@ -3,6 +3,15 @@ import { cn, cx, type ClassValue } from './lib/utils.js';
 export { cn, cx };
 export type { ClassValue };
 
+export {
+  BrandChip,
+  BrandLockup,
+  BrandLogo,
+  BrandMark,
+  BrandTile,
+  BrandWordmark,
+} from './components/brand/index.js';
+
 export { Button, buttonVariants } from './components/button/index.js';
 export type {
   ButtonProps,

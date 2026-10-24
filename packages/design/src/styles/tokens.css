@@ -24,8 +24,12 @@
  * 它不满足 WCAG 1.4.11 对"控件边界 3:1"的严格解读。表单控件的可识别性由标签与
  * 占位文字承担;若项目需要更硬的边界,覆盖 --bd-input(如亮色 #d4d4d4)即可。
  *
- * 说明:品牌月相色(logo 与字标里的月面)不走 --bd-*,由使用方用 --logo-moon 单独定义,
- * 属于品牌资产而非主题色,换主题不影响它。
+ * 品牌资产令牌(--bd-logo-*):月面/标识牌/字标墨色是品牌资产而非主题色,
+ * 单独成组。几何在 Brand* 组件里,颜色只在这里定义一次:
+ * - --bd-logo-moon:月面月光米(暗色)/ 品牌暖玫瑰(亮色,米色在浅底对比不足);
+ * - --bd-logo-tile:方形标识牌底色,品牌靛蓝,深浅主题一致;
+ * - --bd-logo-text:锁定里的产品名墨色,跟随主题前景色。
+ * 使用方需要局部改白(标识牌内)只覆盖 --bd-logo-moon 即可,不要复制色值。
  */
 
 :root {
@@ -61,6 +65,14 @@
   --bd-font-sans:
     ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'HarmonyOS Sans SC',
     'Microsoft YaHei', sans-serif;
+  /* 展示衬线:只给品牌字标用(界面正文一律无衬线) */
+  --bd-font-display:
+    Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
+
+  /* 品牌资产令牌(几何在 Brand* 组件,颜色只此处一处定义) */
+  --bd-logo-moon: #b76e79;
+  --bd-logo-tile: #5e6ad2;
+  --bd-logo-text: #171717;
 }
 
 .dark {
@@ -89,4 +101,7 @@
   --bd-success: #3ecf8e;
   --bd-warning: #f5a623;
   --bd-info: #3291ff;
+
+  --bd-logo-moon: #ffefc6;
+  --bd-logo-text: #ededed;
 }

@@ -1,0 +1,80 @@
+/**
+ * 品牌标识样式(普通 CSS + 语义类名)
+ *
+ * 颜色只读品牌令牌 --bd-logo-moon / --bd-logo-tile / --bd-logo-text;
+ * 几何(路径、遮罩)留在 TSX 里,与官方 SVG 资产逐字节对应。
+ */
+
+.bd-brand-chip {
+  flex-shrink: 0;
+  border-radius: 27%;
+}
+
+.bd-brand-mark {
+  flex-shrink: 0;
+}
+
+/* 字标:展示衬线字体,月相圆盘用 em 跟随字号缩放 */
+.bd-brand-wordmark {
+  font-family: var(--bd-font-display);
+  line-height: 1;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+}
+
+.bd-brand-wordmark__moon {
+  display: inline-block;
+  width: 0.53em;
+  height: 0.53em;
+  margin-inline: 0.02em;
+}
+
+/* 方形标识牌:靛蓝底 + 白色月云(在靛蓝底上改白保证镂空可读) */
+.bd-brand-tile {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+  background-color: var(--bd-logo-tile);
+}
+
+.bd-brand-tile__mark {
+  width: 64%;
+  height: 64%;
+  --bd-logo-moon: #ffffff;
+}
+
+.bd-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.bd-brand-lockup__text {
+  font-family: var(--bd-font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--bd-logo-text);
+  white-space: nowrap;
+}
+
+/* 默认字号 15px;调用方可用 text-[20px] 这类工具类覆盖(Tailwind 入口下组件样式在 components 层) */
+.bd-brand-lockup__text--md {
+  font-size: 0.9375rem;
+}
+
+.bd-brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bd-brand-logo__chip {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.bd-brand-logo__wordmark {
+  font-size: 1.125rem;
+}

@@ -18,43 +18,72 @@
 /*
   ── Harness 风格控制台主题(暗色) ─────────────────────────────────────────
   来源:ardot 设计稿《Harness Agent Web 控制台》四个页面(会话工作台 / 任务编排 /
-  变更与产物 / 官网落地页)。设计稿的视觉规则:
-  - 近黑分层:页面 #08090A、侧栏/顶栏 #0B0C0E、卡片 #101113、控件 #16181C、
-    代码块 #0D0F12,分隔线 #1C1C1F / #26292E;
-  - 文字四级:#FAFAFA(标题)/ #E8E8EC(正文)/ #C8C8CF(次级)/ #8B8B95 / #6E6E78 / #55555F;
-  - 唯一强调色是靛蓝 #5E6AD2(按钮、选中态)与 #7C8CF5(链接、图标),
-    状态色只在标签/状态点小面积出现:信息 #2EA7FF、成功 #13DDC4、
-    警告 #FFB454、危险 #FF6B81;
+  变更与产物 / 官网落地页)。设计稿的视觉规则(具体色值只在下方语义令牌里出现一次,
+  此处不再复述):
+  - 近黑分层:页面/侧栏/卡片/控件/代码块五档,靠极轻的分隔线区分层次;
+  - 文字从标题到提示共六级灰阶;
+  - 唯一强调色是靛蓝(按钮、选中态)与其亮一档的衍生色(链接、图标),
+    状态色只在标签/状态点小面积出现:信息、成功、警告、危险各一;
   - 字体:Inter(界面)+ JetBrains Mono(元信息、编号、代码)。
-  这些值以 --ha-* 命名,映射成 Tailwind 颜色(bg-ha-panel 等),避免与
-  @beauty/design 的 --bd-* 令牌混名。组件库令牌在下面同层覆盖,让
-  @beauty/design 组件(Button/Input/Dialog…)自动落到这套暗色 + 靛蓝主色。
+
+  ── 令牌单一来源 ──
+  色值只在这一条规则里定义一次:
+  1) 语义令牌 --bd-* = 控制台暗色取值,既是 @beauty/design 组件的唯一真源
+     (Button/Input/Dialog… 自动落到这套暗色 + 靛蓝主色),也是下面别名的唯一来源;
+  2) --ha-* = 纯别名(var(--bd-*)),只用来保留页面既有工具类(bg-ha-panel 等),
+     不再重复写色值;
+  3) design 语义里没有对应项的「控制台自有令牌」保留字面值,单独成组并注释清单。
+  选择器写成 `:root, .dark`:显式挂 .dark 的子树(登录页/说明页可能被外部加类)
+  也保持同一套值;与组件库 .dark 同特异性,本文件在其后加载,故不会被打回默认暗色,
+  而声明只写一遍。
+
+  —— 仍保留字面值的控制台自有令牌(design 语义无对应项)——
+  panel-3 / code、text-2 / text-3 / dim / faint / ghost、accent-soft、
+  info|success|warning|danger 的 -bg / -border、diff-add|del 的 -bg / -text。
 */
-:root {
+:root,
+.dark {
   color-scheme: dark;
 
-  --ha-bg: #08090a;
-  --ha-sidebar: #0b0c0e;
-  --ha-panel: #101113;
-  --ha-panel-2: #16181c;
+  /* 1) 语义令牌:主题色值的唯一定义处 */
+  --bd-radius: 10px;
+  --bd-background: #08090a;
+  --bd-foreground: #e8e8ec;
+  --bd-card: #0b0c0e;
+  --bd-card-foreground: #fafafa;
+  --bd-popover: #101113;
+  --bd-popover-foreground: var(--bd-card-foreground);
+  --bd-secondary: #16181c;
+  --bd-secondary-foreground: var(--bd-foreground);
+  --bd-muted: var(--bd-secondary);
+  --bd-muted-foreground: #8b8b95;
+  --bd-primary: #5e6ad2;
+  --bd-primary-foreground: #ffffff;
+  --bd-accent: #1c1d1f;
+  --bd-accent-foreground: var(--bd-card-foreground);
+  --bd-destructive: #ff6b81;
+  --bd-destructive-foreground: #14080b;
+  --bd-border: #1c1c1f;
+  --bd-input: #26292e;
+  --bd-ring: var(--bd-primary);
+  --bd-success: #13ddc4;
+  --bd-warning: #ffb454;
+  --bd-info: #2ea7ff;
+  /* 品牌资产:月面沿用 @beauty/design 的暗色令牌(品牌月光米),产品名墨色跟随控制台标题色 */
+  --bd-logo-text: var(--bd-card-foreground);
+  --bd-font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+
+  /* 2) 控制台自有令牌(无 --bd-* 对应值,全仓库仅此处定义一次) */
   --ha-panel-3: #12141a;
   --ha-code: #0d0f12;
-  --ha-border: #1c1c1f;
-  --ha-border-strong: #26292e;
-  --ha-text: #fafafa;
-  --ha-text-body: #e8e8ec;
   --ha-text-2: #c8c8cf;
   --ha-text-3: #a1a1aa;
-  --ha-muted: #8b8b95;
   --ha-dim: #6e6e78;
   --ha-faint: #55555f;
   --ha-ghost: #3a3a42;
-  --ha-accent: #5e6ad2;
   --ha-accent-soft: #7c8cf5;
-  --ha-info: #2ea7ff;
-  --ha-success: #13ddc4;
-  --ha-warning: #ffb454;
-  --ha-danger: #ff6b81;
   --ha-info-bg: #101c26;
   --ha-info-border: #1f6699;
   --ha-success-bg: #0f241f;
@@ -63,72 +92,37 @@
   --ha-warning-border: #6b4f1f;
   --ha-danger-bg: #241216;
   --ha-danger-border: #5c2430;
-  --ha-diff-add-bg: #0f241f;
+  /* diff 底色复用状态底色,避免同一色值写两遍 */
+  --ha-diff-add-bg: var(--ha-success-bg);
   --ha-diff-add-text: #7ee0c8;
-  --ha-diff-del-bg: #241216;
+  --ha-diff-del-bg: var(--ha-danger-bg);
   --ha-diff-del-text: #f8a0a8;
 
-  /* 组件库令牌覆盖:按钮=靛蓝、卡片=侧栏色、边框/输入=控制台灰阶 */
-  --bd-radius: 10px;
-  --bd-background: var(--ha-bg);
-  --bd-foreground: var(--ha-text-body);
-  --bd-card: var(--ha-sidebar);
-  --bd-card-foreground: var(--ha-text);
-  --bd-popover: var(--ha-panel);
-  --bd-popover-foreground: var(--ha-text);
-  --bd-primary: var(--ha-accent);
-  --bd-primary-foreground: #ffffff;
-  --bd-secondary: var(--ha-panel-2);
-  --bd-secondary-foreground: var(--ha-text-body);
-  --bd-muted: var(--ha-panel-2);
-  --bd-muted-foreground: var(--ha-muted);
-  --bd-accent: #1c1d1f;
-  --bd-accent-foreground: var(--ha-text);
-  --bd-destructive: var(--ha-danger);
-  --bd-destructive-foreground: #14080b;
-  --bd-border: var(--ha-border);
-  --bd-input: var(--ha-border-strong);
-  --bd-ring: var(--ha-accent);
-  --bd-success: var(--ha-success);
-  --bd-warning: var(--ha-warning);
-  --bd-info: var(--ha-info);
-  --bd-font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
-    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
-}
-
-/* 显式挂 .dark 时保持同一套值(登录页/说明页可能被外部加类) */
-.dark {
-  color-scheme: dark;
-  --bd-background: var(--ha-bg);
-  --bd-foreground: var(--ha-text-body);
-  --bd-card: var(--ha-sidebar);
-  --bd-card-foreground: var(--ha-text);
-  --bd-popover: var(--ha-panel);
-  --bd-popover-foreground: var(--ha-text);
-  --bd-primary: var(--ha-accent);
-  --bd-primary-foreground: #ffffff;
-  --bd-secondary: var(--ha-panel-2);
-  --bd-secondary-foreground: var(--ha-text-body);
-  --bd-muted: var(--ha-panel-2);
-  --bd-muted-foreground: var(--ha-muted);
-  --bd-accent: #1c1d1f;
-  --bd-accent-foreground: var(--ha-text);
-  --bd-border: var(--ha-border);
-  --bd-input: var(--ha-border-strong);
-  --bd-ring: var(--ha-accent);
+  /* 3) --ha-* 别名:值全部来自上面的语义令牌,供页面工具类消费 */
+  --ha-bg: var(--bd-background);
+  --ha-sidebar: var(--bd-card);
+  --ha-panel: var(--bd-popover);
+  --ha-panel-2: var(--bd-secondary);
+  --ha-border: var(--bd-border);
+  --ha-border-strong: var(--bd-input);
+  --ha-text: var(--bd-card-foreground);
+  --ha-text-body: var(--bd-foreground);
+  --ha-muted: var(--bd-muted-foreground);
+  --ha-accent: var(--bd-primary);
+  --ha-info: var(--bd-info);
+  --ha-success: var(--bd-success);
+  --ha-warning: var(--bd-warning);
+  --ha-danger: var(--bd-destructive);
 }
 
 @theme inline {
-  --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
-    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  /* 字栈同样只有一个来源:--bd-font-sans / --bd-font-display 由设计令牌提供 */
+  --font-sans: var(--bd-font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
     'Liberation Mono', monospace;
   /* 品牌字标仍用衬线展示字(仅用于 logo 字标,界面正文一律无衬线) */
-  --font-display:
-    Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
+  --font-display: var(--bd-font-display);
 
   --color-ha-bg: var(--ha-bg);
   --color-ha-sidebar: var(--ha-sidebar);
@@ -166,15 +160,6 @@
   --color-ha-diff-del-text: var(--ha-diff-del-text);
 }
 
-/*
-  品牌变量(logo 用):官方 mark 允许单色场景把月面改成当前主题色平涂——
-  暗色下取官方月光米 #FFEFC6;控制台标识牌里再局部改白(见 BrandTile)。
-  字标里的月相圆盘与标识共用该色,形成呼应。
-*/
-:root {
-  --logo-moon: #ffefc6;
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -183,7 +168,7 @@
   }
 
   html {
-    /* 字栈由主题的 @theme 映射提供,避免依赖库内部的变量名 */
+    /* 字栈来自设计令牌 --bd-font-sans,经 @theme 映射成 font-sans 工具类 */
     @apply font-sans;
     background: var(--ha-bg);
   }
@@ -194,7 +179,7 @@
 
   ::selection {
     background: color-mix(in srgb, var(--ha-accent) 45%, transparent);
-    color: #ffffff;
+    color: var(--bd-primary-foreground);
   }
 
   ::-webkit-scrollbar {
