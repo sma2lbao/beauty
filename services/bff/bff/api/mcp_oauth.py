@@ -12,8 +12,8 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 import httpx
-from common.security import SECRET_HEADER
 from common.logging import get_logger
+from common.security import SECRET_HEADER
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 

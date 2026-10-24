@@ -10,13 +10,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from common.security import SECRET_HEADER
 from common.errors import (
     AppError,
     ConflictError,
     UnauthorizedError,
     UpstreamError,
 )
+from common.security import SECRET_HEADER
 
 from bff.core.config import Settings
 from bff.schemas.auth import SessionUser
