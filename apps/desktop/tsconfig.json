@@ -20,12 +20,7 @@
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": [
-    "src/renderer",
-    "src/shared",
-    "vite.renderer.config.mts",
-    "vitest.config.mts"
-  ],
+  "include": ["src/renderer", "src/shared", "vite.renderer.config.mts"],
   "references": [
     {
       "path": "../../packages/design"

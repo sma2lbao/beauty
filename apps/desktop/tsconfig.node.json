@@ -22,7 +22,6 @@
     "src/preload",
     "src/shared",
     "vite.main.config.mts",
-    "vite.preload.config.mts",
-    "vitest.node.config.mts"
+    "vite.preload.config.mts"
   ]
 }
