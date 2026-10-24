@@ -1,7 +1,7 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W3 待立项；最近更新：2026-10-25 02:20 +08:00
+- 当前波次：W3 进行中（RFC-004，2026-10-25 立项）；最近更新：2026-10-25 02:05 +08:00
 - 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md
 
 ## W0（已收口 · 7 项）
@@ -72,22 +72,24 @@
 | R-26 Button/Dialog 与旧控制台样式的视觉差异（34px/32rem 等）         | R-26 偏差 | W4 发布前人工核对截图                                                    |
 | vitest 子配置物理收敛（本轮仅文档化）                                | R-21 偏差 | 下波次                                                                   |
 
-## W3（待立项 · 预排）
+## W3（进行中 · 2026-10-25 立项，RFC-004）
 
-- 范围：R-27 ~ R-33（docs/refactoring-playbook.md §10.2 W3 表）
-- 门禁（§10.3 W3）：全仓 lint/typecheck/test + AO 全量测试 + 迁移检查 + 黄金 run；指标：最大 Python 文件 ≤500、graph 无反向依赖、覆盖率阈值生效
-- 复盘重点：高风险拆分的回滚演练
-- 建议顺序：R-27（graph/nodes.py 601）+ R-28（services/runs.py 1100）同批同人；R-29（API 层 mcp.py 792 / conversations.py 682 / skill_packages.py 624 / skill_runner.py 666）独立并行；R-30..R-33 质量 ratchet 收尾
+- 立项：RFC-004 `docs/refactoring/rfc/004-w3.md`（范围 R-27..R-33，7 项）；基线 `docs/refactoring/baseline.md`「W3 基线」
+- 门禁（§10.3 W3，本波口径）：全仓 lint 16/16 + TS 测试 5 项目 + Python 10 项目 724 例 + 5 服务 alembic check + 黄金 run + docs 门禁；指标：最大 Python 文件 ≤700（W4 收到 ≤500）、graph 反向依赖 0、覆盖率阈值生效
+- 复盘重点：高风险拆分的回滚演练（R-30 用 patch 反向 apply --check）
 
-| ID   | 重构项（详见 playbook §10.2）             | 规模 | 风险 | 依赖         | 状态   |
-| ---- | ----------------------------------------- | ---- | ---- | ------------ | ------ |
-| R-27 | 拆 graph/nodes.py（601 行）与反向依赖     | L    | 高   | R-23/R-24 ✅ | 待立项 |
-| R-28 | 拆 services/runs.py（1100 行）            | L    | 高   | R-27         | 待立项 |
-| R-29 | API 层拆分（mcp/conversations/skill\_\*） | M    | 中   | 无           | 待立项 |
-| R-30 | Python 覆盖率阈值与 ratchet               | M    | 低   | 无           | 待立项 |
-| R-31 | 前端覆盖率阈值与 ratchet                  | M    | 低   | 无           | 待立项 |
-| R-32 | 重复代码与死代码清理（jscpd/knip 或等价） | M    | 低   | 无           | 待立项 |
-| R-33 | 性能预算与 bundle 分析入 CI               | S    | 低   | 无           | 待立项 |
+| ID    | 重构项                                   | 规模 | 风险 | 实施者       | 任务    | 状态                 |
+| ----- | ---------------------------------------- | ---- | ---- | ------------ | ------- | -------------------- |
+| R-27  | graph 去反向依赖 + delta 显式注入        | L    | 高   | audit-python | task-22 | 进行中               |
+| R-28  | 拆 services/runs.py（1100）              | L    | 高   | w1-api       | task-23 | 待启动（依赖 R-27）  |
+| R-29  | api 瘦身 + AppContainer + 分域           | L    | 高   | w0-gate      | task-24 | 待启动（依赖 R-28）  |
+| R-30  | common 瘦身（documents 移出 + 依赖隔离） | M    | 中   | w0-docs      | task-25 | 进行中               |
+| R-31a | Python 覆盖率 ratchet                    | M    | 中   | w0-ci        | task-26 | 进行中               |
+| R-31b | TS 覆盖率 ratchet                        | M    | 中   | audit-ts     | task-27 | 进行中               |
+| R-32  | pytest-socket 零网络硬门禁               | M    | 中   | w0-ci        | task-28 | 待启动（依赖 R-31a） |
+| R-33  | 黄金 run 脚本                            | M    | 中   | audit-ops    | task-29 | 进行中               |
+
+偏差登记（RFC-004 §10）：① W3 最大 Python 文件目标 ≤700（playbook 写 500，拆两步）；② R-30 只做 documents 移出与依赖隔离，metrics 域指标真实拆分顺延 W4；③ R-32 与 R-33 顺序对调。
 
 ## 波次总览
 
@@ -96,5 +98,5 @@
 | W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24） |
 | W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
 | W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25） |
-| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | 未开始（待立项）      |
+| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | 进行中（2026-10-25）  |
 | W4   | 发布与运维（R-34..R-38）                               | 未开始                |
