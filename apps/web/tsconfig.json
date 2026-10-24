@@ -1,21 +1,19 @@
 {
+  // W2 R-21:统一 extends 根 tsconfig.base.json(strict/target/lib(es2022)/customConditions/
+  // noUnusedLocals/noFallthroughCasesInSwitch/skipLibCheck/isolatedModules 都在 base)。
+  // 本文件只留 Vite 应用的有意差异:bundler 解析、DOM 环境、jsx、路径别名。
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
-    "customConditions": ["@beauty/source"],
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
     "paths": {
       "@/*": ["./src/*"]
     }

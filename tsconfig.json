@@ -8,6 +8,15 @@
     },
     {
       "path": "./packages/console-ui"
+    },
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./apps/desktop"
+    },
+    {
+      "path": "./apps/site"
     }
   ]
 }

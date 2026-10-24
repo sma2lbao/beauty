@@ -1,6 +1,9 @@
 {
+  // W2 R-21:统一 extends 根 tsconfig.base.json(strict/noUnusedLocals/
+  // noFallthroughCasesInSwitch/skipLibCheck 都在 base)。
+  // 主/预加载进程是纯 node 环境:lib 不含 DOM,bundler 解析,types=node。
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleDetection": "force",
@@ -8,11 +11,7 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "strict": true,
-    "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
     "types": ["node"],
     "paths": {
       "@shared/*": ["./src/shared/*"]

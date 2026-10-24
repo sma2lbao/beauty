@@ -1,20 +1,21 @@
 {
+  // W2 R-21:统一 extends 根 tsconfig.base.json(strict/skipLibCheck/isolatedModules/
+  // target/customConditions 都在 base)。
+  // 本文件只留 Next.js 的有意差异:bundler 解析、esModuleInterop、incremental、
+  // next 插件、DOM lib 与站点路径别名。
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": [
       "dom",
       "dom.iterable",
       "es2022"
     ],
     "allowJs": false,
-    "skipLibCheck": true,
-    "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
@@ -26,10 +27,7 @@
       "@/*": [
         "./*"
       ]
-    },
-    "customConditions": [
-      "@beauty/source"
-    ]
+    }
   },
   "include": [
     "next-env.d.ts",
@@ -44,6 +42,9 @@
     ".next"
   ],
   "references": [
+    {
+      "path": "../../packages/console-ui"
+    },
     {
       "path": "../../packages/design"
     }

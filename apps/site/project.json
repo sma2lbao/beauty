@@ -27,6 +27,14 @@
         "cwd": "apps/site"
       },
       "cache": true
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run",
+        "cwd": "apps/site"
+      },
+      "cache": true
     }
   },
   "tags": []
