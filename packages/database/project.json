@@ -60,10 +60,14 @@
         "{workspaceRoot}/coverage/{projectRoot}"
       ],
       "options": {
-        "command": "uv run pytest tests/",
+        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run pytest tests/",
+        "env": {
+          "_UV_ROOT": "{projectRoot}/../.."
+        },
         "cwd": "{projectRoot}"
       },
-      "cache": true
+      "cache": true,
+      "dependsOn": []
     },
     "install": {
       "executor": "@nxlv/python:install",
