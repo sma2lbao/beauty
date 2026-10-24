@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "docs:check": "bash scripts/check-docs.sh",
-    "gate": "bash scripts/refactor-gate.sh"
+    "gate": "bash scripts/refactor-gate.sh",
+    "golden": "bash scripts/golden-run/golden-run.sh"
   },
   "private": true,
   "devDependencies": {

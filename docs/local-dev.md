@@ -261,6 +261,17 @@ npx nx lint @beauty/web
 
 注意:不带 -- --run 的 npx nx test 是 vitest watch 模式,会挂住。
 
+### 8.1 黄金 run(进程内全链路冒烟)
+
+跨重构(R-27 graph 去反向依赖、R-28 拆 services/runs.py、R-29 API 瘦身)只允许改内部结构,不允许改对外 HTTP 契约与 SSE 事件序列。黄金 run 用 TestClient 在**进程内**驱动 agent-orchestrator 真实应用(不起端口、不依赖已启动的服务与真实模型),走完「健康探针 → 会话 → 流式对话 → 复杂任务建 run → 计划审批 → 危险操作确认 → 交付物 → 事件序列 → sqlite 落库」全链路并逐阶段断言:
+
+```sh
+bash scripts/golden-run/golden-run.sh           # 临时 sqlite,跑完清理;退出码 0=全 PASS,1=有 FAIL
+bash scripts/golden-run/golden-run.sh --keep    # 保留库到 .cache/golden-run/<UTC 时间戳>/golden.db,便于对照排查
+```
+
+临时 sqlite + 脚本化 FakeLLM + 合成 DANGER 工具 + 内存假知识库,零网络(进程内 socket 守卫兜底)、零 Docker/Postgres/Redis 依赖,约 0.2s 跑完。用法与维护约定见 `scripts/golden-run/README.md`。
+
 ## 9. 暂不包含
 
 - 容器化/云 PG/云 Redis/部署
