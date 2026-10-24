@@ -1,17 +1,19 @@
 """任务执行的正文增量通道:节点上报、services 层落库(架构 §6.3)。
 
-分层约定(§4)保持不变:节点仍是纯函数——只读 state、返回增量,不碰数据库、
-不发事件。但节点知道"自己正在写什么",所以这里只给一条**上报**通道:
-节点调 :func:`emit_text`,真正的落库与分发在 services 层的图调用边界完成。
+分层约定(§4)不变:节点仍是纯函数——只读 state、返回增量,不碰数据库、
+不发事件。节点用注入到本次图调用的 :class:`DeltaProjector` 上报正文,真正的
+落库与分发在 services 层的图调用边界完成。
 
-未绑定 sink(单测直跑节点、无 worker 的场景)时 :func:`emit_text` 静默丢弃,
-节点行为因此与"不流式"完全一致。
+未注入 sink(单测直跑节点、无 worker 的场景)时上报静默丢弃,节点行为因此与
+"不流式"完全一致。进程级 ``configure`` 仅剩**静态配置兼容层**(main.py 在
+create_app 里按 settings 固定一次),sink 本身不再走进程级上下文变量。
 """
 
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
-from typing import Protocol
+from dataclasses import dataclass
+
+from agent_orchestrator.graph.ports import DeltaSink
 
 #: 事件 payload 的 phase:前端据此分组显示(同一阶段拼一段,换阶段即换段)
 PHASE_PLAN = "plan"
@@ -27,16 +29,32 @@ DEFAULT_FLUSH_CHARS = 240
 DEFAULT_FLUSH_SECONDS = 0.25
 
 
-class DeltaSink(Protocol):
-    """增量接收方(services 层实现):按批落成 run 事件。"""
+@dataclass(frozen=True, slots=True)
+class DeltaProjector:
+    """一次图调用的正文增量投影器:显式持有 sink,无 sink 时静默 no-op。"""
 
-    async def push(self, text: str, phase: str) -> None: ...
+    sink: DeltaSink | None = None
+
+    def active(self) -> bool:
+        """本次图调用是否有增量接收方(节点据此决定走流式还是普通调用)。"""
+        return self.sink is not None
+
+    async def emit_text(self, text: str, phase: str) -> None:
+        """上报一段正文增量:无 sink 或空串时 no-op(绝不改变执行结果)。"""
+        if self.sink is not None and text:
+            await self.sink.push(text, phase)
 
 
-_sink: ContextVar[DeltaSink | None] = ContextVar("run_delta_sink", default=None)
-_enabled: bool = False
-_flush_chars: int = DEFAULT_FLUSH_CHARS
-_flush_seconds: float = DEFAULT_FLUSH_SECONDS
+@dataclass(frozen=True, slots=True)
+class _StreamingConfig:
+    """进程级静态配置(整对象替换,不做逐字段全局赋值)。"""
+
+    enabled: bool = False
+    flush_chars: int = DEFAULT_FLUSH_CHARS
+    flush_seconds: float = DEFAULT_FLUSH_SECONDS
+
+
+_config = _StreamingConfig()
 
 
 def configure(
@@ -45,40 +63,26 @@ def configure(
     flush_chars: int = DEFAULT_FLUSH_CHARS,
     flush_seconds: float = DEFAULT_FLUSH_SECONDS,
 ) -> None:
-    """进程级配置(create_app 按 settings 调一次;未配置即关闭)。"""
-    global _enabled, _flush_chars, _flush_seconds
-    _enabled = enabled
-    _flush_chars = max(1, flush_chars)
-    _flush_seconds = max(0.0, flush_seconds)
+    """进程级静态配置(create_app 按 settings 调一次;未配置即关闭)。
+
+    TODO(R-29): main.py 的装配迁到显式注入后删除本兼容层。
+    """
+    global _config
+    _config = _StreamingConfig(
+        enabled=enabled,
+        flush_chars=max(1, flush_chars),
+        flush_seconds=max(0.0, flush_seconds),
+    )
 
 
 def enabled() -> bool:
-    return _enabled
+    """正文增量通道是否启用(services 层的图调用边界据此决定建不建 sink)。"""
+    return _config.enabled
 
 
 def flush_chars() -> int:
-    return _flush_chars
+    return _config.flush_chars
 
 
 def flush_seconds() -> float:
-    return _flush_seconds
-
-
-def active() -> bool:
-    """当前协程上下文里是否有 sink(节点据此决定走流式还是普通调用)。"""
-    return _sink.get() is not None
-
-
-def bind(sink: DeltaSink) -> Token:
-    return _sink.set(sink)
-
-
-def unbind(token: Token) -> None:
-    _sink.reset(token)
-
-
-async def emit_text(text: str, phase: str) -> None:
-    """节点上报正文增量:无 sink 或空串时 no-op(绝不因此改变执行结果)。"""
-    sink = _sink.get()
-    if sink is not None and text:
-        await sink.push(text, phase)
+    return _config.flush_seconds

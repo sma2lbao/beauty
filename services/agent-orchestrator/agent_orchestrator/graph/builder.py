@@ -13,8 +13,6 @@ toolkit_factory:租户 → 工具注册表(§8,execute 的 function-calling 用)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -30,16 +28,12 @@ from agent_orchestrator.graph.nodes import (
     make_tool_exec_node,
     make_verify_node,
 )
+from agent_orchestrator.graph.ports import (
+    LLMPort,
+    ToolExtrasFactory,
+    ToolkitFactory,
+)
 from agent_orchestrator.graph.state import RunGraphState
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from agent_orchestrator.services.llm import LLMClient
-    from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
-
-    ToolkitFactory = Callable[[str], ToolRegistry]
-    ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 MAX_REWORK_ROUNDS = 3
 
@@ -74,7 +68,7 @@ def route_after_verify(state: RunGraphState) -> str:
 
 def build_run_graph(
     checkpointer: BaseCheckpointSaver | None = None,
-    llm: LLMClient | None = None,
+    llm: LLMPort | None = None,
     toolkit_factory: ToolkitFactory | None = None,
     mcp_tools_factory: ToolExtrasFactory | None = None,
     *,

@@ -26,6 +26,8 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.graph import delta
+from agent_orchestrator.graph.ports import ApprovalDecision, GraphPorts
+from agent_orchestrator.graph.runtime import GRAPH_RUNTIME_KEY, GraphRuntime
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import (
     PendingInstruction,
@@ -54,7 +56,37 @@ from agent_orchestrator.services.tool_context import (
     ToolContext,
     bind_tool_context,
 )
+from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 from agent_orchestrator.services.workspace import Workspace
+
+
+class _ApprovalAdapter:
+    """graph.ports.ApprovalPort 的 services 实现:包装租户审批策略引擎。
+
+    依赖方向是 services → graph:节点只认 graph 侧的值域,策略表求值仍留在
+    services.approval(纯函数),适配层只做类型/枚举对齐。
+    """
+
+    def decide(
+        self,
+        policies: Any,
+        tool: str,
+        risk: str,
+    ) -> ApprovalDecision:
+        action = approval_service.decide(policies, tool, ToolRisk(risk))
+        return ApprovalDecision(action.value)
+
+
+def _graph_ports() -> GraphPorts:
+    """装配 graph 侧端口:预算闸、审批策略、空工具注册表兜底。"""
+    return GraphPorts(
+        usage=usage_service,
+        approval=_ApprovalAdapter(),
+        empty_toolkit=lambda: ToolRegistry([]),
+    )
+
+
+_GRAPH_PORTS = _graph_ports()
 
 
 def _tool_context(run: Run):
@@ -156,20 +188,25 @@ class _RunDeltaSink:
 
 
 @asynccontextmanager
-async def _delta_stream(session: AsyncSession, run: Run) -> AsyncIterator[None]:
-    """图调用边界:把正文增量通道绑到本次 run(未开启时原样透传)。"""
+async def _delta_stream(
+    session: AsyncSession, run: Run
+) -> AsyncIterator[delta.DeltaProjector]:
+    """图调用边界:构造本次 run 的正文增量投影器(未开启时为空投影器)。
+
+    投影器经 graph invocation config 显式注入节点(不再用 ContextVar 绑定),
+    图内节点只上报、落库与提交仍在这里完成。
+    """
     if not delta.enabled():
-        yield
+        yield delta.DeltaProjector()
         return
     sink = _RunDeltaSink(session, run)
     # 开跑前的写入(计划/放行/指令消费)先落库:增量事件才有独立的可见时刻,
     # 也避免同一 session 里未提交的旧事务挡住 flush 提交。
     await session.commit()
-    token = delta.bind(sink)
+    projector = delta.DeltaProjector(sink)
     try:
-        yield
+        yield projector
     finally:
-        delta.unbind(token)
         await sink.close()
 
 
@@ -193,9 +230,21 @@ async def _usage_boundary(run: Run) -> AsyncIterator[None]:
         )
 
 
-def _config(run: Run) -> dict[str, Any]:
-    """graph 线程标识:同一 run 的每次 blocked→resume 周期一个新线程。"""
-    return {"configurable": {"thread_id": f"{run.id}#{run.attempts}"}}
+def _config(run: Run, projector: delta.DeltaProjector | None = None) -> dict[str, Any]:
+    """graph 线程标识 + 本次调用的运行期依赖(端口/增量投影器显式注入)。
+
+    同一 run 的每次 blocked→resume 周期一个新线程;运行期依赖随调用传递,
+    节点不再读进程级上下文变量。
+    """
+    return {
+        "configurable": {
+            "thread_id": f"{run.id}#{run.attempts}",
+            GRAPH_RUNTIME_KEY: GraphRuntime(
+                ports=_GRAPH_PORTS,
+                delta=projector or delta.DeltaProjector(),
+            ),
+        }
+    }
 
 
 async def require_run(session: AsyncSession, tenant_id: str, run_id: str) -> Run:
@@ -688,8 +737,8 @@ async def _invoke_plan(
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
         with _tool_context(run):
-            async with _delta_stream(session, run), _usage_boundary(run):
-                values = await graph.ainvoke(state, config=_config(run))
+            async with _delta_stream(session, run) as projector, _usage_boundary(run):
+                values = await graph.ainvoke(state, config=_config(run, projector))
     except Exception as exc:
         await _fail_run(session, run, exc, stage="plan")
         return
@@ -875,10 +924,10 @@ async def approve_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run), _usage_boundary(run):
+            async with _delta_stream(session, run) as projector, _usage_boundary(run):
                 values = await graph.ainvoke(
                     Command(resume={"action": "approve", "instructions": instructions}),
-                    config=_config(run),
+                    config=_config(run, projector),
                 )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
@@ -932,7 +981,7 @@ async def confirm_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run), _usage_boundary(run):
+            async with _delta_stream(session, run) as projector, _usage_boundary(run):
                 values = await graph.ainvoke(
                     Command(
                         resume={
@@ -941,7 +990,7 @@ async def confirm_run(
                             "instructions": instructions,
                         }
                     ),
-                    config=_config(run),
+                    config=_config(run, projector),
                 )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")

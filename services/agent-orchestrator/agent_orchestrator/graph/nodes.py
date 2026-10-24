@@ -3,6 +3,10 @@
 约定(架构 §4 分层):节点是纯函数——只读 state、返回增量,
 不碰数据库、不发事件;事务与事件在 services 层的图调用边界统一处理。
 
+依赖注入(架构 §4 依赖倒置):节点需要的外界能力全部来自 graph.ports 的
+Protocol,由 services 层在装配处通过 LangGraph invocation config 注入
+(graph.runtime.GraphRuntime);因此本模块不依赖 services 包。
+
 LLM 注入:builder 用 make_*_node(llm) 工厂装配;llm 为 None 时回退
 确定性桩(dev/测试零外部依赖)。节点内 LLM 异常不捕获,由 services 层的
 图调用边界统一转 failed 终态(§6.2)。
@@ -14,29 +18,21 @@ LLM 注入:builder 用 make_*_node(llm) 工厂装配;llm 为 None 时回退
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langgraph.types import interrupt
 
 from agent_orchestrator.graph import delta
+from agent_orchestrator.graph.ports import (
+    ApprovalDecision,
+    LLMPort,
+    ToolExtrasFactory,
+    ToolkitFactory,
+    ToolkitPort,
+    ToolReplyPort,
+)
+from agent_orchestrator.graph.runtime import GraphRuntime, runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
-from agent_orchestrator.services import approval as approval_service
-from agent_orchestrator.services import usage as usage_service
-from agent_orchestrator.services.llm import LLMReply
-
-# ToolRegistry 在 _load_toolkit 里**运行期**构造(base = toolkit or ToolRegistry([])),
-# 不能只放在 TYPE_CHECKING 里——只有外部工具(extras)、没有基础工具工厂时
-# 会抛 NameError(P3-C 的纯 skill_run run 正是这种形态)。
-from agent_orchestrator.services.tools import ToolRegistry
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from agent_orchestrator.services.llm import LLMClient
-    from agent_orchestrator.services.tools import ToolSpec
-
-    ToolkitFactory = Callable[[str], ToolRegistry]
-    ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
@@ -66,7 +62,11 @@ DELIVER_SYSTEM_PROMPT = (
 
 
 async def _text_reply(
-    llm: LLMClient, messages: list[dict[str, Any]], *, phase: str
+    llm: LLMPort,
+    messages: list[dict[str, Any]],
+    *,
+    phase: str,
+    runtime: GraphRuntime,
 ) -> str:
     """取一段模型正文:有增量通道时边流边报(§6.3 token.delta.v1)。
 
@@ -74,13 +74,13 @@ async def _text_reply(
     注入实现(测试假客户端等)不一定支持 stream,没有就退回 complete,
     行为与不流式时完全一致。调用前先过 token 预算闸(P0-3)。
     """
-    usage_service.check_budget()
-    if not delta.active() or not hasattr(llm, "stream"):
+    runtime.ports.usage.check_budget()
+    if not runtime.delta.active() or not hasattr(llm, "stream"):
         return (await llm.complete(messages)).content
     parts: list[str] = []
     async for piece in llm.stream(messages):
         parts.append(piece)
-        await delta.emit_text(piece, phase)
+        await runtime.delta.emit_text(piece, phase)
     return "".join(parts)
 
 
@@ -146,13 +146,16 @@ def _stub_plan(state: RunGraphState) -> dict:
     return {"plan_markdown": plan}
 
 
-def make_plan_node(llm: LLMClient | None):
+def make_plan_node(llm: LLMPort | None):
     """plan 节点工厂:LLM 生成计划(§6.1 可编辑工件)。
 
     resume 重试时保留用户已编辑的计划,不覆盖(先判 plan_markdown)。
     """
 
-    async def plan_node(state: RunGraphState) -> dict:
+    async def plan_node(state: RunGraphState, config=None) -> dict:
+        # config 由 LangGraph 运行时注入(带本次调用的 GraphRuntime);
+        # 直跑节点的单测可只传 state,此时回退默认运行期。
+        runtime = runtime_from_config(config)
         if state.get("plan_markdown"):
             return {}
         if llm is None:
@@ -177,6 +180,7 @@ def make_plan_node(llm: LLMClient | None):
                 },
             ],
             phase=delta.PHASE_PLAN,
+            runtime=runtime,
         )
         return {"plan_markdown": plan_markdown}
 
@@ -184,8 +188,8 @@ def make_plan_node(llm: LLMClient | None):
 
 
 def _scoped_toolkit(
-    toolkit: ToolRegistry | None, allowed_tools: list[str] | None
-) -> ToolRegistry | None:
+    toolkit: ToolkitPort | None, allowed_tools: list[str] | None
+) -> ToolkitPort | None:
     """按 Skill 的 tools 白名单裁剪(与 execute 的口径一致)。
 
     缺省(None)=不限制;空列表=技能声明不用任何工具(与 execute 的
@@ -196,10 +200,42 @@ def _scoped_toolkit(
     return toolkit.restricted(allowed_tools) if allowed_tools is not None else toolkit
 
 
+def _empty_toolkit(runtime: GraphRuntime) -> ToolkitPort:
+    """只有外部工具、没有基础工具工厂时的兜底空注册表。
+
+    具体类在 services 层(依赖方向:graph 不 import services),由装配方
+    通过 GraphPorts.empty_toolkit 注入;未注入即视为装配缺失。
+    """
+    factory = runtime.ports.empty_toolkit
+    if factory is None:
+        raise RuntimeError("外部工具有 specs 但装配方未注入 empty_toolkit 工厂")
+    return factory()
+
+
+async def _load_toolkit(
+    tenant_id: str,
+    toolkit_factory: ToolkitFactory | None,
+    extras_factory: ToolExtrasFactory | None,
+    runtime: GraphRuntime,
+) -> ToolkitPort | None:
+    """基础工具 + 外部工具(MCP)。外部工具加载失败不阻断 run。"""
+    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    if extras_factory is not None:
+        try:
+            extras = await extras_factory(tenant_id)
+        except Exception:  # noqa: BLE001 - MCP 故障降级为基础工具
+            extras = []
+        if extras:
+            base = toolkit if toolkit is not None else _empty_toolkit(runtime)
+            toolkit = base.extended(extras)
+    return toolkit
+
+
 async def _has_dangerous_tools(
     state: RunGraphState,
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ToolExtrasFactory | None,
+    runtime: GraphRuntime,
 ) -> bool:
     """本 run 实际可用的工具里有没有危险操作(决定审批闸要不要中断)。
 
@@ -208,7 +244,7 @@ async def _has_dangerous_tools(
     执行阶段也就不可能产生未经确认的对外副作用。
     """
     toolkit = await _load_toolkit(
-        state.get("tenant_id", ""), toolkit_factory, extras_factory
+        state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
     )
     scoped = _scoped_toolkit(toolkit, state.get("allowed_tools"))
     return scoped is not None and scoped.has_dangerous
@@ -228,9 +264,10 @@ def make_approval_gate_node(
       放行时把 resume 载荷里的追加指令(§6.5)并入 state,后续节点遵循。
     """
 
-    async def approval_gate_node(state: RunGraphState) -> dict:
+    async def approval_gate_node(state: RunGraphState, config=None) -> dict:
+        runtime = runtime_from_config(config)
         if auto_approve and not await _has_dangerous_tools(
-            state, toolkit_factory, extras_factory
+            state, toolkit_factory, extras_factory, runtime
         ):
             return {"auto_approved": True}
         answer = interrupt({"plan_markdown": state.get("plan_markdown", "")})
@@ -269,7 +306,7 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
     ]
 
 
-def _assistant_tool_message(reply: LLMReply) -> dict[str, Any]:
+def _assistant_tool_message(reply: ToolReplyPort) -> dict[str, Any]:
     """把模型的工具请求回填进消息历史(OpenAI 嵌套形状)。"""
     return {
         "role": "assistant",
@@ -302,26 +339,8 @@ def _tool_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
-async def _load_toolkit(
-    tenant_id: str,
-    toolkit_factory: ToolkitFactory | None,
-    extras_factory: ToolExtrasFactory | None,
-) -> ToolRegistry | None:
-    """基础工具 + 外部工具(MCP)。外部工具加载失败不阻断 run。"""
-    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
-    if extras_factory is not None:
-        try:
-            extras = await extras_factory(tenant_id)
-        except Exception:  # noqa: BLE001 - MCP 故障降级为基础工具
-            extras = []
-        if extras:
-            base = toolkit or ToolRegistry([])
-            toolkit = base.extended(extras)
-    return toolkit
-
-
 def make_execute_node(
-    llm: LLMClient | None,
+    llm: LLMPort | None,
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ToolExtrasFactory | None = None,
 ):
@@ -335,7 +354,8 @@ def make_execute_node(
       中断等人工放行(§6.2)——放行后由 tool_exec 执行并回喂同一消息流。
     """
 
-    async def execute_node(state: RunGraphState) -> dict:
+    async def execute_node(state: RunGraphState, config=None) -> dict:
+        runtime = runtime_from_config(config)
         if llm is None:
             return {
                 "results": ["目标已拆解(桩)", "子任务已执行(桩)", "结果已汇总(桩)"],
@@ -344,21 +364,23 @@ def make_execute_node(
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
         toolkit = await _load_toolkit(
-            state.get("tenant_id", ""), toolkit_factory, extras_factory
+            state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:
             toolkit = toolkit.restricted(allowed)
         if toolkit is None or len(toolkit) == 0:
-            text = await _text_reply(llm, messages, phase=delta.PHASE_EXECUTE)
+            text = await _text_reply(
+                llm, messages, phase=delta.PHASE_EXECUTE, runtime=runtime
+            )
             return {"results": [text], "rounds": 1}
 
         schemas = toolkit.schemas()
         records: list[dict[str, Any]] = []
-        reply = LLMReply(content="")
+        reply: ToolReplyPort | None = None
         exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
-            usage_service.check_budget()
+            runtime.ports.usage.check_budget()
             reply = await llm.complete(messages, tools=schemas)
             if not reply.tool_calls:
                 exhausted = False
@@ -367,10 +389,10 @@ def make_execute_node(
             pending: list[dict[str, Any]] = []
             policies = state.get("approval_policies") or []
             for call in reply.tool_calls:
-                decision = approval_service.decide(
+                decision = runtime.ports.approval.decide(
                     policies, call.name, toolkit.risk(call.name)
                 )
-                if decision is approval_service.ApprovalAction.DENY:
+                if decision is ApprovalDecision.DENY:
                     # 策略禁用:不执行,如实回喂模型(它能据此换个做法)
                     output = _tool_error(
                         f"工具 {call.name} 被租户审批策略禁止使用,本次未执行"
@@ -378,7 +400,7 @@ def make_execute_node(
                     records.append(_record(call.name, call.arguments, output))
                     messages.append(_tool_message(call.id, output))
                     continue
-                if decision is approval_service.ApprovalAction.CONFIRM:
+                if decision is ApprovalDecision.CONFIRM:
                     if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
                         # 确认次数达上限:不再打断,如实告知模型未执行
                         output = _tool_error("危险操作确认次数已达上限,本次未执行")
@@ -401,10 +423,12 @@ def make_execute_node(
         if exhausted and records:
             # 轮次用尽仍在要工具:再给一次"不带工具"的收束调用,把已拿到的
             # 工具结果收敛成正文;否则下游只能拿到空正文,误报成"没读到内容"。
-            reply = LLMReply(
-                content=await _text_reply(llm, messages, phase=delta.PHASE_EXECUTE)
+            content = await _text_reply(
+                llm, messages, phase=delta.PHASE_EXECUTE, runtime=runtime
             )
-        text = reply.content or f"(调用工具 {len(records)} 次后模型未给出结论)"
+        else:
+            content = reply.content if reply is not None else ""
+        text = content or f"(调用工具 {len(records)} 次后模型未给出结论)"
         return {
             "results": [text],
             "rounds": 1,
@@ -442,12 +466,13 @@ def make_tool_exec_node(
 ):
     """执行已确认的危险操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
 
-    async def tool_exec_node(state: RunGraphState) -> dict:
+    async def tool_exec_node(state: RunGraphState, config=None) -> dict:
+        runtime = runtime_from_config(config)
         pending = state.get("pending_writes") or []
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
         toolkit = await _load_toolkit(
-            state.get("tenant_id", ""), toolkit_factory, extras_factory
+            state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:
@@ -489,13 +514,14 @@ def _parse_verdicts(text: str, criteria: list[str]) -> tuple[dict[str, bool], st
     return verdicts, str(data.get("summary", ""))
 
 
-def make_verify_node(llm: LLMClient | None):
+def make_verify_node(llm: LLMPort | None):
     """verify 节点工厂:LLM 逐条判定验收标准(§6.1);llm=None 回退全通过桩。
 
     验收小结追加进 results——下一轮 execute 带着未过项继续返工。
     """
 
-    async def verify_node(state: RunGraphState) -> dict:
+    async def verify_node(state: RunGraphState, config=None) -> dict:
+        runtime = runtime_from_config(config)
         criteria = state.get("acceptance_criteria") or []
         if llm is None or not criteria:
             return {"verified": {c: True for c in criteria}}
@@ -519,6 +545,7 @@ def make_verify_node(llm: LLMClient | None):
                 },
             ],
             phase=delta.PHASE_VERIFY,
+            runtime=runtime,
         )
         verdicts, summary = _parse_verdicts(verdict_text, criteria)
         update: dict = {"verified": verdicts}
@@ -562,13 +589,14 @@ def _stub_deliver(state: RunGraphState) -> dict:
     return {"final_status": "completed", "artifact": _artifact(state, content)}
 
 
-def make_deliver_node(llm: LLMClient | None):
+def make_deliver_node(llm: LLMPort | None):
     """deliver 节点工厂:LLM 合成最终交付物(§7);llm=None 回退拼装桩。
 
     交付物只进 state(nodes 是纯函数);落库 + run.delivered.v1 在 services 层。
     """
 
-    async def deliver_node(state: RunGraphState) -> dict:
+    async def deliver_node(state: RunGraphState, config=None) -> dict:
+        runtime = runtime_from_config(config)
         if llm is None:
             return _stub_deliver(state)
         results = "\n\n".join(state.get("results") or []) or "(无执行结果)"
@@ -592,6 +620,7 @@ def make_deliver_node(llm: LLMClient | None):
                 },
             ],
             phase=delta.PHASE_DELIVER,
+            runtime=runtime,
         )
         return {
             "final_status": "completed",
