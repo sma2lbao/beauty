@@ -157,7 +157,13 @@ per-connector / per-tenant 配置,每个动作分级 `auto | confirm | deny`:
 
 - 读操作默认 auto;写/发/删默认 confirm;危险删除默认 deny;
 - 用户可按连接器调档到"全自动"——策略是配置,不是硬编码;
-- 计划审批与执行策略是两个层次:是否需要人工放行看 run 装配的工具里有无 DANGER 级(见 §6.2),执行期动作仍逐个按本节分级。
+- 计划审批与执行策略是两个层次:是否需要人工放行看 run 装配的工具里有无 DANGER 级(见 §6.2),执行期动作仍逐个按本节分级;
+- 落地(P0-4):`approval_policies` 表按租户存 `tool → auto|confirm|deny`(工具名或 `*`),
+  `GET/PUT /api/v1/approval-policies` 整表替换;求值是一层纯函数
+  (`services/approval.py: decide`):精确规则 > 通配规则 > 风险等级默认值,
+  因此空表时行为与之前完全一致。策略随 run 状态进图(节点仍不查库),命中
+  `deny` 时不执行并把拒绝原因回喂模型,对话路径同样生效(chat 没有审批流,
+  `confirm` 一律降级为"请改用任务")。
 
 ### 6.5 指令追加队列
 

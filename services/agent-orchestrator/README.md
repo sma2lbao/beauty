@@ -40,6 +40,20 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
   判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;
+- **配额与预算**(P0-2/P0-3):建 run 前先读 account 的租户配额快照
+  (`GET /v1/usage/quota`,`X-Internal-Secret` + `X-Tenant-Id`),月度 token 用尽或并发
+  run 超限直接 429(`quota.monthly_tokens_exceeded` / `quota.concurrent_runs_exceeded`,
+  details 带 limit/used);account 不可用时**fail-open**(配额是保护性限流,不是鉴权)。
+  配额结构在 `organizations.quota` JSON:`{"monthly_tokens": N, "max_concurrent_runs": M}`,
+  缺省即不限制。token 预算用 `AGENT_ORCHESTRATOR__RUN_TOKEN_BUDGET` 控制单次执行的
+  模型用量上限(0=不限制),节点边界检查,用尽则该次执行 failed(错误里写明
+  `TokenBudgetExceeded`);
+- **审批策略**(P0-4):`approval_policies` 表按租户覆盖"要不要人工确认"的默认值,
+  `GET/PUT /api/v1/approval-policies` 读/整表替换,规则是
+  `{"tool": "<工具名>"|"*", "action": "auto"|"confirm"|"deny"}`。求值顺序:
+  精确工具 > `*` > **风险等级默认值**(DANGER 需确认、READ/WRITE 自动),
+  空表即等价于旧行为;策略快照随状态进图(节点仍纯函数),命中 `deny` 不执行并把
+  原因回喂模型,对话路径也走同一套判定(`confirm` 在 chat 里降级为"请改用任务");
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
 - 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是

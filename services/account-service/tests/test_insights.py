@@ -9,6 +9,12 @@ from fastapi.testclient import TestClient
 from account.main import create_app
 from tests.conftest import _IDP, OTHER, TENANT, _settings
 
+INTERNAL = {
+    **TENANT,
+    "X-Internal-Secret": "internal-secret",
+    "X-Tenant-Id": "org-1",
+}
+
 
 def _client(tmp_path: Path) -> TestClient:
     app = create_app(
@@ -42,7 +48,7 @@ def test_usage_summary_empty_and_recorded(tmp_path: Path) -> None:
                 "prompt_tokens": 10,
                 "completion_tokens": 5,
             },
-            headers={**TENANT, "X-Internal-Secret": "internal-secret"},
+            headers=INTERNAL,
         )
         assert recorded.status_code == 201
 
@@ -64,7 +70,7 @@ def test_usage_internal_secret_required(tmp_path: Path) -> None:
             headers=TENANT,
         )
     assert response.status_code == 401
-    assert response.json()["code"] == "usage.internal_forbidden"
+    assert response.json()["code"] == "auth.internal_forbidden"
 
 
 def test_byok_upsert_mask_list_delete(tmp_path: Path) -> None:
@@ -92,7 +98,49 @@ def test_byok_upsert_mask_list_delete(tmp_path: Path) -> None:
         )
         assert updated.json()["masked_key"] == "••••9999"
 
-        assert (
-            client.delete("/v1/byok/openai", headers=TENANT).status_code == 204
-        )
+        assert client.delete("/v1/byok/openai", headers=TENANT).status_code == 204
         assert client.get("/v1/byok", headers=TENANT).json() == []
+
+
+def test_usage_quota_snapshot(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        # 未配置配额:三个维度都是未限制,已用量 0
+        empty = client.get(
+            "/v1/usage/quota",
+            headers=INTERNAL,
+        )
+        assert empty.status_code == 200
+        assert empty.json() == {
+            "monthly_tokens": None,
+            "max_concurrent_runs": None,
+            "used_tokens": 0,
+        }
+
+        updated = client.patch(
+            "/v1/organization",
+            json={"quota": {"monthly_tokens": 100, "max_concurrent_runs": 2}},
+            headers=TENANT,
+        )
+        assert updated.status_code == 200
+        client.post(
+            "/v1/usage/events",
+            json={"model": "m", "prompt_tokens": 30, "completion_tokens": 10},
+            headers=INTERNAL,
+        )
+        snapshot = client.get(
+            "/v1/usage/quota",
+            headers=INTERNAL,
+        )
+    assert snapshot.status_code == 200
+    assert snapshot.json() == {
+        "monthly_tokens": 100,
+        "max_concurrent_runs": 2,
+        "used_tokens": 40,
+    }
+
+
+def test_usage_quota_requires_internal_secret(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = client.get("/v1/usage/quota", headers=TENANT)
+    assert response.status_code == 401
+    assert response.json()["code"] == "auth.internal_forbidden"

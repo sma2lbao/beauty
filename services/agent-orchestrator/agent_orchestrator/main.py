@@ -33,6 +33,7 @@ from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.builder import build_run_graph
+from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
     conversations as conversations_models,
 )
@@ -41,6 +42,8 @@ from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 
 from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
+from agent_orchestrator.services import quota as quota_service
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
@@ -102,6 +105,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owns_oauth_introspector = True
     app.state.oauth_introspector = oauth_introspector
 
+    # token 预算(P0-3):进程级固定,0 = 不限制
+    usage_service.configure_budget(settings.run_token_budget)
+
+    # 配额快照(P0-2):建 run 前读 account 的租户配额;密钥缺失即关闭
+    owns_quota_client = quota_service.client() is None and (
+        quota_service.configure_client(
+            base_url=settings.account_service_url,
+            internal_secret=settings.internal_auth_secret,
+        )
+        is not None
+    )
+
+    # 用量上报(P0-1):密钥缺失即关闭(不裸调),测试默认零网络
+    owns_usage_reporter = False
+    if usage_service.reporter() is None:
+        owns_usage_reporter = (
+            usage_service.configure_reporter(
+                base_url=settings.account_service_url,
+                internal_secret=settings.internal_auth_secret,
+            )
+            is not None
+        )
+
     factory = create_session_factory(settings.database_url)
     app.state.session_factory = factory
     if settings.auto_create_tables:
@@ -117,6 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             base_url=settings.llm_gateway_url,
             timeout_seconds=settings.llm_timeout_seconds,
             model=settings.llm_model,
+            retry_attempts=settings.llm_retry_attempts,
+            retry_backoff_seconds=settings.llm_retry_backoff_seconds,
         )
         owns_llm = True
     # 发布解析后的客户端:直接对话(§6.7)与执行图共用同一个;
@@ -419,6 +447,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await oauth_introspector.aclose()
         if knowledge is not None:
             await knowledge.aclose()
+        if owns_usage_reporter:
+            await usage_service.close_reporter()
+        if owns_quota_client:
+            await quota_service.close_client()
         if owns_sandbox and sandbox is not None:
             await sandbox.aclose()
         await broker.aclose()

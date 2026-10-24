@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import MessageRepository
+from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history
 from agent_orchestrator.services.llm import LLMClient
@@ -88,12 +89,14 @@ async def run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
     toolkit,
+    *,
+    policies: list[dict[str, str]] | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any] | str]]:
     """对话内 function-calling 循环(只读 + 受控写,§6.7)。
 
     产出 ("tool", {name, arguments, ok}) 事件供流式层转发;最终一轮产出
     ("content", 正文)。只读与受控写工具自动执行;**危险操作(DANGER)不执行**,
-    回喂错误文本引导走任务路径(对话没有审批流)。
+    回喂错误文本引导走任务路径(对话没有审批流);租户策略 ``deny`` 的工具同样不执行。
     轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
     工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底。
     """
@@ -107,8 +110,13 @@ async def run_tool_loop(
             return
         messages.append(_assistant_tool_message(reply))
         for call in reply.tool_calls:
-            if toolkit.requires_confirmation(call.name):
-                # 危险操作在 chat 中不执行:回喂错误让模型引导用户走任务
+            decision = approval_service.decide(
+                policies, call.name, toolkit.risk(call.name)
+            )
+            if decision is approval_service.ApprovalAction.DENY:
+                output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
+            elif decision is approval_service.ApprovalAction.CONFIRM:
+                # 需要人工确认的动作在 chat 中不执行:回喂错误让模型引导走任务
                 output = _tool_error(
                     "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
                 )
@@ -136,6 +144,7 @@ async def answer(
     toolkit=None,
     *,
     reference_note: str = "",
+    policies: list[dict[str, str]] | None = None,
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
@@ -146,7 +155,7 @@ async def answer(
         reply = await llm.complete(messages)
         return reply.content
     final = ""
-    async for kind, payload in run_tool_loop(llm, messages, toolkit):
+    async for kind, payload in run_tool_loop(llm, messages, toolkit, policies=policies):
         if kind == "content":
             final = str(payload)
     return final

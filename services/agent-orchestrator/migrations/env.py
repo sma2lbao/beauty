@@ -20,6 +20,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
     conversations as conversations_models,
 )

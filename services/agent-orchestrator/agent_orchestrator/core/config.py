@@ -96,6 +96,13 @@ class Settings(BaseAppSettings):
     llm_gateway_url: str = "http://127.0.0.1:8003"
     llm_model: str | None = None  # None:走网关默认路由
     llm_timeout_seconds: float = 60.0
+    # 网关调用重试(P0-7):429/5xx/连接错误按指数退避重试;4xx 业务错误不重试。
+    # 流式只在"开流前"重试——增量一旦发出,重发会拼出重复正文。
+    llm_retry_attempts: int = 2
+    llm_retry_backoff_seconds: float = 1.5
+    # P0-3 token 预算:单次执行(plan 或 approve 的一次图调用)允许的最大模型用量,
+    # 0 = 不限制。用尽时该次执行 failed(可在新 run 里续做)。
+    run_token_budget: int = 0
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库/代码库)
     tools_enabled: bool = False
     tool_timeout_seconds: float = 30.0

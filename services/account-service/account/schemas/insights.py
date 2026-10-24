@@ -30,6 +30,14 @@ class UsageEventCreate(BaseModel):
     completion_tokens: int = Field(default=0, ge=0)
 
 
+class UsageQuota(BaseModel):
+    """租户配额快照(内部读取用):未配置的维度为 None,表示不限制。"""
+
+    monthly_tokens: int | None = None
+    max_concurrent_runs: int | None = None
+    used_tokens: int = 0
+
+
 class BYOKUpsert(BaseModel):
     api_key: str = Field(min_length=8, max_length=4096)
 

@@ -30,6 +30,9 @@ class RunGraphState(TypedDict, total=False):
     # network/timeout_seconds;内置技能无此项
     skill_package: dict[str, Any]
     allowed_tools: list[str]  # Skill 工具白名单;缺省=不限制,空表=不用工具
+    # P0-4 审批策略快照:[{"tool": "name"|"*", "action": "auto"|"confirm"|"deny"}]
+    # 由 services 层在起图时加载(节点纯函数,不查库);空表=按风险等级默认
+    approval_policies: list[dict[str, str]]
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
     writes_approved: bool  # 确认闸的判定结果

@@ -19,7 +19,7 @@ from typing import Any
 
 from common import metrics
 from common.artifacts import ArtifactStore
-from common.errors import ConflictError
+from common.errors import ConflictError, QuotaExceededError
 from events.envelope import EventEnvelope
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
@@ -43,8 +43,11 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import artifacts, history
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services import quota as quota_service
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.file_capture import FileDownloader, extract_file_urls
 from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.tool_context import (
@@ -168,6 +171,26 @@ async def _delta_stream(session: AsyncSession, run: Run) -> AsyncIterator[None]:
     finally:
         delta.unbind(token)
         await sink.close()
+
+
+@asynccontextmanager
+async def _usage_boundary(run: Run) -> AsyncIterator[None]:
+    """图调用边界:绑定用量采集器,退出时上报 account(P0-1)。
+
+    上报失败只打 warning + 计数(在 usage.report 内部兜住),绝不影响 run——
+    用量是观测数据,不是执行路径。
+    """
+    collector = usage_service.UsageCollector()
+    token = usage_service.bind(collector)
+    try:
+        yield
+    finally:
+        usage_service.unbind(token)
+        await usage_service.report(
+            tenant_id=run.tenant_id,
+            run_id=run.id,
+            samples=collector.samples,
+        )
 
 
 def _config(run: Run) -> dict[str, Any]:
@@ -516,6 +539,37 @@ async def _conversation_history(
     return history.to_prompt(rows)
 
 
+async def _enforce_quota(session: AsyncSession, tenant_id: str) -> None:
+    """P0-2 准入闸:月度 token 用尽 / 并发 run 超限 → 429。
+
+    快照取不到(=account 未配置或不可用)时不拦:配额是保护性限流,
+    不能被观测依赖的抖动连带打死。判定语义:
+    - 月度:``used_tokens >= monthly_tokens`` 即拒绝(边界值按用尽算);
+    - 并发:未终结 run 数(排除 completed/failed/blocked)``>= max_concurrent_runs``。
+    """
+    snapshot = await quota_service.fetch(tenant_id)
+    if snapshot is None:
+        return
+    if snapshot.monthly_tokens_exceeded:
+        raise QuotaExceededError(
+            "quota.monthly_tokens_exceeded",
+            "本月模型用量已超出配额,请升级或等待下月重置",
+            details={
+                "limit": snapshot.monthly_tokens,
+                "used": snapshot.used_tokens,
+            },
+        )
+    limit = snapshot.max_concurrent_runs
+    if limit is not None:
+        active = await RunRepository(session).count_active(tenant_id)
+        if active >= limit:
+            raise QuotaExceededError(
+                "quota.concurrent_runs_exceeded",
+                "同时进行的任务数已达上限,请等待现有任务结束",
+                details={"limit": limit, "active": active},
+            )
+
+
 async def create_run(
     session: AsyncSession,
     tenant_id: str,
@@ -528,7 +582,9 @@ async def create_run(
     上传包额外冻结 version_id/object_key/sha256 与执行字段——之后用户上传
     新版本不影响本 run(P3-C 的 skill_run 按 run 上的快照取包执行)。
     工作区归属:显式给的就用,否则从所属对话继承(对话在哪个工作区,run 就在哪)。
+    配额(P0-2):建 run 前先过准入闸,超限直接 429,不留下半残 run。
     """
+    await _enforce_quota(session, tenant_id)
     manifest = skill.manifest if skill else None
     workspace_id = data.workspace_id
     if workspace_id is None and data.conversation_id:
@@ -620,6 +676,10 @@ async def _invoke_plan(
     if run.conversation_id:
         # 对话触发的 run:带上多轮上下文,模型才能理解"接着刚才的做"
         state["conversation_history"] = await _conversation_history(session, run)
+    # P0-4:审批策略随状态进图(节点是纯函数,不能自己查库);空表即沿用风险默认值
+    state["approval_policies"] = await approval_service.load_policies(
+        session, run.tenant_id
+    )
     # §6.5:规划边界消费排队指令,并入图状态供各节点遵循
     instructions = await _consume_instructions(session, run)
     if instructions:
@@ -628,7 +688,7 @@ async def _invoke_plan(
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
         with _tool_context(run):
-            async with _delta_stream(session, run):
+            async with _delta_stream(session, run), _usage_boundary(run):
                 values = await graph.ainvoke(state, config=_config(run))
     except Exception as exc:
         await _fail_run(session, run, exc, stage="plan")
@@ -815,7 +875,7 @@ async def approve_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run):
+            async with _delta_stream(session, run), _usage_boundary(run):
                 values = await graph.ainvoke(
                     Command(resume={"action": "approve", "instructions": instructions}),
                     config=_config(run),
@@ -872,7 +932,7 @@ async def confirm_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run):
+            async with _delta_stream(session, run), _usage_boundary(run):
                 values = await graph.ainvoke(
                     Command(
                         resume={

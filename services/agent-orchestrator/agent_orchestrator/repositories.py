@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 
 from database.repository import TenantRepository
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.orm import Session
 
+from agent_orchestrator.models.approval import ApprovalPolicy
 from agent_orchestrator.models.conversations import (
     Attachment,
     ChatMessage,
@@ -26,6 +28,7 @@ from agent_orchestrator.models.runs import (
     RunEvent,
 )
 from agent_orchestrator.models.skills import SkillPackage, SkillVersion
+from agent_orchestrator.schemas.runs import RunStatus
 
 QUEUED = "queued"
 CONSUMED = "consumed"
@@ -80,6 +83,15 @@ class RunRepository(TenantRepository[Run]):
             limit=limit,
             order_by=[Run.created_at.desc(), Run.id.desc()],
         )
+
+    async def count_active(self, tenant_id: str) -> int:
+        """租户内未终结的 run 数(配额并发闸用)。"""
+        terminal = (
+            RunStatus.COMPLETED.value,
+            RunStatus.FAILED.value,
+            RunStatus.BLOCKED.value,
+        )
+        return await self.count(Run.tenant_id == tenant_id, Run.status.not_in(terminal))
 
     async def list_changed_since(
         self, tenant_id: str, since: datetime, limit: int = 100
@@ -212,6 +224,31 @@ class MCPServerAuthRepository(TenantRepository[MCPServerAuth]):
         return {row.server_id: row for row in rows}
 
 
+def _claim_statement(now: datetime):
+    """job 领取条件:queued 已到期,或 running 但租约过期(worker 崩溃后重领)。"""
+    return (
+        select(Job)
+        .where(
+            or_(
+                and_(Job.status == "queued", Job.run_at <= now),
+                and_(
+                    Job.status == "running",
+                    Job.lease_until.is_not(None),
+                    Job.lease_until < now,
+                ),
+            )
+        )
+        .order_by(Job.run_at, Job.created_at)
+        .limit(1)
+    )
+
+
+def _is_postgres(session: Session) -> bool:
+    """领取策略按方言分叉:PG 用行锁跳过,SQLite 没有 FOR UPDATE。"""
+    bind = session.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") == "postgresql"
+
+
 class JobRepository(TenantRepository[Job]):
     model = Job
     not_found_code = "job.not_found"
@@ -232,22 +269,16 @@ class JobRepository(TenantRepository[Job]):
     async def claim_next(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> Job | None:
-        """本地轮询领取:queued 到期或 running 租约过期;PG 后续换 SKIP LOCKED。"""
-        job = await self.session.scalar(
-            select(Job)
-            .where(
-                or_(
-                    and_(Job.status == "queued", Job.run_at <= now),
-                    and_(
-                        Job.status == "running",
-                        Job.lease_until.is_not(None),
-                        Job.lease_until < now,
-                    ),
-                )
-            )
-            .order_by(Job.run_at, Job.created_at)
-            .limit(1)
-        )
+        """领取一个到期的 job,并立刻占住租约。
+
+        SQLite(单进程 dev)靠先查后改即可;PostgreSQL 多实例部署时同一时刻会有
+        多个 worker 抢同一行,因此套 `FOR UPDATE SKIP LOCKED`:被占住的行直接跳过,
+        各 worker 领到不同 job,不互相等锁也不重复执行。
+        """
+        statement = _claim_statement(now)
+        if _is_postgres(self.session):
+            statement = statement.with_for_update(skip_locked=True)
+        job = await self.session.scalar(statement)
         if job is None:
             return None
         job.status = "running"
@@ -255,6 +286,13 @@ class JobRepository(TenantRepository[Job]):
         job.locked_by = worker_id
         job.lease_until = now + timedelta(seconds=lease_seconds)
         return job
+
+
+class ApprovalPolicyRepository(TenantRepository[ApprovalPolicy]):
+    model = ApprovalPolicy
+    not_found_code = "approval_policy.not_found"
+    not_found_message = "审批策略不存在"
+    id_detail_key = "policy_id"
 
 
 class AttachmentRepository(TenantRepository[Attachment]):

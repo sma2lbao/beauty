@@ -9,12 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.core.byok import encrypt_key
 from account.models.account import BYOKKey, UsageEvent
-from account.repositories import BYOKRepository, UsageEventRepository
+from account.repositories import (
+    BYOKRepository,
+    OrganizationRepository,
+    UsageEventRepository,
+)
 from account.schemas.insights import (
     BYOKRead,
     BYOKUpsert,
     UsageByModel,
     UsageEventCreate,
+    UsageQuota,
     UsageSummary,
 )
 
@@ -72,6 +77,36 @@ async def usage_summary(session: AsyncSession, tenant_id: str) -> UsageSummary:
     )
 
 
+def _positive_int(value: object) -> int | None:
+    """quota JSON 里的数字:非正数/非数字一律当未配置(不限制)。"""
+    if isinstance(value, bool):  # bool 是 int 子类,显式挡掉
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value > 0:
+        return int(value)
+    return None
+
+
+async def usage_quota(session: AsyncSession, tenant_id: str) -> UsageQuota:
+    """租户配额快照:organizations.quota + 本月已用 token。
+
+    quota JSON 结构(宽松,缺省即不限制):
+    ``{"monthly_tokens": 500000, "max_concurrent_runs": 3}``。
+    组织档案不存在时按未配置处理(不拦创建)。
+    """
+    organization = await OrganizationRepository(session).get(tenant_id)
+    quota = (organization.quota if organization is not None else None) or {}
+    events = await UsageEventRepository(session).list_since(
+        tenant_id, _start_of_month()
+    )
+    return UsageQuota(
+        monthly_tokens=_positive_int(quota.get("monthly_tokens")),
+        max_concurrent_runs=_positive_int(quota.get("max_concurrent_runs")),
+        used_tokens=sum(event.total_tokens for event in events),
+    )
+
+
 def _to_read(record: BYOKKey) -> BYOKRead:
     return BYOKRead(
         provider=record.provider,
@@ -117,9 +152,7 @@ async def upsert_byok(
     return _to_read(record)
 
 
-async def delete_byok(
-    session: AsyncSession, tenant_id: str, provider: str
-) -> None:
+async def delete_byok(session: AsyncSession, tenant_id: str, provider: str) -> None:
     repo = BYOKRepository(session)
     record = await repo.find_for_provider(tenant_id, provider.strip().lower())
     if record is None:

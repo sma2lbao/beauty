@@ -55,6 +55,12 @@ class UpstreamError(AppError):
     status = 502
 
 
+class QuotaExceededError(AppError):
+    """配额/预算用尽(用量、并发数、token 预算)——拒绝新任务但可稍后重试。"""
+
+    status = 429
+
+
 class UnauthorizedError(AppError):
     """未认证或凭证不可信(缺失/过期/签名不符/缺租户 claim)。"""
 

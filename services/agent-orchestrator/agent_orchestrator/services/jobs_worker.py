@@ -1,6 +1,7 @@
 """本地 job worker(M0-04):轮询领取、执行、lease/重试。
 
-SQLite 下单进程轮询即可;PG 多实例时把 claim_next 换成 FOR UPDATE SKIP LOCKED。
+SQLite 下单进程轮询即可;PG 多实例由 claim_next 的 FOR UPDATE SKIP LOCKED
+保证不重复领取。
 """
 
 from __future__ import annotations

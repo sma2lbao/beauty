@@ -63,6 +63,17 @@ def test_claim_and_expired_lease_reclaim(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+async def test_claim_statement_is_locked_on_postgres() -> None:
+    """PG 多实例靠 FOR UPDATE SKIP LOCKED 领取,SQLite 没有行锁只能先查后改。"""
+    from sqlalchemy.dialects import postgresql
+
+    from agent_orchestrator.repositories import _claim_statement
+
+    statement = _claim_statement(datetime.now(UTC)).with_for_update(skip_locked=True)
+    sql = str(statement.compile(dialect=postgresql.dialect())).upper()
+    assert "FOR UPDATE SKIP LOCKED" in sql
+
+
 def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
     app = _app(
         tmp_path,

@@ -42,10 +42,12 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
+from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, triage
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
 from agent_orchestrator.services.skill_packages import SkillDefinition
@@ -504,8 +506,14 @@ async def post_message(
             )
         ):
             toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
+            policies = await approval_service.load_policies(session, tenant_id)
             answer = await chat.answer(
-                session, llm, message, toolkit, reference_note=mcp_reference_note
+                session,
+                llm,
+                message,
+                toolkit,
+                reference_note=mcp_reference_note,
+                policies=policies,
             )
         reply = await _persist_assistant_message(session, message, answer)
         return message, None, reply, triage.CHAT
@@ -617,7 +625,9 @@ async def stream_message(
         yield "done", {"mode": outcome, "reply": None}
         return
 
-    # 第二段:流式产出增量(不占事务)
+    # 第二段:流式产出增量(不占事务);顺带采集本轮用量(P0-1,run_id 为空)
+    collector = usage_service.UsageCollector()
+    usage_token = usage_service.bind(collector)
     parts: list[str] = []
     failure: UpstreamError | None = None
     reply: ChatMessage | None = None
@@ -641,7 +651,10 @@ async def stream_message(
                 # 对话内 function-calling:complete 轮次 + 工具事件;
                 # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
                 final = ""
-                async for kind, payload in chat.run_tool_loop(llm, prompt, toolkit):
+                policies = await approval_service.load_policies(session, tenant_id)
+                async for kind, payload in chat.run_tool_loop(
+                    llm, prompt, toolkit, policies=policies
+                ):
                     if kind == "tool":
                         yield "tool", payload
                     elif kind == "content":
@@ -656,9 +669,13 @@ async def stream_message(
     finally:
         # 正常结束、上游失败、客户端断开都走这里:已产出的部分必须落库
         # (finally 里只允许 await,不能再 yield——断开时 yield 会 RuntimeError)
+        usage_service.unbind(usage_token)
         text = "".join(parts)
         if text:
             reply = await _persist_reply(factory, message, text)
+        await usage_service.report(
+            tenant_id=tenant_id, run_id=None, samples=collector.samples
+        )
     if failure is not None:
         yield "error", {"code": failure.code, "message": failure.message}
         return

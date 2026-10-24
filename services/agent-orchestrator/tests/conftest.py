@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.llm import LLMReply
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 
@@ -322,6 +323,17 @@ class FakeWorkspace:
         if self.fail:
             raise RuntimeError("工作区对象存储失败")
         self.objects.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_budget() -> Iterator[None]:
+    """token 预算是进程级配置:多个 create_app 共用一个进程时,用例间必须复位。
+
+    不做这一步,某个开了预算的用例会把后续用例的 run 全带成 failed。
+    """
+    usage_service.configure_budget(0)
+    yield
+    usage_service.configure_budget(0)
 
 
 def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:

@@ -20,6 +20,8 @@ from langgraph.types import interrupt
 
 from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.services import approval as approval_service
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.llm import LLMReply
 
 # ToolRegistry 在 _load_toolkit 里**运行期**构造(base = toolkit or ToolRegistry([])),
@@ -70,8 +72,9 @@ async def _text_reply(
 
     节点仍然只上报文本、不碰数据库——落库在 services 层的图调用边界。
     注入实现(测试假客户端等)不一定支持 stream,没有就退回 complete,
-    行为与不流式时完全一致。
+    行为与不流式时完全一致。调用前先过 token 预算闸(P0-3)。
     """
+    usage_service.check_budget()
     if not delta.active() or not hasattr(llm, "stream"):
         return (await llm.complete(messages)).content
     parts: list[str] = []
@@ -355,14 +358,27 @@ def make_execute_node(
         reply = LLMReply(content="")
         exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
+            usage_service.check_budget()
             reply = await llm.complete(messages, tools=schemas)
             if not reply.tool_calls:
                 exhausted = False
                 break
             messages.append(_assistant_tool_message(reply))
             pending: list[dict[str, Any]] = []
+            policies = state.get("approval_policies") or []
             for call in reply.tool_calls:
-                if toolkit.requires_confirmation(call.name):
+                decision = approval_service.decide(
+                    policies, call.name, toolkit.risk(call.name)
+                )
+                if decision is approval_service.ApprovalAction.DENY:
+                    # 策略禁用:不执行,如实回喂模型(它能据此换个做法)
+                    output = _tool_error(
+                        f"工具 {call.name} 被租户审批策略禁止使用,本次未执行"
+                    )
+                    records.append(_record(call.name, call.arguments, output))
+                    messages.append(_tool_message(call.id, output))
+                    continue
+                if decision is approval_service.ApprovalAction.CONFIRM:
                     if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
                         # 确认次数达上限:不再打断,如实告知模型未执行
                         output = _tool_error("危险操作确认次数已达上限,本次未执行")

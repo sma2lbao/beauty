@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -9,7 +10,7 @@ from common.auth import JwtVerifier
 from common.errors import UnauthorizedError
 from common.logging import bind_request_context
 from database.session import session_scope
-from fastapi import Header, Request
+from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.core.config import Settings
@@ -23,6 +24,30 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+async def get_internal_tenant_id(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+    x_internal_secret: Annotated[str | None, Header(alias="X-Internal-Secret")] = None,
+) -> str:
+    """内部调用租户解析:共享密钥 + 显式 X-Tenant-Id,不用租户 token。
+
+    服务间调用(orchestrator 上报用量、读配额快照)没有用户上下文,
+    凭 ``X-Internal-Secret`` 认证;密钥不匹配/缺租户头都是 401。
+    """
+    expected = settings.internal_secret
+    if (
+        not expected
+        or not x_internal_secret
+        or not secrets.compare_digest(x_internal_secret, expected)
+    ):
+        raise UnauthorizedError("auth.internal_forbidden", "内部调用未开放")
+    if not x_tenant_id:
+        raise UnauthorizedError("auth.tenant_missing", "内部调用缺少 X-Tenant-Id")
+    bind_request_context(tenant_id=x_tenant_id)
+    return x_tenant_id
 
 
 async def get_tenant_id(
