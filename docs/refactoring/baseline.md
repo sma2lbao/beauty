@@ -19,3 +19,19 @@
 | 规模 | TS/TSX 行数 | git ls-files 后 wc -l | 33319 行（236 文件）+ CSS 2226 行 | — | web 21860/120、desktop 6734/43、design 3216/57、site 1509/16 |
 | 规模 | Python 行数 | 同上（排除 tests） | 约 2.82 万行 | — | AO 15878 为最大 |
 
+## W1 基线（2026-10-24 · 立项时实测）
+
+| 维度 | 指标 | 采集命令 | 基线值 | W1 目标 |
+| --- | --- | --- | --- | --- |
+| 重复代码 | 本地 request<T> 定义 | grep -rn "function request<" apps/web/src/lib/*.ts | 10 处（account-api:59、api-keys-api:21、conversations-api:90、insights-api:42、knowledge-api:45、mcp-api:112、outbox-api:33、runs-api:90、skills-api:70、workspace-api:47） | 0（统一 http 工厂） |
+| 重复代码 | SSE getReader 手写 | grep -rn "getReader()" apps/web/src | 3 处（runs-api:224、conversations-api:318、notifications-api:56） | 1（lib/sse.ts） |
+| 重复代码 | formatTime/formatSize 定义 | grep 页面源码 | 7 处（settings:33、outbox:39、knowledge:27/34、workspace:39/46、mcp:95） | 1（presentation/format） |
+| 配置 | import.meta.env 直读 | grep -rn "import.meta.env" apps/web/src | 14 处 / 9 文件 | 0（config/env.ts） |
+| 数据层 | queryKey 字面量 | grep queryKey: 数组字面量 | 86 处 queryKey / 58 处数组字面量 | 0 字面量（query-keys.ts） |
+| 结构 | presentation.ts | wc -l | 477 行 / 14 个引用文件 | ≤4 文件 + barrel |
+| 结构 | lib 目录 | ls apps/web/src/lib | 41 文件 5464 行 | 暂增（W2 分层） |
+| 路由 | app.tsx | wc -l | 59 行，静态 import 15 页，0 lazy/Suspense | lazy + Suspense |
+| 构建 | 入口 chunk | npx nx build @beauty/web（W0 台账） | 737954B JS + 77514B CSS | 入口 < 737954B，新值入库 |
+| 质量 | eslint 规则 | tools/eslint-config/configs/base.js | 仅 ignores + recommended，无 import 边界/max-lines | 边界+体量规则 |
+| 质量 | 文档门禁 | npx prettier --check "docs/**/*.md" | 15 文件失败；无 markdownlint/链接检查；gate 未含 | 全绿并纳入 gate |
+| 脚本 | dev.sh 已知缺陷 | 审计（ops） | 进程组只 kill nx 父进程 / lsof 依赖 / 端口占用误判 / 首次不 uv sync；reset 不清 services/*/.cache | R-15 尽力修 |

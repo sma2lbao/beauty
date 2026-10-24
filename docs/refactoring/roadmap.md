@@ -30,7 +30,27 @@
 | common:build（uv export）在无 UV_CACHE_DIR 时失败（build executor 不吃 env） | R-01 | gate/CI 均先导出，非阻塞 |
 | ~~docs/README.md 的 PR 模板行~~ 已解决：R-06 已落地，lead 已将索引行改为链接 | R-05 | 完成 |
 
-## W1（下一波，未立项）
+## W1（进行中 · 2026-10-24 立项）
 
-R-08 env 集中、R-09 queryKey registry、R-10 路由拆包、R-11 http 工厂、R-12 SSE 基座、R-13 拆 presentation.ts、R-14 eslint 边界、R-15 dev.sh 健壮性、R-16 文档门禁。依赖关系见 playbook §10.4。
+- 立项文档：docs/refactoring/rfc/002-w1.md；基线：docs/refactoring/baseline.md「W1 基线」小节
+- 出口门禁（§10.3 W1）：request<T> 定义=0；getReader=1；import.meta.env=0；queryKey 字面量=0；formatTime/formatSize=1；单 PR ≤400 行；bundle 新基线入库
 
+| ID | 波次 | 范围 | 规模 | 风险 | 依赖 | owner | 状态 | 提交 | 出口证据 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R-08 | W1 | env 集中（14 处 → config/env.ts） | S | 低 | R-11/R-12/R-13 合入后 | w1-env | 🚧 in_progress | — | import.meta.env=0 |
+| R-09 | W1 | queryKey registry（58 字面量 → 工厂） | S | 低 | R-13 合入后 | w1-env | 🚧 in_progress | — | 字面量=0，缓存失效行为不变 |
+| R-10 | W1 | 路由级拆包（15 页 static → lazy） | S | 低 | 无 | lead | 🚧 in_progress | — | 入口 chunk < 737954B，新值入库 |
+| R-11 | W1 | HTTP client 工厂（10 份 request<T> → 1） | M | 低 | 无 | w1-api | 🚧 in_progress | — | 本地 request<T>=0，测试全绿 |
+| R-12 | W1 | SSE 基座（3 份 reader → lib/sse.ts） | M | 中 | R-11 | w1-api | 🚧 in_progress | — | getReader=1，SSE 语义等价 |
+| R-13 | W1 | 拆 presentation.ts + 去重 format | S | 低 | 无 | w1-present | 🚧 in_progress | — | 单文件≤4，format 定义=1 |
+| R-14 | W1 | eslint 边界与体量规则 | S | 低 | 无 | w1-tooling | 🚧 in_progress | — | lint 15/15 绿，命中数记录 |
+| R-15 | W1 | dev.sh 健壮性（尽力） | M | 低 | 无 | w1-tooling | 🚧 in_progress | — | 4 缺陷修复或记遗留 |
+| R-16 | W1 | 文档门禁（prettier+链接检查入 gate） | S | 低 | 无 | w1-tooling | 🚧 in_progress | — | docs 检查全绿并入 gate |
+
+## W1 任务板映射
+
+- task-8 = R-14 + R-16（+R-15 尽力）→ w1-tooling
+- task-9 = R-11 + R-12 → w1-api
+- task-10 = R-13 → w1-present
+- task-11 = R-08 + R-09 → w1-env（blocked_by task-9、task-10）
+- task-12 = R-10 → lead
