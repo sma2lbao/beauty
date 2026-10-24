@@ -3,6 +3,8 @@ import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+import { thresholds } from '../../vitest.config.mts';
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -23,6 +25,7 @@ export default defineConfig({
     coverage: {
       reportsDirectory: './test-output/vitest/coverage',
       provider: 'v8' as const,
+      thresholds: thresholds['@beauty/web'],
     },
   },
 });

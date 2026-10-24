@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+import { thresholds } from '../../vitest.config.mts';
+
 /** 渲染进程测试:jsdom + Testing Library。 */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -14,7 +16,12 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src/renderer', import.meta.url)),
       '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)),
     },
-    conditions: ['@beauty/source', 'module', 'browser', 'development|production'],
+    conditions: [
+      '@beauty/source',
+      'module',
+      'browser',
+      'development|production',
+    ],
   },
   test: {
     name: '@beauty/desktop (renderer)',
@@ -25,5 +32,10 @@ export default defineConfig({
     setupFiles: ['./src/renderer/vitest.setup.ts'],
     include: ['src/renderer/**/*.{test,spec}.{ts,tsx}'],
     reporters: ['default'],
+    coverage: {
+      reportsDirectory: './test-output/vitest/coverage',
+      provider: 'v8' as const,
+      thresholds: thresholds['@beauty/desktop (renderer)'],
+    },
   },
 });

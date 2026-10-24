@@ -2,6 +2,8 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
 
+import { thresholds } from '../../vitest.config.mts';
+
 /** 主进程 / 预加载 / 共享契约测试:纯 node 环境,零网络、零 Electron 依赖。 */
 export default defineConfig({
   // Vitest 4 的 cacheDir 是 Vite 顶层配置,不属于 test 对象
@@ -19,5 +21,10 @@ export default defineConfig({
     environment: 'node',
     include: ['src/main/**/*.{test,spec}.ts', 'src/shared/**/*.{test,spec}.ts'],
     reporters: ['default'],
+    coverage: {
+      reportsDirectory: './test-output/vitest/coverage',
+      provider: 'v8' as const,
+      thresholds: thresholds['@beauty/desktop (node)'],
+    },
   },
 });

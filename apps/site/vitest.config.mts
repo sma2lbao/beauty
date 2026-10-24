@@ -3,6 +3,8 @@ import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+import { thresholds } from '../../vitest.config.mts';
+
 /**
  * W2 R-21:官网最小测试配置(此前零测试)。
  * 只测纯函数与可直 render 的客户端组件:
@@ -26,5 +28,10 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['app/**/*.test.{ts,tsx}', 'components/**/*.test.{ts,tsx}'],
     reporters: ['default'],
+    coverage: {
+      reportsDirectory: './test-output/vitest/coverage',
+      provider: 'v8' as const,
+      thresholds: thresholds['@beauty/site'],
+    },
   },
 });
