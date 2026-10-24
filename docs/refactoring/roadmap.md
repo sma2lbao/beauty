@@ -24,11 +24,11 @@
 
 | 项 | 来源 | 跟踪 |
 | --- | --- | --- |
-| CI 首次真实运行（push 后）验证 job 耗时与 affected 退化行为 | R-03 | W1 立项前 |
+| CI 首次真实运行验证：已 push c9b3d63 触发首跑（2026-10-24 21:10），结果待 GitHub Actions 页面确认；affected 基线无变更时退化全量属预期 | R-03 | 结果出来后回填此行 |
 | workspace-service test_sandbox_lifecycle 既有环境失败（本机 msb rootfs 缓存） | gate --affected 发现 | R-15 清理清单 |
 | @nxlv/python 6 类 executor（sync/lock/add/update/remove/install、ruff-check/format）schema 无 env | R-01 降级方案 | 上游支持后回补 project.json；gate/CI 已兜底 |
 | common:build（uv export）在无 UV_CACHE_DIR 时失败（build executor 不吃 env） | R-01 | gate/CI 均先导出，非阻塞 |
-| docs/README.md 的 PR 模板行待 R-06 落地后改回链接 | R-05 | 已由 R-06 落地，链接待 lead 顺手更新 |
+| ~~docs/README.md 的 PR 模板行~~ 已解决：R-06 已落地，lead 已将索引行改为链接 | R-05 | 完成 |
 
 ## W1（下一波，未立项）
 
