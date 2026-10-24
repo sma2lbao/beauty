@@ -10,9 +10,7 @@
 
 import { authMode } from '@/lib/auth';
 import { createHttpClient } from '@/lib/http';
-
-const BASE =
-  (import.meta.env.VITE_KNOWLEDGE_API_URL as string | undefined) ?? '';
+import { knowledgeBase as BASE } from '@/config/env';
 
 const PREFIX = authMode() === 'session' ? '/api/knowledge' : '/knowledge-api';
 

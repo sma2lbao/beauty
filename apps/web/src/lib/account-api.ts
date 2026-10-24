@@ -8,8 +8,7 @@
 
 import { authMode } from '@/lib/auth';
 import { createHttpClient } from '@/lib/http';
-
-const BASE = (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
+import { accountBase as BASE } from '@/config/env';
 
 const PREFIX = authMode() === 'session' ? '/api/account' : '/account-api';
 

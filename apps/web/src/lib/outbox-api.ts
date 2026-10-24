@@ -7,8 +7,7 @@
  */
 
 import { createHttpClient } from '@/lib/http';
-
-const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
+import { runsBase as BASE } from '@/config/env';
 
 export type OutboxStatus = 'pending' | 'dispatched' | 'failed';
 

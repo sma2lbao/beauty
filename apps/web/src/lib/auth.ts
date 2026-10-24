@@ -16,19 +16,20 @@
 
 import LogtoClient from '@logto/browser';
 
-export type AuthMode = 'token' | 'logto' | 'session';
+import {
+  accountBase as ACCOUNT_BASE,
+  authMode as MODE,
+  logto as logtoEnv,
+  type AuthMode,
+} from '@/config/env';
 
-const MODE =
-  (import.meta.env.VITE_AUTH_MODE as AuthMode | undefined) ?? 'token';
-const LOGTO_ENDPOINT = import.meta.env.VITE_LOGTO_ENDPOINT as
-  | string
-  | undefined;
-const LOGTO_APP_ID = import.meta.env.VITE_LOGTO_APP_ID as string | undefined;
-const LOGTO_RESOURCE = import.meta.env.VITE_LOGTO_RESOURCE as
-  | string
-  | undefined;
-const ACCOUNT_BASE =
-  (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
+export type { AuthMode };
+
+const {
+  endpoint: LOGTO_ENDPOINT,
+  appId: LOGTO_APP_ID,
+  resource: LOGTO_RESOURCE,
+} = logtoEnv;
 const TOKEN_KEY = 'beauty.auth.access_token';
 const REFRESH_KEY = 'beauty.auth.refresh_token';
 const LABEL_KEY = 'beauty.auth.account_label';

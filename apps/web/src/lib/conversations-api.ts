@@ -11,8 +11,7 @@ import { authHeaders } from '@/lib/auth';
 import { ApiError, createHttpClient } from '@/lib/http';
 import { connectSse, parseSseFrameText } from '@/lib/sse';
 import type { Run } from '@/lib/runs-api';
-
-const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
+import { runsBase as BASE } from '@/config/env';
 
 export type Conversation = {
   id: string;

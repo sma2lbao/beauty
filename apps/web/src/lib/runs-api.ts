@@ -8,8 +8,7 @@
 
 import { ApiError, createHttpClient, isUnauthorized } from '@/lib/http';
 import { connectSse } from '@/lib/sse';
-
-const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
+import { runsBase as BASE } from '@/config/env';
 
 export type RunStatus =
   | 'pending'

@@ -8,9 +8,7 @@
 
 import { authMode } from '@/lib/auth';
 import { createHttpClient } from '@/lib/http';
-
-const BASE =
-  (import.meta.env.VITE_WORKSPACE_API_URL as string | undefined) ?? '';
+import { workspaceBase as BASE } from '@/config/env';
 
 const PREFIX = authMode() === 'session' ? '/api/workspace' : '/workspace-api';
 
