@@ -27,6 +27,7 @@ import type { Run } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { type RunFilterKey, useRunBoardStore } from '@/stores/run-board-store';
 import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/query-keys';
 
 const FILTERS: { key: RunFilterKey; label: string }[] = [
   { key: 'all', label: '全部任务' },
@@ -54,7 +55,7 @@ export function RunsPage() {
   const [criteria, setCriteria] = useState('覆盖本周主要进展\n不超过 300 字');
 
   const runsQuery = useQuery({
-    queryKey: ['runs'],
+    queryKey: queryKeys.runs,
     queryFn: runsApi.list,
     refetchInterval: 5000,
   });
@@ -71,7 +72,7 @@ export function RunsPage() {
     onSuccess: async (run) => {
       setSelectedRunId(run.id);
       setCreateOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ['runs'] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs });
     },
   });
 

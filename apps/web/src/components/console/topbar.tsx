@@ -22,6 +22,7 @@ import { insightsApi } from '@/lib/insights-api';
 import { useUiStore } from '@/stores/ui-store';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/query-keys';
 
 export function ConsoleTopbar({
   title,
@@ -34,11 +35,11 @@ export function ConsoleTopbar({
   workspace?: string | null;
 }) {
   const accountQuery = useQuery({
-    queryKey: ['auth-account'],
+    queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
   });
   const modelsQuery = useQuery({
-    queryKey: ['models'],
+    queryKey: queryKeys.models,
     queryFn: insightsApi.models,
     retry: false,
     staleTime: 60_000,

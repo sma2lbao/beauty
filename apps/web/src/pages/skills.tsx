@@ -33,9 +33,7 @@ import {
 import { formatBytes } from '@/lib/presentation';
 import { skillsApi } from '@/lib/skills-api';
 import type { SkillPackage } from '@/lib/skills-api';
-
-const SKILLS_KEY = ['skills'];
-const PACKAGES_KEY = ['skill-packages'];
+import { queryKeys } from '@/lib/query-keys';
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
@@ -52,20 +50,20 @@ export function SkillsPage() {
   const [pendingDelete, setPendingDelete] = useState<SkillPackage | null>(null);
 
   const skillsQuery = useQuery({
-    queryKey: SKILLS_KEY,
+    queryKey: queryKeys.skills,
     queryFn: skillsApi.list,
   });
   const packagesQuery = useQuery({
-    queryKey: PACKAGES_KEY,
+    queryKey: queryKeys.skillPackages,
     queryFn: skillsApi.listPackages,
   });
   const skills = skillsQuery.data ?? [];
   const packages = packagesQuery.data ?? [];
 
   const refreshSkills = () =>
-    queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.skills });
   const refreshPackages = () =>
-    queryClient.invalidateQueries({ queryKey: PACKAGES_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.skillPackages });
 
   const uploadMutation = useMutation({
     mutationFn: (target: File) => skillsApi.uploadPackage(target),

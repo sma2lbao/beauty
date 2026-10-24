@@ -8,6 +8,7 @@ import { useSearchParams } from 'react-router';
 import { BrandLockup } from '@/components/brand/logo';
 import { Button } from '@beauty/design';
 import { oauth21Api } from '@/lib/oauth21-api';
+import { queryKeys } from '@/lib/query-keys';
 
 function denyRedirect(
   redirectUri: string,
@@ -34,7 +35,7 @@ export function OAuthAuthorizePage() {
   const responseType = params.get('response_type') ?? 'code';
 
   const clientQuery = useQuery({
-    queryKey: ['oauth-client', clientId],
+    queryKey: queryKeys.oauthClient(clientId),
     queryFn: () => oauth21Api.client(clientId),
     enabled: Boolean(clientId),
     retry: false,

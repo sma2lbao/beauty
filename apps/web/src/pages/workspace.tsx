@@ -36,6 +36,7 @@ import {
   useWorkspaceSelection,
   type WorkspaceList,
 } from '@/lib/workspace-selection';
+import { queryKeys } from '@/lib/query-keys';
 
 /** 工作区中心的区块标题:图标 + 文案 + 右侧计数。 */
 function SectionHeading({
@@ -94,14 +95,14 @@ export function WorkspacePage() {
   }, [formOpen, workspacesLoading]);
 
   const artifactsQuery = useQuery({
-    queryKey: ['workspace-artifacts', activeWorkspaceId],
+    queryKey: queryKeys.workspaceArtifacts(activeWorkspaceId),
     queryFn: () => workspaceApi.artifacts(activeWorkspaceId as string),
     enabled: Boolean(activeWorkspaceId),
   });
 
   // 工作区页展示"这个工作区下的会话":归属过滤由服务端按 workspace_id 完成。
   const conversationsQuery = useQuery({
-    queryKey: ['conversations', 'workspace', activeWorkspaceId],
+    queryKey: [...queryKeys.conversations, 'workspace', activeWorkspaceId],
     queryFn: () =>
       conversationsApi.list({
         workspace_id: activeWorkspaceId ?? undefined,
@@ -115,7 +116,7 @@ export function WorkspacePage() {
     queryClient.invalidateQueries({ queryKey: WORKSPACES_KEY });
   const refreshArtifacts = () =>
     queryClient.invalidateQueries({
-      queryKey: ['workspace-artifacts', activeWorkspaceId],
+      queryKey: queryKeys.workspaceArtifacts(activeWorkspaceId),
     });
 
   const createMutation = useMutation({
@@ -168,7 +169,7 @@ export function WorkspacePage() {
     ? isImageArtifact(selectedArtifact)
     : false;
   const imageQuery = useQuery({
-    queryKey: ['workspace-artifact-blob', selectedArtifact?.id],
+    queryKey: queryKeys.workspaceArtifactBlob(selectedArtifact?.id),
     queryFn: () =>
       workspaceApi.downloadArtifact(selectedArtifact?.id as string),
     enabled: Boolean(selectedArtifact?.id) && selectedIsImage,
@@ -366,8 +367,8 @@ export function WorkspacePage() {
                         {activeWorkspace.description ?? '无描述'}
                       </p>
                       <p className="mt-1 font-mono text-[11px] text-ha-dim">
-                        创建于 {formatDateTime(activeWorkspace.created_at)} · 会话{' '}
-                        {workspaceConversations.length} 个 · 交付物{' '}
+                        创建于 {formatDateTime(activeWorkspace.created_at)} ·
+                        会话 {workspaceConversations.length} 个 · 交付物{' '}
                         {artifacts.length} 个
                       </p>
                     </div>

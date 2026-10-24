@@ -53,6 +53,7 @@ import type { Run, RunStatus } from '@/lib/runs-api';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
 import { useUiStore } from '@/stores/ui-store';
+import { queryKeys } from '@/lib/query-keys';
 
 const SUGGESTIONS = [
   '把本周文档整理成一份周报草稿',
@@ -128,7 +129,7 @@ export function ChatPage() {
   const prevStatusRef = useRef<RunStatus | null>(null);
 
   const conversationsQuery = useQuery({
-    queryKey: ['conversations', activeWorkspaceId],
+    queryKey: [...queryKeys.conversations, activeWorkspaceId],
     queryFn: () =>
       conversationsApi.list({
         workspace_id: activeWorkspaceId ?? undefined,
@@ -136,12 +137,12 @@ export function ChatPage() {
     enabled: Boolean(activeWorkspaceId),
   });
   const skillsQuery = useQuery({
-    queryKey: ['skills'],
+    queryKey: queryKeys.skills,
     queryFn: skillsApi.list,
     retry: false,
   });
   const mcpQuery = useQuery({
-    queryKey: ['mcp-servers'],
+    queryKey: queryKeys.mcpServers,
     queryFn: mcpApi.list,
     retry: false,
   });
@@ -157,21 +158,21 @@ export function ChatPage() {
   }));
 
   const conversationQuery = useQuery({
-    queryKey: ['conversation', activeConversationId],
+    queryKey: queryKeys.conversation(activeConversationId as string),
     queryFn: () => conversationsApi.get(activeConversationId as string),
     enabled: Boolean(activeConversationId),
   });
   const conversationWorkspaceId = conversationQuery.data?.workspace_id ?? null;
 
   const messagesQuery = useQuery({
-    queryKey: ['conversation-messages', activeConversationId],
+    queryKey: queryKeys.conversationMessages(activeConversationId as string),
     queryFn: () => conversationsApi.messages(activeConversationId as string),
     enabled: Boolean(activeConversationId),
   });
   const messages = messagesQuery.data ?? [];
 
   const attachmentsQuery = useQuery({
-    queryKey: ['conversation-attachments', activeConversationId],
+    queryKey: queryKeys.conversationAttachments(activeConversationId as string),
     queryFn: () => conversationsApi.attachments(activeConversationId as string),
     enabled: Boolean(activeConversationId),
   });
@@ -191,7 +192,7 @@ export function ChatPage() {
     manualRunId ?? conversationQuery.data?.active_run_id ?? null;
 
   const runQuery = useQuery({
-    queryKey: ['run', activeRunId],
+    queryKey: queryKeys.run(activeRunId as string),
     queryFn: () => runsApi.get(activeRunId as string),
     enabled: Boolean(activeRunId),
     refetchInterval: (query) => {
@@ -202,7 +203,7 @@ export function ChatPage() {
   const { events, connected, reconnecting } = useRunEvents(activeRunId);
   const toolCalls = toolCallsFrom(events);
   const planQuery = useQuery({
-    queryKey: ['plan', activeRunId],
+    queryKey: queryKeys.plan(activeRunId as string),
     queryFn: () => runsApi.getPlan(activeRunId as string),
     enabled: Boolean(activeRunId),
     retry: false,
@@ -244,12 +245,12 @@ export function ChatPage() {
 
   const settle = async (conversationId: string) => {
     await queryClient.invalidateQueries({
-      queryKey: ['conversation-messages', conversationId],
+      queryKey: queryKeys.conversationMessages(conversationId),
     });
     await queryClient.invalidateQueries({
-      queryKey: ['conversation-attachments', conversationId],
+      queryKey: queryKeys.conversationAttachments(conversationId),
     });
-    await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
     setPending((previous) =>
       previous && previous.conversationId === conversationId ? null : previous,
     );
@@ -322,9 +323,11 @@ export function ChatPage() {
               runId: meta.run.id,
             });
           }
-          void queryClient.invalidateQueries({ queryKey: ['conversations'] });
           void queryClient.invalidateQueries({
-            queryKey: ['conversation', targetConversationId],
+            queryKey: queryKeys.conversations,
+          });
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.conversation(targetConversationId),
           });
         },
         onDelta: (delta) =>
@@ -400,8 +403,10 @@ export function ChatPage() {
     mutationFn: (task: () => Promise<unknown>) => task(),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['run', activeRunId] }),
-        queryClient.invalidateQueries({ queryKey: ['conversations'] }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.run(activeRunId as string),
+        }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
       ]);
     },
   });
@@ -479,9 +484,11 @@ export function ChatPage() {
       isRunTerminal(status)
     ) {
       void queryClient.invalidateQueries({
-        queryKey: ['conversation-messages', activeConversationId],
+        queryKey: queryKeys.conversationMessages(
+          activeConversationId as string,
+        ),
       });
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
     }
   }, [status, activeConversationId, queryClient]);
 

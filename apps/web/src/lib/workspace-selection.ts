@@ -11,10 +11,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 
+import { queryKeys } from '@/lib/query-keys';
 import { workspaceApi, type Workspace } from '@/lib/workspace-api';
 
-/** 工作区列表 + 默认工作区的缓存键(建工作区后往这里补数据)。 */
-export const WORKSPACES_KEY = ['workspaces'] as const;
+/** 工作区列表 + 默认工作区的缓存键(建工作区后往这里补数据);键定义收敛在 @/lib/query-keys。 */
+export const WORKSPACES_KEY = queryKeys.workspaces;
 
 export type WorkspaceList = {
   workspaces: Workspace[];

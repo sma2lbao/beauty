@@ -12,6 +12,7 @@ import {
   ToneBadge,
 } from '@/components/console/ui';
 import { insightsApi } from '@/lib/insights-api';
+import { queryKeys } from '@/lib/query-keys';
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('zh-CN').format(value);
@@ -19,11 +20,11 @@ function formatNumber(value: number): string {
 
 export function UsagePage() {
   const summaryQuery = useQuery({
-    queryKey: ['usage-summary'],
+    queryKey: queryKeys.usageSummary,
     queryFn: insightsApi.usage,
   });
   const modelsQuery = useQuery({
-    queryKey: ['models'],
+    queryKey: queryKeys.models,
     queryFn: insightsApi.models,
     retry: false,
   });

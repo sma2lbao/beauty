@@ -58,8 +58,7 @@ import {
   type MCPRuntime,
   type MCPTransport,
 } from '@/lib/mcp-api';
-
-const SERVERS_KEY = ['mcp-servers'];
+import { queryKeys } from '@/lib/query-keys';
 
 const TRANSPORT_TABS = [
   { value: 'http', label: 'HTTP(远程)' },
@@ -177,7 +176,7 @@ export function McpPage() {
   } | null>(null);
 
   const serversQuery = useQuery({
-    queryKey: SERVERS_KEY,
+    queryKey: queryKeys.mcpServers,
     queryFn: mcpApi.list,
   });
   const servers = serversQuery.data ?? [];
@@ -185,12 +184,12 @@ export function McpPage() {
     servers.find((server) => server.id === selectedId) ?? servers[0] ?? null;
 
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: SERVERS_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.mcpServers });
 
   // 浏览器授权成功回调(带 ?oauth=success):该 server 的授权状态与 token 已变化,重新拉列表
   useEffect(() => {
     if (oauthStatus !== 'success') return;
-    void queryClient.invalidateQueries({ queryKey: SERVERS_KEY });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.mcpServers });
   }, [oauthStatus, queryClient]);
 
   const buildCreateInput = (): MCPServerCreateInput => {
@@ -351,8 +350,7 @@ export function McpPage() {
                 : '浏览器授权成功'}
             </p>
             <p className="mt-1 text-[11px] leading-4 text-ha-text-2">
-              授权状态已刷新,可点「测试/刷新」重新拉取该 server
-              的工具。
+              授权状态已刷新,可点「测试/刷新」重新拉取该 server 的工具。
             </p>
           </ConsolePanel>
         ) : null}
@@ -660,7 +658,8 @@ export function McpPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <ToneBadge tone={status.tone}>{status.label}</ToneBadge>
                     <span className="font-mono text-[11px] text-ha-dim">
-                      最近测试 {formatDateTime(selected.last_checked_at, '未测试')}
+                      最近测试{' '}
+                      {formatDateTime(selected.last_checked_at, '未测试')}
                     </span>
                     {selected.last_status === 'ok' ? (
                       <Mono>{selected.tools.length} 个工具可用</Mono>
@@ -737,7 +736,9 @@ export function McpPage() {
                         <div className="flex shrink-0 gap-2">
                           <Button
                             size="sm"
-                            variant={oauthNeedsAuthorize ? 'primary' : 'outline'}
+                            variant={
+                              oauthNeedsAuthorize ? 'primary' : 'outline'
+                            }
                             disabled={oauthStartMutation.isPending}
                             onClick={() =>
                               oauthStartMutation.mutate(selected.id)

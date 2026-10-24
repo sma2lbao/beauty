@@ -62,6 +62,7 @@ import { siteUrl } from '@/lib/site-links';
 import { cn } from '@/lib/utils';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
 import { useUiStore } from '@/stores/ui-store';
+import { queryKeys } from '@/lib/query-keys';
 
 const PRIMARY_NAV = [
   { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
@@ -107,7 +108,7 @@ export function ConsoleSidebar() {
   // 取租户内全部会话(不传 workspace_id),客户端再按当前工作区过滤;
   // 搜索与归档视图仍交给服务端分页。
   const conversationsQuery = useInfiniteQuery({
-    queryKey: ['conversations', 'all', showArchived, deferredQuery],
+    queryKey: [...queryKeys.conversations, 'all', showArchived, deferredQuery],
     queryFn: ({ pageParam }) =>
       conversationsApi.page({
         limit: 20,
@@ -120,16 +121,16 @@ export function ConsoleSidebar() {
   });
 
   const runsQuery = useQuery({
-    queryKey: ['runs'],
+    queryKey: queryKeys.runs,
     queryFn: runsApi.list,
     refetchInterval: 5000,
   });
   const accountQuery = useQuery({
-    queryKey: ['auth-account'],
+    queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
   });
   const organizationQuery = useQuery({
-    queryKey: ['organization'],
+    queryKey: queryKeys.organization,
     queryFn: accountApi.organization,
     retry: false,
   });
@@ -167,8 +168,10 @@ export function ConsoleSidebar() {
   );
 
   const invalidateConversations = () => {
-    void queryClient.invalidateQueries({ queryKey: ['conversations'] });
-    void queryClient.invalidateQueries({ queryKey: ['conversation'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.conversationPrefix,
+    });
   };
 
   /** 控制台内所有会话链接都带上工作区:刷新/分享都能还原同一视图。 */

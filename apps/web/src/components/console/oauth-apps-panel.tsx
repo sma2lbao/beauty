@@ -15,12 +15,13 @@ import {
 } from '@beauty/design';
 
 import { oauth21Api } from '@/lib/oauth21-api';
+import { queryKeys } from '@/lib/query-keys';
 
 export function OAuthAppsPanel() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const appsQuery = useQuery({
-    queryKey: ['oauth-authorizations'],
+    queryKey: queryKeys.oauthAuthorizations,
     queryFn: oauth21Api.authorizations,
   });
   const apps = appsQuery.data ?? [];
@@ -29,7 +30,7 @@ export function OAuthAppsPanel() {
     onSuccess: async () => {
       setError(null);
       await queryClient.invalidateQueries({
-        queryKey: ['oauth-authorizations'],
+        queryKey: queryKeys.oauthAuthorizations,
       });
     },
     onError: (failure) => setError((failure as Error).message),

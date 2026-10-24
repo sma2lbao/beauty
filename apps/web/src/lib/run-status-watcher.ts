@@ -24,6 +24,7 @@ import {
   type NotificationTone,
 } from '@/stores/notifications-store';
 import { useUiStore } from '@/stores/ui-store';
+import { queryKeys } from '@/lib/query-keys';
 
 export type StatusChange = {
   runId: string;
@@ -151,7 +152,7 @@ export function useRunStatusNotifications(): void {
 
   // 与 sidebar 的 ['runs'] 同 key,共享缓存与轮询,不会多打请求
   const runsQuery = useQuery({
-    queryKey: ['runs'],
+    queryKey: queryKeys.runs,
     queryFn: runsApi.list,
     refetchInterval: 5000,
   });

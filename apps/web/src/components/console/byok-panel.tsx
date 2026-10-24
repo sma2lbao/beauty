@@ -17,6 +17,7 @@ import {
 } from '@beauty/design';
 
 import { insightsApi } from '@/lib/insights-api';
+import { queryKeys } from '@/lib/query-keys';
 
 const PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 
@@ -26,8 +27,12 @@ export function ByokPanel() {
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const keysQuery = useQuery({ queryKey: ['byok'], queryFn: insightsApi.byok });
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['byok'] });
+  const keysQuery = useQuery({
+    queryKey: queryKeys.byok,
+    queryFn: insightsApi.byok,
+  });
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.byok });
 
   const saveMutation = useMutation({
     mutationFn: () => insightsApi.saveByok(provider, apiKey.trim()),

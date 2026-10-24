@@ -27,6 +27,7 @@ import {
 import type { Run } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/query-keys';
 
 const CONSOLE_TEXTAREA =
   'w-full resize-y rounded-md border border-ha-border-strong bg-ha-panel-2 px-3 py-2 text-[12px] leading-5 text-ha-text-body outline-none placeholder:text-ha-dim focus:border-ha-accent';
@@ -47,7 +48,7 @@ export function RunDetail({
   const [showArtifact, setShowArtifact] = useState(false);
 
   const runQuery = useQuery({
-    queryKey: ['run', runId],
+    queryKey: queryKeys.run(runId),
     queryFn: () => runsApi.get(runId),
     refetchInterval: (query) => {
       const data = query.state.data as Run | undefined;
@@ -55,21 +56,23 @@ export function RunDetail({
     },
   });
   const planQuery = useQuery({
-    queryKey: ['plan', runId],
+    queryKey: queryKeys.plan(runId),
     queryFn: () => runsApi.getPlan(runId),
   });
   const instructionsQuery = useQuery({
-    queryKey: ['instructions', runId],
+    queryKey: queryKeys.instructions(runId),
     queryFn: () => runsApi.instructions(runId),
   });
   const { events, connected } = useRunEvents(runId);
 
   const refresh = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['run', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['plan', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['instructions', runId] }),
-      queryClient.invalidateQueries({ queryKey: ['runs'] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plan(runId) }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.instructions(runId),
+      }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
     ]);
   };
 

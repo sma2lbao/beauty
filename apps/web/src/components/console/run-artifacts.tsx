@@ -20,6 +20,7 @@ import { formatBytes } from '@/lib/presentation';
 import { runsApi, type ArtifactMeta } from '@/lib/runs-api';
 import { useBlobUrl } from '@/lib/use-blob-url';
 import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/query-keys';
 
 export function RunArtifacts({
   runId,
@@ -31,7 +32,7 @@ export function RunArtifacts({
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const listQuery = useQuery({
-    queryKey: ['run-artifacts', runId],
+    queryKey: queryKeys.runArtifacts(runId),
     queryFn: () => runsApi.artifacts(runId),
     retry: false,
   });
@@ -44,7 +45,7 @@ export function RunArtifacts({
   const previewIsImage = preview ? isImageArtifact(preview) : false;
 
   const previewQuery = useQuery({
-    queryKey: ['run-artifact-preview', runId, previewId],
+    queryKey: queryKeys.runArtifactPreview(runId, previewId),
     queryFn: async () => {
       const blob = await runsApi.downloadArtifact(runId, previewId as string);
       return { blob, text: previewIsImage ? null : await blob.text() };

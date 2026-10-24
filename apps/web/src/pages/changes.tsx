@@ -36,6 +36,7 @@ import { workspaceApi } from '@/lib/workspace-api';
 import { isUnauthorized } from '@/lib/runs-api';
 import { useBlobUrl } from '@/lib/use-blob-url';
 import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/query-keys';
 
 type ViewMode = 'inline' | 'split';
 
@@ -52,13 +53,13 @@ export function ChangesPage() {
   const [copied, setCopied] = useState(false);
 
   const workspaceQuery = useQuery({
-    queryKey: ['workspace', 'default'],
+    queryKey: queryKeys.defaultWorkspace,
     queryFn: workspaceApi.defaultWorkspace,
     retry: false,
   });
   const workspace = workspaceQuery.data;
   const artifactsQuery = useQuery({
-    queryKey: ['workspace-artifacts', workspace?.id],
+    queryKey: queryKeys.workspaceArtifacts(workspace?.id),
     queryFn: () => workspaceApi.artifacts(workspace?.id as string),
     enabled: Boolean(workspace?.id),
     refetchInterval: 8000,
@@ -75,13 +76,13 @@ export function ChangesPage() {
   const isText = selected ? isTextArtifact(selected) : false;
 
   const contentQuery = useQuery({
-    queryKey: ['workspace-artifact', selected?.id],
+    queryKey: queryKeys.workspaceArtifact(selected?.id),
     queryFn: () => workspaceApi.artifact(selected?.id as string),
     enabled: Boolean(selected?.id) && !isImage,
   });
   const content = contentQuery.data?.content ?? '';
   const imageQuery = useQuery({
-    queryKey: ['workspace-artifact-blob', selected?.id],
+    queryKey: queryKeys.workspaceArtifactBlob(selected?.id),
     queryFn: () => workspaceApi.downloadArtifact(selected?.id as string),
     enabled: Boolean(selected?.id) && isImage,
     retry: false,

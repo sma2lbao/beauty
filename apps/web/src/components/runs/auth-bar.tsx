@@ -9,13 +9,12 @@ import {
   signIn,
   signOut,
 } from '@/lib/auth';
+import { queryKeys } from '@/lib/query-keys';
 
 const MODE_LABEL: Record<string, string> = {
   token: '账号登录',
   logto: 'Logto 登录',
 };
-
-const ACCOUNT_QUERY_KEY = ['auth-account'];
 
 /**
  * 鉴权面板:当前身份 + 登出(§10 的浏览器侧入口)。
@@ -30,7 +29,7 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   const accountQuery = useQuery({
-    queryKey: ACCOUNT_QUERY_KEY,
+    queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
   });
   const account = accountQuery.data ?? null;
@@ -40,7 +39,7 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
     setError(null);
     try {
       await task();
-      await queryClient.invalidateQueries({ queryKey: ACCOUNT_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.authAccount });
       onChange?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '操作失败');
@@ -80,7 +79,9 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
 
       {mode === 'token' && !account ? (
         <>
-          <span className="text-xs text-muted-foreground">或粘贴令牌(联调):</span>
+          <span className="text-xs text-muted-foreground">
+            或粘贴令牌(联调):
+          </span>
           <Input
             aria-label="access token"
             type="password"

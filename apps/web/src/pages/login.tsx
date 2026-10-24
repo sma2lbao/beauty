@@ -30,8 +30,7 @@ import {
   signOut,
   takeLoginRedirect,
 } from '@/lib/auth';
-
-const ACCOUNT_QUERY_KEY = ['auth-account'];
+import { queryKeys } from '@/lib/query-keys';
 
 function SignedIn({
   account,
@@ -88,7 +87,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   const accountQuery = useQuery({
-    queryKey: ACCOUNT_QUERY_KEY,
+    queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
   });
   const account = accountQuery.data ?? null;
@@ -143,7 +142,7 @@ export function LoginPage() {
           result.subject,
         );
       }
-      await queryClient.invalidateQueries({ queryKey: ACCOUNT_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.authAccount });
     }).then((ok) => {
       if (ok) {
         enter();
@@ -153,7 +152,7 @@ export function LoginPage() {
   const loginWithToken = () =>
     void attempt(async () => {
       setStoredToken(token.trim());
-      await queryClient.invalidateQueries({ queryKey: ACCOUNT_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.authAccount });
     }).then((ok) => {
       if (ok) {
         enter();
@@ -171,7 +170,7 @@ export function LoginPage() {
   const leave = () =>
     void attempt(async () => {
       await signOut();
-      await queryClient.invalidateQueries({ queryKey: ACCOUNT_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.authAccount });
     });
 
   return (

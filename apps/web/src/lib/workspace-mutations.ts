@@ -11,6 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/lib/http';
 import { workspaceApi } from '@/lib/workspace-api';
 import { WORKSPACES_KEY } from '@/lib/workspace-selection';
+import { queryKeys } from '@/lib/query-keys';
 
 /** 后端错误码 → 控制台可读文案(未知错误保留后端 message)。 */
 export function workspaceErrorMessage(error: unknown): string {
@@ -35,10 +36,12 @@ export function useWorkspaceMutations() {
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: WORKSPACES_KEY }),
-      queryClient.invalidateQueries({ queryKey: ['conversations'] }),
-      queryClient.invalidateQueries({ queryKey: ['conversation'] }),
-      queryClient.invalidateQueries({ queryKey: ['workspace-artifacts'] }),
-      queryClient.invalidateQueries({ queryKey: ['artifacts'] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversationPrefix }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.workspaceArtifactsAll,
+      }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.artifacts }),
     ]);
   };
 

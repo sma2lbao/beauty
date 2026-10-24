@@ -17,6 +17,7 @@ import {
 } from '@beauty/design';
 
 import { apiKeysApi } from '@/lib/api-keys-api';
+import { queryKeys } from '@/lib/query-keys';
 
 const DEFAULT_SCOPES = ['mcp:tools:read', 'mcp:tools:call', 'artifacts:read'];
 
@@ -28,12 +29,12 @@ export function ApiKeysPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const keysQuery = useQuery({
-    queryKey: ['api-keys'],
+    queryKey: queryKeys.apiKeys,
     queryFn: apiKeysApi.list,
   });
   const keys = keysQuery.data ?? [];
   const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: ['api-keys'] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys });
 
   const createMutation = useMutation({
     mutationFn: () => apiKeysApi.create(name.trim(), DEFAULT_SCOPES),

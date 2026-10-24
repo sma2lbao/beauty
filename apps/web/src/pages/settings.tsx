@@ -26,10 +26,7 @@ import type { Role } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { isUnauthorized } from '@/lib/http';
 import { formatDateTime } from '@/lib/presentation';
-
-const ORG_KEY = ['account-organization'];
-const MEMBERS_KEY = ['account-members'];
-const SESSIONS_KEY = ['account-sessions'];
+import { queryKeys } from '@/lib/query-keys';
 
 /** 账号控制台:组织档案/配额、成员、多端会话(§3/§7)。 */
 export function SettingsPage() {
@@ -47,23 +44,24 @@ export function SettingsPage() {
   const [sessionUserId, setSessionUserId] = useState('');
 
   const orgQuery = useQuery({
-    queryKey: ORG_KEY,
+    queryKey: queryKeys.accountOrganization,
     queryFn: accountApi.organization,
   });
   const membersQuery = useQuery({
-    queryKey: MEMBERS_KEY,
+    queryKey: queryKeys.accountMembers,
     queryFn: accountApi.members,
   });
   const sessionsQuery = useQuery({
-    queryKey: SESSIONS_KEY,
+    queryKey: queryKeys.accountSessions,
     queryFn: accountApi.sessions,
   });
 
-  const refreshOrg = () => queryClient.invalidateQueries({ queryKey: ORG_KEY });
+  const refreshOrg = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.accountOrganization });
   const refreshMembers = () =>
-    queryClient.invalidateQueries({ queryKey: MEMBERS_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.accountMembers });
   const refreshSessions = () =>
-    queryClient.invalidateQueries({ queryKey: SESSIONS_KEY });
+    queryClient.invalidateQueries({ queryKey: queryKeys.accountSessions });
 
   const orgMutation = useMutation({
     mutationFn: async (input: {
