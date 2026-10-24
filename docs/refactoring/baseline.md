@@ -15,7 +15,7 @@
 | 质量 | lint / typecheck | npx nx lint/typecheck | design lint EXIT0（3 warning，4.0s）；design typecheck EXIT0（3.1s）；common lint EXIT0（2s，固化缓存后）；common test EXIT0（18.1s） | 0 error | playbook §9.7 |
 | 质量 | TODO/FIXME | grep -r 'TODO\|FIXME' 源码 | 5 | 不增加 | |
 | 行为 | 零网络测试 | 钉住开关后跑 pytest | 全绿（各服务测试不依赖外部服务） | 全绿 | AGENTS.md 纪律 |
-| 性能 | web 构建产物 | npx nx build @beauty/web 后统计 dist | 单 JS chunk 737954B + CSS 77514B；0 处 lazy/Suspense | 只降不升 | 审计值（取自既有 dist），W1 R-10 落地时复测 |
+| 性能 | web 构建产物 | npx nx build @beauty/web 后统计 dist | 单 JS chunk 737954B + CSS 77514B；0 处 lazy/Suspense | 只降不升 | 审计值（W0 态）；W1 R-10 后入口 315135B，见 W1 基线 |
 | 规模 | TS/TSX 行数 | git ls-files 后 wc -l | 33319 行（236 文件）+ CSS 2226 行 | — | web 21860/120、desktop 6734/43、design 3216/57、site 1509/16 |
 | 规模 | Python 行数 | 同上（排除 tests） | 约 2.82 万行 | — | AO 15878 为最大 |
 
@@ -31,7 +31,7 @@
 | 结构 | presentation.ts | wc -l | 477 行 / 14 个引用文件 | ≤4 文件 + barrel |
 | 结构 | lib 目录 | ls apps/web/src/lib | 41 文件 5464 行 | 暂增（W2 分层） |
 | 路由 | app.tsx | wc -l | 59 行，静态 import 15 页，0 lazy/Suspense | lazy + Suspense |
-| 构建 | 入口 chunk | npx nx build @beauty/web（W0 台账） | 737954B JS + 77514B CSS | 入口 < 737954B，新值入库 |
+| 构建 | 入口 chunk | npx nx build @beauty/web（W0 台账） | 737954B JS + 77514B CSS | ✅ R-10 后实测：入口 315135B（22 个 JS chunk，合计 856KB 未压缩）+ CSS 77822B |
 | 质量 | eslint 规则 | tools/eslint-config/configs/base.js | 仅 ignores + recommended，无 import 边界/max-lines | 边界+体量规则 |
 | 质量 | 文档门禁 | npx prettier --check "docs/**/*.md" | 15 文件失败；无 markdownlint/链接检查；gate 未含 | 全绿并纳入 gate |
 | 脚本 | dev.sh 已知缺陷 | 审计（ops） | 进程组只 kill nx 父进程 / lsof 依赖 / 端口占用误判 / 首次不 uv sync；reset 不清 services/*/.cache | R-15 尽力修 |

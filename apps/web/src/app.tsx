@@ -1,25 +1,56 @@
-import { Route, Routes } from 'react-router';
+import { lazy, Suspense } from 'react';
+import { Outlet, Route, Routes } from 'react-router';
 
 import { AuthGuard } from '@/components/auth-guard';
 import { ConsoleLayout } from '@/components/console/console-layout';
 import { ExternalRedirect } from '@/components/external-redirect';
 import { SiteLayout } from '@/components/layout/site-layout';
+import { RouteFallback } from '@/components/route-fallback';
 import { siteUrl } from '@/lib/site-links';
 import { AboutPage } from '@/pages/about';
 import { CallbackPage } from '@/pages/callback';
-import { ChangesPage } from '@/pages/changes';
-import { ChatPage } from '@/pages/chat';
-import { KnowledgePage } from '@/pages/knowledge';
 import { LoginPage } from '@/pages/login';
-import { McpPage } from '@/pages/mcp';
 import { NotFoundPage } from '@/pages/not-found';
 import { OAuthAuthorizePage } from '@/pages/oauth-authorize';
-import { OutboxPage } from '@/pages/outbox';
-import { SettingsPage } from '@/pages/settings';
-import { SkillsPage } from '@/pages/skills';
-import { UsagePage } from '@/pages/usage';
-import { WorkspacePage } from '@/pages/workspace';
-import { RunsPage } from '@/pages/runs';
+
+/**
+ * 控制台内页按路由懒加载:入口只含骨架、登录页与官网小页,
+ * 各页面各自成 chunk,首屏不再下载全部 15 页。
+ */
+const ChatPage = lazy(() =>
+  import('@/pages/chat').then((module) => ({ default: module.ChatPage })),
+);
+const RunsPage = lazy(() =>
+  import('@/pages/runs').then((module) => ({ default: module.RunsPage })),
+);
+const ChangesPage = lazy(() =>
+  import('@/pages/changes').then((module) => ({ default: module.ChangesPage })),
+);
+const McpPage = lazy(() =>
+  import('@/pages/mcp').then((module) => ({ default: module.McpPage })),
+);
+const KnowledgePage = lazy(() =>
+  import('@/pages/knowledge').then((module) => ({
+    default: module.KnowledgePage,
+  })),
+);
+const SettingsPage = lazy(() =>
+  import('@/pages/settings').then((module) => ({ default: module.SettingsPage })),
+);
+const SkillsPage = lazy(() =>
+  import('@/pages/skills').then((module) => ({ default: module.SkillsPage })),
+);
+const UsagePage = lazy(() =>
+  import('@/pages/usage').then((module) => ({ default: module.UsagePage })),
+);
+const WorkspacePage = lazy(() =>
+  import('@/pages/workspace').then((module) => ({
+    default: module.WorkspacePage,
+  })),
+);
+const OutboxPage = lazy(() =>
+  import('@/pages/outbox').then((module) => ({ default: module.OutboxPage })),
+);
 
 export function App() {
   return (
@@ -42,16 +73,25 @@ export function App() {
       {/* 控制台:登录门(§10)+ 侧边栏骨架 */}
       <Route element={<ConsoleLayout />}>
         <Route element={<AuthGuard />}>
-          <Route index element={<ChatPage />} />
-          <Route path="runs" element={<RunsPage />} />
-          <Route path="changes" element={<ChangesPage />} />
-          <Route path="mcp" element={<McpPage />} />
-          <Route path="knowledge" element={<KnowledgePage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="skills" element={<SkillsPage />} />
-          <Route path="usage" element={<UsagePage />} />
-          <Route path="workspace" element={<WorkspacePage />} />
-          <Route path="outbox" element={<OutboxPage />} />
+          {/* Suspense 放在骨架内层:切页时侧栏/顶栏保持,仅主区域出骨架 */}
+          <Route
+            element={
+              <Suspense fallback={<RouteFallback />}>
+                <Outlet />
+              </Suspense>
+            }
+          >
+            <Route index element={<ChatPage />} />
+            <Route path="runs" element={<RunsPage />} />
+            <Route path="changes" element={<ChangesPage />} />
+            <Route path="mcp" element={<McpPage />} />
+            <Route path="knowledge" element={<KnowledgePage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="skills" element={<SkillsPage />} />
+            <Route path="usage" element={<UsagePage />} />
+            <Route path="workspace" element={<WorkspacePage />} />
+            <Route path="outbox" element={<OutboxPage />} />
+          </Route>
         </Route>
       </Route>
     </Routes>
