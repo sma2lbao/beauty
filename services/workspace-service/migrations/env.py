@@ -1,73 +1,19 @@
-"""alembic 迁移环境(async)。
+"""alembic 迁移环境(async,装配收敛至 common.alembic_kit)。
 
-约定:
-
-- 元数据来自 database.Base——命名约定(NAMING_CONVENTION)保证迁移可回滚;
-- DB URL 从服务配置读(WORKSPACE__DATABASE_URL),与运行服务同源。
+约定:元数据来自 database.Base(命名约定保证迁移可回滚);DB URL 从服务配置读
+(WORKSPACE__DATABASE_URL),与运行服务同源,不在 alembic.ini 里写死。
 """
 
 from __future__ import annotations
 
-import asyncio
-from logging.config import fileConfig
-
 from alembic import context
+from common.alembic_kit import apply_service_config, run_migrations
 from database.base import Base
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from workspace.core.config import Settings
-from workspace.models import (  # noqa: F401  注册 ORM
-    sandbox as sandbox_models,
-    workspace as workspace_models,
-)
+from workspace.models import sandbox as sandbox_models  # noqa: F401  注册 ORM
+from workspace.models import workspace as workspace_models  # noqa: F401  注册 ORM
 
 config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-settings = Settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
-
-target_metadata = Base.metadata
-
-
-def run_migrations_offline() -> None:
-    """offline 模式:不连库,直接生成 SQL。"""
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-    await connectable.dispose()
-
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    asyncio.run(run_async_migrations())
+apply_service_config(config, Settings())
+run_migrations(config, Base.metadata)

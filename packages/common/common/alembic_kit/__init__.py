@@ -1,0 +1,188 @@
+"""Alembic 迁移装配共享件(R-24):五个服务的 env.py 只保留服务差异。
+
+位置选择(packages/common 而非 RFC 建议的 packages/database):
+
+- database 是纯 ORM 基座,只依赖 SQLAlchemy,不应给所有消费方绑定 alembic;
+- 五个迁移服务本来就依赖 common(R-22 service_kit 先例),放这里不新增依赖边;
+- alembic/sqlalchemy 全部惰性导入,没装 alembic 的消费方也能 import common。
+
+env.py 收敛后的形态(约 15 行)::
+
+    from alembic import context
+    from common.alembic_kit import apply_service_config, run_migrations
+    from database.base import Base
+    from <service>.core.config import Settings
+    from <service>.models import ...  # noqa: F401  注册 ORM
+
+    config = context.config
+    apply_service_config(config, Settings())
+    run_migrations(config, Base.metadata)
+
+script.py.mako 的 canonical 副本就在本目录;各服务 migrations/ 下的副本由
+packages/common/tests/test_alembic_kit.py 做字节一致性校验(Mako 的 include
+指令不被 alembic 的 TemplateLookup 支持,不能跨目录共享)。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from logging.config import fileConfig
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from alembic.config import Config
+    from sqlalchemy import MetaData
+    from sqlalchemy.engine import Connection
+
+__all__ = [
+    "SettingsLike",
+    "apply_service_config",
+    "check",
+    "heads",
+    "make_config",
+    "run_migrations",
+    "script_template_path",
+    "stamp",
+    "upgrade",
+]
+
+
+class SettingsLike(Protocol):
+    """共享装配只需 database_url,各服务 Settings 均满足。"""
+
+    database_url: str
+
+
+def script_template_path() -> Path:
+    """返回 canonical script.py.mako 路径(供一致性校验/生成使用)。"""
+    return Path(__file__).with_name("script.py.mako")
+
+
+def apply_service_config(config: Config, settings: SettingsLike) -> None:
+    """env.py 装配:加载 alembic.ini 日志配置,并把服务 DB URL 注入 config。
+
+    已有 sqlalchemy.url(programmatic Config)时不覆盖,便于测试/CI 指向临时库。
+    """
+    if config.config_file_name is not None:
+        fileConfig(config.config_file_name)
+    if not config.get_main_option("sqlalchemy.url"):
+        config.set_main_option("sqlalchemy.url", settings.database_url)
+
+
+def run_migrations(config: Config, target_metadata: MetaData) -> None:
+    """env.py 末尾调用:按 offline/online 模式执行迁移(online 走 async 引擎)。"""
+    from alembic import context
+
+    if context.is_offline_mode():
+        _run_offline(config, target_metadata)
+    else:
+        asyncio.run(_run_online(config, target_metadata))
+
+
+def _run_offline(config: Config, target_metadata: MetaData) -> None:
+    from alembic import context
+
+    context.configure(
+        url=config.get_main_option("sqlalchemy.url"),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def _configure(connection: Connection, target_metadata: MetaData) -> None:
+    from alembic import context
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def _run_online(config: Config, target_metadata: MetaData) -> None:
+    from sqlalchemy import pool
+    from sqlalchemy.ext.asyncio import async_engine_from_config
+
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    async with connectable.connect() as connection:
+        await connection.run_sync(_configure, target_metadata)
+    await connectable.dispose()
+
+
+def make_config(
+    script_location: str | Path,
+    settings: SettingsLike,
+    *,
+    config_file_name: str | Path | None = None,
+) -> Config:
+    """构造 programmatic Config:绝对 script_location + 服务 DB URL。"""
+    from alembic.config import Config
+
+    config = Config(None if config_file_name is None else str(config_file_name))
+    config.set_main_option("script_location", str(Path(script_location).resolve()))
+    config.set_main_option("sqlalchemy.url", settings.database_url)
+    return config
+
+
+def upgrade(
+    script_location: str | Path,
+    settings: SettingsLike,
+    revision: str = "head",
+    *,
+    config_file_name: str | Path | None = None,
+) -> None:
+    """升级到 revision(默认 head);同步函数,勿在事件循环内调用。"""
+    from alembic import command
+
+    config = make_config(script_location, settings, config_file_name=config_file_name)
+    command.upgrade(config, revision)
+
+
+def stamp(
+    script_location: str | Path,
+    settings: SettingsLike,
+    revision: str = "head",
+    *,
+    config_file_name: str | Path | None = None,
+) -> None:
+    """把库标记为 revision(不执行迁移);同步函数,勿在事件循环内调用。"""
+    from alembic import command
+
+    config = make_config(script_location, settings, config_file_name=config_file_name)
+    command.stamp(config, revision)
+
+
+def check(
+    script_location: str | Path,
+    settings: SettingsLike,
+    *,
+    config_file_name: str | Path | None = None,
+) -> None:
+    """核对模型与迁移;有差异抛 alembic.util.exc.AutogenerateDiffsDetected。"""
+    from alembic import command
+
+    config = make_config(script_location, settings, config_file_name=config_file_name)
+    command.check(config)
+
+
+def heads(
+    script_location: str | Path,
+    settings: SettingsLike,
+    *,
+    config_file_name: str | Path | None = None,
+) -> list[str]:
+    """返回迁移脚本的 head revision(不连库;smoke 用其断言唯一 head)。"""
+    from alembic.script import ScriptDirectory
+
+    config = make_config(script_location, settings, config_file_name=config_file_name)
+    return list(ScriptDirectory.from_config(config).get_heads())
