@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from common.security import SECRET_HEADER
 from common.errors import (
     AppError,
     NotFoundError,
@@ -19,6 +18,7 @@ from common.errors import (
     UnauthorizedError,
     UpstreamError,
 )
+from common.security import SECRET_HEADER
 from database.session import session_scope
 
 from agent_orchestrator.models.runs import RunArtifact

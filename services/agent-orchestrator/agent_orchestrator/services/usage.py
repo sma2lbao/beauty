@@ -15,10 +15,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-from common.security import SECRET_HEADER
 from common.logging import get_logger
 from common.metrics import observe_job_failure
 from common.middleware import inject_request_headers
+from common.security import SECRET_HEADER
 
 
 @dataclass(frozen=True)

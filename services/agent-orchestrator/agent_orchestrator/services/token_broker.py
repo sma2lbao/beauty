@@ -17,9 +17,9 @@ import time
 from typing import Any
 
 import httpx
-from common.security import SECRET_HEADER
 from common.errors import UpstreamError
 from common.middleware import inject_request_headers
+from common.security import SECRET_HEADER
 
 REFRESH_MARGIN_SECONDS = 60  # 剩余寿命低于该值就提前换新,避免临界过期
 

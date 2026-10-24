@@ -22,7 +22,9 @@ class ApprovalPolicy(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """一条租户级审批规则(工具名或 ``*`` + 动作)。"""
 
     __tablename__ = "approval_policies"
-    __table_args__ = (UniqueConstraint("tenant_id", "tool"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "tool", name="uq_approval_policies_tenant_tool"),
+    )
 
     tool: Mapped[str] = mapped_column(String(120))
     action: Mapped[str] = mapped_column(String(16))
