@@ -4,6 +4,10 @@
 #   - 一律不用 test-ci（Nx Cloud atomized target，本地/自托管不可用）；
 #   - Python target 一律固化 uv 缓存到仓库本地（UV_CACHE_DIR/UV_PYTHON_INSTALL_DIR，.gitignore 已覆盖）；
 #   - CI 命令必须与本地门禁矩阵（playbook §6.1）逐条等价。
+#   - 覆盖率门禁：TS 用 vitest coverage.thresholds（唯一数字来源是根 vitest.config.mts 的 thresholds；
+#     CI 必须真正带 --coverage 才会校验，否则阈值是假门禁）；
+#     Python 用各项目 pyproject.toml [tool.pytest.ini_options].addopts 的 --cov-fail-under
+#     （pytest 自动读取，CI 不重复传参，避免阈值出现第二份真源）。
 name: CI
 
 on:
@@ -89,7 +93,7 @@ jobs:
         run: bash scripts/check-docs.sh
 
   # ------------------------------------------------------------------
-  # Job 3/7：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test
+  # Job 3/7：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test + coverage
   # ------------------------------------------------------------------
   affected-js:
     name: affected-js (lint+typecheck+build+test)
@@ -113,13 +117,30 @@ jobs:
         # nx 只对存在该 target 的项目执行（无对应 target 的项目自动跳过）
         run: npx nx affected -t lint,typecheck,build --base=origin/main
 
-      - name: Test @beauty/web
-        # 与本地等价：npx nx test @beauty/web -- --run（必须 -- --run，watch 模式会挂住）
-        run: npx nx test @beauty/web -- --run
-      - name: Test @beauty/desktop
-        run: npx nx test @beauty/desktop -- --run
-      - name: Test @beauty/design
-        run: npx nx test @beauty/design -- --run
+      # 覆盖率门禁（R-31b）：阈值唯一数字来源是根 vitest.config.mts 的 `thresholds`，
+      # 各项目 vitest 配置 import 后挂到自身 coverage.thresholds；这里必须带 --coverage。
+      # 不用 `nx affected -t test`：该 target 集合包含 10 个 Python 项目，`--` 后的
+      # --run/--coverage 会被透传给 pytest（unrecognized arguments）而挂掉；
+      # 因此 TS 测试仍逐项目显式执行，与本地门禁逐条等价。
+      - name: Test + coverage @beauty/web
+        # 与本地等价：npx nx test @beauty/web -- --run（加 --coverage 后走 R-31b 阈值）
+        run: npx nx test @beauty/web -- --run --coverage
+      - name: Test + coverage @beauty/design
+        run: npx nx test @beauty/design -- --run --coverage
+      - name: Test + coverage @beauty/console-ui
+        run: npx nx test @beauty/console-ui -- --run --coverage
+      - name: Test + coverage @beauty/site
+        run: npx nx test @beauty/site -- --run --coverage
+
+      # @beauty/desktop 的 test target 连跑两段 vitest（renderer 与 main/preload/node），
+      # `nx test ... -- --run --coverage` 只会把参数透传给最后一段，renderer 覆盖率会漏掉；
+      # 所以这里显式跑两段都带 --coverage（R-31b 为 desktop 配了 renderer/node 两套阈值）。
+      - name: Test + coverage @beauty/desktop (renderer)
+        working-directory: apps/desktop
+        run: npx vitest run --config vitest.config.mts --coverage
+      - name: Test + coverage @beauty/desktop (main/preload)
+        working-directory: apps/desktop
+        run: npx vitest run --config vitest.node.config.mts --coverage
 
   # ------------------------------------------------------------------
   # Job 4/7：python-lint——10 个 Python 项目逐个 npx nx lint
@@ -177,7 +198,7 @@ jobs:
         run: npx nx lint ${{ matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 5/7：python-test——10 个 Python 项目逐个 npx nx test
+  # Job 5/7：python-test——10 个 Python 项目逐个 npx nx test（覆盖率阈值见各项目 pyproject addopts）
   # ------------------------------------------------------------------
   python-test:
     name: python-test (${{ matrix.project }})
@@ -229,6 +250,9 @@ jobs:
 
       - name: Test ${{ matrix.project }}
         # 与本地等价：npx nx test <项目>（底层 uv run pytest tests/，零网络；缓存已固化）
+        # 覆盖率阈值：写在各项目 pyproject.toml 的 [tool.pytest.ini_options].addopts
+        # （--cov-fail-under=<实测向下取整>，R-31a）；pytest 以项目目录为 CWD 运行会自动读取，
+        # 因此本 job 不重复传 --cov/--cov-fail-under，阈值只有一份真源。
         run: npx nx test ${{ matrix.project }}
 
   # ------------------------------------------------------------------
