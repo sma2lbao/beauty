@@ -1,8 +1,9 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W1 已收口（2026-10-24），W2 待立项；最近更新：2026-10-24 23:50 +08:00
+- 当前波次：W2 进行中（2026-10-24 立项）；最近更新：2026-10-25 00:10 +08:00
 - 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md
+- W2 立项：docs/refactoring/rfc/003-w2.md（10 项，分批次 A/B）
 
 ## W0（已收口 · 7 项）
 
@@ -58,25 +59,25 @@
 - 门禁（§10.3 W2）：W1 全部门禁 + Python service-kit 试点服务 lint/test + 全仓 TS 测试；指标：chat.tsx ≤400、console-ui 被两端引用、connector/knowledge 启动路径一致；复盘重点：拆分等价性（黄金路径人工核对）
 - 体积例外（§10.4）：R-17 / R-19 / R-22 先合 characterization 或契约快照 PR，再逐 PR 拆。
 
-| ID   | 重构项                                                  | 规模 | 风险 | 依赖                    | 状态   |
-| ---- | ------------------------------------------------------- | ---- | ---- | ----------------------- | ------ |
-| R-17 | chat.tsx 1313 行拆 features/chat/\*（+ 901 行测试重写） | L    | 高   | R-08/09/11/12 ✅        | 待立项 |
-| R-18 | mcp 941 / sidebar 663 / workspace 610 / settings 472    | M    | 中   | R-13、R-17 后端模式成立 | 待立项 |
-| R-19 | 抽 @beauty/console-ui（web + desktop 共享）             | L    | 中   | R-17（避免同文件冲突）  | 待立项 |
-| R-20 | 清 web/site 重复（button-class、utils、logo、About）    | S    | 低   | 无                      | 待立项 |
-| R-21 | tsconfig/vitest 收敛 + site/console 测试盲区            | M    | 中   | R-14                    | 待立项 |
-| R-22 | Python service-kit 试点（connector + knowledge）        | L    | 中   | R-25                    | 待立项 |
-| R-23 | service_testkit（统一 conftest / 零网络默认）           | M    | 中   | R-22                    | 待立项 |
-| R-24 | alembic 共享 env 模板 + 迁移 smoke                      | M    | 中   | R-22                    | 待立项 |
-| R-25 | 收编 Fernet×4 / SlidingWindowLimiter×2 / 内部密钥校验   | S    | 低   | 无（随 R-22 落地）      | 待立项 |
-| R-26 | design 令牌单一来源 + Dialog/Button 合一                | M    | 中   | 无                      | 待立项 |
+| ID   | 重构项                                                  | 规模 | 风险 | 依赖              | 状态                             |
+| ---- | ------------------------------------------------------- | ---- | ---- | ----------------- | -------------------------------- |
+| R-17 | chat.tsx 1320 行拆 features/chat/\*（+ 901 行测试重写） | L    | 高   | R-08/09/11/12 ✅  | 🚧 A 批（w1-api，task-13）       |
+| R-18 | mcp 936 / sidebar 666 / workspace 598 / settings 461    | M    | 中   | R-13              | 🚧 A 批（audit-ts，task-14）     |
+| R-19 | 抽 @beauty/console-ui（web + desktop 共享）             | L    | 中   | R-17、R-18 完成   | B 批（待派）                     |
+| R-20 | site 去重（utils、brand 副本、About 页壳）              | S    | 低   | R-26（logo 归位） | 🚧 A 批（lead，task-17）         |
+| R-21 | tsconfig/vitest 收敛 + site/console 测试盲区            | M    | 中   | R-14              | 🚧 A 批（w0-ci，task-16）        |
+| R-22 | Python service-kit 试点（connector + knowledge）        | L    | 中   | R-25              | B 批（w0-gate，blocked_by R-25） |
+| R-23 | service_testkit（统一 conftest / 零网络默认）           | M    | 中   | R-22              | B 批（audit-python）             |
+| R-24 | alembic 共享 env 模板 + 迁移 smoke                      | M    | 中   | R-22              | B 批（audit-ops）                |
+| R-25 | 收编 Fernet×4 / SlidingWindowLimiter×2 / 内部密钥校验   | S    | 低   | 无                | 🚧 A 批（audit-python，task-15） |
+| R-26 | design 令牌单一来源 + Dialog/Button 合一 + logo 归位    | M    | 中   | 无                | 🚧 A 批（w0-docs，task-18）      |
 
 ## 波次总览
 
-| 波次 | 主题                                                   | 状态                  |
-| ---- | ------------------------------------------------------ | --------------------- |
-| W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24） |
-| W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
-| W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | 待立项                |
-| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | 未开始                |
-| W4   | 发布与运维（R-34..R-38）                               | 未开始                |
+| 波次 | 主题                                                   | 状态                         |
+| ---- | ------------------------------------------------------ | ---------------------------- |
+| W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24）        |
+| W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24）        |
+| W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | 🚧 进行中（2026-10-24 立项） |
+| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | 未开始                       |
+| W4   | 发布与运维（R-34..R-38）                               | 未开始                       |
