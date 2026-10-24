@@ -10,10 +10,10 @@ import { useState } from 'react';
 
 import type { ChatMessage } from '@shared/contract';
 
-import { cn } from '@/lib/utils';
+import type { Tone } from '@beauty/console-ui';
+import { StatusDot, StatusText } from '@beauty/console-ui';
 
-import type { Tone } from '@/components/ui';
-import { StatusDot, StatusText } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 const STATUS_META: Record<
   NonNullable<ChatMessage['toolStatus']>,
@@ -26,6 +26,7 @@ const STATUS_META: Record<
 
 const BORDER: Record<Tone, string> = {
   neutral: 'border-ha-border',
+  accent: 'border-ha-accent/60',
   info: 'border-ha-info-border',
   success: 'border-ha-border',
   warning: 'border-ha-warning-border',

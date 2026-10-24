@@ -10,6 +10,12 @@
 @import '@beauty/design/tailwind.css';
 
 /*
+  共享展示包在 apps 根之外,Tailwind v4 默认不扫,需显式登记源码,
+  否则包内用到的 ha-* 工具类不会生成(构建产物缺类,线上样式局部丢失)。
+*/
+@source '../../../packages/console-ui/src';
+
+/*
   ── Harness 风格控制台主题(暗色) ─────────────────────────────────────────
   来源:ardot 设计稿《Harness Agent Web 控制台》四个页面(会话工作台 / 任务编排 /
   变更与产物 / 官网落地页)。设计稿的视觉规则:

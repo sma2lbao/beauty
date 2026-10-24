@@ -28,5 +28,12 @@
     "vite.renderer.config.mts",
     "vitest.config.mts"
   ],
-  "references": [{ "path": "../../packages/design" }]
+  "references": [
+    {
+      "path": "../../packages/design"
+    },
+    {
+      "path": "../../packages/console-ui"
+    }
+  ]
 }

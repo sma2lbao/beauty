@@ -16,12 +16,11 @@
     "package:dir": "npm run build && electron-builder --config electron-builder.config.mjs --dir"
   },
   "dependencies": {
+    "@beauty/console-ui": "*",
     "@beauty/design": "*",
-    "clsx": "^2.1.1",
     "lucide-react": "^1.47.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "tailwind-merge": "^3.7.0"
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@beauty/eslint-config": "*",
