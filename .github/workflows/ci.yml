@@ -65,7 +65,31 @@ jobs:
         run: npx nx run common:sync
 
   # ------------------------------------------------------------------
-  # Job 2/6：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test
+  # Job 2/7：docs-check——W1 R-16 文档门禁（prettier 格式 + 相对链接 + 锚点 + 归档误引）
+  # 与本地等价：bash scripts/check-docs.sh（纯 bash+node，无 Python 依赖，可与 setup 并行）
+  # ------------------------------------------------------------------
+  docs-check:
+    name: docs-check (prettier + links)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Docs gate (prettier + links + anchors)
+        run: bash scripts/check-docs.sh
+
+  # ------------------------------------------------------------------
+  # Job 3/7：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test
   # ------------------------------------------------------------------
   affected-js:
     name: affected-js (lint+typecheck+build+test)
@@ -98,7 +122,7 @@ jobs:
         run: npx nx test @beauty/design -- --run
 
   # ------------------------------------------------------------------
-  # Job 3/6：python-lint——10 个 Python 项目逐个 npx nx lint
+  # Job 4/7：python-lint——10 个 Python 项目逐个 npx nx lint
   # ------------------------------------------------------------------
   python-lint:
     name: python-lint (${D} matrix.project }})
@@ -153,7 +177,7 @@ jobs:
         run: npx nx lint ${D} matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 4/6：python-test——10 个 Python 项目逐个 npx nx test
+  # Job 5/7：python-test——10 个 Python 项目逐个 npx nx test
   # ------------------------------------------------------------------
   python-test:
     name: python-test (${D} matrix.project }})
@@ -208,7 +232,7 @@ jobs:
         run: npx nx test ${D} matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 5/6：lock-check——uv.lock 与 package-lock.json 与清单一致
+  # Job 6/7：lock-check——uv.lock 与 package-lock.json 与清单一致
   # ------------------------------------------------------------------
   lock-check:
     name: lock-check (uv + npm)
@@ -249,7 +273,7 @@ jobs:
           git diff --exit-code package-lock.json
 
   # ------------------------------------------------------------------
-  # Job 6/6：alembic-check——5 个有迁移的服务模型与迁移一致
+  # Job 7/7：alembic-check——5 个有迁移的服务模型与迁移一致
   # ------------------------------------------------------------------
   alembic-check:
     name: alembic-check (${D} matrix.service }})

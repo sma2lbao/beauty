@@ -6,13 +6,13 @@
 
 ## 总览矩阵
 
-| 产品 | 形态 | 工具与执行 | 权限/沙箱 | 子代理/并行 | 上下文与记忆 | 扩展机制 | headless/SDK | 亮点机制 |
-| ---- | ---- | ---------- | --------- | ----------- | ------------ | -------- | ------------ | -------- |
-| OpenHands | Web 平台+CLI+本地 | shell/浏览器/IPython 工具 | 每任务隔离 runtime | 支持 agent 委派（待核实） | 事件历史+microagent | microagent/MCP/自定义 | headless+容器运行 | 隔离 runtime、持久流 |
-| Cline | IDE 插件 | 读写/终端/浏览器工具集 | Plan/Act 分期+逐步审批 | 暂无内建子代理（待核实） | 说明文件+压缩（待核实） | MCP+.clinerules 规则 | headless/CI（待核实） | Plan/Act 双模式协同 |
-| Aider | 终端结对编程 CLI | 编辑文件+跑命令+git 提交 | 每步确认/可自动（待核实） | 无子代理（单 agent） | repo map（符号图索引） | 配置项/自定义提示模板 | --message 一次执行 | repo map 精准选上下文 |
-| Gemini CLI | 开源终端 agent | 读写文件/shell/MCP 工具 | 逐工具确认+白名单 | 暂无内建子代理（待核实） | GEMINI.md+会话 | 扩展包+MCP server | headless 非交互模式 | 开源可 fork、扩展体系 |
-| Goose | 桌面 App+CLI | 可插拔 extension | 逐档模式确认（待核实） | 暂无内建子代理（待核实） | 会话持久化+recipe 固化 | MCP extension+配方 | goose run 无交互 | recipe 作为任务契约 |
+| 产品       | 形态              | 工具与执行                | 权限/沙箱                 | 子代理/并行               | 上下文与记忆            | 扩展机制              | headless/SDK          | 亮点机制              |
+| ---------- | ----------------- | ------------------------- | ------------------------- | ------------------------- | ----------------------- | --------------------- | --------------------- | --------------------- |
+| OpenHands  | Web 平台+CLI+本地 | shell/浏览器/IPython 工具 | 每任务隔离 runtime        | 支持 agent 委派（待核实） | 事件历史+microagent     | microagent/MCP/自定义 | headless+容器运行     | 隔离 runtime、持久流  |
+| Cline      | IDE 插件          | 读写/终端/浏览器工具集    | Plan/Act 分期+逐步审批    | 暂无内建子代理（待核实）  | 说明文件+压缩（待核实） | MCP+.clinerules 规则  | headless/CI（待核实） | Plan/Act 双模式协同   |
+| Aider      | 终端结对编程 CLI  | 编辑文件+跑命令+git 提交  | 每步确认/可自动（待核实） | 无子代理（单 agent）      | repo map（符号图索引）  | 配置项/自定义提示模板 | --message 一次执行    | repo map 精准选上下文 |
+| Gemini CLI | 开源终端 agent    | 读写文件/shell/MCP 工具   | 逐工具确认+白名单         | 暂无内建子代理（待核实）  | GEMINI.md+会话          | 扩展包+MCP server     | headless 非交互模式   | 开源可 fork、扩展体系 |
+| Goose      | 桌面 App+CLI      | 可插拔 extension          | 逐档模式确认（待核实）    | 暂无内建子代理（待核实）  | 会话持久化+recipe 固化  | MCP extension+配方    | goose run 无交互      | recipe 作为任务契约   |
 
 ## OpenHands
 

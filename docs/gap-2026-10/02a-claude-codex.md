@@ -5,10 +5,10 @@
 
 ## 总览矩阵
 
-| 产品 | 形态 | 工具与执行 | 权限/沙箱 | 子代理/并行 | 上下文与记忆 | 扩展机制 | headless/SDK | 亮点机制 |
-| ---- | ---- | ---------- | --------- | ----------- | ------------ | -------- | ------------ | -------- |
-| Claude Code | CLI+IDE+Web/SDK | 内置 Bash/读写/搜索工具 | 分级审批+allow/deny 规则 | 内置 Task 子代理，可并行 | CLAUDE.md+自动压缩 | MCP/Skills/Hooks/命令 | Agent SDK+headless | 权限模式与钩子生态 |
-| OpenAI Codex | CLI+IDE+云端/App | shell 执行+文件编辑等本地工具 | OS 级沙箱+审批策略（待核实细节） | 嵌套 codex exec 可作子代理 | AGENTS.md+会话历史 | MCP/配置化 profile | codex exec + SDK | 沙箱内自动执行、边界外审批 |
+| 产品         | 形态             | 工具与执行                    | 权限/沙箱                        | 子代理/并行                | 上下文与记忆       | 扩展机制              | headless/SDK       | 亮点机制                   |
+| ------------ | ---------------- | ----------------------------- | -------------------------------- | -------------------------- | ------------------ | --------------------- | ------------------ | -------------------------- |
+| Claude Code  | CLI+IDE+Web/SDK  | 内置 Bash/读写/搜索工具       | 分级审批+allow/deny 规则         | 内置 Task 子代理，可并行   | CLAUDE.md+自动压缩 | MCP/Skills/Hooks/命令 | Agent SDK+headless | 权限模式与钩子生态         |
+| OpenAI Codex | CLI+IDE+云端/App | shell 执行+文件编辑等本地工具 | OS 级沙箱+审批策略（待核实细节） | 嵌套 codex exec 可作子代理 | AGENTS.md+会话历史 | MCP/配置化 profile    | codex exec + SDK   | 沙箱内自动执行、边界外审批 |
 
 ## Claude Code
 

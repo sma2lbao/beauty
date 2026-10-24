@@ -4,34 +4,34 @@
 - 采集人 / 时间：重构 Lead（AI）/ 2026-10-24 19:30 +08:00
 - 说明：数值均为命令真实输出；标注「审计值」的取自 .cache/refactor-audit 三份报告，本轮未复跑。
 
-| 维度 | 指标 | 采集命令 | 基线值 | 目标 | 备注 |
-| --- | --- | --- | --- | --- | --- |
-| 结构 | 最大 TS 文件行数 | git ls-files 'apps/**/*.ts(x)' 后 wc -l 排序 | 1313（apps/web/src/pages/chat.tsx） | ≤400（W2 起） | 热点表见 playbook §9.3 |
-| 结构 | 最大 Python 文件行数 | find packages services -name '*.py' 排除 tests 后 wc -l | 1100（agent_orchestrator/services/runs.py） | ≤500（W3） | 同上 |
-| 结构 | 单目录文件数 | ls apps/web/src/lib | 41 | ≤20 | W2 分层后 |
-| 结构 | 循环依赖 | 手工核对 import | 已知 1 处：graph/nodes.py:23-30 ↔ services/runs.py:28 | 0（W3 R-27） | 待工具化 |
-| 质量 | pytest 用例数 | cd <项目> && uv run pytest --collect-only -q | 697（103 个测试文件）：common 71 / database 22 / events 26 / AO 386 / llm-gateway 22 / connector 11 / knowledge 23 / account 39 / workspace 74 / bff 23 | 不减少 | 实测 |
-| 质量 | vitest 用例数 | npx nx test <项目> -- --run | 445（74 文件）：web 292(45) / desktop 58(10，2 个 vitest 项目) / design 95(19)；早期口径 446 系粗 grep 误差，以本行实测为准 | 不减少 | W0 出口实测（2026-10-24） |
-| 质量 | lint / typecheck | npx nx lint/typecheck | design lint EXIT0（3 warning，4.0s）；design typecheck EXIT0（3.1s）；common lint EXIT0（2s，固化缓存后）；common test EXIT0（18.1s） | 0 error | playbook §9.7 |
-| 质量 | TODO/FIXME | grep -r 'TODO\|FIXME' 源码 | 5 | 不增加 | |
-| 行为 | 零网络测试 | 钉住开关后跑 pytest | 全绿（各服务测试不依赖外部服务） | 全绿 | AGENTS.md 纪律 |
-| 性能 | web 构建产物 | npx nx build @beauty/web 后统计 dist | 单 JS chunk 737954B + CSS 77514B；0 处 lazy/Suspense | 只降不升 | 审计值（W0 态）；W1 R-10 后入口 315135B，见 W1 基线 |
-| 规模 | TS/TSX 行数 | git ls-files 后 wc -l | 33319 行（236 文件）+ CSS 2226 行 | — | web 21860/120、desktop 6734/43、design 3216/57、site 1509/16 |
-| 规模 | Python 行数 | 同上（排除 tests） | 约 2.82 万行 | — | AO 15878 为最大 |
+| 维度 | 指标                 | 采集命令                                                 | 基线值                                                                                                                                                  | 目标          | 备注                                                         |
+| ---- | -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------ |
+| 结构 | 最大 TS 文件行数     | git ls-files 'apps/\*_/_.ts(x)' 后 wc -l 排序            | 1313（apps/web/src/pages/chat.tsx）                                                                                                                     | ≤400（W2 起） | 热点表见 playbook §9.3                                       |
+| 结构 | 最大 Python 文件行数 | find packages services -name '\*.py' 排除 tests 后 wc -l | 1100（agent_orchestrator/services/runs.py）                                                                                                             | ≤500（W3）    | 同上                                                         |
+| 结构 | 单目录文件数         | ls apps/web/src/lib                                      | 41                                                                                                                                                      | ≤20           | W2 分层后                                                    |
+| 结构 | 循环依赖             | 手工核对 import                                          | 已知 1 处：graph/nodes.py:23-30 ↔ services/runs.py:28                                                                                                  | 0（W3 R-27）  | 待工具化                                                     |
+| 质量 | pytest 用例数        | cd <项目> && uv run pytest --collect-only -q             | 697（103 个测试文件）：common 71 / database 22 / events 26 / AO 386 / llm-gateway 22 / connector 11 / knowledge 23 / account 39 / workspace 74 / bff 23 | 不减少        | 实测                                                         |
+| 质量 | vitest 用例数        | npx nx test <项目> -- --run                              | 445（74 文件）：web 292(45) / desktop 58(10，2 个 vitest 项目) / design 95(19)；早期口径 446 系粗 grep 误差，以本行实测为准                             | 不减少        | W0 出口实测（2026-10-24）                                    |
+| 质量 | lint / typecheck     | npx nx lint/typecheck                                    | design lint EXIT0（3 warning，4.0s）；design typecheck EXIT0（3.1s）；common lint EXIT0（2s，固化缓存后）；common test EXIT0（18.1s）                   | 0 error       | playbook §9.7                                                |
+| 质量 | TODO/FIXME           | grep -r 'TODO\|FIXME' 源码                               | 5                                                                                                                                                       | 不增加        |                                                              |
+| 行为 | 零网络测试           | 钉住开关后跑 pytest                                      | 全绿（各服务测试不依赖外部服务）                                                                                                                        | 全绿          | AGENTS.md 纪律                                               |
+| 性能 | web 构建产物         | npx nx build @beauty/web 后统计 dist                     | 单 JS chunk 737954B + CSS 77514B；0 处 lazy/Suspense                                                                                                    | 只降不升      | 审计值（W0 态）；W1 R-10 后入口 315135B，见 W1 基线          |
+| 规模 | TS/TSX 行数          | git ls-files 后 wc -l                                    | 33319 行（236 文件）+ CSS 2226 行                                                                                                                       | —             | web 21860/120、desktop 6734/43、design 3216/57、site 1509/16 |
+| 规模 | Python 行数          | 同上（排除 tests）                                       | 约 2.82 万行                                                                                                                                            | —             | AO 15878 为最大                                              |
 
 ## W1 基线（2026-10-24 · 立项时实测）
 
-| 维度 | 指标 | 采集命令 | 基线值 | W1 目标 |
-| --- | --- | --- | --- | --- |
-| 重复代码 | 本地 request<T> 定义 | grep -rn "function request<" apps/web/src/lib/*.ts | 10 处（account-api:59、api-keys-api:21、conversations-api:90、insights-api:42、knowledge-api:45、mcp-api:112、outbox-api:33、runs-api:90、skills-api:70、workspace-api:47） | 0（统一 http 工厂） |
-| 重复代码 | SSE getReader 手写 | grep -rn "getReader()" apps/web/src | 3 处（runs-api:224、conversations-api:318、notifications-api:56） | 1（lib/sse.ts） |
-| 重复代码 | formatTime/formatSize 定义 | grep 页面源码 | 7 处（settings:33、outbox:39、knowledge:27/34、workspace:39/46、mcp:95） | 1（presentation/format） |
-| 配置 | import.meta.env 直读 | grep -rn "import.meta.env" apps/web/src | 14 处 / 9 文件 | 0（config/env.ts） |
-| 数据层 | queryKey 字面量 | grep queryKey: 数组字面量 | 86 处 queryKey / 58 处数组字面量 | 0 字面量（query-keys.ts） |
-| 结构 | presentation.ts | wc -l | 477 行 / 14 个引用文件 | ≤4 文件 + barrel |
-| 结构 | lib 目录 | ls apps/web/src/lib | 41 文件 5464 行 | 暂增（W2 分层） |
-| 路由 | app.tsx | wc -l | 59 行，静态 import 15 页，0 lazy/Suspense | lazy + Suspense |
-| 构建 | 入口 chunk | npx nx build @beauty/web（W0 台账） | 737954B JS + 77514B CSS | ✅ R-10 后实测：入口 315135B（22 个 JS chunk，合计 856KB 未压缩）+ CSS 77822B |
-| 质量 | eslint 规则 | tools/eslint-config/configs/base.js | 仅 ignores + recommended，无 import 边界/max-lines | 边界+体量规则 |
-| 质量 | 文档门禁 | npx prettier --check "docs/**/*.md" | 15 文件失败；无 markdownlint/链接检查；gate 未含 | 全绿并纳入 gate |
-| 脚本 | dev.sh 已知缺陷 | 审计（ops） | 进程组只 kill nx 父进程 / lsof 依赖 / 端口占用误判 / 首次不 uv sync；reset 不清 services/*/.cache | R-15 尽力修 |
+| 维度     | 指标                       | 采集命令                                            | 基线值                                                                                                                                                                      | W1 目标                                                                       |
+| -------- | -------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 重复代码 | 本地 request<T> 定义       | grep -rn "function request<" apps/web/src/lib/\*.ts | 10 处（account-api:59、api-keys-api:21、conversations-api:90、insights-api:42、knowledge-api:45、mcp-api:112、outbox-api:33、runs-api:90、skills-api:70、workspace-api:47） | 0（统一 http 工厂）                                                           |
+| 重复代码 | SSE getReader 手写         | grep -rn "getReader()" apps/web/src                 | 3 处（runs-api:224、conversations-api:318、notifications-api:56）                                                                                                           | 1（lib/sse.ts）                                                               |
+| 重复代码 | formatTime/formatSize 定义 | grep 页面源码                                       | 7 处（settings:33、outbox:39、knowledge:27/34、workspace:39/46、mcp:95）                                                                                                    | 1（presentation/format）                                                      |
+| 配置     | import.meta.env 直读       | grep -rn "import.meta.env" apps/web/src             | 14 处 / 9 文件                                                                                                                                                              | 0（config/env.ts）                                                            |
+| 数据层   | queryKey 字面量            | grep queryKey: 数组字面量                           | 86 处 queryKey / 58 处数组字面量                                                                                                                                            | 0 字面量（query-keys.ts）                                                     |
+| 结构     | presentation.ts            | wc -l                                               | 477 行 / 14 个引用文件                                                                                                                                                      | ≤4 文件 + barrel                                                              |
+| 结构     | lib 目录                   | ls apps/web/src/lib                                 | 41 文件 5464 行                                                                                                                                                             | 暂增（W2 分层）                                                               |
+| 路由     | app.tsx                    | wc -l                                               | 59 行，静态 import 15 页，0 lazy/Suspense                                                                                                                                   | lazy + Suspense                                                               |
+| 构建     | 入口 chunk                 | npx nx build @beauty/web（W0 台账）                 | 737954B JS + 77514B CSS                                                                                                                                                     | ✅ R-10 后实测：入口 315135B（22 个 JS chunk，合计 856KB 未压缩）+ CSS 77822B |
+| 质量     | eslint 规则                | tools/eslint-config/configs/base.js                 | 仅 ignores + recommended，无 import 边界/max-lines                                                                                                                          | 边界+体量规则                                                                 |
+| 质量     | 文档门禁                   | npx prettier --check "docs/\*_/_.md"                | 15 文件失败；无 markdownlint/链接检查；gate 未含                                                                                                                            | 全绿并纳入 gate                                                               |
+| 脚本     | dev.sh 已知缺陷            | 审计（ops）                                         | 进程组只 kill nx 父进程 / lsof 依赖 / 端口占用误判 / 首次不 uv sync；reset 不清 services/\*/.cache                                                                          | R-15 尽力修                                                                   |

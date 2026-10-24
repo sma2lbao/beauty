@@ -122,6 +122,11 @@ PYEOF
   fi
 fi
 
+# W1 R-16:文档门禁(prettier 格式 + 相对链接 + 锚点 + 归档误引)。
+# 无论单项目还是 affected 模式都在最后执行:检查对象是 docs 全局,与项目无关;
+# 失败计入 FAILURES 判 FAIL。
+run_step "docs" bash scripts/check-docs.sh
+
 echo "== 汇总: ${STEPS_TOTAL} 步执行, ${FAILURES} 失败 =="
 if [ "$FAILURES" -gt 0 ]; then
   exit 1

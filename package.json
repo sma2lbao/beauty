@@ -12,6 +12,7 @@
     "test": "nx run-many -t test --projects=@beauty/web,@beauty/desktop,@beauty/design -- --run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docs:check": "bash scripts/check-docs.sh",
     "gate": "bash scripts/refactor-gate.sh"
   },
   "private": true,

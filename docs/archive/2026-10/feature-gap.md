@@ -1,6 +1,6 @@
 # 功能差距与路线图（对比 DeepSeek Harness）
 
-> **已归档，2026-10-24**；被 [docs/architecture.md](../../architecture.md) 与 [docs/roadmap.md](../../roadmap.md) 取代（能力缺口需求池见 [docs/gap-2026-10/](../gap-2026-10/)）。本文仅作历史留痕，不再更新、不再作为依据。
+> **已归档，2026-10-24**；被 [docs/architecture.md](../../architecture.md) 与 [docs/roadmap.md](../../roadmap.md) 取代（能力缺口需求池见 [docs/gap-2026-10/](../../gap-2026-10/)）。本文仅作历史留痕，不再更新、不再作为依据。
 
 > 状态：**决策版**（2026-10-18）。已按本轮选型收敛：云 PG + 云 Redis（开发 SQLite/本地 Redis）、
 > 对象存储暂缓、Temporal/E2B 暂缓、Logto 不用（自建 account-service）、Sentry 官方、Stripe/Resend/Langfuse 暂缓、
@@ -69,14 +69,14 @@
 
 | 能力                                      | 现状                                                        | 目标                                                                      | 里程碑               |
 | ----------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------- |
-| Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP + P3 技能包                         | microsandbox provider；终端/预览后置；P4 出网/计量                        | M1 前                |
+| Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP + P3 技能包                       | microsandbox provider；终端/预览后置；P4 出网/计量                        | M1 前                |
 | GitHub 集成                               | ❌                                                          | GitHub App + 只读仓库/分支/PR                                             | M1                   |
 | 文件系统工具（read/write/edit/glob/grep） | ⏸ 依赖 sandbox                                             | 先只读+补丁建议；执行后置                                                 | M1（条件）           |
 | Shell / 终端                              | ⏸ 依赖 sandbox                                             | 决策后实施                                                                | M1（条件）           |
 | Git 工具（status/diff/commit/branch/PR）  | ⏸ 依赖 sandbox                                             | 只读 diff 先做；写操作后置                                                | M1（条件）           |
 | 工具注册表 + 权限策略                     | ⚠️ 7 个硬编码工具                                           | Tool Registry + auto/confirm/deny                                         | M1                   |
-| Skills                                    | ✅ 内置 + 上传包（P3）                                      | 审核/灰度/市场 P4；首批 coding/office 内置技能                              | M1/M2                |
-| MCP Client                                | ✅ HTTP + stdio（P2）                                       | 租户配置、命名空间、审批；stdio 在沙箱内运行                               | M1（GitHub 优先）/M3 |
+| Skills                                    | ✅ 内置 + 上传包（P3）                                      | 审核/灰度/市场 P4；首批 coding/office 内置技能                            | M1/M2                |
+| MCP Client                                | ✅ HTTP + stdio（P2）                                       | 租户配置、命名空间、审批；stdio 在沙箱内运行                              | M1（GitHub 优先）/M3 |
 | MCP Server / 开放 API                     | ❌                                                          | 对外工具/资源、OAuth、Webhook                                             | M3                   |
 | 计划/Todo/Goal/反问                       | ⚠️ 仅 plan markdown                                         | 运行时工具 + UI                                                           | M1                   |
 | 上下文压缩 / token 计量                   | ❌                                                          | 有界摘要 + token meter + 预算                                             | M1                   |
@@ -127,22 +127,22 @@
 > coding 内置技能仍只交付「只读代码分析 + 补丁建议」；FS/Git/终端工具待 M1-05/06/07，不承诺
 > 终端/预览。
 
-| ID    | 任务                                                               | 端             | 验收标准                           | 依赖  | 规模 |
-| ----- | ------------------------------------------------------------------ | -------------- | ---------------------------------- | ----- | ---- |
+| ID    | 任务                                                                   | 端             | 验收标准                           | 依赖  | 规模 |
+| ----- | ---------------------------------------------------------------------- | -------------- | ---------------------------------- | ----- | ---- |
 | M1-00 | 沙箱替代决策与 spike：microsandbox / Fly Machines / 自建 gVisor runner | 架构           | 决策：microsandbox + provider 抽象 | —     | S    |
-| M1-01 | Sandbox 实现（按 M1-00 结论）                                      | Service        | P1 底座 + P2/P3 执行已落地         | M1-00 | L    |
-| M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                            | Service        | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
-| M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                   | Service        | 按类型加载工具集；只读文件树       | M1-02 | M    |
-| M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                        | Service        | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |
-| M1-05 | FS 工具（read/write/edit/glob/grep）                               | ⏸ Service     | 依赖 M1-01；路径逃逸拦截           | M1-01 | M    |
-| M1-06 | Shell/终端 + 后台任务                                              | ⏸ Service     | 依赖 M1-01；危险命令确认           | M1-01 | M    |
-| M1-07 | Git 工具 + 快照回滚/PR                                             | ⏸ Service     | 依赖 M1-01/02                      | M1-01 | M    |
-| M1-08 | 文件树 + 终端 + 后台任务 UI                                        | Web            | 只读文件树先做；终端随 M1-06       | M1-03 | M    |
-| M1-09 | Diff review UI（逐文件/行评论/应用）                               | Web            | 大 diff 虚拟滚动；评论可提交       | M1-04 | M    |
-| M1-10 | 预览 URL                                                           | ⏸ Service/Web | 依赖 M1-01；TTL/鉴权               | M1-01 | M    |
-| M1-11 | 权限策略：per-tool/connector/tenant                                | Service/Web    | 设置页可调档；审计可见             | M1-04 | M    |
-| M1-12 | Coding Skills：审查/问答/补丁建议（执行类后置）                    | Service        | 每个技能有 schema 与交付物         | M1-04 | M    |
-| M1-13 | Plan/Todo/Goal/ask_user_question + 上下文压缩/token 预算           | Service/Web    | 计划可编辑；Todo 实时；超预算终止  | —     | L    |
+| M1-01 | Sandbox 实现（按 M1-00 结论）                                          | Service        | P1 底座 + P2/P3 执行已落地         | M1-00 | L    |
+| M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                                | Service        | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
+| M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                       | Service        | 按类型加载工具集；只读文件树       | M1-02 | M    |
+| M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                            | Service        | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |
+| M1-05 | FS 工具（read/write/edit/glob/grep）                                   | ⏸ Service     | 依赖 M1-01；路径逃逸拦截           | M1-01 | M    |
+| M1-06 | Shell/终端 + 后台任务                                                  | ⏸ Service     | 依赖 M1-01；危险命令确认           | M1-01 | M    |
+| M1-07 | Git 工具 + 快照回滚/PR                                                 | ⏸ Service     | 依赖 M1-01/02                      | M1-01 | M    |
+| M1-08 | 文件树 + 终端 + 后台任务 UI                                            | Web            | 只读文件树先做；终端随 M1-06       | M1-03 | M    |
+| M1-09 | Diff review UI（逐文件/行评论/应用）                                   | Web            | 大 diff 虚拟滚动；评论可提交       | M1-04 | M    |
+| M1-10 | 预览 URL                                                               | ⏸ Service/Web | 依赖 M1-01；TTL/鉴权               | M1-01 | M    |
+| M1-11 | 权限策略：per-tool/connector/tenant                                    | Service/Web    | 设置页可调档；审计可见             | M1-04 | M    |
+| M1-12 | Coding Skills：审查/问答/补丁建议（执行类后置）                        | Service        | 每个技能有 schema 与交付物         | M1-04 | M    |
+| M1-13 | Plan/Todo/Goal/ask_user_question + 上下文压缩/token 预算               | Service/Web    | 计划可编辑；Todo 实时；超预算终止  | —     | L    |
 
 ### M2 Office + 体验（4–6 周）
 
