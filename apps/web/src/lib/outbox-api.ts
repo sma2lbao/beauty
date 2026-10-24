@@ -6,7 +6,7 @@
  * 而不是把"没开"显示成"没有事件"。
  */
 
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -30,21 +30,25 @@ export type OutboxStats = {
   failed: number;
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(BASE, `/api/v1/outbox${path}`, init);
-}
+const http = createHttpClient(BASE);
 
 export const outboxApi = {
-  stats: () => request<OutboxStats>('/stats'),
+  stats: () => http.request<OutboxStats>('/api/v1/outbox/stats'),
   events: (status?: OutboxStatus, limit = 50) => {
     const query = new URLSearchParams({ limit: String(limit) });
     if (status) {
       query.set('status', status);
     }
-    return request<OutboxEvent[]>(`/events?${query.toString()}`);
+    return http.request<OutboxEvent[]>(
+      `/api/v1/outbox/events?${query.toString()}`,
+    );
   },
   retry: (eventId: string) =>
-    request<OutboxEvent>(`/events/${eventId}/retry`, { method: 'POST' }),
+    http.request<OutboxEvent>(`/api/v1/outbox/events/${eventId}/retry`, {
+      method: 'POST',
+    }),
   retryFailed: () =>
-    request<{ requeued: number }>('/retry-failed', { method: 'POST' }),
+    http.request<{ requeued: number }>('/api/v1/outbox/retry-failed', {
+      method: 'POST',
+    }),
 };

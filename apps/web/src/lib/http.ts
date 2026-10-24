@@ -124,3 +124,29 @@ export async function requestBlob(
   }
   return response.blob();
 }
+
+/** 绑定了服务根地址的 HTTP 客户端(见 `createHttpClient`)。 */
+export type HttpClient = {
+  /**
+   * 发一个 JSON 请求:非 2xx 抛 `ApiError`,204 返回 undefined。
+   * `path` 是 base 之后的服务内路径,默认空(直接命中 base)。
+   */
+  request<T>(path?: string, init?: RequestInit): Promise<T>;
+  /** 发一个二进制下载请求:返回 `Blob`。 */
+  blob(path?: string, init?: RequestInit): Promise<Blob>;
+};
+
+/**
+ * 创建固定 base 的 HTTP 客户端:各 api 模块不再各自复制 `request<T>`,
+ * 统一复用上面的鉴权/401 续期(单飞)/错误映射/FormData/204 语义。
+ *
+ * base 是服务根(如 `BASE`、`BASE + 路由前缀` 或同源路径前缀),
+ * 调用方只写 base 之后的路径。行为与直接调用 `requestJson`/`requestBlob` 完全一致。
+ */
+export function createHttpClient(base: string): HttpClient {
+  return {
+    request: <T>(path = '', init?: RequestInit) =>
+      requestJson<T>(base, path, init),
+    blob: (path = '', init?: RequestInit) => requestBlob(base, path, init),
+  };
+}

@@ -5,7 +5,7 @@
  * - 上传技能包(SKILL.md zip)在服务端落成"包 + 版本",列表接口把包的最新版本
  *   合并进 GET /api/v1/skills,用 `source` / `package_id` 标注来源。
  */
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 export type SkillDeliverable = {
   kind: string;
@@ -67,25 +67,23 @@ export type SkillPackage = {
   versions: SkillVersion[];
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>('', '/api/v1/skills' + path, init);
-}
+const http = createHttpClient('/api/v1/skills');
 
 export const skillsApi = {
-  list: () => request<SkillManifest[]>(''),
-  get: (skillId: string) => request<SkillManifest>('/' + skillId),
-  listPackages: () => request<SkillPackage[]>('/packages'),
+  list: () => http.request<SkillManifest[]>(''),
+  get: (skillId: string) => http.request<SkillManifest>('/' + skillId),
+  listPackages: () => http.request<SkillPackage[]>('/packages'),
   getPackage: (packageId: string) =>
-    request<SkillPackage>('/packages/' + packageId),
+    http.request<SkillPackage>('/packages/' + packageId),
   /** 上传 SKILL.md zip 包:multipart 的 file 字段,不手写 Content-Type。 */
   uploadPackage: (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return request<SkillPackage>('/packages', {
+    return http.request<SkillPackage>('/packages', {
       method: 'POST',
       body: form,
     });
   },
   deletePackage: (packageId: string) =>
-    request<void>('/packages/' + packageId, { method: 'DELETE' }),
+    http.request<void>('/packages/' + packageId, { method: 'DELETE' }),
 };

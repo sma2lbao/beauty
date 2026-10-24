@@ -1,7 +1,7 @@
 /**
  * 开放平台 API Key(M3-01):同源 /api/account/v1/api-keys(BFF 代理)。
  */
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 export type ApiKey = {
   id: string;
@@ -18,18 +18,16 @@ export type ApiKeyCreated = ApiKey & { key: string };
 
 const PATH = '/api/account/v1/api-keys';
 
-function request<T>(path = '', init?: RequestInit): Promise<T> {
-  return requestJson<T>('', PATH + path, init);
-}
+const http = createHttpClient(PATH);
 
 export const apiKeysApi = {
-  list: () => request<ApiKey[]>(),
+  list: () => http.request<ApiKey[]>(),
   create: (name: string, scopes: string[]) =>
-    request<ApiKeyCreated>('', {
+    http.request<ApiKeyCreated>('', {
       method: 'POST',
       body: JSON.stringify({ name, scopes }),
     }),
   rotate: (id: string) =>
-    request<ApiKeyCreated>('/' + id + '/rotate', { method: 'POST' }),
-  revoke: (id: string) => request<void>('/' + id, { method: 'DELETE' }),
+    http.request<ApiKeyCreated>('/' + id + '/rotate', { method: 'POST' }),
+  revoke: (id: string) => http.request<void>('/' + id, { method: 'DELETE' }),
 };

@@ -7,7 +7,7 @@
  */
 
 import { authMode } from '@/lib/auth';
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 const BASE = (import.meta.env.VITE_ACCOUNT_API_URL as string | undefined) ?? '';
 
@@ -56,29 +56,27 @@ export type AuthResult = {
   session_id: string;
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(BASE, `${PREFIX}${path}`, init);
-}
+const http = createHttpClient(BASE);
 
 export const accountApi = {
-  organization: () => request<Organization>('/v1/organization'),
+  organization: () => http.request<Organization>(`${PREFIX}/v1/organization`),
   updateOrganization: (patch: {
     name?: string;
     plan?: string;
     quota?: Record<string, unknown>;
   }) =>
-    request<Organization>('/v1/organization', {
+    http.request<Organization>(`${PREFIX}/v1/organization`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  members: () => request<Member[]>('/v1/users'),
+  members: () => http.request<Member[]>(`${PREFIX}/v1/users`),
   addMember: (body: {
     subject: string;
     email: string;
     display_name?: string | null;
     role?: Role;
   }) =>
-    request<Member>('/v1/users', {
+    http.request<Member>(`${PREFIX}/v1/users`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -86,31 +84,33 @@ export const accountApi = {
     memberId: string,
     patch: { display_name?: string; role?: Role; status?: MemberStatus },
   ) =>
-    request<Member>(`/v1/users/${memberId}`, {
+    http.request<Member>(`${PREFIX}/v1/users/${memberId}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  sessions: () => request<Session[]>('/v1/sessions'),
+  sessions: () => http.request<Session[]>(`${PREFIX}/v1/sessions`),
   addSession: (body: { user_id: string; device: string }) =>
-    request<Session>('/v1/sessions', {
+    http.request<Session>(`${PREFIX}/v1/sessions`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   revokeSession: (sessionId: string) =>
-    request<Session>(`/v1/sessions/${sessionId}/revoke`, { method: 'POST' }),
+    http.request<Session>(`${PREFIX}/v1/sessions/${sessionId}/revoke`, {
+      method: 'POST',
+    }),
   /** 注册:新组织 + owner 成员,返回双令牌(409 = 邮箱已注册)。 */
   register: (input: {
     email: string;
     password: string;
     display_name?: string;
   }) =>
-    request<AuthResult>('/v1/auth/register', {
+    http.request<AuthResult>(`${PREFIX}/v1/auth/register`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),
   /** 登录:邮箱 + 密码换双令牌(access 过期由 http 层用 refresh 自动续)。 */
   login: (input: { email: string; password: string }) =>
-    request<AuthResult>('/v1/auth/login', {
+    http.request<AuthResult>(`${PREFIX}/v1/auth/login`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),

@@ -6,7 +6,7 @@
  * - stdio:本地进程(command/args/env/runtime/image),由 orchestrator 沙箱拉起。
  * 环境变量只写不读:读取接口只返回 has_env/env_keys,永远不会回显值。
  */
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 export type MCPTool = {
   name: string;
@@ -109,9 +109,7 @@ export type MCPTestRead = {
   auth_required: boolean;
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>('', '/api/v1/mcp/servers' + path, init);
-}
+const http = createHttpClient('/api/v1/mcp/servers');
 
 /** HTTP 传输只接受 http(s) URL(后端同样是 ^https?:// 校验)。 */
 export function isHttpUrl(value: string): boolean {
@@ -150,24 +148,26 @@ export function parseEnvText(text: string): Record<string, string> {
 }
 
 export const mcpApi = {
-  list: () => request<MCPServer[]>(''),
+  list: () => http.request<MCPServer[]>(''),
   create: (input: MCPServerCreateInput) =>
-    request<MCPServer>('', {
+    http.request<MCPServer>('', {
       method: 'POST',
       body: JSON.stringify(input),
     }),
   update: (id: string, patch: MCPServerUpdateInput) =>
-    request<MCPServer>('/' + id, {
+    http.request<MCPServer>('/' + id, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  remove: (id: string) => request<void>('/' + id, { method: 'DELETE' }),
+  remove: (id: string) => http.request<void>('/' + id, { method: 'DELETE' }),
   test: (id: string) =>
-    request<MCPTestRead>('/' + id + '/test', { method: 'POST' }),
+    http.request<MCPTestRead>('/' + id + '/test', { method: 'POST' }),
   /** 发起浏览器 OAuth 授权:拿到授权页地址,由调用方整页跳转 */
   startOAuth: (id: string) =>
-    request<MCPOAuthStartRead>('/' + id + '/oauth/start', { method: 'POST' }),
+    http.request<MCPOAuthStartRead>('/' + id + '/oauth/start', {
+      method: 'POST',
+    }),
   /** 解除浏览器授权(丢弃本地 token,server 保留) */
   disconnectOAuth: (id: string) =>
-    request<void>('/' + id + '/oauth/disconnect', { method: 'POST' }),
+    http.request<void>('/' + id + '/oauth/disconnect', { method: 'POST' }),
 };

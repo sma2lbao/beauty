@@ -1,10 +1,12 @@
 /**
  * 通知流客户端(P1-9b):订阅 agent-orchestrator 的 /api/v1/notifications/stream。
  *
- * 与 runs-api 的 SSE 客户端同构(手写 frame 解析,不用 EventSource:
- * 需要带 Bearer 头与 credentials,EventSource 做不到)。
+ * 复用 @/lib/sse 基座(runs-api 同构):手写 fetch + ReadableStream 而不用
+ * EventSource —— 需要带 Bearer 头与 credentials,EventSource 做不到;
+ * 注释行(心跳)由基座跳过。连接失败抛 ApiError,由调用方决定降级。
  */
-import { ApiError, jsonHeaders } from '@/lib/http';
+import { ApiError } from '@/lib/http';
+import { connectSse } from '@/lib/sse';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -18,7 +20,6 @@ export type RunStatusNotification = {
 };
 
 const NEWLINE = String.fromCharCode(10);
-const FRAME_SEP = NEWLINE + NEWLINE;
 
 function parseData(frame: string): RunStatusNotification | null {
   for (const line of frame.split(NEWLINE)) {
@@ -38,34 +39,20 @@ export async function streamNotifications(handlers: {
   onNotification: (notification: RunStatusNotification) => void;
   signal?: AbortSignal;
 }): Promise<void> {
-  const response = await fetch(`${BASE}/api/v1/notifications/stream`, {
-    credentials: 'include',
-    // 必须显式声明要 SSE:BFF 只有看到 Accept: text/event-stream 才会流式转发,
-    // 否则会按普通请求缓冲整条响应,poll 循环永不结束 → 上游读超时 → 500。
-    headers: { ...(await jsonHeaders()), Accept: 'text/event-stream' },
+  await connectSse(`${BASE}/api/v1/notifications/stream`, {
     signal: handlers.signal,
+    onOpen: handlers.onOpen,
+    mapError: (response) =>
+      new ApiError(
+        response.status,
+        'notifications.stream_failed',
+        `通知流连接失败(${response.status})`,
+      ),
+    onFrame: (frame) => {
+      const notification = parseData(frame.raw);
+      if (notification) {
+        handlers.onNotification(notification);
+      }
+    },
   });
-  if (!response.ok || !response.body) {
-    throw new ApiError(
-      response.status,
-      'notifications.stream_failed',
-      `通知流连接失败(${response.status})`,
-    );
-  }
-  handlers.onOpen?.();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split(FRAME_SEP);
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      if (!frame.trim() || frame.startsWith(':')) continue;
-      const notification = parseData(frame);
-      if (notification) handlers.onNotification(notification);
-    }
-  }
 }

@@ -9,7 +9,7 @@
  */
 
 import { authMode } from '@/lib/auth';
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 const BASE =
   (import.meta.env.VITE_KNOWLEDGE_API_URL as string | undefined) ?? '';
@@ -42,23 +42,22 @@ export type SearchResult = {
   hits: SearchHit[];
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(BASE, `${PREFIX}${path}`, init);
-}
+const http = createHttpClient(BASE);
 
 export const knowledgeApi = {
-  documents: () => request<KnowledgeDocument[]>('/v1/knowledge/documents'),
+  documents: () =>
+    http.request<KnowledgeDocument[]>(`${PREFIX}/v1/knowledge/documents`),
   ingest: (body: { title: string; content: string; source?: string }) =>
-    request<KnowledgeDocument>('/v1/knowledge/documents', {
+    http.request<KnowledgeDocument>(`${PREFIX}/v1/knowledge/documents`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   remove: (documentId: string) =>
-    request<void>(`/v1/knowledge/documents/${documentId}`, {
+    http.request<void>(`${PREFIX}/v1/knowledge/documents/${documentId}`, {
       method: 'DELETE',
     }),
   search: (query: string, limit = 5) =>
-    request<SearchResult>('/v1/knowledge/search', {
+    http.request<SearchResult>(`${PREFIX}/v1/knowledge/search`, {
       method: 'POST',
       body: JSON.stringify({ query, limit }),
     }),

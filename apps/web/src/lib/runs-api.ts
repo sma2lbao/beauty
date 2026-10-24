@@ -6,13 +6,8 @@
  * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
  */
 
-import {
-  ApiError,
-  isUnauthorized,
-  jsonHeaders,
-  requestBlob,
-  requestJson,
-} from '@/lib/http';
+import { ApiError, createHttpClient, isUnauthorized } from '@/lib/http';
+import { connectSse } from '@/lib/sse';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
 
@@ -87,63 +82,61 @@ export type Instruction = {
 /** 统一错误契约与请求封装见 @/lib/http;这里保留同名再导出,老的引用不用改。 */
 export { ApiError, isUnauthorized };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(BASE, path, init);
-}
+const http = createHttpClient(BASE);
 
 export const runsApi = {
-  list: () => request<Run[]>('/api/v1/runs?limit=50'),
+  list: () => http.request<Run[]>('/api/v1/runs?limit=50'),
   create: (body: {
     title: string;
     goal: string;
     acceptance_criteria: string[];
   }) =>
-    request<Run>('/api/v1/runs', {
+    http.request<Run>('/api/v1/runs', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  get: (runId: string) => request<Run>(`/api/v1/runs/${runId}`),
-  getPlan: (runId: string) => request<Plan>(`/api/v1/runs/${runId}/plan`),
+  get: (runId: string) => http.request<Run>(`/api/v1/runs/${runId}`),
+  getPlan: (runId: string) => http.request<Plan>(`/api/v1/runs/${runId}/plan`),
   events: (runId: string) =>
-    request<RunEvent[]>(`/api/v1/runs/${runId}/events`),
+    http.request<RunEvent[]>(`/api/v1/runs/${runId}/events`),
   generatePlan: (runId: string) =>
-    request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
+    http.request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>
-    request<Plan>(`/api/v1/runs/${runId}/plan`, {
+    http.request<Plan>(`/api/v1/runs/${runId}/plan`, {
       method: 'PATCH',
       body: JSON.stringify({ plan_markdown: planMarkdown }),
     }),
   approve: (runId: string) =>
-    request<Run>(`/api/v1/runs/${runId}/approve`, { method: 'POST' }),
+    http.request<Run>(`/api/v1/runs/${runId}/approve`, { method: 'POST' }),
   reject: (runId: string, reason: string) =>
-    request<Run>(`/api/v1/runs/${runId}/reject`, {
+    http.request<Run>(`/api/v1/runs/${runId}/reject`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
   confirm: (runId: string, action: 'approve' | 'reject', reason?: string) =>
-    request<Run>(`/api/v1/runs/${runId}/confirm`, {
+    http.request<Run>(`/api/v1/runs/${runId}/confirm`, {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
     }),
   /** blocked → 新 attempt 重回审批闸(计划保留,§6.2);返回更新后的计划。 */
   resume: (runId: string) =>
-    request<Plan>(`/api/v1/runs/${runId}/resume`, { method: 'POST' }),
+    http.request<Plan>(`/api/v1/runs/${runId}/resume`, { method: 'POST' }),
   /** failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。 */
   retry: (runId: string) =>
-    request<Run>(`/api/v1/runs/${runId}/retry`, { method: 'POST' }),
+    http.request<Run>(`/api/v1/runs/${runId}/retry`, { method: 'POST' }),
   /** 旧端点:主文本交付物(带 content),仅为兼容保留。 */
   artifact: (runId: string) =>
-    request<Artifact>(`/api/v1/runs/${runId}/artifact`),
+    http.request<Artifact>(`/api/v1/runs/${runId}/artifact`),
   /** 交付物列表:报告 + 真实文件(截图/文档等),只有元数据。 */
   artifacts: (runId: string) =>
-    request<ArtifactMeta[]>(`/api/v1/runs/${runId}/artifacts`),
+    http.request<ArtifactMeta[]>(`/api/v1/runs/${runId}/artifacts`),
   /** 下载交付物二进制:返回 Blob,文件名/MIME 由列表元数据决定。 */
   downloadArtifact: (runId: string, artifactId: string): Promise<Blob> =>
-    requestBlob(BASE, `/api/v1/runs/${runId}/artifacts/${artifactId}/download`),
+    http.blob(`/api/v1/runs/${runId}/artifacts/${artifactId}/download`),
   instructions: (runId: string) =>
-    request<Instruction[]>(`/api/v1/runs/${runId}/instructions`),
+    http.request<Instruction[]>(`/api/v1/runs/${runId}/instructions`),
   queueInstruction: (runId: string, content: string) =>
-    request<Instruction>(`/api/v1/runs/${runId}/instructions`, {
+    http.request<Instruction>(`/api/v1/runs/${runId}/instructions`, {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
@@ -202,54 +195,26 @@ export async function streamRunEvents(
     signal?: AbortSignal;
   },
 ): Promise<void> {
-  const headers = await jsonHeaders();
-  // SSE 必须显式声明:BFF 据此选择流式转发而非缓冲(缓冲会在读超时后 500)
-  headers.Accept = 'text/event-stream';
-  if (handlers.lastEventId) {
-    headers['Last-Event-ID'] = String(handlers.lastEventId);
-  }
-  const response = await fetch(`${BASE}/api/v1/runs/${runId}/events/stream`, {
-    credentials: 'include',
-    headers,
+  await connectSse(`${BASE}/api/v1/runs/${runId}/events/stream`, {
+    lastEventId: handlers.lastEventId,
     signal: handlers.signal,
-  });
-  if (!response.ok || !response.body) {
-    throw new ApiError(
-      response.status,
-      'stream_failed',
-      `事件流连接失败(${response.status})`,
-    );
-  }
-  handlers.onOpen?.();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let ended = false;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (ended) {
-        return;
-      }
-      // 没有 stream.end 就断开:当作网络中断,交给调用方重连(带 Last-Event-ID)。
-      throw new ApiError(0, 'stream.interrupted', '事件流意外中断');
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      if (!frame.trim()) {
-        continue;
-      }
-      if (frame.includes('event: stream.end')) {
-        ended = true;
-        handlers.onEnd?.();
-        return;
-      }
-      const event = parseEventFrame(frame);
+    onOpen: handlers.onOpen,
+    mapError: (response) =>
+      new ApiError(
+        response.status,
+        'stream_failed',
+        `事件流连接失败(${response.status})`,
+      ),
+    onFrame: (frame) => {
+      const event = parseEventFrame(frame.raw);
       if (event) {
         handlers.onEvent(event);
       }
-    }
-  }
+    },
+    onEnd: handlers.onEnd,
+    // 没有 stream.end 就断开:当作网络中断,交给调用方重连(带 Last-Event-ID)。
+    onInterrupted: () => {
+      throw new ApiError(0, 'stream.interrupted', '事件流意外中断');
+    },
+  });
 }

@@ -8,7 +8,8 @@
  */
 
 import { authHeaders } from '@/lib/auth';
-import { ApiError, jsonHeaders, requestJson } from '@/lib/http';
+import { ApiError, createHttpClient } from '@/lib/http';
+import { connectSse, parseSseFrameText } from '@/lib/sse';
 import type { Run } from '@/lib/runs-api';
 
 const BASE = (import.meta.env.VITE_RUNS_API_URL as string | undefined) ?? '';
@@ -87,9 +88,7 @@ export type MessagePostResult = {
   mode: 'chat' | 'run_created' | 'instruction_queued';
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(BASE, path, init);
-}
+const http = createHttpClient(BASE);
 
 function listPath(params: ConversationListParams = {}): string {
   const search = new URLSearchParams();
@@ -112,7 +111,7 @@ export const conversationsApi = {
   page: async (
     params: ConversationListParams = {},
   ): Promise<ConversationPage> => {
-    const data = await request<ConversationPage | Conversation[]>(
+    const data = await http.request<ConversationPage | Conversation[]>(
       listPath(params),
     );
     return Array.isArray(data) ? { items: data, next_cursor: null } : data;
@@ -124,12 +123,12 @@ export const conversationsApi = {
     conversationId: string,
     patch: { title?: string; archived?: boolean },
   ) =>
-    request<Conversation>(`/api/v1/conversations/${conversationId}`, {
+    http.request<Conversation>(`/api/v1/conversations/${conversationId}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
   remove: (conversationId: string) =>
-    request<void>(`/api/v1/conversations/${conversationId}`, {
+    http.request<void>(`/api/v1/conversations/${conversationId}`, {
       method: 'DELETE',
     }),
   /**
@@ -141,15 +140,17 @@ export const conversationsApi = {
     const title = input.title?.trim();
     if (title) body.title = title;
     if (input.workspace_id) body.workspace_id = input.workspace_id;
-    return request<Conversation>('/api/v1/conversations', {
+    return http.request<Conversation>('/api/v1/conversations', {
       method: 'POST',
       body: JSON.stringify(body),
     });
   },
   get: (conversationId: string) =>
-    request<Conversation>(`/api/v1/conversations/${conversationId}`),
+    http.request<Conversation>(`/api/v1/conversations/${conversationId}`),
   messages: (conversationId: string) =>
-    request<ChatMessage[]>(`/api/v1/conversations/${conversationId}/messages`),
+    http.request<ChatMessage[]>(
+      `/api/v1/conversations/${conversationId}/messages`,
+    ),
   postMessage: (
     conversationId: string,
     content: string,
@@ -158,7 +159,7 @@ export const conversationsApi = {
     skillId?: string,
     mcpServerIds: string[] = [],
   ) =>
-    request<MessagePostResult>(
+    http.request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
       {
         method: 'POST',
@@ -173,7 +174,7 @@ export const conversationsApi = {
       },
     ),
   attachments: (conversationId: string) =>
-    request<Attachment[]>(
+    http.request<Attachment[]>(
       `/api/v1/conversations/${conversationId}/attachments`,
     ),
   uploadAttachment: async (conversationId: string, file: File) => {
@@ -246,20 +247,12 @@ export type StreamMessageHandlers = {
 export function parseSseFrame(
   frame: string,
 ): [string, Record<string, unknown>] | null {
-  let name: string | null = null;
-  const dataLines: string[] = [];
-  for (const line of frame.split('\n')) {
-    if (line.startsWith('event: ')) {
-      name = line.slice('event: '.length).trim();
-    } else if (line.startsWith('data: ')) {
-      dataLines.push(line.slice('data: '.length));
-    }
-  }
-  if (!name || dataLines.length === 0) {
+  const parsed = parseSseFrameText(frame);
+  if (!parsed?.event || !parsed.data) {
     return null;
   }
   try {
-    return [name, JSON.parse(dataLines.join('\n')) as Record<string, unknown>];
+    return [parsed.event, JSON.parse(parsed.data) as Record<string, unknown>];
   } catch {
     return null;
   }
@@ -280,12 +273,10 @@ export async function streamMessage(
   skillId?: string,
   mcpServerIds: string[] = [],
 ): Promise<void> {
-  const response = await fetch(
+  await connectSse(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
     {
       method: 'POST',
-      credentials: 'include',
-      headers: { ...(await jsonHeaders()), Accept: 'text/event-stream' },
       body: JSON.stringify({
         content,
         mode,
@@ -295,69 +286,64 @@ export async function streamMessage(
         mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
       }),
       signal: handlers.signal,
-    },
-  );
-  if (!response.ok) {
-    let code = 'stream_failed';
-    let message = `发送失败(${response.status})`;
-    try {
-      const body = (await response.json()) as {
-        code?: string;
-        message?: string;
-      };
-      code = body.code ?? code;
-      message = body.message ?? message;
-    } catch {
-      // 非 JSON 错误体:保留兜底文案
-    }
-    throw new ApiError(response.status, code, message);
-  }
-  if (!response.body) {
-    throw new ApiError(response.status, 'stream_failed', '响应没有流式内容');
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      return;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      const parsed = parseSseFrame(frame);
-      if (!parsed) {
-        continue;
-      }
-      const [name, data] = parsed;
-      if (name === 'meta') {
-        handlers.onMeta?.(
-          data as Parameters<NonNullable<StreamMessageHandlers['onMeta']>>[0],
-        );
-      } else if (name === 'delta') {
-        handlers.onDelta?.(typeof data.text === 'string' ? data.text : '');
-      } else if (name === 'tool') {
-        if (typeof data.name === 'string') {
-          handlers.onTool?.({
-            name: data.name,
-            arguments: typeof data.arguments === 'string' ? data.arguments : '',
-            ok: data.ok !== false,
+      mapError: async (response) => {
+        // HTTP 层已是 200 但没流式内容;或开流前失败(404/409/422)。
+        if (response.ok) {
+          return new ApiError(
+            response.status,
+            'stream_failed',
+            '响应没有流式内容',
+          );
+        }
+        let code = 'stream_failed';
+        let message = `发送失败(${response.status})`;
+        try {
+          const body = (await response.json()) as {
+            code?: string;
+            message?: string;
+          };
+          code = body.code ?? code;
+          message = body.message ?? message;
+        } catch {
+          // 非 JSON 错误体:保留兜底文案
+        }
+        return new ApiError(response.status, code, message);
+      },
+      onFrame: (frame) => {
+        // 复用既有帧解析器,保持「具名事件 + JSON data」的帧语义不变。
+        const parsed = parseSseFrame(frame.raw);
+        if (!parsed) {
+          return;
+        }
+        const [name, data] = parsed;
+        if (name === 'meta') {
+          handlers.onMeta?.(
+            data as Parameters<NonNullable<StreamMessageHandlers['onMeta']>>[0],
+          );
+        } else if (name === 'delta') {
+          handlers.onDelta?.(typeof data.text === 'string' ? data.text : '');
+        } else if (name === 'tool') {
+          if (typeof data.name === 'string') {
+            handlers.onTool?.({
+              name: data.name,
+              arguments:
+                typeof data.arguments === 'string' ? data.arguments : '',
+              ok: data.ok !== false,
+            });
+          }
+        } else if (name === 'done') {
+          handlers.onDone?.(
+            data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
+          );
+        } else if (name === 'error') {
+          handlers.onError?.({
+            code:
+              typeof data.code === 'string' ? data.code : 'llm.upstream_error',
+            message:
+              typeof data.message === 'string' ? data.message : '模型调用失败',
           });
         }
-      } else if (name === 'done') {
-        handlers.onDone?.(
-          data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
-        );
-      } else if (name === 'error') {
-        handlers.onError?.({
-          code:
-            typeof data.code === 'string' ? data.code : 'llm.upstream_error',
-          message:
-            typeof data.message === 'string' ? data.message : '模型调用失败',
-        });
-      }
-    }
-  }
+      },
+    },
+  );
 }

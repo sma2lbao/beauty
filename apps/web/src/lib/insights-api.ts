@@ -4,7 +4,7 @@
  * 全部走 BFF 同源: /api/models、/api/usage/summary、/api/byok
  * (BFF 再转发 llm-gateway / account-service;token 模式 Bearer 兜底)。
  */
-import { requestJson } from '@/lib/http';
+import { createHttpClient } from '@/lib/http';
 
 export type ModelInfo = {
   id: string;
@@ -39,19 +39,17 @@ export type BYOKKey = {
   updated_at: string;
 };
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>('', path, init);
-}
+const http = createHttpClient('');
 
 export const insightsApi = {
-  models: () => request<ModelList>('/api/models'),
-  usage: () => request<UsageSummary>('/api/usage/summary'),
-  byok: () => request<BYOKKey[]>('/api/byok'),
+  models: () => http.request<ModelList>('/api/models'),
+  usage: () => http.request<UsageSummary>('/api/usage/summary'),
+  byok: () => http.request<BYOKKey[]>('/api/byok'),
   saveByok: (provider: string, apiKey: string) =>
-    request<BYOKKey>(`/api/byok/${provider}`, {
+    http.request<BYOKKey>(`/api/byok/${provider}`, {
       method: 'PUT',
       body: JSON.stringify({ api_key: apiKey }),
     }),
   deleteByok: (provider: string) =>
-    request<void>(`/api/byok/${provider}`, { method: 'DELETE' }),
+    http.request<void>(`/api/byok/${provider}`, { method: 'DELETE' }),
 };
