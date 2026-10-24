@@ -24,7 +24,7 @@
 
 微服务架构设计(定稿)见 `docs/architecture.md`:微服务放 `services/`(部署单元),共享库实名命名(不用 `py-` 前缀),新 Python 项目必须在根 `pyproject.toml` 登记 uv workspace members。
 
-环境要求:Node.js >= 20.19;Python 3.12(根 `.python-version` 锁定);uv >= 0.5。
+环境要求:Node.js >= 22.22.2(jsdom 30 与 undici 8 的下限);Python 3.12(根 `.python-version` 锁定);uv >= 0.5。
 
 ## 常用命令
 
