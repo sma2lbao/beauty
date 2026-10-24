@@ -1,327 +1,535 @@
-# beauty-moon 微服务架构设计
+# beauty-moon 架构（现行唯一真源）
 
-> 状态:**定稿 v1.0** · 2026-10-12
-> 范围:AI agent harness 产品(WorkBuddy 类)的后端微服务平台
-> 本文是唯一架构事实源;实现与本文冲突时,先修订本文达成共识,再动代码。
+> **本文是唯一现行架构真源**（2026-10-24 起生效，取代 v1《微服务架构设计》与 v2《架构 v2》）。
+> 旧版已归档至 [docs/archive/2026-10/](./archive/2026-10/)（architecture-v2.md 为本文基底、feature-gap.md、tasks-m0\*.md）。
+> 实现与本文冲突时，先修订本文达成共识，再动代码。架构决策记录（ADR 001-011）见 §1。
+> 部署与平台缺口（Dockerfile、云 PG/Redis 接入等）在 [docs/roadmap.md](./roadmap.md) 跟踪，不在本文重复展开。
 
-## 1. 产品定位
+## 0. 最终选型（2026-10 拍板）
 
-**替用户在真实账号里把活干完**的 AI 办公 harness,对标腾讯 WorkBuddy 与字节豆包工作:
+| 领域              | 生产                                                | 开发环境                                     | 状态                                                   |
+| ----------------- | --------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------ |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）       | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                    |
+| Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口） |
+| 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）    |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**               |
+| 沙箱              | **microsandbox provider（P1）**                     | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）       |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）   |
+| 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                         |
+| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续  |
+| 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                  |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                              |
+| BFF               | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                              |
+| LLM 推理          | **继续用 API**（litellm 网关 :8003）                | 本地/API                                     | ✅ 已实施                                              |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）        | 本地 Next dev                                | ✅ 已实施                                              |
+| 多区域 / 数据驻留 | 不做                                                | —                                            | ⏸ 后续                                                |
 
-- 第一连接器:~~邮箱~~(Gmail API / Microsoft 365 Graph / 国内 IMAP+授权码)——**2026-10 起邮箱与日历连接器整体下线**,
-  connector-service 收敛为空框架(健康探针、连接列表/详情/撤销、凭证加密);能力重心转向知识库 + 文档 + 代码库,
-  服务国内 + 海外双市场;
-- 渠道:**web 独立站先行**,移动 app 后置,共用同一套 `/api/v1` 契约;
-- 双模式交互:**即时问答**(轻路径,单次 LLM 调用,不建 run)与**长任务执行**(重路径,durable run);
-- 差异化:邮箱场景纵深 + 数据驻留/自托管可控性,不拼通用办公广度;
-- 历史 `apps/ink`(个人知识库 RAG 原型)已从代码库移除,不在迁移路径上。
+### 0.1 两种部署形态（同一套代码）
 
-## 2. 总体架构
+| 形态                         | 适用               | Web/BFF                                                                       | 数据                        | 外部依赖                                                                              | 状态                 |
+| ---------------------------- | ------------------ | ----------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------- | -------------------- |
+| **A. SaaS（静态 SPA + 云）** | to C 公网          | Nginx 托管 SPA + FastAPI BFF；Next.js 官网部署 Vercel                         | 云 PG/云 Redis              | LLM API、Sentry（可选）                                                               | ✅ 当前              |
+| **B. 内网/离线（Intranet）** | 私有化/内网/无外网 | **Linux VM/裸机 + systemd 原生进程 + Nginx**（不用 Compose/K8s）；**仅 HTTP** | SQLite + 本地目录；无 Redis | 内网 OpenAI 兼容模型（支持 function calling）；或 `LLM_ENABLED=false` 桩；Sentry 关闭 | **⏸ 暂缓（M0-13）** |
+
+**硬性原则**
+
+1. 内网形态**不依赖 Vercel/云 PG/云 Redis/Sentry/Logto/Stripe/Resend/Langfuse**；
+2. BFF 用 FastAPI 实现并与 SPA 同域部署（Nginx 反代 `/api`），不依赖 Vercel Functions；
+3. 前端产物必须可静态托管（无外部 CDN/字体/远程图片）；
+4. 模型可指向内网 OpenAI 兼容端点；无模型时系统仍能启动（降级为确定性桩）；
+5. 内网验收必须在**禁止外网 egress** 的环境下通过。
+
+---
+
+## 1. ADR（最终状态）
+
+| ADR | 决策                                     | 状态                   | 说明                                                                                                    |
+| --- | ---------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                           |
+| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 七个 Python 服务（六业务 + bff）+ BFF 为独立 FastAPI 服务；**容器化（Dockerfile/compose）待补（R-36）** |
+| 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                |
+| 004 | Sandbox 用 microsandbox provider         | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                               |
+| 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                       |
+| 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关          |
+| 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                      |
+| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接                                                                                    |
+| 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                            |
+| 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                   |
+| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                          |
+
+---
+
+## 2. 目标拓扑
 
 ```text
-apps/web (React 19, 画布+时间线+SSE)
-        │
-   gateway :8080 (SSE 透传/限流/版本化路由)
-        │
-┌────────────────────── 控制面 ──────────────────────┐
-│ agent-orchestrator:会话与运行编排                  │
-│   LangGraph 状态机 · Postgres checkpoint           │
-│   人审中断 · SSE · 技能注册表 · 指令队列(含 runner) │
-└───────────────┬────────────────────────────────────┘
-                │ HTTP/gRPC(起步) + 事件(Redis Streams)
-┌───────────────┴───────────── 数据面 ────────────────────────────┐
-│ connector-service   邮箱适配器 + OAuth/授权码 token vault         │
-│ workspace-service   沙箱生命周期(microsandbox provider) + artifacts │
-│ knowledge-service   摄取/检索(pgvector)/记忆                    │
-│ llm-gateway         模型+embedding 唯一出口(LiteLLM)            │
-└──────────────────────────────────────────────────────────────────┘
-事件总线(events):run.* / email.received.* → 计量/知识库/通知 消费
-观测:OTel(GenAI semconv) → Langfuse;usage_ledger → credits/billing
+Browser
+├── app.beautymoon.com      Nginx: apps/web 静态产物
+│      └── /api/*           FastAPI BFF :8007（同域反代）
+│            ├── 登录/登出/会话 Cookie（account-service 为 IdP）
+│            ├── 代理 runtime（短请求 + 短流）
+│            ├── 产物/附件下载（DB/本地存储 → 流式响应）
+│            └── 限流/错误契约/审计头
+├── www.beautymoon.com      Vercel Project: apps/site（Next.js 静态导出）
+└── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
+
+容器平台（Fly.io / Cloud Run / 自有云主机；Dockerfile 待补，见 roadmap R-36）
+├── agent-runtime（agent-orchestrator）  编排 + Tool Registry + Skill + MCP + run worker  :8002
+├── llm-gateway             模型路由/降级/预算/usage 采集（API 上游）                  :8003
+├── connector-service       连接器框架（当前无内置连接器）+ 凭证管理                    :8004
+├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
+├── knowledge-service       摄取/检索/重排/记忆（JSON 向量，SQLite 兼容）              :8006
+└── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
+
+云托管（只保留 URL 型依赖）
+├── 云 Postgres             生产库（URL 注入；开发 SQLite）
+├── 云 Redis                限流/锁/短期缓存（URL 注入；开发本地 Redis；业务接入待办）
+└── Sentry                  前端/服务错误（官方 SaaS）
+
+开发环境
+├── SQLite                  AUTO_CREATE_TABLES=true，零外部依赖
+├── 本地 Redis              可选（未配置时降级为进程内限流）
+├── 本地目录                artifact_store=filesystem（默认）
+└── 本地 SMTP               事务邮件联调（生产暂不做）
 ```
 
-核心原则:
+**流量原则**
 
-1. **durable execution**:长任务状态落库、可中断、可恢复、可人审;
-2. **一切事件化**:过程 = 事件流,可回放、可检索、可审计;
-3. **LLM 访问唯一出口** llm-gateway:路由/降级/配额/预算/缓存,业务服务禁止直连模型 SDK;
-4. **业务逻辑 transport 无关**:graph 节点与业务层不感知 HTTP/gRPC/MCP,接口层都是薄壳。
+- 普通 CRUD / 短请求：浏览器 → Nginx → FastAPI BFF → 容器服务；
+- 长任务事件流：BFF 发短时 token，浏览器直连 runtime SSE（避免 BFF/代理超时）；
+- 公开 API / MCP：第三方 → api.beautymoon.com（API Key/OAuth，限流）；
+- 服务间：内部 HTTP + 租户 JWT；禁止跨服务直连数据库。
 
-## 3. 服务清单(阶段 A:六个)
+---
 
-| 服务 (`services/`)   | 职责                                                               | HTTP 端口 |
-| -------------------- | ------------------------------------------------------------------ | --------- |
-| `account-service`    | 用户/组织/配额/套餐 + sessions/devices;认证交给 IdP(Logto 自托管)  | 8001      |
-| `agent-orchestrator` | 会话与运行编排:graph/checkpoint/SSE/技能注册表/简单定时(含 runner) | 8002      |
-| `llm-gateway`        | 模型+embedding 路由(LiteLLM):区域路由/降级/预算/限流/缓存          | 8003      |
-| `connector-service`  | 邮箱适配器、token vault、以 MCP 暴露工具                           | 8004      |
-| `workspace-service`  | 沙箱生命周期(microsandbox provider,P1)、artifacts → 对象存储       | 8005      |
-| `knowledge-service`  | 摄取(事件驱动)+ 检索(pgvector)+ 记忆(起步合体)                     | 8006      |
+## 3. 服务与职责（七个 Python 服务 + 三个共享库 + 前端三应用）
 
-gRPC 端口规划 `90xx` 与 HTTP 同号对应,引入时机见 §5。
+| 服务 / 应用        | 部署 / 端口           | 职责                                                                                    | 备注                                                            |
+| ------------------ | --------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| apps/web           | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置） | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token） |
+| apps/site          | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                     | 静态导出（`output: 'export'`）                                  |
+| apps/desktop       | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                      | 与 web 云端模式并存可切换                                       |
+| services/bff       | 容器 :8007            | BFF：认证、代理、下载、限流                                                             | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）               |
+| agent-orchestrator | 容器 :8002            | 会话/run/tool registry/skill/MCP/worker                                                 | 队列为 PG job 表；事件溯源 + SSE 断线续传                       |
+| llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK、计量、预算                                                |
+| connector-service  | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密       |
+| knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用、记忆                                                            | 嵌入提供方可插拔（本地词法/网关）                               |
+| workspace-service  | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                  |
+| account-service    | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                   | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补 |
+| packages/common    | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                        | Python 共享库                                                   |
+| packages/database  | 库                    | Base/mixin/session_scope/Repository/UoW                                                 | 仓储层租户隔离 + 统一 404                                       |
+| packages/events    | 库                    | 事件信封/总线/outbox/dispatcher                                                         | 事务性 outbox + 消费幂等                                        |
+| packages/design    | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                  | web/site/desktop 共用                                           |
 
-- **阶段 B**:browser-service、runner、scheduler、guardrails、memory 拆分;实时推送(Gmail Pub/Sub / Graph webhooks / IMAP IDLE);canary 发布;evals 进 CI 门禁。
-- **阶段 C**:billing/支付、通知中心、移动 app+推送、开放平台(MCP 对外技能)、k8s、第二区域部署。
+> 拆分节奏：M0 保持六业务服务 + FastAPI BFF；M1 起把 tool registry 从 orchestrator 内拆出；M3 再拆 platform-api（先复用 runtime 路由）。
+
+---
 
 ## 4. Monorepo 结构与命名
 
 ```text
 beauty-moon/
-├── apps/
-│   └── web/                     # 产品前端(画布+时间线+artifacts 面板,反聊天刷屏)
-├── services/                    # ★ 微服务:部署单元
-│   ├── _template/               #   服务脚手架模板(uv workspace 需 exclude)
-│   ├── account-service/
-│   ├── agent-orchestrator/
-│   ├── llm-gateway/
-│   ├── connector-service/
-│   ├── workspace-service/
-│   └── knowledge-service/
-├── packages/                    # ★ 共享库:实名命名(参考 design 包,不用 py- 前缀)
-│   ├── common/                  #   错误模型/配置/日志/认证依赖/观测/SSE
-│   ├── database/                #   DeclarativeBase/命名约定/Repository/UoW/testcontainers
-│   ├── events/                  #   事件信封 + 事件总线抽象 + outbox
-│   ├── agent-kit/               #   MCP 封装/GenAI trace/agent 事件 payload(阶段 A 后期)
-│   ├── clients/                #   OpenAPI 生成 SDK(第二个消费者出现时启用)
-│   └── contracts/               #   proto 契约 + buf 生成物(内部 gRPC 化时启用)
-├── deploy/
-│   ├── docker-compose.yml       # 本地 dev:pg/redis/logto/litellm/langfuse + 服务
-│   └── regions/                 # 国内/海外区域差异配置(数据驻留)
-└── tools/                       # eslint-config 等
+├── apps/                     # ★ 终端 UI（npm workspaces）
+│   ├── web/                  #   Vite SPA 控制台（React 19 + react-router v8 + Tailwind v4）
+│   ├── site/                 #   Next.js 官网（App Router，静态导出，部署 Vercel）
+│   └── desktop/              #   Electron 桌面应用（本地电脑模式）
+├── services/                 # ★ 微服务：部署单元（uv workspace 成员，FastAPI）
+│   ├── account-service/      #   :8001
+│   ├── agent-orchestrator/   #   :8002
+│   ├── llm-gateway/           #   :8003
+│   ├── connector-service/    #   :8004
+│   ├── workspace-service/    #   :8005
+│   ├── knowledge-service/    #   :8006
+│   └── bff/                  #   :8007 同源 /api 门面
+├── packages/                 # ★ 共享库：实名命名（不用 py- 前缀）
+│   ├── common/               #   错误模型/配置/日志/JWT/存储/观测（Python）
+│   ├── database/             #   Base/命名约定/Repository/UoW/testcontainers（Python）
+│   ├── events/               #   事件信封 + 总线 + outbox（Python）
+│   └── design/               #   React 组件库（JS，bd- BEM + --bd-* 令牌）
+├── tools/
+│   └── eslint-config/        # ESLint 9 flat config 工厂
+├── scripts/                  # dev.sh / seed-local.sh / reset-local.sh / refactor-gate.sh
+├── deploy/                   # docker-compose.yml（pg/redis）+ web/nginx.conf
+└── docs/                      # 文档（README.md 为索引）
 ```
 
-**放置判据**:
+**放置判据**：
 
-- `services/`:独立部署单元——有 Dockerfile、被 compose/k8s 编排的长驻进程(暴露 API 或消费队列,纯 worker 也算);
-- `apps/`:人直接使用的终端 UI;
-- `packages/`:被 import 的库(不部署)。
+- `services/`：独立部署单元——有 Dockerfile（待补，R-36）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
+- `apps/`：人直接使用的终端 UI；
+- `packages/`：被 import 的库（不部署）。
 
-**命名护栏**(Python 顶层 import 没有作用域):
+**命名护栏**（Python 顶层 import 没有作用域）：
 
-- 避开 stdlib 模块名(如 `platform`)与主流库顶层名(如 `agents` 已被 openai-agents 占用,故用 `agent-kit`);
-- 逃生舱:将来可用 PEP 420 命名空间包 `beauty.*`(对应 JS 侧 `@beauty/` 作用域语义)。
+- 避开 stdlib 模块名（如 `platform`）与主流库顶层名（如 `agents` 已被 openai-agents 占用）；
+- 逃生舱：将来可用 PEP 420 命名空间包 `beauty.*`（对应 JS 侧 `@beauty/` 作用域语义）。
 
-**uv workspace 注意**:members 为**显式清单**——`apps/` 与 `packages/` 混有 npm 项目(web/design 无 `pyproject.toml`),glob 会命中无 pyproject 的目录导致 uv 报错(见 [uv workspace 文档](https://docs.astral.sh/uv/concepts/projects/workspaces/))。新 Python 项目必须在根 `pyproject.toml` 登记 members + dependencies + `[tool.uv.sources]`,随后 `npx nx sync <项目>`;`services/_template` 用 `[tool.uv.workspace] exclude` 排除。
+**uv workspace 注意**：members 为**显式清单**——`apps/` 与 `packages/` 混有 npm 项目（web/site/desktop/design 无 `pyproject.toml`），glob 会命中无 pyproject 的目录导致 uv 报错（见 [uv workspace 文档](https://docs.astral.sh/uv/concepts/projects/workspaces/)）。新 Python 项目必须在根 `pyproject.toml` 登记 members + dependencies + `[tool.uv.sources]`，随后 `npx nx run <项目>:sync`（注意：`npx nx sync <项目>` 会被 Nx 内置命令抢占而不执行 uv sync，必须用显式 run 形式）。
 
-## 5. 通信设计
+---
 
-| 通道          | 协议                      | 说明                                                                                                                                                                         |
-| ------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 对外(web/app) | REST `/api/v1` + SSE      | OpenAPI 即契约;SSE 断线用 Last-Event-ID 重放                                                                                                                                 |
-| 服务间(起步)  | HTTP + OpenAPI 生成客户端 | `packages/clients` 由各服务 schema 生成,统一超时/重试                                                                                                                        |
-| 服务间(升级)  | gRPC(内 gRPC、外 REST)    | 触发条件:内部高频/流式/多语言契约;契约集中于 `packages/contracts`(proto+[buf](https://buf.build),`buf breaking` 进 CI);同进程双端口 uvicorn + grpc.aio,业务层 transport 无关 |
-| 异步事件      | Redis Streams(→Kafka)     | `events` 包:信封 + outbox;阶段 B 引入                                                                                                                                        |
-| 工具调用      | MCP(streamable HTTP)      | connector/workspace 以 MCP server 暴露工具,内外共用                                                                                                                          |
-| 模型访问      | OpenAI 兼容 API           | 唯一出口 llm-gateway;按部署区域路由模型                                                                                                                                      |
+## 5. Web 架构（Vite SPA + BFF）
 
-## 6. Agent 执行模型(核心)
-
-### 6.1 Graph 固定骨架
+### 5.1 项目结构
 
 ```text
-plan → confirm(按需) → execute → verify → deliver
+apps/web           Vite SPA（暗色控制台；src/pages + src/components/console + src/lib 数据层）
+  └── src/          页面/组件/数据层（@beauty/design 组件 + @beauty/design/tailwind.css 令牌）
+apps/site          Next.js App Router（官网、文档、博客；静态导出）
+apps/desktop       Electron（主进程 src/main/local/，本地电脑模式）
+services/bff       FastAPI BFF（同域 /api）
+packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 ```
 
-- **plan**:产出**可编辑的 Markdown 计划 artifact**(存对象存储,画布上直接改),不是 yes/no 门;
-- **confirm**:按需人审中断(checkpointer 挂起)——装配工具(基础工具 + 该 run 引用的 MCP 工具,按技能 tools 白名单裁剪)里**没有 DANGER 级**(未信任 MCP、对外不可逆写)时,计划生成后自动放行:事件 `run.planned.v1` 带 `auto_approved=true`,并补一条 `run.approved.v1`;有 DANGER 工具才挂起,用户改完计划确认后再执行(`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`,默认 true;关闭即回到每跑必审);
-- **execute**:工具/MCP/连接器调用,产出 artifacts;
-- **verify**:对 `acceptance_criteria` **逐项校验**,不达标自动返工,**上限 3 轮**(防死循环烧钱);
-- **deliver**:交付物注册;写操作按风险等级执行(受控写自动、危险操作按策略确认,见 §6.4)。
+- SPA 静态产物由 Nginx 托管，`/api` 反代到 FastAPI BFF；
+- 官网独立项目，Next.js 静态导出 + sitemap/RSS，部署 Vercel；
+- 环境变量拆分：公开配置（`VITE_*` / `NEXT_PUBLIC_*`）与服务端 secret。
 
-### 6.2 Run 状态机(goal 语义)
+### 5.2 认证与会话
+
+- 登录：account-service 自建 IdP——注册 + 邮箱密码登录（argon2id）+ **旋转式刷新令牌**（旧令牌一次性，重用即吊销该用户全部）+ 内部签发 `POST /v1/auth/issue` + OIDC 发现/JWKS（签名密钥经 `SIGNING_KEY_PATH` 持久化）；**不用 Logto**（前端保留 `VITE_AUTH_MODE=logto` 作为可选模式）；社交 OAuth（Google/GitHub）待补；
+- BFF 回调后建立 **httpOnly, Secure, SameSite=Lax Cookie**；SPA 不接触 refresh token（session 模式）；
+- BFF 调 runtime 时签发短时服务 JWT（tenant/org/sub/scope）；服务间内部调用一律经 TokenBroker（租户来自签名 claim，无 `X-Tenant-Id` 裸调路径）；
+- 开放平台/API Key 请求绕过 BFF，直连 public API，用 API Key → 短时 JWT；
+- 本地开发保留 token 模式兜底（`VITE_AUTH_MODE=token|session|logto`，默认 token）；`AUTH_ENABLED=false` 时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义。
+
+### 5.3 流式
+
+- BFF 以 FastAPI 实现，Nginx 同域反代 `/api`；一套实现同时服务 SaaS 与内网；
+- 短对话/短流：BFF 代理 SSE（FastAPI StreamingResponse）；
+- 长任务：BFF 发 `streamToken`（短时、单 run），浏览器直连 runtime SSE；
+- 断线重连带 `Last-Event-ID`；Redis 做 fan-out（可选），Postgres 做重放；
+- 不做 WebSocket；多端同步后续再评估。
+
+### 5.4 页面地图（现行控制台）
+
+| 区域       | 页面                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| 工作台     | 会话工作台（SSE 流式：meta/delta/done；审批就地确认）、附件（受限）、@ 引用（只读）、/ 命令、模型选择、执行面板   |
+| 任务编排   | 看板、运行详情、计划/Todo/Goal、审批（/runs）                                                                     |
+| 变更与产物 | Diff 评审、产物预览（Markdown/图片；PDF/Office 后置）、下载/分享（/changes）                                      |
+| 工作区     | 工作区中心（清单/新建/重命名/删除、会话与交付物归属、一行切换器；/workspace）、文件树（只读）、Git 状态、补丁建议 |
+| 知识库     | 文档入库/清单/检索预览（/knowledge）、记忆/引用溯源                                                               |
+| 开发者     | API Key、MCP（HTTP/stdio 面板）、Skills（上传/版本/删除）、Webhook、调用日志、用量（/outbox 事件队列运维）        |
+| 设置       | 账户、安全、模型/BYOK、权限、组织/成员/会话（/settings）；订阅/发票后置                                           |
+| 官网       | 独立部署（apps/site，深链 /landing 跳转过去）                                                                     |
+
+---
+
+## 6. 数据与存储
+
+| 数据                                                             | 生产                             | 开发               | 说明                                                   |
+| ---------------------------------------------------------------- | -------------------------------- | ------------------ | ------------------------------------------------------ |
+| runs / run_events / conversations / chat_messages / instructions | 云 Postgres                      | SQLite             | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
+| connections / credentials                                        | 云 Postgres                      | SQLite             | 凭证加密暂用应用层密钥；KMS 后置                       |
+| workspaces / artifacts / sandboxes                               | 云 Postgres + 内容存 DB/文件系统 | SQLite + 本地目录  | 对象存储后置；单实例 filesystem 可用                   |
+| knowledge_documents / chunks                                     | 云 Postgres（JSON 向量）         | SQLite             | 现有实现不依赖 pgvector，可直接跑                      |
+| orgs / members / quotas / usage_ledger / api_keys                | 云 Postgres                      | SQLite             | usage ledger 新增；Stripe 后置                         |
+| session / rate limit / locks                                     | 云 Redis（**业务未接，R-P1-8**） | 本地 Redis（可选） | 未配置时降级为进程内实现                               |
+| jobs                                                             | 云 Postgres（job 表）            | SQLite job 表      | 队列与重试；worker 轮询                                |
+
+**开发/生产一致性**
+
+- 开发：SQLite + `AUTO_CREATE_TABLES=true`（现有默认），零外部依赖；
+- 生产：云 Postgres + Alembic 迁移（现有迁移未使用 PG 专属类型，SQLite 兼容）；
+- CI 必须对**云 PG**跑一遍迁移 + 集成测试，避免「SQLite 过、PG 挂」；
+- 多实例部署时 **filesystem artifact store 不可用**，必须用 database 模式或共享盘；对象存储接入后替换。
+
+---
+
+## 7. 认证、配额、计费（Stripe 暂缓）
+
+- **身份**：account-service 维持自建 IdP（邮箱密码 + 计划补 Google/GitHub OAuth）；各服务沿用 JWT/JWKS 验签（同一个 `JwtVerifier`，不设后门；换 IdP 时各服务只改 `AUTH_ISSUER`）；
+- **会话**：BFF httpOnly Cookie；服务间短时 JWT；API Key 独立通道；
+- **Free 配额**：`usage_ledger` 记录 token / tool call / 存储；按月聚合 → 配额检查（402/429）；
+- **BYOK**：租户级 provider key（应用层加密，KMS 后置）；llm-gateway 按租户选 key；BYOK 不扣模型 credits；
+- **订阅/支付**：Stripe 暂不做；先只支持 Free 档 + 手动开通内部档；付费自助后续补；
+- **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；租户/IP/Key 三级；Turnstile 后置；
+- **公开分享**：不可猜测 token、可撤销、可过期（后置）。
+
+---
+
+## 8. 开放平台与 MCP（M3）
+
+### 8.1 Public API
+
+- `/v1`：conversations、runs、events(SSE)、artifacts、skills、tools、usage；
+- 鉴权：OAuth 2.1（第三方应用）或 API Key（服务端调用）；scope 最小化；
+- 幂等键、分页 cursor、统一错误 `{code,message,details}`、限流头；
+- Webhook：`run.completed`/`run.failed`/`artifact.created`/`usage.threshold`，签名 + 重试；
+- SDK：TypeScript/Python（OpenAPI 生成）+ 示例仓库。
+
+### 8.2 MCP
+
+- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略、审计；
+- **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
+  - **HTTP 型**（M1 已落地）：orchestrator 进程内 httpx（Streamable HTTP），后续补 SSRF/出网代理加固；
+  - **stdio 型**（P2 已落地）：命令在 workspace-service 沙箱内拉起，经 stdin/stdout JSON-RPC
+    执行（`stdin MCP` 不能进 orchestrator 进程）；沙箱按**对话级**复用
+    （`ToolContext.conversation_id`，无对话退化为 run），命令白名单 + 参数不经 shell；
+    `env/token` 只存密文，读端只回 `has_env/env_keys`；P2 出网 `public`（允许 npx/uvx 安装），
+    P4 切 allowlist/凭据注入；
+  - **审批策略**（已落地）：每个 server 一个 `auto_approve` 信任开关（Web `/mcp` 页
+    「免确认执行」，默认关）。关：run 里逐次进确认闸、对话里只回喂「请改用任务」；
+    开：run 不再确认、对话里可直接调用（对话本身没有审批流）——对齐
+    操作策略「是配置，不是硬编码」；
+- **安全**：MCP 返回内容视为不可信数据；提示注入过滤；危险工具默认 confirm；凭证只存在服务端；
+  stdio 进程只允许在沙箱内运行，沙箱内 env 明文对用户代码可见（最小 scope + P4 凭据代理）；
+- **市场**：后续 MCP server 目录 + 一键安装（M4）。
+
+### 8.3 Skill / Plugin 注册表
+
+- manifest：id/version/description/workspaceType/tools/permissions/deliverables/pricing；
+- 发布/审核/灰度/回滚；运行时按租户启用；
+- 开放平台开发者可提交 Skill；与 MCP server 一起构成插件市场。
+- **P3 已落地（上传包）**：租户上传 SKILL.md zip（可选 skill.json entrypoint），
+  对象存储 + 版本表（slug+version 不可变），run 创建时冻结版本快照；
+  有 entrypoint 的包在沙箱内执行（skill_run 工具，需确认），无 entrypoint 的包作为提示词技能；
+  Web Skills 页支持上传/版本查看/删除。开放平台的审核/灰度/计费仍在 M4。
+
+---
+
+## 9. 观测、质量与安全
+
+- **错误**：Sentry 官方（前端 + 服务），PII 脱敏后上报；
+- **日志**：结构化日志 + traceId（沿用 `common.logging`）；OTel/Langfuse 后置；
+- **观测规范**：字段字典、`request_id` 跨服务贯穿、访问/异常日志规格、Sentry 接入与告警草案见 [observability.md](./observability.md)；
+- **产品分析**：PostHog 后置（可用 Sentry + 自建事件表过渡）；
+- **Evals**：golden dataset + grader；PR 门禁（M4）；
+- **安全**：沙箱 P1/P2 受控使用（stdio MCP 有开关 + 命令白名单 + 沙箱隔离）；用户上传 skill 包执行 P3 已开；凭证加密；租户隔离测试；输入/输出审查后置；
+- **审计**：run_events 即审计流水（append-only、seq 单调、可回放）；导出后置。
+
+---
+
+## 10. 部署与迁移
+
+### 10.1 环境
+
+| 环境    | Web                              | Runtime            | 数据                                           |
+| ------- | -------------------------------- | ------------------ | ---------------------------------------------- |
+| dev     | 本地 Vite + 本地 BFF             | 本地进程（dev.sh） | SQLite + 本地 Redis + 本地目录                 |
+| staging | Nginx SPA + Vercel preview(site) | 容器平台 + BFF     | 云 PG（staging URL）+ 云 Redis + DB artifact   |
+| prod    | Nginx SPA + Vercel(site)         | 容器平台 + BFF     | 云 PG + 云 Redis + DB artifact（对象存储后置） |
+
+- CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
+- 服务镜像：每服务 Dockerfile + 健康检查 + 迁移 job（部署前执行）——**当前全仓无 Dockerfile，待补（见 roadmap R-36）**；
+- 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
+- 成本护栏：容器平台 scale-to-zero、Free 配额、预算告警。
+
+### 10.2 从当前仓库迁移（M0 路径）
+
+1. ✅ 新增 `services/bff`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
+2. ⏳ 七个服务补 Dockerfile + 容器平台配置（SaaS）——**待补（R-36）**；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
+3. ⏳ 接入云 PG/云 Redis URL——**M0-03，未启动**；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
+4. ⏳ account-service 补 Google/GitHub OAuth + BFF Cookie 会话（保留 token 模式开发兜底）——BFF Cookie 会话已落地，社交 OAuth 待补；
+5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
+6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；
+7. ✅ 补 Markdown/会话管理/产物预览（DB/文件版）等体验闭环；
+8. ⏳ 灰度：内部 dogfood → Free 邀请制 → 公开注册。
+
+### 10.3 内网/离线部署（Intranet Profile）——⏸ 暂缓，不纳入 M0
+
+> 当前只要求**本地可启动**；本节保留为后续内网交付参考，恢复时再按 M0-13 子任务执行
+> （完整方案见归档的 [tasks-m0-13.md](./archive/2026-10/tasks-m0-13.md)）。
+
+**目标**：在完全无外网（或仅允许内网模型/依赖源）的环境中，用 **Linux VM/裸机 + systemd 原生进程 + Nginx** 启动完整系统；**不使用 Docker Compose / Kubernetes**。
+
+**组成**
 
 ```text
-pending → planning → awaiting_approval → running → awaiting_confirmation
-                        │                    │(外部条件不满足)        │
-                        └── resume ── blocked(reason)                  ├→ completed / failed
+/opt/beauty/releases/<version>/       发布包（服务代码 + venv/wheels + web/node 产物）
+/opt/beauty/current -> releases/<v>   当前版本软链（升级/回滚切换）
+/etc/beauty/*.env                     EnvironmentFile（600）
+/etc/beauty/secrets/                  JWT/内部密钥/BFF session 密钥（600）
+/var/lib/beauty/<service>/*.db        SQLite
+/var/lib/beauty/artifacts/            产物/附件（filesystem）
+/var/backups/beauty/<date>/           DB + artifacts 备份
+/etc/systemd/system/beauty-*.service  六业务服务 + BFF + 迁移（oneshot）
+/etc/nginx/conf.d/beauty.conf         HTTP 静态站 + /api 反代（SSE 不缓冲）
 ```
 
-- 其中 `awaiting_approval` 只在装配了 DANGER 级工具时出现:没有 DANGER 工具时 planning 后**自动放行**直接进 running(`run.planned.v1` 带 `auto_approved=true`,并补 `run.approved.v1`);判据是 run 装配的工具集(基础工具 + 引用的 MCP 工具,按技能 tools 白名单裁剪),执行期危险操作确认闸(`awaiting_confirmation`)不变;开关 `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`(默认 true,关闭即每跑必审);
-- `rounds` 计数:支持跨轮续跑与有界返工;
-- `blocked(reason) → resume`:覆盖"等邮件回复/等外部事件"类场景;
-- 即时问答走轻路径,不建 run。
+**必须满足**
 
-### 6.3 事件溯源(run_events)
+1. **无 Vercel/容器编排**：BFF 以 FastAPI 进程由 systemd 管理；Nginx 托管 SPA 静态产物并反代 `/api`；SPA 深链 rewrite 由 Nginx 完成；
+2. **无外部 CDN/字体/图片**：构建产物自包含；
+3. **模型可配**：`LLM_GATEWAY__API_BASE`、`LLM_GATEWAY__API_KEY`、`LLM_GATEWAY__DEFAULT_MODEL`（litellm 透传 `api_base`/`api_key`）；未配置且 `LLM_ENABLED=false` 时可启动（桩）；内网模型**支持 function calling**；
+4. **数据本地**：SQLite + 本地目录；Redis 不配置（进程内限流/锁）；产物 `ARTIFACT_STORE=filesystem|database`；
+5. **可选依赖默认关闭**：Sentry、社交 OAuth、Stripe、Resend、Langfuse；
+6. **鉴权本地可用**：仅 account-service 邮箱密码（无内网 OIDC/LDAP）；**HTTP 内网 Cookie `BFF_COOKIE_SECURE=false`** + SameSite=Lax + CSRF + 短会话 + 防火墙/IP allowlist；
+7. **内网构建/交付**：Python 走内网 PyPI（或 wheelhouse），Node 走内网 npm；发布包 + 校验和；无容器镜像依赖；
+8. **验收**：在禁止外网 egress 的 VM 上，安装脚本执行后 `systemctl status beauty-*` 全绿，登录 → 会话 → 流式（桩或内网模型）→ 上传 → 产物 → 搜索可用；日志无外网请求失败。
 
-- `run_events` 表:append-only、`seq` 单调编号、`type` + `payload`(JSONB),**落 Postgres**;
-- Redis Streams 只做实时分发;**SSE 断线回放从 Postgres 读**;
-- 事件名复用 `events` 信封约定:`run.started.v1` / `token.delta.v1` / `tool.invoked.v1` / `run.completed.v1` …;
-- `token.delta.v1` 是**正文增量**(payload `{text, phase}`,phase ∈ plan/execute/verify/deliver):
-  执行图的四个正文节点把模型流式输出攒批落成事件(按 seq 拼接即该阶段全文,阶段切换切批),
-  前端订阅 run 事件流就能在 run 还没终态时看到正文——任务对话没有别的正文通道,
-  chat 路径才走会话 SSE 的 `delta` 帧;增量事件不进 outbox,开关 `RUN_DELTA_STREAMING`(默认 true);
-- 价值:审计流水 + 断线/多端回放 + 全文检索——"AI 工作记录可回放可检索"是产品功能。
+**注意**
 
-### 6.4 操作策略
+- **不允许 Compose/K8s**：用 systemd 管进程；若连 systemd 也不允许，需要改为 supervisor/手工守护（待确认）；
+- **不支持 HTTPS**：Cookie Secure=false，HTTP 下凭证/Cookie 明文传输；必须靠内网隔离、Nginx 仅内网监听、CSRF、短会话、防火墙/IP allowlist 补偿，并在文档中声明风险；
+- **单机 SQLite 无 HA**：systemd 自动重启 + 备份/快速恢复；多机/高并发需 PG（后续 I3）；
+- 无对象存储时附件限制 10MB。
 
-per-connector / per-tenant 配置,每个动作分级 `auto | confirm | deny`:
+**环境变量补充（内网）**
 
-- 读操作默认 auto;写/发/删默认 confirm;危险删除默认 deny;
-- 用户可按连接器调档到"全自动"——策略是配置,不是硬编码;
-- 计划审批与执行策略是两个层次:是否需要人工放行看 run 装配的工具里有无 DANGER 级(见 §6.2),执行期动作仍逐个按本节分级;
-- 落地(P0-4):`approval_policies` 表按租户存 `tool → auto|confirm|deny`(工具名或 `*`),
-  `GET/PUT /api/v1/approval-policies` 整表替换;求值是一层纯函数
-  (`services/approval.py: decide`):精确规则 > 通配规则 > 风险等级默认值,
-  因此空表时行为与之前完全一致。策略随 run 状态进图(节点仍不查库),命中
-  `deny` 时不执行并把拒绝原因回喂模型,对话路径同样生效(chat 没有审批流,
-  `confirm` 一律降级为"请改用任务")。
+```text
+BFF__COOKIE_SECURE=false       # 无 HTTPS 内网；上线 HTTPS 后改 true
+LLM_GATEWAY__API_BASE=...      # 内网 OpenAI 兼容地址
+LLM_GATEWAY__API_KEY=...
+LLM_GATEWAY__DEFAULT_MODEL=openai/<model>
+SENTRY_ENABLED=false
+SOCIAL_LOGIN_ENABLED=false
+ARTIFACT_STORE=filesystem      # 单机；多机改 database/共享盘
+DATABASE_URL=sqlite+aiosqlite:////var/lib/beauty/app/app.db
+REDIS_URL=                      # 留空 = 进程内降级
+```
 
-### 6.5 指令追加队列
+---
 
-run 执行中用户可继续发指令,入 `pending_instructions`,当前 run 完成后依次触发(豆包"任务队列"语义)。
+## 11. Agent 执行模型（核心）
 
-### 6.6 引擎与上下文
+### 11.1 统一 run 生命周期
 
-- 执行引擎默认 **LangGraph + Postgres checkpointer**;流程复杂/强 SLA/大量人审编排时升级 **Temporal**;**不自研状态机**;
-- graph 内设 **context 组装/压缩节点**;超长任务轮次间只传**有界结构化摘要**(借鉴 DSH ralph 与 [Manus 上下文工程](https://www.zenml.io/llmops-database/context-engineering-for-production-ai-agents-at-scale))。
+```text
+message → triage → (chat | run)
+run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自动放行) → running
+     → awaiting_confirmation → completed / failed / blocked
+```
 
-### 6.7 对话(conversations)
+- 执行引擎 **LangGraph + PG checkpointer**（SQLite 开发用 InMemorySaver，现有代码已支持）；
+- run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行 → 心跳/重试；
+- 同一 run 只允许一个 worker（行锁 + lease），崩溃后按 checkpoint 恢复；
+- **plan**：产出可编辑的 Markdown 计划 artifact（存对象存储，画布上直接改），不是 yes/no 门；
+- **confirm**：按需人审中断——装配工具里没有 DANGER 级（未信任 MCP、对外不可逆写）时计划生成后自动放行（`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`，默认 true），有 DANGER 工具才挂起；
+- **verify**：对 `acceptance_criteria` 逐项校验，不达标自动返工，上限 3 轮；
+- **deliver**：交付物注册（一个 run 多件：报告/技能产物/工具外链文件）；写操作按风险等级执行。
 
-- **先分流**:消息先判 `chat`(简单对话)还是 `task`(复杂任务)——显式指定(自动/对话/任务)优先,其次由模型判别,**判别失败或无模型时退回 task**;chat 由模型直接答一条,不建 run、不需审批,只有 task 才进 §6 任务流程;
-- **流式**:发消息走 SSE(`meta` 分流结论 → `delta` 正文增量 → `done`),chat 的正文**边产出边显示**;模型出口是 llm-gateway 的 `POST /v1/completions/stream`,失败以 `error` 帧收尾(开流后状态码改不了);中途断连时已产出的片段仍落库,不丢半截回复;
-- **任务正文**:task 走的是 run,正文不在会话 SSE 的 `delta` 帧里——它作为 `token.delta.v1` 事件落 `run_events`(见 §6.3),前端边执行边订阅 run 事件流渲染,run 终态后由落库的 assistant 消息接管(正文不重复);
-- 对话(`conversations`)是消息容器:task 消息在没有进行中的 run 时自动建 run 并规划,进行中则并入 §6.5 指令队列;首条消息自动定题;
-- **对话必须归属工作区**:`conversations.workspace_id` 为归属字段(跨服务弱引用,无 FK)——显式传入时经 workspace-service 校验(不存在 404 `workspace.not_found`、上游不可达 502 `workspace.upstream_error`),不传则落租户**默认工作区**;历史 `workspace_id IS NULL` 的旧会话在默认工作区列表时**懒回填**,非默认工作区过滤不回填、不泄漏;run 建时从对话继承 `workspace_id`,交付物镜像(`create_artifact`)带着它落库;
-- user/assistant 消息都持久化(`chat_messages`):assistant 消息既可能是 run 终态(交付物正文/失败原因/拒绝原因)的投影,也可能是 chat 的直接回复(`run_id` 为空)——历史双向完整,作为多轮上下文注入(chat 带此前全部轮次,规划排除本 run 自己的消息);
-- blocked 视为对话停点(需人工 resume):新消息另开一跑,不挂旧图;重试继承会话归属。
+### 11.2 Tool Registry（coding 与办公共用）
 
-## 7. 数据模型要点
+```text
+ToolSpec {
+  name, description, inputSchema, outputSchema,
+  scopes, risk: read | write | destructive,
+  requiresApproval: auto | confirm | deny,
+  executor: connector | knowledge | workspace | sandbox | mcp,
+  cost: { tokens?, toolCalls?, sandboxMs? }
+}
+```
 
-| 表/存储                                  | 归属                      | 说明                                                                           |
-| ---------------------------------------- | ------------------------- | ------------------------------------------------------------------------------ |
-| runs / run_events / pending_instructions | orchestrator              | §6 状态机、事件溯源、指令队列                                                  |
-| conversations / chat_messages            | orchestrator              | §6.7 对话消息(user/assistant 持久化 + 多轮上下文;**必须归属工作区**)           |
-| artifacts                                | workspace                 | 交付物元数据(一个 run 多件:报告/技能产物/工具外链文件);实体文件在对象存储或 DB |
-| connections + credentials                | connector                 | 双凭据模型:OAuth refresh token 与国内授权码/密码;KMS 加密                      |
-| skills                                   | orchestrator              | 技能 = prompt 模板 + 工具集 + 输入 schema + 触发方式 + 交付物类型;版本化       |
-| schedules                                | orchestrator(阶段 B 独立) | cron/webhook 触发器                                                            |
-| usage_ledger                             | 计量消费者                | 模型 token + 沙箱分钟 + 工具调用 → credits                                     |
-| feedback                                 | orchestrator              | 点赞/点踩/纠错 → datasets 飞轮                                                 |
-| 知识库(pgvector)                         | knowledge                 | 全表 tenant_id,检索同租户过滤                                                  |
-| sessions/devices                         | account                   | 多端会话(为 app 预留)                                                          |
+- 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
+- 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
+- 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm）；策略是配置，不是硬编码；
+- 所有工具调用写 `run_events`（可回放/审计/计量）。
 
-### 7.1 交付物(run artifacts)
+### 11.3 Skill（场景模板）
 
-用户要的是**能打开的文件**,不是一段 Markdown 正文——所以交付物是"一个 run 多件":
+```text
+Skill {
+  id, version, title, description,
+  workspaceType, tools[], permissions,
+  systemPrompt, inputSchema,
+  deliverables: { kind, template? },
+  triggers: manual | schedule(后续),
+  billing: { free?, creditsPerRun? }
+}
+```
 
-- **多件**:报告件(`source=report`,deliver 合成的成品)之外,技能产物按输出文件
-  逐件登记(`source=skill`),工具返回的外链文件在执行期下载落库(`source=mcp`);
-  `run_artifacts` 不再对 `run_id` 唯一;
-- **文本与二进制分流**:文本类(`text/*`、JSON/YAML/XML 等)存 `content`,
-  二进制存 `content_bytes`(DB)或对象存储(行里留 `object_key`/`size_bytes`),
-  并记 `filename`/`content_type`;下载端点 `GET /api/v1/runs/{id}/artifacts/{aid}/download`
-  返回原始字节 + 附件头;
-- **外链在执行时抓**:MCP/工具返回带签名链接会过期,交付后再抓往往已失效,因此
-  执行期就按白名单扩展名识别 http(s) 文件并下载(SSRF 拦截私网/回环、不跟随
-  重定向、单文件 10MB / 20s / 每 run 10 件上限);抓取失败只进 `download_errors`,
-  不拖垮交付;
-- **幂等与镜像**:workspace-service 侧同构(`content` 或 `content_base64`),
-  orchestrator 逐件镜像并回写 `workspace_artifact_id`;重复交付复用该 id,
-  事件 `run.delivered.v1` 记 `artifact_ids`/`artifacts`/`download_errors`;
-- **归属随对话**:镜像时带 run 的 `workspace_id`(run 从对话继承,见 §6.7),
-  交付物因此落在发起它的对话所属工作区,而不是散在租户根下。
+首批：代码审查、仓库问答、补丁建议（内置 manifest，只读）；邮件摘要、回复草稿、分类去噪、邮件→周报、附件归档、日历排期。
 
-### 7.2 工作区(workspaces)
+P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/）：
 
-- 工作区是**会话与交付物的归属容器**(workspace-service 的表,UI 交互对齐 dsh:
-  侧栏用一行切换器 + 下拉菜单切换工作区,会话区只列当前工作区的会话);`workspaces.is_default` 标记系统维护的默认工作区——
-  **默认工作区可改名、不可删除**(交付与编排默认往它落,删掉也会被下一次懒建重建);
-- `PATCH /v1/workspaces/{id}` 改名/改描述(同租户重名 409 `workspace.exists`);
-  `DELETE /v1/workspaces/{id}` 级联清理该工作区的交付物(对象存储 + 行),
-  默认工作区返回 409 `workspace.default_protected`;
-- 跨服务引用(orchestrator 的会话/run、沙箱实例)是**弱引用**,不做跨服务级联:
-  删工作区后遗留会话落「未分组」继续可用,再跑 run 时交付物镜像只记错误、不打断执行。
+- 包在对象存储（workspace-service /v1/objects），DB 只存包/版本 + manifest/SKILL.md 快照；
+- 版本化：租户内 slug + version 不可变；run 创建时冻结版本与执行字段，后传新版本不影响旧 run；
+- 有 entrypoint 的包自动获得 skill_run 工具（受控写，在沙箱内自动执行、不打断审批），产物登记为 run 交付物；
+- 当前仍不开放终端/预览；coding 类内置技能保持只读。
 
-## 8. 知识、记忆与连接器
+### 11.4 Sandbox（P1 底座 + P2 stdio MCP + P3 技能包执行已落地）
 
-- **knowledge-service**(阶段 A 合体):ingestion 消费 `email.received.v1` 等事件 → embedding(**经 llm-gateway 走 API**,自托管 bge-m3 后置)→ pgvector;retrieval 提供检索+重排入口;memory 以表起步(事实/偏好/会话摘要);
-- **连接器现状(2026-10)**:邮箱(IMAP/SMTP、Gmail、M365)与日历(OAuth + 事件 CRUD)能力**已下线**,
-  connector-service 只剩连接器空框架:健康探针、`GET /v1/connections`、`GET /v1/connections/{id}`、
-  `DELETE /v1/connections/{id}`(撤销留痕)与凭证加密;存量连接由迁移统一置 `revoked`;
-  orchestrator 侧不再有邮件/日历工具;
-- 首批技能:知识库检索与汇总、文档整理成周报、只读代码审查;写/发类动作默认人审。
+- **引擎选型（2026-10-20 拍板）**：**microsandbox**（Apache-2.0，microVM，Python SDK）——自建的是 **provider 抽象 + 生命周期 + 租户配额**，不自建隔离内核；备选 E2B / Fly Machines 通过同一 `SandboxProvider` 接口接入；
+- **P1（2026-10-20）**：`workspace-service` 沙箱模块——`SandboxProvider` 抽象、microsandbox 实现、`sandboxes` 实例表（租户/TTL/资源/状态）、生命周期 API（create/exec/files/touch/destroy）、过期回收 job；`agent-orchestrator` 增加沙箱 HTTP 客户端（默认关闭）。测试零网络；真实 microVM 需宿主可写 `MSB_HOME` 且允许 OCI registry 出网；
+- **P2（2026-10-20）**：stdio MCP 接入——命令在沙箱内拉起，`StdioSandboxPool` 按对话级复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；`env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换；
+- **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
+- **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
+- **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
 
-## 9. 安全与合规
+### 11.5 事件溯源与对话
 
-1. **token vault**:KMS 加密、租户隔离、最小 OAuth scope、全程审计——用户真实账号令牌是安全皇冠;
-2. **操作分级**(§6.4)+ 每租户工具白名单;
-3. **沙箱强隔离**(E2B/容器实例),不可信代码不进服务进程;
-4. **审计**:run_events 即审计流水(谁、何时、在谁的账号、做了什么、结果如何,不可抵赖可回放);
-5. **数据驻留**:国内/海外双区域,**同一套代码**、区域决定模型路由与数据存储位置;国内区只路由境内可用模型(如 DeepSeek)。
+- `run_events` 表：append-only、`seq` 单调编号、`type` + payload（JSONB），落 Postgres；Redis Streams 只做实时分发；**SSE 断线回放从 Postgres 读**（`Last-Event-ID`）；
+- `token.delta.v1` 是正文增量（payload `{text, phase}`，phase ∈ plan/execute/verify/deliver）：执行图四个正文节点把模型流式输出攒批落成事件，前端订阅 run 事件流就能在 run 还没终态时看到正文；增量事件不进 outbox，开关 `RUN_DELTA_STREAMING`（默认 true）；
+- 跨服务事件走 `events.outbox`：状态改了事件一定发、事务回滚一定不发；投递至少一次，消费方用 `mark_processed` 幂等；失败按 `backoff_seconds` 退避，超 `max_attempts` 落 failed 留痕；
+- **对话先分流**：消息先判 chat（简单对话）还是 task（复杂任务）——显式指定（自动/对话/任务）优先，其次模型判别，失败退回 task；chat 由模型直接答一条（不建 run、不需审批、正文边产出边渲染），task 进 §11.1 流程；
+- 发消息走 SSE（`meta` 分流结论 → `delta` 正文增量 → `done`），失败以 `error` 帧收尾；中途断连时已产出片段仍落库；
+- **对话必须归属工作区**：`conversations.workspace_id` 为归属字段（跨服务弱引用）；不传则落租户默认工作区；删除工作区级联清交付物、会话保留落「未分组」；
+- **指令追加队列**：run 执行中用户可继续发指令，入 `pending_instructions`，当前 run 完成后依次触发；
+- blocked 视为对话停点（需人工 resume）：新消息另开一跑，不挂旧图。
 
-## 10. 可观测与质量
+---
 
-- 全链路 OTel(GenAI 语义约定仍在演进,用 openllmetry instrumentation 起步),trace 贯穿 web → orchestrator → 工具 → 模型;
-- 观测落地规范(日志字段字典、`request_id` 跨服务贯穿、访问/异常日志、Sentry、指标与告警草案)见 [observability.md](./observability.md);
-- [Langfuse](https://github.com/langfuse/langfuse) self-host(trace/prompt 管理/datasets/evals;OTel 原生备选 Arize Phoenix),按租户/功能打标;
-- **evals 是发布门禁**:golden datasets + [ragas](https://github.com/explodinggradients/ragas) 挂 CI,改 prompt/模型/图结构必须过基线;
-- 用户反馈入库,周期性回灌 datasets;
-- credits:usage 事件 → usage_ledger → billing(阶段 C)。
+## 12. 暂缓项与影响（必须显式管理）
 
-## 11. Web 与 API 纪律
+### 12.1 Temporal/Inngest 暂缓
 
-- `/api/v1` 是产品公共契约(未来 app 同套):版本化、分页/错误约定统一(错误统一渲染 `{"code","message","details"}`,见 `packages/common`);
-- SSE:网关透传(禁缓冲)+ Last-Event-ID 重放;durable run 天然支持换设备续看进度;
-- 信息架构:**画布 + 过程时间线 + artifacts 面板**,计划是画布上可编辑的文档(反聊天刷屏);
-- IdP:**Logto** 自托管(同时支持国内短信/社交登录与 Google/Apple,覆盖将来 iOS app);
-- **实施现状:自建认证(account-service,由 dev 桩转正)**:Logto 接入前
-  account-service 即 IdP——注册 + 邮箱密码登录(argon2id)+ **旋转式刷新令牌**
-  (旧令牌一次性,重用即吊销该用户全部)+ 内部签发 `POST /v1/auth/issue`
-  (共享密钥换目标租户 token,供 orchestrator 的服务间调用;orchestrator 对
-  下游的内部调用**一律**经 TokenBroker 走该端点——租户来自签名 claim,不再
-  有 `X-Tenant-Id` 裸调路径,密钥未配置时在换发处即报错)+ OIDC 发现/JWKS
-  端点(签名密钥经 `SIGNING_KEY_PATH` 持久化,跨重启不轮换);各服务用**同一个**
-  `JwtVerifier` 验签,不设后门;**换 Logto 时各服务只改 `AUTH_ISSUER`**,
-  服务代码零改动(自建签发不落任何服务专有依赖);**测试基建同步**——各服务
-  测试装配走"开鉴权 + 真签 token"(`common/testing.py` 的 TestIdP:本地密钥 +
-  JWKS MockTransport + 按租户签 Bearer),不再依赖临时租户头;`AUTH_ENABLED=false`
-  时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义,前端与测试均不再使用;
-  各服务 `AUTH_ENABLED` **默认即 `true`**(issuer 默认指向自建 IdP
-  account-service `:8001`),零配置启动即与前端 token 模式对齐。
+- 用 Postgres job 表 + worker 替代；适合 MVP，但缺少可视化工作流/复杂重试编排；
+- 任务量/复杂度上来后再评估 Temporal Cloud / Inngest，接口按队列抽象隔离。
 
-## 12. 工程约定
+### 12.2 对象存储暂缓
 
-- 命令纪律见 `AGENTS.md`:Python 依赖只经 `nx run <项目>:add`,变更后 `npx nx sync <项目>`;uv.lock 不手改;
-- 端口:服务 HTTP `80xx`(8001 起)/ gRPC `90xx` 同号对应 / 网关 8080;web dev 5173 不变;
-- 测试:unit(无 IO)+ integration(testcontainers),报告/覆盖率落根 `reports/`、`coverage/`;
-- 部署演进:本地 compose → 前期生产**单云主机 compose**(托管 PG/COS/Redis)→ k8s(用户量驱动);
-- 代码风格:服务与共享库 ruff line-length 88;Python 3.12(根 `.python-version`)。
+- 产物/附件先存 DB 列或本地文件；建议单文件上限（如 10MB）并在 UI 提示；
+- **多实例部署时 filesystem 不可用**：生产必须 `artifact_store=database` 或共享盘；
+- PDF/Office/图片的大文件预览推迟到对象存储接入后。
 
-## 13. 竞品对比结论(为什么长这样)
+### 12.3 Logto 不用
 
-对标字节**豆包工作**(2026-09 上线[目标模式/计划模式/任务队列](https://www.chinaz.com/ainews/31298.shtml)、[多任务排队](https://post.smzdm.com/p/aqrmevvp/))与 **DSH**(DeepSeek Harness,一手源码+运行时观察)后沉淀的关键决策:
+- 自建 account-service 需补社交 OAuth（Google/GitHub；Microsoft 后置）；
+- 邮箱验证、找回密码、风控需要自行实现（或后置）；
+- 前端 `VITE_AUTH_MODE=logto` 保留为可选模式（切换 IdP 时各服务只改 `AUTH_ISSUER`）。
 
-| 模式                                        | 来源                         | 本架构落点               |
-| ------------------------------------------- | ---------------------------- | ------------------------ |
-| 计划先行、确认后执行;计划 = 可编辑 artifact | 豆包计划模式 / DSH plan mode | §6.1                     |
-| 验收标准逐项校验 + 自动返工(有界)           | 豆包目标模式                 | §6.1 verify              |
-| 运行中追加指令队列                          | 豆包任务队列                 | §6.5                     |
-| goal 语义(rounds / blocked / resume)        | DSH goals                    | §6.2                     |
-| 事件溯源(seq / 回放 / 检索)                 | DSH session events           | §6.3                     |
-| approval policy 配置化                      | DSH approval/sandbox policy  | §6.4                     |
-| CAS 任务板多 agent 协调 + 写域              | DSH team task board          | 阶段 B runner 拆分时引入 |
+### 12.4 Stripe 暂缓
 
-## 14. 阶段路线
+- 付费订阅/发票/税/催缴不能上线；先 Free 配额 + 手动开通；
+- usage ledger、配额校验、BYOK 与支付解耦，先做；Stripe 接入时只加支付与套餐同步。
 
-- **阶段 A(当前)**:三个共享包(common/database/events)+ 六个服务 + compose(dev)+ IdP/LLM 网关/观测接入;首批邮箱技能端到端跑通;
-- **阶段 B**:browser/runner/scheduler/guardrails/memory 拆分;实时推送;canary;evals 进 CI 门禁;
-- **阶段 C**:billing/支付、移动 app+推送、开放平台(MCP 对外)、k8s、第二区域。
+### 12.5 Resend 暂缓
 
-## 15. 待定决策
+- 事务邮件（验证/重置/通知）先走本地 SMTP 或控制台日志；
+- 站内通知优先；营销邮件后置。
 
-| 决策              | 当前默认                          | 决定时机                              |
-| ----------------- | --------------------------------- | ------------------------------------- |
-| 执行引擎          | LangGraph + Postgres checkpointer | 阶段 A 动工即定;复杂编排再议 Temporal |
-| 内部 RPC 化(gRPC) | 不做,HTTP + 生成客户端            | 内部高频/流式出现时                   |
-| 自托管 embedding  | 不做,API 起步                     | 检索质量/成本成为瓶颈时               |
-| k8s               | 不做,单云主机 compose             | 并发用户量起来后                      |
-| guardrails 强度   | 输入过滤起步                      | 有真实用户数据前定                    |
-| 移动 app          | 不做                              | 阶段 C                                |
+### 12.6 Langfuse 暂缓
 
-## 16. 参考
+- 没有 prompt/response trace 与数据集回放；先用 Sentry + 结构化日志；
+- 评估/数据集能力后置到 M4。
 
-- [Manus 用 E2B 提供虚拟机](https://e2b.dev/customers/how-manus-uses-e2b-to-provide-agents-with-virtual-computers) · [Manus 上下文工程](https://www.zenml.io/llmops-database/context-engineering-for-production-ai-agents-at-scale)
-- [OpenHands 架构(事件流 + 运行时沙箱)](https://docs.openhands.dev/enterprise/architecture)
-- [LangGraph](https://github.com/langchain-ai/langgraph) · [agent-service-toolkit(FastAPI+LangGraph 生产模板)](https://github.com/JoshuaC215/agent-service-toolkit) · [Temporal](https://github.com/temporalio/temporal)
-- [LiteLLM](https://github.com/BerriAI/litellm) · [MCP](https://modelcontextprotocol.io) · [Logto](https://github.com/logto-io/logto) · [Langfuse](https://github.com/langfuse/langfuse) · [ragas](https://github.com/explodinggradients/ragas)
-- [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) · [buf](https://buf.build)
-- 豆包工作 9 月更新:[目标模式/计划模式](https://www.chinaz.com/ainews/31298.shtml) · [任务队列](https://post.smzdm.com/p/aqrmevvp/)
+### 12.7 静态托管与 BFF 边界
+
+- Vercel 只部署 `apps/site`（Next.js 静态导出），不承载 SPA/BFF；
+- SPA 静态产物由 Nginx 托管，`/api` 反代到 FastAPI BFF；长流仍直连 runtime，长任务走 worker；
+- BFF 不受 Vercel 函数时长限制，但代理 SSE 时必须关闭缓冲并设置足够 read timeout。
+
+---
+
+## 13. 风险与待定
+
+| 风险                                     | 缓解                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| coding agent 无执行环境（沙箱执行后置）  | microsandbox P1-P3 已落地，受控执行；终端/预览不承诺                          |
+| 多实例 + filesystem 产物                 | 生产强制 database 模式；对象存储接入后替换                                    |
+| 云 PG 与 SQLite 行为差异（时区/JSON/锁） | CI 对云 PG 跑迁移+集成；SQLite 仅开发                                         |
+| Redis 成为单点                           | 只用于限流/锁/缓存；关键状态落 PG；Redis 不可用时降级；**业务未接（R-P1-8）** |
+| PG job 队列吞吐                          | 小团队/MVP 足够；量级上来换专业队列                                           |
+| 自建认证的安全负担                       | 沿用现有旋转刷新令牌/JWKS；补社交 OAuth 时做安全评审                          |
+| 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC                       |
+| BFF/代理 SSE 超时                        | 长流直连 runtime；BFF 仅短流，Nginx 关闭缓冲并放宽 read timeout               |
+| BYOK 密钥安全（无 KMS）                  | 应用层加密 + 密钥轮换 + 不落日志；KMS 后置                                    |
+| 无 Dockerfile/容器编排（M0-02 未启动）   | roadmap R-36 跟踪；M0-03 云接入依赖它                                         |
+
+**待定**
+
+1. coding 执行扩展（终端/文件写/预览，依赖沙箱 P4）；
+2. 产物多实例存储（database 先行 or 尽快接对象存储）；
+3. 社交 OAuth 范围（Google/GitHub 先，Microsoft 后）；
+4. Free 配额与 BYOK 的具体额度；
+5. 是否在 M2 前引入对象存储（影响附件/Office 预览）。
+
+---
+
+## 14. 参考
+
+- [microsandbox](https://github.com/microsandbox/microsandbox) · [LangGraph](https://github.com/langchain-ai/langgraph) · [Temporal](https://github.com/temporalio/temporal)
+- [LiteLLM](https://github.com/BerriAI/litellm) · [MCP](https://modelcontextprotocol.io) · [Sentry](https://sentry.io) · [ragas](https://github.com/explodinggradients/ragas)
+- [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)
+- 豆包工作（计划模式/任务队列）与 DSH（事件溯源/approval policy/goal 语义）的对照结论已沉淀进 §11。

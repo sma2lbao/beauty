@@ -1,6 +1,6 @@
 # M1-00 前置研究：沙箱可否自建服务（2026-10-18）
 
-> 问题：beauty-moon 的沙箱（`docs/feature-gap.md` M1-00/M1-01）是接托管服务还是自建？
+> 问题：beauty-moon 的沙箱（`docs/archive/2026-10/feature-gap.md` M1-00/M1-01）是接托管服务还是自建？
 > 结论先行：**可以自建，但"自建"有两条完全不同的路线，不要混为一谈**：
 > - **路线 A（推荐起步）：自建"沙箱服务"，不自建"隔离内核"** —— 引擎用开源（microsandbox / E2B infra / gVisor），自己写的是 provider 抽象 + 生命周期/租户/配额那层。这层本来就是 beauty-moon 的业务，托管服务替代不了。
 > - **路线 B（不建议本阶段）：自建隔离内核**（自维护 gVisor/Firecracker runner、快照、调度、网络策略）——是 L 级长期投入，需要专门团队。

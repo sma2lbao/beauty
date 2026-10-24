@@ -1,5 +1,7 @@
 # beauty-moon 架构 v2（静态 SPA + FastAPI BFF + 容器 Runtime）
 
+> **已归档，2026-10-24**；内容已并入 [docs/architecture.md](../../architecture.md)（以本文为基底重写）与 [docs/roadmap.md](../../roadmap.md)。本文仅作历史留痕，不再更新、不再作为依据。
+
 > 状态：**决策版**（2026-10-18）。本文件已按以下拍板结果收敛：
 > Web 保留 **Vite SPA** + 独立 Next.js 官网；**静态 SPA + FastAPI BFF + 容器 runtime** 混合；
 > **Free 额度 + 订阅 + BYOK**（Stripe 暂缓）；**coding agent + 办公多场景**；**开放平台 / MCP**。
@@ -325,7 +327,7 @@ packages/console   控制台组件（可选抽出）
 
 - **错误**：Sentry 官方（前端 + 服务），PII 脱敏后上报；
 - **日志**：结构化日志 + traceId（沿用 `common.logging`）；OTel/Langfuse 后置；
-- **观测规范**：字段字典、`request_id` 跨服务贯穿、访问/异常日志规格、Sentry 接入与告警草案见 [observability.md](./observability.md)；
+- **观测规范**：字段字典、`request_id` 跨服务贯穿、访问/异常日志规格、Sentry 接入与告警草案见 [observability.md](../../observability.md)；
 - **产品分析**：PostHog 后置（可用 Sentry + 自建事件表过渡）；
 - **Evals**：golden dataset + grader；PR 门禁（M4）；
 - **安全**：沙箱 P1/P2 受控使用（stdio MCP 有开关 + 命令白名单 + 沙箱隔离）；用户上传 skill 包执行 P3 再开；凭证加密；租户隔离测试；输入/输出审查后置；

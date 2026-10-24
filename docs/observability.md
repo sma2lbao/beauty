@@ -2,7 +2,7 @@
 
 > 状态：**P0 日志与请求上下文、P1 Sentry（服务端）、P2 指标与 OTel 追踪均已实施**（2026-10-22）。
 > 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending` 派生指标、GenAI semconv 的模型 span 语义。
-> 对齐 `docs/architecture-v2.md` §9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
+> 对齐 `docs/architecture.md`（现行唯一架构真源）§9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
 
 ---
@@ -14,7 +14,7 @@
 - 线上任意一个请求/任务，能用 `request_id` 把 7 个服务的日志串成一条时间线；
 - 每个 HTTP 请求有且只有一行结构化访问日志（状态、耗时、路由、租户）；
 - 未捕获异常、上游失败、慢请求、后台 job 失败都能被日志与 Sentry 捕获，且不带 PII；
-- 内网/离线形态（`architecture-v2.md` 部署形态 B）可以整层关掉，服务照常运行。
+- 内网/离线形态（`architecture.md` §0.1 部署形态 B）可以整层关掉，服务照常运行。
 
 **非目标（本期）**
 

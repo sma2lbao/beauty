@@ -1,5 +1,7 @@
 # 功能差距与路线图（对比 DeepSeek Harness）
 
+> **已归档，2026-10-24**；被 [docs/architecture.md](../../architecture.md) 与 [docs/roadmap.md](../../roadmap.md) 取代（能力缺口需求池见 [docs/gap-2026-10/](../gap-2026-10/)）。本文仅作历史留痕，不再更新、不再作为依据。
+
 > 状态：**决策版**（2026-10-18）。已按本轮选型收敛：云 PG + 云 Redis（开发 SQLite/本地 Redis）、
 > 对象存储暂缓、Temporal/E2B 暂缓、Logto 不用（自建 account-service）、Sentry 官方、Stripe/Resend/Langfuse 暂缓、
 > Vercel 托管 Web、LLM 继续用 API。

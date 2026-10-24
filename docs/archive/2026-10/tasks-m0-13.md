@@ -1,5 +1,7 @@
 # M0-13 子任务清单：内网/离线部署（Linux VM + systemd）——⏸ 暂缓
 
+> **已归档，2026-10-24**；被 [docs/architecture.md](../../architecture.md)（v2 基底）与 [docs/roadmap.md](../../roadmap.md) 取代。本文仅作历史留痕，不再更新、不再作为依据。
+
 > **状态：暂缓，不纳入 M0。** 当前只要求本地可启动；本文件保留为后续内网交付参考。
 
 > 父任务：[tasks-m0.md](./tasks-m0.md) 的 **M0-13**

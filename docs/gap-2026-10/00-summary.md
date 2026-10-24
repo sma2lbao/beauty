@@ -5,7 +5,7 @@
 > - [02a-claude-codex.md](./02a-claude-codex.md)、[02b-oss-harnesses.md](./02b-oss-harnesses.md)：Claude Code / Codex 与 OpenHands / Cline / Aider / Gemini CLI / Goose 的机制横评
 > - [03-runtime-platform.md](./03-runtime-platform.md)：沙箱、多 agent 编排、记忆、生态、可观测、安全、SaaS 平台要素（S/M/L 与既定里程碑对齐）
 >
-> 旧文档 [feature-gap.md](../feature-gap.md) 只对比 DeepSeek Harness 一家；本文把参照面扩到整个 agent harness 领域，**结论以代码证据为准**，公开资料标注「待核实」的不作为决策依据。
+> 旧文档 [feature-gap.md](../archive/2026-10/feature-gap.md)（已归档）只对比 DeepSeek Harness 一家；本文把参照面扩到整个 agent harness 领域，**结论以代码证据为准**，公开资料标注「待核实」的不作为决策依据。
 > 判定口径：✅ 已具备／⚠️ 部分或「有壳无实」／❌ 缺失；规模 S（≤2 天）/ M（3–5 天）/ L（1–2 周+）。
 
 ---

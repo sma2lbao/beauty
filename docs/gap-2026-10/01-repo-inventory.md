@@ -168,7 +168,7 @@
 | 事务性 outbox（至少一次 + 退避 + failed 留痕 + 人工重放） | ✅ | `packages/events`（OutboxRepository/Dispatcher）；装配 `orchestrator/main.py:195-233`、`services/outbox.py:37-48`；运维端点 `api/v1/outbox.py:50-112`；UI /outbox | 租户隔离；未启用返回 409（outbox.py:42-47） |
 | 观测：结构化日志 + 健康检查 | ✅ | `common.logging`（structlog，main.py:64 setup_logging）；每服务 /healthz（如 `agent_orchestrator/api/health.py:12-13`）；LLM 调用日志 `services/llm.py:127-132` | |
 | 观测：Sentry / OTel / Prometheus / tracing / metrics 端点 | ❌ | 服务与共享库 grep sentry、opentelemetry、prometheus、metrics、trace_id 零命中 | 仅 docs 规划（`docs/architecture.md:203-204`） |
-| Eval（golden dataset / grader / 回归门禁 / 用户反馈入库） | ❌ | 仓库无任何 eval 实现；grep 仅命中规划文本 `docs/architecture-v2.md:295`、`docs/architecture.md:204-205`、`docs/feature-gap.md:181` | 无 datasets 飞轮、无反馈点赞/点踩落库 |
+| Eval（golden dataset / grader / 回归门禁 / 用户反馈入库） | ❌ | 仓库无任何 eval 实现；grep 仅命中规划文本 `docs/archive/2026-10/architecture-v2.md:295`、`docs/architecture.md:204-205`（旧版，已重写）、`docs/archive/2026-10/feature-gap.md:181` | 无 datasets 飞轮、无反馈点赞/点踩落库 |
 | 部署产物 | ⚠️ | 仅 `deploy/docker-compose.yml`（postgres+redis 开发基础设施，文件内注明服务本体等 Dockerfile 就绪后追加）、`deploy/web/nginx.conf`、`deploy/web/README.md` | 无服务 Dockerfile、无 k8s/helm（find 零命中） |
 | CI（lint/test/构建门禁） | ❌ | 无 `.github/workflows`，无 `.gitlab-ci.yml`（仓库根不存在） | 无 PR 门禁；只能人工跑 `nx run-many -t lint/test` |
 | 沙箱/隔离执行环境（runner/browser/container） | ❌ | grep sandbox、runner、container、docker 于 orchestrator 与 workspace-service 代码零命中 | 代码工具直接在服务进程可见文件系统的 root 内读写（`code_tools.py:1-8`）；无执行沙箱 |

@@ -1,5 +1,7 @@
 # M0 任务清单：平台基础 + 体验闭环
 
+> **已归档，2026-10-24**；被 [docs/architecture.md](../../architecture.md)（v2 基底）与 [docs/roadmap.md](../../roadmap.md) 取代。本文仅作历史留痕，不再更新、不再作为依据。
+
 > 状态：**可执行任务清单（草案）** · 2026-10-18
 > 依据：[architecture-v2.md](./architecture-v2.md)、[feature-gap.md](./feature-gap.md)
 > 周期目标：**2–3 周**；并行轨道见第 3 节。
