@@ -167,6 +167,12 @@
 */
 :root {
   --logo-moon: #ffefc6;
+
+  /* R-20:品牌组件单一来源迁到 @beauty/design 后,把它的品牌令牌映射到本站在用的值,
+     避免令牌默认值(亮色主题)落到暗色官网上 */
+  --bd-logo-moon: var(--logo-moon);
+  --bd-logo-tile: var(--ha-accent);
+  --bd-logo-text: var(--ha-text);
 }
 
 @layer base {

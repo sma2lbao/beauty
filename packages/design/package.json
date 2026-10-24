@@ -15,6 +15,18 @@
     "./package.json": "./package.json",
     "./styles.css": "./src/styles/prebuilt.css",
     "./tailwind.css": "./src/styles/index.css",
+    "./brand": {
+      "@beauty/source": "./src/components/brand/index.ts",
+      "types": "./dist/components/brand/index.d.ts",
+      "import": "./dist/components/brand/index.js",
+      "default": "./dist/components/brand/index.js"
+    },
+    "./button": {
+      "@beauty/source": "./src/components/button/index.ts",
+      "types": "./dist/components/button/index.d.ts",
+      "import": "./dist/components/button/index.js",
+      "default": "./dist/components/button/index.js"
+    },
     ".": {
       "@beauty/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
