@@ -5,6 +5,7 @@ description = "服务基础设施共享库:统一错误模型、配置基类、�
 readme = "README.md"
 requires-python = ">=3.11,<4"
 dependencies = [
+    "cryptography>=50.0.2",
     "httpx>=0.28.1",
     "openpyxl>=3.1.5",
     "opentelemetry-exporter-otlp-proto-http>=1.45.1",

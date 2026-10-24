@@ -1,24 +1,20 @@
-"""MCP server token 应用层加密(M1 本地版)。"""
+"""MCP server token 应用层加密:实现委托 common.security,错误码契约不变。"""
 
 from __future__ import annotations
 
-import base64
-import hashlib
+from common.security import SecretBox
 
-from common.errors import AppError
-from cryptography.fernet import Fernet, InvalidToken
+_ERROR_CODE = "mcp.token_unreadable"
+_ERROR_MESSAGE = "MCP token 无法解密"
 
 
-def _fernet(secret: str) -> Fernet:
-    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
+def _box(secret: str) -> SecretBox:
+    return SecretBox(secret, error_code=_ERROR_CODE, error_message=_ERROR_MESSAGE)
 
 
 def encrypt_token(secret: str, value: str) -> str:
-    return _fernet(secret).encrypt(value.encode()).decode()
+    return _box(secret).encrypt(value)
 
 
 def decrypt_token(secret: str, value: str) -> str:
-    try:
-        return _fernet(secret).decrypt(value.encode()).decode()
-    except (InvalidToken, ValueError) as exc:
-        raise AppError("mcp.token_unreadable", "MCP token 无法解密") from exc
+    return _box(secret).decrypt(value)

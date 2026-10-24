@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from common.errors import AppError
+from common.security import SecretBox
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from account.core.byok import encrypt_key
 from account.models.account import BYOKKey, UsageEvent
 from account.repositories import (
     BYOKRepository,
@@ -136,7 +136,7 @@ async def upsert_byok(
         raise AppError("byok.invalid_provider", "provider 无效")
     repo = BYOKRepository(session)
     record = await repo.find_for_provider(tenant_id, normalized)
-    encrypted = encrypt_key(secret, data.api_key)
+    encrypted = SecretBox(secret).encrypt(data.api_key)
     hint = data.api_key[-4:]
     if record is None:
         record = BYOKKey(

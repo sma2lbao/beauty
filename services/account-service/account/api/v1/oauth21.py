@@ -55,7 +55,7 @@ async def register_client(
 ) -> OAuthClientRead | JSONResponse:
     limiter = request.app.state.oauth_register_limiter
     client_ip = request.client.host if request.client else "unknown"
-    if not limiter.allow(f"oauth-register:{client_ip}"):
+    if not await limiter.allow(f"oauth-register:{client_ip}"):
         return JSONResponse(
             {
                 "error": "temporarily_unavailable",

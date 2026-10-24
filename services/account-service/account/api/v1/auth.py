@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-import secrets
 from typing import Annotated
 
-from common.errors import UnauthorizedError
+from common.security import make_internal_secret_dependency
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +38,11 @@ def get_signer(request: Request) -> IdPSigner:
 
 
 SignerDep = Annotated[IdPSigner, Depends(get_signer)]
+
+_require_internal_secret = make_internal_secret_dependency(
+    error_message="内部签发未开放或密钥不符"
+)
+RequireInternalSecret = Annotated[None, Depends(_require_internal_secret)]
 
 
 @router.post(
@@ -114,17 +118,16 @@ async def logout(body: LogoutRequest, session: DBSession) -> Response:
 
 @router.post("/issue", response_model=IssueResponse)
 async def issue(
-    body: IssueRequest, request: Request, settings: SettingsDep, signer: SignerDep
+    body: IssueRequest,
+    settings: SettingsDep,
+    signer: SignerDep,
+    _internal: RequireInternalSecret,
 ) -> IssueResponse:
     """内部服务签发:共享密钥换"以目标租户为 claim"的 access token。
 
     下游服务开了鉴权后,服务间调用与用户面走**同一套** JwtVerifier——
-    不设后门;密钥未配置或不符一律 401(常量时间比较,不泄漏配置状态)。
+    不设后门;密钥由 common.security 统一依赖校验(常量时间,不泄漏配置状态)。
     """
-    expected = settings.internal_secret
-    provided = request.headers.get("X-Internal-Secret", "")
-    if not expected or not secrets.compare_digest(provided, expected):
-        raise UnauthorizedError("auth.internal_forbidden", "内部签发未开放或密钥不符")
     token = signer.sign(subject=body.subject, tenant_id=body.tenant_id)
     return IssueResponse(
         access_token=token,

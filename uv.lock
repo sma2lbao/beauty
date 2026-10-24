@@ -853,6 +853,7 @@ name = "common"
 version = "0.1.0"
 source = { editable = "packages/common" }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "openpyxl" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -874,6 +875,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=50.0.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.45.1" },

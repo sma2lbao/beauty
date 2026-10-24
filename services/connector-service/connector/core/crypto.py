@@ -1,28 +1,25 @@
-"""连接器凭证应用层加密(M0 本地版):读端永不返回,传输时解密。"""
+"""连接器凭证信封:加解密委托 common.security,信封格式与历史明文回退留在本模块。"""
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 from typing import Any
 
-from common.errors import AppError
-from cryptography.fernet import Fernet, InvalidToken
+from common.security import SecretBox
 
 _ENC_PREFIX = "fernet:"
+_ERROR_CODE = "connector.credentials_unreadable"
+_ERROR_MESSAGE = "连接凭证无法解密"
 
 
-def _fernet(secret: str) -> Fernet:
-    digest = hashlib.sha256(secret.encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
+def _box(secret: str) -> SecretBox:
+    return SecretBox(secret, error_code=_ERROR_CODE, error_message=_ERROR_MESSAGE)
 
 
 def encrypt_credentials(secret: str, credentials: dict[str, Any]) -> dict[str, str]:
-    raw = json.dumps(credentials, ensure_ascii=False, separators=(",", ":"))
     return {
         "v": "1",
-        "ciphertext": _ENC_PREFIX + _fernet(secret).encrypt(raw.encode()).decode(),
+        "ciphertext": _ENC_PREFIX + _box(secret).encrypt_json(credentials),
     }
 
 
@@ -34,11 +31,5 @@ def decrypt_credentials(secret: str, stored: dict[str, Any]) -> dict[str, Any]:
     token = str(ciphertext)
     if token.startswith(_ENC_PREFIX):
         token = token[len(_ENC_PREFIX) :]
-    try:
-        raw = _fernet(secret).decrypt(token.encode()).decode()
-    except (InvalidToken, ValueError) as exc:
-        raise AppError(
-            "connector.credentials_unreadable", "连接凭证无法解密"
-        ) from exc
-    data = json.loads(raw)
+    data = json.loads(_box(secret).decrypt(token))
     return data if isinstance(data, dict) else {}

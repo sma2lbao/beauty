@@ -13,6 +13,7 @@ from common.auth import JwtVerifier
 from common.logging import setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
 from common.observability import install_observability
+from common.security import SlidingWindowLimiter
 from common.tracing import exclude_telemetry
 from database.base import Base
 from database.session import create_session_factory
@@ -26,7 +27,6 @@ from account.api.v1 import oidc as oidc_api
 from account.api.v1.router import api_router
 from account.core.config import Settings
 from account.core.idp import IdPSigner, load_or_create_signer
-from account.core.ratelimit import SlidingWindowLimiter
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
 
 
@@ -82,7 +82,7 @@ def create_app(
     app.state.token_verifier = token_verifier
     app.state.oauth_transport = oauth_transport
     app.state.oauth_register_limiter = SlidingWindowLimiter(
-        settings.oauth21_register_limit_per_hour
+        settings.oauth21_register_limit_per_hour, window_seconds=3600.0
     )
 
     install_app_error_handler(app)

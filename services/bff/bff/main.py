@@ -18,6 +18,7 @@ from common.middleware import (
     install_app_error_handler,
 )
 from common.observability import install_observability
+from common.security import SlidingWindowLimiter
 from common.tracing import exclude_telemetry
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +29,6 @@ from bff.api.health import health_router
 from bff.api.mcp_oauth import router as mcp_oauth_router
 from bff.api.proxy import router as proxy_router
 from bff.core.config import Settings
-from bff.core.rate_limit import SlidingWindowLimiter
 from bff.core.security import SessionCodec
 
 
