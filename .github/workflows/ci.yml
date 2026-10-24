@@ -1,0 +1,301 @@
+# W0 R-03 最小 CI（RFC-001 docs/refactoring/rfc/001-w0.md）
+# 约定（docs/refactoring-playbook.md §6.1/§6.3）：
+#   - JS 测试必须 `-- --run`（nx.json testMode: "watch"，否则 vitest 挂住）；
+#   - 一律不用 test-ci（Nx Cloud atomized target，本地/自托管不可用）；
+#   - Python target 一律固化 uv 缓存到仓库本地（UV_CACHE_DIR/UV_PYTHON_INSTALL_DIR，.gitignore 已覆盖）；
+#   - CI 命令必须与本地门禁矩阵（playbook §6.1）逐条等价。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 全 job 固化的 uv 环境（R-01 同款，见 playbook §9.7：受限环境必须显式设置，否则 Python target 直接失败）。
+  # 必须用绝对路径：nx 的 Python target 与 alembic step 都以项目目录为 CWD 执行 uv，
+  # 相对路径会解析到各子目录下（本地约定同 §6.3 的 $PWD 绝对路径）。
+  UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+  UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.uv-python
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1/6：setup——安装依赖并预热 uv/npm 缓存（其余 job 依赖本 job）
+  # ------------------------------------------------------------------
+  setup:
+    name: setup (deps + caches)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # nx affected 需要完整历史
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false # 缓存目录由下方 action 按仓库本地路径恢复
+          python-version: '3.12'
+
+      - name: Cache local uv dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .uv-cache
+            .uv-python
+            .venv
+          key: uv-${D} runner.os }}-${D} hashFiles('uv.lock') }}
+          restore-keys: uv-${D} runner.os }}-
+
+      - name: Sync shared venv (uv workspace)
+        # 与本地等价：npx nx run common:sync（不能写 npx nx sync common，会被 Nx 内置命令抢占）
+        run: npx nx run common:sync
+
+  # ------------------------------------------------------------------
+  # Job 2/6：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test
+  # ------------------------------------------------------------------
+  affected-js:
+    name: affected-js (lint+typecheck+build+test)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Lint / typecheck / build (affected)
+        # 与本地等价：npx nx affected -t lint,typecheck,build --base=origin/main
+        # nx 只对存在该 target 的项目执行（无对应 target 的项目自动跳过）
+        run: npx nx affected -t lint,typecheck,build --base=origin/main
+
+      - name: Test @beauty/web
+        # 与本地等价：npx nx test @beauty/web -- --run（必须 -- --run，watch 模式会挂住）
+        run: npx nx test @beauty/web -- --run
+      - name: Test @beauty/desktop
+        run: npx nx test @beauty/desktop -- --run
+      - name: Test @beauty/design
+        run: npx nx test @beauty/design -- --run
+
+  # ------------------------------------------------------------------
+  # Job 3/6：python-lint——10 个 Python 项目逐个 npx nx lint
+  # ------------------------------------------------------------------
+  python-lint:
+    name: python-lint (${D} matrix.project }})
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          [
+            common,
+            database,
+            events,
+            agent-orchestrator,
+            llm-gateway,
+            connector-service,
+            knowledge-service,
+            account-service,
+            workspace-service,
+            bff,
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+          python-version: '3.12'
+
+      - name: Cache local uv dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .uv-cache
+            .uv-python
+            .venv
+          key: uv-${D} runner.os }}-${D} hashFiles('uv.lock') }}
+          restore-keys: uv-${D} runner.os }}-
+
+      - name: Lint ${D} matrix.project }}
+        # 与本地等价：npx nx lint <项目>（底层 uv run ruff check；缓存已固化）
+        run: npx nx lint ${D} matrix.project }}
+
+  # ------------------------------------------------------------------
+  # Job 4/6：python-test——10 个 Python 项目逐个 npx nx test
+  # ------------------------------------------------------------------
+  python-test:
+    name: python-test (${D} matrix.project }})
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          [
+            common,
+            database,
+            events,
+            agent-orchestrator,
+            llm-gateway,
+            connector-service,
+            knowledge-service,
+            account-service,
+            workspace-service,
+            bff,
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+          python-version: '3.12'
+
+      - name: Cache local uv dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .uv-cache
+            .uv-python
+            .venv
+          key: uv-${D} runner.os }}-${D} hashFiles('uv.lock') }}
+          restore-keys: uv-${D} runner.os }}-
+
+      - name: Test ${D} matrix.project }}
+        # 与本地等价：npx nx test <项目>（底层 uv run pytest tests/，零网络；缓存已固化）
+        run: npx nx test ${D} matrix.project }}
+
+  # ------------------------------------------------------------------
+  # Job 5/6：lock-check——uv.lock 与 package-lock.json 与清单一致
+  # ------------------------------------------------------------------
+  lock-check:
+    name: lock-check (uv + npm)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+          python-version: '3.12'
+
+      - name: Cache local uv dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .uv-cache
+            .uv-python
+          key: uv-${D} runner.os }}-${D} hashFiles('uv.lock') }}
+          restore-keys: uv-${D} runner.os }}-
+
+      - name: uv lock --check (uv.lock 与 pyproject.toml 一致)
+        # 与本地等价：uv lock --check；退出码非 0 即不一致
+        run: uv lock --check
+
+      - name: npm package-lock consistency check
+        # 与本地等价：npm install --package-lock-only 后 git diff --exit-code package-lock.json
+        run: |
+          npm install --package-lock-only
+          git diff --exit-code package-lock.json
+
+  # ------------------------------------------------------------------
+  # Job 6/6：alembic-check——5 个有迁移的服务模型与迁移一致
+  # ------------------------------------------------------------------
+  alembic-check:
+    name: alembic-check (${D} matrix.service }})
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          [
+            agent-orchestrator,
+            connector-service,
+            knowledge-service,
+            account-service,
+            workspace-service,
+          ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+          python-version: '3.12'
+
+      - name: Cache local uv dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .uv-cache
+            .uv-python
+            .venv
+          key: uv-${D} runner.os }}-${D} hashFiles('uv.lock') }}
+          restore-keys: uv-${D} runner.os }}-
+
+      - name: Alembic check ${D} matrix.service }}
+        # 与本地等价：cd services/<svc> && uv run alembic check（模型与迁移一致；缓存已固化）
+        # alembic check 不连接数据库（对比元数据，不执行迁移）
+        working-directory: services/${D} matrix.service }}
+        run: uv run alembic check

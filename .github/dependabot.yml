@@ -1,0 +1,18 @@
+# W0 R-06 顺带落地：依赖自动更新只开安全类（#3571（security updates）不含版本升级 PR，避免与重构波次互相干扰）。
+# 完整依赖更新策略是 W4 R-35，落地时再扩展本文件。
+version: 2
+updates:
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+  - package-ecosystem: 'pip'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
