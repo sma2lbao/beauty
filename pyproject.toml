@@ -64,7 +64,7 @@ workspace = true
 [dependency-groups]
 dev = [
     "ruff>=0.8",
-    "autopep8>=2.3.1",
+    "autopep8>=2.3.2",
     "pytest>=8.3.4",
     "pytest-sugar>=1.0.0",
     "pytest-cov>=6.0.0",
