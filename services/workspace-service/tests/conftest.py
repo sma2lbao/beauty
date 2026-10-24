@@ -1,12 +1,13 @@
-"""测试装配:每用例独立 sqlite 库 + 独立对象存储目录;鉴权开 + 真 token(§10)。"""
+"""测试装配:每用例独立 sqlite 库 + 独立对象存储目录;鉴权开 + 真 token(§10)。
+
+库/客户端/settings 样板来自 common.service_testkit;沙箱 provider 是服务专属替身。
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
 import pytest
 from common.errors import NotFoundError, UpstreamError
+from common.service_testkit import client_fixture, settings_factory
 from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
@@ -24,15 +25,16 @@ def verifier():
     return _IDP.verifier()
 
 
-def _settings(tmp_path: Path, name: str = "test.db", **overrides) -> Settings:
-    overrides.setdefault("sandbox_reaper_enabled", False)
-    return Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}",
-        auto_create_tables=True,
-        artifact_root=str(tmp_path / "objects"),
-        **overrides,
-    )
+_settings = settings_factory(
+    Settings,
+    defaults={
+        "sandbox_reaper_enabled": False,
+        # 显式钉回测试意图的镜像别名:本地 .env 会经 uv run 注入
+        # WORKSPACE__SANDBOX_DEFAULT_IMAGE(指向本地 rootfs),不钉就依赖机器配置
+        "sandbox_default_image": "python",
+        "artifact_root": lambda tmp: str(tmp / "objects"),
+    },
+)
 
 
 class FakeSandboxProvider:
@@ -112,17 +114,12 @@ def sandbox_provider() -> FakeSandboxProvider:
     return FakeSandboxProvider()
 
 
-@pytest.fixture()
-def client(
-    tmp_path: Path, sandbox_provider: FakeSandboxProvider
-) -> Iterator[TestClient]:
-    app = create_app(
-        _settings(tmp_path),
-        token_verifier=_IDP.verifier(),
-        sandbox_provider=sandbox_provider,
-    )
-    with TestClient(app) as test_client:
-        yield test_client
+client = client_fixture(
+    create_app,
+    _settings,
+    app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
+    fixture_kwargs={"sandbox_provider": "sandbox_provider"},
+)
 
 
 def _create_artifact(

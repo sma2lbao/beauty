@@ -1,16 +1,17 @@
-"""测试装配:每用例独立 sqlite 库;连接行直接落库(服务无创建端点);鉴权开 + 真 token。"""
+"""测试装配:每用例独立 sqlite 库;连接行直接落库(服务无创建端点);鉴权开 + 真 token。
+
+库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
+"""
 
 from __future__ import annotations
 
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
+from common.service_testkit import client_fixture, settings_factory
 from common.testing import TestIdP
-from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
 from connector.core.crypto import encrypt_credentials
@@ -30,13 +31,12 @@ DEFAULT_CREDENTIALS = {
     "expires_at": 0,
 }
 
-
-def _settings(tmp_path: Path) -> Settings:
-    return Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
-        auto_create_tables=True,
-    )
+_settings = settings_factory(Settings)
+client = client_fixture(
+    create_app,
+    _settings,
+    app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
+)
 
 
 def insert_connection(
@@ -76,10 +76,3 @@ def insert_connection(
         "account": account,
         "status": status,
     }
-
-
-@pytest.fixture()
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
-    with TestClient(app) as test_client:
-        yield test_client

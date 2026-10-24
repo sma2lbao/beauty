@@ -1,11 +1,11 @@
-"""测试装配:每用例独立 sqlite 库;本地嵌入提供方(零网络);鉴权开 + 真 token。"""
+"""测试装配:每用例独立 sqlite 库;本地嵌入提供方(零网络);鉴权开 + 真 token。
+
+库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
+from common.service_testkit import client_fixture, settings_factory
 from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
@@ -22,20 +22,12 @@ def verifier():
     return _IDP.verifier()
 
 
-def _settings(tmp_path: Path, name: str = "test.db", **overrides) -> Settings:
-    return Settings(
-        env="dev",
-        database_url=f"sqlite+aiosqlite:///{tmp_path}/{name}",
-        auto_create_tables=True,
-        **overrides,
-    )
-
-
-@pytest.fixture()
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
-    with TestClient(app) as test_client:
-        yield test_client
+_settings = settings_factory(Settings)
+client = client_fixture(
+    create_app,
+    _settings,
+    app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
+)
 
 
 def _ingest(client: TestClient, title: str, content: str, tenant: dict | None = None):

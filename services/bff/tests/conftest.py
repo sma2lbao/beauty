@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
+from common.service_testkit import build_settings
 from fastapi.testclient import TestClient
 
 from bff.core.config import Settings
@@ -42,7 +43,8 @@ def settings(**overrides) -> Settings:
         "rate_limit_per_minute": 1000,
     }
     values.update(overrides)
-    return Settings(**values)
+    # _env_file=None + 外部开关钉死:Nx 会把 .env 注入任务环境(见 AGENTS.md)
+    return build_settings(Settings, **values)
 
 
 def handler(request: httpx.Request) -> httpx.Response:

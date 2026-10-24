@@ -60,5 +60,6 @@ unfixable = []
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.4",
     "pytest-asyncio>=1.4.0",
 ]
