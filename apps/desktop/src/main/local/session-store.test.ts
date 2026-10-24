@@ -5,7 +5,7 @@ import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_SESSION_TITLE, SessionStore } from './session-store';
 
@@ -19,7 +19,8 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-describe('SessionStore', () => {
+// CI 慢文件系统上文件 IO 偶发超 5s 默认超时,放宽到 15s。
+describe('SessionStore', { timeout: 15_000 }, () => {
   it('空目录返回空列表', async () => {
     const store = new SessionStore(path.join(directory, 'missing'));
     await expect(store.list()).resolves.toEqual([]);
@@ -38,13 +39,22 @@ describe('SessionStore', () => {
   });
 
   it('列表按 updatedAt 倒序且不返回消息体', async () => {
+    // 真实时钟在同一毫秒内 create 两条时 updatedAt 相同,倒序不稳定
+    // (GitHub Linux runner 实测偶发)。用固定系统时间显式区分先后,
+    // 断言与时间顺序解耦失败。
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
     const store = new SessionStore(directory);
     const first = await store.create({ title: '早的' });
+    vi.setSystemTime(new Date('2026-10-02T00:00:00Z'));
     const second = await store.create({ title: '晚的' });
+    vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
     await store.appendMessage(first.id, { role: 'user', content: '更新一下' });
+    vi.useRealTimers();
 
     const list = await store.list();
     expect(list).toHaveLength(2);
+    expect(list.map((item) => item.id)).toEqual(expect.arrayContaining([first.id, second.id]));
     expect(list[0]?.id).toBe(first.id);
     expect(list[1]?.id).toBe(second.id);
     expect(list[0]).not.toHaveProperty('messages');
