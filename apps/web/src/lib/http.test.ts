@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, isUnauthorized, requestJson } from '@/lib/http';
+import {
+  ApiError,
+  createHttpClient,
+  isUnauthorized,
+  requestJson,
+} from '@/lib/http';
 
 const mocks = vi.hoisted(() => ({
   authHeaders: vi.fn(async () => ({})),
@@ -145,5 +150,44 @@ describe('requestJson', () => {
     await requestJson('', '/v1/x').catch(() => undefined);
     expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createHttpClient', () => {
+  it('绑定 base:request 用 `${base}${path}` 拼出完整 URL', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const http = createHttpClient('http://api.test');
+    expect(await http.request<{ ok: boolean }>('/v1/x')).toEqual({ ok: true });
+
+    const [url] = fetchSpy.mock.calls[0] as unknown as [string];
+    expect(url).toBe('http://api.test/v1/x');
+  });
+
+  it('204 与 requestJson 一致:返回 undefined', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+
+    const http = createHttpClient('');
+    expect(await http.request<void>('/v1/x')).toBeUndefined();
+  });
+
+  it('401 且续期成功:走既有单飞续期并重试一次', async () => {
+    mocks.refreshAccessToken.mockResolvedValue(true);
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 'auth.token_invalid', message: '过期' }, 401),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const http = createHttpClient('http://api.test');
+    expect(await http.request<{ ok: boolean }>('/v1/x')).toEqual({ ok: true });
+    expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
