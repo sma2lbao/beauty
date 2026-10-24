@@ -854,6 +854,7 @@ version = "0.1.0"
 source = { editable = "packages/common" }
 dependencies = [
     { name = "cryptography" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "openpyxl" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -866,6 +867,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "structlog" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -876,6 +878,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.2" },
+    { name = "fastapi", specifier = ">=0.143.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.45.1" },
@@ -888,6 +891,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.73.0" },
     { name = "structlog", specifier = ">=26.1.0" },
+    { name = "uvicorn", specifier = ">=0.53.0" },
 ]
 
 [package.metadata.requires-dev]

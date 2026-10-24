@@ -1,10 +1,10 @@
-"""服务配置(env 前缀 KNOWLEDGE__,约定见 common.config)。"""
+"""服务配置(env 前缀 KNOWLEDGE__,公共字段见 common.service_kit)。"""
 
-from common.config import BaseAppSettings
+from common.service_kit import ServiceSettings
 from pydantic_settings import SettingsConfigDict
 
 
-class Settings(BaseAppSettings):
+class Settings(ServiceSettings):
     model_config = SettingsConfigDict(
         env_prefix="KNOWLEDGE__",
         env_file=".env",
@@ -14,7 +14,6 @@ class Settings(BaseAppSettings):
 
     service_name: str = "knowledge-service"
     database_url: str = "sqlite+aiosqlite:///./knowledge.db"
-    auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     # 嵌入(架构 §5 唯一出口):local = 无依赖词法近似;gateway = 经 llm-gateway
     embedding_provider: str = "local"
     embedding_model: str = "bge-m3"
@@ -25,9 +24,3 @@ class Settings(BaseAppSettings):
     chunk_overlap: int = 60
     search_default_limit: int = 5
     search_max_limit: int = 20
-    # 鉴权(架构 §10):默认开启,与其他服务同一套 token→租户约定(自建 IdP)
-    auth_enabled: bool = True
-    auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
-    auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
-    auth_jwks_url: str | None = None
-    auth_tenant_claim: str = "tenant_id"
