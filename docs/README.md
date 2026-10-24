@@ -16,6 +16,8 @@
 | [docs/refactoring/roadmap.md](./refactoring/roadmap.md)                 | 重构波次路线图与执行状态                                       | Lead       | 每波开始/结束      |
 | [docs/refactoring/baseline.md](./refactoring/baseline.md)               | 重构基线表                                                     | Lead       | 每波结束时         |
 | [docs/local-dev.md](./local-dev.md)                                     | 本地开发与 troubleshooting                                     | Lead       | 脚本或端口变化时   |
+| [docs/refactoring/verification/](./refactoring/verification/)           | 每波验证报告（门禁实测 + 指标对比）                            | verifier   | 波次收口时         |
+| [docs/refactoring/retro/](./refactoring/retro/)                         | 每波复盘（教训与流程改进）                                     | Lead       | 波次收口时         |
 | [docs/observability.md](./observability.md)                             | 日志/指标/追踪约定（可观测性契约）                             | Lead       | 观测设施变化时     |
 | [docs/gap-2026-10/](./gap-2026-10/)                                     | 能力缺口需求池（未落地的能力缺口）                             | Lead       | 缺口状态变化时     |
 | [apps/\*/README.md](../apps/)                                           | 应用运行说明                                                   | 应用 owner | 应用行为变化时     |
