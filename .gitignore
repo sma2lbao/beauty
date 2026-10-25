@@ -9,6 +9,9 @@ apps/site/.next/
 apps/site/out/
 # TypeScript 增量构建信息（root/packages 的 composite 工程均会产出）
 *.tsbuildinfo
+# 例外说明: apps/site/next-env.d.ts 是 Next.js 官方要求提交的类型引导文件,
+# 虽由 next dev/build 生成但不属于构建产物,scripts/check-workspace.sh 的生成物
+# 检查把它列入例外清单 —— 不要把它加入 ignore。
 # Rspress 文档站构建产物（packages/design/rspress.config.ts 的 outDir）
 doc_build
 
@@ -56,7 +59,10 @@ Thumbs.db
 
 # 本地运行时的 sqlite 库与产物目录(服务目录直写,dev 起法生成)
 services/*/*.db
+services/*/migrations/*.db
 services/*/.artifacts/
+# 仓库根也曾残留散落 db(W3 实测 connector.db/workspace.db);只匹配根级,不误伤深层路径
+/*.db
 .claude/worktrees
 .claude/settings.local.json
 

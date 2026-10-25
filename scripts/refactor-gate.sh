@@ -155,6 +155,10 @@ fi
 # 失败计入 FAILURES 判 FAIL。
 run_step "docs" bash scripts/check-docs.sh
 
+# W4 R-38:工作区卫生(归档注记 + docs/README 索引覆盖 + tracked 生成物外泄)。
+# 同 docs 一样属全局检查,失败计入 FAILURES 判 FAIL。
+run_step "workspace" bash scripts/check-workspace.sh
+
 echo "== 汇总: ${STEPS_TOTAL} 步执行, ${FAILURES} 失败 =="
 if [ "$FAILURES" -gt 0 ]; then
   exit 1
