@@ -1,8 +1,9 @@
 # beauty-moon 重构标准流程（Refactoring Playbook）
 
-> 版本 v1.5 · 最近更新 2026-10-25 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
+> 版本 v1.6 · 最近更新 2026-10-25 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
 > 适用范围：本仓库所有「结构重构」与「平台化补缺」类变更。产品功能开发不强制走本流程，但仍须遵守第 6 节门禁。
 > 单一真源：本文件。工程约定冲突以根 AGENTS.md 为准；流程冲突以本文件为准。
+> 数值口径：文中「现状基线」类数字是 2026-10-24 立项时的快照，只用于说明改造起点；任何时刻的最新数值以 docs/refactoring/baseline.md 与其波次实测段为准。
 
 ## 0. 一页纸
 
@@ -169,7 +170,8 @@
 4. 定义成功指标（结构/质量/行为三类，见第 7 节）。
 5. 在任务板建任务树：每片一个任务，标注 write scope 与 blocked_by。
 6. 若本项会改共享图结构（nx.json targetDefaults、项目依赖边、根 tsconfig），预先列出会被牵连的既有 target 与行为对照（W0 教训：R-04 加边牵连 test.dependsOn [^build]）。
-7. 预算里显式留 30% 给「门禁首次真跑暴露的既有债」：W2 计划 10 项，实际 6 个配套修复（CI 模板表达式损坏、Node 下限、alembic 改 Postgres、模型/迁移漂移、isort 不一致、跨平台进程组）占掉近半工时。
+7. 跨语言/多包版本必须机器断言：JS 侧交给 nx release（version + changelog + tag），Python 侧由 scripts/check-versions.sh 校验 pyproject/包常量一致，不强行把两种生态塞进同一套编排（W4 教训：单版本号 0.1.0 一次对齐 18 处，靠脚本而非人眼）。
+8. 预算里显式留 30% 给「门禁首次真跑暴露的既有债」：W2 计划 10 项，实际 6 个配套修复（CI 模板表达式损坏、Node 下限、alembic 改 Postgres、模型/迁移漂移、isort 不一致、跨平台进程组）占掉近半工时。
 
 产物：RFC、任务树、风险登记表。
 
@@ -295,7 +297,7 @@ Definition of Done（每片）：
 3. **SSE 基座**：把 /messages/stream 的 meta/delta/done 解析、重连、取消抽成独立模块 + hook，页面不直接处理 ReadableStream。
 4. **web/desktop 共享**：把与运行环境无关的部分（api 客户端、类型、hooks、console 组件）抽成共享包（如 @beauty/console-core）；desktop 只保留本地运行时适配层（进程/文件/命令），web 保留云端适配层。先抽契约最稳定的 api/types 层。
 5. **design 包边界**：@beauty/design 只放无业务语义的组件与令牌（bd- 前缀 + --bd-\*）；apps/web 只组合，不再本地维护组件副本；Tailwind 用法与 design 令牌的边界写进 README。
-6. **按路由拆包**：Vite 手动分包或路由懒加载，先建立 bundle 基线（当前构建产物单 chunk 737954B + CSS 77514B，且 0 处 lazy/Suspense）再优化，避免"优化完更慢"。
+6. **按路由拆包**：Vite 手动分包或路由懒加载，先建立 bundle 基线（立项时为单 chunk 737954B + CSS 77514B、0 处 lazy/Suspense；W1 起路由级拆包，现值见 docs/refactoring/baseline.md）再优化，避免"优化完更慢"。
 
 ### 5.4 跨切面
 
@@ -349,6 +351,9 @@ R-07 未落地期间，替代做法：按第 6.1 节命令矩阵逐条执行，�
 - **alembic check 需要真 Postgres**：AO/account 迁移含 PG 专有 DDL，sqlite 会 `near "ALTER": syntax error`；docker service 的健康检查 `--health-cmd "pg_isready -U beauty"` 必须带引号，否则 docker 把 `-U` 当自己的 flag（`unknown shorthand flag: 'U' in -U`）。`alembic check` 能抓出模型/迁移漂移（W2 实测 account 索引、AO 唯一约束名），dev 的 create_all 看不见。
 - **本地 lint ≠ CI lint**：ruff isort 的 first-party 分组取决于 venv 里的包集合，本地共享 venv 与 CI 的单项目 venv 可能不同（W2 实测 bff/AO 各 2 处 I001）。推送后必须看 CI 结论。
 - **观测类调用必须 fail-open**：用量上报、指标、遥测这类旁路调用一律 `except Exception`（带 `# noqa: BLE001` 与注释），不能只捕 `httpx.HTTPError`——W3 实测 `UsageReporter.report` 只捕 HTTPError，禁网后异常从 `run_quota` 的 finally 逃出，把 run 直接判 failed。
+- **安全门禁分两档**：生产依赖漏洞（npm audit --omit=dev、pip-audit）阻断合并；全量依赖漏洞只出报告不阻断——否则历史间接依赖会让 CI 永久红，反而没人看。
+- **安全豁免必须带 owner + expires**：每条 allowlist 记录（security/audit-allowlist.json）写清编号/原因/负责人/到期日，由 scripts/check-audit-allowlist.cjs 校验到期并阻断过期豁免；没有到期日的豁免等于永久后门。
+- **发布/版本/门禁类改动一律脚本断言**：18 处版本号、CHANGELOG 形态、compose 配置、镜像可构建，全部用脚本或 CI job 判定，不靠人眼扫 diff。
 - **禁网门禁会改变异常形态**：`--disable-socket` 下传输层异常通常被 anyio 任务组包装成 `ExceptionGroup`（`unhandled errors in a TaskGroup`），按异常类型分支的捕获点会失效；排障时先看异常链最内层。
 
 ### 6.4 门禁分级
@@ -920,14 +925,16 @@ scripts/refactor-gate.sh <项目>
 - 采集人 / 时间：<agent / 会话 id / ISO 时间>
 - 说明：每一行必须给出可直接复制的命令，数值必须是该命令的真实输出。
 
-| 维度 | 指标                 | 采集命令                                                                  | 基线值                        | 目标     | 备注 |
-| ---- | -------------------- | ------------------------------------------------------------------------- | ----------------------------- | -------- | ---- |
-| 结构 | 最大 TS 文件行数     | wc -l 全仓 ts/tsx 后排序取末行                                            |                               | ≤400     |      |
-| 结构 | 最大 Python 文件行数 | find packages services -name '_.py' -not -path '_/tests/\*' 后 wc -l 排序 |                               | ≤500     |      |
-| 质量 | pytest 用例数        | cd <项目> && uv run pytest --collect-only -q                              | 697（103 文件）               | 不减少   |      |
-| 质量 | vitest 用例数        | npx nx test <项目> -- --run                                               | 446（74 文件）                | 不减少   |      |
-| 行为 | 零网络               | 按 §6.3 钉住开关后跑测试                                                  | 全绿                          | 全绿     |      |
-| 性能 | web 构建产物         | npx nx build @beauty/web 后统计 dist                                      | 单 chunk 737954B + CSS 77514B | 只降不升 |      |
+| 维度 | 指标                 | 采集命令                                                                     | 基线值                        | 目标     | 备注             |
+| ---- | -------------------- | ---------------------------------------------------------------------------- | ----------------------------- | -------- | ---------------- |
+| 结构 | 最大 TS 文件行数     | wc -l 全仓 ts/tsx 后排序取末行                                               |                               | ≤400     |                  |
+| 结构 | 最大 Python 文件行数 | find packages services -name '_.py' -not -path '_/tests/\*' 后 wc -l 排序    |                               | ≤500     |                  |
+| 质量 | pytest 用例数        | cd <项目> && uv run pytest --collect-only -q                                 | 697（103 文件）               | 不减少   |                  |
+| 质量 | vitest 用例数        | npx nx test <项目> -- --run                                                  | 446（74 文件）                | 不减少   |                  |
+| 行为 | 零网络               | 按 §6.3 钉住开关后跑测试                                                     | 全绿                          | 全绿     |                  |
+| 发布 | 版本取值数 / 镜像数  | grep 各 package.json+pyproject 的 version 去重；docker compose config 列服务 | 1（全仓 0.1.0）               | 1        | W4 起纳入        |
+| 安全 | 生产依赖漏洞数       | npm audit --omit=dev --audit-level=high；uv export + pip-audit               | 0                             | 0        | 全量漏洞另出报告 |
+| 性能 | web 构建产物         | npx nx build @beauty/web 后统计 dist                                         | 单 chunk 737954B + CSS 77514B | 只降不升 |                  |
 ```
 
 ### 11.8 路线图模板（docs/refactoring/roadmap.md）
@@ -1083,6 +1090,7 @@ scripts/refactor-gate.sh <项目>
 | v1.1 | 2026-10-24 | 独立复核后修订：测试基线改 697 用例/103 文件；统一「七阶段」；ADR 落点 docs/adr/；R-11/12/13/14/18/22/25/27/30/38 证据换为 file:line；RFC 模板补 owner/write scope/阈值/回滚演练；新增 §11.7–§11.11 模板与单 R checklist                                                                                                                                               |
 | v1.2 | 2026-10-24 | W0 执行后流程改进（复盘 retro/w0.md）：用例数一律以 -- --run 实跑为准（§11.7 注记）；改共享图结构的 RFC 须预列牵连的 targetDefaults（§4.1 动作补充）；实施者遇 RFC 冲突的既有行为先 git stash 对照留证（§4.4 步骤补充）；等待实施者超 20 分钟无落盘应主动询问（§3.4 补充）                                                                                             |
 | v1.3 | 2026-10-24 | W1 复盘 retro/w1.md：§10.3 末尾增「每波门禁须贴命令+输出摘要、指标可复现」；§11.11 checklist 增「规则类改动需探针验证命中」                                                                                                                                                                                                                                            |
+| v1.6 | 2026-10-25 | W4 复盘 retro/w4.md：§11.7 基线模板增「发布」「安全」两个维度（版本取值数/镜像数、生产依赖漏洞数）；§6.3 增「安全门禁分阻断/非阻断两档」「豁免须带 owner+expires 并由脚本校验到期」「发布/版本/门禁类改动一律脚本断言」；§4.1 增「跨语言版本用各自生态断言，不强行合并编排」；文首增数值口径说明（现状数字为立项快照）                                                 |
 | v1.5 | 2026-10-25 | W3 复盘 retro/w3.md：§10.3 体量口径拆两步（W3 ≤700 / W4 ≤500）并补 W4 行；§4.5 增「nx test 与直跑结果不同先查注入环境」；§6.3 增「观测类调用用 except Exception」与「禁网门禁的 ExceptionGroup 形态」；§6.4 增「门禁命令退出码显式采集，禁用管道取码」                                                                                                                 |
 | v1.4 | 2026-10-25 | W2 复盘 retro/w2.md：§3.3 增「共享工作树禁 stash/reset/checkout 他人文件，演练只用 git apply -R --check」；§4.1 增「预算留 30% 给门禁既有债」；§4.5 基线更新为 pytest 724 / vitest 498 并增「跨平台失败先查实现语义」；§6.3 增 Node 下限对齐传递依赖、alembic check 需真 Postgres、本地 lint ≠ CI lint；§6.4 增「CI 结论须附 run 链接与 job 表 + workflow 需解析校验」 |
 

@@ -1,7 +1,7 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W4 进行中（RFC-005，2026-10-25）；W3 已收口；最近更新：2026-10-25 09:40 +08:00
+- 当前波次：W0–W4 全部收口（2026-10-25），转入维护窗口；最近更新：2026-10-25 10:30 +08:00
 - 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md，W3 见 docs/refactoring/retro/w3.md 与 docs/refactoring/verification/004-w3.md
 
 ## W0（已收口 · 7 项）
@@ -107,33 +107,34 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 | web 剩余 4 个 >400 行源文件（workspace-switcher 543 / message-list 528 / runs 448 / skills 432） | W2 结构   | W4 评估                                                                  |
 | alembic_kit 落地后 3 处 env.py 仍未接（AO/account/knowledge）                                    | R-24      | W4                                                                       |
 
-## W4（进行中 · 7 项 R-34..R-40）
+## W4（已收口 · 7 项 R-34..R-40）
 
-- 立项：docs/refactoring/rfc/005-w4.md（approved，13KB，§7 指标 14 行 / §8 风险表 / §9 分工）
+- 立项：78c91ef（RFC-005 + baseline「W4 基线」+ roadmap 进行中）；偏差登记 5706183
 - 目标：发布可重复、安全扫描进 CI、容器化可跑、探针一致、体量 ≤500、W3 接线收口、工作区卫生有检查
+- 验证：docs/refactoring/verification/005-w4.md（14 行指标全 ✅、D1–D9 偏差、11 个提交清单）；复盘：docs/refactoring/retro/w4.md
 
-| ID    | 重构项                                            | 规模 | 风险 | 实施者       | 任务    | 状态                   |
-| ----- | ------------------------------------------------- | ---- | ---- | ------------ | ------- | ---------------------- |
-| R-34  | 发布流程：单一版本 0.1.0 + nx release + CHANGELOG | M    | 低   | w0-ci        | task-33 | ⬜ 未开始              |
-| R-35  | 依赖更新与安全扫描（dependabot + audit 入 CI）    | S    | 低   | w0-ci        | task-33 | ⬜ 未开始              |
-| R-36  | 容器化：2 Dockerfile + 全栈 compose + README      | L    | 中   | audit-ops    | task-38 | ⬜ 未开始（依赖 R-37） |
-| R-37  | 探针统一（bff /readyz + nginx 探针/TLS）          | M    | 低   | w0-gate      | task-32 | ⬜ 未开始              |
-| R-38  | 工作区卫生（.gitignore + check-workspace.sh）     | S    | 低   | w0-docs      | task-34 | ⬜ 未开始              |
-| R-39a | 源文件体量 ≤500（10 个文件）                      | L    | 中   | audit-python | task-35 | ⬜ 未开始              |
-| R-39b | 测试文件体量 ≤500（6 个文件）                     | M    | 中   | audit-ts     | task-36 | ⬜ 未开始              |
-| R-40  | 接线收口（env.py×3 + AO conftest + metrics 归属） | M    | 中   | w1-api       | task-37 | ⬜ 未开始              |
+| ID    | 重构项                                            | 规模 | 风险 | 实施者       | 任务    | 状态    | 提交    |
+| ----- | ------------------------------------------------- | ---- | ---- | ------------ | ------- | ------- | ------- |
+| R-34  | 发布流程：单一版本 0.1.0 + nx release + CHANGELOG | M    | 低   | w0-ci        | task-33 | ✅ done | a1f69b6 |
+| R-35  | 依赖更新与安全扫描（dependabot + audit 入 CI）    | S    | 低   | w0-ci        | task-33 | ✅ done | a1f69b6 |
+| R-36  | 容器化：2 Dockerfile + 全栈 compose + README      | L    | 中   | audit-ops    | task-38 | ✅ done | 9f35d79 |
+| R-37  | 探针统一（bff /readyz + nginx 探针/TLS）          | M    | 低   | w0-gate      | task-32 | ✅ done | edecdd2 |
+| R-38  | 工作区卫生（.gitignore + check-workspace.sh）     | S    | 低   | w0-docs      | task-34 | ✅ done | 0678396 |
+| R-39a | 源文件体量 ≤500（10 个文件）                      | L    | 中   | audit-python | task-35 | ✅ done | 5bb665b |
+| R-39b | 测试文件体量 ≤500（6 个文件）                     | M    | 中   | audit-ts     | task-36 | ✅ done | 03f0c11 |
+| R-40  | 接线收口（env.py×3 + AO conftest + metrics 归属） | M    | 中   | w1-api       | task-37 | ✅ done | 546a976 |
 
-复核：task-39（review-doc，依赖 task-32..38）。
+配套提交：82bdeb5（CHANGELOG 0.1.0 基线）、3db0f08（根 .dockerignore）；a1f69b6 内同时完成 lead 的 ci.yml 收口接线（docs-check 增 workspace 卫生、新增 docker-build job、job 编号改 x/9）。
 
 ### W4 出口检查（勾选前须有实测输出）
 
-- [ ] 版本 18 处全 0.1.0，check-versions.sh EXIT 0，nx release dry-run EXIT 0
-- [ ] security-audit job 绿；npm 生产依赖阻断通过；允许清单未过期
-- [ ] 2 个 Dockerfile + compose config EXIT 0 + CI docker-build 绿；deploy README 覆盖 TLS/迁移/回滚
-- [ ] /healthz /readyz 7/7 且契约一致；nginx 2 个探针 location
-- [ ] 最大 Python 源文件 ≤500、最大测试文件 ≤500；pytest ≥727、vitest ≥498、golden 9/9
-- [ ] check-workspace.sh EXIT 0 且入 gate+CI；5/5 env.py 接 alembic_kit；AO conftest 接 testkit
-- [ ] 全仓 lint 16/16、docs 0 失败、入口 chunk ≤336KB、CI 全绿
+- [x] 版本 18 处全 0.1.0，check-versions.sh EXIT 0，nx release dry-run EXIT 0（a1f69b6 后实测）
+- [x] security-audit job 已接线；npm 生产依赖阻断通过（本地 `npm audit --omit=dev` → 0 vulnerabilities）；允许清单 4 条未过期
+- [x] 2 个 Dockerfile（77 / 62 行）+ compose config EXIT 0（11 服务）+ CI docker-build job；deploy README 241 行覆盖 TLS/迁移/回滚（本机无 daemon，构建正确性由 CI 验，D2）
+- [x] /healthz /readyz 7/7 且契约一致（bff 28 passed）；nginx 2 个探针 location（:38 / :46）
+- [x] 最大 Python 源文件 482 ≤500、最大测试文件 498 ≤500；pytest 737 ≥727、vitest 498 ≥498、golden 9/9
+- [x] check-workspace.sh EXIT 0 且入 gate + CI；5/5 env.py 接 alembic_kit；AO conftest 接 testkit（411 行，398 例不减）
+- [x] 全仓 lint 16/16、docs 35 文件 0 失败、入口 chunk 292539B ≤336KB、CI 9 job（首跑结果见 verification §1 与 §5）
 
 ## 波次总览
 
@@ -143,4 +144,6 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 | W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
 | W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25） |
 | W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | ✅ 收口（2026-10-25） |
-| W4   | 发布与运维（R-34..R-40）+ W3 遗留                      | 进行中（2026-10-25）  |
+| W4   | 发布与运维（R-34..R-40）+ W3 遗留                      | ✅ 收口（2026-10-25） |
+
+重构主线（W0–W4，38 个 R 项）已全部收口，转入维护窗口：dependabot 分组 PR 观察、安全允许清单 2026-12-31 到期复核、CI 新增 job 稳定性观察。

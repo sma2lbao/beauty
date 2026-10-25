@@ -63,6 +63,25 @@ npx nx run @beauty/design:docs:dev     # rspress 文档站
 
 注意:`test-ci` target 是 atomized task,本地运行要求 Nx Cloud,请勿使用。
 
+### 质量与发布门禁(重构后新增,W0–W4)
+
+```sh
+bash scripts/refactor-gate.sh @beauty/web   # 单项目全门禁:lint/typecheck/test/build(+覆盖率)/docs
+bash scripts/refactor-gate.sh --affected    # 只跑受影响项目(不收集覆盖率)
+bash scripts/check-docs.sh                  # docs prettier + 相对链接/锚点
+bash scripts/check-workspace.sh             # 未跟踪产物/归档注记/索引覆盖三查
+bash scripts/check-versions.sh              # 18 处版本字段 + CHANGELOG + release 配置一致性
+bash scripts/golden-run/golden-run.sh       # 黄金 run 冒烟(进程内 ASGI,零网络,9 阶段)
+node scripts/check-audit-allowlist.cjs      # 安全豁免到期校验(allowlist 必须带 owner+expires)
+npm run docs:check                          # = bash scripts/check-docs.sh
+docker compose -f deploy/docker-compose.yml config -q   # 部署编排静态校验
+npx nx release --dry-run                    # 发布流程预演(不落改动;实际发版由维护者执行)
+```
+
+覆盖率阈值:Python 10 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / bff 81);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
+
+CI(`.github/workflows/ci.yml`)共 9 job:setup / docs-check / security-audit / affected-js / python-lint×10 / python-test×10 / lock-check / alembic-check×5(真 Postgres)/ docker-build。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
+
 ### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / bff)
 
 ```sh
