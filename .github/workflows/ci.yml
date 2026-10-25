@@ -30,7 +30,7 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # Job 1/6：setup——安装依赖并预热 uv/npm 缓存（其余 job 依赖本 job）
+  # Job 1/9：setup——安装依赖并预热 uv/npm 缓存（其余 job 依赖本 job）
   # ------------------------------------------------------------------
   setup:
     name: setup (deps + caches)
@@ -69,7 +69,7 @@ jobs:
         run: npx nx run common:sync
 
   # ------------------------------------------------------------------
-  # Job 2/7：docs-check——W1 R-16 文档门禁（prettier 格式 + 相对链接 + 锚点 + 归档误引）
+  # Job 2/9：docs-check——W1 R-16 文档门禁（prettier 格式 + 相对链接 + 锚点 + 归档误引）
   # 与本地等价：bash scripts/check-docs.sh（纯 bash+node，无 Python 依赖，可与 setup 并行）
   # ------------------------------------------------------------------
   docs-check:
@@ -92,8 +92,58 @@ jobs:
       - name: Docs gate (prettier + links + anchors)
         run: bash scripts/check-docs.sh
 
+      - name: Workspace hygiene (archive notes + docs index + tracked artifacts)
+        # W4 R-38：与 refactor-gate.sh 的 workspace 段共用同一脚本，避免本地/CI 判据漂移。
+        run: bash scripts/check-workspace.sh
+
   # ------------------------------------------------------------------
-  # Job 3/7：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test + coverage
+  # Job 3/9：security-audit——W4 R-35 安全扫描（生产面阻断 + 全量非阻断 + 清单校验）
+  # 生产依赖必须 0 high；dev 工具链漏洞非阻断留报告；允许清单到期即失败。
+  # ------------------------------------------------------------------
+  security-audit:
+    name: security-audit (npm + pip)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: JS production deps audit (blocking)
+        # 生产依赖 0 high 才放行;默认 registry 是镜像(audit 404),必须显式指 npmjs。
+        # 本地等价:npm audit --omit=dev --registry=https://registry.npmjs.org --audit-level=high
+        run: npm audit --omit=dev --registry=https://registry.npmjs.org --audit-level=high
+
+      - name: JS full audit (non-blocking, dev toolchain report)
+        # 全量(含 dev 工具链)只留报告不阻断;已登记允许清单的见 security/audit-allowlist.json。
+        run: npm audit --registry=https://registry.npmjs.org || true
+
+      - name: Audit allowlist validity (blocking)
+        # 允许清单条目到期即失败,强制季度复核(docs/security.md)。
+        run: node scripts/check-audit-allowlist.cjs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+          python-version: '3.12'
+
+      - name: Python deps audit via pip-audit (blocking)
+        # 导出全量 requirements(含 workspace 解析)后 pip-audit;本地 pypi 不可达,仅 CI 可跑。
+        run: |
+          uv export --format requirements-txt --no-hashes > /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt --disable-pip
+
+  # ------------------------------------------------------------------
+  # Job 4/9：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test + coverage
   # ------------------------------------------------------------------
   affected-js:
     name: affected-js (lint+typecheck+build+test)
@@ -143,7 +193,7 @@ jobs:
         run: npx vitest run --config vitest.node.config.mts --coverage
 
   # ------------------------------------------------------------------
-  # Job 4/7：python-lint——10 个 Python 项目逐个 npx nx lint
+  # Job 5/9：python-lint——10 个 Python 项目逐个 npx nx lint
   # ------------------------------------------------------------------
   python-lint:
     name: python-lint (${{ matrix.project }})
@@ -198,7 +248,7 @@ jobs:
         run: npx nx lint ${{ matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 5/7：python-test——10 个 Python 项目逐个 npx nx test（覆盖率阈值见各项目 pyproject addopts）
+  # Job 6/9：python-test——10 个 Python 项目逐个 npx nx test（覆盖率阈值见各项目 pyproject addopts）
   # ------------------------------------------------------------------
   python-test:
     name: python-test (${{ matrix.project }})
@@ -256,7 +306,7 @@ jobs:
         run: npx nx test ${{ matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 6/7：lock-check——uv.lock 与 package-lock.json 与清单一致
+  # Job 7/9：lock-check——uv.lock 与 package-lock.json 与清单一致
   # ------------------------------------------------------------------
   lock-check:
     name: lock-check (uv + npm)
@@ -298,7 +348,7 @@ jobs:
 
   # ------------------------------------------------------------------
   # ------------------------------------------------------------------
-  # Job 7/7：alembic-check——5 个有迁移的服务模型与迁移一致
+  # Job 8/9：alembic-check——5 个有迁移的服务模型与迁移一致
   # ------------------------------------------------------------------
   alembic-check:
     name: alembic-check (${{ matrix.service }})
@@ -375,3 +425,44 @@ jobs:
           export "${DB_ENV}=postgresql+asyncpg://beauty:beauty@localhost:5432/beauty"
           uv run alembic upgrade head
           uv run alembic check
+
+  # ------------------------------------------------------------------
+  # Job 9/9：docker-build——W4 R-36 镜像可构建性（本机 docker daemon 不可用，构建正确性只能 CI 验）
+  # 等价本地：docker compose -f deploy/docker-compose.yml config -q
+  # ------------------------------------------------------------------
+  docker-build:
+    name: docker-build (compose 校验 + py/web 镜像)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate compose file
+        # 纯语法/变量解析校验（不需要 daemon），本地等价命令见上。
+        run: docker compose -f deploy/docker-compose.yml config -q
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build python-service image (SERVICE=bff)
+        # 单镜像 ARG SERVICE 覆盖 7 服务，这里只验一条代表路径 + 构建缓存。
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/python-service.Dockerfile
+          build-args: SERVICE=bff
+          push: false
+          tags: beauty-moon/bff:ci
+          cache-from: type=gha,scope=py
+          cache-to: type=gha,mode=max,scope=py
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          push: false
+          tags: beauty-moon/web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web

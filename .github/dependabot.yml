@@ -1,18 +1,51 @@
-# W0 R-06 顺带落地：依赖自动更新只开安全类（#3571（security updates）不含版本升级 PR，避免与重构波次互相干扰）。
-# 完整依赖更新策略是 W4 R-35，落地时再扩展本文件。
+# 依赖自动更新(W0 R-06 建,W4 R-35 补分组与标签)。
+# 策略(docs/security.md §4):patch/minor 自动发 PR(major 手工评估,防破坏性升级闯门禁);
+# dev 与 prod 分组,安全更新合并为一个 PR 减噪音;所有 PR 过全套 CI 门禁。
 version: 2
 updates:
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
       interval: 'weekly'
+    labels:
+      - 'dependencies'
+      - 'ci'
+    commit-message:
+      prefix: 'ci'
+      prefix-development: 'chore'
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 5
+    # 分组:生产依赖与 dev 工具分开评审
+    groups:
+      production:
+        dependency-type: 'production'
+      development:
+        dependency-type: 'development'
+        # dev 工具链允许聚合更新(减少 PR 数)
+        update-types:
+          - 'minor'
+          - 'patch'
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'chore'
+      prefix-development: 'chore'
   - package-ecosystem: 'pip'
     directory: '/'
     schedule:
       interval: 'weekly'
     open-pull-requests-limit: 5
+    groups:
+      production:
+        dependency-type: 'production'
+      development:
+        dependency-type: 'development'
+    labels:
+      - 'dependencies'
+      - 'python'
+    commit-message:
+      prefix: 'chore'
+      prefix-development: 'chore'

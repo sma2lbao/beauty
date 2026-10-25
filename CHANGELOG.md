@@ -1,4 +1,10 @@
+# Changelog
+
+本文件由 `npx nx release changelog` 生成并维护(conventional commits 汇总);发布流程见 docs/release.md。
+
 ## 0.1.0 (2026-10-25)
+
+**初始正式发布**:beauty moon 0.1.0——AI Agent 工作台(7 服务微服务 + web 控制台 + Electron 桌面端 + 官网),含任务编排、SSE 流式、审批、交付物与知识库;本轮经 W0-W4 重构波次收口(门禁/CI/文档单一真源/测试基线 697 pytest + 446+ vitest)。
 
 ### 🚀 Features
 

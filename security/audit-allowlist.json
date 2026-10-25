@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "W4 R-35 漏洞允许清单:仅登记【dev 工具链传递依赖】中无可用 fix(或 fix 需破坏性 --force 升级)的条目。",
+    "生产依赖(--omit=dev)必须 0 漏洞,不进本清单;清单条目到期(expires)未处理时,",
+    "scripts/check-audit-allowlist.cjs 会失败以强制复核。复核流程见 docs/security.md。"
+  ],
+  "entries": [
+    {
+      "id": "GHSA-8j7c-j8ch-4j4c",
+      "advisory": "axios",
+      "ecosystem": "npm",
+      "range": ">=1.0.0 <1.13.0",
+      "reason": "dev 工具链传递依赖(rspress 文档站/vitest 链路),不影响生产运行面;上游 @rspress/@nx 尚未发布兼容的 axios 升级",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "GHSA-6j4f-fj2g-mc7p",
+      "advisory": "brace-expansion",
+      "ecosystem": "npm",
+      "range": "<5.0.11",
+      "reason": "nx 23.2.1 内嵌 brace-expansion 4.x(ReDoS),仅构建期 glob 展开,不在请求路径;升 nx major 待评估",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "GHSA-1x5v-j93q-4wxf",
+      "advisory": "follow-redirects",
+      "ecosystem": "npm",
+      "range": "<1.16.0",
+      "reason": "axios 传递依赖,同 axios 链,等上游更新",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "GHSA-7w5x-hrqm-74c2",
+      "advisory": "smol-toml",
+      "ecosystem": "npm",
+      "range": "<=1.8.0",
+      "reason": "@nx/vitest 23.2.1 传递依赖(nx 配置 TOML 解析,DoS 仅影响本地工具),升级 @nx/vitest 需跨 minor,排 W4 后",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "@beauty/desktop",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "beauty moon 桌面应用:本地电脑模式(本机会话、本机文件、本机命令执行)",

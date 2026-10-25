@@ -44,5 +44,33 @@
     "test": {
       "dependsOn": ["^build"]
     }
+  },
+  "release": {
+    "projects": [
+      "*",
+      "!common",
+      "!database",
+      "!events",
+      "!agent-orchestrator",
+      "!llm-gateway",
+      "!connector-service",
+      "!knowledge-service",
+      "!account-service",
+      "!workspace-service",
+      "!bff"
+    ],
+    "conventionalCommits": true,
+    "git": {
+      "tag": true,
+      "tagPrefix": "v"
+    },
+    "version": {
+      "conventionalCommits": true,
+      "fallbackCurrentVersionResolver": "disk"
+    },
+    "changelog": {
+      "workspaceChangelog": true,
+      "automaticFromRef": true
+    }
   }
 }

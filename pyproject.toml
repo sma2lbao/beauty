@@ -1,6 +1,6 @@
 [project]
 name = "beauty-moon"
-version = "1.0.0"
+version = "0.1.0"
 # uv workspace 容器：所有 Python 项目共享仓库根 .venv（统一 Python 3.12）
 dependencies = [
     "common",
