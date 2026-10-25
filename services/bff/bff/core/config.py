@@ -34,3 +34,5 @@ class Settings(BaseAppSettings):
     internal_secret: str = ""
     # 进程内限流(Redis 在 M0-03 接入);每租户/IP 每分钟请求数
     rate_limit_per_minute: int = 120
+    # /readyz 可选上游探测:默认关闭,避免上游抖动把 BFF 级联打成不就绪(R-37)
+    ready_probe_upstreams: bool = False

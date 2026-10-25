@@ -37,6 +37,7 @@ def _login_error(settings: Settings, code: str) -> RedirectResponse:
         f"{settings.app_origin.rstrip('/')}/login?{query}", status_code=302
     )
 
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -195,8 +196,6 @@ async def oauth_callback(
     except Exception as exc:  # noqa: BLE001 - 登录失败统一回登录页
         code_name = getattr(exc, "code", "oauth_failed")
         return _login_error(settings, str(code_name))
-    redirect = RedirectResponse(
-        f"{settings.app_origin.rstrip('/')}/", status_code=302
-    )
+    redirect = RedirectResponse(f"{settings.app_origin.rstrip('/')}/", status_code=302)
     set_session_cookies(redirect, settings, codec, fresh)
     return redirect
