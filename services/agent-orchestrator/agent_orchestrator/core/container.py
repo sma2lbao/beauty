@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
-from datetime import UTC, datetime
 from functools import partial
 
 from common.artifacts import ArtifactStore
@@ -28,18 +27,15 @@ from common.auth import JwtVerifier
 from common.logging import get_logger, setup_logging
 from common.observability import install_observability
 from database.base import Base
-from database.session import create_session_factory, session_scope
+from database.session import create_session_factory
 from events.bus import EventBus, InMemoryEventBus
 from events.outbox import OutboxDispatcher
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.core.container_assemblies import ContainerAssemblyMixin
 from agent_orchestrator.graph.builder import build_run_graph
-from agent_orchestrator.models import mcp as mcp_models
-from agent_orchestrator.models import runs as runs_models
-from agent_orchestrator.services import mcp as mcp_service
-from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services import quota as quota_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.artifacts import build_store
@@ -58,11 +54,9 @@ from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
-from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import (
     ToolExtrasFactory,
     ToolRegistry,
-    ToolSpec,
     build_tools,
 )
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
@@ -88,7 +82,7 @@ INJECTED = (
 )
 
 
-class AppContainer:
+class AppContainer(ContainerAssemblyMixin):
     """一次进程生命周期内的全部外部依赖与后台任务。"""
 
     def __init__(
@@ -299,81 +293,6 @@ class AppContainer:
             extras_factory = self._extras_factory()
         self._publish("tool_extras_factory", extras_factory)
         return knowledge
-
-    def _extras_factory(self) -> ToolExtrasFactory:
-        """外部工具(MCP / skill_run)工厂:调用边界才解析,复用容器里的依赖。"""
-
-        async def _load_extras(tenant_id: str) -> list[ToolSpec]:
-            """run 绑定了可执行技能包 → skill_run;有 MCP → 追加 MCP 工具。
-
-            skill 与 MCP 互不阻断:MCP 故障只降级 MCP 工具;chat 路径没有
-            run_id,自然看不到 skill_run。
-            """
-            settings = self.settings
-            factory = self.session_factory
-            assert factory is not None
-            specs: list[ToolSpec] = []
-            runner = self.skill_runner
-            ctx = current_tool_context()
-            # 显式引用的 MCP server:对话路径从 contextvar 读;run 路径读 run 快照
-            selected: tuple[str, ...] | None = None
-            if ctx is not None and ctx.mcp_server_ids:
-                selected = ctx.mcp_server_ids
-            if ctx is not None and ctx.run_id:
-                async with session_scope(factory) as session:
-                    run = await session.get(runs_models.Run, ctx.run_id)
-                    if run is not None and run.tenant_id == tenant_id:
-                        if runner is not None and run.skill_object_key:
-                            specs.append(runner.spec(run))
-                        if run.mcp_server_ids:
-                            selected = tuple(run.mcp_server_ids)
-            if settings.mcp_enabled:
-
-                async def _mark_mcp_auth_required(server_id: str, detail: str) -> None:
-                    """调用期 401 落库:/mcp 页不必手动测试也能看到"需要授权"。"""
-                    async with session_scope(factory) as session:
-                        server = await session.get(mcp_models.MCPServer, server_id)
-                        if server is None or server.tenant_id != tenant_id:
-                            return
-                        server.last_status = "auth_required"
-                        server.last_error = detail[:500]
-                        server.last_checked_at = datetime.now(UTC)
-
-                async def _mcp_token(server_id: str, force: bool) -> str | None:
-                    """调用前解析 OAuth token(过期自动刷新;401 时 force 刷新)。"""
-                    if not settings.mcp_oauth_enabled:
-                        return None
-                    async with session_scope(factory) as session:
-                        return await mcp_oauth.access_token(
-                            session,
-                            tenant_id,
-                            server_id,
-                            settings=settings,
-                            secret=settings.mcp_secret,
-                            force_refresh=force,
-                        )
-
-                try:
-                    async with session_scope(factory) as session:
-                        # stdio MCP 的沙箱池在启动后段才装配,这里按调用时取值
-                        specs += await mcp_service.tool_specs(
-                            session,
-                            tenant_id,
-                            secret=settings.mcp_secret,
-                            pool=self.mcp_stdio_pool,
-                            on_auth_required=_mark_mcp_auth_required,
-                            token_provider=_mcp_token,
-                            server_ids=selected,
-                        )
-                except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
-                    logger.warning(
-                        "mcp tool specs failed",
-                        tenant_id=tenant_id,
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-            return specs
-
-        return _load_extras
 
     async def _assemble_graph_deps(self) -> None:
         settings = self.settings

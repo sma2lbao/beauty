@@ -23,6 +23,32 @@ from typing import Any
 from langgraph.types import interrupt
 
 from agent_orchestrator.graph import delta
+from agent_orchestrator.graph.deliver_nodes import (
+    DELIVER_SYSTEM_PROMPT as DELIVER_SYSTEM_PROMPT,
+)
+from agent_orchestrator.graph.deliver_nodes import (
+    VERIFY_SYSTEM_PROMPT as VERIFY_SYSTEM_PROMPT,
+)
+from agent_orchestrator.graph.deliver_nodes import _artifact as _artifact
+from agent_orchestrator.graph.deliver_nodes import _parse_verdicts as _parse_verdicts
+from agent_orchestrator.graph.deliver_nodes import _stub_deliver as _stub_deliver
+from agent_orchestrator.graph.deliver_nodes import fail_node as fail_node
+from agent_orchestrator.graph.deliver_nodes import (
+    make_deliver_node as make_deliver_node,
+)
+from agent_orchestrator.graph.deliver_nodes import make_verify_node as make_verify_node
+from agent_orchestrator.graph.plan_nodes import PLAN_SYSTEM_PROMPT as PLAN_SYSTEM_PROMPT
+from agent_orchestrator.graph.plan_nodes import (
+    _conversation_block as _conversation_block,
+)
+from agent_orchestrator.graph.plan_nodes import _criteria_block as _criteria_block
+from agent_orchestrator.graph.plan_nodes import (
+    _instructions_block as _instructions_block,
+)
+from agent_orchestrator.graph.plan_nodes import _skill_block as _skill_block
+from agent_orchestrator.graph.plan_nodes import _stub_plan as _stub_plan
+from agent_orchestrator.graph.plan_nodes import _text_reply as _text_reply
+from agent_orchestrator.graph.plan_nodes import make_plan_node as make_plan_node
 from agent_orchestrator.graph.ports import (
     ApprovalDecision,
     LLMPort,
@@ -37,154 +63,11 @@ from agent_orchestrator.graph.state import RunGraphState
 MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
 
-PLAN_SYSTEM_PROMPT = (
-    "你是任务规划助手。依据目标与验收标准产出 Markdown 执行计划:"
-    "以「# 执行计划」开头,含「## 步骤」编号列表,每步是一个可执行动作;"
-    "末尾「## 验收标准」用「- [ ] 」清单逐条列出。不要输出计划之外的任何文字。"
-)
 
 EXECUTE_SYSTEM_PROMPT = (
     "你是任务执行助手。依据目标与计划执行,输出本轮执行结果小结:"
     "2-6 行要点,直接给结果,不要寒暄。"
 )
-
-VERIFY_SYSTEM_PROMPT = (
-    "你是验收助手。依据目标、计划与执行结果,逐条判定每项验收标准是否通过。"
-    '只输出 JSON 对象:{"summary": "一句话总结", '
-    '"verdicts": {"<验收标准原文>": true 或 false}},'
-    "每项标准都要出现在 verdicts 里,不要输出 JSON 以外的任何文字。"
-)
-
-DELIVER_SYSTEM_PROMPT = (
-    "你是交付助手。依据目标、计划与执行结果,产出**最终交付物正文**(Markdown):"
-    "直接给成品,不要解释过程、不要寒暄、不要重复计划本身。"
-)
-
-
-async def _text_reply(
-    llm: LLMPort,
-    messages: list[dict[str, Any]],
-    *,
-    phase: str,
-    runtime: GraphRuntime,
-) -> str:
-    """取一段模型正文:有增量通道时边流边报(§6.3 token.delta.v1)。
-
-    节点仍然只上报文本、不碰数据库——落库在 services 层的图调用边界。
-    注入实现(测试假客户端等)不一定支持 stream,没有就退回 complete,
-    行为与不流式时完全一致。调用前先过 token 预算闸(P0-3)。
-    """
-    runtime.ports.usage.check_budget()
-    if not runtime.delta.active() or not hasattr(llm, "stream"):
-        return (await llm.complete(messages)).content
-    parts: list[str] = []
-    async for piece in llm.stream(messages):
-        parts.append(piece)
-        await runtime.delta.emit_text(piece, phase)
-    return "".join(parts)
-
-
-def _skill_block(state: RunGraphState) -> str:
-    """Skill 约束(系统提示词):plan/execute/verify/deliver 都要遵循。"""
-    prompt = state.get("skill_system_prompt")
-    if not prompt:
-        return ""
-    return f"\n\n技能约束(必须遵循):\n{prompt}"
-
-
-def _criteria_block(criteria: list[str]) -> str:
-    return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
-
-
-def _instructions_block(state: RunGraphState) -> str:
-    """用户追加指令(§6.5):消费后并入各节点提示词,模型必须遵循。"""
-    instructions = state.get("extra_instructions") or []
-    if not instructions:
-        return ""
-    lines = "\n".join(f"- {item}" for item in instructions)
-    return f"\n\n用户追加指令(必须遵循):\n{lines}"
-
-
-def _conversation_block(state: RunGraphState) -> str:
-    """对话多轮上下文:让模型理解"接着刚才的做"(非首条消息时才有)。"""
-    history = state.get("conversation_history") or []
-    if not history:
-        return ""
-    role_labels = {"user": "用户", "assistant": "助手"}
-    lines = "\n".join(
-        f"{role_labels.get(str(item.get('role')), '用户')}: {item.get('content') or ''}"
-        for item in history
-    )
-    return f"\n\n之前的对话(多轮上下文,理解当前目标用):\n{lines}"
-
-
-def _stub_plan(state: RunGraphState) -> dict:
-    criteria = state.get("acceptance_criteria") or []
-    checklist = "\n".join(f"- [ ] {c}" for c in criteria) or "- [ ] (无显式验收标准)"
-    instructions = state.get("extra_instructions") or []
-    extra = ""
-    if instructions:
-        lines = "\n".join(f"- {item}" for item in instructions)
-        extra = f"\n## 用户追加指令\n\n{lines}\n"
-    plan = f"""# 执行计划:{state["title"]}
-
-## 目标
-
-{state["goal"]}
-
-## 步骤
-
-1. 解析目标,拆解子任务
-2. 执行子任务并记录结果
-3. 逐项核对验收标准
-4. 产出交付物
-
-## 验收标准
-
-{checklist}
-{extra}"""
-    return {"plan_markdown": plan}
-
-
-def make_plan_node(llm: LLMPort | None):
-    """plan 节点工厂:LLM 生成计划(§6.1 可编辑工件)。
-
-    resume 重试时保留用户已编辑的计划,不覆盖(先判 plan_markdown)。
-    """
-
-    async def plan_node(state: RunGraphState, config=None) -> dict:
-        # config 由 LangGraph 运行时注入(带本次调用的 GraphRuntime);
-        # 直跑节点的单测可只传 state,此时回退默认运行期。
-        runtime = runtime_from_config(config)
-        if state.get("plan_markdown"):
-            return {}
-        if llm is None:
-            return _stub_plan(state)
-        criteria = state.get("acceptance_criteria") or []
-        plan_markdown = await _text_reply(
-            llm,
-            [
-                {
-                    "role": "system",
-                    "content": PLAN_SYSTEM_PROMPT + _skill_block(state),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"目标:{state.get('goal', '')}\n"
-                        f"标题:{state.get('title', '')}\n"
-                        f"验收标准:\n{_criteria_block(criteria)}"
-                        f"{_conversation_block(state)}"
-                        f"{_instructions_block(state)}"
-                    ),
-                },
-            ],
-            phase=delta.PHASE_PLAN,
-            runtime=runtime,
-        )
-        return {"plan_markdown": plan_markdown}
-
-    return plan_node
 
 
 def _scoped_toolkit(
@@ -496,135 +379,3 @@ def make_tool_exec_node(
         }
 
     return tool_exec_node
-
-
-def _parse_verdicts(text: str, criteria: list[str]) -> tuple[dict[str, bool], str]:
-    """解析 LLM 验收 JSON:宽容截取首个 {...};解析失败抛错(边界转 failed)。
-
-    缺失的标准保守判 false——宁可多返工一轮,不谎报通过。
-    """
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise RuntimeError(f"验收输出无法解析: {text[:120]}")
-    data = json.loads(text[start : end + 1])
-    verdicts_raw = data.get("verdicts")
-    if not isinstance(verdicts_raw, dict):
-        raise RuntimeError(f"验收输出缺 verdicts 对象: {text[:120]}")
-    verdicts = {c: bool(verdicts_raw.get(c, False)) for c in criteria}
-    return verdicts, str(data.get("summary", ""))
-
-
-def make_verify_node(llm: LLMPort | None):
-    """verify 节点工厂:LLM 逐条判定验收标准(§6.1);llm=None 回退全通过桩。
-
-    验收小结追加进 results——下一轮 execute 带着未过项继续返工。
-    """
-
-    async def verify_node(state: RunGraphState, config=None) -> dict:
-        runtime = runtime_from_config(config)
-        criteria = state.get("acceptance_criteria") or []
-        if llm is None or not criteria:
-            return {"verified": {c: True for c in criteria}}
-        done = "\n".join(state.get("results") or []) or "(尚无)"
-        verdict_text = await _text_reply(
-            llm,
-            [
-                {
-                    "role": "system",
-                    "content": VERIFY_SYSTEM_PROMPT + _skill_block(state),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"目标:{state.get('goal', '')}\n\n"
-                        f"计划:\n{state.get('plan_markdown', '')}\n\n"
-                        f"执行结果:\n{done}\n\n"
-                        f"验收标准:\n{_criteria_block(criteria)}"
-                        f"{_instructions_block(state)}"
-                    ),
-                },
-            ],
-            phase=delta.PHASE_VERIFY,
-            runtime=runtime,
-        )
-        verdicts, summary = _parse_verdicts(verdict_text, criteria)
-        update: dict = {"verified": verdicts}
-        if summary:
-            update["results"] = [f"验收小结:{summary}"]
-        return update
-
-    return verify_node
-
-
-def fail_node(state: RunGraphState) -> dict:
-    """返工耗尽仍未验收:诚实终结为 failed(§6.1/§6.2),不伪装 completed。"""
-    verified = state.get("verified") or {}
-    failed_items = [c for c, ok in verified.items() if not ok]
-    reason = f"验收未通过(已返工 {state.get('rounds', 0)} 轮): " + "; ".join(
-        failed_items
-    )
-    return {"final_status": "failed", "status_reason": reason}
-
-
-def _artifact(state: RunGraphState, content: str) -> dict[str, Any]:
-    return {
-        "title": state.get("title") or "交付物",
-        "kind": "markdown",
-        "content": content,
-    }
-
-
-def _stub_deliver(state: RunGraphState) -> dict:
-    """桩:把目标/执行结果/验收标准拼成交付物,并标注桩来源。"""
-    results = "\n".join(f"- {r}" for r in state.get("results") or []) or "- (无)"
-    criteria = state.get("acceptance_criteria") or []
-    checklist = "\n".join(f"- [x] {c}" for c in criteria) or "- (无显式验收标准)"
-    content = (
-        f"# {state.get('title', '交付物')}\n\n"
-        f"## 目标\n\n{state.get('goal', '')}\n\n"
-        f"## 执行结果\n\n{results}\n\n"
-        f"## 验收标准\n\n{checklist}\n\n"
-        "---\n\n(阶段 A 桩:交付物由 LLM 合成,见 LLM_ENABLED=true)\n"
-    )
-    return {"final_status": "completed", "artifact": _artifact(state, content)}
-
-
-def make_deliver_node(llm: LLMPort | None):
-    """deliver 节点工厂:LLM 合成最终交付物(§7);llm=None 回退拼装桩。
-
-    交付物只进 state(nodes 是纯函数);落库 + run.delivered.v1 在 services 层。
-    """
-
-    async def deliver_node(state: RunGraphState, config=None) -> dict:
-        runtime = runtime_from_config(config)
-        if llm is None:
-            return _stub_deliver(state)
-        results = "\n\n".join(state.get("results") or []) or "(无执行结果)"
-        content = await _text_reply(
-            llm,
-            [
-                {
-                    "role": "system",
-                    "content": DELIVER_SYSTEM_PROMPT + _skill_block(state),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"目标:{state.get('goal', '')}\n\n"
-                        f"计划:\n{state.get('plan_markdown', '')}\n\n"
-                        f"执行结果:\n{results}\n\n"
-                        f"验收标准:\n"
-                        f"{_criteria_block(state.get('acceptance_criteria') or [])}"
-                        f"{_instructions_block(state)}"
-                    ),
-                },
-            ],
-            phase=delta.PHASE_DELIVER,
-            runtime=runtime,
-        )
-        return {
-            "final_status": "completed",
-            "artifact": _artifact(state, content),
-        }
-
-    return deliver_node

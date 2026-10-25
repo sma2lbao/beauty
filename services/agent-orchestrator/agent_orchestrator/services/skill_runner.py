@@ -21,9 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import mimetypes
 from contextlib import suppress
-from dataclasses import dataclass
 from typing import Any
 
 from common.artifacts import ArtifactStore
@@ -39,6 +37,36 @@ from agent_orchestrator.services.sandbox import Sandbox, SandboxExecResult
 from agent_orchestrator.services.skill_packages import (
     MAX_FILES,
     MAX_UNCOMPRESSED_BYTES,
+)
+from agent_orchestrator.services.skill_runner_scripts import (
+    _UNPACK_TEMPLATE as _UNPACK_TEMPLATE,
+)
+from agent_orchestrator.services.skill_runner_scripts import (
+    LIST_OUTPUTS_PY as LIST_OUTPUTS_PY,
+)
+from agent_orchestrator.services.skill_runner_support import (
+    INTERPRETERS as INTERPRETERS,
+)
+from agent_orchestrator.services.skill_runner_support import (
+    MARKDOWN_SUFFIXES as MARKDOWN_SUFFIXES,
+)
+from agent_orchestrator.services.skill_runner_support import (
+    RUNTIME_BINS as RUNTIME_BINS,
+)
+from agent_orchestrator.services.skill_runner_support import OutputFile as OutputFile
+from agent_orchestrator.services.skill_runner_support import (
+    SkillRunError as SkillRunError,
+)
+from agent_orchestrator.services.skill_runner_support import (
+    _content_type_for as _content_type_for,
+)
+from agent_orchestrator.services.skill_runner_support import (
+    _entrypoint_argv as _entrypoint_argv,
+)
+from agent_orchestrator.services.skill_runner_support import _error as _error
+from agent_orchestrator.services.skill_runner_support import _truncate as _truncate
+from agent_orchestrator.services.skill_runner_support import (
+    _unpack_failure_summary as _unpack_failure_summary,
 )
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 from agent_orchestrator.services.workspace import Workspace
@@ -61,131 +89,8 @@ DEFAULT_TIMEOUT_SECONDS = 300
 STDOUT_LIMIT = 20_000
 STDERR_LIMIT = 4_000
 #: 执行器视为"已是解释器"的首段(命中则不拼 runtime 解释器)
-INTERPRETERS = frozenset(
-    {
-        "python",
-        "python3",
-        "python3.11",
-        "python3.12",
-        "python3.13",
-        "py",
-        "node",
-        "nodejs",
-        "bash",
-        "sh",
-    }
-)
 #: runtime → 沙箱镜像里的解释器可执行名
-RUNTIME_BINS = {"python": "python3", "node": "node"}
-MARKDOWN_SUFFIXES = (".md", ".markdown")
 
-_UNPACK_TEMPLATE = r'''#!/usr/bin/env python3
-"""沙箱内解包技能包:按上传同口径再校验一遍路径与规模(双保险)。
-
-stdin JSON: {"zip": "<包路径>", "dest": "<解压目录>"}
-stdout JSON: {"ok": true, "files": N, "bytes": M}
-    或 {"ok": false, "code": ..., "message": ...}
-退出码:0 成功;2 校验失败(服务层据此中止执行)。
-"""
-
-import json
-import os
-import re
-import sys
-import zipfile
-
-MAX_FILES = __MAX_FILES__
-MAX_TOTAL_BYTES = __MAX_UNCOMPRESSED_BYTES__
-SKILL_MD = "SKILL.md"
-S_IFLNK = 0o120000
-
-
-def fail(code, message):
-    payload = {"ok": False, "code": code, "message": message}
-    print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(2)
-
-
-def validate(name):
-    """归一化包内相对路径;拒绝绝对路径/穿越/NUL,不合法返回 None。"""
-    if not name or "\x00" in name:
-        return None
-    normalized = name.replace("\\", "/")
-    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
-        return None
-    parts = [part for part in normalized.split("/") if part not in ("", ".")]
-    if not parts or ".." in parts:
-        return None
-    return "/".join(parts)
-
-
-def main():
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        fail("bad_request", "stdin 不是合法 JSON")
-    zip_path = payload.get("zip")
-    dest = payload.get("dest")
-    if not zip_path or not dest:
-        fail("bad_request", "缺少 zip/dest")
-    os.makedirs(dest, exist_ok=True)
-    try:
-        archive = zipfile.ZipFile(zip_path)
-    except zipfile.BadZipFile:
-        fail("package_invalid", "不是合法的 zip 包")
-    with archive:
-        entries = [info for info in archive.infolist() if not info.is_dir()]
-        if len(entries) > MAX_FILES:
-            fail("too_large", "文件数超过上限 %d" % MAX_FILES)
-        if sum(info.file_size for info in entries) > MAX_TOTAL_BYTES:
-            fail("too_large", "解压后超过上限 %d 字节" % MAX_TOTAL_BYTES)
-        mapping = {}
-        for info in entries:
-            if (info.external_attr >> 16) & 0o170000 == S_IFLNK:
-                fail("path_invalid", "不允许符号链接:" + info.filename)
-            normalized = validate(info.filename)
-            if normalized is None:
-                fail("path_invalid", "非法包内路径:" + info.filename)
-            if normalized in mapping:
-                fail("path_invalid", "重复路径:" + normalized)
-            mapping[normalized] = info
-        names = list(mapping)
-        # 与服务端归一化口径一致:整包只包一层顶层目录时剥掉
-        if SKILL_MD not in names:
-            tops = set(name.split("/")[0] for name in names)
-            if len(tops) == 1:
-                top = next(iter(tops))
-                if all("/" in name for name in names):
-                    mapping = dict(
-                        (name[len(top) + 1 :], info)
-                        for name, info in mapping.items()
-                    )
-                    names = list(mapping)
-        root = os.path.realpath(dest)
-        total = 0
-        for name in names:
-            target = os.path.realpath(os.path.join(root, *name.split("/")))
-            if target != root and not target.startswith(root + os.sep):
-                fail("path_escape", "解压路径越出目标目录:" + name)
-            parent = os.path.dirname(target)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            with archive.open(mapping[name]) as source, open(target, "wb") as sink:
-                while True:
-                    chunk = source.read(64 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > MAX_TOTAL_BYTES:
-                        fail("too_large", "解压后超过上限 %d 字节" % MAX_TOTAL_BYTES)
-                    sink.write(chunk)
-    print(json.dumps({"ok": True, "files": len(names), "bytes": total}))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-'''
 
 _UNPACK_PLACEHOLDERS = {
     "__MAX_FILES__": str(MAX_FILES),
@@ -194,126 +99,6 @@ _UNPACK_PLACEHOLDERS = {
 UNPACK_PY = _UNPACK_TEMPLATE
 for _placeholder, _value in _UNPACK_PLACEHOLDERS.items():
     UNPACK_PY = UNPACK_PY.replace(_placeholder, _value)
-
-LIST_OUTPUTS_PY = r'''#!/usr/bin/env python3
-"""列出产物目录里的文件(相对路径/大小),给服务层决定读哪些正文。
-
-argv: [root, limit];stdout 单行 JSON:
-    {"files": [{"path": ..., "size": ...}], "truncated": bool}
-只读元数据,不读正文——正文由服务层按大小上限逐个 read_file。
-"""
-
-import json
-import os
-import sys
-
-root = sys.argv[1] if len(sys.argv) > 1 else "/workspace/output"
-limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-files = []
-truncated = False
-if os.path.isdir(root):
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        for name in sorted(filenames):
-            full = os.path.join(dirpath, name)
-            if os.path.islink(full):
-                continue
-            try:
-                size = os.path.getsize(full)
-            except OSError:
-                continue
-            if len(files) >= limit:
-                truncated = True
-                break
-            rel = os.path.relpath(full, root).replace(os.sep, "/")
-            files.append({"path": rel, "size": size})
-        if truncated:
-            break
-print(json.dumps({"files": files, "truncated": truncated}, ensure_ascii=False))
-'''
-
-
-class SkillRunError(Exception):
-    """技能包执行失败(可读原因;execute 转成 {"error": ...} 返回)。"""
-
-
-@dataclass
-class OutputFile:
-    """产物目录里的一个文件(未超限时读到字节,文本额外解码出正文)。"""
-
-    path: str
-    size: int
-    text: str | None = None
-    binary: bool = False
-    truncated: bool = False
-    data: bytes | None = None
-    artifact_id: str | None = None
-
-    def as_payload(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "path": self.path,
-            "size": self.size,
-            "binary": self.binary,
-            "truncated": self.truncated,
-        }
-        if self.artifact_id is not None:
-            payload["artifact_id"] = self.artifact_id
-        return payload
-
-
-def _error(message: str) -> str:
-    return json.dumps({"error": message}, ensure_ascii=False)
-
-
-def _truncate(text: str, limit: int) -> tuple[str, bool]:
-    """按字符截断;返回 (文本, 是否截断)。"""
-    if len(text) <= limit:
-        return text, False
-    return text[:limit], True
-
-
-def _entrypoint_argv(entrypoint: list[str] | None, runtime: str) -> list[str]:
-    """解析入口命令:runtime 选解释器,entrypoint 首段已是解释器则原样用。
-
-    上传时已拒绝绝对路径/穿越;这里再守一遍(DB 快照不能当作可信输入),
-    避免沙箱内执行被快照改动带偏。
-    """
-    argv = [str(arg) for arg in entrypoint or []]
-    if not argv:
-        raise SkillRunError("该技能包没有 entrypoint,不能执行")
-    for arg in argv:
-        if "\x00" in arg:
-            raise SkillRunError("entrypoint 含 NUL 字符")
-        candidate = arg.replace("\\", "/")
-        if candidate.startswith("/") or (len(candidate) > 1 and candidate[1] == ":"):
-            raise SkillRunError(f"entrypoint 不允许绝对路径:{arg}")
-        if ".." in candidate.split("/"):
-            raise SkillRunError(f"entrypoint 不允许路径穿越:{arg}")
-    if argv[0] in INTERPRETERS:
-        return argv
-    return [RUNTIME_BINS.get(runtime, "python3"), *argv]
-
-
-def _content_type_for(item: OutputFile) -> str:
-    """产物 MIME:文本按 .md/其他区分,二进制按扩展名猜,兜底二进制流。"""
-    if not item.binary:
-        if item.path.lower().endswith(MARKDOWN_SUFFIXES):
-            return "text/markdown"
-        return "text/plain"
-    guessed, _encoding = mimetypes.guess_type(item.path)
-    return guessed or artifacts.DEFAULT_CONTENT_TYPE
-
-
-def _unpack_failure_summary(result: SandboxExecResult) -> str:
-    """解包失败时的可读原因(stdout 里的 JSON 优先,否则 stderr 尾巴)。"""
-    try:
-        payload = json.loads((result.stdout or "").strip() or "{}")
-    except ValueError:
-        payload = {}
-    if isinstance(payload, dict) and payload.get("message"):
-        return str(payload["message"])
-    tail = (result.stderr or "").strip()[-500:]
-    return tail or f"解包脚本退出码 {result.exit_code}"
 
 
 class SkillRunner:
