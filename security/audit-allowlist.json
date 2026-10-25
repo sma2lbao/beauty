@@ -40,6 +40,33 @@
       "reason": "@nx/vitest 23.2.1 传递依赖(nx 配置 TOML 解析,DoS 仅影响本地工具),升级 @nx/vitest 需跨 minor,排 W4 后",
       "owner": "lead",
       "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112940",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "litellm(<1.107 全部已发布版)硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版无法在现有 resolver 下安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+(目前仅 rc)",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112913",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 对 filelock 的上界约束阻断升级",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112907",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 对 filelock 的上界约束阻断升级",
+      "owner": "lead",
+      "expires": "2026-12-31"
     }
   ]
 }

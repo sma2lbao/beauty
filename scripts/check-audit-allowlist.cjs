@@ -17,7 +17,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const FILE = path.join(ROOT, 'security', 'audit-allowlist.json');
 const REQUIRED = ['id', 'advisory', 'ecosystem', 'reason', 'owner', 'expires'];
-const ID_RE = /^(GHSA|OSV|RUSTSEC|PYSEC)-[a-z0-9-]+$/i;
+const ID_RE = /^(GHSA|OSV|RUSTSEC|PYSEC|CVE)-[a-z0-9-]+$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 let doc;

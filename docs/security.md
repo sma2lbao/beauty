@@ -27,7 +27,7 @@
 - **修复优先于豁免**：`npm audit fix`（无破坏）随时可跑；`--force`（跨 major）须评估兼容性后单独 PR。
 - **禁止无期限豁免**：每条 expires 最长季度末；`check-audit-allowlist.cjs` 到期即红。
 - **允许清单不是永久白名单**：条目携带 `reason`（为什么安全/为什么修不了）与 `owner`（谁负责跟进）。
-- **Python 侧豁免**：security/audit-allowlist.json 目前只覆盖 npm 生态（id/advisory/ecosystem）；
+- **Python 侧豁免**：security/audit-allowlist.json 同时登记 `ecosystem: pip` 条目；`scripts/pip-audit-ignore.cjs` 把未过期条目转成 `--ignore-vuln <id>` 传给 CI 的 pip-audit（当前 3 条 filelock CVE，因 litellm 约束 filelock<4.0 无法升级，expires 2026-12-31）；
   若 pip-audit 报出无修复版本的 Python 传递依赖，必须先登记同等字段（ecosystem: pip、range、owner、expires），
   并在 CI 里用 pip-audit --ignore-vuln <id> 逐条放行——禁止用 --ignore-vuln 之外的宽泛跳过参数；
   有修复版本一律升级，不做豁免。
