@@ -9,6 +9,7 @@ from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.plan_nodes import (
     _criteria_block,
     _instructions_block,
+    _memory_block,
     _skill_block,
     _text_reply,
 )
@@ -65,7 +66,11 @@ def make_verify_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": VERIFY_SYSTEM_PROMPT + _skill_block(state),
+                    "content": (
+                        VERIFY_SYSTEM_PROMPT
+                        + _skill_block(state)
+                        + _memory_block(state)
+                    ),
                 },
                 {
                     "role": "user",
@@ -139,7 +144,11 @@ def make_deliver_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": DELIVER_SYSTEM_PROMPT + _skill_block(state),
+                    "content": (
+                        DELIVER_SYSTEM_PROMPT
+                        + _skill_block(state)
+                        + _memory_block(state)
+                    ),
                 },
                 {
                     "role": "user",

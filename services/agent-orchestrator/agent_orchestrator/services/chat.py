@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,25 +49,52 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
+@dataclass(frozen=True)
+class ChatPromptContext:
+    """对话上下文(压缩摘要 + 长期记忆召回),由服务层提前算好。
+
+    为什么由调用方算:压缩要调模型、记忆召回要查库,而 chat.prompt 是纯装配
+    (非流式与流式共用同一口径)。context 为空时退回"只带近期原文"的老行为。
+    """
+
+    rows: list[ChatMessage] = field(default_factory=list)
+    summary: str = ""
+    memory_block: str = ""
+
+
 async def prompt(
-    session: AsyncSession, message: ChatMessage, *, reference_note: str = ""
+    session: AsyncSession,
+    message: ChatMessage,
+    *,
+    reference_note: str = "",
+    context: ChatPromptContext | None = None,
 ) -> list[dict[str, str]]:
-    """直接对话的完整消息序列:系统提示 + 此前全部轮次 + 本轮。
+    """直接对话的完整消息序列:系统提示 + 摘要/历史 + 本轮。
 
     非流式与流式共用——两条路径的上下文口径因此不会漂。
-    reference_note 是本次消息显式引用 MCP server 的约束片段(空则不追加)。
+    reference_note 是本次消息显式引用 MCP server 的约束片段(空则不追加);
+    context 带上压缩摘要与记忆召回(空则退化为只带近期原文,保持旧行为)。
     """
-    rows = await MessageRepository(session).list_before(
-        message.tenant_id,
-        message.conversation_id,
-        before=message.created_at,
-        exclude_id=message.id,
-    )
+    if context is None:
+        rows = await MessageRepository(session).list_before(
+            message.tenant_id,
+            message.conversation_id,
+            before=message.created_at,
+            exclude_id=message.id,
+        )
+        summary = ""
+        memory_block = ""
+    else:
+        rows = context.rows
+        summary = context.summary
+        memory_block = context.memory_block
     system_prompt = CHAT_SYSTEM_PROMPT
+    if memory_block:
+        system_prompt = f"{system_prompt}\n\n{memory_block}"
     if reference_note:
         system_prompt = f"{system_prompt}\n\n{reference_note}"
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    messages.extend(history.to_prompt(rows))
+    messages.extend(history.to_prompt(rows, summary=summary))
     attachment_context = await attachments_service.context_for_message(
         session, message.tenant_id, message.id
     )
@@ -173,12 +201,16 @@ async def answer(
     *,
     reference_note: str = "",
     policies: list[dict[str, str]] | None = None,
+    context: ChatPromptContext | None = None,
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
     toolkit 为空(未配置工具)时行为与原先完全一致:单轮直答。
+    context 为空时只带近期原文(旧行为);服务层会传入压缩摘要与记忆召回。
     """
-    messages = await prompt(session, message, reference_note=reference_note)
+    messages = await prompt(
+        session, message, reference_note=reference_note, context=context
+    )
     if toolkit is None or len(toolkit) == 0:
         reply = await llm.complete(messages)
         return reply.content

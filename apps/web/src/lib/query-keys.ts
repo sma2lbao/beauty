@@ -66,6 +66,17 @@ export const queryKeys = {
   /** 知识库域。 */
   knowledgeDocuments: ['knowledge-documents'] as const,
 
+  /**
+   * 记忆域:memories 是域级前缀键(命中列表/统计/检索),写操作后统一失效;
+   * 列表与检索把过滤维度拼进键,维度变化自然重查。
+   */
+  memories: ['memories'] as const,
+  memoryList: (kind?: string, workspaceId?: string) =>
+    ['memories', 'list', kind ?? '', workspaceId ?? ''] as const,
+  memoryStats: ['memories', 'stats'] as const,
+  memorySearch: (query: string, kind?: string, workspaceId?: string) =>
+    ['memories', 'search', query, kind ?? '', workspaceId ?? ''] as const,
+
   /** MCP / Skills 域。 */
   mcpServers: ['mcp-servers'] as const,
   skills: ['skills'] as const,

@@ -540,6 +540,16 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     # 计划审批:关掉自动放行——既有用例覆盖的是"人工审批"路径;
     # 自动放行由 tests/test_plan_auto_approve.py 显式开启。
     "plan_auto_approve": False,
+    # 记忆模块(P0 压缩 + P1 长期记忆):默认关——既有用例断言的是"没有记忆
+    # 工具、系统提示词没有记忆/摘要块"的旧口径;相关能力由 test_memory_*.py /
+    # test_compaction.py 用显式 settings 开启。
+    "memory_enabled": False,
+    "context_compaction_enabled": False,
+    # P2 记忆二期:自动抽取/巩固/sweeper 默认关——后台任务与额外 LLM 调用会
+    # 打乱既有用例的事件序列/调用计数;P2 用例自己显式开启。
+    "memory_auto_extract_enabled": False,
+    "memory_consolidation_enabled": False,
+    "memory_sweep_interval_seconds": 0.0,
 }
 
 #: 测试用配置:自足、零网络。保留 (tmp_path, name, **overrides) 签名,

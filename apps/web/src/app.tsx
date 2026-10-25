@@ -34,8 +34,13 @@ const KnowledgePage = lazy(() =>
     default: module.KnowledgePage,
   })),
 );
+const MemoryPage = lazy(() =>
+  import('@/pages/memory').then((module) => ({ default: module.MemoryPage })),
+);
 const SettingsPage = lazy(() =>
-  import('@/pages/settings').then((module) => ({ default: module.SettingsPage })),
+  import('@/pages/settings').then((module) => ({
+    default: module.SettingsPage,
+  })),
 );
 const SkillsPage = lazy(() =>
   import('@/pages/skills').then((module) => ({ default: module.SkillsPage })),
@@ -86,6 +91,7 @@ export function App() {
             <Route path="changes" element={<ChangesPage />} />
             <Route path="mcp" element={<McpPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
+            <Route path="memory" element={<MemoryPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="skills" element={<SkillsPage />} />
             <Route path="usage" element={<UsagePage />} />

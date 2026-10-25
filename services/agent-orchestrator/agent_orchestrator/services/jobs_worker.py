@@ -20,6 +20,11 @@ from agent_orchestrator import metrics
 from agent_orchestrator.models.runs import Job
 from agent_orchestrator.repositories import JobRepository
 from agent_orchestrator.services import runs as runs_service
+from agent_orchestrator.services.post_commit import (
+    PostCommitRuntime,
+    bind_runtime,
+    drain_after_commit,
+)
 
 if TYPE_CHECKING:
     from agent_orchestrator.core.container import AppContainer
@@ -50,6 +55,8 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             job.run_id,
             store=container.artifact_store,
             workspace=container.workspace_client,
+            # 后台 job 也要带上配置:记忆召回在 _invoke_plan 里按开关执行
+            settings=container.settings,
             **common,
         )
         return
@@ -133,11 +140,19 @@ async def process_one(container: AppContainer) -> bool:
 
     # 后台任务没有 HTTP 请求:用 job id 作种子,让同一 job 的日志可串联
     bind_request_context(request_id=f"job-{job_id}", tenant_id=tenant_id, job_id=job_id)
+    runtime = PostCommitRuntime(
+        session_factory=factory,
+        llm=container.llm_client,
+        settings=container.settings,
+    )
     try:
         try:
             async with session_scope(factory) as session:
+                bind_runtime(session, runtime)
                 job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
                 await _dispatch(container, session, job)
+            # 事务已提交:执行 run 完成等提交后副作用(记忆抽取),失败不影响 job
+            await drain_after_commit(session)
         except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
             logger.exception("job failed", job_id=job_id)
             async with session_scope(factory) as session:

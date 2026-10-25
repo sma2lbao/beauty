@@ -34,12 +34,17 @@ from events.outbox import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run, RunArtifact
+from agent_orchestrator.repositories import MessageRepository, RunRepository
 from agent_orchestrator.services import artifacts as artifacts_service
+from agent_orchestrator.services import memory_extraction
 from agent_orchestrator.services.knowledge import Knowledge
+from agent_orchestrator.services.llm import LLMClient
 
 DELIVERED_EVENT = "run.delivered.v1"
 KNOWLEDGE_CONSUMER = "knowledge-ingest"
+MEMORY_CONSUMER = "memory-extraction"
 INGEST_LIST_LIMIT = 200
 
 
@@ -162,12 +167,109 @@ class KnowledgeIngestConsumer:
             )
 
 
+class MemoryExtractionConsumer:
+    """run 交付后自动抽取长期记忆(run.delivered.v1)。
+
+    只处理绑定对话的 run:消息正文在对话里,抽取器按 transcript 提炼候选。
+    与知识入库不同,抽取是**增强能力**:缺消息/模型异常都只记 warning 并登记
+    已处理,避免同一条事件被反复重投成死循环(失败留痕也便于排查)。
+    """
+
+    name = MEMORY_CONSUMER
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+    ) -> None:
+        self._llm = llm
+        self._factory = session_factory
+        self._settings = settings
+        self._log = get_logger("orchestrator.outbox")
+
+    async def __call__(self, envelope: EventEnvelope) -> None:
+        if envelope.type != DELIVERED_EVENT:
+            return
+        tenant_id = envelope.tenant_id
+        run_id = str(envelope.payload.get("run_id") or "")
+        if not tenant_id or not run_id:
+            self._log.warning("memory_extract_bad_event", event_id=envelope.id)
+            return
+        if await self._already_processed(tenant_id, envelope.id):
+            return
+        try:
+            await self._extract(tenant_id, run_id)
+        except Exception as exc:  # noqa: BLE001 - 抽取失败不影响交付主链路
+            self._log.warning("memory_extract_failed", run_id=run_id, error=str(exc))
+        await self._remember(tenant_id, envelope.id)
+
+    async def _extract(self, tenant_id: str, run_id: str) -> None:
+        async with session_scope(self._factory) as session:
+            run = await RunRepository(session).get_for_tenant(tenant_id, run_id)
+            if run is None or not run.conversation_id:
+                return
+            # 与 chat 路径同口径节流:每累计 N 条会话消息才抽一次,避免每个 run
+            # 交付事件都触发一次模型调用(节流命中时事件仍标记 processed)。
+            min_messages = int(
+                getattr(self._settings, "memory_extraction_min_messages", 0) or 0
+            )
+            count = await MessageRepository(session).count_for_conversation(
+                tenant_id, run.conversation_id
+            )
+            if min_messages > 0 and count % min_messages != 0:
+                self._log.debug(
+                    "run_memory_extract_throttled",
+                    run_id=run_id,
+                    count=count,
+                    every=min_messages,
+                )
+                return
+            messages = await MessageRepository(session).list_for_conversation(
+                tenant_id, run.conversation_id
+            )
+            memories = await memory_extraction.extract_from_messages(
+                session,
+                self._llm,
+                tenant_id=tenant_id,
+                messages=messages,
+                workspace_id=run.workspace_id,
+                source_type="run",
+                source_id=run.id,
+                settings=self._settings,
+            )
+            if memories:
+                self._log.info(
+                    "run_memories_extracted", run_id=run_id, count=len(memories)
+                )
+
+    async def _already_processed(self, tenant_id: str, event_id: str) -> bool:
+        async with session_scope(self._factory) as session:
+            return await is_processed(
+                session,
+                tenant_id=tenant_id,
+                consumer=self.name,
+                event_id=event_id,
+            )
+
+    async def _remember(self, tenant_id: str, event_id: str) -> None:
+        async with session_scope(self._factory) as session:
+            await mark_processed(
+                session,
+                tenant_id=tenant_id,
+                consumer=self.name,
+                event_id=event_id,
+            )
+
+
 def register_consumers(
     bus: EventBus,
     *,
-    knowledge: Knowledge | None,
+    knowledge: Knowledge | None = None,
     session_factory: async_sessionmaker[AsyncSession],
     store: Any = None,
+    llm: LLMClient | None = None,
+    settings: Settings | None = None,
 ) -> list[str]:
     """把已启用的消费者挂到总线上,返回消费者名(便于启动日志)。"""
     registered: list[str] = []
@@ -175,6 +277,15 @@ def register_consumers(
         consumer = KnowledgeIngestConsumer(knowledge, session_factory, store)
         bus.subscribe(DELIVERED_EVENT, consumer)
         registered.append(consumer.name)
+    if (
+        llm is not None
+        and settings is not None
+        and settings.memory_enabled
+        and settings.memory_auto_extract_enabled
+    ):
+        memory_consumer = MemoryExtractionConsumer(llm, session_factory, settings)
+        bus.subscribe(DELIVERED_EVENT, memory_consumer)
+        registered.append(memory_consumer.name)
     return registered
 
 

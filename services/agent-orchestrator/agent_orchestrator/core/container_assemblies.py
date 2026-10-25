@@ -11,6 +11,7 @@ from agent_orchestrator.models import mcp as mcp_models
 from agent_orchestrator.models import runs as runs_models
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
+from agent_orchestrator.services.memory_tools import build_memory_tools
 from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import (
     ToolExtrasFactory,
@@ -94,6 +95,15 @@ class ContainerAssemblyMixin:
                         tenant_id=tenant_id,
                         error=f"{type(exc).__name__}: {exc}",
                     )
+            # 长期记忆工具(§6.7):跨会话读写偏好/事实,与知识库检索互补
+            # (知识库是"文档"检索,记忆是"对话沉淀")。开关关闭即不暴露——
+            # 能力即权限边界,与 documents/knowledge 的口径一致。
+            if settings.memory_enabled:
+                specs += build_memory_tools(
+                    factory,
+                    max_content_chars=settings.memory_max_content_chars,
+                    default_limit=settings.memory_recall_limit,
+                )
             return specs
 
         return _load_extras

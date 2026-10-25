@@ -25,6 +25,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services import memory_extraction
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.run_artifacts import (
@@ -184,6 +185,8 @@ def _tool_context(run: Run):
             tenant_id=run.tenant_id,
             run_id=run.id,
             conversation_id=run.conversation_id,
+            # 记忆工具按工作区归属读写(与 run 的工作区一致,§6.7)
+            workspace_id=run.workspace_id,
             # run 创建时快照的 MCP 引用:工具装配(execution/extras)只暴露这些 server
             mcp_server_ids=tuple(run.mcp_server_ids or ()),
         )
@@ -339,6 +342,9 @@ async def _apply_graph_result(
         or "\n".join(values.get("results") or [])
         or "任务完成 ✅",
     )
+    # 提交后抽取(P1-3):run 完成写入进程内回调,由会话边界提交成功后执行;
+    # outbox 开启时交给 outbox 消费者,这里只登记不等待
+    memory_extraction.schedule_run_extraction(session, run)
     return run
 
 

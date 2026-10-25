@@ -24,6 +24,9 @@ class RunGraphState(TypedDict, total=False):
     tool_calls: Annotated[list[dict[str, Any]], add]  # 工具调用审计(services 层落事件)
     extra_instructions: list[str]  # 用户追加指令(§6.5),在下一个边界并入上下文
     conversation_history: list[dict[str, str]]  # 对话多轮上下文(services 层建图时装载)
+    # 长期记忆召回(§6.7):services 层起图时按目标检索并拼成提示块,节点只读不改;
+    # 缺省=没召回(旧 checkpoint 兼容,节点统一用 .get 读)。
+    memory_block: str
     skill_id: str  # Skill 绑定(run 创建时快照)
     skill_system_prompt: str  # Skill 的系统提示词
     # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/

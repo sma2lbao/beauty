@@ -27,6 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_orchestrator.core.container import AppContainer
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
+from agent_orchestrator.services.post_commit import (
+    PostCommitRuntime,
+    bind_runtime,
+    drain_after_commit,
+)
 from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
@@ -44,11 +49,19 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     """
     container = get_container(request)
     assert container.session_factory is not None
+    runtime = PostCommitRuntime(
+        session_factory=container.session_factory,
+        llm=container.llm_client,
+        settings=container.settings,
+    )
     async with session_scope(container.session_factory) as session:
         recorder = container.outbox_recorder
         if recorder is not None:
             session.info["outbox"] = recorder
+        bind_runtime(session, runtime)
         yield session
+    # 事务已提交:执行登记过的提交后副作用(如自动记忆抽取);失败不影响响应
+    await drain_after_commit(session)
 
 
 def get_settings(request: Request):

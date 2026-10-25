@@ -109,6 +109,7 @@ async def post_message(
         workspace=workspace,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -231,6 +232,7 @@ async def stream_message(
                 workspace=workspace,
                 downloader=downloader,
                 max_download_files=settings.artifact_download_max_files,
+                settings=settings,
             )
         ),
         media_type="text/event-stream",

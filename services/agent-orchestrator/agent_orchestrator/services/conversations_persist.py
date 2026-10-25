@@ -40,7 +40,9 @@ from agent_orchestrator.services.workspace import Workspace
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agent_orchestrator.core.config import Settings
     from agent_orchestrator.graph.ports import ToolkitPort
+    from agent_orchestrator.services.compaction import CompactionResult
     from agent_orchestrator.services.tools import ToolSpec
 
     ToolkitFactory = Callable[[str], ToolkitPort]
@@ -118,8 +120,14 @@ async def _task_path(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    compaction: CompactionResult | None = None,
+    settings: Settings | None = None,
 ) -> tuple[Run, str]:
-    """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。"""
+    """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。
+
+    compaction 是建 run 前刚完成的对话压缩(服务层算好传入,这里只透传给
+    create_run 记 run.compacted.v1 事件;压缩本身不在这层做,避免重复调模型)。
+    """
     run = await active_run(session, conversation.tenant_id, conversation.id)
     if run is not None:
         await runs_service.queue_instruction(
@@ -140,6 +148,7 @@ async def _task_path(
             mcp_server_ids=list(mcp_server_ids or []),
         ),
         skill=skill,
+        compaction=compaction,
     )
     message.run_id = run.id
     if jobs_enabled:
@@ -155,6 +164,7 @@ async def _task_path(
             workspace=workspace,
             downloader=downloader,
             max_download_files=max_download_files,
+            settings=settings,
         )
     return run, "run_created"
 
@@ -175,6 +185,9 @@ async def _toolkit_for(
     审批流,内置写操作引导用户改用「任务」;MCP 工具(extras)按租户
     auto_approve 映射出的风险等级走既有口径,不参与这里的裁剪。
     远端工具箱目录拉取失败也只降级、不报错。
+    extras 里还有记忆工具(见 docs/design/memory.md §10.2):同样不参与
+    只读裁剪,即对话内可自动执行 memory_write/memory_delete——这是
+    已接受的取舍(与 MCP 写工具的既有口径一致,副作用仅限本租户记忆)。
     """
     toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
     if toolkit is not None:

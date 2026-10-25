@@ -78,7 +78,7 @@ Browser
 ├── llm-gateway             模型路由/降级/预算/usage 采集（API 上游）                  :8003
 ├── connector-service       连接器框架（当前无内置连接器）+ 凭证管理                    :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
-├── knowledge-service       摄取/检索/重排/记忆（JSON 向量，SQLite 兼容）              :8006
+├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
 └── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
 
 云托管（只保留 URL 型依赖）
@@ -114,7 +114,7 @@ Browser
 | tool-service       | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）        | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md) |
 | llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK、计量、预算                                                                                       |
 | connector-service  | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密                                              |
-| knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用、记忆                                                            | 嵌入提供方可插拔（本地词法/网关）                                                                      |
+| knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用                                                                  | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)   |
 | workspace-service  | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                                                         |
 | account-service    | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                   | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                        |
 | packages/common    | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                        | Python 共享库                                                                                          |
@@ -211,7 +211,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 | 任务编排   | 看板、运行详情、计划/Todo/Goal、审批（/runs）                                                                     |
 | 变更与产物 | Diff 评审、产物预览（Markdown/图片；PDF/Office 后置）、下载/分享（/changes）                                      |
 | 工作区     | 工作区中心（清单/新建/重命名/删除、会话与交付物归属、一行切换器；/workspace）、文件树（只读）、Git 状态、补丁建议 |
-| 知识库     | 文档入库/清单/检索预览（/knowledge）、记忆/引用溯源                                                               |
+| 知识库     | 文档入库/清单/检索预览（/knowledge）、引用溯源                                                                    |
 | 开发者     | API Key、MCP（HTTP/stdio 面板）、Skills（上传/版本/删除）、Webhook、调用日志、用量（/outbox 事件队列运维）        |
 | 设置       | 账户、安全、模型/BYOK、权限、组织/成员/会话（/settings）；订阅/发票后置                                           |
 | 官网       | 独立部署（apps/site，深链 /landing 跳转过去）                                                                     |

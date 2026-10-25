@@ -6,9 +6,10 @@
 
 装配顺序(与关闭逆序):
     日志/观测/Skills → api_key_verifier → oauth_introspector → token 预算 →
-    配额客户端 → 用量上报 → DB session factory → LLM → 工具工厂/外部工具工厂 →
-    JWT verifier → 工作区/沙箱 → stdio MCP 池 → 交付物存储 → 外链下载器 →
-    skill runner → 事件总线 + outbox → run 执行图(Postgres 时可恢复)→ job worker
+    配额客户端 → 用量上报 → DB session factory → LLM → 记忆嵌入提供方 →
+    工具工厂/外部工具工厂 → JWT verifier → 工作区/沙箱 → stdio MCP 池 →
+    交付物存储 → 外链下载器 → skill runner → 事件总线 + outbox →
+    run 执行图(Postgres 时可恢复)→ job worker → 记忆清扫
 
 发布契约:容器把每个装配结果同时写到 app.state(测试与依赖注入都从这里取,
 见 tests 里的 app.state.* 断言);api 层不直接读 app.state,统一经
@@ -41,6 +42,10 @@ from agent_orchestrator.services import quota as quota_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.documents import DocumentLibrary
+from agent_orchestrator.services.embeddings import (
+    build_embedding_provider,
+    configure_embedding,
+)
 from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
 from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
@@ -51,6 +56,9 @@ from agent_orchestrator.services.mcp_server import (
     OAuthTokenIntrospector,
 )
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
+from agent_orchestrator.services.memory_sweeper import (
+    start_sweeper as start_memory_sweeper,
+)
 from agent_orchestrator.services.outbox import record_run_event, register_consumers
 from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
 from agent_orchestrator.services.skill_runner import SkillRunner
@@ -118,6 +126,7 @@ class AppContainer(ContainerAssemblyMixin):
         self.run_graph = None
         self.worker_task: asyncio.Task[None] | None = None
         self.interrupt_task: asyncio.Task[None] | None = None
+        self.memory_sweep_task: asyncio.Task[None] | None = None
         self.settings = settings
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
@@ -188,6 +197,7 @@ class AppContainer(ContainerAssemblyMixin):
                 await conn.run_sync(Base.metadata.create_all)
 
         await self._assemble_llm()
+        self._assemble_memory()
         knowledge = await self._assemble_tools()
         if knowledge is not None:
             self._closers.append(("knowledge client", knowledge.aclose))
@@ -256,6 +266,19 @@ class AppContainer(ContainerAssemblyMixin):
         # create_app 里存的是"测试注入值",生产路径为 None,这里补齐
         self._publish("llm_client", llm)
 
+    def _assemble_memory(self) -> None:
+        """记忆 P2:嵌入提供方全局装配(本地哈希默认;gateway 走 llm-gateway)。
+
+        嵌入是记忆检索/去重/巩固的共同底座,进程内只应有一份配置;provider
+        自建的 HTTP 客户端由容器负责关闭(本地哈希无资源,不用登记 closer)。
+        """
+        provider = build_embedding_provider(self.settings)
+        configure_embedding(provider)
+        self._publish("embedding_provider", provider)
+        aclose = getattr(provider, "aclose", None)
+        if aclose is not None:
+            self._closers.append(("embedding provider", aclose))
+
     async def _assemble_tools(self) -> KnowledgeClient | None:
         settings = self.settings
         # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
@@ -307,7 +330,11 @@ class AppContainer(ContainerAssemblyMixin):
 
         extras_factory = self.tool_extras_factory
         if extras_factory is None and (
-            settings.mcp_enabled or settings.skill_execution_enabled
+            settings.mcp_enabled
+            or settings.skill_execution_enabled
+            # 记忆工具也走 extras 通道(§6.7):MCP/技能全关但记忆开着时,
+            # 记忆读写工具仍要进执行图与对话的工具面,否则开关形同虚设。
+            or settings.memory_enabled
         ):
             extras_factory = self._extras_factory()
         self._publish("tool_extras_factory", extras_factory)
@@ -402,9 +429,9 @@ class AppContainer(ContainerAssemblyMixin):
         recorder = None
         dispatcher: OutboxDispatcher | None = None
         self._outbox_stop: asyncio.Event | None = None
-        ingest_knowledge: KnowledgeClient | None = None
         if settings.outbox_enabled:
             recorder = record_run_event
+            ingest_knowledge: KnowledgeClient | None = None
             if settings.knowledge_ingest_enabled:
                 ingest_knowledge = KnowledgeClient(
                     settings.knowledge_service_url,
@@ -412,13 +439,17 @@ class AppContainer(ContainerAssemblyMixin):
                     token_provider=self._token_provider,
                 )
                 self._closers.append(("ingest knowledge", ingest_knowledge.aclose))
-                consumers = register_consumers(
-                    bus,
-                    knowledge=ingest_knowledge,
-                    session_factory=self.session_factory,
-                    store=self.artifact_store,
-                )
-                self._publish("outbox_consumers", consumers)
+            # 消费者按各自开关在 register_consumers 内筛选(知识入库 / 记忆抽取),
+            # 同一份总线、同一套 outbox 去重语义;返回名字只用于启动日志
+            consumers = register_consumers(
+                bus,
+                knowledge=ingest_knowledge,
+                session_factory=self.session_factory,
+                store=self.artifact_store,
+                llm=self.llm_client,
+                settings=settings,
+            )
+            self._publish("outbox_consumers", consumers)
             dispatcher = OutboxDispatcher(
                 self.session_factory,
                 bus,
@@ -491,6 +522,9 @@ class AppContainer(ContainerAssemblyMixin):
                 or settings.question_timeout_seconds > 0
             ):
                 self.interrupt_task = start_sweeper(self)
+        # 记忆清扫:过期清理 + 相似记忆巩固,独立于 job worker(纯运维后台任务)
+        if settings.memory_enabled and settings.memory_sweep_interval_seconds > 0:
+            self.memory_sweep_task = start_memory_sweeper(self)
 
     # ------------------------------------------------------------------ 关闭
 
@@ -506,6 +540,11 @@ class AppContainer(ContainerAssemblyMixin):
             with suppress(asyncio.CancelledError):
                 await self.interrupt_task
             self.interrupt_task = None
+        if self.memory_sweep_task is not None:
+            self.memory_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.memory_sweep_task
+            self.memory_sweep_task = None
         for name, closer in reversed(self._closers):
             try:
                 await closer()

@@ -17,7 +17,8 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
-from agent_orchestrator.services import history
+from agent_orchestrator.services import compaction, history
+from agent_orchestrator.services.compaction import CompactionResult
 from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.run_quota import _enforce_quota
 from agent_orchestrator.services.skill_packages import SkillDefinition
@@ -74,6 +75,7 @@ async def create_run(
     data: RunCreate,
     *,
     skill: SkillDefinition | None = None,
+    compaction: CompactionResult | None = None,
 ) -> Run:
     """建 run;skill 定义(内置或上传包)在此**冻结**为快照列。
 
@@ -81,6 +83,9 @@ async def create_run(
     新版本不影响本 run(P3-C 的 skill_run 按 run 上的快照取包执行)。
     工作区归属:显式给的就用,否则从所属对话继承(对话在哪个工作区,run 就在哪)。
     配额(P0-2):建 run 前先过准入闸,超限直接 429,不留下半残 run。
+    compaction 非空表示建 run 前刚压缩过对话历史:摘要已落库(执行图据此
+    只读摘要),这里补一条 run.compacted.v1 事件,让事件流/前端能看到
+    "这轮上下文被折叠过"——压缩必须可观测,否则排查上下文丢失时没有依据。
     """
     await _enforce_quota(session, tenant_id)
     manifest = skill.manifest if skill else None
@@ -118,6 +123,22 @@ async def create_run(
         "run.created.v1",
         {"title": run.title, "skill_id": run.skill_id},
     )
+    if compaction is not None:
+        # 纯展示类事件(同 token.delta.v1/run.step.v1):只进 run 事件流供排查,
+        # 不进 outbox——HTTP 路径挂了 recorder 而 job worker 路径没挂,进 outbox
+        # 会让同一事件在两条路径上投递行为不一致;将来要跨服务消费再打开。
+        await append_event(
+            session,
+            run,
+            "run.compacted.v1",
+            {
+                "summary_chars": len(compaction.summary),
+                "covered_messages": compaction.covered_messages,
+                "tokens_before": compaction.tokens_before,
+                "tokens_after": compaction.tokens_after,
+            },
+            record_outbox=False,
+        )
     return run
 
 
@@ -190,14 +211,20 @@ async def _conversation_history(
     排除口径见 MessageRepository.list_history——触发本 run 的用户消息
     (先落库再建 run)与并发到达的追加指令都不会重复进上下文;
     截断口径(条数/单条字数)与直接对话共用 services.history。
+
+    已压缩的消息不再重复带入:摘要覆盖点之前的原文由摘要块代表,只回放
+    覆盖点之后的原文(压缩在发消息/建 run 之前完成,执行图这里不调模型)。
     """
+    summary, covered_until = await compaction.summary_for(
+        session, run.tenant_id, run.conversation_id
+    )
     rows = await MessageRepository(session).list_history(
         run.tenant_id,
         run.conversation_id,
         before=run.created_at,
         exclude_run_id=run.id,
     )
-    return history.to_prompt(rows)
+    return history.to_prompt(history.filter_after(rows, covered_until), summary=summary)
 
 
 MAX_TITLE = 200

@@ -77,6 +77,7 @@ async def plan_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -157,6 +158,7 @@ async def resume_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -183,6 +185,7 @@ async def retry_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return RunRead.model_validate(run)
 

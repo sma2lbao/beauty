@@ -1,7 +1,20 @@
 /**
  * 侧边栏主导航与更多导航(含官网外链)。
  */
-import { BarChart3, BookOpen, Columns3, GitCompareArrows, Globe, Inbox, FolderKanban, LayoutGrid, Plug, Settings, Sparkles } from 'lucide-react';
+import {
+  BarChart3,
+  BookOpen,
+  Brain,
+  Columns3,
+  FolderKanban,
+  GitCompareArrows,
+  Globe,
+  Inbox,
+  LayoutGrid,
+  Plug,
+  Settings,
+  Sparkles,
+} from 'lucide-react';
 
 import { ConsoleNavLink } from '@/components/console/ui';
 import { siteUrl } from '@/lib/site-links';
@@ -14,6 +27,7 @@ const PRIMARY_NAV = [
   { to: '/skills', icon: <Sparkles />, label: 'Skills' },
   { to: '/usage', icon: <BarChart3 />, label: '用量' },
   { to: '/knowledge', icon: <BookOpen />, label: '知识库' },
+  { to: '/memory', icon: <Brain />, label: '记忆' },
   { to: '/settings', icon: <Settings />, label: '设置' },
 ];
 

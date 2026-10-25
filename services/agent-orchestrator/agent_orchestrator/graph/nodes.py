@@ -48,6 +48,7 @@ from agent_orchestrator.graph.plan_nodes import _criteria_block as _criteria_blo
 from agent_orchestrator.graph.plan_nodes import (
     _instructions_block as _instructions_block,
 )
+from agent_orchestrator.graph.plan_nodes import _memory_block as _memory_block
 from agent_orchestrator.graph.plan_nodes import _skill_block as _skill_block
 from agent_orchestrator.graph.plan_nodes import _stub_plan as _stub_plan
 from agent_orchestrator.graph.plan_nodes import _text_reply as _text_reply
@@ -205,7 +206,9 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
     return [
         {
             "role": "system",
-            "content": EXECUTE_SYSTEM_PROMPT + _skill_block(state),
+            "content": EXECUTE_SYSTEM_PROMPT
+            + _skill_block(state)
+            + _memory_block(state),
         },
         {
             "role": "user",
@@ -649,6 +652,12 @@ def make_execute_node(
             )
         else:
             content = reply.content if reply is not None else ""
+            if content:
+                # function-calling 的收口走的是 complete,不是 _text_reply 的
+                # 流式调用;这里补报一次最终正文(§6.3),让"有工具"的 run
+                # 在 execute 阶段也有 token.delta.v1。只报这一处:轮次用尽
+                # 回退 _text_reply 的分支已自行上报,不重复。
+                await runtime.delta.emit_text(content, delta.PHASE_EXECUTE)
         text = content or f"(调用工具 {len(records)} 次后模型未给出结论)"
         return {
             "results": [text],

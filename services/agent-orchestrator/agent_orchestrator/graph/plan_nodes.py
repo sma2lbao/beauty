@@ -49,6 +49,18 @@ def _skill_block(state: RunGraphState) -> str:
     return f"\n\n技能约束(必须遵循):\n{prompt}"
 
 
+def _memory_block(state: RunGraphState) -> str:
+    """长期记忆召回块(§6.7):跨会话沉淀的偏好/事实,四个节点都要参考。
+
+    内容由 services 层在起图时按目标检索拼好(自带小标题),空串=没召回;
+    节点是纯函数只读它,召回失败在服务层降级为空,不阻断执行。
+    """
+    block = state.get("memory_block")
+    if not block:
+        return ""
+    return f"\n\n{block}"
+
+
 def _criteria_block(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
 
@@ -123,7 +135,9 @@ def make_plan_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": PLAN_SYSTEM_PROMPT + _skill_block(state),
+                    "content": (
+                        PLAN_SYSTEM_PROMPT + _skill_block(state) + _memory_block(state)
+                    ),
                 },
                 {
                     "role": "user",

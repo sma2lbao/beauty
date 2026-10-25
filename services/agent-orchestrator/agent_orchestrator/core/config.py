@@ -129,6 +129,46 @@ class Settings(BaseAppSettings):
     knowledge_enabled: bool = False
     knowledge_service_url: str = "http://127.0.0.1:8006"
     knowledge_timeout_seconds: float = 30.0
+    # 长期记忆(§6.7 记忆模块):跨会话保留的用户偏好/事实/项目笔记。
+    # 与知识库的分工:知识库是"文档"检索(显式工具),记忆是"对话沉淀"(自动召回)。
+    # 存储走 orchestration 自己的 memories 表(租户隔离 + 工作区归属),
+    # recall 结果按相关性拼进系统提示,不是把整库塞给模型。
+    memory_enabled: bool = True
+    memory_recall_limit: int = 5
+    memory_recall_max_chars: int = 2000
+    # 程序性记忆(kind=procedure)常驻注入的字符预算;0 = 关闭常驻约定块。
+    # 与召回互补:约定不按相关性过滤(否则模型不知道去查),但仍受预算约束。
+    memory_convention_max_chars: int = 2000
+    memory_max_content_chars: int = 8000
+    memory_max_entries_per_tenant: int = 2000
+    # 0 = 不过期(只按容量与手动删除治理);>0 时写入时算 expires_at
+    memory_default_ttl_days: int = 0
+    memory_embedding_dimensions: int = 256
+    # 记忆二期(P2):自动抽取/近重复巩固/周期清理。抽取需要 LLM 且会把对话
+    # 内容写进长期记忆(默认 tenant 级、跨工作区可见),属隐私敏感行为,**默认关**;
+    # 显式开启后受 memory_extraction_min_messages 节流(每累计 N 条会话消息抽一次,
+    # 0=关闭该调用方)。巩固按词面相似度合并近重复,pinned 永不删除;sweeper
+    # 周期清理过期记忆。run 完成路径不依赖 outbox(提交后回调),见 memory_extraction。
+    memory_auto_extract_enabled: bool = False
+    memory_extraction_min_messages: int = 6
+    memory_extraction_max_items: int = 5
+    memory_extraction_max_chars: int = 1200
+    memory_dedupe_threshold: float = 0.9
+    memory_consolidation_enabled: bool = True
+    memory_consolidation_threshold: float = 0.92
+    # 周期清理/巩固间隔秒;<=0 = 不起后台 sweeper(测试里钉 0 关掉)。
+    memory_sweep_interval_seconds: float = 3600.0
+    # 语义嵌入(P2):local = 进程内 256 维确定哈希(零网络);gateway 走
+    # llm-gateway 的 /v1/embeddings(默认模型 bge-m3),失败自动回退 local。
+    memory_embedding_provider: str = "local"
+    memory_embedding_model: str = "bge-m3"
+    memory_embedding_timeout_seconds: float = 10.0
+    # 短期上下文压缩(§6.7):早期轮次折叠成摘要,原文仍保留(审计/回放不受影响)。
+    # 阈值按估算 token 计(中文约 1 字/token),超过后把"最老的一批"折叠进摘要。
+    context_compaction_enabled: bool = True
+    context_compact_threshold_tokens: int = 6000
+    context_keep_recent_messages: int = 8
+    context_summary_max_chars: int = 2000
     # 事务性 outbox(§6.3/§8):run 事件与业务同事务入发件箱,再由 dispatcher
     # 至少一次投递(失败退避重试);阶段 A 用进程内总线
     outbox_enabled: bool = False

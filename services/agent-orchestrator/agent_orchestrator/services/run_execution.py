@@ -9,9 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 from common.artifacts import ArtifactStore
+from common.logging import get_logger
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     RunRepository,
@@ -19,6 +21,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import jobs as jobs_service
+from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.run_events import (
     _delta_stream,
@@ -63,6 +66,8 @@ from agent_orchestrator.services.run_quota import _usage_boundary
 from agent_orchestrator.services.tool_names import normalize_tool_names
 from agent_orchestrator.services.workspace import Workspace
 
+logger = get_logger(__name__)
+
 
 def _allowed_tools_from_snapshot(run: Run) -> list[str] | None:
     """快照读取边界:Run.skill_tools 里的旧工具名归一到 tool-service 正式名。
@@ -75,6 +80,50 @@ def _allowed_tools_from_snapshot(run: Run) -> list[str] | None:
     return normalize_tool_names(run.skill_tools)
 
 
+def _memory_query(run: Run) -> str:
+    """记忆召回查询词:目标为主、标题为辅(标题常含用户原话,更易命中偏好)。"""
+    return " ".join(part for part in (run.goal, run.title) if part).strip()
+
+
+async def _recall_memory_block(
+    session: AsyncSession, run: Run, settings: Settings
+) -> str:
+    """召回长期记忆并拼成提示块(§6.7);失败降级空串,不阻断 run。
+
+    两块内容:程序性约定(kind=procedure)无条件注入——它是"这个工作区的
+    做法",不依赖查询词命中;相关性命中按 goal+title 检索。记忆是"锦上添花"
+    的上下文:嵌入/检索/库任一处抖动都只该让交付少一点个性化,不该让用户
+    看到 failed——所以这里吞异常只留 warning。
+    """
+    try:
+        convention = await memory_service.convention_block(
+            session,
+            run.tenant_id,
+            workspace_id=run.workspace_id,
+            max_chars=settings.memory_convention_max_chars,
+        )
+        query = _memory_query(run)
+        recall = ""
+        if query:
+            recall = await memory_service.recall_block(
+                session,
+                run.tenant_id,
+                query,
+                workspace_id=run.workspace_id,
+                limit=settings.memory_recall_limit,
+                max_chars=settings.memory_recall_max_chars,
+            )
+        return "\n\n".join(part for part in (convention, recall) if part)
+    except Exception as exc:  # noqa: BLE001 - 记忆故障不阻断执行
+        logger.warning(
+            "memory recall failed",
+            run_id=run.id,
+            tenant_id=run.tenant_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return ""
+
+
 async def _invoke_plan(
     session: AsyncSession,
     graph: CompiledStateGraph,
@@ -84,6 +133,7 @@ async def _invoke_plan(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings | None = None,
 ) -> None:
     """起图跑到审批闸;resume 场景保留用户已编辑的计划。
 
@@ -133,6 +183,10 @@ async def _invoke_plan(
     instructions = await _consume_instructions(session, run)
     if instructions:
         state["extra_instructions"] = instructions
+    if settings is not None and settings.memory_enabled:
+        # 记忆只在起图时召回一次:resume 走 checkpoint 恢复,state 里带出同一块
+        # (召回结果进 state 而不是每次调用重算,审批/确认恢复时上下文保持一致)。
+        state["memory_block"] = await _recall_memory_block(session, run, settings)
     try:
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
@@ -188,6 +242,7 @@ async def plan_run(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings | None = None,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     require_transition(run, "plan")
@@ -202,6 +257,7 @@ async def plan_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=max_download_files,
+        settings=settings,
     )
     return run
 
@@ -232,6 +288,7 @@ async def retry_run(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings | None = None,
 ) -> Run:
     """failed → **另起一跑**并继承上下文(§6.2:failed 是终态,不重放旧图)。
 
@@ -281,6 +338,7 @@ async def retry_run(
             workspace=workspace,
             downloader=downloader,
             max_download_files=max_download_files,
+            settings=settings,
         )
     return child
 
@@ -296,6 +354,7 @@ async def resume_run(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings | None = None,
 ) -> Run:
     """blocked → 新 attempt 重新进审批闸,计划保留(§6.2 goal 语义)。"""
     run = await require_run(session, tenant_id, run_id)
@@ -315,5 +374,6 @@ async def resume_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=max_download_files,
+        settings=settings,
     )
     return run
