@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from common.errors import UpstreamError
+from common.service_testkit import client_fixture, settings_factory
 from common.testing import TestIdP
 from fastapi.testclient import TestClient
 
@@ -336,52 +337,31 @@ def _reset_process_budget() -> Iterator[None]:
     usage_service.configure_budget(0)
 
 
-def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settings:
-    """测试用配置:自足、零网络。
+#: AO 专属固定覆盖;共通三道防线(_env_file=None、env=dev、临时 sqlite +
+#: auto_create_tables、NETWORK_SWITCHES 全关)由 common.service_testkit 提供。
+_SETTINGS_DEFAULTS: dict[str, Any] = {
+    "sse_poll_interval_seconds": 0.05,
+    # 正文增量流:默认关——既有用例断言的是事件类型序列,打开会多出
+    # token.delta.v1;要覆盖流式路径的用例显式传 True(tests/test_run_delta.py)
+    "run_delta_streaming": False,
+    # R-32 补钉:.env 会被 Nx 注入任务环境(AGENT_ORCHESTRATOR__* 前缀),
+    # 这几项开着时 quota 用例的执行图会去连外部服务,被 pytest-socket 拦成
+    # SocketBlockedError → run failed。默认钉 False,与直跑口径一致。
+    "documents_enabled": False,
+    "knowledge_enabled": False,
+    "skill_execution_enabled": False,
+    # 内部服务地址:默认 127.0.0.1:8001,装配配额/用量时会建真实 httpx 客户端;
+    # 禁网门禁下这会变成 SocketBlockedError 放大成 run failed。测试要覆盖
+    # 配额/上报就自己 configure_client/configure_reporter(MockTransport)。
+    "account_service_url": "",
+    # 计划审批:关掉自动放行——既有用例覆盖的是"人工审批"路径;
+    # 自动放行由 tests/test_plan_auto_approve.py 显式开启。
+    "plan_auto_approve": False,
+}
 
-    两道防线缺一不可:
-
-    1. _env_file=None:不读本地 .env(开发机配置,可能开着 LLM_ENABLED 等);
-    2. **显式钉住所有"会连外部"的开关**:Nx 会把项目 .env 注入任务环境,
-       环境变量优先级高于 .env 与 _env_file=None——只靠第 1 条挡不住
-       (npx nx test 会因此真的调用模型网关)。显式入参才是最高优先级。
-
-    需要开这些能力的测试通过 overrides 显式传入(如 _client 的 llm_enabled=True)。
-    """
-    defaults: dict[str, Any] = {
-        "_env_file": None,
-        "env": "dev",
-        "database_url": f"sqlite+aiosqlite:///{tmp_path}/{name}",
-        "auto_create_tables": True,
-        "sse_poll_interval_seconds": 0.05,
-        # 正文增量流:默认关——既有用例断言的是事件类型序列,打开会多出
-        # token.delta.v1;要覆盖流式路径的用例显式传 True(tests/test_run_delta.py)
-        "run_delta_streaming": False,
-        # 外部副作用开关:默认全关,测试要开就显式传
-        "llm_enabled": False,
-        "tools_enabled": False,
-        "outbox_enabled": False,
-        "knowledge_ingest_enabled": False,
-        "workspace_enabled": False,
-        "sandbox_enabled": False,
-        "mcp_stdio_enabled": False,
-        "jobs_enabled": False,
-        # R-32 补钉:.env 会被 Nx 注入任务环境(AGENT_ORCHESTRATOR__* 前缀),
-        # 这几项开着时 quota 用例的执行图会去连外部服务,被 pytest-socket 拦成
-        # SocketBlockedError → run failed。默认钉 False,与直跑口径一致。
-        "documents_enabled": False,
-        "knowledge_enabled": False,
-        "skill_execution_enabled": False,
-        # 内部服务地址:默认 127.0.0.1:8001,装配配额/用量时会建真实 httpx 客户端;
-        # 禁网门禁下这会变成 SocketBlockedError 放大成 run failed。测试要覆盖
-        # 配额/上报就自己 configure_client/configure_reporter(MockTransport)。
-        "account_service_url": "",
-        # 计划审批:关掉自动放行——既有用例覆盖的是"人工审批"路径;
-        # 自动放行由 tests/test_plan_auto_approve.py 显式开启。
-        "plan_auto_approve": False,
-    }
-    defaults.update(overrides)
-    return Settings(**defaults)
+#: 测试用配置:自足、零网络。保留 (tmp_path, name, **overrides) 签名,
+#: 多个测试文件直接 `from tests.conftest import _settings` 复用。
+_settings = settings_factory(Settings, defaults=_SETTINGS_DEFAULTS)
 
 
 def _client(tmp_path: Path, fake: FakeLLM) -> TestClient:
@@ -423,8 +403,9 @@ def _create_run(client: TestClient, goal: str = "整理本周日程") -> str:
     return resp.json()["id"]
 
 
-@pytest.fixture()
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    app = create_app(_settings(tmp_path), token_verifier=_IDP.verifier())
-    with TestClient(app) as test_client:
-        yield test_client
+#: 默认客户端:tmp_path 独立库 + 进入 lifespan + 每用例现造 verifier。
+client = client_fixture(
+    create_app,
+    _settings,
+    app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
+)

@@ -6,8 +6,9 @@
   **禁止** `tenant_id`、`run_id`、原始 path(404 扫描会把基数打爆);
 - 暴露在 `/internal/metrics`(Prometheus 文本格式),不进 `/api/v1` 公共契约,
   部署侧不要把该路径暴露到公网;
-- 请求级 RED 指标由 `common.middleware` 自动记录;业务指标(run/job/模型)由
-  各服务在自己的边界调用 `observe_*`。
+- 请求级 RED 指标由 `common.middleware` 自动记录;业务指标(run/job/模型)
+  **归属于各自服务**(agent-orchestrator / llm-gateway 的 `metrics` 模块),
+  本模块不再定义域指标——避免所有服务同进程重复注册同名 Counter。
 """
 
 from __future__ import annotations
@@ -43,39 +44,6 @@ http_request_duration_seconds = Histogram(
     ("service", "route"),
     buckets=_DURATION_BUCKETS,
 )
-# ── 域指标(归属 AO / llm-gateway,非通用 HTTP 基础设施)────────────────────
-# W3-R-30 只做归属标注:这些 Counter/Histogram 只被 agent-orchestrator 与
-# llm-gateway 使用,却由 10 个服务共同继承 common。拆分到各自的
-# metrics 模块留到 W4 做(需同时挪动 AO services/runs.py、jobs_worker.py 与
-# llm-gateway completions.py 的调用点),此处不改逻辑。
-run_outcomes_total = Counter(
-    "run_outcomes_total",
-    "任务终态计数",
-    ("service", "status"),
-)
-job_failures_total = Counter(
-    "job_failures_total",
-    "job 失败计数",
-    ("service", "kind"),
-)
-llm_upstream_errors_total = Counter(
-    "llm_upstream_errors_total",
-    "模型网关上游错误计数",
-    ("service", "provider", "code"),
-)
-llm_tokens_total = Counter(
-    "llm_tokens_total",
-    "模型 token 用量(input=提示 / output=补全)",
-    ("service", "model", "direction"),
-)
-llm_request_duration_seconds = Histogram(
-    "llm_request_duration_seconds",
-    "模型调用耗时(秒,含上游排队)",
-    ("service", "provider", "model"),
-    buckets=(0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0),
-)
-
-
 _default_service: str = "unknown"
 
 
@@ -85,8 +53,11 @@ def configure(*, service: str) -> None:
     _default_service = service
 
 
-def _service(service: str | None) -> str:
-    """服务名优先用显式值,其次日志上下文,最后装配时登记的默认值。"""
+def service_label(service: str | None = None) -> str:
+    """服务名标签:显式值 > 日志上下文 > 装配时登记的默认值。
+
+    供各服务的业务指标模块复用(域指标已迁出 common,见 W4-R-40)。
+    """
     if service:
         return service
     return str(current_context().get("service") or _default_service)
@@ -101,60 +72,13 @@ def observe_http(
     duration_seconds: float,
 ) -> None:
     """记录一次 HTTP 请求的 RED 指标。"""
-    service = _service(service)
+    service = service_label(service)
     http_requests_total.labels(
         service=service, method=method, route=route, status=str(status)
     ).inc()
     http_request_duration_seconds.labels(service=service, route=route).observe(
         max(duration_seconds, 0.0)
     )
-
-
-def observe_run_outcome(*, status: str, service: str | None = None) -> None:
-    run_outcomes_total.labels(service=_service(service), status=status).inc()
-
-
-def observe_job_failure(*, kind: str, service: str | None = None) -> None:
-    job_failures_total.labels(service=_service(service), kind=kind).inc()
-
-
-def observe_llm_error(*, provider: str, code: str, service: str | None = None) -> None:
-    llm_upstream_errors_total.labels(
-        service=_service(service),
-        provider=provider or "unknown",
-        code=code or "unknown",
-    ).inc()
-
-
-def observe_llm_tokens(
-    *,
-    model: str,
-    direction: str,
-    tokens: int,
-    service: str | None = None,
-) -> None:
-    """记录一次模型调用的 token 用量(为 0 的上游不记,避免空样本)。"""
-    if tokens <= 0:
-        return
-    llm_tokens_total.labels(
-        service=_service(service),
-        model=model or "unknown",
-        direction=direction,
-    ).inc(tokens)
-
-
-def observe_llm_latency(
-    *,
-    provider: str,
-    model: str,
-    seconds: float,
-    service: str | None = None,
-) -> None:
-    llm_request_duration_seconds.labels(
-        service=_service(service),
-        provider=provider or "unknown",
-        model=model or "unknown",
-    ).observe(max(seconds, 0.0))
 
 
 def metrics_payload() -> bytes:

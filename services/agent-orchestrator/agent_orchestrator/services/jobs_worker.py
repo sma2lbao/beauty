@@ -13,10 +13,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from common import metrics
 from common.logging import bind_request_context, clear_request_context
 from database.session import session_scope
 
+from agent_orchestrator import metrics
 from agent_orchestrator.models.runs import Job
 from agent_orchestrator.repositories import JobRepository
 from agent_orchestrator.services import runs as runs_service

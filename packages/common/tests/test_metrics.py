@@ -4,26 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from common.config import BaseAppSettings
-from common.logging import clear_request_context
 from common.metrics import (
     METRICS_PATH,
-    configure,
     http_request_duration_seconds,
     http_requests_total,
     install_metrics_endpoint,
-    job_failures_total,
-    llm_upstream_errors_total,
     metrics_payload,
     observe_http,
-    observe_job_failure,
-    observe_llm_error,
-    observe_run_outcome,
-    run_outcomes_total,
 )
 from common.middleware import RequestContextMiddleware
 
@@ -127,7 +118,7 @@ def test_metrics_endpoint_exposes_prometheus_text() -> None:
     assert "text/plain" in response.headers["content-type"]
     body = response.text
     assert "http_requests_total" in body
-    assert "run_outcomes_total" in body
+    assert "http_request_duration_seconds" in body
 
 
 def test_metrics_endpoint_requires_token_when_configured() -> None:
@@ -146,46 +137,6 @@ def test_metrics_endpoint_requires_token_when_configured() -> None:
 def test_metrics_endpoint_can_be_disabled() -> None:
     client = TestClient(_app(_settings(metrics_enabled=False)))
     assert client.get(METRICS_PATH).status_code == 404
-
-
-def test_domain_counters() -> None:
-    observe_run_outcome(status="completed", service="svc-domain")
-    observe_job_failure(kind="plan", service="svc-domain")
-    observe_llm_error(
-        provider="openai", code="llm.upstream_error", service="svc-domain"
-    )
-    assert _value(run_outcomes_total, service="svc-domain", status="completed") == 1
-    assert _value(job_failures_total, service="svc-domain", kind="plan") == 1
-    assert (
-        _value(
-            llm_upstream_errors_total,
-            service="svc-domain",
-            provider="openai",
-            code="llm.upstream_error",
-        )
-        == 1
-    )
-
-
-def test_service_name_defaults_to_log_context() -> None:
-    """业务埋点不传 service 时,用日志上下文里启动时绑定的服务名。"""
-    structlog.contextvars.bind_contextvars(service="svc-ctx")
-    try:
-        observe_job_failure(kind="approve")
-    finally:
-        clear_request_context()
-    assert _value(job_failures_total, service="svc-ctx", kind="approve") == 1
-
-
-def test_service_name_falls_back_to_configured_default() -> None:
-    """后台任务没有请求上下文时,用装配时登记的默认服务名。"""
-    structlog.contextvars.clear_contextvars()
-    configure(service="svc-configured")
-    try:
-        observe_job_failure(kind="resume")
-        assert _value(job_failures_total, service="svc-configured", kind="resume") == 1
-    finally:
-        configure(service="unknown")
 
 
 def test_metrics_payload_is_prometheus_text() -> None:

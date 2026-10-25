@@ -10,10 +10,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from common import metrics
 from events.envelope import EventEnvelope
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator import metrics
 from agent_orchestrator.graph import delta
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run, RunEvent

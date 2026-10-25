@@ -7,10 +7,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
-from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 
+from llm_gateway import metrics
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import (
     CompletionChunk,

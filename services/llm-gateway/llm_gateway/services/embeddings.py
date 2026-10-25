@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import litellm
-from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 
+from llm_gateway import metrics
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import UsageOut
 from llm_gateway.schemas.embeddings import EmbeddingRequest, EmbeddingResponse

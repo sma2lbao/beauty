@@ -13,11 +13,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
-from common import metrics
 from common.errors import UpstreamError
 from common.logging import get_logger
 from common.middleware import inject_request_headers
 
+from agent_orchestrator import metrics
 from agent_orchestrator.services import usage as usage_service
 
 # 可重试状态:P0-7 语义是"上游临时故障",429 限流 + 5xx 网关/上游故障
