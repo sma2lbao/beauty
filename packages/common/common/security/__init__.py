@@ -13,11 +13,13 @@ from common.security.internal_secret import (
 )
 from common.security.rate_limit import SlidingWindowLimiter
 from common.security.secret_box import SecretBox, derive_key
+from common.security.token_broker import TokenBroker
 
 __all__ = [
     "SECRET_HEADER",
     "SecretBox",
     "SlidingWindowLimiter",
+    "TokenBroker",
     "derive_key",
     "make_internal_secret_dependency",
     "require_internal_secret",

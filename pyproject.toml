@@ -12,6 +12,7 @@ dependencies = [
     "knowledge-service",
     "account-service",
     "workspace-service",
+    "tool-service",
     "bff",
 ]
 
@@ -28,6 +29,7 @@ members = [
     "services/knowledge-service",
     "services/account-service",
     "services/workspace-service",
+    "services/tool-service",
     "services/bff",
 ]
 
@@ -56,6 +58,9 @@ workspace = true
 workspace = true
 
 [tool.uv.sources.workspace-service]
+workspace = true
+
+[tool.uv.sources.tool-service]
 workspace = true
 
 [tool.uv.sources.bff]

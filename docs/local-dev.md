@@ -20,7 +20,7 @@ npm install
 ## 2. 一键启动
 
 ```sh
-npm run dev            # 六个业务服务 + BFF + Vite SPA
+npm run dev            # 七个业务服务 + BFF + Vite SPA
 npm run dev:site       # 额外启动 Next.js 官网(:3000)
 npm run dev:status     # 只检查健康状态
 ```
@@ -44,6 +44,7 @@ npm run dev:status     # 只检查健康状态
 | workspace-service  | 8005 | /healthz    |
 | knowledge-service  | 8006 | /healthz    |
 | bff                | 8007 | /api/health |
+| tool-service       | 8008 | /healthz    |
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
@@ -77,7 +78,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 内置 manifest 在仓库根 `skills/*.json`（id/version/title/workspace_type/tools/system_prompt 等）。
 - orchestrator 启动时加载，暴露 `GET /v1/skills`、`GET /v1/skills/{id}`。
 - `POST /v1/runs` 或发消息时可带 `skill_id`：创建 run 时冻结 skill 快照（系统提示词 + 工具白名单），后续改 manifest 不影响已建 run。
-- 执行时只暴露白名单内工具；例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `code_list_files`/`code_read_file`/`code_search_text`，不能写。
+- 执行时只暴露白名单内工具；例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
 ## 3.2 连接器（空框架）
@@ -148,7 +149,15 @@ curl -s http://127.0.0.1:8002/mcp \
 
 ## 3.8 编码 Function Tools
 
-- 配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(受控写,在 roots 内自动执行,敏感路径写前拦截)。
+- **P0 起新增内置工具服务 tool-service(:8008)**:工具目录与执行都委托给它,文件工具在
+  workspace-service 的沙箱内执行(不再直读服务进程本机目录)。开启方式:orchestrator 侧设
+  `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`(默认 false),并确认 tool-service 的
+  `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service;关掉即回到下面的进程内 `code_*`
+  工具(过渡路径,保留一个发布周期,见 docs/design/tool-service.md §15)。
+- 走服务时对话只挂只读工具(`read` / `glob` / `grep` / `list_dir`);写工具(`write` / `edit`)
+  的受控写与审批闸在 P1 开启。旧名 `code_*` 作为别名再可用一个发布周期。
+- compose 演示默认不开工具服务(与 LLM/工具开关一致),该服务块只保证镜像可起、健康探针通过。
+- 旧进程内路径:配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(受控写,在 roots 内自动执行,敏感路径写前拦截)。
 - 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。
 - 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
 - Skills 的 coding.repo-readonly-review 已绑定只读代码工具。

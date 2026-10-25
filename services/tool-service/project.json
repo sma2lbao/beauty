@@ -1,0 +1,74 @@
+{
+  "name": "tool-service",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "services/tool-service/tool_service",
+  "targets": {
+    "lock": {
+      "executor": "@nxlv/python:lock",
+      "options": {
+        "update": false
+      }
+    },
+    "sync": {
+      "executor": "@nxlv/python:sync",
+      "options": {}
+    },
+    "add": {
+      "executor": "@nxlv/python:add",
+      "options": {}
+    },
+    "update": {
+      "executor": "@nxlv/python:update",
+      "options": {}
+    },
+    "remove": {
+      "executor": "@nxlv/python:remove",
+      "options": {}
+    },
+    "lint": {
+      "executor": "@nxlv/python:ruff-check",
+      "outputs": [],
+      "options": {
+        "lintFilePatterns": ["tool_service", "tests"]
+      },
+      "cache": true
+    },
+    "format": {
+      "executor": "@nxlv/python:ruff-format",
+      "outputs": [],
+      "options": {
+        "filePatterns": ["tool_service", "tests"]
+      },
+      "cache": true
+    },
+    "test": {
+      "executor": "@nxlv/python:run-commands",
+      "outputs": [
+        "{workspaceRoot}/reports/{projectRoot}/unittests",
+        "{workspaceRoot}/coverage/{projectRoot}"
+      ],
+      "options": {
+        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run pytest tests/",
+        "env": {
+          "_UV_ROOT": "{projectRoot}/../.."
+        },
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "dependsOn": []
+    },
+    "serve": {
+      "executor": "@nxlv/python:run-commands",
+      "options": {
+        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run uvicorn tool_service.main:app --port 8008 --no-access-log",
+        "env": {
+          "_UV_ROOT": "{projectRoot}/../.."
+        },
+        "cwd": "{projectRoot}"
+      }
+    }
+  },
+  "implicitDependencies": ["common", "database"],
+  "tags": []
+}

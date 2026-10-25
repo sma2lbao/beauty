@@ -60,6 +60,7 @@
       "!knowledge-service",
       "!account-service",
       "!workspace-service",
+      "!tool-service",
       "!bff"
     ],
     "conventionalCommits": true,

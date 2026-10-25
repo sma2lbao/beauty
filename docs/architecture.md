@@ -46,7 +46,7 @@
 | ADR | 决策                                     | 状态                   | 说明                                                                                                                                                                   |
 | --- | ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                          |
-| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 七个 Python 服务（六业务 + bff）+ BFF 为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭） |
+| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 八个 Python 服务（七业务 + bff）+ BFF 为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭） |
 | 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                               |
 | 004 | Sandbox 用 microsandbox provider         | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                              |
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                      |
@@ -73,7 +73,8 @@ Browser
 └── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
 
 容器平台（Fly.io / Cloud Run / 自有云主机；容器化已落地，见 deploy/，R-36 关闭）
-├── agent-runtime（agent-orchestrator）  编排 + Tool Registry + Skill + MCP + run worker  :8002
+├── agent-runtime（agent-orchestrator）  编排 + Skill + MCP + run worker                  :8002
+├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
 ├── llm-gateway             模型路由/降级/预算/usage 采集（API 上游）                  :8003
 ├── connector-service       连接器框架（当前无内置连接器）+ 凭证管理                    :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
@@ -101,26 +102,27 @@ Browser
 
 ---
 
-## 3. 服务与职责（七个 Python 服务 + 三个共享库 + 前端三应用）
+## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端三应用）
 
-| 服务 / 应用        | 部署 / 端口           | 职责                                                                                    | 备注                                                            |
-| ------------------ | --------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| apps/web           | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置） | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token） |
-| apps/site          | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                     | 静态导出（`output: 'export'`）                                  |
-| apps/desktop       | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                      | 与 web 云端模式并存可切换                                       |
-| services/bff       | 容器 :8007            | BFF：认证、代理、下载、限流                                                             | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）               |
-| agent-orchestrator | 容器 :8002            | 会话/run/tool registry/skill/MCP/worker                                                 | 队列为 PG job 表；事件溯源 + SSE 断线续传                       |
-| llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK、计量、预算                                                |
-| connector-service  | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密       |
-| knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用、记忆                                                            | 嵌入提供方可插拔（本地词法/网关）                               |
-| workspace-service  | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                  |
-| account-service    | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                   | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补 |
-| packages/common    | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                        | Python 共享库                                                   |
-| packages/database  | 库                    | Base/mixin/session_scope/Repository/UoW                                                 | 仓储层租户隔离 + 统一 404                                       |
-| packages/events    | 库                    | 事件信封/总线/outbox/dispatcher                                                         | 事务性 outbox + 消费幂等                                        |
-| packages/design    | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                  | web/site/desktop 共用                                           |
+| 服务 / 应用        | 部署 / 端口           | 职责                                                                                    | 备注                                                                                                   |
+| ------------------ | --------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| apps/web           | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置） | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                        |
+| apps/site          | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                     | 静态导出（`output: 'export'`）                                                                         |
+| apps/desktop       | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                      | 与 web 云端模式并存可切换                                                                              |
+| services/bff       | 容器 :8007            | BFF：认证、代理、下载、限流                                                             | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                      |
+| agent-orchestrator | 容器 :8002            | 会话/run/skill/MCP/worker                                                               | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                              |
+| tool-service       | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）        | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md) |
+| llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK、计量、预算                                                                                       |
+| connector-service  | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密                                              |
+| knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用、记忆                                                            | 嵌入提供方可插拔（本地词法/网关）                                                                      |
+| workspace-service  | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                                                         |
+| account-service    | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                   | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                        |
+| packages/common    | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                        | Python 共享库                                                                                          |
+| packages/database  | 库                    | Base/mixin/session_scope/Repository/UoW                                                 | 仓储层租户隔离 + 统一 404                                                                              |
+| packages/events    | 库                    | 事件信封/总线/outbox/dispatcher                                                         | 事务性 outbox + 消费幂等                                                                               |
+| packages/design    | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                  | web/site/desktop 共用                                                                                  |
 
-> 拆分节奏：M0 保持六业务服务 + FastAPI BFF；M1 起把 tool registry 从 orchestrator 内拆出；M3 再拆 platform-api（先复用 runtime 路由）。
+> 拆分节奏：M0 保持七业务服务 + FastAPI BFF（tool-service 已按 [tool-service.md](./design/tool-service.md) 拆出，承接 orchestrator 的 tool registry；沙箱生命周期仍归 workspace-service）；M3 再拆 platform-api（先复用 runtime 路由）。
 
 ---
 
@@ -139,6 +141,7 @@ beauty-moon/
 │   ├── connector-service/    #   :8004
 │   ├── workspace-service/    #   :8005
 │   ├── knowledge-service/    #   :8006
+│   ├── tool-service/         #   :8008 内置工具服务（catalog/执行/审计）
 │   └── bff/                  #   :8007 同源 /api 门面
 ├── packages/                 # ★ 共享库：实名命名（不用 py- 前缀）
 │   ├── common/               #   错误模型/配置/日志/JWT/存储/观测（Python）
@@ -154,7 +157,7 @@ beauty-moon/
 
 **放置判据**：
 
-- `services/`：独立部署单元——有 Dockerfile（7 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
+- `services/`：独立部署单元——有 Dockerfile（8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
 - `apps/`：人直接使用的终端 UI；
 - `packages/`：被 import 的库（不部署）。
 
@@ -313,14 +316,14 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 | prod    | Nginx SPA + Vercel(site)         | 容器平台 + BFF     | 云 PG + 云 Redis + DB artifact（对象存储后置） |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
-- 服务镜像：7 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
+- 服务镜像：8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
 - 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
 - 成本护栏：容器平台 scale-to-zero、Free 配额、预算告警。
 
 ### 10.2 从当前仓库迁移（M0 路径）
 
 1. ✅ 新增 `services/bff`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
-2. ✅ 七个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；容器平台（Fly/Cloud Run）部署配置待补；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
+2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；容器平台（Fly/Cloud Run）部署配置待补；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
 3. ⏳ 接入云 PG/云 Redis URL——**M0-03，未启动**；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
 4. ⏳ account-service 补 Google/GitHub OAuth + BFF Cookie 会话（保留 token 模式开发兜底）——BFF Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
@@ -345,7 +348,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 /var/lib/beauty/<service>/*.db        SQLite
 /var/lib/beauty/artifacts/            产物/附件（filesystem）
 /var/backups/beauty/<date>/           DB + artifacts 备份
-/etc/systemd/system/beauty-*.service  六业务服务 + BFF + 迁移（oneshot）
+/etc/systemd/system/beauty-*.service  七业务服务 + BFF + 迁移（oneshot）
 /etc/nginx/conf.d/beauty.conf         HTTP 静态站 + /api 反代（SSE 不缓冲）
 ```
 
@@ -409,16 +412,18 @@ run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自�
 ### 11.2 Tool Registry（coding 与办公共用）
 
 ```text
-ToolSpec {
-  name, description, inputSchema, outputSchema,
-  scopes, risk: read | write | destructive,
-  requiresApproval: auto | confirm | deny,
-  executor: connector | knowledge | workspace | sandbox | mcp,
-  cost: { tokens?, toolCalls?, sandboxMs? }
+ToolDescriptor {   # v2 契约，真源 packages/common/common/tools.py
+  name, description,
+  input_schema, output_schema?,
+  risk: read | write | destructive,
+  kind: function | interaction,
+  executor: sandbox | http | none,
+  timeout_seconds,
+  scopes, aliases, enabled, version
 }
 ```
 
-> 状态注记（2026-10-25）：上为**目标设计**；实现字段仅 `name/description/parameters/handler/risk`（`services/tools.py`），`inputSchema/outputSchema/scopes/executor/cost` 未落地；审批由 `approval_policies` 表控制（见 06 §2.3 #6）。
+> 状态注记（2026-10-25）：v2 契约真源是 `packages/common/common/tools.py` 的 `ToolDescriptor`（设计见 [tool-service.md](./design/tool-service.md) §6.1）；tool-service 落地后 orchestrator 经 ToolClient 消费该契约，旧 `services/tools.py` 的 `name/description/parameters/handler/risk` 实现保留一个发布周期兼容。审批策略仍由 `approval_policies` 表控制（见 06 §2.3 #6）。
 
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；

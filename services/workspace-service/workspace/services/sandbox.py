@@ -18,6 +18,8 @@ from uuid import uuid4
 import structlog
 from common.errors import AppError, ConflictError, UpstreamError
 from database.session import session_scope
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from workspace.core.config import Settings
@@ -97,6 +99,99 @@ async def _mark_failed(
     await session.commit()
 
 
+ENSURE_ATTEMPTS = 3
+
+
+def _new_name() -> str:
+    return f"{NAME_PREFIX}{uuid4().hex[:NAME_HEX_LEN]}"
+
+
+def _new_sandbox(
+    tenant_id: str,
+    data: SandboxCreate,
+    provider: SandboxProvider,
+    settings: Settings,
+    *,
+    scope_key: str | None = None,
+) -> SandboxInstance:
+    """按请求 + 配置构造待落库的沙箱行(status=creating)。"""
+    now = _now()
+    requested_ttl = (
+        data.ttl_seconds
+        if data.ttl_seconds is not None
+        else settings.sandbox_default_ttl_seconds
+    )
+    ttl = max(1, min(requested_ttl, settings.sandbox_max_ttl_seconds))
+    name = _new_name()
+    cpus = data.cpus if data.cpus is not None else settings.sandbox_default_cpus
+    memory_mb = (
+        data.memory_mb
+        if data.memory_mb is not None
+        else settings.sandbox_default_memory_mb
+    )
+    return SandboxInstance(
+        id=uuid4().hex,
+        tenant_id=tenant_id,
+        name=name,
+        scope_key=scope_key,
+        kind=data.kind,
+        provider=provider.provider,
+        external_name=name,
+        image=data.image or settings.sandbox_default_image,
+        cpus=cpus,
+        memory_mb=memory_mb,
+        network=data.network or settings.sandbox_network,
+        workspace_id=data.workspace_id,
+        run_id=data.run_id,
+        status="creating",
+        expires_at=now + timedelta(seconds=ttl),
+        last_used_at=now,
+        meta={"ttl_seconds": ttl},
+    )
+
+
+def _spec_from(record: SandboxInstance, settings: Settings) -> SandboxSpec:
+    """把已落库的行翻译成 provider 需要的运行时规格。"""
+    return SandboxSpec(
+        tenant_id=record.tenant_id,
+        name=record.external_name,
+        kind=record.kind,
+        image=record.image,
+        cpus=record.cpus,
+        memory_mb=record.memory_mb,
+        network=record.network,
+        ttl_seconds=_ttl_seconds(record, settings),
+    )
+
+
+async def _start_runtime(
+    session: AsyncSession,
+    record: SandboxInstance,
+    provider: SandboxProvider,
+    settings: Settings,
+) -> None:
+    """拉起运行时;失败保留 failed 记录(含 last_error)再抛错。"""
+    spec = _spec_from(record, settings)
+    try:
+        await provider.create(spec)
+    except AppError as exc:
+        await _mark_failed(session, record, exc)
+        raise
+    except Exception as exc:
+        await _mark_failed(session, record, exc)
+        raise UpstreamError(
+            "sandbox.provider_error",
+            "沙箱运行时创建失败",
+            details={"sandbox_id": record.id, "sandbox_name": spec.name},
+        ) from exc
+    record.status = "running"
+    record.last_error = None
+    record.last_used_at = _now()
+    record.expires_at = record.last_used_at + timedelta(
+        seconds=_ttl_seconds(record, settings)
+    )
+
+
 async def create_sandbox(
     session: AsyncSession,
     tenant_id: str,
@@ -108,67 +203,142 @@ async def create_sandbox(
 
     失败时保留 failed 记录(含 last_error)再抛错,便于运维追查。
     """
-    now = _now()
-    requested_ttl = (
-        data.ttl_seconds
-        if data.ttl_seconds is not None
-        else settings.sandbox_default_ttl_seconds
-    )
-    ttl = max(1, min(requested_ttl, settings.sandbox_max_ttl_seconds))
-    cpus = data.cpus if data.cpus is not None else settings.sandbox_default_cpus
-    memory_mb = (
-        data.memory_mb
-        if data.memory_mb is not None
-        else settings.sandbox_default_memory_mb
-    )
-    network = data.network or settings.sandbox_network
-    name = f"{NAME_PREFIX}{uuid4().hex[:NAME_HEX_LEN]}"
-    record = SandboxInstance(
-        id=uuid4().hex,
-        tenant_id=tenant_id,
-        name=name,
-        kind=data.kind,
-        provider=provider.provider,
-        external_name=name,
-        image=data.image or settings.sandbox_default_image,
-        cpus=cpus,
-        memory_mb=memory_mb,
-        network=network,
-        workspace_id=data.workspace_id,
-        run_id=data.run_id,
-        status="creating",
-        expires_at=now + timedelta(seconds=ttl),
-        last_used_at=now,
-        meta={"ttl_seconds": ttl},
-    )
+    record = _new_sandbox(tenant_id, data, provider, settings)
     await SandboxRepository(session).add(record)
-    spec = SandboxSpec(
-        tenant_id=tenant_id,
-        name=name,
-        kind=data.kind,
-        image=record.image,
-        cpus=cpus,
-        memory_mb=memory_mb,
-        network=network,
-        ttl_seconds=ttl,
-    )
-    try:
-        await provider.create(spec)
-    except AppError as exc:
-        await _mark_failed(session, record, exc)
-        raise
-    except Exception as exc:
-        await _mark_failed(session, record, exc)
-        raise UpstreamError(
-            "sandbox.provider_error",
-            "沙箱运行时创建失败",
-            details={"sandbox_id": record.id, "sandbox_name": name},
-        ) from exc
-    record.status = "running"
-    record.last_error = None
-    record.last_used_at = _now()
-    record.expires_at = record.last_used_at + timedelta(seconds=ttl)
+    await _start_runtime(session, record, provider, settings)
     return record
+
+
+async def _find_by_scope(
+    session: AsyncSession, tenant_id: str, scope_key: str
+) -> SandboxInstance | None:
+    statement = SandboxRepository(session).scoped(
+        tenant_id, SandboxInstance.scope_key == scope_key
+    )
+    return await session.scalar(statement)
+
+
+async def _insert_ensured(
+    session: AsyncSession,
+    tenant_id: str,
+    scope_key: str,
+    data: SandboxCreate,
+    provider: SandboxProvider,
+    settings: Settings,
+) -> SandboxInstance | None:
+    """插入带 scope_key 的新行;并发撞唯一约束时 rollback 并返回 None。"""
+    record = _new_sandbox(tenant_id, data, provider, settings, scope_key=scope_key)
+    try:
+        await SandboxRepository(session).add(record)
+    except IntegrityError:
+        # 另一个副本已插入同一 (tenant_id, scope_key):回滚后由调用方重查
+        await session.rollback()
+        return None
+    await _start_runtime(session, record, provider, settings)
+    return record
+
+
+async def _claim_rebuild(
+    session: AsyncSession,
+    record: SandboxInstance,
+    data: SandboxCreate,
+    provider: SandboxProvider,
+    settings: Settings,
+) -> bool:
+    """抢占式原地重建:条件 UPDATE 只有一方成功,避免多副本重复拉起运行时。
+
+    WHERE 带上旧 status/name,若行已被别的副本改掉则 rowcount=0;
+    调用方 rollback 后重新查询(此时通常已是 running)。
+    """
+    candidate = _new_sandbox(
+        record.tenant_id, data, provider, settings, scope_key=record.scope_key
+    )
+    values: dict[str, object] = {
+        field: getattr(candidate, field)
+        for field in (
+            "name",
+            "scope_key",
+            "kind",
+            "provider",
+            "external_name",
+            "image",
+            "cpus",
+            "memory_mb",
+            "network",
+            "workspace_id",
+            "run_id",
+            "expires_at",
+            "last_used_at",
+            "meta",
+        )
+    }
+    values.update({"status": "creating", "last_error": None})
+    result = await session.execute(
+        update(SandboxInstance)
+        .where(
+            SandboxInstance.id == record.id,
+            SandboxInstance.status == record.status,
+            SandboxInstance.name == record.name,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        return False
+    await session.refresh(record)
+    return True
+
+
+async def ensure_sandbox(
+    session: AsyncSession,
+    tenant_id: str,
+    *,
+    scope_key: str,
+    spec: SandboxCreate,
+    provider: SandboxProvider,
+    settings: Settings,
+) -> tuple[SandboxInstance, bool]:
+    """按 (tenant_id, scope_key) 幂等 get-or-create(设计 §11.2 / P0-05)。
+
+    返回 (sandbox, created):created=True 表示本次新建/重建了运行时。
+    未命中→插入(并发由唯一约束兜底:IntegrityError → rollback → 重查);
+    命中 running 未过期→续期复用;命中 stopped/failed/已过期→原地重建。
+    IntegrityError 不会抛给调用方。
+    """
+    for _ in range(ENSURE_ATTEMPTS):
+        record = await _find_by_scope(session, tenant_id, scope_key)
+        if record is None:
+            inserted = await _insert_ensured(
+                session, tenant_id, scope_key, spec, provider, settings
+            )
+            if inserted is not None:
+                return inserted, True
+            continue
+        expired_running = False
+        if record.status == "running":
+            if _as_utc(record.expires_at) > _now():
+                _renew(record, settings)
+                return record, False
+            expired_running = True
+        elif record.status == "creating":
+            raise ConflictError(
+                "sandbox.creating",
+                "沙箱仍在创建中,请稍后重试",
+                details={"sandbox_id": record.id, "scope_key": scope_key},
+            )
+        stale_name = record.external_name
+        if await _claim_rebuild(session, record, spec, provider, settings):
+            if expired_running:
+                # 回收放在抢到行之后,并发下只有一个副本销毁旧运行时
+                await _destroy_quietly(provider, stale_name)
+            await _start_runtime(session, record, provider, settings)
+            return record, True
+        await session.rollback()
+    raise ConflictError(
+        "sandbox.ensure_busy",
+        "沙箱正在被并发创建,请稍后重试",
+        details={"scope_key": scope_key},
+    )
 
 
 async def list_sandboxes(

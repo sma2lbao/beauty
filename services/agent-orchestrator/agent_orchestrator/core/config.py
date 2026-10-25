@@ -112,6 +112,11 @@ class Settings(BaseAppSettings):
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库/代码库)
     tools_enabled: bool = False
     tool_timeout_seconds: float = 30.0
+    # 内置工具服务(docs/design/tool-service.md):开启后内置工具的目录与执行
+    # 全部委托给 tool-service(:8008);关闭时走进程内旧注册表(兼容与回滚路径)。
+    tool_service_enabled: bool = False
+    tool_service_url: str = "http://127.0.0.1:8008"
+    tool_service_timeout_seconds: float = 35.0
     # 技能提供方:未开启的能力不暴露给模型(能力即权限边界)
     documents_enabled: bool = False
     documents_root: str = "./.documents"

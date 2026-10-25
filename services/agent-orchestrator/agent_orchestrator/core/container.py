@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.core.container_assemblies import ContainerAssemblyMixin
 from agent_orchestrator.graph.builder import build_run_graph
+from agent_orchestrator.graph.ports import ToolkitPort
 from agent_orchestrator.services import quota as quota_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.artifacts import build_store
@@ -55,16 +56,20 @@ from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.token_broker import TokenBroker
+from agent_orchestrator.services.tool_client import (
+    RemoteToolkit,
+    ToolCatalog,
+    ToolClient,
+)
 from agent_orchestrator.services.tools import (
     ToolExtrasFactory,
-    ToolRegistry,
     build_tools,
 )
 from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
 
 logger = get_logger(__name__)
 
-ToolkitFactory = Callable[[str], ToolRegistry]
+ToolkitFactory = Callable[[str], ToolkitPort]
 
 #: 可注入项名称:create_app 收哪些测试替身,容器就发布哪些(测试按名读 app.state)
 INJECTED = (
@@ -265,6 +270,19 @@ class AppContainer(ContainerAssemblyMixin):
 
         toolkit_factory = self.toolkit_factory
         knowledge: KnowledgeClient | None = None
+        if toolkit_factory is None and settings.tool_service_enabled:
+            # 内置工具服务(设计 §12.3):目录与执行都在 tool-service(:8008)。
+            # 与旧 tools_enabled 同时开启时以服务为准(迁移期口径,见 §15.5)。
+            tool_client = ToolClient(
+                settings.tool_service_url,
+                timeout_seconds=settings.tool_service_timeout_seconds,
+                token_provider=broker.token,
+            )
+            self._closers.append(("tool client", tool_client.aclose))
+            catalog = ToolCatalog()
+            toolkit_factory = partial(
+                RemoteToolkit, client=tool_client, catalog=catalog
+            )
         if toolkit_factory is None and settings.tools_enabled:
             documents = (
                 DocumentLibrary(settings.documents_root, settings.documents_max_bytes)

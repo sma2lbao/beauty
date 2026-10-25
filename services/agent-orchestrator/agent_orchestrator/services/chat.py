@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.graph.tool_results import is_tool_error
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import MessageRepository
 from agent_orchestrator.services import approval as approval_service
@@ -128,7 +129,7 @@ async def run_tool_loop(
                 {
                     "name": call.name,
                     "arguments": call.arguments,
-                    "ok": not output.startswith('{"error"'),
+                    "ok": not is_tool_error(output),
                 },
             )
     # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里

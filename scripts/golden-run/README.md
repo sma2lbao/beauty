@@ -34,13 +34,15 @@ FastAPI 应用(不起端口、不依赖已启动的服务),用脚本化 FakeLLM 
   JWKS MockTransport;
 - 进程内 socket 守卫把任何 AF_INET / AF_INET6 connect 视为失败;
 - 不需要真实模型、Docker、Postgres、Redis 或任何已启动的服务;
-- 所有会连外部的配置开关在建 Settings 时显式钉死(_env_file=None),
+- 所有会连外部的配置开关在建 Settings 时显式钉死(\_env_file=None),
   不受本地 .env 与 shell 环境变量影响。
 
 ## 维护约定
 
 - 契约变化(端点/字段/事件名/顺序)时,先改本脚本的断言,再改实现——脚本是
   契约的可执行文档;
+- 事件回放过滤 `run.step.v1`(节点步骤时间线走 `GET /runs/{id}/steps`),所以
+  回放里的 seq 允许有空洞:断言「严格递增且唯一」,不要求从 1 连续;
 - FakeLLM 的脚本条数即「模型调用次数契约」:多一次/少一次调用都会失败;
 - 失败时 --keep 保留 sqlite,便于用 sqlite3 .cache/golden-run/<ts>/golden.db
   对照阶段表排查。

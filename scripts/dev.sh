@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 本地开发一键启动(无需 docker/云依赖):
-#   - 六个业务服务 + FastAPI BFF + Vite SPA
+#   - 七个业务服务 + FastAPI BFF + Vite SPA
 #   - 缺 .env 时自动从 .env.example 复制
 #   - 统一日志与 Ctrl+C 清理
 #
@@ -24,6 +24,7 @@ SERVICES=(
   "connector-service|8004|/healthz"
   "workspace-service|8005|/healthz"
   "knowledge-service|8006|/healthz"
+  "tool-service|8008|/healthz"
   "bff|8007|/api/health"
 )
 
@@ -138,7 +139,7 @@ cleanup() {
     done
     # 兜底:按命令行特征清掉本脚本拉起的 uvicorn/vite 孤儿(仅限我们的端口)。
     sleep 1
-    for port in 8001 8002 8003 8004 8005 8006 8007 5173 3000; do
+    for port in 8001 8002 8003 8004 8005 8006 8007 8008 5173 3000; do
       local orphan
       orphan="$(port_pid "$port")"
       # 空 = 未占用;含「lsof 不可用」= 探测回退模式拿不到 pid,跳过。

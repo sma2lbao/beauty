@@ -210,7 +210,9 @@ async def post_message(
                 mcp_server_ids=tuple(mcp_server_ids or ()),
             )
         ):
-            toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
+            toolkit = await _toolkit_for(
+                toolkit_factory, extras_factory, tenant_id, read_only=True
+            )
             policies = await approval_service.load_policies(session, tenant_id)
             answer = await chat.answer(
                 session,
@@ -338,7 +340,9 @@ async def stream_message(
                 mcp_server_ids=tuple(mcp_server_ids or ()),
             )
         ):
-            toolkit = await _toolkit_for(toolkit_factory, extras_factory, tenant_id)
+            toolkit = await _toolkit_for(
+                toolkit_factory, extras_factory, tenant_id, read_only=True
+            )
             if toolkit is None or len(toolkit) == 0:
                 # 无工具:保持原路径——真正的流式增量(边产出边显示)
                 async for delta in llm.stream(prompt):

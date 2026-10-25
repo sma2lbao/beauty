@@ -582,9 +582,13 @@ def main(argv: list[str] | None = None) -> int:
             types == ctx.expected_events,
             f"事件序列不符\n  期望 {ctx.expected_events}\n  实际 {types}",
         )
+        # 事件回放不含 run.step.v1(步骤时间线走 GET /runs/{id}/steps,见
+        # services/run_events.py 的 list_events 注释),因此 seq 在过滤后的列表里
+        # 允许有空洞:断言严格递增且唯一,而不是从 1 连续。
+        seqs = [event["seq"] for event in events]
         check(
-            [event["seq"] for event in events] == list(range(1, len(events) + 1)),
-            "事件 seq 不是从 1 连续递增",
+            seqs == sorted(seqs) and len(seqs) == len(set(seqs)),
+            f"事件 seq 不是严格递增且唯一:{seqs}",
         )
         names = [
             event["payload"].get("name")
@@ -626,10 +630,10 @@ def main(argv: list[str] | None = None) -> int:
             f"SSE 重放事件序列不符:{names}",
         )
         ids = [sid for sid, _, _ in frames[:-1]]
-        check(
-            ids == [str(index) for index in range(1, len(ctx.expected_events) + 1)],
-            f"SSE id(seq)不符:{ids}",
-        )
+        # SSE id 是 run 内事件 seq,与 /events 回放同源;step 事件被过滤后同样有空洞,
+        # 因此对齐已取回的过滤后事件 seq,而不是 1..n 的连续整数。
+        expected_ids = [str(event["seq"]) for event in ctx.events]
+        check(ids == expected_ids, f"SSE id(seq)不符:{ids} != {expected_ids}")
         check(
             frames[-1][2] == {"status": "completed"},
             f"stream.end payload 不符:{frames[-1][2]}",
@@ -686,14 +690,18 @@ def main(argv: list[str] | None = None) -> int:
             check(rounds >= 1, f"runs.rounds 期望 >=1,实际 {rounds}")
             check(title == TASK_TEXT, f"runs.title 不符:{title}")
 
-            event_types = [
-                item[0]
-                for item in connection.execute(
+            rows = list(
+                connection.execute(
                     "select type from run_events where run_id = ? order by seq",
                     (ctx.run_id,),
                 )
-            ]
+            )
+            # run.step.v1 是步骤视图(S1)的底层记录,不进用户事件回放(见
+            # services/run_events.py 的 list_events),对齐时先剔除再比。
+            event_types = [row[0] for row in rows if row[0] != "run.step.v1"]
             check(event_types == ctx.expected_events, f"DB 事件序列不符:{event_types}")
+            step_count = sum(1 for row in rows if row[0] == "run.step.v1")
+            check(step_count >= 1, "run.step.v1 步骤事件未落库")
 
             artifacts = list(
                 connection.execute(
@@ -762,7 +770,7 @@ def main(argv: list[str] | None = None) -> int:
             "approve → awaiting_confirmation 且未执行写操作",
             phase_approve_and_confirm,
         ),
-        ("run 事件序列", "9 类事件有序、seq 连续", phase_events),
+        ("run 事件序列", "9 类事件有序、seq 严格递增", phase_events),
         ("run SSE 重放", "重放全事件 + stream.end", phase_run_sse),
         ("交付物", "正文/清单/下载字节一致", phase_artifact),
     ]

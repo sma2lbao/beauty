@@ -2,7 +2,7 @@
 # check-versions.sh —— W4 R-34 版本一致性门禁。
 #
 # 断言:
-#   1) 18 处版本字段全部 = 0.1.0(JS 7 + 根 pyproject + Python 10 成员);
+#   1) 19 处版本字段全部 = 0.1.0(JS 7 + 根 pyproject + Python 11 成员);
 #   2) CHANGELOG.md 存在且含 '## 0.1.0' 段;
 #   3) nx.json 含 release 配置(conventionalCommits 与 tagPrefix)。
 # 任一不满足退出非 0。
@@ -44,6 +44,7 @@ PY_FILES=(
   services/knowledge-service/pyproject.toml
   services/account-service/pyproject.toml
   services/workspace-service/pyproject.toml
+  services/tool-service/pyproject.toml
   services/bff/pyproject.toml
 )
 for f in "${PY_FILES[@]}"; do
@@ -66,5 +67,5 @@ if ! node -e "const n=require('./nx.json');const r=n.release||{};process.exit(r.
   FAILURES=$((FAILURES + 1))
 fi
 
-echo "== versions 汇总: ${FAILURES} 失败(18 版本字段 + CHANGELOG + release 配置) =="
+echo "== versions 汇总: ${FAILURES} 失败(19 版本字段 + CHANGELOG + release 配置) =="
 [ "$FAILURES" -eq 0 ]

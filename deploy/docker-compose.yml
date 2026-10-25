@@ -7,15 +7,15 @@
 #   docker compose -f deploy/docker-compose.yml up -d postgres redis
 # 停止/重置数据:
 #   docker compose -f deploy/docker-compose.yml down        # 保留数据卷
-#   docker compose -f deploy/docker-compose.yml down -v     # 连数据卷一起删(重建 5 个库)
+#   docker compose -f deploy/docker-compose.yml down -v     # 连数据卷一起删(重建 6 个库)
 #
 # 设计要点:
-# - 7 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
-# - 5 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
+# - 8 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
+# - 6 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
 #   原因见 deploy/postgres/initdb/01-create-databases.sql(alembic_version 表名冲突);
 # - web 容器(nginx)同源托管 SPA 并反代 /api → bff:8007;浏览器只访问 :8080 一个入口;
 # - 健康探针一律打 /healthz(进程存活,不依赖数据库);/readyz 是给编排层的就绪建议;
-#   7 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
+#   8 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
 #   端口按 SERVICE 映射),compose 仅在 pg/redis 上显式声明 healthcheck;
 # - 所有演示用密钥可用宿主机环境变量覆盖(见 deploy/web/README.md「生产差异」),
 #   默认值只用于本机演示,禁止直接用于生产。
@@ -42,13 +42,13 @@ services:
       POSTGRES_DB: beauty
     ports:
       # 只为本地 psql/alembic 调试暴露;生产请删掉端口映射,只走 compose 内网。
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 仅首次初始化数据卷时执行:建 5 个服务库(beauty_account 等)。
+      # 仅首次初始化数据卷时执行:建 6 个服务库(beauty_account 等)。
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U beauty"]
+      test: ['CMD-SHELL', 'pg_isready -U beauty']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -59,9 +59,9 @@ services:
     # 限流/缓存/队列接入时直接使用,可在不需要时注释掉。
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - '6379:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -85,17 +85,19 @@ services:
         cd ../connector-service && alembic upgrade head
         cd ../knowledge-service && alembic upgrade head
         cd ../workspace-service && alembic upgrade head
-        echo "migrations: all 5 databases at head"
+        cd ../tool-service && alembic upgrade head
+        echo "migrations: all 6 databases at head"
     environment:
       ACCOUNT__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_account
       AGENT_ORCHESTRATOR__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_agent
       CONNECTOR__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_connector
       KNOWLEDGE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_knowledge
       WORKSPACE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_workspace
+      TOOL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_tool
     depends_on:
       postgres:
         condition: service_healthy
-    restart: "no"
+    restart: 'no'
 
   # ── Python 服务(同一镜像、不同 SERVICE) ─────────────────────────────────
   account-service:
@@ -106,9 +108,9 @@ services:
     image: beauty-moon/account-service:local
     environment:
       ACCOUNT__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_account
-      ACCOUNT__AUTO_CREATE_TABLES: "false"
+      ACCOUNT__AUTO_CREATE_TABLES: 'false'
       # 演示统一关鉴权(BFF 仍按 session 流程代理;生产改 true 并配 issuer/JWKS)
-      ACCOUNT__AUTH_ENABLED: "false"
+      ACCOUNT__AUTH_ENABLED: 'false'
       # 签名密钥落 /data/keys 具名卷,重启不轮换 kid(生产必须持久化,见 README)
       ACCOUNT__SIGNING_KEY_PATH: /data/keys/account-signing-key.pem
       ACCOUNT__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
@@ -127,20 +129,24 @@ services:
     image: beauty-moon/agent-orchestrator:local
     environment:
       AGENT_ORCHESTRATOR__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_agent
-      AGENT_ORCHESTRATOR__AUTO_CREATE_TABLES: "false"
-      AGENT_ORCHESTRATOR__AUTH_ENABLED: "false"
+      AGENT_ORCHESTRATOR__AUTO_CREATE_TABLES: 'false'
+      AGENT_ORCHESTRATOR__AUTH_ENABLED: 'false'
       AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       AGENT_ORCHESTRATOR__ACCOUNT_SERVICE_URL: http://account-service:8001
       AGENT_ORCHESTRATOR__LLM_GATEWAY_URL: http://llm-gateway:8003
       # 演示默认不连真实模型:置 LLM_ENABLED=true 并给 LLM_GATEWAY_API_KEY 后
       # 工作台对话走真实模型(见 README「接入真实模型」)。
       AGENT_ORCHESTRATOR__LLM_ENABLED: ${LLM_ENABLED:-false}
-      AGENT_ORCHESTRATOR__TOOLS_ENABLED: "false"
-      AGENT_ORCHESTRATOR__KNOWLEDGE_ENABLED: "false"
+      AGENT_ORCHESTRATOR__TOOLS_ENABLED: 'false'
+      # 内置工具服务(docs/design/tool-service.md):默认 false 走进程内旧路径;
+      # 置 TOOL_SERVICE_ENABLED=true 且 account/workspace 鉴权可达后走 tool-service。
+      AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED: ${TOOL_SERVICE_ENABLED:-false}
+      AGENT_ORCHESTRATOR__TOOL_SERVICE_URL: http://tool-service:8008
+      AGENT_ORCHESTRATOR__KNOWLEDGE_ENABLED: 'false'
       AGENT_ORCHESTRATOR__KNOWLEDGE_SERVICE_URL: http://knowledge-service:8006
-      AGENT_ORCHESTRATOR__WORKSPACE_ENABLED: "false"
+      AGENT_ORCHESTRATOR__WORKSPACE_ENABLED: 'false'
       AGENT_ORCHESTRATOR__WORKSPACE_SERVICE_URL: http://workspace-service:8005
-      AGENT_ORCHESTRATOR__OUTBOX_ENABLED: "false"
+      AGENT_ORCHESTRATOR__OUTBOX_ENABLED: 'false'
       AGENT_ORCHESTRATOR__MCP_SECRET: ${MCP_SECRET:-compose-demo-mcp-secret-change-me}
       AGENT_ORCHESTRATOR__MCP_RESOURCE_URL: http://localhost:8080/mcp
       AGENT_ORCHESTRATOR__MCP_OAUTH_REDIRECT_URI: http://localhost:8080/api/mcp/oauth/callback
@@ -169,8 +175,8 @@ services:
     image: beauty-moon/connector-service:local
     environment:
       CONNECTOR__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_connector
-      CONNECTOR__AUTO_CREATE_TABLES: "false"
-      CONNECTOR__AUTH_ENABLED: "false"
+      CONNECTOR__AUTO_CREATE_TABLES: 'false'
+      CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
     depends_on: *db-depends
     restart: unless-stopped
@@ -183,8 +189,8 @@ services:
     image: beauty-moon/knowledge-service:local
     environment:
       KNOWLEDGE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_knowledge
-      KNOWLEDGE__AUTO_CREATE_TABLES: "false"
-      KNOWLEDGE__AUTH_ENABLED: "false"
+      KNOWLEDGE__AUTO_CREATE_TABLES: 'false'
+      KNOWLEDGE__AUTH_ENABLED: 'false'
       # 演示用本地词法嵌入(零网络);接真嵌入模型时改为网关提供方。
       KNOWLEDGE__EMBEDDING_PROVIDER: local
       KNOWLEDGE__LLM_GATEWAY_URL: http://llm-gateway:8003
@@ -199,14 +205,37 @@ services:
     image: beauty-moon/workspace-service:local
     environment:
       WORKSPACE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_workspace
-      WORKSPACE__AUTO_CREATE_TABLES: "false"
-      WORKSPACE__AUTH_ENABLED: "false"
+      WORKSPACE__AUTO_CREATE_TABLES: 'false'
+      WORKSPACE__AUTH_ENABLED: 'false'
       WORKSPACE__ARTIFACT_ROOT: /data/artifacts
       # 演示不启动沙箱回收器(否则会尝试连接 microsandbox 运行时并刷错误日志)
-      WORKSPACE__SANDBOX_REAPER_ENABLED: "false"
+      WORKSPACE__SANDBOX_REAPER_ENABLED: 'false'
     volumes:
       - workspace-artifacts:/data/artifacts
     depends_on: *db-depends
+    restart: unless-stopped
+
+  tool-service:
+    build:
+      <<: *python-build
+      args:
+        SERVICE: tool-service
+    image: beauty-moon/tool-service:local
+    environment:
+      TOOL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_tool
+      TOOL__AUTO_CREATE_TABLES: 'false'
+      TOOL__AUTH_ENABLED: 'false'
+      TOOL__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
+      # 租户 JWT 由 account-service 内部签发(TokenBroker);容器内不能用 127.0.0.1
+      TOOL__AUTH_ISSUER: http://account-service:8001
+      # 沙箱统一经 workspace-service 的 :ensure 接口(见 docs/design/tool-service.md)
+      TOOL__WORKSPACE_SERVICE_URL: http://workspace-service:8005
+    depends_on:
+      <<: *db-depends
+      account-service:
+        condition: service_healthy
+      workspace-service:
+        condition: service_healthy
     restart: unless-stopped
 
   bff:
@@ -228,7 +257,7 @@ services:
       BFF__SESSION_SECRET: ${BFF_SESSION_SECRET:-compose-demo-session-secret-change-me}
       # 与 account / orchestrator 的内部签发密钥保持同值,内部调用才能互认。
       BFF__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
-      BFF__COOKIE_SECURE: "false"
+      BFF__COOKIE_SECURE: 'false'
       BFF__READY_PROBE_UPSTREAMS: ${READY_PROBE_UPSTREAMS:-false}
     depends_on:
       <<: *db-depends
@@ -257,7 +286,7 @@ services:
         VITE_SITE_URL: ${VITE_SITE_URL:-http://localhost:3000}
     image: beauty-moon/web:local
     ports:
-      - "8080:80"
+      - '8080:80'
     depends_on:
       bff:
         condition: service_healthy

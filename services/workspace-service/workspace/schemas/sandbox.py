@@ -1,4 +1,4 @@
-"""沙箱契约:创建/读取/执行/文件读写。
+"""沙箱契约:创建/读取/执行/文件读写/幂等 ensure。
 
 上限在这里做**请求侧**硬校验;服务层还会按配置(sandbox_max_ttl_seconds 等)
 再收紧一次,配置可以比这里的硬上限更保守。
@@ -23,6 +23,9 @@ MAX_PATH_LENGTH = 512
 MAX_ENV_ITEMS = 64
 MAX_STDIN_CHARS = 1_000_000
 MAX_BASE64_CHARS = 16_000_000
+# ensure 幂等键(设计 §11.2):conv:<conversation_id> / run:<run_id>,最长 96
+MAX_SCOPE_KEY_LENGTH = 96
+SCOPE_KEY_PATTERN = r"^[a-z0-9:_-]+$"
 
 SandboxKind = Literal["skill", "mcp", "generic"]
 SandboxNetwork = Literal["deny", "public"]
@@ -42,6 +45,20 @@ class SandboxCreate(BaseModel):
     run_id: str | None = Field(default=None, max_length=32)
 
 
+class SandboxEnsure(SandboxCreate):
+    """幂等 ensure 请求:scope_key 是租户内幂等键(P0-05)。
+
+    tool-service 每次工具调用都带同一个 scope_key(conv:<id> / run:<id>),
+    服务端按 (tenant_id, scope_key) get-or-create,多副本并发也只保留一行。
+    """
+
+    scope_key: str = Field(
+        min_length=1,
+        max_length=MAX_SCOPE_KEY_LENGTH,
+        pattern=SCOPE_KEY_PATTERN,
+    )
+
+
 class SandboxRead(BaseModel):
     """沙箱实例(生命周期与配额元数据)。"""
 
@@ -57,11 +74,19 @@ class SandboxRead(BaseModel):
     network: str
     workspace_id: str | None
     run_id: str | None
+    scope_key: str | None = None
     status: str
     created_at: datetime
     last_used_at: datetime
     expires_at: datetime
     last_error: str | None
+
+
+class SandboxEnsureRead(BaseModel):
+    """ensure 响应:sandbox 是复用的实例,created 表示本次是否新建了运行时。"""
+
+    sandbox: SandboxRead
+    created: bool
 
 
 class SandboxExecRequest(BaseModel):

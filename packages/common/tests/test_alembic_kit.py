@@ -13,7 +13,7 @@ def test_service_script_templates_match_canonical() -> None:
     canonical = script_template_path()
     repo_root = canonical.parents[4]  # <repo>/packages/common/common/alembic_kit
     copies = sorted(repo_root.glob("services/*/migrations/script.py.mako"))
-    assert len(copies) == 5, f"发现 {len(copies)} 个服务模板,预期 5 个"
+    assert len(copies) == 6, f"发现 {len(copies)} 个服务模板,预期 6 个"
     expected = canonical.read_bytes()
     drifted = [
         str(path.relative_to(repo_root))

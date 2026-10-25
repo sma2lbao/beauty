@@ -40,9 +40,10 @@ from agent_orchestrator.services.workspace import Workspace
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agent_orchestrator.graph.ports import ToolkitPort
     from agent_orchestrator.services.tools import ToolSpec
 
-    ToolkitFactory = Callable[[str], ToolRegistry]
+    ToolkitFactory = Callable[[str], ToolkitPort]
     ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 logger = get_logger(__name__)
@@ -162,13 +163,24 @@ async def _toolkit_for(
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ExtrasFactory | None,
     tenant_id: str,
-) -> ToolRegistry | None:
+    *,
+    read_only: bool = False,
+) -> ToolkitPort | None:
     """内置工具 + 外部工具(MCP / skill_run)合并成对话可用的注册表。
 
     extras 是"按调用现取"的(见 main._load_extras),取失败只降级外部工具,
     不让一条对话报错——与 run 路径的降级口径一致。
+
+    read_only=True 时内置工具只保留 risk=read 的(设计 §10 决策):对话没有
+    审批流,内置写操作引导用户改用「任务」;MCP 工具(extras)按租户
+    auto_approve 映射出的风险等级走既有口径,不参与这里的裁剪。
+    远端工具箱目录拉取失败也只降级、不报错。
     """
     toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    if toolkit is not None:
+        await _ensure_chat_toolkit(toolkit, tenant_id)
+    if read_only:
+        toolkit = _read_only_toolkit(toolkit)
     if extras_factory is None:
         return toolkit
     try:
@@ -183,6 +195,33 @@ async def _toolkit_for(
     if not extras:
         return toolkit
     return toolkit.extended(extras) if toolkit is not None else ToolRegistry(extras)
+
+
+async def _ensure_chat_toolkit(toolkit: ToolkitPort, tenant_id: str) -> None:
+    """远端工具箱惰性加载目录;失败只降级(没有工具也能正常对话)。"""
+    hook = getattr(toolkit, "ensure_ready", None)
+    if hook is None:
+        return
+    try:
+        await hook()
+    except Exception as exc:  # noqa: BLE001 - 工具服务故障不阻断对话
+        logger.warning(
+            "chat toolkit catalog failed",
+            tenant_id=tenant_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _read_only_toolkit(toolkit: ToolkitPort | None) -> ToolkitPort | None:
+    """裁剪出只读工具(chat 的内置工具只能用读类,§10 决策)。"""
+    if toolkit is None:
+        return None
+    allowed = [
+        entry["function"]["name"]
+        for entry in toolkit.schemas()
+        if str(toolkit.risk(entry["function"]["name"])) == "read"
+    ]
+    return toolkit.restricted(allowed)
 
 
 async def _persist_reply(

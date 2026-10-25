@@ -59,6 +59,7 @@ from agent_orchestrator.graph.ports import (
 )
 from agent_orchestrator.graph.runtime import GraphRuntime, runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.graph.tool_results import is_tool_error
 
 MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
@@ -103,6 +104,12 @@ async def _load_toolkit(
 ) -> ToolkitPort | None:
     """基础工具 + 外部工具(MCP)。外部工具加载失败不阻断 run。"""
     toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    if toolkit is not None:
+        # 远端工具箱(RemoteToolkit)惰性加载目录;失败向上抛——工具服务开启
+        # 时它是必需依赖,本进程没有本机直读兜底(设计 §16.1 R1)。
+        ensure = getattr(toolkit, "ensure_ready", None)
+        if ensure is not None:
+            await ensure()
     if extras_factory is not None:
         try:
             extras = await extras_factory(tenant_id)
@@ -213,7 +220,7 @@ def _record(name: str, arguments: str, output: str) -> dict[str, Any]:
     return {
         "name": name,
         "arguments": arguments,
-        "ok": not output.startswith('{"error"'),
+        "ok": not is_tool_error(output),
         "detail": output[:200],
     }
 

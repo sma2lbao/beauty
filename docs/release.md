@@ -4,11 +4,11 @@
 
 ## 1. 版本策略
 
-- **全仓单一版本**：所有可发版单元统一版本号（JS 7 个 package.json + 根 pyproject + 10 个 Python 成员）。
+- **全仓单一版本**：所有可发版单元统一版本号（JS 7 个 package.json + 根 pyproject + 11 个 Python 成员）。
   发布单元 = 整仓：一个版本号、一个 tag、一份 workspace CHANGELOG。
 - **pre-1.0**：`0.x.y` 阶段允许破坏性变更，**minor 即 breaking**（不使用 `!` 语义化突增）。
 - **版本号在哪**：JS 在各 package.json 的 `version`；Python 在各 pyproject.toml 的 `version`；一致性问题由
-  `scripts/check-versions.sh` 门禁兜底（断言 18 处版本一致 + CHANGELOG 段存在 + nx.json release 配置存在）。
+  `scripts/check-versions.sh` 门禁兜底（断言 19 处版本一致 + CHANGELOG 段存在 + nx.json release 配置存在）。
 - Python 成员版本由 uv workspace 统一（成员间依赖写死 `==` 同版本），随 `uv lock` 联动。
 
 ## 2. 发版步骤（每一步在仓库根执行）
@@ -65,5 +65,5 @@ git push origin main --follow-tags
 | ---------------------------- | --------------------------------------------------------------------------------- |
 | nx.json `release` 段         | nx release 配置（projects、conventionalCommits、tagPrefix v、workspaceChangelog） |
 | CHANGELOG.md                 | 发布历史（workspace 级，nx release 维护）                                         |
-| scripts/check-versions.sh    | 版本一致性门禁（18 处 + CHANGELOG + release 配置）                                |
+| scripts/check-versions.sh    | 版本一致性门禁（19 处 + CHANGELOG + release 配置）                                |
 | .github/COMMIT_CONVENTION.md | 提交规范（changelog 分组的输入）                                                  |

@@ -4,12 +4,12 @@
 
 ## 环境要求
 
-| 工具    | 版本                  | 说明                                                    |
-| ------- | --------------------- | ------------------------------------------------------- |
+| 工具    | 版本                    | 说明                                                    |
+| ------- | ----------------------- | ------------------------------------------------------- |
 | Node.js | >= 22.22.2（本机 24.x） | 运行 Nx 与 JS 工具链                                    |
-| npm     | 随 Node               | 安装 JS 依赖                                            |
-| Python  | 3.12.x                | uv workspace 共享 venv，由根 `.python-version` 统一锁定 |
-| uv      | >= 0.5                | Python 包管理 / 虚拟环境 / 构建                         |
+| npm     | 随 Node                 | 安装 JS 依赖                                            |
+| Python  | 3.12.x                  | uv workspace 共享 venv，由根 `.python-version` 统一锁定 |
+| uv      | >= 0.5                  | Python 包管理 / 虚拟环境 / 构建                         |
 
 ## 本地开发（推荐）
 
@@ -17,7 +17,7 @@
 
 ```sh
 npm install
-npm run dev          # 六个业务服务 + BFF + Vite SPA
+npm run dev          # 七个业务服务 + BFF + Vite SPA
 npm run dev:status   # 健康检查
 npm run dev:seed     # 演示账号/会话/产物/run
 npm run dev:reset    # 清空本地 SQLite 与产物

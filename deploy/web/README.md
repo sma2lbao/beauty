@@ -1,10 +1,10 @@
-# 部署与容器化（Web + BFF + 七个 Python 服务）
+# 部署与容器化（Web + BFF + 八个 Python 服务）
 
 本目录是**容器部署入口**。三条默认路径：
 
 | 场景                        | 入口                                         | 说明                                            |
 | --------------------------- | -------------------------------------------- | ----------------------------------------------- |
-| 本地开发（裸机，热更新）    | [docs/local-dev.md](../../docs/local-dev.md) | `npm run dev`，七服务 + BFF + Vite 都跑在宿主机 |
+| 本地开发（裸机，热更新）    | [docs/local-dev.md](../../docs/local-dev.md) | `npm run dev`，八服务 + BFF + Vite 都跑在宿主机 |
 | 容器演示 / 自托管（本文件） | `deploy/docker-compose.yml`                  | 一条 `up` 起全栈，访问 <http://localhost:8080>  |
 | 生产                        | 本文件 + 你自己的编排                        | 必须开鉴权、换密钥、终止 TLS、备份数据库        |
 
@@ -19,10 +19,11 @@
             └─ bff:8007 → account-service:8001 / agent-orchestrator:8002
                          / llm-gateway:8003 / connector-service:8004
                          / workspace-service:8005 / knowledge-service:8006
-postgres:5432(5 个库，见 §4) · redis:6379(预留) · migrate(一次性作业)
+                         / tool-service:8008(内置工具服务)
+postgres:5432(6 个库，见 §4) · redis:6379(预留) · migrate(一次性作业)
 ```
 
-- Python 侧用**同一个镜像**跑 7 个服务：构建参数 `SERVICE` 决定入口模块与端口（构建方式见 [deploy/docker/python-service.Dockerfile](../docker/python-service.Dockerfile)）。理由：单 uv workspace、单 `uv.lock`、根 `pyproject.toml` 依赖全部服务，一次 `uv sync --frozen --no-dev` 即可装齐运行依赖。
+- Python 侧用**同一个镜像**跑 8 个服务：构建参数 `SERVICE` 决定入口模块与端口（构建方式见 [deploy/docker/python-service.Dockerfile](../docker/python-service.Dockerfile)）。理由：单 uv workspace、单 `uv.lock`、根 `pyproject.toml` 依赖全部服务，一次 `uv sync --frozen --no-dev` 即可装齐运行依赖。
 - Web 镜像：Node 构建 `apps/web` 静态产物 → nginx:alpine，配置文件来自本目录 `nginx.conf`（见 [deploy/docker/web.Dockerfile](../docker/web.Dockerfile)）。
 - 配置全部走环境变量（各服务 pydantic-settings 前缀：`ACCOUNT__`、`AGENT_ORCHESTRATOR__`、`BFF__` …），**没有把密钥写进镜像**。
 
@@ -34,7 +35,7 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 # 看状态(等所有服务 healthy；migrate 应显示 exited(0))
 docker compose -f deploy/docker-compose.yml ps
-docker compose -f deploy/docker-compose.yml logs -f migrate   # 5 个库的迁移日志
+docker compose -f deploy/docker-compose.yml logs -f migrate   # 6 个库的迁移日志
 
 # 打开 http://localhost:8080
 # 自定义演示密钥(可选，不传则用 compose 里的演示默认值)
@@ -49,7 +50,7 @@ docker compose -f deploy/docker-compose.yml down -v   # 删除 pgdata 与两个�
 说明：
 
 - compose 的构建上下文是**仓库根**（`context: ..`），所以必须在仓库根或任意目录用 `-f deploy/docker-compose.yml` 调用均可，但不要 `cd deploy` 后省略 `-f` 去构建上下文。
-- `down -v` 会删掉 `pgdata`（5 个库）、`account-keys`（账号服务签名密钥）、`workspace-artifacts`（交付物）。下一步 `up` 会重新执行 `deploy/postgres/initdb/01-create-databases.sql`。
+- `down -v` 会删掉 `pgdata`（6 个库）、`account-keys`（账号服务签名密钥）、`workspace-artifacts`（交付物）。下一步 `up` 会重新执行 `deploy/postgres/initdb/01-create-databases.sql`。
 - 宿主机不暴露 BFF/各服务端口，浏览器只访问 `:8080`；服务间走 compose 默认网络。
 - 只需要一个镜像时：
 
@@ -60,7 +61,7 @@ docker build -f deploy/docker/web.Dockerfile -t beauty-moon/web:local .
 
 ## 3. 数据库与迁移
 
-5 个有迁移的服务（account / agent-orchestrator / connector / knowledge / workspace）**各自一个数据库**：
+6 个有迁移的服务（account / agent-orchestrator / connector / knowledge / workspace / tool）**各自一个数据库**：
 
 | 服务               | 库名               | 环境变量                           |
 | ------------------ | ------------------ | ---------------------------------- |
@@ -69,10 +70,11 @@ docker build -f deploy/docker/web.Dockerfile -t beauty-moon/web:local .
 | connector-service  | `beauty_connector` | `CONNECTOR__DATABASE_URL`          |
 | knowledge-service  | `beauty_knowledge` | `KNOWLEDGE__DATABASE_URL`          |
 | workspace-service  | `beauty_workspace` | `WORKSPACE__DATABASE_URL`          |
+| tool-service       | `beauty_tool`      | `TOOL__DATABASE_URL`               |
 
-库由 [deploy/postgres/initdb/01-create-databases.sql](../postgres/initdb/01-create-databases.sql) 在**数据卷首次初始化**时创建。为什么隔离：五个服务的 alembic 都用默认版本表名 `alembic_version`（`packages/common/common/alembic_kit` 未配置 `version_table`），共用一个库会互相覆盖版本记录，迁移直接乱序。即使以后换成独立 schema，也建议保持这五个库名。
+库由 [deploy/postgres/initdb/01-create-databases.sql](../postgres/initdb/01-create-databases.sql) 在**数据卷首次初始化**时创建。为什么隔离：六个服务的 alembic 都用默认版本表名 `alembic_version`（`packages/common/common/alembic_kit` 未配置 `version_table`），共用一个库会互相覆盖版本记录，迁移直接乱序。即使以后换成独立 schema，也建议保持这六个库名。
 
-迁移由一次性作业 `migrate` 负责：等 postgres healthy 后按固定顺序对 5 个库执行 `alembic upgrade head`，成功退出后 5 个业务服务才启动（`depends_on: migrate: service_completed_successfully`）。服务本身 **`AUTO_CREATE_TABLES=false`**，不做运行期建表。
+迁移由一次性作业 `migrate` 负责：等 postgres healthy 后按固定顺序对 6 个库执行 `alembic upgrade head`，成功退出后 6 个业务服务才启动（`depends_on: migrate: service_completed_successfully`）。服务本身 **`AUTO_CREATE_TABLES=false`**，不做运行期建表。
 
 ```sh
 # 手动补一次迁移(改了迁移文件后)
@@ -141,10 +143,10 @@ services:
 | 项             | 裸机（[docs/local-dev.md](../../docs/local-dev.md)） | 容器                                            |
 | -------------- | ---------------------------------------------------- | ----------------------------------------------- |
 | 启动           | `npm run dev`（`scripts/dev.sh`）                    | `docker compose ... up -d --build`              |
-| 数据库         | 各服务目录下 SQLite（`*.db`）                        | postgres:16，5 个库                             |
+| 数据库         | 各服务目录下 SQLite（`*.db`）                        | postgres:16，6 个库                             |
 | 迁移           | 服务启动内置表或手动 alembic                         | `migrate` 一次性作业                            |
 | Nginx upstream | `127.0.0.1:8007`                                     | `bff:8007`（[nginx.conf](./nginx.conf) 默认值） |
-| 端口           | 8001–8007 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）             |
+| 端口           | 8001–8008 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）             |
 | 数据重置       | `npm run dev:reset`                                  | `down -v`                                       |
 | 热更新         | 有（Vite/Nx）                                        | 无，重建镜像                                    |
 
@@ -201,9 +203,9 @@ cat backup.sql | docker compose -f deploy/docker-compose.yml exec -T postgres ps
 | `up` 卡在 migrate             | `docker compose -f deploy/docker-compose.yml logs migrate`；常见是数据库连接串/库不存在（要 `down -v` 重新 initdb） |
 | 服务 unhealthy                | `docker compose ... logs <service>`；`/healthz` 只证明进程活着，业务错看日志/500                                    |
 | web 打开白屏                  | 镜像是否重建（`VITE_*` 是构建期的）；`logs web` 看 nginx                                                            |
-| `/api` 502                    | BFF 未健康；先 `logs bff`，再看它依赖的六服务                                                                       |
+| `/api` 502                    | BFF 未健康；先 `logs bff`，再看它依赖的七服务                                                                       |
 | `/readyz` 503                 | 多半是 `BFF_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d bff`                    |
-| 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 五个各自指向 `beauty_<服务>`                                             |
+| 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 六个各自指向 `beauty_<服务>`                                             |
 | 构建很慢/上下文巨大           | 仓库根缺 `.dockerignore`（见下节建议）                                                                              |
 
 ## 10. 建议补的仓库根 `.dockerignore`

@@ -1,4 +1,4 @@
-"""沙箱端点:创建/查询/执行/文件读写/续期/删除(§7 阶段 B / P1)。"""
+"""沙箱端点:创建/幂等 ensure/查询/列表/执行/文件读写/续期/删除(§7 阶段 B / P1)。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from workspace.core.config import Settings
 from workspace.schemas.sandbox import (
     MAX_PATH_LENGTH,
     SandboxCreate,
+    SandboxEnsure,
+    SandboxEnsureRead,
     SandboxExecRead,
     SandboxExecRequest,
     SandboxFileRead,
@@ -48,6 +50,40 @@ async def create_sandbox(
         session, tenant_id, body, provider, settings
     )
     return SandboxRead.model_validate(record)
+
+
+@router.post(":ensure", response_model=SandboxEnsureRead)
+async def ensure_sandbox(
+    body: SandboxEnsure,
+    session: DBSession,
+    tenant_id: TenantId,
+    settings: SettingsDep,
+    provider: ProviderDep,
+    response: Response,
+) -> SandboxEnsureRead:
+    """幂等 get-or-create:同 (tenant_id, scope_key) 只有一个沙箱。
+
+    新建运行时返回 201,复用现有沙箱返回 200(响应体结构一致)。
+    """
+    record, created = await sandbox_service.ensure_sandbox(
+        session,
+        tenant_id,
+        scope_key=body.scope_key,
+        spec=body,
+        provider=provider,
+        settings=settings,
+    )
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return SandboxEnsureRead(
+        sandbox=SandboxRead.model_validate(record), created=created
+    )
+
+
+@router.get("", response_model=list[SandboxRead])
+async def list_sandboxes(session: DBSession, tenant_id: TenantId) -> list[SandboxRead]:
+    """沙箱列表(仅本租户,新建在前)。"""
+    records = await sandbox_service.list_sandboxes(session, tenant_id)
+    return [SandboxRead.model_validate(record) for record in records]
 
 
 @router.get("/{sandbox_id}", response_model=SandboxRead)
