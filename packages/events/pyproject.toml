@@ -33,6 +33,7 @@ addopts = """
  --html='../../reports/packages/events/unittests/html/index.html'
  --junitxml='../../reports/packages/events/unittests/junit.xml'
  --cov-fail-under=96
+ --disable-socket --allow-unix-socket
 """
 asyncio_mode = "auto"
 
@@ -55,4 +56,5 @@ database = { workspace = true }
 dev = [
     "aiosqlite>=0.22.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-socket>=0.8.1",
 ]

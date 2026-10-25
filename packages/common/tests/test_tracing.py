@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
+import pytest
 import structlog
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -140,6 +141,9 @@ def test_probe_paths_are_not_traced() -> None:
     assert exporter.get_finished_spans() == ()
 
 
+# 零网络白名单:验证 httpx 真实 HTTPTransport 的 traceparent 注入——插桩挂在
+# HTTPTransport 上、MockTransport 不经过,必须起本地回环 server(127.0.0.1)收头。
+@pytest.mark.enable_socket
 def test_http_client_injects_current_traceparent() -> None:
     # httpx 官方插桩挂在 HTTPTransport 上(MockTransport 不经过它),
     # 所以这里起一个本地回环 server 收头,验证真实的出站注入。

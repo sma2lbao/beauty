@@ -28,6 +28,7 @@ dev = [
     "aiosqlite>=0.22.1",
     "httpx>=0.28.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-socket>=0.8.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -49,6 +50,7 @@ addopts = """
  --html='../../reports/services/workspace-service/unittests/html/index.html'
  --junitxml='../../reports/services/workspace-service/unittests/junit.xml'
  --cov-fail-under=81
+ --disable-socket --allow-unix-socket
 """
 asyncio_mode = "auto"
 

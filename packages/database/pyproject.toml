@@ -31,6 +31,7 @@ addopts = """
  --html='../../reports/packages/database/unittests/html/index.html'
  --junitxml='../../reports/packages/database/unittests/junit.xml'
  --cov-fail-under=88
+ --disable-socket --allow-unix-socket
 """
 asyncio_mode = "auto"
 
@@ -50,5 +51,6 @@ dev = [
     "aiosqlite>=0.22.1",
     "asyncpg>=0.32.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-socket>=0.8.1",
     "testcontainers[postgres]>=4.15.0",
 ]

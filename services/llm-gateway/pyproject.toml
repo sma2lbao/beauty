@@ -22,6 +22,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "pytest-socket>=0.8.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -43,6 +44,7 @@ addopts = """
  --html='../../reports/services/llm-gateway/unittests/html/index.html'
  --junitxml='../../reports/services/llm-gateway/unittests/junit.xml'
  --cov-fail-under=95
+ --disable-socket --allow-unix-socket
 """
 
 [tool.ruff]
