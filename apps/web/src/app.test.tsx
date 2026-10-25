@@ -119,7 +119,11 @@ describe('App 路由', () => {
 
   it('/ 渲染工作台', async () => {
     renderApp('/');
-    expect(await screen.findByText('开始一个新会话')).toBeInTheDocument();
+    // 工作台是路由级懒加载（R-10），覆盖率插桩 + 并行 worker 下首帧可能超过
+    // findBy 默认 1s；放宽到 5s，避免门禁偶发超时（不是功能断言放宽）。
+    expect(
+      await screen.findByText('开始一个新会话', undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
   });
 
   it('/landing 旧链接跳转到独立官网', async () => {
