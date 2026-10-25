@@ -15,6 +15,7 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   blocked: '已阻塞',
   completed: '已完成',
   failed: '已失败',
+  cancelled: '已取消',
 };
 
 /** 任务执行阶段标签(token.delta.v1 的 phase):未知阶段由调用方兜底成「执行中」。 */
@@ -42,7 +43,12 @@ export function runStatusTone(status: RunStatus): Tone {
   }
 }
 
-const TERMINAL: readonly RunStatus[] = ['completed', 'failed', 'blocked'];
+const TERMINAL: readonly RunStatus[] = [
+  'completed',
+  'failed',
+  'blocked',
+  'cancelled',
+];
 
 export function isRunTerminal(status: RunStatus): boolean {
   return TERMINAL.includes(status);
@@ -76,7 +82,7 @@ export const BOARD_COLUMNS: {
     key: 'done',
     label: '已完成',
     tone: 'success',
-    statuses: ['completed', 'failed'],
+    statuses: ['completed', 'failed', 'cancelled'],
   },
 ];
 

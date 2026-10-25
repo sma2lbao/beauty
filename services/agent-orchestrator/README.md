@@ -1,14 +1,14 @@
 # agent-orchestrator
 
-Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构与执行模型见 `docs/architecture.md` §6。
+Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/沙箱/技能包/公开 MCP 均已运行)。架构与执行模型见 `docs/architecture.md` §6。
 
-当前实现(阶段 A):
+当前实现:
 
 - run 垂直切片:`POST /api/v1/runs` 创建,`GET /runs/{id}` 查询,
   `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端),
   `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
-  断线续传,run 终态(completed/failed)自动 `stream.end` 收线;
+  断线续传,run 终态(completed/failed/cancelled)自动 `stream.end` 收线;
 - **正文增量流**(`graph/delta.py` + `services/runs.py`):plan/execute/verify/deliver
   四个阶段的模型正文以 `token.delta.v1` 事件落 `run_events`(payload `{text, phase}`,
   text 是**增量**片段,按 seq 拼接即全文),执行期前端订阅 run 事件流即可看到正文
@@ -30,6 +30,8 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   `POST /runs/{id}/retry`(failed → **另起一跑**并继承目标/验收标准/已批准计划,
   返回新 run;血缘见 `parent_run_id` 与 `run.retry.requested.v1`)、
   `POST /runs/{id}/confirm`(危险操作放行/拒绝,§6.2)、
+  `POST /runs/{id}/cancel`(协作式取消:立刻置 `cancelled` + 撤 queued job +
+  `run.cancelled.v1`,图结果在下一个执行边界丢弃;终态再取消 409 `run.invalid_state`)、
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
 - 对话垂直切片(§6.7):`POST /api/v1/conversations` 建会话、`GET /conversations`(最近活跃在前)、
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
@@ -44,6 +46,7 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   (`GET /v1/usage/quota`,`X-Internal-Secret` + `X-Tenant-Id`),月度 token 用尽或并发
   run 超限直接 429(`quota.monthly_tokens_exceeded` / `quota.concurrent_runs_exceeded`,
   details 带 limit/used);account 不可用时**fail-open**(配额是保护性限流,不是鉴权)。
+  **已知缺口**:对话直答路径(`services/chat.py`)不走配额闸,见 `docs/gap-2026-10/06-refresh-2026-10-25.md` P0-4。
   配额结构在 `organizations.quota` JSON:`{"monthly_tokens": N, "max_concurrent_runs": M}`,
   缺省即不限制。token 预算用 `AGENT_ORCHESTRATOR__RUN_TOKEN_BUDGET` 控制单次执行的
   模型用量上限(0=不限制),节点边界检查,用尽则该次执行 failed(错误里写明
@@ -55,6 +58,11 @@ Agent 编排服务(阶段 A 骨架):会话与运行编排的控制面。架构�
   空表即等价于旧行为;策略快照随状态进图(节点仍纯函数),命中 `deny` 不执行并把
   原因回喂模型,对话路径也走同一套判定(`confirm` 在 chat 里降级为"请改用任务");
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
+  规划节点进入时置 `planning`、放行/确认通过时置 `running`(状态变更不单落事件);
+  **中断超时**(可选,默认关闭):`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS` > 0
+  且 `JOBS_ENABLED` 时,sweeper(`services/interrupts.py`,`INTERRUPT_SWEEP_INTERVAL_SECONDS`)
+  把悬挂的审批/确认自动走 `reject`/`confirm(reject)` 并落 `run.interrupt.timeout.v1`,
+  run 可再 `resume` 重新规划;确认超时另补 `run.confirmation.received.v1` 留审计痕迹;
 - 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是
   审计凭据,不能被"重试"改写。重试派生新 run 继承已批准计划(计划节点检测到

@@ -18,7 +18,8 @@ export type RunStatus =
   | 'awaiting_confirmation'
   | 'blocked'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export type Run = {
   id: string;
@@ -116,6 +117,15 @@ export const runsApi = {
     http.request<Run>(`/api/v1/runs/${runId}/confirm`, {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
+    }),
+  /**
+   * 协作式取消:落 cancelled 终态并撤掉排队中的 job;执行中的图不会被强杀,
+   * 结果在下一个执行边界被丢弃。终态(completed/failed/cancelled)调用回 409。
+   */
+  cancel: (runId: string, reason?: string) =>
+    http.request<Run>(`/api/v1/runs/${runId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
     }),
   /** blocked → 新 attempt 重回审批闸(计划保留,§6.2);返回更新后的计划。 */
   resume: (runId: string) =>

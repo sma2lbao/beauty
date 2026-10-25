@@ -59,6 +59,12 @@ class Settings(BaseAppSettings):
     jobs_poll_interval_seconds: float = 0.5
     jobs_lease_seconds: int = 60
     jobs_max_attempts: int = 3
+    # 中断超时(P0-2):awaiting_approval / awaiting_confirmation 停留超过阈值后
+    # 自动按"拒绝"处理——审批超时 → blocked(可 resume);确认超时 → 跳过危险写
+    # 继续验收。0 = 关闭该类超时;sweeper 仅在 jobs_enabled 且至少一类 > 0 时启动。
+    approval_timeout_seconds: int = 0
+    confirmation_timeout_seconds: int = 0
+    interrupt_sweep_interval_seconds: float = 15.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
     # 编码 agent 的本地工作区 function tools;为空 = 不暴露代码工具

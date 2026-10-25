@@ -75,6 +75,9 @@ async def _invoke_plan(
     图会一路跑到终态,这里补记"计划 + 放行"事件后按统一终态处理收尾
     (交付物落库/工作区镜像/外链抓取与 completed/failed 投影)。
     """
+    # P0-2:进图即 planning(前端/SSE 可见),不落事件——事件流保持
+    # created → planned 的既有契约(计划真正产出后才发 planned)。
+    run.status = RunStatus.PLANNING.value
     state: dict[str, Any] = {
         "run_id": run.id,
         "tenant_id": run.tenant_id,
@@ -138,6 +141,8 @@ async def _invoke_plan(
     await append_event(
         session, run, "run.approved.v1", {"attempt": run.attempts, "auto": True}
     )
+    # P0-2:自动放行后图已在执行段,落 running 再投影终态(时间线如实)。
+    run.status = RunStatus.RUNNING.value
     await _apply_graph_result(
         session,
         run,

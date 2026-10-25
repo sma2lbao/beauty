@@ -85,6 +85,7 @@ class RunRepository(TenantRepository[Run]):
             RunStatus.COMPLETED.value,
             RunStatus.FAILED.value,
             RunStatus.BLOCKED.value,
+            RunStatus.CANCELLED.value,
         )
         return await self.count(Run.tenant_id == tenant_id, Run.status.not_in(terminal))
 
@@ -101,6 +102,44 @@ class RunRepository(TenantRepository[Run]):
             limit=limit,
             order_by=[Run.updated_at.desc(), Run.id.desc()],
         )
+
+    async def list_stale_interrupts(
+        self,
+        now: datetime,
+        *,
+        approval_seconds: int,
+        confirmation_seconds: int,
+        limit: int = 100,
+    ) -> list[Run]:
+        """扫描停留超时的待审批/待确认 run(中断超时 sweeper 用)。
+
+        这是**跨租户的系统维护查询**(后台任务没有请求租户上下文),因此不用
+        list_scoped;逐 run 处理时仍回到各自的租户作用域。阈值 <= 0 表示关闭该类。
+        """
+        criteria = []
+        if approval_seconds > 0:
+            criteria.append(
+                and_(
+                    Run.status == RunStatus.AWAITING_APPROVAL.value,
+                    Run.updated_at < now - timedelta(seconds=approval_seconds),
+                )
+            )
+        if confirmation_seconds > 0:
+            criteria.append(
+                and_(
+                    Run.status == RunStatus.AWAITING_CONFIRMATION.value,
+                    Run.updated_at < now - timedelta(seconds=confirmation_seconds),
+                )
+            )
+        if not criteria:
+            return []
+        statement = (
+            select(Run)
+            .where(or_(*criteria))
+            .order_by(Run.updated_at, Run.id)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
 
 
 class ConversationRepository(TenantRepository[Conversation]):
@@ -260,6 +299,27 @@ class JobRepository(TenantRepository[Job]):
                 Job.status.in_(("queued", "running")),
             ).order_by(Job.created_at)
         )
+
+    async def cancel_queued_for_run(self, tenant_id: str, run_id: str) -> int:
+        """把该 run 还没被领取的 job 置为 cancelled(取消 run 时用)。
+
+        只动 queued:running 的 job 由执行边界自己收尾(协作式取消),
+        把 running 改成 cancelled 会和 worker 的 succeeded 回写打架。
+        返回取消条数,便于事件/指标记录。
+        """
+        rows = await self.session.scalars(
+            self.scoped(
+                tenant_id,
+                Job.run_id == run_id,
+                Job.status == QUEUED,
+            )
+        )
+        cancelled = 0
+        for job in rows:
+            job.status = "cancelled"
+            job.lease_until = None
+            cancelled += 1
+        return cancelled
 
     async def claim_next(
         self, worker_id: str, now: datetime, lease_seconds: int

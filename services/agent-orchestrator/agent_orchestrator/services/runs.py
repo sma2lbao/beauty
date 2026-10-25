@@ -3,6 +3,7 @@
 拆分(R-28,行为零变化):
 - run_lifecycle:状态机迁移表、创建/列表、指令队列、多轮上下文、状态守卫
 - run_events:事件写入(seq 单调)、正文增量攒批、回放查询、失败终态投影
+- run_cancel:取消(非终态→cancelled,排队 job 一并作废;协作式收手)
 - run_artifacts:交付物登记、工具外链抓取、工作区镜像与取件
 - run_quota:准入闸(fail-open)与用量边界观测
 - run_execution:图调用边界(端口/增量注入)、审批编排与结果投影
@@ -18,6 +19,7 @@ from agent_orchestrator.services.run_artifacts import (
     _persist_artifact,
     get_artifact,
 )
+from agent_orchestrator.services.run_cancel import cancel_run
 from agent_orchestrator.services.run_events import (
     append_event,
     list_events,
@@ -43,6 +45,7 @@ __all__ = [
     "_persist_artifact",
     "append_event",
     "approve_run",
+    "cancel_run",
     "confirm_run",
     "create_run",
     "get_artifact",

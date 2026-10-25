@@ -26,6 +26,7 @@ vi.mock('@/lib/runs-api', async () => {
       reject: vi.fn(),
       confirm: vi.fn(),
       resume: vi.fn(),
+      cancel: vi.fn(),
       retry: vi.fn(),
       artifact: vi.fn(),
       artifacts: vi.fn(),
@@ -311,7 +312,38 @@ describe('RunsPage', () => {
     await waitFor(() => expect(runsApi.resume).toHaveBeenCalledWith('run-1'));
   });
 
-  it('blocked run:追加指令仍可用(后端只拒绝 completed/failed)', async () => {
+  it('cancelled run:看板与详情展示已取消,取消按钮消失', async () => {
+    const cancelled = makeRun({
+      status: 'cancelled',
+      status_reason: '用户在控制台取消',
+    });
+    vi.mocked(runsApi.list).mockResolvedValue([cancelled]);
+    vi.mocked(runsApi.get).mockResolvedValue(cancelled);
+    renderPage();
+
+    expect(await screen.findByText('已取消 · 用户在控制台取消')).toBeTruthy();
+
+    await selectRun('整理本周邮件成周报');
+    expect(await screen.findByTestId('run-status')).toHaveTextContent('已取消');
+    expect(screen.getByText(/取消原因:用户在控制台取消/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '取消任务' })).toBeNull();
+  });
+
+  it('cancelled run:追加指令不可提交(已是终态)', async () => {
+    const cancelled = makeRun({ status: 'cancelled' });
+    vi.mocked(runsApi.list).mockResolvedValue([cancelled]);
+    vi.mocked(runsApi.get).mockResolvedValue(cancelled);
+    renderPage();
+
+    await selectRun('整理本周邮件成周报');
+    await screen.findByTestId('run-status');
+    fireEvent.change(await screen.findByLabelText('追加指令'), {
+      target: { value: '再补一句' },
+    });
+    expect(screen.getByRole('button', { name: '提交指令' })).toBeDisabled();
+  });
+
+  it('blocked run:追加指令仍可用(blocked 非终态)', async () => {
     const blocked = makeRun({ status: 'blocked' });
     vi.mocked(runsApi.list).mockResolvedValue([blocked]);
     vi.mocked(runsApi.get).mockResolvedValue(blocked);

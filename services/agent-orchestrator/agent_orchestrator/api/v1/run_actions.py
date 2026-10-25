@@ -23,6 +23,7 @@ from agent_orchestrator.api.deps import (
 )
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import (
+    CancelRequest,
     ConfirmRequest,
     PlanRead,
     PlanUpdate,
@@ -209,5 +210,19 @@ async def confirm_run(
         jobs_enabled=settings.jobs_enabled,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+    )
+    return RunRead.model_validate(run)
+
+
+@router.post("/{run_id}/cancel", response_model=RunRead)
+async def cancel_run(
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    body: CancelRequest | None = None,
+) -> RunRead:
+    """取消 run(P0-2):非终态 → cancelled,该 run 排队中的 job 一并作废。"""
+    run = await runs_service.cancel_run(
+        session, tenant_id, run_id, body.reason if body else None
     )
     return RunRead.model_validate(run)

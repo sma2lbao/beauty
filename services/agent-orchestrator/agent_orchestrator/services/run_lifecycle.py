@@ -31,6 +31,18 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
     "reject": frozenset({RunStatus.AWAITING_APPROVAL}),
     "retry": frozenset({RunStatus.FAILED}),
     "resume": frozenset({RunStatus.BLOCKED}),
+    # 取消(P0-2):非终态都可取消。running/planning 是协作式——已发出的图调用
+    # 不被打断,执行边界回来读库发现 cancelled 后跳过终态覆盖(见 _apply_graph_result)。
+    "cancel": frozenset(
+        {
+            RunStatus.PENDING,
+            RunStatus.PLANNING,
+            RunStatus.RUNNING,
+            RunStatus.AWAITING_APPROVAL,
+            RunStatus.AWAITING_CONFIRMATION,
+            RunStatus.BLOCKED,
+        }
+    ),
 }
 
 
@@ -118,7 +130,11 @@ async def queue_instruction(
 ) -> PendingInstruction:
     """追加指令(§6.5):排队等下一个图边界消费;终态 run 拒绝。"""
     run = await require_run(session, tenant_id, run_id)
-    if run.status in (RunStatus.COMPLETED.value, RunStatus.FAILED.value):
+    if run.status in (
+        RunStatus.COMPLETED.value,
+        RunStatus.FAILED.value,
+        RunStatus.CANCELLED.value,
+    ):
         raise ConflictError(
             "run.invalid_state",
             f"run 已 {run.status},不能再追加指令",

@@ -10,7 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_orchestrator.models.runs import Job
 from agent_orchestrator.repositories import JobRepository
 
-KINDS = frozenset({"plan", "approve", "confirm", "resume", "retry"})
+KINDS = frozenset(
+    {
+        "plan",
+        "approve",
+        "confirm",
+        "resume",
+        "retry",
+        # 中断超时 sweeper 用(P0-2):审批超时自动拒绝,走 blocked
+        "reject",
+    }
+)
 
 
 async def enqueue(

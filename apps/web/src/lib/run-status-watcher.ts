@@ -47,6 +47,7 @@ const NOTIFY_ON: Partial<
   completed: { tone: 'success', title: '任务已完成' },
   failed: { tone: 'danger', title: '任务失败' },
   blocked: { tone: 'danger', title: '任务被阻塞' },
+  cancelled: { tone: 'info', title: '任务已取消' },
 };
 
 export function statusChanges(

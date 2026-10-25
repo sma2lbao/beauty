@@ -3,7 +3,7 @@
 三条契约(读端行为,改传输不改契约):
 1. 帧格式:普通事件为 `id: <seq>\nevent: <type>\ndata: <JSON>\n\n` 三段;
    `stream.end` 帧不带 id,data 为 `{"status": <run 终态>}`。
-2. 终态:run 状态为 completed/failed(TERMINAL_STATUSES)时,先发完已读到的事件,
+2. 终态:run 状态为 completed/failed/cancelled(TERMINAL_STATUSES)时,先发完已读到的事件,
    再发 `stream.end` 并结束生成器——客户端据此停止重连。
 3. keep-alive:空轮询时按 `sse_keepalive_polls` 周期发注释帧 `: keep-alive\n\n`,
    仅为保活、不承载数据,客户端解析时应跳过(见 lib/sse.ts 的注释行跳过)。
@@ -27,7 +27,11 @@ from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services.run_events import list_events
 from agent_orchestrator.services.run_lifecycle import require_run
 
-TERMINAL_STATUSES = (RunStatus.COMPLETED.value, RunStatus.FAILED.value)
+TERMINAL_STATUSES = (
+    RunStatus.COMPLETED.value,
+    RunStatus.FAILED.value,
+    RunStatus.CANCELLED.value,
+)
 
 
 async def ensure_stream_target(

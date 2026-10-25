@@ -32,6 +32,7 @@ from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
     append_event,
+    is_cancelled,
 )
 from agent_orchestrator.services.run_lifecycle import (
     _consume_instructions,
@@ -42,6 +43,16 @@ from agent_orchestrator.services.run_quota import _usage_boundary
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 from agent_orchestrator.services.workspace import Workspace
+
+#: from_job 路径下"无需再执行"的状态:终态或已取消(取消后的 job 直接作废)
+_TERMINAL_OR_CANCELLED = frozenset(
+    {
+        RunStatus.COMPLETED.value,
+        RunStatus.FAILED.value,
+        RunStatus.BLOCKED.value,
+        RunStatus.CANCELLED.value,
+    }
+)
 
 
 class _ApprovalAdapter:
@@ -119,7 +130,13 @@ async def _apply_graph_result(
 
     注意:state.tool_calls 是 add reducer,恢复执行(如确认闸放行)后会带上
     历史累积记录——按已落库条数只发增量,避免事件重复。
+
+    协作式取消(P0-2):执行期间收到取消请求时,结果一律丢弃——不改交付物、
+    不写 completed/failed,只把本地对象同步成 cancelled 后返回。
     """
+    if await is_cancelled(session, run.id):
+        run.status = RunStatus.CANCELLED.value
+        return run
     records = values.get("tool_calls") or []
     emitted = await RunEventRepository(session).count_of_type(run.id, TOOL_CALLED_EVENT)
     for record in records[emitted or 0 :]:
@@ -199,11 +216,20 @@ async def approve_run(
     *,
     jobs_enabled: bool = False,
     emit_approved: bool = True,
+    from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
-    require_transition(run, "approve")
+    if from_job:
+        # worker 回来执行:API 侧已把状态推到 running,无法再过状态守卫;
+        # 期间被取消或已终态(例如取消后 job 才被领到)则直接收手。
+        if run.status in _TERMINAL_OR_CANCELLED:
+            return run
+    else:
+        require_transition(run, "approve")
+        # P0-2:审批通过即进入执行,同步与 jobs 两条路径都在这里推进状态。
+        run.status = RunStatus.RUNNING.value
     if emit_approved:
         # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
         await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
@@ -245,12 +271,20 @@ async def confirm_run(
     *,
     jobs_enabled: bool = False,
     emit_confirmation: bool = True,
+    from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
 ) -> Run:
     """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
     run = await require_run(session, tenant_id, run_id)
-    require_transition(run, "confirm")
+    if from_job:
+        # 同 approve_run:worker 路径状态已由 API 侧推进,守卫在此不重复校验。
+        if run.status in _TERMINAL_OR_CANCELLED:
+            return run
+    else:
+        require_transition(run, "confirm")
+        # P0-2:确认后图继续执行,状态回到 running。
+        run.status = RunStatus.RUNNING.value
     if emit_confirmation:
         await append_event(
             session,

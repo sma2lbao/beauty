@@ -24,10 +24,20 @@ import {
   isRunQuiescent,
   relativeTime,
 } from '@/lib/presentation';
-import type { Run } from '@/lib/runs-api';
+import type { Run, RunStatus } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/query-keys';
+
+/** 可发起取消的状态:与后端 run_lifecycle.TRANSITIONS["cancel"] 对齐。 */
+const CANCELLABLE: readonly RunStatus[] = [
+  'pending',
+  'planning',
+  'running',
+  'awaiting_approval',
+  'awaiting_confirmation',
+  'blocked',
+];
 
 const CONSOLE_TEXTAREA =
   'w-full resize-y rounded-md border border-ha-border-strong bg-ha-panel-2 px-3 py-2 text-[12px] leading-5 text-ha-text-body outline-none placeholder:text-ha-dim focus:border-ha-accent';
@@ -91,6 +101,10 @@ export function RunDetail({
     mutationFn: () => runsApi.updatePlan(runId, planDraft ?? ''),
     onSuccess: refresh,
   });
+  const cancelMutation = useMutation({
+    mutationFn: () => runsApi.cancel(runId),
+    onSuccess: refresh,
+  });
   const queueInstruction = useMutation({
     mutationFn: () => runsApi.queueInstruction(runId, instruction.trim()),
     onSuccess: async () => {
@@ -103,6 +117,13 @@ export function RunDetail({
   const plan = planQuery.data;
   const status = run?.status ?? 'pending';
   const editable = status === 'awaiting_approval';
+  const canCancel = run !== undefined && CANCELLABLE.includes(status);
+  const reasonLabel =
+    status === 'failed'
+      ? '失败原因'
+      : status === 'cancelled'
+        ? '取消原因'
+        : '中断原因';
 
   return (
     <aside
@@ -143,8 +164,7 @@ export function RunDetail({
           </p>
           {run?.status_reason ? (
             <p className="mt-2 rounded-md border border-ha-border bg-ha-panel px-2.5 py-2 text-[12px] leading-5 text-ha-text-2">
-              {status === 'failed' ? '失败原因' : '中断原因'}:
-              {run.status_reason}
+              {reasonLabel}:{run.status_reason}
             </p>
           ) : null}
           {run?.parent_run_id ? (
@@ -251,6 +271,17 @@ export function RunDetail({
                 查看交付物
               </ConsoleButton>
             ) : null}
+
+            {canCancel ? (
+              <ConsoleButton
+                variant="danger"
+                size="sm"
+                onClick={() => cancelMutation.mutate()}
+                disabled={cancelMutation.isPending}
+              >
+                {cancelMutation.isPending ? '取消中…' : '取消任务'}
+              </ConsoleButton>
+            ) : null}
           </div>
 
           {action.isError ? (
@@ -261,6 +292,11 @@ export function RunDetail({
           {retryMutation.isError ? (
             <p className="mt-2 text-[12px] text-ha-danger">
               {retryMutation.error.message}
+            </p>
+          ) : null}
+          {cancelMutation.isError ? (
+            <p className="mt-2 text-[12px] text-ha-danger">
+              {cancelMutation.error.message}
             </p>
           ) : null}
         </section>
@@ -328,9 +364,10 @@ export function RunDetail({
                 queueInstruction.isPending ||
                 !instruction.trim() ||
                 !run ||
-                // 后端只拒绝 completed/failed;blocked 仍可排队(等 resume 时消费)
+                // 后端只拒绝 completed/failed/cancelled;blocked 仍可排队(等 resume 时消费)
                 status === 'completed' ||
-                status === 'failed'
+                status === 'failed' ||
+                status === 'cancelled'
               }
             >
               提交指令

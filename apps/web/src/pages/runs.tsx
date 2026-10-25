@@ -427,6 +427,9 @@ function cardStatusLine(run: Run): string {
   if (run.status === 'blocked') {
     return '已阻塞 · ' + (reason || time);
   }
+  if (run.status === 'cancelled') {
+    return '已取消 · ' + (reason || time);
+  }
   if (run.status === 'awaiting_approval') {
     return '待人工放行 · ' + time;
   }

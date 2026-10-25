@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from events.envelope import EventEnvelope
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator import metrics
@@ -52,6 +53,16 @@ async def append_event(
     if recorder is not None:
         await recorder(session, run, env)
     return event
+
+
+async def is_cancelled(session: AsyncSession, run_id: str) -> bool:
+    """协作式取消(P0-2):执行边界回来时读最新**已提交**状态,已取消则收手。
+
+    只读一条 SELECT 而不 refresh ORM 对象——本事务里可能已有未提交的投影写入,
+    refresh 会把它们丢掉;取消请求来自另一会话,READ COMMITTED 下这条查询能看到。
+    """
+    status = await session.scalar(select(Run.status).where(Run.id == run_id))
+    return status == RunStatus.CANCELLED.value
 
 
 class _RunDeltaSink:
@@ -157,7 +168,11 @@ async def _fail_run(
 
     这是图调用边界的统一兜底——节点/LLM/图本身的异常都在这里收敛;
     failed 是终态,重试语义是新起 run。
+
+    协作式取消优先:取消请求已提交时不再写 failed,否则会覆盖 cancelled 终态。
     """
+    if await is_cancelled(session, run.id):
+        return
     run.status = RunStatus.FAILED.value
     run.status_reason = f"{type(exc).__name__}: {exc}"[:500]
     metrics.observe_run_outcome(status=RunStatus.FAILED.value)

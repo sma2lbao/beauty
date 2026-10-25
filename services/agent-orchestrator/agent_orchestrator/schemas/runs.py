@@ -18,6 +18,9 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
     BLOCKED = "blocked"
+    # 取消(P0-2):任意非终态都可取消;执行中的图调用不强制打断,
+    # 执行边界回来时读到 cancelled 就不再覆盖终态(协作式取消)。
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -80,6 +83,12 @@ class ConfirmRequest(BaseModel):
     """写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。"""
 
     action: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class CancelRequest(BaseModel):
+    """取消 run(P0-2):reason 可选,落 run.cancelled.v1 与 status_reason。"""
+
     reason: str | None = Field(default=None, max_length=2000)
 
 

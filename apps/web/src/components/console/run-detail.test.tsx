@@ -2,6 +2,7 @@
  * W2 R-21:运行详情抽屉契约。
  * - 标题/目标/状态徽章来自 run 查询;
  * - awaiting_approval 状态出现「放行执行/拒绝计划」按钮;
+ * - 非终态出现「取消任务」并调用取消 API,终态不再出现;
  * - 关闭按钮触发 onClose 回调。
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -25,6 +26,7 @@ vi.mock('@/lib/runs-api', () => ({
     updatePlan: vi.fn(),
     queueInstruction: vi.fn(),
     resume: vi.fn(),
+    cancel: vi.fn(),
   },
 }));
 
@@ -56,7 +58,9 @@ function renderDetail(status: Run['status'], onClose = vi.fn()) {
   vi.mocked(runsApi.get).mockResolvedValue({ ...baseRun, status });
   vi.mocked(runsApi.getPlan).mockResolvedValue(plan);
   vi.mocked(runsApi.instructions).mockResolvedValue([]);
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
     <QueryClientProvider client={client}>
       <RunDetail runId="run-1" onClose={onClose} />
@@ -80,6 +84,28 @@ describe('RunDetail', () => {
       expect(screen.getByRole('button', { name: '放行执行' })).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: '拒绝计划' })).toBeTruthy();
+  });
+
+  it('非终态提供取消按钮,点击调用取消 API', async () => {
+    vi.mocked(runsApi.cancel).mockResolvedValue({
+      ...baseRun,
+      status: 'cancelled',
+      status_reason: '已取消',
+    });
+    renderDetail('awaiting_approval');
+    const cancel = await screen.findByRole('button', { name: '取消任务' });
+    fireEvent.click(cancel);
+    await waitFor(() => {
+      expect(runsApi.cancel).toHaveBeenCalledWith('run-1');
+    });
+  });
+
+  it('终态不出现取消按钮', async () => {
+    renderDetail('completed');
+    await waitFor(() => {
+      expect(screen.getByText('修登录超时 bug')).toBeTruthy();
+    });
+    expect(screen.queryByRole('button', { name: '取消任务' })).toBeNull();
   });
 
   it('非审批状态不出现审批按钮', async () => {

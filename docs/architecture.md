@@ -3,26 +3,26 @@
 > **本文是唯一现行架构真源**（2026-10-24 起生效，取代 v1《微服务架构设计》与 v2《架构 v2》）。
 > 旧版已归档至 [docs/archive/2026-10/](./archive/2026-10/)（architecture-v2.md 为本文基底、feature-gap.md、tasks-m0\*.md）。
 > 实现与本文冲突时，先修订本文达成共识，再动代码。架构决策记录（ADR 001-011）见 §1。
-> 部署与平台缺口（Dockerfile、云 PG/Redis 接入等）在 [docs/roadmap.md](./roadmap.md) 跟踪，不在本文重复展开。
+> 部署与平台缺口（云 PG/Redis 接入等）在 [docs/roadmap.md](./roadmap.md) 跟踪，不在本文重复展开。
 
 ## 0. 最终选型（2026-10 拍板）
 
-| 领域              | 生产                                                | 开发环境                                     | 状态                                                   |
-| ----------------- | --------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------ |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）       | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                    |
-| Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口） |
-| 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）    |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**               |
-| 沙箱              | **microsandbox provider（P1）**                     | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）       |
-| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）   |
-| 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                         |
-| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续  |
-| 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                  |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                              |
-| BFF               | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                              |
-| LLM 推理          | **继续用 API**（litellm 网关 :8003）                | 本地/API                                     | ✅ 已实施                                              |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）        | 本地 Next dev                                | ✅ 已实施                                              |
-| 多区域 / 数据驻留 | 不做                                                | —                                            | ⏸ 后续                                                |
+| 领域              | 生产                                                | 开发环境                                     | 状态                                                                        |
+| ----------------- | --------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）       | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                                         |
+| Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                      |
+| 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                         |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**                                    |
+| 沙箱              | **microsandbox provider（P1）**                     | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                            |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                        |
+| 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                                              |
+| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 仅加密存储、调用面未接，订阅后续 |
+| 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                       |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                                                   |
+| BFF               | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                                                   |
+| LLM 推理          | **继续用 API**（litellm 网关 :8003）                | 本地/API                                     | ✅ 已实施                                                                   |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）        | 本地 Next dev                                | ✅ 已实施                                                                   |
+| 多区域 / 数据驻留 | 不做                                                | —                                            | ⏸ 后续                                                                     |
 
 ### 0.1 两种部署形态（同一套代码）
 
@@ -43,19 +43,19 @@
 
 ## 1. ADR（最终状态）
 
-| ADR | 决策                                     | 状态                   | 说明                                                                                                    |
-| --- | ---------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                           |
-| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 七个 Python 服务（六业务 + bff）+ BFF 为独立 FastAPI 服务；**容器化（Dockerfile/compose）待补（R-36）** |
-| 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                |
-| 004 | Sandbox 用 microsandbox provider         | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                               |
-| 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                       |
-| 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关          |
-| 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                      |
-| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接                                                                                    |
-| 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                            |
-| 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                   |
-| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                          |
+| ADR | 决策                                     | 状态                   | 说明                                                                                                                                                                   |
+| --- | ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                          |
+| 002 | 静态 SPA + FastAPI BFF + 容器 runtime    | ✅ 采用                | 七个 Python 服务（六业务 + bff）+ BFF 为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭） |
+| 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                               |
+| 004 | Sandbox 用 microsandbox provider         | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                              |
+| 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                      |
+| 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                         |
+| 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                     |
+| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 仅加密存储、gateway 未消费（06 P0-6）                                                                                                       |
+| 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                           |
+| 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                                                                                  |
+| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                         |
 
 ---
 
@@ -72,7 +72,7 @@ Browser
 ├── www.beautymoon.com      Vercel Project: apps/site（Next.js 静态导出）
 └── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
 
-容器平台（Fly.io / Cloud Run / 自有云主机；Dockerfile 待补，见 roadmap R-36）
+容器平台（Fly.io / Cloud Run / 自有云主机；容器化已落地，见 deploy/，R-36 关闭）
 ├── agent-runtime（agent-orchestrator）  编排 + Tool Registry + Skill + MCP + run worker  :8002
 ├── llm-gateway             模型路由/降级/预算/usage 采集（API 上游）                  :8003
 ├── connector-service       连接器框架（当前无内置连接器）+ 凭证管理                    :8004
@@ -154,7 +154,7 @@ beauty-moon/
 
 **放置判据**：
 
-- `services/`：独立部署单元——有 Dockerfile（待补，R-36）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
+- `services/`：独立部署单元——有 Dockerfile（7 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
 - `apps/`：人直接使用的终端 UI；
 - `packages/`：被 import 的库（不部署）。
 
@@ -240,8 +240,8 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 - **身份**：account-service 维持自建 IdP（邮箱密码 + 计划补 Google/GitHub OAuth）；各服务沿用 JWT/JWKS 验签（同一个 `JwtVerifier`，不设后门；换 IdP 时各服务只改 `AUTH_ISSUER`）；
 - **会话**：BFF httpOnly Cookie；服务间短时 JWT；API Key 独立通道；
-- **Free 配额**：`usage_ledger` 记录 token / tool call / 存储；按月聚合 → 配额检查（402/429）；
-- **BYOK**：租户级 provider key（应用层加密，KMS 后置）；llm-gateway 按租户选 key；BYOK 不扣模型 credits；
+- **Free 配额**：`usage_ledger` 记录 token 用量（tool call / 存储维度待补，见 06 P0-1）；按月聚合 → 配额检查（402/429）；
+- **BYOK**：租户级 provider key 已应用层加密存储（KMS 后置），但 **llm-gateway 仍只用 `settings.api_key`、未按租户选 key**（06 P0-6）；BYOK 不扣模型 credits；
 - **订阅/支付**：Stripe 暂不做；先只支持 Free 档 + 手动开通内部档；付费自助后续补；
 - **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；租户/IP/Key 三级；Turnstile 后置；
 - **公开分享**：不可猜测 token、可撤销、可过期（后置）。
@@ -252,6 +252,8 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 8.1 Public API
 
+> 状态（2026-10-25）：以下为**目标态**。当前只有基础 runs/events/artifacts/usage 只读接口——runs 列表无 cursor、无幂等键/Webhook/SDK（见 06 §2.3 #8）。
+
 - `/v1`：conversations、runs、events(SSE)、artifacts、skills、tools、usage；
 - 鉴权：OAuth 2.1（第三方应用）或 API Key（服务端调用）；scope 最小化；
 - 幂等键、分页 cursor、统一错误 `{code,message,details}`、限流头；
@@ -260,7 +262,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 8.2 MCP
 
-- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略、审计；
+- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略已实现；**审计与提示注入过滤未实现**（见 06 §2.3 #9）；
 - **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
   - **HTTP 型**（M1 已落地）：orchestrator 进程内 httpx（Streamable HTTP），后续补 SSRF/出网代理加固；
   - **stdio 型**（P2 已落地）：命令在 workspace-service 沙箱内拉起，经 stdin/stdout JSON-RPC
@@ -272,7 +274,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
     「免确认执行」，默认关）。关：run 里逐次进确认闸、对话里只回喂「请改用任务」；
     开：run 不再确认、对话里可直接调用（对话本身没有审批流）——对齐
     操作策略「是配置，不是硬编码」；
-- **安全**：MCP 返回内容视为不可信数据；提示注入过滤；危险工具默认 confirm；凭证只存在服务端；
+- **安全**：MCP 返回内容视为不可信数据；提示注入过滤**待补**；危险工具默认 confirm；凭证只存在服务端；
   stdio 进程只允许在沙箱内运行，沙箱内 env 明文对用户代码可见（最小 scope + P4 凭据代理）；
 - **市场**：后续 MCP server 目录 + 一键安装（M4）。
 
@@ -283,7 +285,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 - 开放平台开发者可提交 Skill；与 MCP server 一起构成插件市场。
 - **P3 已落地（上传包）**：租户上传 SKILL.md zip（可选 skill.json entrypoint），
   对象存储 + 版本表（slug+version 不可变），run 创建时冻结版本快照；
-  有 entrypoint 的包在沙箱内执行（skill_run 工具，需确认），无 entrypoint 的包作为提示词技能；
+  有 entrypoint 的包在沙箱内执行（skill_run 工具，WRITE 级受控自动执行），无 entrypoint 的包作为提示词技能；
   Web Skills 页支持上传/版本查看/删除。开放平台的审核/灰度/计费仍在 M4。
 
 ---
@@ -291,7 +293,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 ## 9. 观测、质量与安全
 
 - **错误**：Sentry 官方（前端 + 服务），PII 脱敏后上报；
-- **日志**：结构化日志 + traceId（沿用 `common.logging`）；OTel/Langfuse 后置；
+- **日志**：结构化日志 + traceId（沿用 `common.logging`）；OTel 已接入（`packages/common/common/tracing.py`，OTLP + httpx 插桩，GenAI semconv 未做）；Langfuse 暂不做；
 - **观测规范**：字段字典、`request_id` 跨服务贯穿、访问/异常日志规格、Sentry 接入与告警草案见 [observability.md](./observability.md)；
 - **产品分析**：PostHog 后置（可用 Sentry + 自建事件表过渡）；
 - **Evals**：golden dataset + grader；PR 门禁（M4）；
@@ -311,14 +313,14 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 | prod    | Nginx SPA + Vercel(site)         | 容器平台 + BFF     | 云 PG + 云 Redis + DB artifact（对象存储后置） |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
-- 服务镜像：每服务 Dockerfile + 健康检查 + 迁移 job（部署前执行）——**当前全仓无 Dockerfile，待补（见 roadmap R-36）**；
+- 服务镜像：7 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
 - 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
 - 成本护栏：容器平台 scale-to-zero、Free 配额、预算告警。
 
 ### 10.2 从当前仓库迁移（M0 路径）
 
 1. ✅ 新增 `services/bff`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
-2. ⏳ 七个服务补 Dockerfile + 容器平台配置（SaaS）——**待补（R-36）**；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
+2. ✅ 七个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；容器平台（Fly/Cloud Run）部署配置待补；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
 3. ⏳ 接入云 PG/云 Redis URL——**M0-03，未启动**；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
 4. ⏳ account-service 补 Google/GitHub OAuth + BFF Cookie 会话（保留 token 模式开发兜底）——BFF Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
@@ -389,13 +391,18 @@ REDIS_URL=                      # 留空 = 进程内降级
 message → triage → (chat | run)
 run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自动放行) → running
      → awaiting_confirmation → completed / failed / blocked
+     任一非终态 ──cancel──> cancelled
 ```
 
-- 执行引擎 **LangGraph + PG checkpointer**（SQLite 开发用 InMemorySaver，现有代码已支持）；
-- run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行 → 心跳/重试；
-- 同一 run 只允许一个 worker（行锁 + lease），崩溃后按 checkpoint 恢复；
+> 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS`，默认 0=关闭，生产建议审批 86400s / 确认 600s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收。完整状态时间线（status_changed 事件 + step 投影）仍缺，见 07-run-step-model.md。
+
+- 执行引擎 **LangGraph + PG checkpointer**（生产 Postgres 用 `AsyncPostgresSaver`；SQLite 开发用 InMemorySaver）；
+- run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行；**心跳与 lease 续租未实现**（job 60s lease 无续租，多实例下存在重复领取风险，见 06 P0-3）；
+- 同一 run 同一时刻只由一个 worker 执行（领取时行锁；lease 无续租），崩溃后按 checkpoint 恢复；
 - **plan**：产出可编辑的 Markdown 计划 artifact（存对象存储，画布上直接改），不是 yes/no 门；
 - **confirm**：按需人审中断——装配工具里没有 DANGER 级（未信任 MCP、对外不可逆写）时计划生成后自动放行（`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`，默认 true），有 DANGER 工具才挂起；
+- **cancel**：`POST /api/v1/runs/{id}/cancel`（body `{reason?}`）——非终态均可取消，落 `cancelled` + `status_reason`、撤掉 queued job、写 `run.cancelled.v1` 事件；终态再取消回 409 `run.invalid_state`；
+- **中断超时**：`interrupts` sweeper 周期扫描 `awaiting_approval` / `awaiting_confirmation` 超时项，按 `run.interrupt.timeout.v1` 留痕后复用 reject/confirm job 走正常状态机（不直接改状态，保留 resume 语义）；确认超时同时补写 `run.confirmation.received.v1`；
 - **verify**：对 `acceptance_criteria` 逐项校验，不达标自动返工，上限 3 轮；
 - **deliver**：交付物注册（一个 run 多件：报告/技能产物/工具外链文件）；写操作按风险等级执行。
 
@@ -410,6 +417,8 @@ ToolSpec {
   cost: { tokens?, toolCalls?, sandboxMs? }
 }
 ```
+
+> 状态注记（2026-10-25）：上为**目标设计**；实现字段仅 `name/description/parameters/handler/risk`（`services/tools.py`），`inputSchema/outputSchema/scopes/executor/cost` 未落地；审批由 `approval_policies` 表控制（见 06 §2.3 #6）。
 
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
@@ -429,13 +438,13 @@ Skill {
 }
 ```
 
-首批：代码审查、仓库问答、补丁建议（内置 manifest，只读）；邮件摘要、回复草稿、分类去噪、邮件→周报、附件归档、日历排期。
+首批内置：代码审查、仓库问答、补丁建议（`skills/coding.repo-readonly-review.json`，只读）；邮件/日历类内置技能已于 2026-10 随连接器下线移除。
 
 P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/）：
 
 - 包在对象存储（workspace-service /v1/objects），DB 只存包/版本 + manifest/SKILL.md 快照；
 - 版本化：租户内 slug + version 不可变；run 创建时冻结版本与执行字段，后传新版本不影响旧 run；
-- 有 entrypoint 的包自动获得 skill_run 工具（受控写，在沙箱内自动执行、不打断审批），产物登记为 run 交付物；
+- 有 entrypoint 的包自动获得 skill_run 工具（WRITE 级受控写，在沙箱内自动执行、不打断审批；确认闸只拦 DANGER），产物登记为 run 交付物；
 - 当前仍不开放终端/预览；coding 类内置技能保持只读。
 
 ### 11.4 Sandbox（P1 底座 + P2 stdio MCP + P3 技能包执行已落地）
@@ -491,7 +500,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 
 ### 12.6 Langfuse 暂缓
 
-- 没有 prompt/response trace 与数据集回放；先用 Sentry + 结构化日志；
+- 没有 prompt/response trace 与数据集回放；当前用 Sentry + 结构化日志 + OTel span（GenAI semconv 未做）；
 - 评估/数据集能力后置到 M4。
 
 ### 12.7 静态托管与 BFF 边界
@@ -515,7 +524,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 | 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC                       |
 | BFF/代理 SSE 超时                        | 长流直连 runtime；BFF 仅短流，Nginx 关闭缓冲并放宽 read timeout               |
 | BYOK 密钥安全（无 KMS）                  | 应用层加密 + 密钥轮换 + 不落日志；KMS 后置                                    |
-| 无 Dockerfile/容器编排（M0-02 未启动）   | roadmap R-36 跟踪；M0-03 云接入依赖它                                         |
+| 云 PG/Redis 未接入（M0-03）              | roadmap R-36 跟踪；M0-03 云接入依赖它                                         |
 
 **待定**
 

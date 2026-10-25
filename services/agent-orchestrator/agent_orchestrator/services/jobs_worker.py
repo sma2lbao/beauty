@@ -62,6 +62,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             container.artifact_store,
             container.workspace_client,
             emit_approved=False,
+            from_job=True,
             **common,
         )
         return
@@ -76,7 +77,17 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             container.artifact_store,
             container.workspace_client,
             emit_confirmation=False,
+            from_job=True,
             **common,
+        )
+        return
+    if kind == "reject":
+        await runs_service.reject_run(
+            session,
+            graph,
+            job.tenant_id,
+            job.run_id,
+            str(payload.get("reason") or "已拒绝"),
         )
         return
     raise ValueError(f"unknown job kind: {kind}")

@@ -41,6 +41,7 @@ from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
+from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import GatewayClient, LLMClient
@@ -111,6 +112,7 @@ class AppContainer(ContainerAssemblyMixin):
         self.session_factory: async_sessionmaker[AsyncSession] | None = None
         self.run_graph = None
         self.worker_task: asyncio.Task[None] | None = None
+        self.interrupt_task: asyncio.Task[None] | None = None
         self.settings = settings
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
@@ -463,16 +465,27 @@ class AppContainer(ContainerAssemblyMixin):
             )
         if settings.jobs_enabled:
             self.worker_task = start_worker(self)
+            # 中断超时依赖 worker 执行 reject/confirm job,故仅在 jobs 开启时启动
+            if (
+                settings.approval_timeout_seconds > 0
+                or settings.confirmation_timeout_seconds > 0
+            ):
+                self.interrupt_task = start_sweeper(self)
 
     # ------------------------------------------------------------------ 关闭
 
     async def stop(self) -> None:
-        """严格逆序关闭:worker → outbox → 各客户端 → DB → checkpointer。"""
+        """严格逆序关闭:worker → 中断 sweeper → outbox → 客户端 → DB → checkpointer。"""
         if self.worker_task is not None:
             self.worker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.worker_task
             self.worker_task = None
+        if self.interrupt_task is not None:
+            self.interrupt_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.interrupt_task
+            self.interrupt_task = None
         for name, closer in reversed(self._closers):
             try:
                 await closer()
