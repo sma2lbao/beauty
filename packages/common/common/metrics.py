@@ -43,6 +43,11 @@ http_request_duration_seconds = Histogram(
     ("service", "route"),
     buckets=_DURATION_BUCKETS,
 )
+# ── 域指标(归属 AO / llm-gateway,非通用 HTTP 基础设施)────────────────────
+# W3-R-30 只做归属标注:这些 Counter/Histogram 只被 agent-orchestrator 与
+# llm-gateway 使用,却由 10 个服务共同继承 common。拆分到各自的
+# metrics 模块留到 W4 做(需同时挪动 AO services/runs.py、jobs_worker.py 与
+# llm-gateway completions.py 的调用点),此处不改逻辑。
 run_outcomes_total = Counter(
     "run_outcomes_total",
     "任务终态计数",

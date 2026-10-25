@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from common.documents import DocumentParseError, extract_text
 from common.errors import AppError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.models.conversations import Attachment, ChatMessage
+from agent_orchestrator.services.documents import DocumentParseError, extract_text
 from agent_orchestrator.repositories import AttachmentRepository, ConversationRepository
 
 MAX_FILENAME = 255

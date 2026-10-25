@@ -158,7 +158,7 @@ curl -s http://127.0.0.1:8002/mcp \
 - 支持 PDF(pypdf)、docx(python-docx)、xlsx(openpyxl)与文本类;上传时解析,单附件最多保留 20k 字符。
 - 聊天附件:直接对话会把当前消息附件文本附到 user content;任务路径会把附件文本拼进 run goal,plan/execute 可见。
 - 解析失败不拒绝附件,只记录 extraction_error;图片暂不 OCR。
-- 解析器在 packages/common/common/documents.py(common 测试覆盖 PDF/docx/xlsx/文本)。
+- 解析器在 services/agent-orchestrator/agent_orchestrator/services/documents.py(AO 测试覆盖 PDF/docx/xlsx/文本);解析依赖(pypdf/python-docx/openpyxl)只由 AO 声明,common 不再继承。
 
 ## 4.0 Job worker（run 队列）
 
