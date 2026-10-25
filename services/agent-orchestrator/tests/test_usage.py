@@ -65,6 +65,7 @@ def reporter():
             {
                 "path": request.url.path,
                 "secret": request.headers.get("X-Internal-Secret"),
+                "tenant": request.headers.get("X-Tenant-Id"),
                 "body": json.loads(request.content),
             }
         )
@@ -114,6 +115,7 @@ def test_run_reports_usage_once_per_model_call(tmp_path, reporter) -> None:
 
     assert [item["path"] for item in reporter] == ["/v1/usage/events"] * 4
     assert {item["secret"] for item in reporter} == {"s3cret"}
+    assert {item["tenant"] for item in reporter} == {"t-1"}
     for item in reporter:
         body = item["body"]
         assert body["run_id"] == run_id
@@ -214,6 +216,7 @@ def test_stream_chat_reports_usage_without_run(tmp_path, reporter) -> None:
         assert resp.status_code == 200
 
     assert [item["path"] for item in reporter] == ["/v1/usage/events"]
+    assert reporter[0]["tenant"] == "t-1"
     body = reporter[0]["body"]
     assert body["run_id"] is None
     assert body["model"] == "deepseek-chat"

@@ -115,7 +115,12 @@ class UsageReporter:
                 resp = await self._client.post(
                     "/v1/usage/events",
                     json=body,
-                    headers={SECRET_HEADER: self._secret},
+                    headers={
+                        SECRET_HEADER: self._secret,
+                        # account 的内部租户解析 = 共享密钥 + 显式 X-Tenant-Id;
+                        # 缺这个头会 401 auth.tenant_missing,用量永远落库失败。
+                        "X-Tenant-Id": tenant_id,
+                    },
                 )
             except Exception as exc:  # noqa: BLE001 - 上报是观测数据,任何异常都不能连带打死 run
                 # 不只是 httpx.HTTPError:异步传输层异常(事件循环关闭、
