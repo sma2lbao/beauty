@@ -1,6 +1,6 @@
 # beauty-moon 重构标准流程（Refactoring Playbook）
 
-> 版本 v1.0 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
+> 版本 v1.5 · 最近更新 2026-10-25 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
 > 适用范围：本仓库所有「结构重构」与「平台化补缺」类变更。产品功能开发不强制走本流程，但仍须遵守第 6 节门禁。
 > 单一真源：本文件。工程约定冲突以根 AGENTS.md 为准；流程冲突以本文件为准。
 
@@ -246,6 +246,7 @@ Definition of Done（每片）：
 - 指标前后对比表（第 7 节指标），退化超阈值即阻断；
 - 人工/独立 agent 走查关键路径；
 - 跨平台失败（只在 CI 红、本地绿）先定位实现语义差异（进程组/信号/管道/时间精度/文件系统延迟），再考虑放宽超时；W2 的 desktop 三例最终是「取消只杀 sh 不杀孙进程」而非 flake；
+- 环境差异排查（只在 `nx test` 红、直跑 `uv run pytest` 绿）：先比对任务环境——Nx 会注入项目 `.env` 与 target 的 env 前缀，`Settings(_env_file=None)` 挡不住；再怀疑并发/flake。W3 的 AO 两个 quota 用例连红两轮，实为 `.env` 让容器装配了真实 account URL、被禁网门禁拦下，不是并发干扰；
 - Lead 签字，任务板标记完成。
 
 ### 4.6 阶段 5：落地、观测与回滚
@@ -347,6 +348,8 @@ R-07 未落地期间，替代做法：按第 6.1 节命令矩阵逐条执行，�
 - **Node 下限对齐传递依赖**：engines/.nvmrc 不能拍脑袋（jsdom 30.1.2 要求 ^22.22.2 || ^24.15.0 || >=26、undici 8.11 要求 >=22.19）；Node 20 下 vitest 直接 `TypeError: webidl.util.markAsUncloneable is not a function`。改版本要同步 .nvmrc / package.json engines / README / AGENTS.md / docs/local-dev.md。
 - **alembic check 需要真 Postgres**：AO/account 迁移含 PG 专有 DDL，sqlite 会 `near "ALTER": syntax error`；docker service 的健康检查 `--health-cmd "pg_isready -U beauty"` 必须带引号，否则 docker 把 `-U` 当自己的 flag（`unknown shorthand flag: 'U' in -U`）。`alembic check` 能抓出模型/迁移漂移（W2 实测 account 索引、AO 唯一约束名），dev 的 create_all 看不见。
 - **本地 lint ≠ CI lint**：ruff isort 的 first-party 分组取决于 venv 里的包集合，本地共享 venv 与 CI 的单项目 venv 可能不同（W2 实测 bff/AO 各 2 处 I001）。推送后必须看 CI 结论。
+- **观测类调用必须 fail-open**：用量上报、指标、遥测这类旁路调用一律 `except Exception`（带 `# noqa: BLE001` 与注释），不能只捕 `httpx.HTTPError`——W3 实测 `UsageReporter.report` 只捕 HTTPError，禁网后异常从 `run_quota` 的 finally 逃出，把 run 直接判 failed。
+- **禁网门禁会改变异常形态**：`--disable-socket` 下传输层异常通常被 anyio 任务组包装成 `ExceptionGroup`（`unhandled errors in a TaskGroup`），按异常类型分支的捕获点会失效；排障时先看异常链最内层。
 
 ### 6.4 门禁分级
 
@@ -358,6 +361,8 @@ R-07 未落地期间，替代做法：按第 6.1 节命令矩阵逐条执行，�
 | L4 发布前     | 发布候选 | L3 + e2e 冒烟 + 回滚演练（至少验证 flag off）  | 是   |
 
 CI 落地前 L2–L4 由 Lead 在本地按矩阵执行并记录；CI 落地后 L1/L2 交给 CI。
+
+门禁命令的退出码必须显式采集：写成 `命令 > log 2>&1; echo EXIT=$?`，不要用 `命令 | grep`——管道退出码来自末端的 grep，W3 曾因此让一处 E501 lint 失败混过提交（branch 保护之外的本地门禁也同理）。
 
 CI 结论类证据必须附 run 链接 + 逐 job 结论表，不得只写「CI 通过」：W2 发现自 W0 起 ci.yml 有 24 处模板表达式被写坏成 `${D} ... }}`，python-lint/python-test/alembic-check 从未真正执行，而 W0/W1 的结论写的是「CI 已绿」。workflow 文件提交前必须过两道校验：`node -e "require('js-yaml').load(...)"` 解析 + 模板表达式首尾标记配对（`grep -c '${{'` 与 `}}` 相等）。
 
@@ -617,8 +622,8 @@ gap-2026-10/00-summary.md 已给出 P0/P1/P2 的**能力缺口**；本文件补�
 | W0   | 全仓 lint + 受影响项目 typecheck/test + scripts/refactor-gate.sh 自测 | 无退化；CI 6 job 全绿（或本地等价执行记录）                                                                 | 门禁是否可被 agent 一键执行    |
 | W1   | @beauty/web、@beauty/site lint/typecheck/test + build；bundle 记录    | 重复 request 包装 = 0；SSE reader 份数 = 1；改动文件 ≤400 行（chat.tsx 等高压文件留 W2）；bundle 基线已入库 | 边界规则是否拦住新违规         |
 | W2   | 上述 + Python service-kit 试点服务 lint/test + 全仓 TS 测试           | chat.tsx ≤ 400；console-ui 被两端引用；connector/knowledge 启动路径一致                                     | 拆分等价性（黄金路径人工核对） |
-| W3   | 全仓 lint/typecheck/test + AO 全量测试 + 迁移检查 + 黄金 run          | 最大 Python 文件 ≤ 500；graph 无反向依赖；覆盖率阈值生效                                                    | 高风险拆分的回滚演练           |
-| W4   | 发布候选全量门禁 + e2e 冒烟 + 回滚演练                                | 发布可重复；探针全绿                                                                                        | 运维可操作性                   |
+| W3   | 全仓 lint/typecheck/test + AO 全量测试 + 迁移检查 + 黄金 run          | 最大 Python 文件 ≤ 700（W4 收到 ≤ 500，拆两步）；graph 无反向依赖；覆盖率阈值生效（10 Python + 6 TS 单元）  | 高风险拆分的回滚演练           |
+| W4   | 发布候选全量门禁 + e2e 冒烟 + 回滚演练                                | 最大 Python 文件 ≤ 500；发布可重复；探针全绿                                                                | 运维可操作性                   |
 
 每波收口时，门禁表的每一项都要在验证报告中贴出「命令 + 输出摘要」，指标口径必须可 grep 或可实跑复现（例：request<T> 定义数、getReader 调用数）。无法复现的指标视为未验证。
 
@@ -1078,6 +1083,7 @@ scripts/refactor-gate.sh <项目>
 | v1.1 | 2026-10-24 | 独立复核后修订：测试基线改 697 用例/103 文件；统一「七阶段」；ADR 落点 docs/adr/；R-11/12/13/14/18/22/25/27/30/38 证据换为 file:line；RFC 模板补 owner/write scope/阈值/回滚演练；新增 §11.7–§11.11 模板与单 R checklist                                                                                                                                               |
 | v1.2 | 2026-10-24 | W0 执行后流程改进（复盘 retro/w0.md）：用例数一律以 -- --run 实跑为准（§11.7 注记）；改共享图结构的 RFC 须预列牵连的 targetDefaults（§4.1 动作补充）；实施者遇 RFC 冲突的既有行为先 git stash 对照留证（§4.4 步骤补充）；等待实施者超 20 分钟无落盘应主动询问（§3.4 补充）                                                                                             |
 | v1.3 | 2026-10-24 | W1 复盘 retro/w1.md：§10.3 末尾增「每波门禁须贴命令+输出摘要、指标可复现」；§11.11 checklist 增「规则类改动需探针验证命中」                                                                                                                                                                                                                                            |
+| v1.5 | 2026-10-25 | W3 复盘 retro/w3.md：§10.3 体量口径拆两步（W3 ≤700 / W4 ≤500）并补 W4 行；§4.5 增「nx test 与直跑结果不同先查注入环境」；§6.3 增「观测类调用用 except Exception」与「禁网门禁的 ExceptionGroup 形态」；§6.4 增「门禁命令退出码显式采集，禁用管道取码」                                                                                                                 |
 | v1.4 | 2026-10-25 | W2 复盘 retro/w2.md：§3.3 增「共享工作树禁 stash/reset/checkout 他人文件，演练只用 git apply -R --check」；§4.1 增「预算留 30% 给门禁既有债」；§4.5 基线更新为 pytest 724 / vitest 498 并增「跨平台失败先查实现语义」；§6.3 增 Node 下限对齐传递依赖、alembic check 需真 Postgres、本地 lint ≠ CI lint；§6.4 增「CI 结论须附 run 链接与 job 表 + workflow 需解析校验」 |
 
 ### 附录 C 参考

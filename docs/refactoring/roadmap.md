@@ -1,8 +1,8 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W3 进行中（RFC-004，2026-10-25 立项）；最近更新：2026-10-25 02:05 +08:00
-- 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md
+- 当前波次：W3 已收口（RFC-004，2026-10-25）；W4 待立项；最近更新：2026-10-25 09:25 +08:00
+- 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md，W3 见 docs/refactoring/retro/w3.md 与 docs/refactoring/verification/004-w3.md
 
 ## W0（已收口 · 7 项）
 
@@ -58,38 +58,64 @@
 - [x] 回滚演练 1 次（git apply -R --check，R-21 提交）
 - [x] 复盘写入 docs/refactoring/retro/w2.md；playbook v1.4 记录 5 条流程改进
 
+## W3（已收口 · 7 项拆 8 项 + 5 个配套修复）
+
+- 立项：0e2c41e（RFC-004 + baseline「W3 基线」+ roadmap 进行中）
+- 出口门禁（§10.3 W3，本波口径）：全仓 lint 16/16 ✅；TS 5 项目 498 例 ✅；Python 10 项目 727 例 ✅；黄金 run 9/9 ✅；docs 门禁 29 文件 0 失败 ✅；服务源码最大 690 行 ✅（W4 收到 ≤500）；graph 反向依赖 0 ✅；覆盖率阈值 10 Python + 6 TS 单元生效 ✅
+
+| ID    | 重构项                                   | 规模 | 风险 | 实施者       | 任务    | 状态    | 提交              |
+| ----- | ---------------------------------------- | ---- | ---- | ------------ | ------- | ------- | ----------------- |
+| R-27  | graph 去反向依赖 + delta 显式注入        | L    | 高   | audit-python | task-22 | ✅ done | b386fc6           |
+| R-28  | 拆 services/runs.py（1149 行）           | L    | 高   | w1-api       | task-23 | ✅ done | 7c01d81           |
+| R-29  | api 瘦身 + AppContainer + 分域           | L    | 高   | w1-api       | task-24 | ✅ done | 1c78bc9 + 1737a86 |
+| R-30  | common 瘦身（documents 移出 + 依赖隔离） | M    | 中   | lead         | task-25 | ✅ done | aa8d101 + c59e8c9 |
+| R-31a | Python 覆盖率 ratchet                    | M    | 中   | w0-ci        | task-26 | ✅ done | feef0d6           |
+| R-31b | TS 覆盖率 ratchet                        | M    | 中   | audit-ts     | task-27 | ✅ done | c8d1c66 + 8b1924d |
+| R-32  | pytest-socket 零网络硬门禁               | M    | 中   | w0-ci        | task-28 | ✅ done | c33d520           |
+| R-33  | 黄金 run 脚本                            | M    | 中   | audit-ops    | task-29 | ✅ done | c649737           |
+
+配套修复（非原计划，波次内出现）：7884737（CI 覆盖率接线）、7833bbf（gate 按项目收集覆盖率）、b78ef8c（AO 审批策略连接泄漏）、c8805ab（用量上报 fail-open）、8ff7545（web 懒加载断言超时）。
+
+偏差登记（RFC-004 §10）：D1 最大 Python 文件分两步（W3 ≤700 / W4 ≤500）；D2 R-30 只做 documents 移出与依赖隔离，metrics 域指标真实拆分顺延 W4；D3 R-32 与 R-33 顺序对调（黄金 run 先立，零网络最后开）；D4 R-31 拆 a/b；D5 cov-fail-under 比较 combined 而非 line；D6 documents.py 双职责；D7 run_execution 562 不拆；D8 golden_run.py 808 行为脚本例外；D9 黄金 run 落目录；D10/D11 顺带修连接泄漏与上报 fail-open。
+
+### W3 出口检查
+
+- [x] 门禁实测：lint 16/16、web 53/324、desktop 59、design 100、console-ui 6、site 9、pytest 727、golden 9/9、docs 0 失败、build chunk 292539B
+- [x] 指标全部达成（详见 docs/refactoring/verification/004-w3.md §2，17 行全 ✅）
+- [x] 回滚演练：R-30 用 git diff > patch + git apply -R --check（共享工作树禁 stash/reset --hard）
+- [x] 复盘写入 docs/refactoring/retro/w3.md；playbook v1.5 记录 4 条流程改进
+- [ ] CI 7 job 全绿（待 push 后回填 run 编号）
+
 ## 遗留项（跟踪）
 
-| 项                                                                   | 来源      | 跟踪                                                                     |
-| -------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------ |
-| dependabot 两个 PR 分支（b6b2dc6 / 33d7ec0）CI 红：分支上是旧 ci.yml | CI 修复   | 重基即可恢复；合并前确认 actions 版本与 Node 22 兼容                     |
-| AO / account / knowledge 的 migrations/env.py 未接 alembic_kit       | R-24 偏差 | W3 顺手项（78/70/71 行）                                                 |
-| AO conftest（420 行 / 386 例）未接 service_testkit                   | R-23 范围 | W3；AO 的 SKILL_PYTHON_IMAGE / MCP_STDIO_PYTHON_IMAGE 仍受本地 .env 影响 |
-| workspace-service test_sandbox_lifecycle 既有环境失败                | W0        | 本机 msb rootfs 缓存问题，非重构引入                                     |
-| 6 类 @nxlv/python executor 无 env 透传                               | R-01 降级 | 上游支持后回补；gate/CI 已兜底                                           |
-| common:build（uv export）在无 UV_CACHE_DIR 时失败                    | R-01      | gate/CI 均先导出，非阻塞                                                 |
-| ROADMAP：local-dev/README 里的 Node 版本口径已同步为 22.22.2         | W2        | 已完成                                                                   |
-| R-26 Button/Dialog 与旧控制台样式的视觉差异（34px/32rem 等）         | R-26 偏差 | W4 发布前人工核对截图                                                    |
-| vitest 子配置物理收敛（本轮仅文档化）                                | R-21 偏差 | 下波次                                                                   |
+| 项                                                                                               | 来源      | 跟踪                                                                     |
+| ------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------ |
+| dependabot 两个 PR 分支（b6b2dc6 / 33d7ec0）CI 红：分支上是旧 ci.yml                             | CI 修复   | 重基即可恢复；合并前确认 actions 版本与 Node 22 兼容                     |
+| AO / account / knowledge 的 migrations/env.py 未接 alembic_kit                                   | R-24 偏差 | W4（78/70/71 行）                                                        |
+| AO conftest（420 行 / 394 例）未接 service_testkit                                               | R-23 范围 | W4；AO 的 SKILL_PYTHON_IMAGE / MCP_STDIO_PYTHON_IMAGE 仍受本地 .env 影响 |
+| workspace-service test_sandbox_lifecycle 既有环境失败                                            | W0        | 本机 msb rootfs 缓存问题，非重构引入                                     |
+| 6 类 @nxlv/python executor 无 env 透传                                                           | R-01 降级 | 上游支持后回补；gate/CI 已兜底                                           |
+| common:build（uv export）在无 UV_CACHE_DIR 时失败                                                | R-01      | gate/CI 均先导出，非阻塞                                                 |
+| R-26 Button/Dialog 与旧控制台样式的视觉差异（34px/32rem 等）                                     | R-26 偏差 | W4 发布前人工核对截图                                                    |
+| vitest 子配置物理收敛（本轮仅文档化）                                                            | R-21 偏差 | W4 评估                                                                  |
+| 5 个 >500 行测试文件（AO test_skill_runner 995 / test_mcp_stdio 774 等）                         | W3 结构   | W4 按用例域拆                                                            |
+| llm-gateway 并行跑 litellm rust_bridge 循环导入 flake                                            | R-31a     | 单跑绿；W4 评估串行或隔离                                                |
+| 分支覆盖率（branch%）无阈值                                                                      | R-31a     | W4 评估                                                                  |
+| metrics 域指标归属（common.metrics 被 AO 与 llm-gateway 共用）                                   | D2        | W4 拆分                                                                  |
+| web 剩余 4 个 >400 行源文件（workspace-switcher 543 / message-list 528 / runs 448 / skills 432） | W2 结构   | W4 评估                                                                  |
+| alembic_kit 落地后 3 处 env.py 仍未接（AO/account/knowledge）                                    | R-24      | W4                                                                       |
 
-## W3（进行中 · 2026-10-25 立项，RFC-004）
+## W4 预排（未立项）
 
-- 立项：RFC-004 `docs/refactoring/rfc/004-w3.md`（范围 R-27..R-33，7 项）；基线 `docs/refactoring/baseline.md`「W3 基线」
-- 门禁（§10.3 W3，本波口径）：全仓 lint 16/16 + TS 测试 5 项目 + Python 10 项目 724 例 + 5 服务 alembic check + 黄金 run + docs 门禁；指标：最大 Python 文件 ≤700（W4 收到 ≤500）、graph 反向依赖 0、覆盖率阈值生效
-- 复盘重点：高风险拆分的回滚演练（R-30 用 patch 反向 apply --check）
+| ID   | 项                                         | 规模 | 风险 | 说明                                             |
+| ---- | ------------------------------------------ | ---- | ---- | ------------------------------------------------ |
+| R-34 | 发布流程：版本策略、CHANGELOG、nx release  | M    | 低   | 无 CHANGELOG；版本号 0.0.0/0.1.0/1.0.0 并存      |
+| R-35 | 依赖更新与安全扫描（Dependabot + audit）   | S    | 低   | 无更新策略、无安全扫描入 CI                      |
+| R-36 | 容器化：Dockerfile / compose / nginx TLS   | L    | 中   | 依赖 R-37；deploy/README 过时                    |
+| R-37 | 健康探针统一（/healthz 与 /readyz 全服务） | M    | 低   | /readyz 仅部分服务；nginx 不暴露探针             |
+| R-38 | 工作区卫生收口（生成物口径核对等）         | S    | 低   | 链接检查已由 R-16 完成，剩余归档规则与生成物核对 |
 
-| ID    | 重构项                                   | 规模 | 风险 | 实施者       | 任务    | 状态                 |
-| ----- | ---------------------------------------- | ---- | ---- | ------------ | ------- | -------------------- |
-| R-27  | graph 去反向依赖 + delta 显式注入        | L    | 高   | audit-python | task-22 | 进行中               |
-| R-28  | 拆 services/runs.py（1100）              | L    | 高   | w1-api       | task-23 | 待启动（依赖 R-27）  |
-| R-29  | api 瘦身 + AppContainer + 分域           | L    | 高   | w0-gate      | task-24 | 待启动（依赖 R-28）  |
-| R-30  | common 瘦身（documents 移出 + 依赖隔离） | M    | 中   | w0-docs      | task-25 | 进行中               |
-| R-31a | Python 覆盖率 ratchet                    | M    | 中   | w0-ci        | task-26 | 进行中               |
-| R-31b | TS 覆盖率 ratchet                        | M    | 中   | audit-ts     | task-27 | 进行中               |
-| R-32  | pytest-socket 零网络硬门禁               | M    | 中   | w0-ci        | task-28 | 待启动（依赖 R-31a） |
-| R-33  | 黄金 run 脚本                            | M    | 中   | audit-ops    | task-29 | 进行中               |
-
-偏差登记（RFC-004 §10）：① W3 最大 Python 文件目标 ≤700（playbook 写 500，拆两步）；② R-30 只做 documents 移出与依赖隔离，metrics 域指标真实拆分顺延 W4；③ R-32 与 R-33 顺序对调。
+另：W4 需承接 W3 遗留（≤500 行体量收紧、5 个超大测试文件、AO conftest 接 testkit、3 处 env.py 接 alembic_kit、分支覆盖率评估、metrics 归属）。
 
 ## 波次总览
 
@@ -98,5 +124,5 @@
 | W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24） |
 | W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
 | W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25） |
-| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | 进行中（2026-10-25）  |
-| W4   | 发布与运维（R-34..R-38）                               | 未开始                |
+| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | ✅ 收口（2026-10-25） |
+| W4   | 发布与运维（R-34..R-38）+ W3 遗留                      | 待立项                |
