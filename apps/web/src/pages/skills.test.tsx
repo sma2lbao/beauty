@@ -92,7 +92,7 @@ describe('SkillsPage', () => {
         title: '只读代码审查',
         description: '提炼关键信息',
         workspace_type: 'local',
-        tools: ['code_read_file'],
+        tools: ['glob', 'read', 'grep'],
         permissions: {},
         system_prompt: 'x',
         input_schema: {},
@@ -122,7 +122,9 @@ describe('SkillsPage', () => {
     renderPage();
 
     expect(await screen.findByText('只读代码审查')).toBeInTheDocument();
-    expect(screen.getByText('code_read_file')).toBeInTheDocument();
+    expect(screen.getByText('glob')).toBeInTheDocument();
+    expect(screen.getByText('read')).toBeInTheDocument();
+    expect(screen.getByText('grep')).toBeInTheDocument();
     expect(screen.getAllByText('用此技能开始')).toHaveLength(2);
     expect(screen.getByText('内置')).toBeInTheDocument();
     expect(screen.getByText('上传')).toBeInTheDocument();

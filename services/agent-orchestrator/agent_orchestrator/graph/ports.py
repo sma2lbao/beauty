@@ -20,6 +20,11 @@ from typing import Any, Protocol
 #: 工具风险值域里"危险操作"的取值(与 services.tools.ToolRisk.DANGER 对齐)。
 RISK_DANGER = "danger"
 
+#: 工具形态值域(与 common.tools.ToolKind 对齐):普通可执行 vs 需要用户输入。
+#: interaction 工具不能 execute,只能由 execute 节点识别后走 ask_gate 中断。
+KIND_FUNCTION = "function"
+KIND_INTERACTION = "interaction"
+
 
 class ApprovalDecision(StrEnum):
     """审批策略求值结果(graph 侧值域,services 侧枚举值与之对齐)。"""
@@ -83,6 +88,18 @@ class ToolkitPort(Protocol):
     def restricted(self, allowed: list[str]) -> ToolkitPort: ...
 
     def risk(self, name: str) -> str: ...
+
+    def kind(self, name: str) -> str:
+        """工具形态:KIND_FUNCTION 或 KIND_INTERACTION(未知名字回落 function)。"""
+        ...
+
+    def validate_call(self, name: str, arguments: str) -> list[str]:
+        """执行前参数预校验;返回错误描述列表,空列表表示通过。
+
+        交互工具(ask_question)在中断前必须校验参数——中断点之前零副作用,
+        参数非法时回 tool_error 给模型重试,而不是挂起一个坏问题。
+        """
+        ...
 
     def schemas(self) -> list[dict[str, Any]]: ...
 

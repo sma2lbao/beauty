@@ -29,11 +29,11 @@
 
 ### 1.2 分期
 
-| 期  | 内容                                                                                                                                            | 可回滚性                                   | 状态                         |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------- |
-| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具(`read/glob/grep/list_dir`)+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换 | `TOOL_SERVICE_ENABLED=false` 回旧路径      | 已落地(2026-10-25,`fde652a`) |
-| P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                               | 仅回退写工具注册(catalog feature 开关)     | 已落地(2026-10-25)           |
-| P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `documents`/`knowledge` 代理 + `code_*` alias 下线        | catalog 关 interaction 工具 + 前端隐藏卡片 | 未开始                       |
+| 期  | 内容                                                                                                                                                    | 可回滚性                                   | 状态                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------- |
+| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具(`read/glob/grep/list_dir`)+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换         | `TOOL_SERVICE_ENABLED=false` 回旧路径      | 已落地(2026-10-25,`fde652a`) |
+| P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                                       | 仅回退写工具注册(catalog feature 开关)     | 已落地(2026-10-25)           |
+| P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `search_knowledge` 代理（`documents` 延后） + `code_*` alias 下线 | catalog 关 interaction 工具 + 前端隐藏卡片 | 已落地(2026-10-25)           |
 
 ## 2. 背景
 
@@ -745,17 +745,16 @@ CATALOG: tuple[ToolDescriptor, ...] = (
 
 约束（模型契约）：一次 assistant 回合**只能调用一次 ask_question 且不得与其他工具混用**；问题 ≤ 4 个、每题选项 2–4 个；`header` 是卡片标题短标签；`allow_custom=true` 表示允许用户自由输入（对齐 Claude Code 的 "Other"）。
 
-### 7.8 alias 与参数归一（兼容期）
+### 7.8 参数归一（`code_*` alias 已下线）
 
-| 旧名（存量引用）   | 新名    | 参数归一规则                                                                                                                  | 备注                                                                                                                      |
-| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `code_read_file`   | `read`  | `path`/`offset`/`limit` 同名直传；旧 `limit` 上限 400 → 新上限 2000                                                           | 技能包 `skills/coding.repo-readonly-review.json:7-11` 在用                                                                |
-| `code_write_file`  | `write` | `path`/`content` 同名；旧无 overwrite（总是覆盖）→ 显式 `overwrite=true`                                                      | run 快照 `Run.skill_tools` 可能带旧名                                                                                     |
-| `code_edit_file`   | `edit`  | `path`/`old_string`/`new_string` 同名                                                                                         | 同上                                                                                                                      |
-| `code_search_text` | `grep`  | 旧 `pattern`/`path` 同名；旧无 glob/max_results → 默认值                                                                      | 同上                                                                                                                      |
-| `code_list_files`  | `glob`  | 旧 `pattern` 语义为 `os.walk` 文件名过滤 → 映射为 `glob` 的 `**/*{pattern}*` 需显式适配，或直接建议模型改用 `glob`/`list_dir` | 语义有差异，**不做隐式猜测**：alias 解析到 `glob` 但要求 `pattern` 含通配符，否则 `tool.invalid_args` 提示改用 `list_dir` |
+P0/P1 兼容期曾把 5 个 `code_*` 旧名映射到裸名（`code_read_file→read`、`code_write_file→write`、`code_edit_file→edit`、`code_search_text→grep`、`code_list_files→glob`）。**P2 收口已删除这些映射**：
 
-alias 只保留**一个发布周期**；`GET /v1/tools` 默认不返回 alias 工具（只返回主名 + descriptor.aliases），orchestrator 装配时按主名去重。
+| 位置                                                                    | 处理                                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------ |
+| `services/tool-service/tool_service/services/catalog.py`                | `ALIASES` 清空、catalog 版本升到 `2026-10-25.p3` |
+| `services/agent-orchestrator/agent_orchestrator/services/code_tools.py` | 整个文件与测试删除，旧进程内文件工具不再存在     |
+
+保留的通用机制：`ToolDescriptor.aliases` 字段与 `find_descriptor()` 的 alias 解析仍保留（供未来工具改名时做版本迁移），但当前 catalog 未登记任何 alias；orchestrator 装配时按主名去重。历史 run 的 `Run.skill_tools` 快照里若含旧名，仅作为历史记录展示，不再解析执行。
 
 ### 7.9 限额与常量（实现时集中在 `tool_service/constants.py`）
 
@@ -926,7 +925,7 @@ execute ──route_after_execute──┬─ pending_writes 非空 ──▶ co
 | ------------------ | ---------------- | ----------------------------------------------------------------------- |
 | `pending_question` | `dict` 或 `None` | `{question_id, questions, allow_custom, created_at}`，无提问时为 `None` |
 | `question_answers` | `list[dict]`     | add reducer；每次回答 `{question_id, answers:[{index,labels,custom}]}`  |
-| `ask_cycles`       | `list[str]`      | add reducer；用于 `MAX_ASK_CYCLES=3` 限制                               |
+| `ask_cycles`       | `int`            | add reducer；每轮提问 +1，用于 `MAX_ASK_CYCLES=3` 限制                  |
 
 ### 10.3 执行流程
 
@@ -969,13 +968,13 @@ POST /runs/{run_id}/answer {question_id, answers:[{index:0, labels:["A"], custom
 
 ### 10.4 事件
 
-| 事件                        | 何时              | payload                                                  |
-| --------------------------- | ----------------- | -------------------------------------------------------- |
-| `run.question.required.v1`  | 图中断在 ask_gate | `{question_id, questions:[…], allow_custom, expires_at}` |
-| `run.question.answered.v1`  | answer API 接受后 | `{question_id, answers, action, answered_by?}`           |
-| `run.question.timed_out.v1` | sweeper 判超时    | `{question_id, expires_at}`                              |
+| 事件                       | 何时              | payload                                                  |
+| -------------------------- | ----------------- | -------------------------------------------------------- |
+| `run.question.required.v1` | 图中断在 ask_gate | `{question_id, questions:[…], allow_custom, expires_at}` |
+| `run.question.answered.v1` | answer API 接受后 | `{question_id, answers, action, answered_by?}`           |
+| `run.question.timeout.v1`  | sweeper 判超时    | `{question_id, expires_at, answered_by:"system"}`        |
 
-命名遵循 `<域>.<对象>.<动作>.v1`（`packages/events/events/envelope.py:21` 的约束）；**v1 不建问题表**——问题载荷只落 `run_events`，查「当前挂起问题」用 `RunEventRepository.latest_of_type(run_id, "run.question.required.v1")` + run 状态过滤（现有事件仓储已有 `next_seq`/`list_for_run`/`latest_of_type` 的同类能力）。
+命名遵循 `<域>.<对象>.<动作>.v1`：事件类型正则**不允许下划线**（`packages/events/events/envelope.py:21`），因此超时事件是 `run.question.timeout.v1`（同构于既有 `run.interrupt.timeout.v1`），不是 `timed_out`。超时路径同时补 `run.question.answered.v1`（`action=decline, reason=timeout, answered_by=system`）与 `run.interrupt.timeout.v1`（`{kind:"question", …}`）；**v1 不建问题表**——问题载荷只落 `run_events`，查「当前挂起问题」用 `RunEventRepository.latest_of_type(run_id, "run.question.required.v1")` + run 状态过滤（现有事件仓储已有 `next_seq`/`list_for_run`/`latest_of_type` 的同类能力）。
 
 ### 10.5 API 契约
 
@@ -1008,19 +1007,19 @@ Content-Type: application/json
 ### 10.6 超时与 sweeper
 
 - 新配置：`AGENT_ORCHESTRATOR__QUESTION_TIMEOUT_SECONDS`，**默认 900（开启）**。理由：提问无人回答会让 run 永久挂起、checkpoint 堆积；审批/确认默认 0 是因为它们面向运维动作，与人机问答的暴露面不同。设为 0 可关闭（与现有约定一致）。
-- 复用 `services/interrupts.py` 的 sweeper：`list_stale_interrupts` 增加「question 类型」查询（按 `AWAITING_INPUT` + 事件时间 + `question_timeout_seconds`），超时后入队 `answer` job（action=decline, reason=timeout），由 `jobs_worker` 执行 resume；事件补 `run.question.timed_out.v1`。
+- 复用 `services/interrupts.py` 的 sweeper：`list_stale_interrupts` 增加「question 类型」查询（按 `AWAITING_INPUT` + 事件时间 + `question_timeout_seconds`），超时后依次落 `run.interrupt.timeout.v1`（`{kind:"question", timeout_seconds, reason}`）与 `run.question.timeout.v1`、`run.question.answered.v1`（decline/timeout/system），再入队 `answer` job（action=decline, reason=timeout），由 `jobs_worker` 以 `emit_answered=False, from_job=True` 执行 resume（不重复落 answered 事件）。
 - 与现有审批超时共用 `INTERRUPT_SWEEP_INTERVAL_SECONDS`，不新增调度器。
 
 ### 10.7 前端
 
-| 层   | 改动                                                                                                                                                                                               |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 类型 | `RunStatus` 联合类型加 `awaiting_input`（`apps/web/src/lib/runs-api.ts` 的类型定义区）；`Run.question` 可选字段                                                                                    |
-| 事件 | `run.question.required.v1`/`answered.v1` 翻译为 UI 状态（`apps/web/src/lib/presentation/events.ts` 现有映射表扩展）                                                                                |
-| 组件 | 新增 `apps/web/src/features/chat/question-card.tsx`（radio/checkbox + 自定义输入 + 提交/跳过；React 自动转义，**不渲染 markdown/HTML**）；插入消息流 `message-list.tsx:291-308` 的审批卡片相邻位置 |
-| 数据 | `runs-api.ts` 加 `getPendingQuestion(runId)` 与 `answerQuestion(runId, payload)`；`query-keys.ts` 加 `question(runId)`；`use-chat-queries.ts`/`use-chat-actions.ts` 加对应 hook/action             |
-| 文案 | `presentation/run.ts` 加 `awaiting_input: "等待你的回答"`；看板筛选与运行详情抽屉同步                                                                                                              |
-| 降级 | SSE 不新增事件类型（`run.question.required.v1` 走现有 run 事件流 → query invalidation 拉卡片），避免改 `conversations-api.ts` 的帧协议                                                             |
+| 层   | 改动                                                                                                                                                                                                                                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 类型 | `RunStatus` 联合类型加 `awaiting_input`（`apps/web/src/lib/runs-api.ts` 的类型定义区）；`Run.question` 可选字段                                                                                                                                                                        |
+| 事件 | `run.question.required.v1`/`answered.v1`/`timeout.v1` 翻译为 UI 状态（`presentation/events.ts` 事件行文案；`presentation/question.ts` 的 `questionStateFrom` 按事件序列推导卡片状态）                                                                                                  |
+| 组件 | 新增 `apps/web/src/features/chat/question-card.tsx`（radio/checkbox + 自定义输入 + 提交/跳过；React 自动转义，**不渲染 markdown/HTML**）；挂在消息流审批卡片之后（`message-list.tsx`）                                                                                                 |
+| 数据 | `runs-api.answerRunQuestion(runId, body)` 提交答案（`POST /api/v1/runs/{runId}/answer`）；不新增 GET，挂起问题由 `use-chat-queries.ts` 从 run 事件 + run 状态派生（`presentation/question.ts` 的 `parseRunQuestion`/`questionStateFrom`）；`use-chat-actions.ts` 提供 `answerQuestion` |
+| 文案 | `presentation/run.ts` 加 `awaiting_input: "等待你的回答"`；看板筛选与运行详情抽屉同步                                                                                                                                                                                                  |
+| 降级 | SSE 不新增事件类型（`run.question.required.v1` 走现有 run 事件流 → query invalidation 拉卡片），避免改 `conversations-api.ts` 的帧协议                                                                                                                                                 |
 
 ### 10.8 安全
 
@@ -1180,13 +1179,13 @@ CREATE INDEX ix_file_reads_run ON file_reads (tenant_id, run_id, path);
 
 ### 13.1 里程碑与依赖关系
 
-| 里程碑                     | 内容                                                                                     | 依赖 | 可演示结果                                         | 回滚开关                              |
-| -------------------------- | ---------------------------------------------------------------------------------------- | ---- | -------------------------------------------------- | ------------------------------------- |
-| **P0-a** 契约与服务骨架    | common.tools DTO、tool-service 骨架、catalog、tool_calls 表                              | 无   | curl :8008/v1/tools 返回目录；/healthz、/readyz 通 | 服务不启动即回滚（无调用方）          |
-| **P0-b** 只读竖切          | workspace scope_key 与 :ensure、沙箱执行器、read/glob/grep/list_dir、alias               | P0-a | curl 在沙箱里读仓库文件并拿到带行号结果            | TOOL_SERVICE_ENABLED=false            |
-| **P0-c** orchestrator 切换 | ToolClient + RemoteToolkit + 装配开关 + chat 只读过滤 + \_record 修复                    | P0-b | 任务与对话都走新服务，run.tool.called.v1 不变      | 同上（一键回旧路径）                  |
-| **P1** 受控写              | write/edit、风险修正、两阶段确认对接、expected_sha256 与读前置、per-run 配额、审计字段   | P0-c | 写工具必须经审批闸；approved=false 直连被 403      | catalog 移除写工具注册                |
-| **P2** 交互与收口          | ask*question 全栈（状态机/图/API/前端）、documents 与 knowledge 代理、code*\* alias 下线 | P1   | run 中途弹提问卡片，回答后继续执行                 | catalog 关 interaction + 前端隐藏卡片 |
+| 里程碑                     | 内容                                                                                                                             | 依赖 | 可演示结果                                         | 回滚开关                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------- | ------------------------------------- |
+| **P0-a** 契约与服务骨架    | common.tools DTO、tool-service 骨架、catalog、tool_calls 表                                                                      | 无   | curl :8008/v1/tools 返回目录；/healthz、/readyz 通 | 服务不启动即回滚（无调用方）          |
+| **P0-b** 只读竖切          | workspace scope_key 与 :ensure、沙箱执行器、read/glob/grep/list_dir、alias                                                       | P0-a | curl 在沙箱里读仓库文件并拿到带行号结果            | TOOL_SERVICE_ENABLED=false            |
+| **P0-c** orchestrator 切换 | ToolClient + RemoteToolkit + 装配开关 + chat 只读过滤 + `_record` 修复                                                           | P0-b | 任务与对话都走新服务，run.tool.called.v1 不变      | 同上（一键回旧路径）                  |
+| **P1** 受控写              | write/edit、风险修正、两阶段确认对接、expected_sha256 与读前置、per-run 配额、审计字段                                           | P0-c | 写工具必须经审批闸；approved=false 直连被 403      | catalog 移除写工具注册                |
+| **P2** 交互与收口          | `ask_question` 全栈（状态机/图/API/前端）、`search_knowledge` 代理（`documents` 延后）、`code_*` alias 与旧 `code_tools.py` 下线 | P1   | run 中途弹提问卡片，回答后继续执行                 | catalog 关 interaction + 前端隐藏卡片 |
 
 关键路径：common.tools → tool-service 骨架 → 沙箱执行器 → workspace :ensure → orchestrator ToolClient → 切换。workspace-service 改造（13.2 第 12 步）与 common 下沉（第 8 步）可并行；P2 的前端卡片可与 ask_gate 后端并行。
 
@@ -1428,7 +1427,7 @@ helper 的 6 个脚本（read、write、edit、glob、grep、list_dir）是最�
 | nx.json                   | release.projects（:51-64）加 "!tool-service"                                                                                                                                                                                  |
 | AGENTS.md                 | :81 覆盖率阈值清单加 tool-service 82；:134 的 Python 项目枚举加 tool-service；常用命令加 npx nx run tool-service:serve                                                                                                        |
 | docs/architecture.md      | 服务表（:104-115）加一行；:112 的 agent-orchestrator 职责删去 tool registry；:123 的拆分节奏补注「tool-service 已按 docs/design/tool-service.md 拆出」；:409-426 的 ToolSpec 扩为 v2（对齐 §6.1 的 ToolDescriptor）并注明真源 |
-| docs/local-dev.md         | 端口表（:40-46）加 tool-service 8008（/healthz）；:80 的技能工具白名单示例改为新名（search*knowledge、read、glob、grep），注明旧 code*\* 仍可用一个发布周期                                                                   |
+| docs/local-dev.md         | 端口表（:40-46）加 tool-service 8008（/healthz）；§3.8 按 P2 收口更新（新名工具面、`ask_question` 流程、旧 `code_*`/`CODE_WORKSPACE_ROOTS` 已删除）                                                                           |
 | docs/README.md            | 当前文档表插一行：docs/design/tool-service.md、内置工具服务设计（catalog/执行/审计/ask_question）、Lead、工具能力或契约变化时                                                                                                 |
 | docs/roadmap.md           | 「当前活跃」加一条「内置工具服务拆分」，链接本文档，写清分期与开关                                                                                                                                                            |
 
@@ -1485,18 +1484,20 @@ P0 期间的兼容红线：graph 节点与 run 事件不动；ToolkitPort 契约
 
 按 §10 的设计，这是本设计里唯一**跨前端、orchestrator 图状态、事件、超时 sweeper** 的横向切片，因此单独一期。
 
-| ID    | 任务                                          | 主要文件                                                                                           | 验收                                                                                                      |
-| ----- | --------------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| P2-01 | catalog 注册 ask_question（kind=interaction） | catalog.py、api/v1/tools.py                                                                        | 执行请求只返回「需要 orchestrator 处理」，绝不自己回答；未知参数报错                                      |
-| P2-02 | 图状态与 ask_gate 节点                        | graph/state.py（pending_question、question_answers、ask_cycles）、graph/nodes.py、graph/builder.py | 一次 assistant 回合提问独占；混用其他工具全部回 tool_error；MAX_ASK_CYCLES=3                              |
-| P2-03 | 状态机与迁移                                  | schemas/runs.py（AWAITING_INPUT）、services/run_lifecycle.py（TRANSITIONS.answer、cancel 集合）    | 非法迁移 409；cancel 可从 awaiting_input 生效                                                             |
-| P2-04 | interrupt 分流与事件                          | services/run_execution_approvals.py（\_apply_graph_result 按 payload.kind 分流）                   | run.question.required.v1 落库；SSE 不新增帧，前端靠事件触发查询                                           |
-| P2-05 | answer API 与编排                             | api/v1/run_actions.py、services/run_execution_answers.py（仿 confirm_run）                         | POST /runs/{id}/answer：状态机校验 + question_id 匹配（旧 id → 409 run.question_mismatch）+ from_job 幂等 |
-| P2-06 | 超时与 sweeper                                | services/interrupts.py、services/jobs_worker.py、core/config.py                                    | question_timeout_seconds=900 默认开启；超时事件 run.question.timed_out.v1 + 固定回喂文案                  |
-| P2-07 | 前端提问卡片                                  | features/chat/question-card.tsx、message-list.tsx、lib/runs-api.ts、presentation/run.ts            | 卡片可单选/多选/自定义输入；提交后卡片锁定；awaiting_input 有文案                                         |
-| P2-08 | chat 模式过滤 interaction 工具                | services/chat.py                                                                                   | chat 装配时不注册 ask_question，模型改用正文提问                                                          |
-| P2-09 | documents/knowledge 代理与 alias 下线         | catalog.py、executors/http.py、旧 code_tools.py                                                    | search*knowledge/list_documents/read_document 走 http 执行器；code*\* alias 删除且全仓无残留引用          |
-| P2-10 | 验收与收口                                    | 全栈 + 文档                                                                                        | E2E：提问→卡片→回答→继续执行→完成；architecture/AGENTS/local-dev/roadmap 与本文档同步                     |
+| ID    | 任务                                          | 主要文件                                                                                           | 验收                                                                                                                          |
+| ----- | --------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| P2-01 | catalog 注册 ask_question（kind=interaction） | catalog.py、api/v1/tools.py                                                                        | 执行请求只返回「需要 orchestrator 处理」，绝不自己回答；未知参数报错                                                          |
+| P2-02 | 图状态与 ask_gate 节点                        | graph/state.py（pending_question、question_answers、ask_cycles）、graph/nodes.py、graph/builder.py | 一次 assistant 回合提问独占；混用其他工具全部回 tool_error；MAX_ASK_CYCLES=3                                                  |
+| P2-03 | 状态机与迁移                                  | schemas/runs.py（AWAITING_INPUT）、services/run_lifecycle.py（TRANSITIONS.answer、cancel 集合）    | 非法迁移 409；cancel 可从 awaiting_input 生效                                                                                 |
+| P2-04 | interrupt 分流与事件                          | services/run_execution_approvals.py（\_apply_graph_result 按 payload.kind 分流）                   | run.question.required.v1 落库；SSE 不新增帧，前端靠事件触发查询                                                               |
+| P2-05 | answer API 与编排                             | api/v1/run_actions.py、services/run_execution_answers.py（仿 confirm_run）                         | POST /runs/{id}/answer：状态机校验 + question_id 匹配（旧 id → 409 run.question_mismatch）+ from_job 幂等                     |
+| P2-06 | 超时与 sweeper                                | services/interrupts.py、services/jobs_worker.py、core/config.py                                    | question_timeout_seconds=900 默认开启；超时事件 run.question.timeout.v1 + 固定回喂文案                                        |
+| P2-07 | 前端提问卡片                                  | features/chat/question-card.tsx、message-list.tsx、lib/runs-api.ts、presentation/run.ts            | 卡片可单选/多选/自定义输入；提交后卡片锁定；awaiting_input 有文案                                                             |
+| P2-08 | chat 模式过滤 interaction 工具                | services/chat.py                                                                                   | chat 装配时不注册 ask_question，模型改用正文提问                                                                              |
+| P2-09 | knowledge 代理与 alias 下线                   | catalog.py、executors/http.py、旧 code_tools.py                                                    | `search_knowledge` 走 http 执行器（`list_documents`/`read_document` 随对象存储波次再迁）；`code_*` alias 删除且全仓无残留引用 |
+| P2-10 | 验收与收口                                    | 全栈 + 文档                                                                                        | E2E：提问→卡片→回答→继续执行→完成；architecture/AGENTS/local-dev/roadmap 与本文档同步                                         |
+
+状态（2026-10-25）：P2-01…P2-09 已落地；P2-10 的验收随 P2 收口完成，E2E 与文档同步见 §14.6 与 §15。
 
 ### 13.6 每期完成定义（DoD）
 
@@ -1618,23 +1619,38 @@ S14 的样本集是本设计对「提示注入」这一类的可回归承诺：�
 19. 运维可在 GET /v1/tool-calls?run_id= 上定位一次 run 的全部工具调用（含失败与耗时）；
 20. 开关演练：在 dev 上把 TOOL_SERVICE_ENABLED 从 true 切到 false，同一任务重跑成功。
 
+### 14.6 实施验证记录（2026-10-25）
+
+| 范围               | 命令                                                                                           | 结果                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------ |
+| tool-service       | `cd services/tool-service && uv run pytest -q`                                                 | 199 passed，覆盖率 87.54%（阈值 82） |
+| agent-orchestrator | `cd services/agent-orchestrator && uv run pytest -q`                                           | 492 passed，覆盖率 84.01%（阈值 82） |
+| packages/common    | `cd packages/common && uv run pytest -q`                                                       | 146 passed，覆盖率 88.45%（阈值 84） |
+| apps/web           | `npx nx typecheck/lint/test @beauty/web -- --run`                                              | 58 files / 363 tests passed          |
+| 迁移               | `uv run alembic check`（tool-service、workspace-service）                                      | No new upgrade operations detected   |
+| 仓库门禁           | `scripts/check-docs.sh`、`check-workspace.sh`、`check-versions.sh`、compose config、golden-run | 全绿（9/9 阶段）                     |
+
+（数字为 P2 W1 结束时的快照；W2 收口后的重跑结果以 CI 为准。）
+
 ## 15. 迁移与兼容
 
 本设计的兼容面有四处：工具名、结果信封、事件 payload、数据。逐项给出「改什么 / 谁受影响 / 怎么过渡 / 怎么验证」。
 
-### 15.1 工具名：裸名 + 一个发布周期的 alias
+### 15.1 工具名：裸名已全仓统一（P2 收口完成）
 
-新名为 catalog 主名（read/write/edit/glob/grep/list*dir/ask_question）；旧 code*\* 以 alias 形式在 tool-service 内解析（§7.8），orchestrator 侧不需要改技能包或历史快照。存量引用点（必须逐一验证）：
+新名为 catalog 主名（`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`/`search_knowledge`）。P2 收口时把存量引用全部切到新名并删除旧实现，原「保留一个发布周期的 alias」过渡方案随之下线（§7.8）：
 
-| 引用点                | 现状                                                                                                                                           | 过渡方式                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| 技能包清单            | services/agent-orchestrator/agent_orchestrator/skills/coding.repo-readonly-review.json:7-11 用 code_list_files/code_read_file/code_search_text | 依赖 alias，不改文件；P2 末统一切新名        |
-| run 快照              | Run.skill_tools（services/run_lifecycle.py:101 冻结）                                                                                          | 历史 run 里的旧名由 alias 解析，不迁移数据   |
-| MCP Server 对外工具面 | services/mcp*server.py:134-152、:247-256 过滤 code* 前缀                                                                                       | P2 改为按 catalog 生成；过渡期保持只读白名单 |
-| 桌面端本地模式        | apps/desktop/src/main/local/agent.ts:209 的 LOCAL_TOOL_NAMES                                                                                   | P3 对齐；本期不动                            |
-| 文档与测试            | docs/local-dev.md:80、services/agent-orchestrator/tests/test_code_tools.py:26-93                                                               | 文档随 P2 改；测试在旧实现删除时一起删       |
+| 引用点                | 收口结果                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 技能包清单            | `skills/coding.repo-readonly-review.json` 的 tools 改为 `glob`/`read`/`grep`，auto map 同步                                      |
+| run 快照              | 历史 `Run.skill_tools` 经 `services/tool_names.py` 的 `LEGACY_TOOL_NAMES`（5 条）在读取边界归一，P3 删除；历史事件保留原样不回填 |
+| MCP Server 对外工具面 | `services/mcp_server.py` 改为按 catalog 的「`kind=function` 且 `risk=read`」生成只读白名单，删除 `code_` 前缀特判                |
+| 桌面端本地模式        | `apps/desktop/src/main/local/agent.ts:209` 的 `LOCAL_TOOL_NAMES` 仍是上代命名，P3 与 tool-service 对齐（本期不动）               |
+| 文档与测试            | `docs/local-dev.md` 已改新名；`services/agent-orchestrator/tests/test_code_tools.py` 随旧实现删除                                |
 
-alias 下线条件（P2 末）：全仓 grep 旧名零命中（除归档文档）、技能包全部更新、历史 run 已过保留期。删除时同步删 catalog 的 ALIASES 与 §7.8 表格。
+兼容范围：plan/retry/resume 三条会重建图 state 的路径都已归一（`run_execution.py` 的 `_allowed_tools_from_snapshot`，`:110`）。例外是**部署前已停在审批/确认闸的 run**：恢复走 `Command(resume=...)`，不重建 state，checkpoint 里仍是旧名，白名单会解析为空工具箱——不报错、run 仍能跑但没有文件工具。接受为已知限制（这类在途 run 极少，可 cancel 后重发；不为此读 checkpoint 反向归一，成本高于收益）。
+
+验收口径：全仓检索旧名（`code_read_file` 等）只应命中 `docs/` 下的历史说明与 `services/tool_names.py` 兼容层。
 
 ### 15.2 结果信封：新旧双兼容
 
@@ -1678,19 +1694,20 @@ run.tool.called.v1 的 type 与语义不变（仍由 orchestrator 在 \_apply_gr
 
 三层，从快到慢：
 
-1. **秒级**：AGENT_ORCHESTRATOR\_\_TOOL_SERVICE_ENABLED=false，orchestrator 回到进程内 ToolRegistry（旧代码保留一个发布周期，不删 code_tools.py）；
+1. **秒级**：`AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=false` → orchestrator 不再装配 `RemoteToolkit`，回到进程内 `ToolRegistry`；P2 收口后进程内只剩 `list_documents`/`read_document`/`search_knowledge` 与 MCP/skill 工具，文件类工具直接不可用（不再有本机直读兜底，这是 D6 的取舍）。若要恢复文件工具，走第 3 层镜像回退。
 2. **分钟级**：catalog 里把某工具 enabled=False 或移除注册项（服务重启即可），或把 TOOL\_\_HTTP_EXECUTOR_ENABLED=false 断开代理；
 3. **小时级**：镜像回退到上一版 tag；数据库无需回滚（新表/新列可留），仅当确认要清理时才跑 alembic downgrade（先备份）。
 
 回滚演练是 P0 验收的一部分（§14.5 第 20 条）：在 dev 上用同一任务对比两条路径的 run 事件序列。
 
-### 15.7 下线清单（P2 收口时）
+### 15.7 下线清单（P2 收口，已执行）
 
-- 删除 services/agent-orchestrator/agent_orchestrator/services/code_tools.py 与对应测试；
-- 删除 graph/nodes.py 里 \_load_toolkit 对 code_roots 的装配与 core/config.py 的 code_workspace_roots；
-- 删除 catalog 的 ALIASES 与 §7.8、docs/local-dev.md:80 的旧名示例；
-- 删除 AGENT_ORCHESTRATOR\_\_TOOLS_ENABLED 之外的过渡开关（保留 TOOL_SERVICE_ENABLED 作为长期能力开关）；
-- 更新 docs/architecture.md §11.2 与本文档状态标记（把「目标态」改为「已实施」）。
+- ✅ 删除 `services/agent-orchestrator/agent_orchestrator/services/code_tools.py` 与 `tests/test_code_tools.py`；
+- ✅ 删除 `build_tools` 的 `code_roots` 装配、`core/config.py` 的 `code_workspace_roots` 与 `core/container.py` 的 `code_roots=`；
+- ✅ 删除 tool-service catalog 的 `ALIASES`（保留 `ToolDescriptor.aliases` 通用机制），§7.8 改为下线记录；
+- ✅ `docs/local-dev.md` 的旧名示例与 `CODE_WORKSPACE_ROOTS` 说明改为 tool-service 路径；
+- ✅ 更新 `docs/architecture.md` §11.2 与本文档状态标记（目标态 → 已实施）；
+- ⏸ `AGENT_ORCHESTRATOR__TOOLS_ENABLED` 与 `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED` 保留为长期开关（双路径回滚需要），不删。
 
 ## 16. 风险与开放问题
 
@@ -1742,6 +1759,8 @@ run.tool.called.v1 的 type 与语义不变（仍由 orchestrator 在 \_apply_gr
 | Q9  | 沙箱镜像内容（是否预装 rg/git/python 版本）由谁维护？ | workspace-service 镜像；tool-service 只依赖 python3 与标准库             | P0 联调时与 workspace owner 确认 |
 | Q10 | 公开 MCP Server 是否直接暴露新裸名工具？              | P2 前保持现有只读集合；之后按 catalog 生成，但不暴露写工具               | P2 安全评审                      |
 
+实施结果（2026-10-25）：Q2 已按「默认开启」落地（`TOOL__READ_BEFORE_WRITE_ENABLED=true`）；Q3 按 900s 默认开启；Q5 的 `documents` 两个工具随对象存储波次再迁；Q10 已改为按 catalog 的「`kind=function` 且 `risk=read`」生成只读白名单。其余问题仍开放。
+
 ### 16.3 与既有差距文档的关系
 
 docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计覆盖：工具注册表分散与命名不统一、写操作未走审批、路径安全、无超时/截断元数据、缺少提问通道（P1 机制「上下文压缩/子代理/hooks/eval」不在本设计范围）。**不覆盖**：成本归因、MCP SSRF、BYOK、多实例 job 正确性——这些需要各自独立立项，本设计只保证工具侧不新增同类问题（R12 的多实例结论）。
@@ -1792,7 +1811,8 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 | common       | packages/common/common/service_testkit/settings.py                                                                                                                                                                                                                                                                                                                                                            | NETWORK_SWITCHES 登记               |
 | workspace    | workspace/models/sandbox.py、workspace/services/sandbox.py、workspace/api/v1/sandboxes.py                                                                                                                                                                                                                                                                                                                     | scope_key 与 :ensure                |
 | orchestrator | core/config.py、core/container.py、core/container_assemblies.py、api/deps.py、services/tools.py、services/chat.py、services/conversations.py、services/conversations_persist.py、services/run_execution_approvals.py、services/run_lifecycle.py、services/interrupts.py、services/jobs_worker.py、graph/state.py、graph/nodes.py、graph/builder.py、schemas/runs.py、api/v1/run_actions.py、tests/conftest.py | 12 条集成改造点（§12.3）            |
-| 前端         | apps/web/src/features/chat/tool-call-card.tsx、message-list.tsx、lib/runs-api.ts、presentation/run.ts、lib/query-keys.ts                                                                                                                                                                                                                                                                                      | 卡片与状态文案                      |
+| 前端         | apps/web/src/features/chat/tool-call-card.tsx、features/chat/question-card.tsx（P2）、message-list.tsx、lib/runs-api.ts、lib/presentation/question.ts（P2）、presentation/run.ts、lib/query-keys.ts                                                                                                                                                                                                           | 卡片与状态文案                      |
+| 删除         | services/agent-orchestrator/agent*orchestrator/services/code_tools.py、tests/test_code_tools.py；tool-service catalog 的 `code*\*` alias                                                                                                                                                                                                                                                                      | P2 收口（§15.7）                    |
 | 文档         | docs/architecture.md、docs/README.md、docs/local-dev.md、docs/roadmap.md                                                                                                                                                                                                                                                                                                                                      | 索引与计数                          |
 
 ### 17.3 参考资料
@@ -1823,4 +1843,4 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 
 ---
 
-文档状态：设计定稿（2026-10-25）；P0 与 P1 已按 §13 落地（状态见 §1.2），P2 未开始。每期收口时更新 §1.2 的状态列、§15.7 下线清单与 docs/architecture.md 的交叉引用。
+文档状态：P0/P1/P2 已按 §13 落地（2026-10-25），P2 收口完成，代码已实施；每期变更时更新 §1.2 状态列、§15.7 下线清单与 docs/architecture.md 的交叉引用。

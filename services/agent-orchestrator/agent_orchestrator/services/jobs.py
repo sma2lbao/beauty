@@ -19,6 +19,8 @@ KINDS = frozenset(
         "retry",
         # 中断超时 sweeper 用(P0-2):审批超时自动拒绝,走 blocked
         "reject",
+        # 交互式提问的回答(§10.5):POST /answer 或问题超时自动 decline
+        "answer",
     }
 )
 

@@ -37,6 +37,12 @@ class RunGraphState(TypedDict, total=False):
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
     writes_approved: bool  # 确认闸的判定结果
     confirm_cycles: Annotated[int, add]  # 确认轮次(上限见 nodes.MAX_CONFIRM_CYCLES)
+    # 交互提问(docs/design/tool-service.md §10.2):execute 遇到 interaction 工具
+    # 调用后置待答问题,ask_gate 是唯一 interrupt 点;全部用 .get 读以兼容旧
+    # checkpoint(发布说明要求 drain 在途 run,这里是兜底)。
+    pending_question: dict[str, Any]
+    question_answers: Annotated[list[dict[str, Any]], add]  # 每次回答一条
+    ask_cycles: Annotated[int, add]  # 提问轮次(上限见 nodes.MAX_ASK_CYCLES)
     artifact: dict[str, Any]  # 交付物(title/kind/content),services 层落库
     verified: dict[str, bool]
     final_status: str

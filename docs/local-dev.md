@@ -149,22 +149,30 @@ curl -s http://127.0.0.1:8002/mcp \
 
 ## 3.8 编码 Function Tools
 
-- **P0 起新增内置工具服务 tool-service(:8008)**:工具目录与执行都委托给它,文件工具在
-  workspace-service 的沙箱内执行(不再直读服务进程本机目录)。开启方式:orchestrator 侧设
-  `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`(默认 false),并确认 tool-service 的
-  `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service;关掉即回到下面的进程内 `code_*`
-  工具(过渡路径,保留一个发布周期,见 docs/design/tool-service.md §15)。
-- 走服务时对话只挂只读工具(`read` / `glob` / `grep` / `list_dir`);P1 起任务路径也装配写工具
-  (`write` / `edit`,风险等级 write):策略为 confirm 时先落 `pending_writes` 等人工确认,确认后
-  `POST /runs/{id}/confirm` 再带 `approved=true` 执行;tool-service 侧未带 approved 的写请求一律 403。
-- 写前置与限额:同 run 内必须先 `read` 过目标路径(tool-service 的 `file_reads` 表),否则
-  `tool.read_required`;读后文件变化 → `tool.stale_read`;单 run 写次数/字节/总调用次数上限见
-  tool-service README(catalog 与 `TOOL__MAX_*` 配置)。旧名 `code_*` 作为别名再可用一个发布周期。
-- compose 演示默认不开工具服务(与 LLM/工具开关一致),该服务块只保证镜像可起、健康探针通过。
-- 旧进程内路径:配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(受控写,在 roots 内自动执行,敏感路径写前拦截)。
-- 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。
-- 公开 MCP Server 不暴露 code\_ 前缀工具,避免 API Key 读服务端本地文件。
-- Skills 的 coding.repo-readonly-review 已绑定只读代码工具。
+- **内置工具服务 tool-service（:8008）**：P0 起工具目录与执行都委托给它，文件工具在 workspace-service 的
+  沙箱内执行（不再直读服务进程本机目录）。开启方式：orchestrator 侧设
+  `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`（默认 false，compose 演示也默认关），并确认 tool-service 的
+  `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service；关掉即回到进程内工具（只剩文档/知识库与 MCP/skill，见下方「旧进程内路径」）。
+- **工具面（P2 收口后）**：`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`/`ask_question`；对话只挂只读工具
+  （`read`/`glob`/`grep`/`list_dir`/`search_knowledge`），写工具与 `ask_question` 只在任务模式装配。
+- **受控写（P1）**：`write`/`edit` 风险等级为 `write`；租户策略为 confirm 时先落 `pending_writes` 等人工确认，确认后
+  `POST /runs/{id}/confirm` 再带 `approved=true` 执行；tool-service 侧未带 approved 的写请求一律 403 `tool.confirmation_required`。
+- **读前置与限额**：同 run 内必须先 `read` 过目标路径（tool-service 的 `file_reads` 表），否则 `tool.read_required`；
+  读后文件变化 → `tool.stale_read`；单 run 上限见 tool-service README（`TOOL__MAX_WRITES_PER_RUN` /
+  `TOOL__MAX_WRITE_BYTES_PER_RUN` / `TOOL__MAX_TOOL_CALLS_PER_RUN`，默认 50 / 5MiB / 60）。
+- **知识库检索**：`search_knowledge` 由 tool-service 以内部 JWT 代理到 knowledge-service（:8006），需
+  `TOOL__HTTP_EXECUTOR_ENABLED=true`（默认 true）与 `TOOL__KNOWLEDGE_SERVICE_URL`；文档工具 `list_documents`/`read_document`
+  仍在 orchestrator 进程内（随对象存储波次再迁）。
+- **模型提问（P2）**：任务模式下模型可调 `ask_question`（1–4 题，单选/多选/自由输入），run 进 `awaiting_input` 并落
+  `run.question.required.v1`；聊天页出现提问卡片，提交走 `POST /api/v1/runs/{id}/answer`
+  （`{question_id, action: answer|decline, answers:[{index, labels, custom}]}`）；超时默认 900s
+  （`AGENT_ORCHESTRATOR__QUESTION_TIMEOUT_SECONDS`，设 0 关闭），超时按 decline 继续执行。SSE 不新增帧类型。
+- **旧进程内路径（P2 收口后）**：`code_list_files`/`code_read_file`/`code_search_text`/`code_write_file`/`code_edit_file`
+  与 `AGENT_ORCHESTRATOR__CODE_WORKSPACE_ROOTS` 已删除；进程内只保留文档/知识库工具与 MCP/skill 工具。历史 run 的
+  `skill_tools` 快照里的旧名不再解析。
+- 公开 MCP Server 按 catalog 的「`kind=function` 且 `risk=read`」生成只读白名单，不暴露 `ask_question` 与写工具。
+- Skills 的 `coding.repo-readonly-review` 已改绑新名 `glob`/`read`/`grep`。
+- 设计与验收见 [design/tool-service.md](./design/tool-service.md)；端口 8008 见 §2 端口表与 `scripts/dev.sh`。
 
 ## 3.9 附件解析与上下文注入
 

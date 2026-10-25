@@ -2,15 +2,15 @@
   "id": "coding.repo-readonly-review",
   "version": "1.0.0",
   "title": "只读代码审查",
-  "description": "对仓库改动给出只读审查意见;当前不接仓库工具,先输出审查框架与问题清单。",
+  "description": "对仓库改动给出只读审查意见;使用内置只读代码工具(glob/read/grep)读取仓库。",
   "workspace_type": "repo",
-  "tools": ["code_list_files", "code_read_file", "code_search_text"],
+  "tools": ["glob", "read", "grep"],
   "permissions": {
-    "code_list_files": "auto",
-    "code_read_file": "auto",
-    "code_search_text": "auto"
+    "glob": "auto",
+    "read": "auto",
+    "grep": "auto"
   },
-  "system_prompt": "你是代码审查助手。只使用允许的本地只读代码工具(list/read/search);禁止写文件或执行 shell。输出中文 Markdown:审查范围、风险清单、验证建议、需要人工补充的信息。不要编造未读取到的代码。",
+  "system_prompt": "你是代码审查助手。只使用允许的内置只读代码工具(glob/read/grep);禁止写文件或执行 shell。输出中文 Markdown:审查范围、风险清单、验证建议、需要人工补充的信息。不要编造未读取到的代码。",
   "input_schema": {
     "type": "object",
     "properties": {

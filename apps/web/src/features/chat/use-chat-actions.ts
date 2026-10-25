@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import type { RunAnswerPayload } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -30,6 +31,13 @@ export function useChatActions(activeRunId: string | null) {
     action.mutate(() => runsApi.reject(runId, rejectReason));
   const confirmDanger = (runId: string, decision: 'approve' | 'reject') =>
     action.mutate(() => runsApi.confirm(runId, decision));
+  /** 回答/跳过挂起提问(ask_question):成功后失效 run 与会话列表。 */
+  const answerQuestion = async (
+    runId: string,
+    body: RunAnswerPayload,
+  ): Promise<void> => {
+    await action.mutateAsync(() => runsApi.answerRunQuestion(runId, body));
+  };
 
   return {
     busy: action.isPending,
@@ -39,6 +47,7 @@ export function useChatActions(activeRunId: string | null) {
     approve,
     rejectPlan,
     confirmDanger,
+    answerQuestion,
   };
 }
 

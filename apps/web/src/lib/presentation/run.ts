@@ -12,6 +12,7 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   awaiting_approval: '待审批',
   running: '执行中',
   awaiting_confirmation: '待确认危险操作',
+  awaiting_input: '等待你的回答',
   blocked: '已阻塞',
   completed: '已完成',
   failed: '已失败',
@@ -57,6 +58,7 @@ export function runStatusTone(status: RunStatus): Tone {
       return 'info';
     case 'awaiting_approval':
     case 'awaiting_confirmation':
+    case 'awaiting_input':
       return 'warning';
     case 'blocked':
     case 'failed':
@@ -101,7 +103,12 @@ export const BOARD_COLUMNS: {
     key: 'review',
     label: '待审核',
     tone: 'warning',
-    statuses: ['awaiting_approval', 'awaiting_confirmation', 'blocked'],
+    statuses: [
+      'awaiting_approval',
+      'awaiting_confirmation',
+      'awaiting_input',
+      'blocked',
+    ],
   },
   {
     key: 'done',

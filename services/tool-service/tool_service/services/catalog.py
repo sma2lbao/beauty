@@ -1,4 +1,4 @@
-"""内置工具目录(P1:只读 + 受控写;交互工具预埋 enabled=False)。
+"""内置工具目录(P2:只读 + 受控写 + 知识库只读代理;交互工具已启用)。
 
 目录真源在代码而不是数据库:工具的 schema 随镜像版本发布,业务库只存
 调用审计与幂等记录。这样 catalog 与实现同版本、评审走代码评审、
@@ -18,7 +18,7 @@ from common.tools import (
 )
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-10-25.p1"
+CATALOG_VERSION = "2026-10-25.p3"
 
 READ = ToolDescriptor(
     name="read",
@@ -41,7 +41,6 @@ READ = ToolDescriptor(
     kind=ToolKind.FUNCTION,
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=20.0,
-    aliases=("code_read_file",),
 )
 
 GLOB = ToolDescriptor(
@@ -63,7 +62,6 @@ GLOB = ToolDescriptor(
     kind=ToolKind.FUNCTION,
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=20.0,
-    aliases=("code_list_files",),
 )
 
 GREP = ToolDescriptor(
@@ -91,7 +89,6 @@ GREP = ToolDescriptor(
     kind=ToolKind.FUNCTION,
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=30.0,
-    aliases=("code_search_text",),
 )
 
 LIST_DIR = ToolDescriptor(
@@ -136,7 +133,6 @@ WRITE = ToolDescriptor(
     kind=ToolKind.FUNCTION,
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=30.0,
-    aliases=("code_write_file",),
     enabled=True,
 )
 
@@ -162,8 +158,33 @@ EDIT = ToolDescriptor(
     kind=ToolKind.FUNCTION,
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=30.0,
-    aliases=("code_edit_file",),
     enabled=True,
+)
+
+SEARCH_KNOWLEDGE = ToolDescriptor(
+    name="search_knowledge",
+    description=(
+        "在知识库中检索与查询最相关的文档片段(只读)。"
+        "返回 query/provider/model 与 hits(标题、相关度、片段内容)。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "default": 5,
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.READ,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.HTTP,
+    timeout_seconds=20.0,
 )
 
 ASK_QUESTION = ToolDescriptor(
@@ -209,13 +230,13 @@ ASK_QUESTION = ToolDescriptor(
                                 "additionalProperties": False,
                             },
                         },
-                        "multi_select": {"type": "boolean"},
-                        "allow_custom": {"type": "boolean"},
+                        "multi_select": {"type": "boolean", "default": False},
                     },
-                    "required": ["question"],
+                    "required": ["question", "options"],
                     "additionalProperties": False,
                 },
-            }
+            },
+            "allow_custom": {"type": "boolean", "default": True},
         },
         "required": ["questions"],
         "additionalProperties": False,
@@ -224,10 +245,10 @@ ASK_QUESTION = ToolDescriptor(
     kind=ToolKind.INTERACTION,
     executor=ExecutorKind.NONE,
     timeout_seconds=30.0,
-    enabled=False,
+    enabled=True,
 )
 
-#: 全部工具(P1:read/glob/grep/list_dir/write/edit 启用;ask_question 预埋)。
+#: 全部工具(P2:read/glob/grep/list_dir/write/edit/search_knowledge/ask_question)。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,
@@ -235,6 +256,7 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     LIST_DIR,
     WRITE,
     EDIT,
+    SEARCH_KNOWLEDGE,
     ASK_QUESTION,
 )
 

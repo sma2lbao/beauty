@@ -394,10 +394,11 @@ REDIS_URL=                      # 留空 = 进程内降级
 message → triage → (chat | run)
 run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自动放行) → running
      → awaiting_confirmation → completed / failed / blocked
+     → awaiting_input（模型提问）── answer/超时 ──> running → …
      任一非终态 ──cancel──> cancelled
 ```
 
-> 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS`，默认 0=关闭，生产建议审批 86400s / 确认 600s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收。完整状态时间线（`run.status_changed.v1` 事件）仍缺，见 07-run-step-model.md；节点级步骤投影（S1）已于 2026-10-25 落地，见 §11.5。
+> 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS` / `QUESTION_TIMEOUT_SECONDS`，前两者默认 0=关闭、生产建议审批 86400s / 确认 600s，提问默认 900s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收，提问超时按 decline 自动回答并继续执行。完整状态时间线（`run.status_changed.v1` 事件）仍缺，见 07-run-step-model.md；节点级步骤投影（S1）已于 2026-10-25 落地，见 §11.5。
 
 - 执行引擎 **LangGraph + PG checkpointer**（生产 Postgres 用 `AsyncPostgresSaver`；SQLite 开发用 InMemorySaver）；
 - run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行；**心跳与 lease 续租未实现**（job 60s lease 无续租，多实例下存在重复领取风险，见 06 P0-3）；
@@ -405,7 +406,8 @@ run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自�
 - **plan**：产出可编辑的 Markdown 计划 artifact（存对象存储，画布上直接改），不是 yes/no 门；
 - **confirm**：按需人审中断——装配工具里没有 DANGER 级（未信任 MCP、对外不可逆写）时计划生成后自动放行（`AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE`，默认 true），有 DANGER 工具才挂起；
 - **cancel**：`POST /api/v1/runs/{id}/cancel`（body `{reason?}`）——非终态均可取消，落 `cancelled` + `status_reason`、撤掉 queued job、写 `run.cancelled.v1` 事件；终态再取消回 409 `run.invalid_state`；
-- **中断超时**：`interrupts` sweeper 周期扫描 `awaiting_approval` / `awaiting_confirmation` 超时项，按 `run.interrupt.timeout.v1` 留痕后复用 reject/confirm job 走正常状态机（不直接改状态，保留 resume 语义）；确认超时同时补写 `run.confirmation.received.v1`；
+- **ask_question**：模型提问走图内 `ask_gate` 中断 → run 进 `awaiting_input` + `run.question.required.v1`；`POST /api/v1/runs/{id}/answer`（`{question_id, action: answer|decline, answers}`）恢复图；一次 assistant 回合只能提问且独占，提问期间其余工具不执行；
+- **中断超时**：`interrupts` sweeper 周期扫描 `awaiting_approval` / `awaiting_confirmation` / `awaiting_input` 超时项，按 `run.interrupt.timeout.v1` 留痕后复用 reject/confirm/answer job 走正常状态机（不直接改状态，保留 resume 语义）；确认超时同时补写 `run.confirmation.received.v1`，提问超时补写 `run.question.timeout.v1` 与 `run.question.answered.v1`（decline/timeout/system）；
 - **verify**：对 `acceptance_criteria` 逐项校验，不达标自动返工，上限 3 轮；
 - **deliver**：交付物注册（一个 run 多件：报告/技能产物/工具外链文件）；写操作按风险等级执行。
 
@@ -423,10 +425,11 @@ ToolDescriptor {   # v2 契约，真源 packages/common/common/tools.py
 }
 ```
 
-> 状态注记（2026-10-25）：v2 契约真源是 `packages/common/common/tools.py` 的 `ToolDescriptor`（设计见 [tool-service.md](./design/tool-service.md) §6.1）；tool-service 落地后 orchestrator 经 ToolClient 消费该契约，旧 `services/tools.py` 的 `name/description/parameters/handler/risk` 实现保留一个发布周期兼容。审批策略仍由 `approval_policies` 表控制（见 06 §2.3 #6）。
+> 状态注记（2026-10-25，P2 收口）：v2 契约真源是 `packages/common/common/tools.py` 的 `ToolDescriptor`（设计见 [tool-service.md](./design/tool-service.md) §6.1）；内置文件/知识工具已迁到独立 `tool-service`（:8008，`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`），orchestrator 经 `RemoteToolkit` 消费该契约，装配开关 `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED`；旧 `code_*` 进程内实现与 alias 已于 P2 删除，进程内只剩 `list_documents`/`read_document`/`search_knowledge` 与 MCP/skill 工具。审批策略仍由 `approval_policies` 表控制（见 06 §2.3 #6）。
 
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
+- `ask_question` 是唯一的 `kind=interaction` 工具：目录与参数校验在 tool-service，中断/答案回填在 orchestrator 图内（`ask_gate` + `awaiting_input`）；chat 模式与公开 MCP Server 均不暴露；
 - 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm）；策略是配置，不是硬编码；
 - 所有工具调用写 `run_events`（可回放/审计/计量）。
 

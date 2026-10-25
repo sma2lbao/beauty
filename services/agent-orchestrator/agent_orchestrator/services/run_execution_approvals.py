@@ -18,6 +18,7 @@ from agent_orchestrator.graph.runtime import GRAPH_RUNTIME_KEY, GraphRuntime
 from agent_orchestrator.graph.steps import StepProjector
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
+    QUESTION_REQUIRED_EVENT,
     TOOL_CALLED_EVENT,
     RunEventRepository,
 )
@@ -211,6 +212,23 @@ def _config(
     }
 
 
+def _interrupt_payload(values: Mapping[str, Any]) -> dict[str, Any]:
+    """取本次图调用的中断载荷(设计 §10.3/§6.2)。
+
+    LangGraph 在状态里放的是 Interrupt 对象列表,载荷在 .value;
+    checkpoint 恢复/测试桩也可能直接给 dict。两种都归一成 dict,
+    非 Mapping 一律 {} 交给"未知中断"的旧语义分支兜底。
+    """
+    interrupts = values.get("__interrupt__") or ()
+    if not interrupts:
+        return {}
+    first = interrupts[0]
+    value = getattr(first, "value", first)
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
 async def _apply_graph_result(
     session: AsyncSession,
     run: Run,
@@ -242,6 +260,24 @@ async def _apply_graph_result(
             session, run, "run.tool.called.v1", _tool_event_payload(record)
         )
     if values.get("__interrupt__"):
+        payload = _interrupt_payload(values)
+        if payload.get("kind") == "question":
+            # 交互式提问待用户回答(§10.3):停在 awaiting_input,等 POST /answer
+            # 或 sweeper 超时自动 decline;答案随 resume 载荷回到 ask_gate。
+            run.status = RunStatus.AWAITING_INPUT.value
+            run.rounds = values.get("rounds", 0)
+            await append_event(
+                session,
+                run,
+                QUESTION_REQUIRED_EVENT,
+                {
+                    "question_id": payload.get("question_id"),
+                    "questions": payload.get("questions") or [],
+                    "allow_custom": bool(payload.get("allow_custom", True)),
+                    "expires_at": payload.get("expires_at"),
+                },
+            )
+            return run
         # 危险操作待人工确认:停在 awaiting_confirmation,等 POST /confirm
         run.status = RunStatus.AWAITING_CONFIRMATION.value
         run.rounds = values.get("rounds", 0)

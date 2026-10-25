@@ -5,7 +5,7 @@
 
 ## 当前活跃
 
-- **内置工具服务拆分（P0/P1 已落地，P2 未开始）**：把 tool registry 从 orchestrator 拆成独立 `tool-service`（:8008，catalog/执行/审计，沙箱经 workspace-service），分 P0/P1/P2 三期推进，装配开关 `TOOL_SERVICE_ENABLED`。P0 只读工具（`read/glob/grep/list_dir`）与 P1 受控写（`write/edit` + 读前置 + per-run 配额 + 审计富字段）已落地，P2 为 `ask_question` 全栈与 `code_*` 别名下线；设计与验收见 [design/tool-service.md](./design/tool-service.md)。
+- **~~内置工具服务拆分~~ ✅ 已完成（2026-10-25，P0/P1/P2）**：把 tool registry 从 orchestrator 拆成独立 `tool-service`（:8008，catalog/执行/审计，沙箱经 workspace-service），装配开关 `TOOL_SERVICE_ENABLED`。P0 只读工具（`read/glob/grep/list_dir`）、P1 受控写（`write/edit` + 读前置 + per-run 配额 + 审计富字段）、P2 `ask_question` 全栈（`awaiting_input` + `ask_gate` + answer API + 前端提问卡片）与 `search_knowledge` 代理已落地，旧 `code_*` 工具与 alias 已下线；设计与验收见 [design/tool-service.md](./design/tool-service.md)。
 - **~~M0-02 七服务容器化~~ ✅ 已完成**：`deploy/docker/python-service.Dockerfile`（7 个 Python 服务复用，`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile` + `deploy/docker-compose.yml` 全量编排（pg/redis/migrate/7 服务/web，:8080）；CI 增 `docker-build` job（= 重构 R-36 关闭）。
 - **M0-03 云 PG/云 Redis 接入**：生产 URL 注入即用；开发保持 SQLite/本地 Redis；CI 对云 PG 跑迁移与集成测试；顺带把限流从进程内切到 Redis（R-P1-8 缺口：compose 已起 Redis、业务未接）。
 - **~~CI 上线后~~ ✅ 已完成**：覆盖率阈值（R-31）、零网络硬门禁（R-32）、文档链接检查（`scripts/check-docs.sh`，CI `docs-check` job）。

@@ -261,6 +261,7 @@ export async function runsModuleMock() {
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),
+      answerRunQuestion: vi.fn(),
       artifacts: vi.fn(async () => []),
       downloadArtifact: vi.fn(),
     },

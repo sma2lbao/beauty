@@ -16,6 +16,7 @@ export type RunStatus =
   | 'awaiting_approval'
   | 'running'
   | 'awaiting_confirmation'
+  | 'awaiting_input'
   | 'blocked'
   | 'completed'
   | 'failed'
@@ -95,6 +96,51 @@ export type ArtifactMeta = {
 /** 旧 `GET /runs/{id}/artifact`(主文本交付物)仍附带正文,保留兼容。 */
 export type Artifact = ArtifactMeta & { content: string };
 
+/**
+ * ask_question 的挂起提问(§10.4):来自 `run.question.required.v1` 事件载荷。
+ *
+ * 后端 v1 不建问题表,载荷只在事件里;字段全部防御性解析(旧事件可能缺省),
+ * 问题/选项一律当纯文本渲染,不解析 markdown/HTML。
+ */
+export type RunQuestionOption = {
+  label: string;
+  description?: string | null;
+};
+
+export type RunQuestionItem = {
+  header?: string | null;
+  question: string;
+  options: RunQuestionOption[];
+  multi_select?: boolean;
+};
+
+export type RunQuestion = {
+  question_id: string;
+  questions: RunQuestionItem[];
+  allow_custom?: boolean;
+  expires_at?: string | null;
+};
+
+/** 用户对一道问题的作答:选中的选项 label + 自定义文本(二选一或并存)。 */
+export type RunAnswer = {
+  index: number;
+  labels: string[];
+  custom: string | null;
+};
+
+/** 回答/跳过挂起提问的请求体(§10.5)。 */
+export type RunAnswerPayload = {
+  question_id: string;
+  action: 'answer' | 'decline';
+  answers: RunAnswer[];
+};
+
+/** 回答接口返回:202 接受后回更新后的 run(重新进入 running)。 */
+export type RunAnswerAccepted = {
+  run: Run;
+  accepted: boolean;
+};
+
 /** 运行中追加指令(§6.5):queued 表示等下一个边界消费。 */
 export type Instruction = {
   id: string;
@@ -145,6 +191,17 @@ export const runsApi = {
     http.request<Run>(`/api/v1/runs/${runId}/confirm`, {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
+    }),
+  /**
+   * 回答/跳过挂起提问(ask_question,§10.5):202 返回更新后的 run。
+   *
+   * 409 的 `run.question_mismatch` / `run.question_expired` /
+   * `run.invalid_state` 由展示层翻译成用户能读懂的提示;重复提交幂等。
+   */
+  answerRunQuestion: (runId: string, body: RunAnswerPayload) =>
+    http.request<RunAnswerAccepted>(`/api/v1/runs/${runId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
   /**
    * 协作式取消:落 cancelled 终态并撤掉排队中的 job;执行中的图不会被强杀,

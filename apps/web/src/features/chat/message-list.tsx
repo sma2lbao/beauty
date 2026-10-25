@@ -27,6 +27,7 @@ import {
 import type { Run } from '@/lib/runs-api';
 
 import { DangerConfirmCard, PlanApprovalCard } from './approval-block';
+import { QuestionCard } from './question-card';
 import type { ChatActions } from './use-chat-actions';
 import type { ChatQueries } from './use-chat-queries';
 import type { ChatStream } from './use-chat-stream';
@@ -77,6 +78,7 @@ export function ChatMessageList({
     plan,
     liveRun,
     runPaused,
+    question,
     eventLines,
     mcpCatalog,
     changeNewSessionWorkspace,
@@ -91,6 +93,8 @@ export function ChatMessageList({
     toolCalls.length,
     liveRun?.text.length,
     pending?.reply.length,
+    question?.phase,
+    question?.question.question_id,
   ]);
 
   return (
@@ -317,6 +321,17 @@ export function ChatMessageList({
             onConfirm={() => actions.confirmDanger(run.id, 'approve')}
             onReject={() => actions.confirmDanger(run.id, 'reject')}
             busy={actions.busy}
+          />
+        ) : null}
+
+        {run && question ? (
+          <QuestionCard
+            key={question.question.question_id}
+            state={question}
+            busy={actions.busy}
+            onSubmit={async (payload) => {
+              await actions.answerQuestion(run.id, payload);
+            }}
           />
         ) : null}
 

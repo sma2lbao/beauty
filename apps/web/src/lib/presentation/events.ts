@@ -60,6 +60,24 @@ export function eventLine(
         text: `危险操作确认:${asText(payload.action, '已回复')}`,
         tone: 'neutral',
       };
+    case 'run.question.required.v1':
+      return {
+        text: 'Agent 需要你回答几个问题,才能继续。',
+        tone: 'warning',
+      };
+    case 'run.question.answered.v1':
+      return {
+        text:
+          payload.action === 'decline'
+            ? '已跳过提问,任务继续执行。'
+            : '已提交回答,任务继续执行。',
+        tone: payload.action === 'decline' ? 'neutral' : 'success',
+      };
+    case 'run.question.timeout.v1':
+      return {
+        text: '提问超时未答,任务已按跳过继续。',
+        tone: 'warning',
+      };
     case 'run.instruction.queued.v1':
       return {
         text: '已记下你的补充,会在下一个边界并入执行。',

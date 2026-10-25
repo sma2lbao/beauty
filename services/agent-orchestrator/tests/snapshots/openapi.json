@@ -1,6 +1,42 @@
 {
   "components": {
     "schemas": {
+      "AnswerItem": {
+        "description": "单个问题的回答:index 对应 questions 下标(§10.5)。",
+        "properties": {
+          "custom": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom"
+          },
+          "index": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Labels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "title": "AnswerItem",
+        "type": "object"
+      },
       "ApprovalPolicyIn": {
         "description": "一条策略:工具名(或 ``*``)+ 动作。",
         "properties": {
@@ -1566,6 +1602,57 @@
         "title": "RequeueResultRead",
         "type": "object"
       },
+      "RunAnswerRead": {
+        "description": "answer API 的 202 响应:接受后返回 run 快照(幂等成功也回 202)。",
+        "properties": {
+          "accepted": {
+            "default": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunRead"
+          }
+        },
+        "required": [
+          "run"
+        ],
+        "title": "RunAnswerRead",
+        "type": "object"
+      },
+      "RunAnswerRequest": {
+        "description": "回答 ask_question 提问(§10.5):decline 时 answers 可空。",
+        "properties": {
+          "action": {
+            "default": "answer",
+            "enum": [
+              "answer",
+              "decline"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerItem"
+            },
+            "maxItems": 4,
+            "title": "Answers",
+            "type": "array"
+          },
+          "question_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "title": "RunAnswerRequest",
+        "type": "object"
+      },
       "RunCreate": {
         "properties": {
           "acceptance_criteria": {
@@ -1801,6 +1888,7 @@
           "awaiting_approval",
           "running",
           "awaiting_confirmation",
+          "awaiting_input",
           "blocked",
           "cancelled",
           "completed",
@@ -4501,6 +4589,91 @@
           }
         },
         "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/answer": {
+      "post": {
+        "description": "回答/放弃挂起的提问(§10.5):awaiting_input → running(或入队 answer job)。",
+        "operationId": "answer_run_api_v1_runs__run_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAnswerRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Answer Run",
         "tags": [
           "runs"
         ]

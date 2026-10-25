@@ -3,8 +3,9 @@
 约定:
 
 - 工具是模型接触外部世界的**唯一**通道;能力按**提供方(provider)**分组——
-  本地文档库、企业知识库、代码库各产出一组 `ToolSpec`,`build_tools` 汇总;
-  **没有配置的提供方不暴露工具**(能力即权限边界);
+  本地文档库、企业知识库各产出一组 `ToolSpec`,`build_tools` 汇总;
+  **没有配置的提供方不暴露工具**(能力即权限边界);代码类工具(read/write/
+  glob/grep 等)已迁到 tool-service,经 RemoteToolkit 远程执行;
 - 执行失败不抛给图,而是以 ``{"error": ...}`` 回喂模型让它决策(§6.1)——
   工具坏了不该把整条 run 炸掉;
 - 每次调用产出 ToolCallRecord,由 services 层落 ``run.tool.called.v1`` 事件;
@@ -20,7 +21,6 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
-from agent_orchestrator.services.code_tools import code_specs
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import Knowledge
 
@@ -123,6 +123,26 @@ class ToolRegistry:
     def requires_confirmation(self, name: str) -> bool:
         """危险操作:execute 不得直接执行,必须交确认闸(§6.2)。"""
         return self.risk(name) is ToolRisk.DANGER
+
+    def kind(self, name: str) -> str:
+        """工具形态:本机注册表只有普通可执行工具(交互工具在 tool-service)。"""
+        del name
+        return "function"
+
+    def validate_call(self, name: str, arguments: str) -> list[str]:
+        """执行前参数预校验:本机注册表没有 JSON Schema 信息,只查 JSON 形态。
+
+        与 tool-service/RemoteToolkit 的契约一致(返回错误描述列表):交互工具
+        在中断前必须校验参数,参数非法时回 tool_error 而不是挂起坏问题。
+        """
+        del name
+        try:
+            payload = json.loads(arguments or "{}")
+        except ValueError as exc:
+            return [f"工具参数不是合法 JSON:{exc}"]
+        if not isinstance(payload, dict):
+            return ["工具参数必须是 JSON 对象"]
+        return []
 
     def schemas(self) -> list[dict[str, Any]]:
         """OpenAI tools 格式(网关原样透传给 litellm)。"""
@@ -287,14 +307,14 @@ def build_tools(
     *,
     documents: DocumentLibrary | None = None,
     knowledge: Knowledge | None = None,
-    code_roots: list[str] | None = None,
 ) -> ToolRegistry:
-    """汇总已配置提供方的工具;未配置的能力不暴露(能力即权限边界)。"""
+    """汇总已配置提供方的工具;未配置的能力不暴露(能力即权限边界)。
+
+    代码类工具由 tool-service 提供,不在本进程内注册(见 docs/design/tool-service.md)。
+    """
     specs: list[ToolSpec] = []
     if documents is not None:
         specs += document_specs(documents)
     if knowledge is not None:
         specs += knowledge_specs(tenant_id, knowledge)
-    if code_roots:
-        specs += code_specs(code_roots)
     return ToolRegistry(specs)

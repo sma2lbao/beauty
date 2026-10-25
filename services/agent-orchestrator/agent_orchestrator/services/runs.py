@@ -26,6 +26,7 @@ from agent_orchestrator.services.run_events import (
     list_events,
 )
 from agent_orchestrator.services.run_execution import (
+    answer_run,
     approve_run,
     confirm_run,
     plan_run,
@@ -45,6 +46,7 @@ from agent_orchestrator.services.run_steps import list_steps
 
 __all__ = [
     "_persist_artifact",
+    "answer_run",
     "append_event",
     "approve_run",
     "cancel_run",

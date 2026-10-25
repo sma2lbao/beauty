@@ -64,11 +64,13 @@ class Settings(BaseAppSettings):
     # 继续验收。0 = 关闭该类超时;sweeper 仅在 jobs_enabled 且至少一类 > 0 时启动。
     approval_timeout_seconds: int = 0
     confirmation_timeout_seconds: int = 0
+    # 交互提问超时(tool-service §10.6):awaiting_input 停留过久自动按 decline
+    # 收场。默认 900(开启)——提问无人回答会让 run 永久挂起、checkpoint 堆积;
+    # 审批/确认默认 0 是因为它们面向运维动作,暴露面不同。0 = 关闭。
+    question_timeout_seconds: int = 900
     interrupt_sweep_interval_seconds: float = 15.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
-    # 编码 agent 的本地工作区 function tools;为空 = 不暴露代码工具
-    code_workspace_roots: list[str] = []
     # MCP Client(M1 本地版):允许租户配置第三方 MCP server
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
@@ -109,11 +111,13 @@ class Settings(BaseAppSettings):
     # P0-3 token 预算:单次执行(plan 或 approve 的一次图调用)允许的最大模型用量,
     # 0 = 不限制。用尽时该次执行 failed(可在新 run 里续做)。
     run_token_budget: int = 0
-    # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库/代码库)
+    # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库;
+    # 代码类工具由 tool-service 提供,见下方的 tool_service_enabled)
     tools_enabled: bool = False
     tool_timeout_seconds: float = 30.0
     # 内置工具服务(docs/design/tool-service.md):开启后内置工具的目录与执行
-    # 全部委托给 tool-service(:8008);关闭时走进程内旧注册表(兼容与回滚路径)。
+    # 全部委托给 tool-service(:8008);关闭时退回进程内注册表(仅文档/知识库;
+    # 代码类工具只由 tool-service 提供)。
     tool_service_enabled: bool = False
     tool_service_url: str = "http://127.0.0.1:8008"
     tool_service_timeout_seconds: float = 35.0

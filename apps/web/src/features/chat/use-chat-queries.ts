@@ -15,6 +15,7 @@ import {
   eventLine,
   isRunTerminal,
   liveRunText,
+  questionStateFrom,
   runStatusTone,
   toolCallsFrom,
 } from '@/lib/presentation';
@@ -158,7 +159,10 @@ export function useChatQueries(activeConversationId: string | null) {
   const runPaused =
     status === 'awaiting_approval' ||
     status === 'awaiting_confirmation' ||
+    status === 'awaiting_input' ||
     status === 'blocked';
+  // ask_question 的挂起提问(§10.4):从 run 事件流推导,不新增后端读面。
+  const question = questionStateFrom(events, run?.status);
 
   // 底部状态栏条目(页面外壳直接消费的视图派生)
   const statusTone = runStatusTone(status);
@@ -278,6 +282,7 @@ export function useChatQueries(activeConversationId: string | null) {
     plan: planQuery.data,
     liveRun,
     runPaused,
+    question,
     eventLines,
     title,
     statusItems,

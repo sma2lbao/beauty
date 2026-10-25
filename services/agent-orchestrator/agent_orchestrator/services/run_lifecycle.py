@@ -31,6 +31,8 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
     "reject": frozenset({RunStatus.AWAITING_APPROVAL}),
     "retry": frozenset({RunStatus.FAILED}),
     "resume": frozenset({RunStatus.BLOCKED}),
+    # 交互提问回答(tool-service §10.2):只有挂起提问时能回答;answer API 专用。
+    "answer": frozenset({RunStatus.AWAITING_INPUT}),
     # 取消(P0-2):非终态都可取消。running/planning 是协作式——已发出的图调用
     # 不被打断,执行边界回来读库发现 cancelled 后跳过终态覆盖(见 _apply_graph_result)。
     "cancel": frozenset(
@@ -40,6 +42,7 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
             RunStatus.RUNNING,
             RunStatus.AWAITING_APPROVAL,
             RunStatus.AWAITING_CONFIRMATION,
+            RunStatus.AWAITING_INPUT,
             RunStatus.BLOCKED,
         }
     ),

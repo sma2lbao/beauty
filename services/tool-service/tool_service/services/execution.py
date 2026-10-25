@@ -19,6 +19,7 @@ from common.tools import (
     ToolDescriptor,
     ToolError,
     ToolExecuteResponse,
+    ToolKind,
     ToolRisk,
     validate_arguments,
 )
@@ -27,6 +28,7 @@ from tool_service.constants import DEFAULT_TOOL_TIMEOUT_SECONDS, MAX_TOOL_CHARS
 from tool_service.core.config import Settings
 from tool_service.repositories import WRITE_TOOL_NAMES
 from tool_service.services.catalog import find_descriptor
+from tool_service.services.executors.http import HttpToolExecutor
 from tool_service.services.helpers import build_request, helper_argv
 from tool_service.services.sandbox import SandboxProvider, scope_key_for
 
@@ -75,9 +77,16 @@ def arguments_digest(arguments: dict[str, Any]) -> str:
 class ToolRunner:
     """按目录分派工具执行;一个实例可被并发请求复用(无状态)。"""
 
-    def __init__(self, *, settings: Settings, sandbox: SandboxProvider) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        sandbox: SandboxProvider,
+        http: HttpToolExecutor | None = None,
+    ) -> None:
         self._settings = settings
         self._sandbox = sandbox
+        self._http = http
 
     async def execute(
         self,
@@ -116,19 +125,24 @@ class ToolRunner:
                 hint=error.hint,
                 duration_ms=_elapsed_ms(started),
             )
+        if descriptor.kind is ToolKind.INTERACTION:
+            # 交互工具只校验参数并归一化,不执行、不产生副作用;建中断由
+            # orchestrator 负责(设计 §8.3)。
+            return ExecutionOutcome(
+                descriptor=descriptor,
+                response=ToolExecuteResponse(
+                    ok=True,
+                    result=normalize_interaction(arguments),
+                    duration_ms=_elapsed_ms(started),
+                    tool_call_id=context.tool_call_id,
+                ),
+            )
         if descriptor.executor is ExecutorKind.SANDBOX:
             return await self._run_sandbox(
                 context, descriptor, arguments, started, internal_arguments
             )
         if descriptor.executor is ExecutorKind.HTTP:
-            return self._failure(
-                context,
-                descriptor,
-                "tool.executor_unavailable",
-                "该工具的下游执行器尚未接线",
-                hint="http 执行器在 P1 落地",
-                duration_ms=_elapsed_ms(started),
-            )
+            return await self._run_http(context, descriptor, arguments, started)
         return self._failure(
             context,
             descriptor,
@@ -136,6 +150,58 @@ class ToolRunner:
             f"工具 {descriptor.name} 由运行时处理,不能直接执行",
             duration_ms=_elapsed_ms(started),
         )
+
+    async def _run_http(
+        self,
+        context: ExecutionContext,
+        descriptor: ToolDescriptor,
+        arguments: dict[str, Any],
+        started: float,
+    ) -> ExecutionOutcome:
+        """经 HTTP 执行器跑一次只读代理(超时/大小上限与沙箱执行同口径)。"""
+
+        if self._http is None:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.executor_unavailable",
+                "该工具的下游执行器尚未接线",
+                hint="http 执行器未装配",
+                duration_ms=_elapsed_ms(started),
+            )
+        timeout = self._timeout_seconds(context, descriptor)
+        try:
+            response = await asyncio.wait_for(
+                self._http.execute(context.tenant_id, descriptor.name, arguments),
+                timeout,
+            )
+        except TimeoutError:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.timeout",
+                f"工具 {descriptor.name} 执行超时",
+                hint=f"超时 {int(timeout)} 秒;请稍后重试",
+                retryable=True,
+                duration_ms=_elapsed_ms(started),
+            )
+        response = replace(
+            response,
+            duration_ms=_elapsed_ms(started),
+            tool_call_id=context.tool_call_id,
+            idempotent_replay=False,
+        )
+        if response.ok and self._result_chars(response) > MAX_TOOL_CHARS:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.too_large",
+                f"工具结果超过 {MAX_TOOL_CHARS} 字符上限",
+                hint="缩小检索范围(更精确的 query/更小的 limit)后重试",
+                retryable=True,
+                duration_ms=_elapsed_ms(started),
+            )
+        return ExecutionOutcome(descriptor=descriptor, response=response)
 
     # ---- 沙箱执行 -------------------------------------------------------
 
@@ -325,6 +391,44 @@ class ToolRunner:
             duration_ms=duration_ms,
             sandbox_id=sandbox_id,
         )
+
+
+def normalize_interaction(arguments: dict[str, Any]) -> dict[str, Any]:
+    """把交互工具参数归一成 orchestrator 可直接建中断的形状(设计 §8.3)。
+
+    只做字段归一与默认值补齐(allow_custom 默认 true、multi_select 默认
+    false),不做任何副作用;schema 校验已在上游完成。
+    """
+
+    questions: list[dict[str, Any]] = []
+    for item in arguments.get("questions") or []:
+        question: dict[str, Any] = {"question": item["question"]}
+        header = item.get("header")
+        if header:
+            question["header"] = header
+        options = item.get("options")
+        if options:
+            question["options"] = [
+                {
+                    "label": option["label"],
+                    **(
+                        {"description": option["description"]}
+                        if option.get("description")
+                        else {}
+                    ),
+                }
+                for option in options
+            ]
+        question["multi_select"] = bool(item.get("multi_select", False))
+        questions.append(question)
+    return {
+        "kind": "interaction",
+        "interaction": {"type": "question"},
+        "normalized": {
+            "questions": questions,
+            "allow_custom": bool(arguments.get("allow_custom", True)),
+        },
+    }
 
 
 def failure_outcome(

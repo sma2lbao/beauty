@@ -15,7 +15,7 @@ def test_load_builtin_skills() -> None:
     assert "coding.repo-readonly-review" in ids
     skill = registry.get("coding.repo-readonly-review")
     assert skill is not None
-    assert "code_read_file" in skill.tools
+    assert skill.tools == ["glob", "read", "grep"]
     assert skill.system_prompt
 
 

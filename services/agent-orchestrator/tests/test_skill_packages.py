@@ -32,7 +32,7 @@ BASE_MANIFEST: dict[str, Any] = {
     "runtime": "python",
     "network": "deny",
     "timeout_seconds": 120,
-    "tools": ["code_read_file"],
+    "tools": ["read"],
 }
 
 
@@ -143,7 +143,7 @@ def test_skills_list_merges_builtin_and_uploaded(
     assert uploaded["package_id"] == package["id"]
     assert uploaded["version_id"] == version_id
     assert "skill_run" in uploaded["tools"]
-    assert "code_read_file" in uploaded["tools"]
+    assert "read" in uploaded["tools"]
     assert uploaded["system_prompt"].startswith("# 周报生成")
     builtin = by_id["coding.repo-readonly-review"]
     assert builtin["source"] == "builtin"

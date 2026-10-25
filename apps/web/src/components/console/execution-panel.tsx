@@ -286,15 +286,17 @@ function StatusStep({ status, run }: { status: RunStatus; run?: Run }) {
       ? '等待你放行计划'
       : status === 'awaiting_confirmation'
         ? '等待你确认危险操作'
-        : status === 'blocked'
-          ? '任务中断,需要人工处理'
-          : status === 'failed'
-            ? '执行失败'
-            : status === 'completed'
-              ? '任务完成'
-              : status === 'running'
-                ? 'Agent 正在执行下一步'
-                : '等待规划';
+        : status === 'awaiting_input'
+          ? '等待你回答提问'
+          : status === 'blocked'
+            ? '任务中断,需要人工处理'
+            : status === 'failed'
+              ? '执行失败'
+              : status === 'completed'
+                ? '任务完成'
+                : status === 'running'
+                  ? 'Agent 正在执行下一步'
+                  : '等待规划';
   return (
     <div
       className={cn(

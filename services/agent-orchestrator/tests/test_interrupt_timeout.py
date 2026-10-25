@@ -8,6 +8,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
+from agent_orchestrator.repositories import (
+    QUESTION_ANSWERED_EVENT,
+    QUESTION_REQUIRED_EVENT,
+    QUESTION_TIMED_OUT_EVENT,
+)
 from agent_orchestrator.services import interrupts
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
@@ -15,10 +20,12 @@ from tests.conftest import (
     _IDP,
     TENANT,
     FakeDangerTool,
+    FakeInteractionToolkit,
     FakeKnowledge,
     FakeLLM,
     _create_run,
     _settings,
+    ask_reply,
 )
 
 DANGER_ARGS = '{"title": "对外发布说明"}'
@@ -161,3 +168,68 @@ def test_confirmation_timeout_rejects_danger_write_and_completes(
         assert "external_publish" not in [
             e["payload"]["name"] for e in events if e["type"] == "run.tool.called.v1"
         ]
+
+
+def test_question_timeout_declines_and_resumes(tmp_path: Path) -> None:
+    """待回答问题超时:emit timed_out + answered(decline),worker 恢复图继续。"""
+
+    fake = FakeLLM(
+        [
+            "# 计划",
+            ask_reply(),  # execute:发起提问 → ask_gate 中断
+            "未获回答按已有信息继续",  # 超时放弃后模型拿固定文案继续
+            VERIFY_PASS,
+            "# 交付物",
+        ]
+    )
+    toolkit = FakeInteractionToolkit()
+    app = create_app(
+        _settings(
+            tmp_path,
+            "question-timeout.db",
+            llm_enabled=True,
+            tools_enabled=True,
+            jobs_enabled=True,
+            jobs_poll_interval_seconds=0.01,
+            question_timeout_seconds=1,
+            interrupt_sweep_interval_seconds=0.05,
+        ),
+        llm_client=fake,
+        toolkit_factory=lambda tenant: toolkit,
+        token_verifier=_IDP.verifier(),
+    )
+    with TestClient(app) as client:
+        run_id = _create_run(client)
+        _wait_status(client, run_id, "awaiting_approval")
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+        assert approved.status_code == 200
+        _wait_status(client, run_id, "awaiting_input")
+
+        # sweeper 按提问超时自动放弃 → worker 推图到完成
+        completed = _wait_status(client, run_id, "completed")
+        assert completed["status"] == "completed"
+        # 提问从未走 execute(中断前零副作用)
+        assert toolkit.executed == []
+
+        events = _events(client, run_id)
+        required = next(e for e in events if e["type"] == QUESTION_REQUIRED_EVENT)[
+            "payload"
+        ]
+        fired = next(e for e in events if e["type"] == interrupts.TIMED_OUT_EVENT)
+        assert fired["payload"]["kind"] == "question"
+        assert fired["payload"]["timeout_seconds"] == 1
+        assert fired["payload"]["reason"] == interrupts.QUESTION_TIMEOUT_REASON
+        timed_out = next(e for e in events if e["type"] == QUESTION_TIMED_OUT_EVENT)[
+            "payload"
+        ]
+        assert timed_out["question_id"] == required["question_id"]
+        assert timed_out["expires_at"] == required["expires_at"]
+        answered = [e for e in events if e["type"] == QUESTION_ANSWERED_EVENT]
+        assert len(answered) == 1
+        assert answered[0]["payload"] == {
+            "question_id": required["question_id"],
+            "answers": [],
+            "action": "decline",
+            "reason": "timeout",
+            "answered_by": "system",
+        }

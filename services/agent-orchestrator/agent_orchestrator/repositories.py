@@ -49,6 +49,11 @@ from agent_orchestrator.schemas.runs import RunStatus
 QUEUED = "queued"
 CONSUMED = "consumed"
 TOOL_CALLED_EVENT = "run.tool.called.v1"
+#: 交互式提问事件(设计 §10.4):required = 图已挂起等待回答,
+#: answered = API/worker 已受理(答案随 resume/job 载荷回到图),timeout = 超时放弃。
+QUESTION_REQUIRED_EVENT = "run.question.required.v1"
+QUESTION_ANSWERED_EVENT = "run.question.answered.v1"
+QUESTION_TIMED_OUT_EVENT = "run.question.timeout.v1"
 
 # 报告件的来源标记:与 services.artifacts.ARTIFACT_REPORT_SOURCE 同值,
 # 仓储不反向 import service 层(artifact service 已依赖本模块,反向会循环)。
@@ -109,9 +114,10 @@ class RunRepository(TenantRepository[Run]):
         *,
         approval_seconds: int,
         confirmation_seconds: int,
+        question_seconds: int = 0,
         limit: int = 100,
     ) -> list[Run]:
-        """扫描停留超时的待审批/待确认 run(中断超时 sweeper 用)。
+        """扫描停留超时的待审批/待确认/待回答 run(中断超时 sweeper 用)。
 
         这是**跨租户的系统维护查询**(后台任务没有请求租户上下文),因此不用
         list_scoped;逐 run 处理时仍回到各自的租户作用域。阈值 <= 0 表示关闭该类。
@@ -129,6 +135,13 @@ class RunRepository(TenantRepository[Run]):
                 and_(
                     Run.status == RunStatus.AWAITING_CONFIRMATION.value,
                     Run.updated_at < now - timedelta(seconds=confirmation_seconds),
+                )
+            )
+        if question_seconds > 0:
+            criteria.append(
+                and_(
+                    Run.status == RunStatus.AWAITING_INPUT.value,
+                    Run.updated_at < now - timedelta(seconds=question_seconds),
                 )
             )
         if not criteria:
@@ -465,6 +478,18 @@ class RunEventRepository(TenantRepository[RunEvent]):
                 .where(RunEvent.run_id == run_id, RunEvent.type == type_)
             )
             or 0
+        )
+
+    async def latest_of_type(self, run_id: str, type_: str) -> RunEvent | None:
+        """该 run 最近一条某类事件(v1 不建问题表,挂起提问从事件流取,§10.4)。
+
+        按 seq 倒序取第一条即"当前有效载荷";无记录返回 None。
+        """
+        return await self.session.scalar(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id, RunEvent.type == type_)
+            .order_by(RunEvent.seq.desc())
+            .limit(1)
         )
 
     async def list_for_run(

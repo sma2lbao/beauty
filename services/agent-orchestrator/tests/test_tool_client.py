@@ -39,9 +39,9 @@ def _descriptor(
     risk: ToolRisk = ToolRisk.READ,
     kind: ToolKind = ToolKind.FUNCTION,
     timeout_seconds: float = 20.0,
-    aliases: tuple[str, ...] = ("code_read_file",),
+    aliases: tuple[str, ...] = ("legacy_local_read",),
 ) -> ToolDescriptor:
-    """构造一份工具描述(默认只读文件工具,带旧别名)。"""
+    """构造一份工具描述(默认只读文件工具,带一个 legacy 别名)。"""
 
     return ToolDescriptor(
         name=name,
@@ -443,7 +443,7 @@ async def test_toolkit_exposes_only_function_tools() -> None:
     assert toolkit.names == ["read", "write"]
     assert toolkit.has_dangerous is True
     assert toolkit.contains("read") is True
-    assert toolkit.contains("code_read_file") is True
+    assert toolkit.contains("legacy_local_read") is True
     assert toolkit.contains("ask_question") is False
     schemas = toolkit.schemas()
     assert [item["function"]["name"] for item in schemas] == ["read", "write"]
@@ -457,7 +457,7 @@ async def test_toolkit_risk_uses_legacy_values() -> None:
     write = _descriptor("write", risk=ToolRisk.DESTRUCTIVE, aliases=())
     toolkit, _, client = await _ready(_server(_catalog(read, write)), read, write)
     assert toolkit.risk("read") == "read"
-    assert toolkit.risk("code_read_file") == "read"
+    assert toolkit.risk("legacy_local_read") == "read"
     assert toolkit.risk("write") == "danger"
     assert toolkit.risk("missing") == "danger"
     await client.aclose()
@@ -478,7 +478,9 @@ async def test_toolkit_execute_alias_hits_canonical_endpoint() -> None:
     seen: list[httpx.Request] = []
     read = _descriptor()
     toolkit, _, client = await _ready(_server(_catalog(read), seen=seen), read)
-    payload = json.loads(await toolkit.execute("code_read_file", '{"path": "a.txt"}'))
+    payload = json.loads(
+        await toolkit.execute("legacy_local_read", '{"path": "a.txt"}')
+    )
     assert payload["ok"] is True
     assert seen[-1].url.path == "/v1/tools/read:execute"
     await client.aclose()
@@ -586,13 +588,57 @@ async def test_toolkit_restricted_filters() -> None:
     read = _descriptor()
     write = _descriptor("write", risk=ToolRisk.DESTRUCTIVE, aliases=())
     toolkit, catalog, client = await _ready(_server(_catalog(read, write)), read, write)
-    only_read = toolkit.restricted(["code_read_file"])
+    only_read = toolkit.restricted(["legacy_local_read"])
     assert only_read.names == ["read"]
     assert only_read.risk("write") == "danger"
     assert only_read.risk("read") == "read"
     nothing = toolkit.restricted(["missing"])
     assert len(nothing) == 0
     assert catalog.loaded is True
+    await client.aclose()
+
+
+async def test_toolkit_kind_and_validate_call() -> None:
+    read = _descriptor()
+    ask = _descriptor("ask_question", kind=ToolKind.INTERACTION, aliases=())
+    toolkit, _, client = await _ready(_server(_catalog(read, ask)), read, ask)
+    assert toolkit.kind("read") == "function"
+    assert toolkit.kind("legacy_local_read") == "function"
+    assert toolkit.kind("ask_question") == "interaction"
+    assert toolkit.kind("missing") == "function"
+    assert toolkit.validate_call("read", '{"path": "a.txt"}') == []
+    missing = toolkit.validate_call("read", "{}")
+    assert missing and "path" in " ".join(missing)
+    assert toolkit.validate_call("ask_question", "{}")
+    assert "不是合法 JSON" in toolkit.validate_call("read", "{not json")[0]
+    assert toolkit.validate_call("read", "[]") == ["工具参数必须是 JSON 对象"]
+    assert toolkit.validate_call("missing", "{}") == ["未知工具: missing"]
+    await client.aclose()
+
+
+async def test_toolkit_with_interaction_exposes_interaction_tools() -> None:
+    """只有执行图用 with_interaction();交互工具不能被直接 execute。"""
+    read = _descriptor()
+    ask = _descriptor("ask_question", kind=ToolKind.INTERACTION, aliases=())
+    toolkit, _, client = await _ready(_server(_catalog(read, ask)), read, ask)
+    assert toolkit.names == ["read"]
+    interactive = toolkit.with_interaction()
+    assert interactive.names == ["read", "ask_question"]
+    assert [item["function"]["name"] for item in interactive.schemas()] == [
+        "read",
+        "ask_question",
+    ]
+    # restricted 白名单同时含交互工具时仍保留可见性
+    only_ask = interactive.restricted(["ask_question"])
+    assert only_ask.names == ["ask_question"]
+    # 混合工具箱(合并 MCP/skill spec 后)沿用 interaction 可见性与 kind 判定
+    hybrid = interactive.extended([])
+    assert hybrid.kind("ask_question") == "interaction"
+    assert hybrid.names == ["read", "ask_question"]
+    # 交互必须走图里 interrupt,execute 仍然拒绝
+    payload = json.loads(await hybrid.execute("ask_question", "{}"))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "tool.not_supported"
     await client.aclose()
 
 

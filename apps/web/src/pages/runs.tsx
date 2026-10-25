@@ -39,7 +39,8 @@ const FILTERS: { key: RunFilterKey; label: string }[] = [
  * 任务编排(原 /runs):设计稿《02 任务看板 · 多 Agent 编排》。
  *
  * 状态到列:待启动(pending/planning)、执行中(running)、
- * 待审核(awaiting_approval/awaiting_confirmation/blocked)、已完成(completed/failed)。
+ * 待审核(awaiting_approval/awaiting_confirmation/awaiting_input/blocked)、
+ * 已完成(completed/failed)。
  * 卡片点开右侧抽屉,原控制台的能力(审批/追加指令/重试/交付物/事件)都在那里。
  */
 export function RunsPage() {
@@ -435,6 +436,9 @@ function cardStatusLine(run: Run): string {
   }
   if (run.status === 'awaiting_confirmation') {
     return '待确认危险操作 · ' + time;
+  }
+  if (run.status === 'awaiting_input') {
+    return '等待你回答 · ' + time;
   }
   if (run.status === 'completed') {
     return '已完成 · ' + time;

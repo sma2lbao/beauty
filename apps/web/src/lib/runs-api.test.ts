@@ -155,6 +155,36 @@ describe('runsApi', () => {
     );
   });
 
+  it('回答挂起提问走 /answer 端点(POST,202 返回 accepted)', async () => {
+    setStoredToken('test-jwt');
+    const accepted = {
+      run: { id: 'r1', status: 'running' },
+      accepted: true,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => accepted,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const body = {
+      question_id: 'q1',
+      action: 'answer' as const,
+      answers: [{ index: 0, labels: ['本周文档'], custom: null }],
+    };
+    const result = await runsApi.answerRunQuestion('r1', body);
+
+    expect(result.accepted).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/answer');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual(body);
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer test-jwt',
+    );
+  });
+
   it('非 JSON 错误体回退通用文案', async () => {
     vi.stubGlobal(
       'fetch',

@@ -22,6 +22,7 @@ from agent_orchestrator.graph.nodes import (
     confirm_gate_node,
     fail_node,
     make_approval_gate_node,
+    make_ask_gate_node,
     make_deliver_node,
     make_execute_node,
     make_plan_node,
@@ -47,7 +48,13 @@ def route_after_gate(state: RunGraphState) -> str:
 
 
 def route_after_execute(state: RunGraphState) -> str:
-    """execute 收集到写操作 → 确认闸;否则进入验收(§6.2)。"""
+    """有待答问题 → 提问闸;有写操作 → 确认闸;否则进入验收(§10.3/§6.2)。
+
+    提问优先于写操作确认:本回合既没执行任何工具,也没收集待确认写操作
+    (execute 命中 interaction 调用时其余调用一律不执行)。
+    """
+    if state.get("pending_question"):
+        return "ask_gate"
     return "confirm_gate" if state.get("pending_writes") else "verify"
 
 
@@ -74,6 +81,7 @@ def build_run_graph(
     mcp_tools_factory: ToolExtrasFactory | None = None,
     *,
     plan_auto_approve: bool = True,
+    question_timeout_seconds: int = 900,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
@@ -89,9 +97,15 @@ def build_run_graph(
         instrument_node(
             "execute",
             "execute",
-            make_execute_node(llm, toolkit_factory, mcp_tools_factory),
+            make_execute_node(
+                llm,
+                toolkit_factory,
+                mcp_tools_factory,
+                question_timeout_seconds=question_timeout_seconds,
+            ),
         ),
     )
+    builder.add_node("ask_gate", make_ask_gate_node())
     builder.add_node("confirm_gate", confirm_gate_node)
     builder.add_node(
         "tool_exec",
@@ -117,8 +131,11 @@ def build_run_graph(
     builder.add_conditional_edges(
         "execute",
         route_after_execute,
-        {"confirm_gate": "confirm_gate", "verify": "verify"},
+        {"ask_gate": "ask_gate", "confirm_gate": "confirm_gate", "verify": "verify"},
     )
+    # 提问闸恢复后回 execute:答案已作为 tool-role 消息写进 tool_history,
+    # 模型下一轮自然看到(而不是重新执行工具或重发提问)。
+    builder.add_edge("ask_gate", "execute")
     builder.add_conditional_edges(
         "confirm_gate",
         route_after_confirm,

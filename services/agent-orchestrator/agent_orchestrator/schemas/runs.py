@@ -17,6 +17,9 @@ class RunStatus(StrEnum):
     AWAITING_APPROVAL = "awaiting_approval"
     RUNNING = "running"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
+    # 交互提问(docs/design/tool-service.md §10.2):模型已提问、run 停在 ask_gate
+    # 等用户回答;只能 answer(取消亦可),DB 列 String(32) 无需迁移。
+    AWAITING_INPUT = "awaiting_input"
     BLOCKED = "blocked"
     # 取消(P0-2):任意非终态都可取消;执行中的图调用不强制打断,
     # 执行边界回来时读到 cancelled 就不再覆盖终态(协作式取消)。
@@ -103,6 +106,29 @@ class ConfirmRequest(BaseModel):
 
     action: Literal["approve", "reject"]
     reason: str | None = Field(default=None, max_length=2000)
+
+
+class AnswerItem(BaseModel):
+    """单个问题的回答:index 对应 questions 下标(§10.5)。"""
+
+    index: int = Field(ge=0, le=3)
+    labels: list[str] = Field(default_factory=list, max_length=4)
+    custom: str | None = Field(default=None, max_length=1000)
+
+
+class RunAnswerRequest(BaseModel):
+    """回答 ask_question 提问(§10.5):decline 时 answers 可空。"""
+
+    question_id: str = Field(min_length=1, max_length=64)
+    action: Literal["answer", "decline"] = "answer"
+    answers: list[AnswerItem] = Field(default_factory=list, max_length=4)
+
+
+class RunAnswerRead(BaseModel):
+    """answer API 的 202 响应:接受后返回 run 快照(幂等成功也回 202)。"""
+
+    run: RunRead
+    accepted: bool = True
 
 
 class CancelRequest(BaseModel):

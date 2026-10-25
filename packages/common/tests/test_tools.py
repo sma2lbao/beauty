@@ -53,13 +53,13 @@ class TestToolDescriptor:
             timeout_seconds=12.5,
             output_schema={"type": "object"},
             scopes=("files:read",),
-            aliases=("code_read_file",),
+            aliases=("legacy_tool_name",),
             enabled=False,
             version="3",
         )
         payload = descriptor.to_payload()
         assert payload["scopes"] == ["files:read"]
-        assert payload["aliases"] == ["code_read_file"]
+        assert payload["aliases"] == ["legacy_tool_name"]
         assert ToolDescriptor.from_payload(payload) == descriptor
 
     def test_defaults_and_minimal_payload(self) -> None:

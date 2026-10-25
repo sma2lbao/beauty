@@ -44,6 +44,10 @@ const NOTIFY_ON: Partial<
     tone: 'warning',
     title: '任务待确认危险操作',
   },
+  awaiting_input: {
+    tone: 'warning',
+    title: '任务等待你的回答',
+  },
   completed: { tone: 'success', title: '任务已完成' },
   failed: { tone: 'danger', title: '任务失败' },
   blocked: { tone: 'danger', title: '任务被阻塞' },

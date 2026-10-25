@@ -1,4 +1,4 @@
-"""目录与执行 API:别名、幂等、错误信封与租户边界(零网络)。"""
+"""目录与执行 API:别名机制、幂等、错误信封与租户边界(零网络)。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
@@ -18,6 +19,7 @@ from tests.conftest import (
     write_envelope,
 )
 from tool_service.main import create_app
+from tool_service.services import catalog
 
 
 def _execute(
@@ -45,41 +47,59 @@ def test_list_tools_exposes_function_slice(client: TestClient) -> None:
         "list_dir",
         "write",
         "edit",
+        "search_knowledge",
+        "ask_question",
     ]
     assert body["tools"][0]["executor"] == "sandbox"
     assert body["tools"][0]["risk"] == "read"
     assert body["tools"][4]["risk"] == "write"
+    assert body["tools"][6]["executor"] == "http"
+    assert body["tools"][6]["risk"] == "read"
+    assert body["tools"][7]["kind"] == "interaction"
+    assert body["tools"][7]["executor"] == "none"
 
 
 def test_list_tools_filters_by_kind_and_scope(client: TestClient) -> None:
     interaction = client.get("/v1/tools", params={"kind": "interaction"})
     assert interaction.status_code == 200
-    assert interaction.json()["tools"] == []
+    assert [tool["name"] for tool in interaction.json()["tools"]] == ["ask_question"]
+
+    function = client.get("/v1/tools", params={"kind": "function"})
+    assert function.status_code == 200
+    function_names = [tool["name"] for tool in function.json()["tools"]]
+    assert "ask_question" not in function_names
+    assert "search_knowledge" in function_names
 
     unknown_scope = client.get("/v1/tools", params={"scope": "missing"})
     assert unknown_scope.status_code == 200
     assert unknown_scope.json()["tools"] == []
 
 
-def test_get_tool_by_name_and_alias(client: TestClient) -> None:
+def test_get_tool_by_name_and_alias(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     by_name = client.get("/v1/tools/read")
     assert by_name.status_code == 200
     assert by_name.json()["name"] == "read"
     assert by_name.json()["input_schema"]["properties"]["path"]["type"] == "string"
 
-    by_alias = client.get("/v1/tools/code_read_file")
+    # 目录不再自带旧别名;别名解析仍是通用机制(临时注册验证一次)。
+    monkeypatch.setitem(catalog.ALIASES, "legacy_local_read", "read")
+    by_alias = client.get("/v1/tools/legacy_local_read")
     assert by_alias.status_code == 200
     assert by_alias.json()["name"] == "read"
 
 
-def test_get_unknown_or_disabled_tool_is_404(client: TestClient) -> None:
+def test_get_unknown_tool_is_404_but_interaction_is_listed(client: TestClient) -> None:
     missing = client.get("/v1/tools/nope")
     assert missing.status_code == 404
     assert missing.json()["code"] == "tool.not_found"
 
-    disabled = client.get("/v1/tools/ask_question")
-    assert disabled.status_code == 404
-    assert disabled.json()["code"] == "tool.not_found"
+    interaction = client.get("/v1/tools/ask_question")
+    assert interaction.status_code == 200
+    assert interaction.json()["name"] == "ask_question"
+    assert interaction.json()["kind"] == "interaction"
+    assert interaction.json()["executor"] == "none"
 
 
 def test_execute_requires_bearer_token(client: TestClient) -> None:
@@ -167,15 +187,98 @@ def test_invalid_arguments_return_200_error_envelope(client: TestClient) -> None
     assert audit.json()["items"][0]["error_code"] == "tool.invalid_args"
 
 
-def test_execute_disabled_tool_is_404(client: TestClient) -> None:
+def test_execute_ask_question_returns_interaction_envelope(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    arguments = {
+        "questions": [
+            {
+                "question": "选哪个环境?",
+                "header": "环境",
+                "options": [
+                    {"label": "staging", "description": "预发"},
+                    {"label": "prod"},
+                ],
+            }
+        ],
+        "allow_custom": False,
+    }
+
     resp = _execute(
         client,
-        {"tool_call_id": "call-3", "arguments": {"questions": []}},
+        {"tool_call_id": "call-3", "arguments": arguments},
         tool="ask_question",
     )
 
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "tool.not_found"
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["kind"] == "interaction"
+    assert body["interaction"] == {"type": "question"}
+    assert body["normalized"]["allow_custom"] is False
+    assert body["normalized"]["questions"][0]["header"] == "环境"
+    assert body["normalized"]["questions"][0]["multi_select"] is False
+    # 交互工具只归一参数,不触发沙箱执行。
+    assert sandbox_provider.exec_calls == []
+
+
+def test_execute_ask_question_invalid_arguments_is_200_error(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    resp = _execute(
+        client,
+        {"tool_call_id": "call-3b", "arguments": {"questions": []}},
+        tool="ask_question",
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is False
+    assert resp.json()["error"]["code"] == "tool.invalid_args"
+    assert sandbox_provider.exec_calls == []
+
+
+def test_execute_search_knowledge_proxies_to_knowledge(
+    client: TestClient, knowledge_client: Any
+) -> None:
+    knowledge_client.result = {
+        "query": "部署",
+        "provider": "fake",
+        "model": "fake",
+        "hits": [{"title": "发布流程", "score": 0.8, "content": "先灰度"}],
+    }
+
+    resp = _execute(
+        client,
+        {"tool_call_id": "call-kb", "arguments": {"query": "部署"}},
+        tool="search_knowledge",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["hits"] == [{"title": "发布流程", "score": 0.8, "content": "先灰度"}]
+    assert body["tool_call_id"] == "call-kb"
+    assert knowledge_client.calls == [{"tenant_id": "t-1", "query": "部署", "limit": 5}]
+
+
+def test_execute_search_knowledge_upstream_error_is_envelope(
+    client: TestClient, knowledge_client: Any
+) -> None:
+    from tool_service.services.executors.http import UpstreamStatusError
+
+    knowledge_client.error = UpstreamStatusError(503, "down")
+
+    resp = _execute(
+        client,
+        {"tool_call_id": "call-kb2", "arguments": {"query": "部署"}},
+        tool="search_knowledge",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "tool.upstream_unavailable"
+    assert body["error"]["retryable"] is True
 
 
 def test_execute_rejects_bad_request_shape(client: TestClient) -> None:

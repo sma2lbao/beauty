@@ -8,12 +8,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from common.clients.sandbox import SandboxExecResult
 from common.errors import NotFoundError, PermissionDeniedError, UpstreamError
 from common.tools import ExecutorKind, ToolRisk
 
-from tests.conftest import FakeSandboxProvider, _settings
+from tests.conftest import FakeKnowledgeClient, FakeSandboxProvider, _settings
 from tool_service.services import catalog, execution
 from tool_service.services.execution import (
     ExecutionContext,
@@ -21,6 +22,7 @@ from tool_service.services.execution import (
     arguments_digest,
     audit_columns,
 )
+from tool_service.services.executors.http import HttpToolExecutor, UpstreamStatusError
 
 
 def _context(**overrides: Any) -> ExecutionContext:
@@ -33,8 +35,13 @@ def _context(**overrides: Any) -> ExecutionContext:
     return ExecutionContext(**values)
 
 
-def _runner(tmp_path: Path, provider: FakeSandboxProvider) -> ToolRunner:
-    return ToolRunner(settings=_settings(tmp_path), sandbox=provider)
+def _runner(
+    tmp_path: Path,
+    provider: FakeSandboxProvider,
+    *,
+    http: HttpToolExecutor | None = None,
+) -> ToolRunner:
+    return ToolRunner(settings=_settings(tmp_path), sandbox=provider, http=http)
 
 
 async def test_execute_read_returns_envelope(tmp_path: Path) -> None:
@@ -57,11 +64,14 @@ async def test_execute_read_returns_envelope(tmp_path: Path) -> None:
     assert provider.touched == ["sbx-1"]
 
 
-async def test_execute_resolves_alias(tmp_path: Path) -> None:
+async def test_execute_resolves_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     provider = FakeSandboxProvider()
     runner = _runner(tmp_path, provider)
+    monkeypatch.setitem(catalog.ALIASES, "legacy_local_read", "read")
 
-    outcome = await runner.execute(_context(), "code_read_file", {"path": "a.txt"})
+    outcome = await runner.execute(_context(), "legacy_local_read", {"path": "a.txt"})
 
     assert outcome.descriptor.name == "read"
     assert json.loads(provider.exec_calls[0]["stdin"])["tool"] == "read"
@@ -88,11 +98,17 @@ async def test_unknown_tool_raises_not_found(tmp_path: Path) -> None:
     assert raised.value.code == "tool.not_found"
 
 
-async def test_disabled_tool_raises_not_found(tmp_path: Path) -> None:
+async def test_disabled_tool_raises_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    descriptor = replace(catalog.READ, enabled=False)
+    monkeypatch.setattr(execution, "find_descriptor", lambda name: descriptor)
     runner = _runner(tmp_path, FakeSandboxProvider())
 
-    with pytest.raises(NotFoundError):
-        await runner.execute(_context(), "ask_question", {"questions": []})
+    with pytest.raises(NotFoundError) as raised:
+        await runner.execute(_context(), "read", {"path": "a.txt"})
+
+    assert raised.value.code == "tool.not_found"
 
 
 async def test_write_requires_approval(tmp_path: Path) -> None:
@@ -465,3 +481,219 @@ async def test_audit_paths_are_capped(tmp_path: Path) -> None:
     columns = audit_columns(outcome, context, arguments, decision="auto")
 
     assert len(json.loads(columns["paths"])) == 20
+
+
+# ---- ask_question:交互工具在 tool-service 侧只校验+归一,不执行 ----------
+
+
+async def test_ask_question_returns_interaction_result(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    runner = _runner(tmp_path, provider)
+    context = _context()
+    arguments = {
+        "questions": [
+            {
+                "question": "选择目标环境",
+                "header": "环境",
+                "options": [
+                    {"label": "staging", "description": "预发环境"},
+                    {"label": "prod"},
+                ],
+                "multi_select": True,
+            },
+            {
+                "question": "补充说明?",
+                "options": [{"label": "无"}, {"label": "见备注"}],
+            },
+        ],
+        "allow_custom": False,
+    }
+
+    outcome = await runner.execute(context, "ask_question", arguments)
+
+    assert outcome.response.ok is True
+    assert outcome.response.tool_call_id == "call-1"
+    assert outcome.response.idempotent_replay is False
+    result = outcome.response.result
+    assert result is not None
+    assert result["kind"] == "interaction"
+    assert result["interaction"] == {"type": "question"}
+    normalized = result["normalized"]
+    assert normalized["allow_custom"] is False
+    assert normalized["questions"] == [
+        {
+            "question": "选择目标环境",
+            "header": "环境",
+            "options": [
+                {"label": "staging", "description": "预发环境"},
+                {"label": "prod"},
+            ],
+            "multi_select": True,
+        },
+        {
+            "question": "补充说明?",
+            "options": [{"label": "无"}, {"label": "见备注"}],
+            "multi_select": False,
+        },
+    ]
+    # 交互工具不进沙箱:零 ensure/零 exec。
+    assert provider.ensured == []
+    assert provider.exec_calls == []
+    assert outcome.sandbox_id is None
+    columns = audit_columns(outcome, context, arguments, decision="auto")
+    assert columns["tool_name"] == "ask_question"
+    assert columns["risk"] == "read"
+    assert columns["ok"] is True
+    assert columns["bytes_written"] == 0
+    assert json.loads(columns["paths"]) == []
+
+
+async def test_ask_question_fills_defaults(tmp_path: Path) -> None:
+    runner = _runner(tmp_path, FakeSandboxProvider())
+
+    outcome = await runner.execute(
+        _context(),
+        "ask_question",
+        {"questions": [{"question": "q", "options": [{"label": "a"}, {"label": "b"}]}]},
+    )
+
+    normalized = outcome.response.result["normalized"]  # type: ignore[index]
+    assert normalized["allow_custom"] is True
+    assert normalized["questions"] == [
+        {
+            "question": "q",
+            "options": [{"label": "a"}, {"label": "b"}],
+            "multi_select": False,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"questions": []},
+        {
+            "questions": [
+                {"question": "q", "options": [{"label": "a"}, {"label": "b"}]}
+            ]
+            * 5
+        },
+        {"questions": [{"question": "q", "options": []}]},
+        {"questions": [{"question": "q"}]},
+        {
+            "questions": [
+                {"question": "q", "options": [{"label": "a"}, {"label": "b"}]}
+            ],
+            "extra": True,
+        },
+        {"questions": [{"question": "", "options": [{"label": "a"}, {"label": "b"}]}]},
+    ],
+)
+async def test_ask_question_rejects_invalid_arguments(
+    tmp_path: Path, arguments: dict[str, Any]
+) -> None:
+    provider = FakeSandboxProvider()
+    runner = _runner(tmp_path, provider)
+
+    outcome = await runner.execute(_context(), "ask_question", arguments)
+
+    assert outcome.response.ok is False
+    assert outcome.response.error is not None
+    assert outcome.response.error.code == "tool.invalid_args"
+    assert provider.ensured == []
+    assert provider.exec_calls == []
+
+
+# ---- search_knowledge:HTTP 执行器代理到知识库(零网络) -------------------
+
+
+def _http_runner(
+    tmp_path: Path,
+    provider: FakeSandboxProvider,
+    knowledge: FakeKnowledgeClient,
+) -> ToolRunner:
+    return _runner(tmp_path, provider, http=HttpToolExecutor(knowledge=knowledge))
+
+
+async def test_search_knowledge_proxies_to_knowledge_client(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    knowledge = FakeKnowledgeClient()
+    knowledge.result = {
+        "query": "部署",
+        "provider": "fake",
+        "model": "fake",
+        "hits": [{"title": "T", "score": 0.9, "content": "C"}],
+    }
+    runner = _http_runner(tmp_path, provider, knowledge)
+    context = _context()
+
+    outcome = await runner.execute(context, "search_knowledge", {"query": "部署"})
+
+    assert outcome.response.ok is True
+    assert outcome.response.tool_call_id == "call-1"
+    assert outcome.response.result == knowledge.result
+    assert outcome.sandbox_id is None
+    assert knowledge.calls == [{"tenant_id": "t-1", "query": "部署", "limit": 5}]
+    assert provider.ensured == []
+    assert provider.exec_calls == []
+    columns = audit_columns(outcome, context, {"query": "部署"}, decision="auto")
+    assert columns["tool_name"] == "search_knowledge"
+    assert columns["risk"] == "read"
+    assert columns["bytes_written"] == 0
+    assert json.loads(columns["paths"]) == []
+    assert columns["result_chars"] > 0
+
+
+async def test_search_knowledge_forwards_limit(tmp_path: Path) -> None:
+    knowledge = FakeKnowledgeClient()
+    runner = _http_runner(tmp_path, FakeSandboxProvider(), knowledge)
+
+    await runner.execute(_context(), "search_knowledge", {"query": "q", "limit": 9})
+
+    assert knowledge.calls[0]["limit"] == 9
+
+
+async def test_search_knowledge_requires_http_executor(tmp_path: Path) -> None:
+    runner = _runner(tmp_path, FakeSandboxProvider())
+
+    outcome = await runner.execute(_context(), "search_knowledge", {"query": "q"})
+
+    assert outcome.response.ok is False
+    assert outcome.response.error is not None
+    assert outcome.response.error.code == "tool.executor_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "retryable"),
+    [
+        (UpstreamStatusError(404, "missing"), "tool.not_found", False),
+        (UpstreamStatusError(422, "bad"), "tool.invalid_args", False),
+        (UpstreamStatusError(503, "down"), "tool.upstream_unavailable", True),
+        (httpx.ReadTimeout("slow"), "tool.timeout", True),
+        (httpx.ConnectError("refused"), "tool.upstream_unavailable", True),
+        (
+            UpstreamError("auth.internal_secret_missing", "no secret"),
+            "tool.upstream_unavailable",
+            False,
+        ),
+        (
+            UpstreamError("knowledge.bad_response", "bad json"),
+            "tool.upstream_unavailable",
+            True,
+        ),
+    ],
+)
+async def test_search_knowledge_maps_upstream_errors(
+    tmp_path: Path, error: Exception, code: str, retryable: bool
+) -> None:
+    knowledge = FakeKnowledgeClient()
+    knowledge.error = error
+    runner = _http_runner(tmp_path, FakeSandboxProvider(), knowledge)
+
+    outcome = await runner.execute(_context(), "search_knowledge", {"query": "q"})
+
+    assert outcome.response.ok is False
+    assert outcome.response.error is not None
+    assert outcome.response.error.code == code
+    assert outcome.response.error.retryable is retryable

@@ -36,6 +36,7 @@ from common.tools import (
     ToolKind,
     ToolRisk,
     to_legacy_risk,
+    validate_arguments,
 )
 
 from agent_orchestrator.services.tool_context import current_tool_context
@@ -212,8 +213,10 @@ class ToolCatalog:
 class RemoteToolkit:
     """把 tool-service 目录包装成 graph 侧 ToolkitPort(按租户实例化)。
 
-    - schemas():只暴露可执行的普通工具(kind=function);交互工具由执行图的
-      提问闸处理,不进模型工具清单;
+    - schemas():默认只暴露可执行的普通工具(kind=function);交互工具
+      (ask_question)只在执行图里经 with_interaction() 开启——对话路径默认
+      不可见(设计 §10.9),避免闲聊里挂起等待用户输入;
+    - kind()/validate_call():执行图据此识别 interaction 调用并在中断前校验参数;
     - risk():返回旧枚举 read/write/danger,审批闸与 golden-run 断言无需改;
     - execute():参数 JSON 解析失败/未知工具/服务不可达一律回错误信封。
     """
@@ -226,12 +229,15 @@ class RemoteToolkit:
         catalog: ToolCatalog,
         timeout_grace_seconds: float = DEFAULT_TIMEOUT_GRACE_SECONDS,
         allowed: frozenset[str] | None = None,
+        interaction: bool = False,
     ) -> None:
         self._tenant_id = tenant_id
         self._client = client
         self._catalog = catalog
         self._timeout_grace = timeout_grace_seconds
         self._allowed = allowed
+        # 交互工具默认隐藏;执行图装配时显式 with_interaction() 打开。
+        self._interaction = interaction
 
     async def ensure_ready(self) -> None:
         """惰性加载目录;图节点/对话循环在拿到 toolkit 后显式等待一次。"""
@@ -239,21 +245,21 @@ class RemoteToolkit:
         await self._catalog.ensure(self._client)
 
     def __len__(self) -> int:
-        return len(self._function_tools())
+        return len(self._model_tools())
 
     @property
     def names(self) -> list[str]:
-        return [tool.name for tool in self._function_tools()]
+        return [tool.name for tool in self._model_tools()]
 
     def contains(self, name: str) -> bool:
         canonical = self._canonical(name)
         return canonical is not None and canonical in {
-            t.name for t in self._function_tools()
+            t.name for t in self._model_tools()
         }
 
     @property
     def has_dangerous(self) -> bool:
-        return any(tool.risk is ToolRisk.DESTRUCTIVE for tool in self._function_tools())
+        return any(tool.risk is ToolRisk.DESTRUCTIVE for tool in self._model_tools())
 
     def risk(self, name: str) -> str:
         """旧枚举风险值(read/write/danger);未知工具按最严处理。"""
@@ -262,6 +268,34 @@ class RemoteToolkit:
         if descriptor is None:
             return "danger"
         return to_legacy_risk(descriptor.risk)
+
+    def kind(self, name: str) -> str:
+        """工具形态(function/interaction);未知名字按 function 处理。"""
+
+        descriptor = self._descriptor(name)
+        return str(descriptor.kind) if descriptor is not None else "function"
+
+    def validate_call(self, name: str, arguments: str) -> list[str]:
+        """按目录里的 input_schema 预校验参数(中断前零副作用,故必须先校验)。"""
+
+        descriptor = self._descriptor(name)
+        if descriptor is None:
+            return [f"未知工具: {name}"]
+        try:
+            payload = json.loads(arguments) if arguments else {}
+        except ValueError as exc:
+            return [f"工具参数不是合法 JSON: {exc}"]
+        if not isinstance(payload, dict):
+            return ["工具参数必须是 JSON 对象"]
+        return [
+            error.message
+            for error in validate_arguments(descriptor.input_schema, payload)
+        ]
+
+    def with_interaction(self) -> RemoteToolkit:
+        """打开 interaction 工具可见性(执行图专用;对话路径不调用)。"""
+
+        return self._clone(interaction=True)
 
     def schemas(self) -> list[dict[str, Any]]:
         return [
@@ -273,7 +307,7 @@ class RemoteToolkit:
                     "parameters": tool.input_schema,
                 },
             }
-            for tool in self._function_tools()
+            for tool in self._model_tools()
         ]
 
     def extended(self, specs: list[ToolSpec]) -> HybridToolkit:
@@ -291,12 +325,23 @@ class RemoteToolkit:
                 canonical.add(found)
         if self._allowed is not None:
             canonical &= self._allowed
+        return self._clone(allowed=frozenset(canonical))
+
+    def _clone(
+        self,
+        *,
+        allowed: frozenset[str] | None = None,
+        interaction: bool | None = None,
+    ) -> RemoteToolkit:
+        """复制工具箱:restricted/with_interaction 都走这里,保证标志不丢。"""
+
         return RemoteToolkit(
             self._tenant_id,
             client=self._client,
             catalog=self._catalog,
             timeout_grace_seconds=self._timeout_grace,
-            allowed=frozenset(canonical),
+            allowed=self._allowed if allowed is None else allowed,
+            interaction=self._interaction if interaction is None else interaction,
         )
 
     async def execute(
@@ -379,9 +424,14 @@ class RemoteToolkit:
             response = replace(response, tool_call_id=call_id)
         return json.dumps(response.envelope(), ensure_ascii=False)
 
-    def _function_tools(self) -> tuple[ToolDescriptor, ...]:
+    def _model_tools(self) -> tuple[ToolDescriptor, ...]:
+        """模型可见工具:function 恒可见,interaction 仅 with_interaction 后可见。"""
+
         return tuple(
-            tool for tool in self._visible_tools() if tool.kind is ToolKind.FUNCTION
+            tool
+            for tool in self._visible_tools()
+            if tool.kind is ToolKind.FUNCTION
+            or (self._interaction and tool.kind is ToolKind.INTERACTION)
         )
 
     def _visible_tools(self) -> tuple[ToolDescriptor, ...]:
@@ -433,6 +483,21 @@ class HybridToolkit:
             if _contains(self._base, name)
             else self._extra.risk(name)
         )
+
+    def kind(self, name: str) -> str:
+        return (
+            self._base.kind(name)
+            if _contains(self._base, name)
+            else self._extra.kind(name)
+        )
+
+    def validate_call(self, name: str, arguments: str) -> list[str]:
+        if _contains(self._base, name):
+            return self._base.validate_call(name, arguments)
+        return self._extra.validate_call(name, arguments)
+
+    def with_interaction(self) -> HybridToolkit:
+        return HybridToolkit(self._base.with_interaction(), self._extra)
 
     def schemas(self) -> list[dict[str, Any]]:
         return [*self._base.schemas(), *self._extra.schemas()]

@@ -37,6 +37,7 @@ const CANCELLABLE: readonly RunStatus[] = [
   'running',
   'awaiting_approval',
   'awaiting_confirmation',
+  'awaiting_input',
   'blocked',
 ];
 

@@ -1,6 +1,6 @@
 # tool-service(工具服务, :8008)
 
-内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
+内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
 
 ## 职责边界
 
@@ -8,6 +8,7 @@
 | --- | --- |
 | 工具目录(catalog)、参数 schema、限额 | tool-service(代码即真源,`tool_service/services/catalog.py`) |
 | 工具执行(沙箱内 helper 脚本) | tool-service → workspace-service 沙箱 |
+| 知识库只读检索(`search_knowledge`) | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱) |
 | 审批决策(allow/ask/deny) | orchestrator 保留;tool-service 只做风险下限防御 |
 | run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events |
 | 调用审计与幂等(`tool_calls` 表) | tool-service |
@@ -37,12 +38,27 @@
 | `TOOL__INTERNAL_SECRET` | 空 | 服务间换取租户 token 的 internal secret |
 | `TOOL__WORKSPACE_SERVICE_URL` | `http://127.0.0.1:8005` | 沙箱来源 |
 | `TOOL__WORKSPACE_TIMEOUT_SECONDS` | `60` | 沙箱 HTTP 超时 |
+| `TOOL__KNOWLEDGE_SERVICE_URL` | `http://127.0.0.1:8006` | 知识库检索来源(`search_knowledge` 代理目标) |
+| `TOOL__KNOWLEDGE_TIMEOUT_SECONDS` | `20` | 知识库 HTTP 超时(单次仍受 descriptor 的 20s 上限约束) |
 | `TOOL__TOOL_TIMEOUT_SECONDS` | `30` | 单次工具执行默认上限 |
 | `TOOL__SANDBOX_TOOL_TTL_SECONDS` | `1800` | 沙箱滑动 TTL |
 | `TOOL__READ_BEFORE_WRITE_ENABLED` | `true` | 写前读校验:同 run 内没 read 过同路径 → `tool.read_required` |
 | `TOOL__MAX_WRITES_PER_RUN` | `50` | 单 run 写操作次数上限(P1) |
 | `TOOL__MAX_WRITE_BYTES_PER_RUN` | `5242880` | 单 run 写入字节上限(P1) |
 | `TOOL__MAX_TOOL_CALLS_PER_RUN` | `60` | 单 run 工具调用总次数上限(P1) |
+
+## 知识库检索代理(P2)
+
+- `search_knowledge` 是 `risk=read`、`executor=http` 的函数工具:参数在 journal 层校验(`query` 必填 ≤2000,`limit` 1..10 默认 5),不进沙箱、不写文件。
+- 本服务用 `TokenBroker`(subject `svc-tool`,与沙箱调用同一 internal secret)换租户 JWT,携带 `Authorization: Bearer` 调 `knowledge-service` 的 `POST /v1/knowledge/search`。
+- 返回形状沿用旧 orchestrator 工具:`{"query","provider","model","hits":[{"title","score","content"}]}`, `chunk_id/document_id` 等内部字段不喂给模型。
+- 错误映射:下游 404 → `tool.not_found`;其余 4xx → `tool.invalid_args`;5xx/连接失败 → `tool.upstream_unavailable`(retryable);`httpx` 超时 → `tool.timeout`(retryable);internal secret 缺失属于配置问题,`tool.upstream_unavailable` 但 `retryable=false`。
+- 只读代理:不建表、不发事件、不产生副作用;未知 HTTP 工具名一律 `tool.executor_unavailable`。
+
+## 交互工具(P2)
+
+- `ask_question` 已启用(`kind=interaction`、`executor=none`):本服务只做 schema 校验与字段归一(默认补 `allow_custom=true`、每题 `multi_select=false`),返回 `{"ok":true,"kind":"interaction","interaction":{"type":"question"},"normalized":{...}}`。
+- 挂起/回答/恢复由 orchestrator 的 run 中断机制处理(见 `docs/design/tool-service.md` §7.7/§8.3);本服务不写 run 事件、不做审批决策。
 
 ## 受控写(P1)
 
@@ -56,6 +72,7 @@
 
 ```sh
 npx nx run workspace-service:serve   # 沙箱来源(:8005)
+npx nx run knowledge-service:serve   # 知识库检索来源(:8006,P2)
 npx nx run tool-service:sync         # 依赖同步(禁用 npx nx sync,会被内置命令抢占)
 npx nx run tool-service:serve        # :8008
 npx nx lint tool-service

@@ -21,10 +21,11 @@ from common.errors import (
 from common.security import SECRET_HEADER
 from database.session import session_scope
 
+from agent_orchestrator.graph.tool_results import is_tool_error
 from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.repositories import ArtifactRepository, RunRepository
 from agent_orchestrator.services import artifacts as artifacts_service
-from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
+from agent_orchestrator.services.tools import ToolRisk
 
 PROTOCOL_VERSION = "2025-03-26"
 
@@ -131,15 +132,32 @@ def _require_scope(principal: MCPPrincipal, scope: str) -> None:
         raise PermissionDeniedError("mcp.forbidden", f"缺少 scope:{scope}")
 
 
-def _read_only_tools(toolkit: ToolRegistry | None) -> list[dict[str, Any]]:
+def _legacy_risk(toolkit: Any, name: str) -> str:
+    """归一工具风险为旧枚举字符串 read/write/danger。
+
+    兼容两种工具箱:进程内 ToolRegistry.risk() 返回 ToolRisk 枚举,
+    RemoteToolkit.risk() 返回旧枚举字符串;未知工具一律按最严的 danger。
+    """
+
+    getter = getattr(toolkit, "risk", None)
+    if not callable(getter):
+        return "danger"
+    value = getter(name)
+    if isinstance(value, ToolRisk):
+        return value.value
+    return str(value)
+
+
+def _read_only_tools(toolkit: Any | None) -> list[dict[str, Any]]:
     if toolkit is None:
         return []
     out: list[dict[str, Any]] = []
+    kind_of = getattr(toolkit, "kind", None)
     for schema in toolkit.schemas():
         name = schema["function"]["name"]
-        if name.startswith("code_"):
-            continue  # 公开 MCP 不暴露服务端本地文件工具
-        if toolkit.risk(name) is not ToolRisk.READ:
+        if callable(kind_of) and str(kind_of(name)) != "function":
+            continue  # 交互式工具(ask_question)需要人工应答,公开面不暴露(§10.9)
+        if _legacy_risk(toolkit, name) != "read":
             continue  # 公开面只暴露只读工具;受控写/危险操作走控制台(有审批/沙箱)
         out.append(
             {
@@ -244,16 +262,19 @@ async def call_tool(
         except AppError as exc:
             return _tool_result(exc.message, is_error=True)
         return _tool_result(content["text"])
-    # 只读工具走与内部 run 相同的 ToolRegistry
+    # 只读工具经工具箱执行(进程内注册表或 tool-service 远程目录)
     toolkit_factory = getattr(request.app.state, "toolkit_factory", None)
     toolkit = toolkit_factory(principal.tenant_id) if toolkit_factory else None
     if toolkit is None:
         return _tool_result("工具未配置", is_error=True)
     tool_name = name.removeprefix("beauty.")
-    if toolkit.requires_confirmation(tool_name):
-        return _tool_result("公开 MCP 不执行写操作", is_error=True)
+    kind_of = getattr(toolkit, "kind", None)
+    if callable(kind_of) and str(kind_of(tool_name)) != "function":
+        return _tool_result("公开 MCP 只暴露可执行工具", is_error=True)
+    if _legacy_risk(toolkit, tool_name) != "read":
+        return _tool_result("公开 MCP 只暴露只读工具", is_error=True)
     output = await toolkit.execute(tool_name, json.dumps(arguments, ensure_ascii=False))
-    return _tool_result(output, is_error=output.startswith('{"error"'))
+    return _tool_result(output, is_error=is_tool_error(output))
 
 
 def _builtin_tools() -> list[dict[str, Any]]:

@@ -28,6 +28,8 @@ from agent_orchestrator.schemas.runs import (
     PlanRead,
     PlanUpdate,
     RejectRequest,
+    RunAnswerRead,
+    RunAnswerRequest,
     RunRead,
     RunStatus,
 )
@@ -212,6 +214,36 @@ async def confirm_run(
         max_download_files=settings.artifact_download_max_files,
     )
     return RunRead.model_validate(run)
+
+
+@router.post("/{run_id}/answer", response_model=RunAnswerRead, status_code=202)
+async def answer_run(
+    body: RunAnswerRequest,
+    run_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    graph: RunGraph,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
+    settings: SettingsDep,
+) -> RunAnswerRead:
+    """回答/放弃挂起的提问(§10.5):awaiting_input → running(或入队 answer job)。"""
+    run = await runs_service.answer_run(
+        session,
+        graph,
+        tenant_id,
+        run_id,
+        question_id=body.question_id,
+        action=body.action,
+        answers=[item.model_dump() for item in body.answers],
+        store=store,
+        workspace=workspace,
+        jobs_enabled=settings.jobs_enabled,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
+    )
+    return RunAnswerRead(run=RunRead.model_validate(run), accepted=True)
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)

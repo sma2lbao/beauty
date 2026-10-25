@@ -212,14 +212,30 @@ async def _ensure_chat_toolkit(toolkit: ToolkitPort, tenant_id: str) -> None:
         )
 
 
+def _tool_kind(toolkit: ToolkitPort, name: str) -> str:
+    """工具类型;没有 kind() 的旧工具集一律按 function 处理(向后兼容)。"""
+    hook = getattr(toolkit, "kind", None)
+    if hook is None:
+        return "function"
+    try:
+        return str(hook(name))
+    except Exception:  # noqa: BLE001 - 目录查询失败按普通工具处理
+        return "function"
+
+
 def _read_only_toolkit(toolkit: ToolkitPort | None) -> ToolkitPort | None:
-    """裁剪出只读工具(chat 的内置工具只能用读类,§10 决策)。"""
+    """裁剪出只读的**功能**工具(chat 无人工应答通道,§10.9)。
+
+    interaction 类工具(ask_question)需要用户回答,只随任务图的工具箱
+    (with_interaction)暴露;对话侧即便工具箱里带了也必须过滤掉。
+    """
     if toolkit is None:
         return None
     allowed = [
         entry["function"]["name"]
         for entry in toolkit.schemas()
         if str(toolkit.risk(entry["function"]["name"])) == "read"
+        and _tool_kind(toolkit, entry["function"]["name"]) == "function"
     ]
     return toolkit.restricted(allowed)
 

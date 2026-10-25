@@ -17,6 +17,7 @@ from common.testing import TestIdP
 
 from tool_service.core.config import Settings
 from tool_service.main import create_app
+from tool_service.services.executors.http import HttpToolExecutor
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
@@ -157,6 +158,30 @@ class FakeSandboxProvider:
         self.closed = True
 
 
+class FakeKnowledgeClient:
+    """零网络知识库替身:记录检索调用,返回可配置结果/异常。"""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.result: dict[str, Any] = {
+            "query": "",
+            "provider": "fake",
+            "model": "fake",
+            "hits": [],
+        }
+        self.error: Exception | None = None
+        self.closed = False
+
+    async def search(self, tenant_id: str, *, query: str, limit: int) -> dict[str, Any]:
+        self.calls.append({"tenant_id": tenant_id, "query": query, "limit": limit})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class SlowSandboxProvider(FakeSandboxProvider):
     """exec/ensure 挂住不返回,用于超时分支。"""
 
@@ -184,9 +209,22 @@ def sandbox_provider() -> FakeSandboxProvider:
     return FakeSandboxProvider()
 
 
+@pytest.fixture()
+def knowledge_client() -> FakeKnowledgeClient:
+    return FakeKnowledgeClient()
+
+
+@pytest.fixture()
+def http_executor(knowledge_client: FakeKnowledgeClient) -> HttpToolExecutor:
+    return HttpToolExecutor(knowledge=knowledge_client)
+
+
 client = client_fixture(
     create_app,
     _settings,
     app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
-    fixture_kwargs={"sandbox_provider": "sandbox_provider"},
+    fixture_kwargs={
+        "sandbox_provider": "sandbox_provider",
+        "http_executor": "http_executor",
+    },
 )

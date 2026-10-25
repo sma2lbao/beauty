@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from langgraph.types import interrupt
 
@@ -51,6 +53,8 @@ from agent_orchestrator.graph.plan_nodes import _stub_plan as _stub_plan
 from agent_orchestrator.graph.plan_nodes import _text_reply as _text_reply
 from agent_orchestrator.graph.plan_nodes import make_plan_node as make_plan_node
 from agent_orchestrator.graph.ports import (
+    KIND_FUNCTION,
+    KIND_INTERACTION,
     RISK_DANGER,
     ApprovalDecision,
     LLMPort,
@@ -69,6 +73,15 @@ from agent_orchestrator.graph.tool_results import (
 
 MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
+MAX_ASK_CYCLES = 3  # 交互提问轮次上限(tool-service §10.3,防提问循环)
+
+#: 提问被拒绝/超时后回喂模型的固定文案(§10.3):不抛错、不阻塞,让模型收束。
+QUESTION_DECLINED_REPLY = "用户拒绝回答该问题,请基于已有信息继续或结束任务"
+QUESTION_TIMEOUT_REPLY = "用户未在时限内回答,请基于已有信息继续"
+
+#: 单个问题/单条答案进 tool_history 前的字符上限(§10.8)。
+MAX_QUESTION_CHARS = 1000
+MAX_ANSWER_CHARS = 2000
 
 
 EXECUTE_SYSTEM_PROMPT = (
@@ -166,7 +179,11 @@ def make_approval_gate_node(
             state, toolkit_factory, extras_factory, runtime
         ):
             return {"auto_approved": True}
-        answer = interrupt({"plan_markdown": state.get("plan_markdown", "")})
+        # kind 是中断类型判别键(§10.3):_apply_graph_result 据此分流
+        # plan/confirmation/question;旧前端只读其余字段,语义不变。
+        answer = interrupt(
+            {"kind": "plan", "plan_markdown": state.get("plan_markdown", "")}
+        )
         if answer.get("action") != "approve":
             return {
                 "final_status": "blocked",
@@ -282,10 +299,156 @@ def _tool_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------- 交互提问(§10)
+
+
+def _tool_kind(toolkit: ToolkitPort, name: str) -> str:
+    """工具形态;旧实现/测试替身没有 kind() 时按普通工具处理(向后兼容)。"""
+
+    hook = getattr(toolkit, "kind", None)
+    return str(hook(name)) if callable(hook) else KIND_FUNCTION
+
+
+def _validate_call(toolkit: ToolkitPort, name: str, arguments: str) -> list[str]:
+    """执行前参数预校验;没有校验能力的实现视为通过。"""
+
+    hook = getattr(toolkit, "validate_call", None)
+    if not callable(hook):
+        return []
+    return [str(message) for message in hook(name, arguments)]
+
+
+def _safe_text(value: Any, limit: int) -> str:
+    """去掉控制字符并截断——回答来自外部输入,进消息历史前必须清洗。"""
+
+    text = "".join(
+        char for char in str(value) if char in {"\n", "\t"} or char.isprintable()
+    )
+    return text[:limit]
+
+
+def format_question_answers(questions: list[dict[str, Any]], answers: Any) -> str:
+    """把结构化回答归一成一条 tool-role 消息(§10.3 固定格式)。"""
+
+    by_index: dict[int, dict[str, Any]] = {}
+    if isinstance(answers, list):
+        for item in answers:
+            if isinstance(item, dict) and isinstance(item.get("index"), int):
+                by_index[item["index"]] = item
+    lines = ["用户已回答你的提问:"]
+    for position, question in enumerate(questions):
+        prompt = question.get("question", "") if isinstance(question, dict) else ""
+        item = by_index.get(position) or {}
+        parts = [
+            _safe_text(label, MAX_ANSWER_CHARS)
+            for label in item.get("labels") or []
+            if str(label).strip()
+        ]
+        custom = item.get("custom")
+        if custom and str(custom).strip():
+            parts.append(_safe_text(custom, MAX_ANSWER_CHARS))
+        value = "、".join(parts) if parts else "(未作答)"
+        lines.append(
+            f"{position + 1}. {_safe_text(prompt, MAX_QUESTION_CHARS)} -> {value}"
+        )
+    return "\n".join(lines)
+
+
+def _build_pending_question(call: Any, timeout_seconds: int) -> dict[str, Any]:
+    """由模型给出的工具调用参数构造待答问题(不产生任何副作用)。"""
+
+    try:
+        payload = json.loads(call.arguments) if call.arguments else {}
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    raw_questions = payload.get("questions")
+    questions = (
+        [item for item in raw_questions if isinstance(item, dict)]
+        if isinstance(raw_questions, list)
+        else []
+    )
+    allow_custom = payload.get("allow_custom")
+    created_at = datetime.now(UTC)
+    expires_at = (
+        (created_at + timedelta(seconds=timeout_seconds)).isoformat()
+        if timeout_seconds > 0
+        else None
+    )
+    return {
+        "question_id": uuid4().hex,
+        "questions": questions,
+        "allow_custom": True if allow_custom is None else bool(allow_custom),
+        "created_at": created_at.isoformat(),
+        "expires_at": expires_at,
+        "tool_call_id": str(getattr(call, "id", "") or ""),
+        "tool": getattr(call, "name", ""),
+    }
+
+
+def _question_update(pending: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+    """恢复后把答案归一成 tool-role 消息写回,清空待答状态、计一轮。"""
+
+    history = list(pending.get("_history") or [])
+    call_id = str(pending.get("tool_call_id") or "")
+    answers: list[dict[str, Any]] = []
+    if answer.get("action") == "decline":
+        reason = answer.get("reason")
+        content = (
+            QUESTION_TIMEOUT_REPLY if reason == "timeout" else QUESTION_DECLINED_REPLY
+        )
+    else:
+        raw = answer.get("answers")
+        answers = (
+            [item for item in raw if isinstance(item, dict)]
+            if isinstance(raw, list)
+            else []
+        )
+        content = format_question_answers(
+            [item for item in pending.get("questions") or [] if isinstance(item, dict)],
+            answers,
+        )
+    return {
+        "tool_history": [*history, _tool_message(call_id, content)],
+        "pending_question": None,
+        "question_answers": [
+            {"question_id": str(pending.get("question_id") or ""), "answers": answers}
+        ],
+        "ask_cycles": 1,
+    }
+
+
+def make_ask_gate_node():
+    """提问闸门(§10.3):execute 已收集到待答问题,这里中断等用户回答。
+
+    这是**唯一新增的 interrupt 点**,且 interrupt 之前零副作用:LangGraph 恢复
+    时会重放本节点,任何副作用(写库/发事件/执行工具)都必须留在节点外。
+    """
+
+    def ask_gate_node(state: RunGraphState) -> dict:
+        pending = state.get("pending_question") or {}
+        answer = interrupt(
+            {
+                "kind": "question",
+                "question_id": pending.get("question_id", ""),
+                "questions": pending.get("questions", []),
+                "allow_custom": pending.get("allow_custom", True),
+                "expires_at": pending.get("expires_at"),
+            }
+        )
+        pending = {**pending, "_history": list(state.get("tool_history") or [])}
+        return _question_update(pending, answer if isinstance(answer, dict) else {})
+
+    return ask_gate_node
+
+
 def make_execute_node(
     llm: LLMPort | None,
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ToolExtrasFactory | None = None,
+    *,
+    question_timeout_seconds: int = 900,
 ):
     """execute 节点工厂:LLM 执行;有工具时跑 function-calling 循环(§6.1)。
 
@@ -312,6 +475,11 @@ def make_execute_node(
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:
             toolkit = toolkit.restricted(allowed)
+        if toolkit is not None:
+            # 执行图可见 interaction 工具(chat 路径不打开,§10.9)
+            with_interaction = getattr(toolkit, "with_interaction", None)
+            if callable(with_interaction):
+                toolkit = with_interaction()
         if toolkit is None or len(toolkit) == 0:
             text = await _text_reply(
                 llm, messages, phase=delta.PHASE_EXECUTE, runtime=runtime
@@ -331,7 +499,82 @@ def make_execute_node(
             messages.append(_assistant_tool_message(reply))
             pending: list[dict[str, Any]] = []
             policies = state.get("approval_policies") or []
+            skip_ids: set[str] = set()
+            ask_call = None
+            ask_reason = ""
+            for call in reply.tool_calls or []:
+                if _tool_kind(toolkit, call.name) != KIND_INTERACTION:
+                    continue
+                risk = str(toolkit.risk(call.name))
+                if (
+                    runtime.ports.approval.decide(policies, call.name, risk)
+                    is ApprovalDecision.DENY
+                ):
+                    # 租户策略禁用提问:走普通工具的"策略禁止"分支回喂
+                    continue
+                if state.get("ask_cycles", 0) >= MAX_ASK_CYCLES:
+                    ask_reason = f"提问次数已达上限({MAX_ASK_CYCLES}),本次未向用户提问"
+                    ask_call = call
+                    break
+                errors = _validate_call(toolkit, call.name, call.arguments)
+                if errors:
+                    ask_reason = "提问参数不合法:" + ";".join(errors)
+                    ask_call = call
+                    break
+                ask_call = call
+                break
+            if ask_call is not None and not ask_reason:
+                # 命中交互调用:本回合只处理提问,其余调用一律不执行——
+                # ask_gate 中断前零副作用,恢复后由模型下一轮基于答案继续。
+                question = _build_pending_question(ask_call, question_timeout_seconds)
+                for other in reply.tool_calls or []:
+                    if other is ask_call:
+                        continue
+                    output = _tool_error("本轮包含需要用户回答的提问,其余工具未执行")
+                    records.append(
+                        _record(
+                            other.name,
+                            other.arguments,
+                            output,
+                            tool_call_id=getattr(other, "id", None),
+                            risk=str(toolkit.risk(other.name)),
+                            decision=DECISION_DENIED,
+                        )
+                    )
+                    messages.append(_tool_message(other.id, output))
+                records.append(
+                    _record(
+                        ask_call.name,
+                        ask_call.arguments,
+                        _tool_error("已向用户发起提问,等待回答"),
+                        tool_call_id=getattr(ask_call, "id", None),
+                        risk=str(toolkit.risk(ask_call.name)),
+                        decision=DECISION_AUTO,
+                    )
+                )
+                return {
+                    "tool_history": messages[len(base) :],
+                    "pending_question": question,
+                    "tool_calls": records,
+                }
+            if ask_call is not None:
+                # 不能挂起(轮次用尽/参数非法):如实回喂,本轮其余工具照常执行
+                output = _tool_error(ask_reason)
+                records.append(
+                    _record(
+                        ask_call.name,
+                        ask_call.arguments,
+                        output,
+                        tool_call_id=getattr(ask_call, "id", None),
+                        risk=str(toolkit.risk(ask_call.name)),
+                        decision=DECISION_DENIED,
+                    )
+                )
+                messages.append(_tool_message(ask_call.id, output))
+                skip_ids.add(str(getattr(ask_call, "id", "")))
             for call in reply.tool_calls:
+                if str(getattr(call, "id", "")) in skip_ids:
+                    continue
                 risk = str(toolkit.risk(call.name))
                 decision = runtime.ports.approval.decide(policies, call.name, risk)
                 if decision is ApprovalDecision.DENY:
@@ -425,7 +668,7 @@ def confirm_gate_node(state: RunGraphState) -> dict:
     副作用逻辑必须留在 tool_exec 里。
     """
     pending = state.get("pending_writes") or []
-    answer = interrupt({"pending_writes": pending})
+    answer = interrupt({"kind": "confirmation", "pending_writes": pending})
     gate = _gate_update(answer)
     if answer.get("action") != "approve":
         reason = answer.get("reason") or "用户拒绝危险操作"

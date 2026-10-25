@@ -26,6 +26,9 @@ from agent_orchestrator.services.run_events import (
     _step_stream,
     append_event,
 )
+from agent_orchestrator.services.run_execution_answers import (
+    answer_run as answer_run,
+)
 from agent_orchestrator.services.run_execution_approvals import (
     _GRAPH_PORTS as _GRAPH_PORTS,
 )
@@ -57,7 +60,19 @@ from agent_orchestrator.services.run_lifecycle import (
     require_transition,
 )
 from agent_orchestrator.services.run_quota import _usage_boundary
+from agent_orchestrator.services.tool_names import normalize_tool_names
 from agent_orchestrator.services.workspace import Workspace
+
+
+def _allowed_tools_from_snapshot(run: Run) -> list[str] | None:
+    """快照读取边界:Run.skill_tools 里的旧工具名归一到 tool-service 正式名。
+
+    None 表示创建时未冻结白名单(=不限制);空表保持空表(=不用工具)。
+    只读快照时归一,图节点与 RemoteToolkit.restricted() 仍只认正式名。
+    """
+    if run.skill_tools is None:
+        return None
+    return normalize_tool_names(run.skill_tools)
 
 
 async def _invoke_plan(
@@ -92,8 +107,9 @@ async def _invoke_plan(
         state["skill_id"] = run.skill_id
     if run.skill_system_prompt:
         state["skill_system_prompt"] = run.skill_system_prompt
-    if run.skill_tools is not None:
-        state["allowed_tools"] = list(run.skill_tools)
+    allowed_tools = _allowed_tools_from_snapshot(run)
+    if allowed_tools is not None:
+        state["allowed_tools"] = allowed_tools
     if run.skill_version_id:
         # 上传技能包快照(P3):P3-C 的 skill_run 工具据此取包/执行;
         # 不带 package_id(run 行按契约只冻结 version_id 与执行字段)。

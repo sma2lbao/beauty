@@ -81,6 +81,27 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             **common,
         )
         return
+    if kind == "answer":
+        # 回答/放弃挂起提问(§10.5):API 侧已落 answered 事件并推进到 running,
+        # 这里只恢复图;超时 sweeper 入队时 status 仍是 awaiting_input,由
+        # answer_run(from_job=True) 自行推进。
+        await runs_service.answer_run(
+            session,
+            graph,
+            job.tenant_id,
+            job.run_id,
+            question_id=str(payload.get("question_id") or ""),
+            action=str(payload.get("action") or "decline"),
+            answers=payload.get("answers") or [],
+            reason=payload.get("reason"),
+            answered_by=payload.get("answered_by"),
+            store=container.artifact_store,
+            workspace=container.workspace_client,
+            emit_answered=False,
+            from_job=True,
+            **common,
+        )
+        return
     if kind == "reject":
         await runs_service.reject_run(
             session,

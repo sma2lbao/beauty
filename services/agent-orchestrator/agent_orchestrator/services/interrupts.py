@@ -1,15 +1,17 @@
-"""中断超时 sweeper(P0-2):待审批/待确认停留过久时自动按"拒绝"收场。
+"""中断超时 sweeper(P0-2):待审批/待确认/待回答停留过久时自动收场。
 
-为什么需要:审批与危险操作确认都是**无限期等待人工**——worker 崩溃、用户离线
-或前端没渲染出按钮,run 会永远停在 awaiting_*。本 sweeper 是后台任务,只在
-jobs_enabled 且至少一类超时 > 0 时启动(见 AppContainer._assemble_graph)。
+为什么需要:审批、危险操作确认与交互式提问都是**无限期等待人工**——worker
+崩溃、用户离线或前端没渲染出按钮,run 会永远停在 awaiting_*。本 sweeper 是
+后台任务,只在 jobs_enabled 且至少一类超时 > 0 时启动(见 AppContainer._assemble_graph)。
 
 收场方式复用既有动作而不是直接改状态,保证状态机与业务语义不变:
 - 审批超时 → 入队 reject job → run 走 reject 语义(blocked + 原因,可 resume);
-- 确认超时 → 入队 confirm(拒绝)job → 跳过危险写,图继续验收(§6.2 拒绝语义)。
-先记 run.interrupt.timed_out.v1 再入队,时间线可审计。
+- 确认超时 → 入队 confirm(拒绝)job → 跳过危险写,图继续验收(§6.2 拒绝语义);
+- 提问超时(§10.6)→ 记 run.question.timeout.v1 后入队 answer(decline)job,
+  图按"用户未在时限内回答"的固定文案继续,不阻塞任务。
+先记 run.interrupt.timeout.v1 再入队,时间线可审计。
 
-多实例注意:多容器同时扫描时 enqueue 对同 run 同 kind 去重,但 timed_out 事件
+多实例注意:多容器同时扫描时 enqueue 对同 run 同 kind 去重,但 timeout 事件
 可能重复一两次(updated_at 推进后下一轮不再命中);彻底幂等属 P0-3。
 """
 
@@ -24,7 +26,13 @@ from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.repositories import RunRepository
+from agent_orchestrator.repositories import (
+    QUESTION_ANSWERED_EVENT,
+    QUESTION_REQUIRED_EVENT,
+    QUESTION_TIMED_OUT_EVENT,
+    RunEventRepository,
+    RunRepository,
+)
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services.jobs import enqueue
 from agent_orchestrator.services.run_events import append_event
@@ -37,6 +45,7 @@ logger = structlog.get_logger(__name__)
 
 APPROVAL_TIMEOUT_REASON = "审批超时,自动拒绝(可 resume 后重新规划)"
 CONFIRMATION_TIMEOUT_REASON = "确认超时,自动拒绝危险写并继续验收"
+QUESTION_TIMEOUT_REASON = "提问超时,自动放弃回答并继续执行"
 TIMED_OUT_EVENT = "run.interrupt.timeout.v1"
 
 
@@ -51,6 +60,7 @@ async def sweep_once(container: AppContainer) -> int:
             datetime.now(UTC),
             approval_seconds=settings.approval_timeout_seconds,
             confirmation_seconds=settings.confirmation_timeout_seconds,
+            question_seconds=settings.question_timeout_seconds,
         )
         targets = [(run.tenant_id, run.id) for run in stale]
     handled = 0
@@ -84,6 +94,24 @@ async def _timeout_one(
         job_kind = "confirm"
         reason = CONFIRMATION_TIMEOUT_REASON
         payload = {"action": "reject", "reason": reason}
+    elif run.status == RunStatus.AWAITING_INPUT.value:
+        kind = "question"
+        seconds = settings.question_timeout_seconds
+        job_kind = "answer"
+        reason = QUESTION_TIMEOUT_REASON
+        # 挂起问题以最近一次 required 事件为准(v1 不建问题表,§10.4):
+        # answer job 必须带 question_id,worker 侧据此校验/幂等。
+        required = await RunEventRepository(session).latest_of_type(
+            run.id, QUESTION_REQUIRED_EVENT
+        )
+        pending = dict(required.payload or {}) if required is not None else {}
+        question_id = str(pending.get("question_id") or "")
+        payload = {
+            "question_id": question_id,
+            "action": "decline",
+            "reason": "timeout",
+            "answered_by": "system",
+        }
     else:
         return False
     await append_event(
@@ -92,6 +120,27 @@ async def _timeout_one(
         TIMED_OUT_EVENT,
         {"kind": kind, "timeout_seconds": seconds, "reason": reason},
     )
+    if kind == "question":
+        # 超时放弃也是"一个回答"(action=decline):answered 事件与人工回答同构,
+        # worker 侧 emit_answered=False,不会重复。
+        await append_event(
+            session,
+            run,
+            QUESTION_TIMED_OUT_EVENT,
+            {"question_id": question_id, "expires_at": pending.get("expires_at")},
+        )
+        await append_event(
+            session,
+            run,
+            QUESTION_ANSWERED_EVENT,
+            {
+                "question_id": question_id,
+                "answers": [],
+                "action": "decline",
+                "reason": "timeout",
+                "answered_by": "system",
+            },
+        )
     if kind == "confirmation":
         # 确认超时是"系统代替人做出的拒绝决定":worker 侧 confirm 分支
         # emit_confirmation=False(避免与 API 人工确认重复),这条审计记录

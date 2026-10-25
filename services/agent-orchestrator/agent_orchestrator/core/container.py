@@ -302,7 +302,6 @@ class AppContainer(ContainerAssemblyMixin):
                 build_tools,
                 documents=documents,
                 knowledge=knowledge,
-                code_roots=settings.code_workspace_roots,
             )
         self._publish("toolkit_factory", toolkit_factory)
 
@@ -468,6 +467,7 @@ class AppContainer(ContainerAssemblyMixin):
                     toolkit_factory=self.toolkit_factory,
                     mcp_tools_factory=self.tool_extras_factory,
                     plan_auto_approve=settings.plan_auto_approve,
+                    question_timeout_seconds=settings.question_timeout_seconds,
                 ),
             )
         else:
@@ -479,6 +479,7 @@ class AppContainer(ContainerAssemblyMixin):
                     toolkit_factory=self.toolkit_factory,
                     mcp_tools_factory=self.tool_extras_factory,
                     plan_auto_approve=settings.plan_auto_approve,
+                    question_timeout_seconds=settings.question_timeout_seconds,
                 ),
             )
         if settings.jobs_enabled:
@@ -487,6 +488,7 @@ class AppContainer(ContainerAssemblyMixin):
             if (
                 settings.approval_timeout_seconds > 0
                 or settings.confirmation_timeout_seconds > 0
+                or settings.question_timeout_seconds > 0
             ):
                 self.interrupt_task = start_sweeper(self)
 

@@ -41,6 +41,8 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `POST /runs/{id}/retry`(failed → **另起一跑**并继承目标/验收标准/已批准计划,
   返回新 run;血缘见 `parent_run_id` 与 `run.retry.requested.v1`)、
   `POST /runs/{id}/confirm`(危险操作放行/拒绝,§6.2)、
+  `POST /runs/{id}/answer`(回答/放弃挂起提问,§10.5;202 返回 run 快照,
+  409 `run.invalid_state` / `run.question_mismatch` / `run.question_expired`)、
   `POST /runs/{id}/cancel`(协作式取消:立刻置 `cancelled` + 撤 queued job +
   `run.cancelled.v1`,图结果在下一个执行边界丢弃;终态再取消 409 `run.invalid_state`)、
   `POST /runs/{id}/instructions` + `GET /runs/{id}/instructions`(追加指令,§6.5);
@@ -70,10 +72,14 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   原因回喂模型,对话路径也走同一套判定(`confirm` 在 chat 里降级为"请改用任务");
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
   规划节点进入时置 `planning`、放行/确认通过时置 `running`(状态变更不单落事件);
-  **中断超时**(可选,默认关闭):`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS` > 0
-  且 `JOBS_ENABLED` 时,sweeper(`services/interrupts.py`,`INTERRUPT_SWEEP_INTERVAL_SECONDS`)
-  把悬挂的审批/确认自动走 `reject`/`confirm(reject)` 并落 `run.interrupt.timeout.v1`,
-  run 可再 `resume` 重新规划;确认超时另补 `run.confirmation.received.v1` 留审计痕迹;
+  **中断超时**:审批/确认默认关闭、提问默认开启(`APPROVAL_TIMEOUT_SECONDS` /
+  `CONFIRMATION_TIMEOUT_SECONDS` / `QUESTION_TIMEOUT_SECONDS` 默认 900,> 0 且
+  `JOBS_ENABLED` 时生效),sweeper(`services/interrupts.py`,
+  `INTERRUPT_SWEEP_INTERVAL_SECONDS`)把悬挂的审批/确认/提问自动走
+  `reject`/`confirm(reject)`/`answer(decline)` 并落 `run.interrupt.timeout.v1`,
+  run 可再 `resume` 重新规划;确认超时另补 `run.confirmation.received.v1`,
+  提问超时另补 `run.question.timeout.v1` 与 `run.question.answered.v1`
+  (`action=decline`、`reason=timeout`),图按固定文案继续;
 - 失败与重试(§6.2):失败即终态(`failed` + `run.failed.v1`,原因留
   `status_reason`),**不原地重放**——失败点的检查点不可信,且旧 run 的历史是
   审计凭据,不能被"重试"改写。重试派生新 run 继承已批准计划(计划节点检测到
@@ -94,12 +100,16 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
   耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
 - 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——
-  模型请求工具 → 工具注册表(`services/tools.py`)执行 → 结果回喂模型,≤5 轮;
+  模型请求工具 → 进程内工具注册表(`services/tools.py`)或经 `RemoteToolkit`
+  远程到 tool-service 执行 → 结果回喂模型,≤5 轮;
   **能力按提供方分组,未开启的不暴露**(能力即权限边界):
   - 本地文档库(`DOCUMENTS_ENABLED`):`list_documents`/`read_document`
     (受限目录只读,后缀白名单、越界/绝对路径拒绝、超限拒读);
   - 企业知识库(`KNOWLEDGE_ENABLED`):`search_knowledge`——经 knowledge-service
     向量检索,让模型"先查资料再回答"(`docs/architecture.md` §9);
+  - 内置代码工具(`TOOL_SERVICE_ENABLED`):`read`/`glob`/`grep`/`list_dir`/
+    `write`/`edit` 由 tool-service(:8008)提供,本服务不再直读宿主目录;
+    旧的代码工具与本机目录配置已随该迁移下线(见 `docs/design/tool-service.md`);
     **工具执行失败不炸图**:错误文本回喂让模型决策,每次调用落
     `run.tool.called.v1` 事件(name/arguments/ok/detail),SSE 实时可见;
 - 确认闸只拦**危险操作**(§6.2):工具按 `ToolRisk` 分级——`READ` 直接执行;
@@ -108,6 +118,13 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   execute 收集后交 `confirm_gate` 中断,run 转 `awaiting_confirmation` 并落
   `run.confirmation.required.v1`;`POST /runs/{id}/confirm` 放行则由
   `tool_exec` 执行并回喂,拒绝则跳过并把原因记入 results;确认 ≤3 轮防死循环。
+- 交互提问(§10):任务图工具箱 `with_interaction()` 才暴露 `ask_question`
+  (`kind=interaction`;对话/只读 MCP 面一律过滤),execute 命中该调用时本回合
+  **只处理提问**——同轮其余工具回 `tool_error` 不执行(中断前零副作用);参数
+  非法、被租户策略禁用或达轮次上限(`MAX_ASK_CYCLES=3`)则回喂模型、不挂起。
+  `ask_gate` 是唯一新增 interrupt 点:run 转 `awaiting_input` 并落
+  `run.question.required.v1{question_id, questions, allow_custom, expires_at}`,
+  回答写回对应 tool-role 消息后继续执行;`decline`/超时用固定文案继续。
 - 计划自动放行(§6.2):审批闸默认只在**装配了 DANGER 工具**时拦截——基础工具 +
   该 run 引用的 MCP 工具经技能 tools 白名单裁剪后无 DANGER 级,则 plan 之后直接进
   execute(事件 `run.planned.v1` 的 `auto_approved=true`,并补 `run.approved.v1`);

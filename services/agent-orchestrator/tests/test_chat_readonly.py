@@ -84,10 +84,36 @@ async def test_chat_keeps_only_read_builtin_tools() -> None:
     assert str(toolkit.risk("read")) == "read"
 
 
+class FakeInteractionToolkit(FakeToolkit):
+    """带交互工具的假工具箱:kind() 区分 function/interaction。"""
+
+    def kind(self, name: str) -> str:
+        return "interaction" if name == "ask_question" else "function"
+
+
+def _interaction_registry() -> ToolRegistry:
+    return ToolRegistry(
+        [_spec("read", ToolRisk.READ), _spec("ask_question", ToolRisk.READ)]
+    )
+
+
 async def test_chat_without_read_only_keeps_write_tools() -> None:
     toolkit = await _toolkit_for(lambda tenant: _registry(), None, "t-1")
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
+
+
+async def test_chat_read_only_filters_interaction_tools() -> None:
+    """对话没有人工应答通道:交互工具即便在目录里也要过滤掉(§10.9)。"""
+
+    fake = FakeInteractionToolkit(_interaction_registry())
+    full = await _toolkit_for(lambda tenant: fake, None, "t-1")
+    assert full is not None
+    assert full.names == ["read", "ask_question"]
+    chat = await _toolkit_for(lambda tenant: fake, None, "t-1", read_only=True)
+    assert chat is not None
+    assert chat.names == ["read"]
+    assert [item["function"]["name"] for item in chat.schemas()] == ["read"]
 
 
 async def test_chat_ensures_catalog_before_filtering() -> None:
