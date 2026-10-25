@@ -134,7 +134,10 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 - [x] /healthz /readyz 7/7 且契约一致（bff 28 passed）；nginx 2 个探针 location（:38 / :46）
 - [x] 最大 Python 源文件 482 ≤500、最大测试文件 498 ≤500；pytest 737 ≥727、vitest 498 ≥498、golden 9/9
 - [x] check-workspace.sh EXIT 0 且入 gate + CI；5/5 env.py 接 alembic_kit；AO conftest 接 testkit（411 行，398 例不减）
-- [x] 全仓 lint 16/16、docs 35 文件 0 失败、入口 chunk 292539B ≤336KB、CI 9 job（首跑结果见 verification §1 与 §5）
+- [x] 全仓 lint 16/16、docs 36 文件 0 失败、入口 chunk 292539B ≤336KB、CI 9 组/31 matrix job（结果见 verification §1 与 §5）
+- [ ] CI 最新 run（docker-build / security-audit 修复后）全绿，run 号已回填 verification §1
+- [ ] tag v0.1.0 已打（git tag --list 'v\*' 非空），release commit 已回填 verification
+- [ ] verification/005-w4.md 无「待回填」字样（收口 DoD）
 
 ## 波次总览
 

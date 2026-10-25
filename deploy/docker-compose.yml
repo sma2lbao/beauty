@@ -15,6 +15,8 @@
 #   原因见 deploy/postgres/initdb/01-create-databases.sql(alembic_version 表名冲突);
 # - web 容器(nginx)同源托管 SPA 并反代 /api → bff:8007;浏览器只访问 :8080 一个入口;
 # - 健康探针一律打 /healthz(进程存活,不依赖数据库);/readyz 是给编排层的就绪建议;
+#   7 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
+#   端口按 SERVICE 映射),compose 仅在 pg/redis 上显式声明 healthcheck;
 # - 所有演示用密钥可用宿主机环境变量覆盖(见 deploy/web/README.md「生产差异」),
 #   默认值只用于本机演示,禁止直接用于生产。
 name: beauty-moon

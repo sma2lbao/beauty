@@ -43,7 +43,23 @@ git push origin main --follow-tags
 - **数据库**：发布不含 schema 变更承诺（迁移走 expand-contract，见根 AGENTS.md「模型/迁移」节）；
   回滚代码不回滚迁移。
 
-## 4. 相关文件
+## 4. 发版收口 checklist（每个版本复制到 PR/issue 勾选）
+
+```text
+[ ] 1. 工作树干净，HEAD 已 push，CI 全绿（附 run 链接与 9 组 job 表）
+[ ] 2. bash scripts/refactor-gate.sh（或 --affected）EXIT 0
+[ ] 3. bash scripts/check-versions.sh EXIT 0；bash scripts/check-workspace.sh EXIT 0
+[ ] 4. npx nx release --dry-run EXIT 0，且预览只含版本/CHANGELOG/锁文件
+[ ] 5. CHANGELOG 段落抽查：不含与实测漂移的硬数字（测试数/文件数一律指向 verification 报告）
+[ ] 6. npx nx release <version> → uv lock → npm install --package-lock-only
+[ ] 7. 本地门禁复跑（lint/test/build/docs:check）后 git push origin main --follow-tags
+[ ] 8. 打 tag 后用 git tag --list 'v*' 确认存在；verification 报告回填 release commit 与 tag
+```
+
+- **DoD（完成定义）**：CI 绿 + tag 已打 + 验证报告无「待回填」字样，三者缺一不得宣称「已发布」。
+- 发布失败回滚：未推送的 tag 用 git tag -d；已推送用新补丁版本修正（不改历史）。
+
+## 5. 相关文件
 
 | 文件                         | 作用                                                                              |
 | ---------------------------- | --------------------------------------------------------------------------------- |
