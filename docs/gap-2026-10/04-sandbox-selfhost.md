@@ -7,6 +7,8 @@
 > - **路线 B（不建议本阶段）：自建隔离内核**（自维护 gVisor/Firecracker runner、快照、调度、网络策略）——是 L 级长期投入，需要专门团队。
 >
 > 与 `03-runtime-platform.md` §1 的结论一致并细化：**先做 provider 抽象（S），spike 用 microsandbox（本地零成本）与 E2B/Fly（云侧）各验证一遍，再决定引擎**。
+>
+> **状态（2026-10-25）**：§1–§3 是前置研究；P1/P2/P3 已于 2026-10-20 落地（见下方实施记录），**P4 未做**（出网 allowlist/凭据注入/配额与 `sandboxMs` 计量/审计事件/常驻 bridge）。
 
 ---
 
@@ -124,7 +126,7 @@ orchestrator(code_tools 改造)
 - **版本化**：租户内 slug + version 不可变；新版本不影响已建 run；内置技能 id 冲突 409。
 - **run 快照**：runs 新增 `skill_version_id/object_key/sha256/entrypoint/runtime/network/
 timeout_seconds`（迁移 `e4c8b1f7a2d9`），创建 run 时冻结，后续上传不改变语义。
-- **执行**（`services/skill_runner.py`）：`skill_run` 工具（确认闸）→ 一次性沙箱
+- **执行**（`services/skill_runner.py`）：`skill_run` 工具（WRITE 级受控自动执行；确认闸只拦 DANGER）→ 一次性沙箱
   （kind=skill）→ 取包并校验 sha256 → 沙箱内 `python3` 解包（再校验路径/符号链接/规模）→
   执行 entrypoint（cwd=/workspace/skill，stdin 传 input/goal/title）→ 读 `/workspace/output`
   文本产物 → 登记 run 交付物 → finally 销毁沙箱；chat 路径无 run_id 不暴露该工具。

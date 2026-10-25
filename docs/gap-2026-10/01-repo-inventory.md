@@ -3,6 +3,14 @@
 > 范围：仓库 `/Users/sma2lbao/Code/beauty/beauty` @ 2026-10-18 工作区状态。
 > 口径：只做**只读**取证；每条结论给出 `file:line` 或目录证据。未确认项显式标注「未确认」。
 > 图例：✅ 已实现可用；⚠️ 部分实现/有壳无实/仅本地最小版；❌ 缺失。
+>
+> **状态注记（2026-10-25 复核）**：本文是 2026-10-18 快照，以下结论已被后续提交推翻/收窄；引用前先读 [06-refresh-2026-10-25.md](./06-refresh-2026-10-25.md) 的逐条校正（§2.1/§2.2/§2.4）。
+>
+> - 邮件/日历工具与连接器已下线（§1.1 相关行、§3「连接器」行过时）；`MAX_TOOL_ROUNDS` 已是 5（原文 3 过时）。
+> - MCP 已补 stdio，**不再补 sampling/roots/logging**（2026-07-28 规范弃用）；`elicitation/tasks/server-discover` 仍缺。
+> - jobs 领取已用 PG `SKIP LOCKED`（outbox dispatcher claim 仍无锁）；PG checkpointer 生产已接（原文「仅 postgres 用」表述不完整）。
+> - Sentry/OTel/metrics、Docker/compose、CI 门禁、黄金 run、技能包上传、沙箱 P1–P3、通知服务端推送均已落地。
+> - Skills manifest 的 permissions/triggers 仍不生效（06 §2.4 #5）；文中「零 TODO 债」不实，仍有 2 处 TODO（06 §2.3 #12）。
 
 ## 1. 运行时与 agent 循环
 

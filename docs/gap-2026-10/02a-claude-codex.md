@@ -2,6 +2,8 @@
 
 > 调研范围：Claude Code 与 OpenAI Codex 的产品形态、工具/执行、权限与沙箱、子代理、上下文与记忆、扩展机制、headless/SDK。
 > 纪律：只取搜索结果标题+摘要，未确认处标「待核实」。
+>
+> **2026-10-25 复核**：Claude Code / Codex 的机制结论无实质变化（自动压缩、分层权限、子代理、SDK 均仍成立），本文继续有效；变化只在对比对象名单（Gemini CLI 已被 Antigravity CLI 取代，见 02b）。
 
 ## 总览矩阵
 

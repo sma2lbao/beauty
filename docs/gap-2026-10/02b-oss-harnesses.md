@@ -3,16 +3,18 @@
 > 调研范围：五款开源 agent harness 的产品形态、agent 循环与工具集、权限/审批与沙箱、子代理/并行、上下文与记忆、扩展机制、headless/CI。
 > 纪律：只取搜索结果标题+摘要，未确认处标「待核实」；关键结论附来源 URL。
 > 本文档聚焦「beauty-moon 可借鉴的机制」，与 [02a Claude Code / Codex 横评](02a-claude-codex.md) 配套。
+>
+> **2026-10-25 复核（对比对象已过时，写新横评前必须换）**：Gemini CLI 2026-06-18 起被闭源 Antigravity CLI 取代；Aider 停更（v0.86.0，2025-08-09）；OpenHands 转型 Agent Canvas（多 ACP agent 控制中心），不再适合当单 agent harness 对标。替代对标：Codex CLI / OpenCode（anomalyco）/ Qwen Code；OpenHands 用「多 agent 控制面」角度对标。本文作为 2026-10-18 快照保留。
 
 ## 总览矩阵
 
-| 产品       | 形态              | 工具与执行                | 权限/沙箱                 | 子代理/并行               | 上下文与记忆            | 扩展机制              | headless/SDK          | 亮点机制              |
-| ---------- | ----------------- | ------------------------- | ------------------------- | ------------------------- | ----------------------- | --------------------- | --------------------- | --------------------- |
-| OpenHands  | Web 平台+CLI+本地 | shell/浏览器/IPython 工具 | 每任务隔离 runtime        | 支持 agent 委派（待核实） | 事件历史+microagent     | microagent/MCP/自定义 | headless+容器运行     | 隔离 runtime、持久流  |
-| Cline      | IDE 插件          | 读写/终端/浏览器工具集    | Plan/Act 分期+逐步审批    | 暂无内建子代理（待核实）  | 说明文件+压缩（待核实） | MCP+.clinerules 规则  | headless/CI（待核实） | Plan/Act 双模式协同   |
-| Aider      | 终端结对编程 CLI  | 编辑文件+跑命令+git 提交  | 每步确认/可自动（待核实） | 无子代理（单 agent）      | repo map（符号图索引）  | 配置项/自定义提示模板 | --message 一次执行    | repo map 精准选上下文 |
-| Gemini CLI | 开源终端 agent    | 读写文件/shell/MCP 工具   | 逐工具确认+白名单         | 暂无内建子代理（待核实）  | GEMINI.md+会话          | 扩展包+MCP server     | headless 非交互模式   | 开源可 fork、扩展体系 |
-| Goose      | 桌面 App+CLI      | 可插拔 extension          | 逐档模式确认（待核实）    | 暂无内建子代理（待核实）  | 会话持久化+recipe 固化  | MCP extension+配方    | goose run 无交互      | recipe 作为任务契约   |
+| 产品                                        | 形态              | 工具与执行                | 权限/沙箱                 | 子代理/并行               | 上下文与记忆            | 扩展机制              | headless/SDK          | 亮点机制              |
+| ------------------------------------------- | ----------------- | ------------------------- | ------------------------- | ------------------------- | ----------------------- | --------------------- | --------------------- | --------------------- |
+| OpenHands                                   | Web 平台+CLI+本地 | shell/浏览器/IPython 工具 | 每任务隔离 runtime        | 支持 agent 委派（待核实） | 事件历史+microagent     | microagent/MCP/自定义 | headless+容器运行     | 隔离 runtime、持久流  |
+| Cline                                       | IDE 插件          | 读写/终端/浏览器工具集    | Plan/Act 分期+逐步审批    | 暂无内建子代理（待核实）  | 说明文件+压缩（待核实） | MCP+.clinerules 规则  | headless/CI（待核实） | Plan/Act 双模式协同   |
+| Aider（已停更）                             | 终端结对编程 CLI  | 编辑文件+跑命令+git 提交  | 每步确认/可自动（待核实） | 无子代理（单 agent）      | repo map（符号图索引）  | 配置项/自定义提示模板 | --message 一次执行    | repo map 精准选上下文 |
+| Gemini CLI（2026-06 起由 Antigravity 取代） | 开源终端 agent    | 读写文件/shell/MCP 工具   | 逐工具确认+白名单         | 暂无内建子代理（待核实）  | GEMINI.md+会话          | 扩展包+MCP server     | headless 非交互模式   | 开源可 fork、扩展体系 |
+| Goose                                       | 桌面 App+CLI      | 可插拔 extension          | 逐档模式确认（待核实）    | 暂无内建子代理（待核实）  | 会话持久化+recipe 固化  | MCP extension+配方    | goose run 无交互      | recipe 作为任务契约   |
 
 ## OpenHands
 
@@ -86,7 +88,7 @@ Block 开源的通用 agent（不只写代码），提供桌面 App 与 CLI 两�
 
 ## 对 beauty-moon 的可借鉴结论
 
-> 对照 beauty-moon 现状（已有 run 状态机、事件溯源、工具注册表、MCP client+server、Skills、只读代码工具、jobs 队列；缺 sandbox、上下文压缩、子代理、评测埋点）。
+> 对照 beauty-moon 现状（2026-10-25：run 状态机、事件溯源、工具注册表、MCP client+server、Skills 上传包、只读代码工具、jobs 队列、**沙箱 P1–P3** 均已有；仍缺上下文压缩、子代理、hooks、eval 埋点）。
 
 1. **沙箱要按「资源池 + 独立生命周期」设计，而不是给现有工具加个开关**。OpenHands 把 isolated runtime 做成可复用、可回收的一等对象，Codex 则是「沙箱内自动执行、越界才审批」。beauty-moon 缺 sandbox，建议把 workspace-service 的沙箱生命周期阶段 B 直接对齐成「每次 run 一个 runtime、带租户隔离与配额」，并把工具注册表里的执行类工具统一声明 sandbox_required，让权限裁决从「逐调用点确认」上移为策略层。
    来源：[Agent Canvas Architecture · OpenHands](https://docs.openhands.dev/openhands/usage/agent-canvas/architecture)、[Agent SDK 概览 · Claude Code](https://code.claude.com/docs/zh-CN/agent-sdk/overview)

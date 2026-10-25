@@ -7,6 +7,8 @@
 > 只读本地代码工具 `code_tools.py`（roots 限定、无 shell、写操作需确认）/ 租户级 MCP Client 注册表 `models/mcp.py` / 公开 MCP Server（Streamable HTTP + API Key `bm_live_` / OAuth 2.1 内省）/
 > Skill manifest 与 run 快照（`schemas/skills.py`）/ account-service 的 `usage_events` + `byok_keys`（M0-11）。**尚无** sandbox、OTel/Sentry/Langfuse 埋点、上下文压缩、Redis（限流目前是 BFF 进程内）。
 >
+> **状态注记（2026-10-25 复核）**：上面「尚无」已过时——沙箱 P1–P3、Sentry/OTel/metrics、黄金 run、Docker/CI、SKIP LOCKED（jobs）均已落地；P0/P1 变化与剩余项见 [06-refresh-2026-10-25.md](./06-refresh-2026-10-25.md) §2.1/§3，本文优先级表仅作历史依据。
+>
 > 规模口径沿用旧文档：**S**（≤2 天）/ **M**（3–5 天）/ **L**（1–2 周+）。
 
 ---
@@ -228,8 +230,8 @@
 | R2  | 各厂商定价随时变（§1 中费率来自第三方横评）                          | 成本模型失真         | 上线前以官方定价页复核                   |
 | R3  | 公开资料缺少压缩阈值、权限模式档位等精确语义                         | 对标结论可能偏差     | 文中已标「待核实」，不据此做承诺         |
 | R4  | OTel GenAI semconv 仍可能改名                                        | 埋点返工             | 先在内部封装一层属性映射                 |
-| R5  | 无 CI 门禁，改动回归靠人工                                           | 平台化后回归成本陡增 | 与 §5 黄金 run 回归一并落地              |
-| R6  | 多实例下 job 重复消费（未用 SKIP LOCKED）                            | 水平扩容不安全       | 扩容前必须先修                           |
+| R5  | CI 已上线（覆盖率/零网络/docs-check/docker-build）；缺黄金 run 进 CI | 平台化后回归成本陡增 | 与 §5 黄金 run 回归一并落地              |
+| R6  | jobs 已 SKIP LOCKED；outbox dispatcher claim 仍无锁                  | 水平扩容不安全       | 扩容前必须先修                           |
 
 ## 10. 优先级汇总表
 
