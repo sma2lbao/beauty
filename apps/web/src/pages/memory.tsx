@@ -32,7 +32,7 @@ import {
 } from '@/lib/memory-api';
 import { formatDateTime } from '@/lib/presentation';
 import { queryKeys } from '@/lib/query-keys';
-import { workspaceApi } from '@/lib/workspace-api';
+import { useWorkspaceList } from '@/lib/workspace-selection';
 
 /** 记忆类型的中文名。 */
 const KIND_LABELS: Record<MemoryKind, string> = {
@@ -177,11 +177,10 @@ export function MemoryPage() {
   const canCreate = content.trim().length > 0 && ttlError === null;
 
   /* ── 查询 ─────────────────────────────────────────────────────────── */
-  const workspacesQuery = useQuery({
-    queryKey: queryKeys.workspaces,
-    queryFn: () => workspaceApi.workspaces(),
-  });
-  const workspaces = workspacesQuery.data ?? [];
+  // 与侧栏共用同一份工作区缓存:缓存里是 WorkspaceList
+  // (`{workspaces, defaultWorkspace}`),这里只取清单。
+  const workspacesQuery = useWorkspaceList();
+  const workspaces = workspacesQuery.data?.workspaces ?? [];
   const workspaceNames = new Map(
     workspaces.map((item) => [item.id, item.name]),
   );

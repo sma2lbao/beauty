@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryPage } from '@/pages/memory';
 import { memoryApi, type Memory } from '@/lib/memory-api';
 import { workspaceApi, type Workspace } from '@/lib/workspace-api';
+import { WORKSPACES_KEY } from '@/lib/workspace-selection';
 
 vi.mock('@/lib/memory-api', async () => {
   const actual =
@@ -36,7 +37,7 @@ vi.mock('@/lib/workspace-api', async () => {
   );
   return {
     ...actual,
-    workspaceApi: { workspaces: vi.fn() },
+    workspaceApi: { workspaces: vi.fn(), defaultWorkspace: vi.fn() },
   };
 });
 
@@ -75,13 +76,16 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   };
 }
 
-function renderPage() {
-  const client = new QueryClient({
+function makeQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+}
+
+function renderPage(client: QueryClient = makeQueryClient()) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryPage />
@@ -102,6 +106,7 @@ beforeEach(() => {
   vi.mocked(memoryApi.remove).mockResolvedValue(undefined);
   vi.mocked(memoryApi.purgeExpired).mockResolvedValue({ purged: 0 });
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
+  vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(makeWorkspace());
 });
 
 describe('MemoryPage', () => {
@@ -164,6 +169,27 @@ describe('MemoryPage', () => {
       const calls = vi.mocked(memoryApi.list).mock.calls;
       expect(calls.some(([query]) => query?.workspaceId === 'ws-1')).toBe(true);
     });
+  });
+
+  it('与侧栏共享 workspaces 缓存时按 WorkspaceList 形状读取', async () => {
+    // 回归:侧栏 useWorkspaceSelection 会把 {workspaces, defaultWorkspace}
+    // 写进 ['workspaces'] 缓存;页面若当数组用会在渲染时报
+    // "workspaces.map is not a function",整页白屏。
+    const cached = makeWorkspace({ name: '侧栏缓存工作区' });
+    vi.mocked(workspaceApi.workspaces).mockResolvedValue([cached]);
+    vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(cached);
+
+    const client = makeQueryClient();
+    client.setQueryData(WORKSPACES_KEY, {
+      workspaces: [cached],
+      defaultWorkspace: cached,
+    });
+
+    renderPage(client);
+
+    expect(
+      await screen.findByRole('option', { name: '侧栏缓存工作区' }),
+    ).toBeInTheDocument();
   });
 
   it('检索走 /search 并展示命中', async () => {
