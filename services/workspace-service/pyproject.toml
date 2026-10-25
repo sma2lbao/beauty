@@ -48,6 +48,7 @@ addopts = """
  --cov-report xml:'../../coverage/services/workspace-service/coverage.xml'
  --html='../../reports/services/workspace-service/unittests/html/index.html'
  --junitxml='../../reports/services/workspace-service/unittests/junit.xml'
+ --cov-fail-under=81
 """
 asyncio_mode = "auto"
 

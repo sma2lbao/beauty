@@ -42,6 +42,7 @@ addopts = """
  --cov-report xml:'../../coverage/services/llm-gateway/coverage.xml'
  --html='../../reports/services/llm-gateway/unittests/html/index.html'
  --junitxml='../../reports/services/llm-gateway/unittests/junit.xml'
+ --cov-fail-under=95
 """
 
 [tool.ruff]

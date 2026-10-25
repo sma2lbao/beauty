@@ -49,6 +49,7 @@ addopts = """
  --cov-report xml:'../../coverage/services/account-service/coverage.xml'
  --html='../../reports/services/account-service/unittests/html/index.html'
  --junitxml='../../reports/services/account-service/unittests/junit.xml'
+ --cov-fail-under=77
 """
 asyncio_mode = "auto"
 

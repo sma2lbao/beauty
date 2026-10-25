@@ -30,6 +30,7 @@ addopts = """
  --cov-report xml:'../../coverage/packages/database/coverage.xml'
  --html='../../reports/packages/database/unittests/html/index.html'
  --junitxml='../../reports/packages/database/unittests/junit.xml'
+ --cov-fail-under=88
 """
 asyncio_mode = "auto"
 
