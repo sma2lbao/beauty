@@ -25,6 +25,7 @@ from common.tools import (
 
 from tool_service.constants import DEFAULT_TOOL_TIMEOUT_SECONDS, MAX_TOOL_CHARS
 from tool_service.core.config import Settings
+from tool_service.repositories import WRITE_TOOL_NAMES
 from tool_service.services.catalog import find_descriptor
 from tool_service.services.helpers import build_request, helper_argv
 from tool_service.services.sandbox import SandboxProvider, scope_key_for
@@ -79,15 +80,27 @@ class ToolRunner:
         self._sandbox = sandbox
 
     async def execute(
-        self, context: ExecutionContext, name: str, arguments: dict[str, Any]
+        self,
+        context: ExecutionContext,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        internal_arguments: dict[str, Any] | None = None,
     ) -> ExecutionOutcome:
-        """执行一次工具调用;返回结果信封或抛调用方错误。"""
+        """执行一次工具调用;返回结果信封或抛调用方错误。
+
+        internal_arguments 是 tool-service 自己算出来的执行期附加参数(如读前置
+        记录的 sha256),只并入 helper 请求、不进审计也不出现在工具 schema 里。
+        """
 
         started = time.monotonic()
         descriptor = find_descriptor(name)
         if descriptor is None or not descriptor.enabled:
             raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
-        if descriptor.risk is ToolRisk.DESTRUCTIVE and not context.approved:
+        if (
+            descriptor.risk in (ToolRisk.WRITE, ToolRisk.DESTRUCTIVE)
+            and not context.approved
+        ):
             raise PermissionDeniedError(
                 "tool.confirmation_required",
                 f"工具 {descriptor.name} 需要人工确认后才能执行",
@@ -104,7 +117,9 @@ class ToolRunner:
                 duration_ms=_elapsed_ms(started),
             )
         if descriptor.executor is ExecutorKind.SANDBOX:
-            return await self._run_sandbox(context, descriptor, arguments, started)
+            return await self._run_sandbox(
+                context, descriptor, arguments, started, internal_arguments
+            )
         if descriptor.executor is ExecutorKind.HTTP:
             return self._failure(
                 context,
@@ -130,7 +145,11 @@ class ToolRunner:
         descriptor: ToolDescriptor,
         arguments: dict[str, Any],
         started: float,
+        internal_arguments: dict[str, Any] | None = None,
     ) -> ExecutionOutcome:
+        helper_arguments = (
+            {**arguments, **internal_arguments} if internal_arguments else arguments
+        )
         timeout = self._timeout_seconds(context, descriptor)
         scope_key = scope_key_for(
             context.tenant_id,
@@ -161,7 +180,7 @@ class ToolRunner:
                     context.tenant_id,
                     sandbox_id,
                     helper_argv(),
-                    stdin=build_request(descriptor.name, arguments),
+                    stdin=build_request(descriptor.name, helper_arguments),
                     timeout_seconds=max(1, int(timeout)),
                 ),
                 timeout + SANDBOX_CALL_GRACE_SECONDS,
@@ -296,21 +315,41 @@ class ToolRunner:
         duration_ms: int = 0,
         sandbox_id: str | None = None,
     ) -> ExecutionOutcome:
-        return ExecutionOutcome(
-            descriptor=descriptor,
-            response=ToolExecuteResponse(
-                ok=False,
-                error=ToolError(
-                    code=code,
-                    message=message,
-                    hint=hint,
-                    retryable=retryable,
-                ),
-                duration_ms=duration_ms,
-                tool_call_id=context.tool_call_id,
-            ),
+        return failure_outcome(
+            descriptor,
+            context,
+            code,
+            message,
+            hint=hint,
+            retryable=retryable,
+            duration_ms=duration_ms,
             sandbox_id=sandbox_id,
         )
+
+
+def failure_outcome(
+    descriptor: ToolDescriptor,
+    context: ExecutionContext,
+    code: str,
+    message: str,
+    *,
+    hint: str = "",
+    retryable: bool = False,
+    duration_ms: int = 0,
+    sandbox_id: str | None = None,
+) -> ExecutionOutcome:
+    """构造失败信封;API 层的读前置/配额检查在执行前也复用它。"""
+
+    return ExecutionOutcome(
+        descriptor=descriptor,
+        response=ToolExecuteResponse(
+            ok=False,
+            error=ToolError(code=code, message=message, hint=hint, retryable=retryable),
+            duration_ms=duration_ms,
+            tool_call_id=context.tool_call_id,
+        ),
+        sandbox_id=sandbox_id,
+    )
 
 
 def audit_columns(
@@ -338,12 +377,22 @@ def audit_columns(
         "error_code": error.code if error is not None else None,
         "duration_ms": response.duration_ms,
         "result_chars": _result_chars_str(result),
+        "bytes_written": _bytes_written(outcome, result),
         "truncated": response.truncated,
         "paths": json.dumps(_result_paths(result), ensure_ascii=False),
         "sha256_before": _optional_str(result.get("sha256_before")),
         "sha256_after": _optional_str(result.get("sha256_after")),
         "sandbox_id": outcome.sandbox_id,
     }
+
+
+def _bytes_written(outcome: ExecutionOutcome, result: dict[str, Any]) -> int:
+    """只有成功的写工具才累计写配额字节。"""
+
+    if not outcome.response.ok or outcome.descriptor.name not in WRITE_TOOL_NAMES:
+        return 0
+    value = result.get("bytes")
+    return int(value) if isinstance(value, int) else 0
 
 
 def _result_chars_str(result: dict[str, Any]) -> int:

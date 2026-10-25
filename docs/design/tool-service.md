@@ -29,11 +29,11 @@
 
 ### 1.2 分期
 
-| 期  | 内容                                                                                                                                              | 可回滚性                                   |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具（`read/glob/grep/list_dir`）+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换 | `TOOL_SERVICE_ENABLED=false` 回旧路径      |
-| P1  | 写工具（`write/edit`）+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                               | 仅回退写工具注册（catalog feature 开关）   |
-| P2  | `ask_question` 全栈（`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片）+ `documents`/`knowledge` 代理 + `code_*` alias 下线        | catalog 关 interaction 工具 + 前端隐藏卡片 |
+| 期  | 内容                                                                                                                                            | 可回滚性                                   | 状态                         |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------- |
+| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具(`read/glob/grep/list_dir`)+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换 | `TOOL_SERVICE_ENABLED=false` 回旧路径      | 已落地(2026-10-25,`fde652a`) |
+| P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                               | 仅回退写工具注册(catalog feature 开关)     | 已落地(2026-10-25)           |
+| P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `documents`/`knowledge` 代理 + `code_*` alias 下线        | catalog 关 interaction 工具 + 前端隐藏卡片 | 未开始                       |
 
 ## 2. 背景
 
@@ -1823,4 +1823,4 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 
 ---
 
-文档状态：设计定稿（2026-10-25），代码尚未实施。实施按 §13 分期推进，每期收口时更新 §1.2 的状态列、§15.7 下线清单与 docs/architecture.md 的交叉引用。
+文档状态：设计定稿（2026-10-25）；P0 与 P1 已按 §13 落地（状态见 §1.2），P2 未开始。每期收口时更新 §1.2 的状态列、§15.7 下线清单与 docs/architecture.md 的交叉引用。

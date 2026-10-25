@@ -91,6 +91,23 @@ def test_write_tool_waits_for_confirmation_then_executes(tmp_path) -> None:
         assert write_index < types.index("run.completed.v1")
         assert knowledge.queries == [("t-1", "本周日程", 5)]
 
+        # P1 审计:人工确认后执行的写操作记为 approved,并带调用 id/风险/耗时
+        write_payload = events[write_index]["payload"]
+        assert write_payload["tool_call_id"] == "call_w1"
+        assert write_payload["risk"] == "danger"
+        assert write_payload["decision"] == "approved"
+        assert write_payload["error_code"] is None
+        assert isinstance(write_payload["duration_ms"], int)
+        assert write_payload["duration_ms"] >= 0
+        assert write_payload["result_chars"] > 0
+        assert write_payload["truncated"] is False
+        assert write_payload["paths"] == []
+        assert write_payload["sha256_before"] is None
+        assert write_payload["sha256_after"] is None
+        # 只读工具走自动放行分支
+        assert events[read_index]["payload"]["decision"] == "auto"
+        assert events[read_index]["payload"]["tool_call_id"] == "call_read"
+
 
 def test_write_tool_rejected_skips_execution(tmp_path) -> None:
     """拒绝写操作 → 不执行;拒绝原因进 results 并由交付物如实呈现。"""

@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeSandboxProvider
+from tests.conftest import (
+    OTHER,
+    TENANT,
+    FakeSandboxProvider,
+    _settings,
+    read_envelope,
+    verifier,
+    write_envelope,
+)
+from tool_service.main import create_app
 
 
 def _execute(
@@ -21,7 +32,7 @@ def _execute(
     )
 
 
-def test_list_tools_exposes_readonly_slice(client: TestClient) -> None:
+def test_list_tools_exposes_function_slice(client: TestClient) -> None:
     resp = client.get("/v1/tools")
 
     assert resp.status_code == 200
@@ -32,9 +43,12 @@ def test_list_tools_exposes_readonly_slice(client: TestClient) -> None:
         "glob",
         "grep",
         "list_dir",
+        "write",
+        "edit",
     ]
     assert body["tools"][0]["executor"] == "sandbox"
     assert body["tools"][0]["risk"] == "read"
+    assert body["tools"][4]["risk"] == "write"
 
 
 def test_list_tools_filters_by_kind_and_scope(client: TestClient) -> None:
@@ -63,7 +77,7 @@ def test_get_unknown_or_disabled_tool_is_404(client: TestClient) -> None:
     assert missing.status_code == 404
     assert missing.json()["code"] == "tool.not_found"
 
-    disabled = client.get("/v1/tools/write")
+    disabled = client.get("/v1/tools/ask_question")
     assert disabled.status_code == 404
     assert disabled.json()["code"] == "tool.not_found"
 
@@ -156,8 +170,8 @@ def test_invalid_arguments_return_200_error_envelope(client: TestClient) -> None
 def test_execute_disabled_tool_is_404(client: TestClient) -> None:
     resp = _execute(
         client,
-        {"tool_call_id": "call-3", "arguments": {"path": "a.txt", "content": "x"}},
-        tool="write",
+        {"tool_call_id": "call-3", "arguments": {"questions": []}},
+        tool="ask_question",
     )
 
     assert resp.status_code == 404
@@ -223,3 +237,125 @@ def test_tool_calls_are_tenant_scoped(client: TestClient) -> None:
     other = client.get("/v1/tool-calls", headers=OTHER)
     assert other.status_code == 200
     assert other.json()["total"] == 0
+
+
+def test_write_requires_confirmation(client: TestClient) -> None:
+    resp = _execute(
+        client,
+        {"tool_call_id": "call-8", "arguments": {"path": "a.txt", "content": "x"}},
+        tool="write",
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "tool.confirmation_required"
+
+
+def test_write_without_read_is_rejected_with_envelope(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    resp = _execute(
+        client,
+        {
+            "tool_call_id": "call-9",
+            "arguments": {"path": "a.txt", "content": "x"},
+            "approved": True,
+            "run_id": "run-write",
+        },
+        tool="write",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "tool.read_required"
+    assert sandbox_provider.exec_calls == []
+    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    assert audit.json()["items"][0]["error_code"] == "tool.read_required"
+
+
+def test_read_then_write_passes_expected_sha(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    read = _execute(
+        client,
+        {
+            "tool_call_id": "call-10",
+            "arguments": {"path": "a.txt"},
+            "run_id": "run-rw",
+        },
+    )
+    assert read.status_code == 200
+    assert read.json()["ok"] is True
+
+    sandbox_provider.stdout = write_envelope("a.txt", sha_before="0" * 64)
+    write = _execute(
+        client,
+        {
+            "tool_call_id": "call-11",
+            "arguments": {"path": "a.txt", "content": "hello"},
+            "approved": True,
+            "run_id": "run-rw",
+        },
+        tool="write",
+    )
+
+    assert write.status_code == 200
+    body = write.json()
+    assert body["ok"] is True
+    assert body["changed"] is True
+    assert len(sandbox_provider.exec_calls) == 2
+    request = json.loads(sandbox_provider.exec_calls[1]["stdin"])
+    assert request["arguments"]["_expected_read_sha256"] == "0" * 64
+    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    item = audit.json()["items"][0]
+    assert item["ok"] is True
+    assert item["bytes_written"] == 12
+    assert item["sha256_after"] == "1" * 64
+
+
+def _custom_client(
+    tmp_path: Path, provider: FakeSandboxProvider, **overrides: Any
+) -> TestClient:
+    app = create_app(
+        _settings(tmp_path, **overrides),
+        verifier(),
+        sandbox_provider=provider,
+    )
+    return TestClient(app)
+
+
+def test_total_call_budget_is_enforced(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    with _custom_client(tmp_path, provider, max_tool_calls_per_run=0) as client:
+        resp = _execute(
+            client,
+            {
+                "tool_call_id": "call-budget",
+                "arguments": {"path": "a.txt"},
+                "run_id": "run-budget",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == "tool.budget_exceeded"
+    assert provider.exec_calls == []
+
+
+def test_write_quota_is_enforced(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    provider.stdout = read_envelope()
+    with _custom_client(tmp_path, provider, max_writes_per_run=0) as client:
+        resp = _execute(
+            client,
+            {
+                "tool_call_id": "call-quota",
+                "arguments": {"path": "a.txt", "content": "x"},
+                "approved": True,
+                "run_id": "run-quota",
+            },
+            tool="write",
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == "tool.budget_exceeded"
+    assert provider.exec_calls == []

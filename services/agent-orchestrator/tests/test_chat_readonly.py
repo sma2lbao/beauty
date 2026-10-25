@@ -62,8 +62,17 @@ class FakeToolkit:
     def restricted(self, allowed: list[str]) -> ToolRegistry:
         return self._registry.restricted(allowed)
 
-    async def execute(self, name: str, arguments: str) -> str:
-        return await self._registry.execute(name, arguments)
+    async def execute(
+        self,
+        name: str,
+        arguments: str,
+        *,
+        tool_call_id: str | None = None,
+        approved: bool = False,
+    ) -> str:
+        return await self._registry.execute(
+            name, arguments, tool_call_id=tool_call_id, approved=approved
+        )
 
 
 async def test_chat_keeps_only_read_builtin_tools() -> None:

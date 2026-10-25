@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from common.errors import ConflictError, NotFoundError
-from common.tools import ToolError, ToolExecuteResponse
+from common.errors import ConflictError, NotFoundError, PermissionDeniedError
+from common.tools import ToolDescriptor, ToolError, ToolExecuteResponse, ToolRisk
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tool_service.api.deps import (
     get_session,
+    get_settings,
     get_tenant_id,
     get_tool_runner,
 )
+from tool_service.core.config import Settings
 from tool_service.models.tool_call import ToolCall
-from tool_service.repositories import ToolCallRepository
+from tool_service.repositories import FileReadRepository, ToolCallRepository
 from tool_service.schemas.tools import (
     ToolDescriptorRead,
     ToolExecuteBody,
@@ -35,16 +37,21 @@ from tool_service.services.catalog import (
 )
 from tool_service.services.execution import (
     ExecutionContext,
+    ExecutionOutcome,
     ToolRunner,
     arguments_digest,
     audit_columns,
+    failure_outcome,
 )
+from tool_service.services.quota import check_total_calls, check_write_quota
+from tool_service.services.sandbox import scope_key_for
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 TenantDep = Annotated[str, Depends(get_tenant_id)]
 RunnerDep = Annotated[ToolRunner, Depends(get_tool_runner)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 @router.get("", response_model=ToolListRead)
@@ -84,8 +91,13 @@ async def execute_tool(
     session: SessionDep,
     tenant_id: TenantDep,
     runner: RunnerDep,
+    settings: SettingsDep,
 ) -> JSONResponse:
-    """执行工具;tool_call_id 是幂等键(同参重放、异参 409)。"""
+    """执行工具;tool_call_id 是幂等键(同参重放、异参 409)。
+
+    执行前依次做:单 run 调用次数/写配额兜底、读前置校验(P1);
+    这些拒绝也是模型可见的工具错误(HTTP 200 + ok=false),并照样落审计。
+    """
 
     descriptor = find_descriptor(name)
     if descriptor is None or not descriptor.enabled:
@@ -95,6 +107,13 @@ async def execute_tool(
     existing = await repository.find_by_call_id(tenant_id, body.tool_call_id)
     if existing is not None:
         return _replay_response(existing, digest)
+    # 防御性风险下限:WRITE/DESTRUCTIVE 没有 approved=true 一律 403。
+    # orchestrator 只在审批策略自动放行或人工确认后才传 approved=true。
+    if descriptor.risk in (ToolRisk.WRITE, ToolRisk.DESTRUCTIVE) and not body.approved:
+        raise PermissionDeniedError(
+            "tool.confirmation_required",
+            f"工具 {descriptor.name} 需要人工确认后才能执行",
+        )
     context = ExecutionContext(
         tenant_id=tenant_id,
         tool_call_id=body.tool_call_id,
@@ -105,7 +124,17 @@ async def execute_tool(
         timeout_seconds=body.timeout_seconds,
         approved=body.approved,
     )
-    outcome = await runner.execute(context, descriptor.name, body.arguments)
+    outcome, internal_arguments = await _preflight(
+        session, settings, descriptor, context, body.arguments
+    )
+    if outcome is None:
+        outcome = await runner.execute(
+            context,
+            descriptor.name,
+            body.arguments,
+            internal_arguments=internal_arguments,
+        )
+        await _remember_read(session, descriptor, context, body, outcome)
     decision = "approved" if body.approved else "auto"
     columns = audit_columns(outcome, context, body.arguments, decision=decision)
     record = ToolCall(
@@ -126,6 +155,154 @@ async def execute_tool(
             raise
         return _replay_response(existing, digest)
     return JSONResponse(outcome.response.envelope())
+
+
+async def _preflight(
+    session: AsyncSession,
+    settings: Settings,
+    descriptor: ToolDescriptor,
+    context: ExecutionContext,
+    arguments: dict[str, Any],
+) -> tuple[ExecutionOutcome | None, dict[str, Any] | None]:
+    """执行前校验;返回(拒绝结果, None)或(None, helper 附加参数)。"""
+
+    repository = ToolCallRepository(session)
+    if context.run_id:
+        used_calls = await repository.count_page(
+            context.tenant_id, run_id=context.run_id
+        )
+        error = check_total_calls(
+            used_calls=used_calls, limit=settings.max_tool_calls_per_run
+        )
+        if error is not None:
+            return _reject(descriptor, context, error), None
+    internal: dict[str, Any] | None = None
+    if descriptor.risk is ToolRisk.WRITE:
+        if context.run_id:
+            used_writes, used_bytes = await repository.write_usage_for_run(
+                context.tenant_id, context.run_id
+            )
+            error = check_write_quota(
+                used_writes=used_writes,
+                used_bytes=used_bytes,
+                incoming_bytes=_incoming_bytes(descriptor, arguments),
+                max_writes=settings.max_writes_per_run,
+                max_bytes=settings.max_write_bytes_per_run,
+            )
+            if error is not None:
+                return _reject(descriptor, context, error), None
+        if settings.read_before_write_enabled:
+            internal = await _read_gate(session, context, arguments)
+            if internal is _READ_REQUIRED:
+                return (
+                    _reject(
+                        descriptor,
+                        context,
+                        ToolError(
+                            code="tool.read_required",
+                            message="写之前必须先 read 目标文件",
+                            hint=(
+                                "先用 read 查看 path(会记录读取版本),再执行 write/edit"
+                            ),
+                            retryable=False,
+                        ),
+                    ),
+                    None,
+                )
+    return None, internal
+
+
+#: _read_gate 的哨兵:需要拒绝执行(数据类无法用 None 表达「读前置未通过」)。
+_READ_REQUIRED = object()
+
+
+async def _read_gate(
+    session: AsyncSession,
+    context: ExecutionContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any] | object | None:
+    """读前置校验:同 scope 内必须读过同 path;返回期望 sha(内部参数)。"""
+
+    if context.run_id is None and context.conversation_id is None:
+        return None
+    path = _normalize_path(arguments.get("path"))
+    if path is None:
+        return None  # 参数不合法:交给 validate_arguments 报 tool.invalid_args
+    scope_key = scope_key_for(
+        context.tenant_id,
+        sandbox_scope=context.sandbox_scope,
+        conversation_id=context.conversation_id,
+        run_id=context.run_id,
+    )
+    record = await FileReadRepository(session).find_read(
+        context.tenant_id, scope_key=scope_key, path=path
+    )
+    if record is None:
+        return _READ_REQUIRED
+    return {"_expected_read_sha256": record.sha256}
+
+
+async def _remember_read(
+    session: AsyncSession,
+    descriptor: ToolDescriptor,
+    context: ExecutionContext,
+    body: ToolExecuteBody,
+    outcome: ExecutionOutcome,
+) -> None:
+    """read 成功后记录 path+sha256,供后续 write/edit 的读前置校验。"""
+
+    if descriptor.name != "read" or not outcome.response.ok:
+        return
+    result = outcome.response.result or {}
+    path = _normalize_path(result.get("path")) or _normalize_path(
+        body.arguments.get("path")
+    )
+    sha256 = result.get("sha256")
+    if path is None or not isinstance(sha256, str):
+        return
+    scope_key = scope_key_for(
+        context.tenant_id,
+        sandbox_scope=context.sandbox_scope,
+        conversation_id=context.conversation_id,
+        run_id=context.run_id,
+    )
+    await FileReadRepository(session).upsert_read(
+        context.tenant_id,
+        scope_key=scope_key,
+        path=path,
+        sha256=sha256,
+        run_id=context.run_id,
+        conversation_id=context.conversation_id,
+    )
+
+
+def _reject(
+    descriptor: ToolDescriptor, context: ExecutionContext, error: ToolError
+) -> ExecutionOutcome:
+    return failure_outcome(
+        descriptor, context, error.code, error.message, hint=error.hint
+    )
+
+
+def _incoming_bytes(descriptor: ToolDescriptor, arguments: dict[str, Any]) -> int:
+    """write 的待写字节数(edit 结果长度未知,按 0 估,由下一次调用兜底)。"""
+
+    if descriptor.name != "write":
+        return 0
+    content = arguments.get("content")
+    return len(content.encode("utf-8")) if isinstance(content, str) else 0
+
+
+def _normalize_path(value: Any) -> str | None:
+    """工具参数/结果里的相对路径归一化(去 ./、反斜杠转 /、折叠重复斜杠)。"""
+
+    if not isinstance(value, str):
+        return None
+    text = value.replace("\\", "/").strip()
+    while text.startswith("./"):
+        text = text[2:]
+    text = "/".join(part for part in text.split("/") if part not in ("", "."))
+    return text or None
 
 
 def _replay_response(existing: ToolCall, digest: str) -> JSONResponse:

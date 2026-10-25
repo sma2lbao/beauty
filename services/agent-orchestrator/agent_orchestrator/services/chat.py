@@ -11,20 +11,33 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_orchestrator.graph.tool_results import is_tool_error
+from agent_orchestrator.graph.tool_results import (
+    is_tool_error,
+    parse_tool_error,
+    tool_result_fields,
+)
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import MessageRepository
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.tools import ToolRisk
 
 MAX_CHAT_TOOL_ROUNDS = 5  # 对话内 function-calling 轮次上限
+
+#: tool 帧的 decision 文案(与执行图审计语义一致;前端归并 approved/confirmed)。
+_DECISION_TEXT = {
+    approval_service.ApprovalAction.AUTO: "auto",
+    approval_service.ApprovalAction.CONFIRM: "confirm",
+    approval_service.ApprovalAction.DENY: "denied",
+}
 
 CHAT_SYSTEM_PROMPT = (
     "你是对话助手。可以调用提供的只读工具查询信息(如文档、"
@@ -95,8 +108,9 @@ async def run_tool_loop(
 ) -> AsyncIterator[tuple[str, dict[str, Any] | str]]:
     """对话内 function-calling 循环(只读 + 受控写,§6.7)。
 
-    产出 ("tool", {name, arguments, ok}) 事件供流式层转发;最终一轮产出
-    ("content", 正文)。只读与受控写工具自动执行;**危险操作(DANGER)不执行**,
+    产出 ("tool", {name, arguments, ok, risk, error_code, duration_ms}) 事件
+    供流式层转发;最终一轮产出 ("content", 正文)。只读与受控写工具自动执行;
+    **危险操作(DANGER)不执行**,
     回喂错误文本引导走任务路径(对话没有审批流);租户策略 ``deny`` 的工具同样不执行。
     轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
     工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底。
@@ -111,9 +125,10 @@ async def run_tool_loop(
             return
         messages.append(_assistant_tool_message(reply))
         for call in reply.tool_calls:
-            decision = approval_service.decide(
-                policies, call.name, toolkit.risk(call.name)
-            )
+            # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
+            risk = str(toolkit.risk(call.name))
+            decision = approval_service.decide(policies, call.name, ToolRisk(risk))
+            duration_ms = 0
             if decision is approval_service.ApprovalAction.DENY:
                 output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
             elif decision is approval_service.ApprovalAction.CONFIRM:
@@ -122,14 +137,26 @@ async def run_tool_loop(
                     "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
                 )
             else:
-                output = await toolkit.execute(call.name, call.arguments)
+                started = time.perf_counter()
+                # 对话没有审批流:approved 恒 False,写工具由服务端风险下限兜底。
+                output = await toolkit.execute(
+                    call.name, call.arguments, approved=False
+                )
+                duration_ms = int((time.perf_counter() - started) * 1000)
             messages.append(_tool_message(call.id, output))
+            result_fields = tool_result_fields(output)
             yield (
                 "tool",
                 {
                     "name": call.name,
                     "arguments": call.arguments,
                     "ok": not is_tool_error(output),
+                    "risk": risk,
+                    "decision": _DECISION_TEXT[decision],
+                    "error_code": parse_tool_error(output),
+                    "duration_ms": duration_ms,
+                    "result_chars": len(output),
+                    "truncated": result_fields.get("truncated"),
                 },
             )
     # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里

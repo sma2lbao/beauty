@@ -221,6 +221,27 @@ async def test_execute_injects_bearer_and_payload() -> None:
     await client.aclose()
 
 
+async def test_execute_passes_approved_and_tool_call_id() -> None:
+    """P1:approved 由调用方决定,原样进请求体(不再按 risk 自动置 True)。"""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_ok_envelope())
+
+    client = _client(handler)
+    from common.tools import ToolExecuteRequest
+
+    request = ToolExecuteRequest(
+        tool_call_id="call-9", arguments={"path": "a.txt"}, approved=True
+    )
+    await client.execute("t-1", "write", request)
+    body = json.loads(seen[0].content)
+    assert body["approved"] is True
+    assert body["tool_call_id"] == "call-9"
+    await client.aclose()
+
+
 async def test_execute_http_error_maps_to_envelope() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -467,9 +488,13 @@ async def test_toolkit_execute_unknown_tool_without_http() -> None:
     seen: list[httpx.Request] = []
     read = _descriptor()
     toolkit, _, client = await _ready(_server(_catalog(read), seen=seen), read)
-    payload = json.loads(await toolkit.execute("missing", "{}"))
+    payload = json.loads(
+        await toolkit.execute("missing", "{}", tool_call_id="call-miss")
+    )
     assert payload["ok"] is False
     assert payload["error"]["code"] == "tool.not_found"
+    # 本地构造的错误信封也要回显调用方 tool_call_id(审计链路可对齐)
+    assert payload["tool_call_id"] == "call-miss"
     assert [request.method for request in seen] == ["GET"]
     await client.aclose()
 
@@ -496,7 +521,8 @@ async def test_toolkit_execute_rejects_bad_arguments() -> None:
     await client.aclose()
 
 
-async def test_toolkit_execute_destructive_sets_approved() -> None:
+async def test_toolkit_execute_approval_comes_from_caller() -> None:
+    """P1:approved/tool_call_id 完全由调用方给出,不再按 risk 自动置 True。"""
     bodies: list[dict[str, Any]] = []
 
     def exec_handler(request: httpx.Request) -> httpx.Response:
@@ -508,10 +534,18 @@ async def test_toolkit_execute_destructive_sets_approved() -> None:
     toolkit, _, client = await _ready(
         _server(_catalog(write, read), exec_handler=exec_handler), write, read
     )
-    await toolkit.execute("read", '{"path": "a.txt"}')
+    # 危险工具默认不自动放行;调用方(确认闸/图节点)显式传 approved=True
     await toolkit.execute("write", '{"path": "a.txt"}')
+    await toolkit.execute(
+        "write",
+        '{"path": "a.txt"}',
+        tool_call_id="call-w1",
+        approved=True,
+    )
     assert bodies[0]["approved"] is False
+    assert bodies[0]["tool_call_id"].startswith("orch-")
     assert bodies[1]["approved"] is True
+    assert bodies[1]["tool_call_id"] == "call-w1"
     await client.aclose()
 
 
@@ -633,6 +667,33 @@ async def test_hybrid_merges_and_routes() -> None:
     local = json.loads(await hybrid.execute("skill_run", "{}"))
     assert local["ok"] is True
     assert local["skill"] == "run"
+    await client.aclose()
+
+
+async def test_hybrid_passes_approval_arguments() -> None:
+    """Hybrid 路由到远端/未知名时都透传 approved 与 tool_call_id。"""
+    bodies: list[dict[str, Any]] = []
+
+    def exec_handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_ok_envelope())
+
+    read = _descriptor()
+    toolkit, _, client = await _ready(
+        _server(_catalog(read), exec_handler=exec_handler), read
+    )
+    hybrid = toolkit.extended([_skill_spec()])
+    remote = json.loads(
+        await hybrid.execute(
+            "read", '{"path": "a.txt"}', tool_call_id="call-h1", approved=True
+        )
+    )
+    assert remote["ok"] is True
+    assert bodies[-1]["approved"] is True
+    assert bodies[-1]["tool_call_id"] == "call-h1"
+    missing = json.loads(await hybrid.execute("missing", "{}", tool_call_id="call-h2"))
+    assert missing["ok"] is False
+    assert missing["tool_call_id"] == "call-h2"
     await client.aclose()
 
 

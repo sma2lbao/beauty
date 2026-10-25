@@ -18,6 +18,7 @@ LLM 注入:builder 用 make_*_node(llm) 工厂装配;llm 为 None 时回退
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from langgraph.types import interrupt
@@ -50,6 +51,7 @@ from agent_orchestrator.graph.plan_nodes import _stub_plan as _stub_plan
 from agent_orchestrator.graph.plan_nodes import _text_reply as _text_reply
 from agent_orchestrator.graph.plan_nodes import make_plan_node as make_plan_node
 from agent_orchestrator.graph.ports import (
+    RISK_DANGER,
     ApprovalDecision,
     LLMPort,
     ToolExtrasFactory,
@@ -59,7 +61,11 @@ from agent_orchestrator.graph.ports import (
 )
 from agent_orchestrator.graph.runtime import GraphRuntime, runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
-from agent_orchestrator.graph.tool_results import is_tool_error
+from agent_orchestrator.graph.tool_results import (
+    is_tool_error,
+    parse_tool_error,
+    tool_result_fields,
+)
 
 MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
@@ -216,12 +222,59 @@ def _tool_message(call_id: str, output: str) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call_id, "content": output}
 
 
-def _record(name: str, arguments: str, output: str) -> dict[str, Any]:
+#: 审计记录 decision 值域:策略自动放行 / 人工确认后放行 / 未执行(拒绝)。
+DECISION_AUTO = "auto"
+DECISION_APPROVED = "approved"
+DECISION_DENIED = "denied"
+
+#: detail 里保留的结果原文长度(与 P0 一致,前端旧字段语义不变)。
+DETAIL_CHARS = 200
+
+
+def _elapsed_ms(started: float) -> int:
+    """perf_counter 起点 -> 毫秒整数(审计不关心微秒)。"""
+
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _record(
+    name: str,
+    arguments: str,
+    output: str,
+    *,
+    tool_call_id: str | None = None,
+    risk: str = RISK_DANGER,
+    decision: str = DECISION_AUTO,
+    duration_ms: int = 0,
+) -> dict[str, Any]:
+    """一次工具调用的审计记录(设计 §11.1)。
+
+    P0 字段 name/arguments/ok/detail 语义不变;P1 扩充:
+
+    - tool_call_id:模型的调用 id(tool-service 幂等键,缺省空串);
+    - risk:read/write/danger;decision:auto/approved/denied;
+    - error_code:从结果信封解析(parse_tool_error),成功为 None;
+    - duration_ms:调用方用 perf_counter 计时;result_chars 是原始结果长度;
+    - truncated/paths/sha256_before|after:来自成功信封(§7.2/§7.3),
+      没有就缺省(False/[]/None),事件 payload 侧再按 16KB 上限裁剪。
+    """
+
+    fields = tool_result_fields(output)
     return {
         "name": name,
         "arguments": arguments,
         "ok": not is_tool_error(output),
-        "detail": output[:200],
+        "detail": output[:DETAIL_CHARS],
+        "tool_call_id": tool_call_id or "",
+        "risk": risk,
+        "decision": decision,
+        "error_code": parse_tool_error(output),
+        "duration_ms": duration_ms,
+        "result_chars": len(output),
+        "truncated": fields.get("truncated", False),
+        "paths": fields.get("paths", []),
+        "sha256_before": fields.get("sha256_before"),
+        "sha256_after": fields.get("sha256_after"),
     }
 
 
@@ -279,30 +332,65 @@ def make_execute_node(
             pending: list[dict[str, Any]] = []
             policies = state.get("approval_policies") or []
             for call in reply.tool_calls:
-                decision = runtime.ports.approval.decide(
-                    policies, call.name, toolkit.risk(call.name)
-                )
+                risk = str(toolkit.risk(call.name))
+                decision = runtime.ports.approval.decide(policies, call.name, risk)
                 if decision is ApprovalDecision.DENY:
                     # 策略禁用:不执行,如实回喂模型(它能据此换个做法)
                     output = _tool_error(
                         f"工具 {call.name} 被租户审批策略禁止使用,本次未执行"
                     )
-                    records.append(_record(call.name, call.arguments, output))
+                    records.append(
+                        _record(
+                            call.name,
+                            call.arguments,
+                            output,
+                            tool_call_id=getattr(call, "id", None),
+                            risk=risk,
+                            decision=DECISION_DENIED,
+                        )
+                    )
                     messages.append(_tool_message(call.id, output))
                     continue
                 if decision is ApprovalDecision.CONFIRM:
                     if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
                         # 确认次数达上限:不再打断,如实告知模型未执行
                         output = _tool_error("危险操作确认次数已达上限,本次未执行")
-                        records.append(_record(call.name, call.arguments, output))
+                        records.append(
+                            _record(
+                                call.name,
+                                call.arguments,
+                                output,
+                                tool_call_id=getattr(call, "id", None),
+                                risk=risk,
+                                decision=DECISION_DENIED,
+                            )
+                        )
                         messages.append(_tool_message(call.id, output))
                         continue
                     pending.append(
                         {"id": call.id, "name": call.name, "arguments": call.arguments}
                     )
                     continue
-                output = await toolkit.execute(call.name, call.arguments)
-                records.append(_record(call.name, call.arguments, output))
+                # 策略 auto:审批流程已放行(不等于人工确认),照实执行并透传
+                # approved 作为服务端写操作的风险下限凭据。
+                started = time.perf_counter()
+                output = await toolkit.execute(
+                    call.name,
+                    call.arguments,
+                    tool_call_id=getattr(call, "id", None),
+                    approved=True,
+                )
+                records.append(
+                    _record(
+                        call.name,
+                        call.arguments,
+                        output,
+                        tool_call_id=getattr(call, "id", None),
+                        risk=risk,
+                        decision=DECISION_AUTO,
+                        duration_ms=_elapsed_ms(started),
+                    )
+                )
                 messages.append(_tool_message(call.id, output))
             if pending:
                 return {
@@ -371,11 +459,27 @@ def make_tool_exec_node(
         for call in pending:
             name = str(call.get("name") or "")
             arguments = str(call.get("arguments") or "{}")
+            call_id = str(call.get("id") or "") or None
+            risk = toolkit.risk(name) if toolkit is not None else RISK_DANGER
+            started = time.perf_counter()
             if toolkit is None:
                 output = _tool_error("工具未配置,写操作未执行")
             else:
-                output = await toolkit.execute(name, arguments)
-            records.append(_record(name, arguments, output))
+                # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
+                output = await toolkit.execute(
+                    name, arguments, tool_call_id=call_id, approved=True
+                )
+            records.append(
+                _record(
+                    name,
+                    arguments,
+                    output,
+                    tool_call_id=call_id,
+                    risk=str(risk),
+                    decision=DECISION_APPROVED,
+                    duration_ms=_elapsed_ms(started),
+                )
+            )
             messages.append(_tool_message(str(call.get("id") or ""), output))
         return {
             "tool_history": messages[len(base) :],

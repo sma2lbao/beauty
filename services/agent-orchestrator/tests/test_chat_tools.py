@@ -96,13 +96,20 @@ def test_chat_tool_loop_executes_readonly_tool(tmp_path) -> None:
         assert names[-1] == "done"
 
         tool_events = [data for name, data in events if name == "tool"]
-        assert tool_events == [
-            {
-                "name": "search_knowledge",
-                "arguments": '{"query": "本周日程"}',
-                "ok": True,
-            }
-        ]
+        assert len(tool_events) == 1
+        event = tool_events[0]
+        # P1 审计字段:风险等级与 error_code 随事件下发,duration_ms 为实测整数
+        assert event["name"] == "search_knowledge"
+        assert event["arguments"] == '{"query": "本周日程"}'
+        assert event["ok"] is True
+        assert event["risk"] == "read"
+        assert event["decision"] == "auto"
+        assert event["result_chars"] > 0
+        # 成功结果没有 error_code/truncated:SSE 帧省略键(旧客户端兼容)
+        assert "error_code" not in event
+        assert "truncated" not in event
+        assert isinstance(event["duration_ms"], int)
+        assert event["duration_ms"] >= 0
         assert knowledge.queries == [("t-1", "本周日程", 5)]
         # 工具结果回喂给了第二轮模型调用(tool role 消息)
         second_call = fake.calls[1]
@@ -128,6 +135,11 @@ def test_chat_tool_loop_rejects_write_tool(tmp_path) -> None:
         tool_events = [data for name, data in events if name == "tool"]
         assert tool_events[0]["name"] == "external_publish"
         assert tool_events[0]["ok"] is False
+        assert tool_events[0]["risk"] == "danger"
+        assert tool_events[0]["decision"] == "confirm"
+        # 未执行:没有耗时,错误信封是旧的纯 error 文本
+        assert tool_events[0]["duration_ms"] == 0
+        assert tool_events[0]["error_code"] == "tool.error"
         # 危险写操作绝没有被执行
         assert danger.sent == []
         # 错误文本回喂给了模型

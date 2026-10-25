@@ -1,4 +1,4 @@
-"""内置工具目录(P0:只读竖切,写与交互工具预埋 enabled=False)。
+"""内置工具目录(P1:只读 + 受控写;交互工具预埋 enabled=False)。
 
 目录真源在代码而不是数据库:工具的 schema 随镜像版本发布,业务库只存
 调用审计与幂等记录。这样 catalog 与实现同版本、评审走代码评审、
@@ -18,7 +18,7 @@ from common.tools import (
 )
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-10-25.p0"
+CATALOG_VERSION = "2026-10-25.p1"
 
 READ = ToolDescriptor(
     name="read",
@@ -117,8 +117,8 @@ LIST_DIR = ToolDescriptor(
 WRITE = ToolDescriptor(
     name="write",
     description=(
-        "把完整内容写入工作区文件(原子替换)。已存在文件需 overwrite=true,"
-        "并可带 expected_sha256 做乐观锁。"
+        "把完整内容写入工作区文件(原子替换)。写已有文件前通常需要先 read(读前置校验);"
+        "可用 expected_sha256 做乐观锁,overwrite=false 时拒绝覆盖。"
     ),
     input_schema={
         "type": "object",
@@ -137,14 +137,14 @@ WRITE = ToolDescriptor(
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=30.0,
     aliases=("code_write_file",),
-    enabled=False,
+    enabled=True,
 )
 
 EDIT = ToolDescriptor(
     name="edit",
     description=(
         "在文件内做一次精确字符串替换;old_string 必须唯一匹配,"
-        "多处替换需 replace_all=true。"
+        "多处替换需 replace_all=true。写前通常需要先 read 该文件。"
     ),
     input_schema={
         "type": "object",
@@ -163,7 +163,7 @@ EDIT = ToolDescriptor(
     executor=ExecutorKind.SANDBOX,
     timeout_seconds=30.0,
     aliases=("code_edit_file",),
-    enabled=False,
+    enabled=True,
 )
 
 ASK_QUESTION = ToolDescriptor(
@@ -227,7 +227,7 @@ ASK_QUESTION = ToolDescriptor(
     enabled=False,
 )
 
-#: 全部工具(P0 只有前四个 enabled=True)。
+#: 全部工具(P1:read/glob/grep/list_dir/write/edit 启用;ask_question 预埋)。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,

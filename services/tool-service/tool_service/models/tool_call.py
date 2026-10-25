@@ -53,6 +53,8 @@ class ToolCall(UUIDMixin, TenantMixin, Base):
     )
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     result_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # write/edit 成功后写入的字节数(单 run 配额按此累计;其他工具为 0)。
+    bytes_written: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # JSON 数组字符串(相对路径),为空时存 "[]"。
     paths: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

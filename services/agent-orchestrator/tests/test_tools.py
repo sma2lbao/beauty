@@ -66,6 +66,17 @@ async def test_handler_exception_becomes_error_text() -> None:
     assert "RuntimeError: 炸了" in payload["error"]
 
 
+async def test_execute_accepts_and_ignores_audit_kwargs() -> None:
+    """P1:本机注册表接受 tool_call_id/approved(审计由调用方记录),行为不变。"""
+    registry = _registry(
+        ToolSpec(name="echo", description="", parameters={}, handler=_echo)
+    )
+    payload = json.loads(
+        await registry.execute("echo", '{"a": 1}', tool_call_id="call-1")
+    )
+    assert payload == {"a": 1}
+
+
 async def test_build_tools_exposes_only_configured_providers() -> None:
     """能力即权限边界:没配置的提供方不暴露工具(§6.2)。"""
     assert len(build_tools("t-1")) == 0

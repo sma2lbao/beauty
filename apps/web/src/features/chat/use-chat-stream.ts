@@ -9,13 +9,14 @@ import type {
 } from '@/lib/conversations-api';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import { queryKeys } from '@/lib/query-keys';
+import type { ToolCallMeta } from '@/lib/tool-meta';
 
-/** 会话内只读工具调用(由 SSE tool 帧流式累积)。 */
+/** 会话内只读工具调用(由 SSE tool 帧流式累积;P1 富字段全部可缺省)。 */
 export type ChatToolCall = {
   name: string;
   arguments: string;
   ok: boolean;
-};
+} & ToolCallMeta;
 
 /** 流式发送期间临时气泡的内容。 */
 export type ChatPending = {

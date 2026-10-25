@@ -93,9 +93,16 @@ def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
 
         assert resp.status_code == 200
         tool_events = [data for name, data in events if name == "tool"]
-        assert tool_events == [
-            {"name": "mcp__mock__echo", "arguments": '{"text": "hi"}', "ok": True}
-        ]
+        assert len(tool_events) == 1
+        event = tool_events[0]
+        assert event["name"] == "mcp__mock__echo"
+        assert event["arguments"] == '{"text": "hi"}'
+        assert event["ok"] is True
+        assert event["risk"] == "write"
+        assert event["decision"] == "auto"
+        assert event["result_chars"] > 0
+        assert "error_code" not in event
+        assert isinstance(event["duration_ms"], int)
         # 外部工具真的被执行了(结果回喂给第二轮模型调用)
         assert seen == [{"text": "hi"}]
         assert any(m.get("role") == "tool" for m in fake.calls[1])
@@ -129,6 +136,9 @@ def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
         tool_events = [data for name, data in events if name == "tool"]
         assert tool_events[0]["name"] == "mcp__mock__echo"
         assert tool_events[0]["ok"] is False
+        assert tool_events[0]["risk"] == "danger"
+        assert tool_events[0]["decision"] == "confirm"
+        assert tool_events[0]["duration_ms"] == 0
         assert called == []
         tool_messages = [m for m in fake.calls[1] if m.get("role") == "tool"]
         assert "「任务」" in tool_messages[0]["content"]

@@ -134,6 +134,18 @@ export function clockTime(value?: string | null): string {
   });
 }
 
+/**
+ * 毫秒 → 人类可读耗时(120ms / 1.2s / 1m05s)。
+ *
+ * 步骤时间线与工具调用共用;空值/非法值返回空串,调用方直接拼进元信息。
+ */
+export function formatDuration(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;

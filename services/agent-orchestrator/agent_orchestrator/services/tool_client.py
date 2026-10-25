@@ -7,7 +7,9 @@ tool-service(:8008),本模块负责三件事:
 - ToolCatalog:进程级目录缓存(首次使用拉一次,失败下次重试;refresh 显式刷新);
 - RemoteToolkit / HybridToolkit:实现 graph.ports.ToolkitPort,保持旧
   ToolRegistry 的 OpenAI schema 形状与「执行永不抛、错误 JSON 回喂」契约,
-  并把三档风险映射回旧枚举(read/write/danger)供审批闸使用。
+  并把三档风险映射回旧枚举(read/write/danger)供审批闸使用;execute() 的
+  approved/tool_call_id 原样透传给 tool-service——审批凭据由调用方给出,
+  不再按风险自动补 approved(P1 受控写)。
 
 服务不可用时的口径:目录拉不到 -> ensure_ready 抛 UpstreamError(装配方
 按必需依赖处理,不静默降级到本机直读);执行期不可达 -> 回喂错误信封
@@ -105,8 +107,10 @@ class ToolClient:
     ) -> ToolExecuteResponse:
         """执行一次工具调用。
 
-        HTTP 200 是正常路径(失败也在信封里);其余状态码映射成错误信封,
-        只有传输层故障才抛 UpstreamError(由 RemoteToolkit 统一回喂)。
+        ToolExecuteRequest 里的 tool_call_id/approved 原样进请求体:前者是
+        服务端幂等键,后者是审批放行凭据(P1 受控写)。HTTP 200 是正常路径
+        (失败也在信封里);其余状态码映射成错误信封,只有传输层故障才抛
+        UpstreamError(由 RemoteToolkit 统一回喂)。
         """
 
         headers: dict[str, str] = {"content-type": "application/json"}
@@ -295,23 +299,35 @@ class RemoteToolkit:
             allowed=frozenset(canonical),
         )
 
-    async def execute(self, name: str, arguments: str) -> str:
-        """执行工具;契约同旧 ToolRegistry:永不向图抛异常。"""
+    async def execute(
+        self,
+        name: str,
+        arguments: str,
+        *,
+        tool_call_id: str | None = None,
+        approved: bool = False,
+    ) -> str:
+        """执行工具;契约同旧 ToolRegistry:永不向图抛异常。
 
-        tool_call_id = f"orch-{uuid.uuid4().hex}"
+        tool_call_id 是调用方给的幂等键(缺省生成 orch-*),approved 是审批
+        流程放行的凭据(策略 auto / 人工确认之后)——这里只做透传,不再按
+        风险自动补:是否放行由调用方(图节点/对话循环)决定。
+        """
+
+        call_id = tool_call_id or f"orch-{uuid.uuid4().hex}"
         descriptor = self._descriptor(name)
         if descriptor is None:
             return _error_envelope(
                 "tool.not_found",
                 f"未知工具: {name}",
                 hint="只允许调用 schemas() 中列出的工具",
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         if descriptor.kind is not ToolKind.FUNCTION:
             return _error_envelope(
                 "tool.not_supported",
                 f"工具 {descriptor.name} 需要人工交互,不能在执行图里直接调用",
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         try:
             payload = json.loads(arguments) if arguments else {}
@@ -319,23 +335,23 @@ class RemoteToolkit:
             return _error_envelope(
                 "tool.invalid_args",
                 f"工具参数不是合法 JSON: {exc}",
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         if not isinstance(payload, dict):
             return _error_envelope(
                 "tool.invalid_args",
                 "工具参数必须是 JSON 对象",
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         context = current_tool_context()
         request = ToolExecuteRequest(
-            tool_call_id=tool_call_id,
+            tool_call_id=call_id,
             arguments=payload,
             run_id=context.run_id if context is not None else None,
             conversation_id=context.conversation_id if context is not None else None,
-            # 执行图保证:destructive 只会在人工确认后由 tool_exec 执行,
-            # 因此这里带 approved=True 作为服务端风险下限的凭据。
-            approved=descriptor.risk is ToolRisk.DESTRUCTIVE,
+            # 审批凭据完全由调用方决定(执行图:策略 auto 或人工确认后传
+            # True;对话路径恒 False,写工具由服务端风险下限兜底)。
+            approved=approved,
         )
         timeout = descriptor.timeout_seconds + self._timeout_grace
         try:
@@ -348,7 +364,7 @@ class RemoteToolkit:
                 "tool.timeout",
                 f"工具 {descriptor.name} 执行超时({timeout:g}s)",
                 retryable=True,
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         except UpstreamError as exc:
             return _error_envelope(
@@ -356,11 +372,11 @@ class RemoteToolkit:
                 exc.message,
                 hint="tool-service 暂不可用,可稍后重试",
                 retryable=True,
-                tool_call_id=tool_call_id,
+                tool_call_id=call_id,
             )
         if not response.tool_call_id:
             # 服务端没回显幂等键时补上本次请求的,保证审计/回放能对上。
-            response = replace(response, tool_call_id=tool_call_id)
+            response = replace(response, tool_call_id=call_id)
         return json.dumps(response.envelope(), ensure_ascii=False)
 
     def _function_tools(self) -> tuple[ToolDescriptor, ...]:
@@ -429,15 +445,26 @@ class HybridToolkit:
             self._base.restricted(allowed), self._extra.restricted(allowed)
         )
 
-    async def execute(self, name: str, arguments: str) -> str:
+    async def execute(
+        self,
+        name: str,
+        arguments: str,
+        *,
+        tool_call_id: str | None = None,
+        approved: bool = False,
+    ) -> str:
         if _contains(self._base, name):
-            return await self._base.execute(name, arguments)
+            return await self._base.execute(
+                name, arguments, tool_call_id=tool_call_id, approved=approved
+            )
         if _contains(self._extra, name):
-            return await self._extra.execute(name, arguments)
+            return await self._extra.execute(
+                name, arguments, tool_call_id=tool_call_id, approved=approved
+            )
         return _error_envelope(
             "tool.not_found",
             f"未知工具: {name}",
-            tool_call_id=f"orch-{uuid.uuid4().hex}",
+            tool_call_id=tool_call_id or f"orch-{uuid.uuid4().hex}",
         )
 
 

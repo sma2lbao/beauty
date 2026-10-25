@@ -11,6 +11,7 @@ import { authHeaders } from '@/lib/auth';
 import { ApiError, createHttpClient } from '@/lib/http';
 import { connectSse, parseSseFrameText } from '@/lib/sse';
 import type { Run } from '@/lib/runs-api';
+import { toolCallMetaFrom, type ToolCallMeta } from '@/lib/tool-meta';
 import { runsBase as BASE } from '@/config/env';
 
 export type Conversation = {
@@ -232,8 +233,13 @@ export type StreamMessageHandlers = {
     run: Run | null;
   }) => void;
   onDelta?: (text: string) => void;
-  /** 会话内只读工具调用(后端已执行完,事件仅为展示过程) */
-  onTool?: (call: { name: string; arguments: string; ok: boolean }) => void;
+  /**
+   * 会话内只读工具调用(后端已执行完,事件仅为展示过程);
+   * P1 起可能附带 risk/decision/error_code/duration_ms 等富字段,全部可缺省。
+   */
+  onTool?: (
+    call: { name: string; arguments: string; ok: boolean } & ToolCallMeta,
+  ) => void;
   onDone?: (result: {
     mode: MessagePostResult['mode'];
     reply: ChatMessage | null;
@@ -328,6 +334,7 @@ export async function streamMessage(
               arguments:
                 typeof data.arguments === 'string' ? data.arguments : '',
               ok: data.ok !== false,
+              ...toolCallMetaFrom(data),
             });
           }
         } else if (name === 'done') {

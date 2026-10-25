@@ -63,6 +63,33 @@ def read_envelope(path: str = "a.txt") -> str:
     )
 
 
+def write_envelope(
+    path: str = "a.txt",
+    *,
+    created: bool = True,
+    changed: bool = True,
+    bytes_written: int = 12,
+    sha_before: str | None = None,
+    sha_after: str = "1" * 64,
+) -> str:
+    """write/edit 成功信封(字段与 helpers/fs_helper.py 一致)。"""
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "path": path,
+        "created": created,
+        "changed": changed,
+        "bytes": bytes_written,
+        "lines": 2,
+        "sha256_before": sha_before,
+        "sha256_after": sha_after,
+        "notes": [],
+    }
+    if not created:
+        payload["replacements"] = 1
+    return json.dumps(payload, ensure_ascii=False)
+
+
 class FakeSandboxProvider:
     """零网络沙箱替身:记录 ensure/exec/touch,返回可配置结果。"""
 

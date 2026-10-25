@@ -1,9 +1,17 @@
 /**
  * 工具调用展示:从 run 事件提取,并把参数 JSON 压成一行摘要。
  */
+import { toolCallMetaFrom, type ToolCallMeta } from '@/lib/tool-meta';
 import type { RunEvent } from '@/lib/runs-api';
+
 import { asText } from './format';
 
+export type { ToolCallMeta, ToolDecision, ToolRisk } from '@/lib/tool-meta';
+
+/**
+ * 工具调用展示对象:核心字段来自 run.tool.called.v1,P1 起后端还可能补
+ * risk/decision/error_code/duration_ms/paths/sha256 等富字段(全部可缺省)。
+ */
 export type ToolCall = {
   seq: number;
   name: string;
@@ -11,7 +19,7 @@ export type ToolCall = {
   ok: boolean;
   detail: string;
   occurredAt?: string;
-};
+} & ToolCallMeta;
 
 export function toolCallsFrom(events: readonly RunEvent[]): ToolCall[] {
   return events
@@ -23,6 +31,7 @@ export function toolCallsFrom(events: readonly RunEvent[]): ToolCall[] {
       ok: event.payload.ok !== false,
       detail: asText(event.payload.detail),
       occurredAt: event.occurred_at,
+      ...toolCallMetaFrom(event.payload),
     }));
 }
 

@@ -4,7 +4,7 @@
  * 只依赖 runs-api 的类型;事件与工具调用的映射见 ./events.ts、./tools.ts。
  */
 import type { Run, RunStatus } from '@/lib/runs-api';
-import type { Tone } from './format';
+import { formatDuration, type Tone } from './format';
 
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   pending: '待规划',
@@ -45,16 +45,11 @@ export const STEP_STATUS_LABELS: Record<string, string> = {
 };
 
 /**
- * 步骤耗时:毫秒 → 人类可读。
+ * 步骤耗时:毫秒 → 人类可读(与工具调用共用 formatDuration,保留旧名免得改调用点)。
  *
  * 只用于步骤时间线,所以精度到 0.1s 就够;空值返回空串,调用方直接拼进元信息。
  */
-export function formatStepDuration(ms: number | null | undefined): string {
-  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
-}
+export const formatStepDuration = formatDuration;
 
 export function runStatusTone(status: RunStatus): Tone {
   switch (status) {

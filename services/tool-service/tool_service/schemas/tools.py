@@ -90,7 +90,10 @@ class ToolCallRead(BaseModel):
     error_code: str | None = None
     duration_ms: int
     result_chars: int
+    bytes_written: int = 0
     truncated: bool
+    sha256_before: str | None = None
+    sha256_after: str | None = None
     paths: list[str] = Field(default_factory=list)
     sandbox_id: str | None = None
     created_at: datetime

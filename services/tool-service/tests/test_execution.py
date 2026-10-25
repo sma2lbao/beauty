@@ -13,9 +13,8 @@ from common.clients.sandbox import SandboxExecResult
 from common.errors import NotFoundError, PermissionDeniedError, UpstreamError
 from common.tools import ExecutorKind, ToolRisk
 
-from tests.conftest import FakeSandboxProvider, _settings, read_envelope
-from tool_service.services import catalog
-from tool_service.services import execution
+from tests.conftest import FakeSandboxProvider, _settings
+from tool_service.services import catalog, execution
 from tool_service.services.execution import (
     ExecutionContext,
     ToolRunner,
@@ -93,7 +92,53 @@ async def test_disabled_tool_raises_not_found(tmp_path: Path) -> None:
     runner = _runner(tmp_path, FakeSandboxProvider())
 
     with pytest.raises(NotFoundError):
+        await runner.execute(_context(), "ask_question", {"questions": []})
+
+
+async def test_write_requires_approval(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    runner = _runner(tmp_path, provider)
+
+    with pytest.raises(PermissionDeniedError) as raised:
         await runner.execute(_context(), "write", {"path": "a.txt", "content": "x"})
+
+    assert raised.value.code == "tool.confirmation_required"
+    assert provider.exec_calls == []
+
+
+async def test_write_with_approval_merges_internal_arguments(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    provider.stdout = json.dumps(
+        {
+            "ok": True,
+            "path": "a.txt",
+            "created": False,
+            "changed": True,
+            "bytes": 7,
+            "lines": 1,
+            "sha256_before": "0" * 64,
+            "sha256_after": "1" * 64,
+            "notes": [],
+        }
+    )
+    runner = _runner(tmp_path, provider)
+    context = _context(approved=True)
+    arguments = {"path": "a.txt", "content": "hello"}
+
+    outcome = await runner.execute(
+        context,
+        "write",
+        arguments,
+        internal_arguments={"_expected_read_sha256": "0" * 64},
+    )
+    request = json.loads(provider.exec_calls[0]["stdin"])
+    columns = audit_columns(outcome, context, arguments, decision="approved")
+
+    assert outcome.response.ok is True
+    assert request["arguments"]["_expected_read_sha256"] == "0" * 64
+    # 审计只记录调用方参数,内部参数不落库
+    assert json.loads(columns["arguments"]) == arguments
+    assert columns["bytes_written"] == 7
 
 
 async def test_destructive_requires_approval(
@@ -383,6 +428,7 @@ async def test_audit_columns_for_success(tmp_path: Path) -> None:
     assert columns["error_code"] is None
     assert columns["duration_ms"] == 5
     assert columns["result_chars"] > 0
+    assert columns["bytes_written"] == 0
     assert columns["truncated"] is False
     assert json.loads(columns["paths"]) == ["a.txt"]
     assert columns["sha256_before"] is None

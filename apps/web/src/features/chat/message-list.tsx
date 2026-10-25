@@ -20,6 +20,7 @@ import { conversationsApi } from '@/lib/conversations-api';
 import {
   RUN_PHASE_LABELS,
   clockTime,
+  formatDuration,
   isRunTerminal,
   runMetaLine,
 } from '@/lib/presentation';
@@ -202,22 +203,34 @@ export function ChatMessageList({
             />
             {pending.chatTools.length > 0 ? (
               <ol className="space-y-1.5 border-l border-ha-border pl-3">
-                {pending.chatTools.map((call, index) => (
-                  <li
-                    key={`${call.name}-${index}`}
-                    className="flex items-center gap-2 text-[12px] text-ha-dim"
-                  >
-                    <StatusDot
-                      tone={call.ok ? 'success' : 'danger'}
-                      pulse={
-                        index === pending.chatTools.length - 1 && !pending.reply
-                      }
-                    />
-                    {call.ok
-                      ? `调用工具 ${call.name}`
-                      : `工具 ${call.name} 被拒绝(会话中只允许只读操作)`}
-                  </li>
-                ))}
+                {pending.chatTools.map((call, index) => {
+                  const duration = formatDuration(call.durationMs);
+                  let label = call.ok
+                    ? '调用工具 ' + call.name
+                    : '工具 ' + call.name + ' 被拒绝(会话中只允许只读操作)';
+                  if (!call.ok && call.errorCode) {
+                    label =
+                      '工具 ' + call.name + ' 失败(' + call.errorCode + ')';
+                  }
+                  return (
+                    <li
+                      key={call.name + '-' + index}
+                      className="flex items-center gap-2 text-[12px] text-ha-dim"
+                    >
+                      <StatusDot
+                        tone={call.ok ? 'success' : 'danger'}
+                        pulse={
+                          index === pending.chatTools.length - 1 &&
+                          !pending.reply
+                        }
+                      />
+                      <span className="min-w-0 truncate">
+                        {label}
+                        {duration ? ' · ' + duration : ''}
+                      </span>
+                    </li>
+                  );
+                })}
               </ol>
             ) : null}
             <AgentBlock

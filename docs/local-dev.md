@@ -154,8 +154,12 @@ curl -s http://127.0.0.1:8002/mcp \
   `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`(默认 false),并确认 tool-service 的
   `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service;关掉即回到下面的进程内 `code_*`
   工具(过渡路径,保留一个发布周期,见 docs/design/tool-service.md §15)。
-- 走服务时对话只挂只读工具(`read` / `glob` / `grep` / `list_dir`);写工具(`write` / `edit`)
-  的受控写与审批闸在 P1 开启。旧名 `code_*` 作为别名再可用一个发布周期。
+- 走服务时对话只挂只读工具(`read` / `glob` / `grep` / `list_dir`);P1 起任务路径也装配写工具
+  (`write` / `edit`,风险等级 write):策略为 confirm 时先落 `pending_writes` 等人工确认,确认后
+  `POST /runs/{id}/confirm` 再带 `approved=true` 执行;tool-service 侧未带 approved 的写请求一律 403。
+- 写前置与限额:同 run 内必须先 `read` 过目标路径(tool-service 的 `file_reads` 表),否则
+  `tool.read_required`;读后文件变化 → `tool.stale_read`;单 run 写次数/字节/总调用次数上限见
+  tool-service README(catalog 与 `TOOL__MAX_*` 配置)。旧名 `code_*` 作为别名再可用一个发布周期。
 - compose 演示默认不开工具服务(与 LLM/工具开关一致),该服务块只保证镜像可起、健康探针通过。
 - 旧进程内路径:配 AGENT_ORCHESTRATOR\_\_CODE_WORKSPACE_ROOTS(JSON 数组;绝对路径,或相对服务进程 cwd 的路径——示例为 `../..` 即仓库根)后,Agent 获得:code_list_files / code_read_file / code_search_text(只读)、code_write_file / code_edit_file(受控写,在 roots 内自动执行,敏感路径写前拦截)。
 - 路径 resolve 后必须仍在 root 内;.git/.env/node_modules 等禁止写;不提供 shell。

@@ -39,7 +39,18 @@
 | `TOOL__WORKSPACE_TIMEOUT_SECONDS` | `60` | 沙箱 HTTP 超时 |
 | `TOOL__TOOL_TIMEOUT_SECONDS` | `30` | 单次工具执行默认上限 |
 | `TOOL__SANDBOX_TOOL_TTL_SECONDS` | `1800` | 沙箱滑动 TTL |
-| `TOOL__READ_BEFORE_WRITE_ENABLED` | `false` | 写前读校验(P1) |
+| `TOOL__READ_BEFORE_WRITE_ENABLED` | `true` | 写前读校验:同 run 内没 read 过同路径 → `tool.read_required` |
+| `TOOL__MAX_WRITES_PER_RUN` | `50` | 单 run 写操作次数上限(P1) |
+| `TOOL__MAX_WRITE_BYTES_PER_RUN` | `5242880` | 单 run 写入字节上限(P1) |
+| `TOOL__MAX_TOOL_CALLS_PER_RUN` | `60` | 单 run 工具调用总次数上限(P1) |
+
+## 受控写(P1)
+
+- `write`/`edit` 的风险等级是 `write`:`approved=false` 的请求一律 403 `tool.confirmation_required`,只有 orchestrator 在两阶段确认/策略放行后才会带 `approved=true`。
+- 原子写:同目录随机临时文件 + `fsync` + `os.replace`,不会出现半截文件;末段 symlink、多硬链接、`.env*` 与 `*.pem/*.key` 一律拒绝。
+- 读前置:同 `run_id`/`scope_key` 内必须先 `read` 过目标路径(记录 sha256),否则 `tool.read_required`;读后文件变化 → `tool.stale_read`;`expected_sha256` 不匹配 → `tool.conflict`。
+- 配额:单 run 写次数/写入字节/总调用次数超限 → `tool.budget_exceeded`。
+- 幂等:`tool_call_id` 重放不重复落副作用,审计表 `tool_calls` 记录 `bytes_written`/`sha256_before`/`sha256_after`。
 
 ## 本地开发
 

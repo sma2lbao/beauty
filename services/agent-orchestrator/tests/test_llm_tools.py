@@ -46,8 +46,21 @@ def test_execute_tool_loop_feeds_result_back(tmp_path) -> None:
         types = [e["type"] for e in events]
         assert "run.tool.called.v1" in types
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
-        assert tool_event["payload"]["name"] == "search_knowledge"
-        assert tool_event["payload"]["ok"] is True
+        payload = tool_event["payload"]
+        assert payload["name"] == "search_knowledge"
+        assert payload["ok"] is True
+        # P1 审计富字段(§11.1):调用 id、风险、决策、耗时、结果规模
+        assert payload["tool_call_id"] == "call_1"
+        assert payload["risk"] == "read"
+        assert payload["decision"] == "auto"
+        assert payload["error_code"] is None
+        assert isinstance(payload["duration_ms"], int)
+        assert payload["duration_ms"] >= 0
+        assert payload["result_chars"] > 0
+        assert payload["truncated"] is False
+        assert payload["paths"] == []
+        assert payload["sha256_before"] is None
+        assert payload["sha256_after"] is None
         # 事件顺序:工具调用记在终态之前
         assert types.index("run.tool.called.v1") < types.index("run.completed.v1")
 
@@ -124,3 +137,7 @@ def test_tool_error_fed_back_to_model(tmp_path) -> None:
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
         assert tool_event["payload"]["ok"] is False
         assert "知识库挂了" in tool_event["payload"]["detail"]
+        # 旧 {"error": ...} 结果仍判失败,并落统一兜底错误码
+        assert tool_event["payload"]["error_code"] == "tool.error"
+        assert tool_event["payload"]["decision"] == "auto"
+        assert tool_event["payload"]["paths"] == []

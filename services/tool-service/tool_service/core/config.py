@@ -26,4 +26,9 @@ class Settings(ServiceSettings):
     tool_timeout_seconds: float = 30.0
     sandbox_tool_ttl_seconds: int = 1800
     tool_call_page_size: int = 50
-    read_before_write_enabled: bool = False
+    # P1:写前必须先 read(file_reads 表),失败回 tool.read_required/tool.stale_read。
+    read_before_write_enabled: bool = True
+    # 单 run 写入配额(write/edit 成功次数与累计字节);超限回 tool.budget_exceeded。
+    max_writes_per_run: int = 50
+    max_write_bytes_per_run: int = 5 * 1024 * 1024
+    max_tool_calls_per_run: int = 60

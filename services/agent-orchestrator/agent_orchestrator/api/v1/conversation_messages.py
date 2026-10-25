@@ -146,6 +146,18 @@ def _message_frames(
                     "arguments": payload["arguments"],
                     "ok": payload["ok"],
                 }
+                # P1 审计字段(可选):有则带,没有则省略键,旧客户端不受影响。
+                for key in (
+                    "risk",
+                    "decision",
+                    "error_code",
+                    "duration_ms",
+                    "result_chars",
+                    "truncated",
+                ):
+                    value = payload.get(key)
+                    if value is not None:
+                        data[key] = value
             elif name == "done":
                 reply = payload.get("reply")
                 data = {
