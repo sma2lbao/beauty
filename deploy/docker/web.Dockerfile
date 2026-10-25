@@ -35,9 +35,11 @@ COPY packages ./packages
 COPY tools ./tools
 COPY tsconfig.base.json ./
 COPY nx.json ./
-# @nx/vitest 插件会在加载项目图时 import 根 vitest.config.mts(各包配置 from '../../vitest.config.mts'
-# 取覆盖率阈值);漏拷会让 nx build 在容器里报 UNRESOLVED_IMPORT 并整图失败。
+# 根配置必须齐:@nx/vitest 加载项目图时 import 根 vitest.config.mts 取覆盖率阈值(否则 UNRESOLVED_IMPORT),
+# @nx/js:typescript-sync 需要根 tsconfig.json(否则报 Missing root "tsconfig.json" 整图失败)。
+# 两者缺一都会让 nx build 在容器里退出 1,而本机因为有这两个文件看不出来。
 COPY vitest.config.mts ./
+COPY tsconfig.json ./
 
 # 防御性清理:本地 apps/*/.env* 会被 Vite 读入并覆盖构建期 VITE_* 值(且可能带
 # 本机联调配置),导致镜像与 CI 构建不一致。容器里只认 build args。
