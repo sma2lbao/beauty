@@ -44,8 +44,11 @@ RUN find /app/apps /app/packages -name '.env' -delete \
 
 RUN npm ci --no-audit --no-fund
 
-# 与 apps/web/package.json 的 "build" 等价(tsc --noEmit + vite build),产物 apps/web/dist。
-RUN npm run build --workspace @beauty/web
+# 走 nx(与本地/CI 同一条构建链):apps/web 的 build 依赖 @beauty/design 与 @beauty/console-ui 的
+# dist 类型声明(tsconfig references),单独 npm run build 会报 TS6305;nx.json 的
+# targetDefaults.build.dependsOn=["^build"] 保证先构建上游库。产物 apps/web/dist。
+ENV NX_DAEMON=false
+RUN npx nx build @beauty/web
 
 # ── 运行阶段:nginx:alpine + 静态产物 + 反代配置 ──────────────────────────────
 FROM nginx:alpine AS runtime

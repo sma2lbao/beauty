@@ -138,9 +138,12 @@ jobs:
 
       - name: Python deps audit via pip-audit (blocking)
         # 导出全量 requirements(含 workspace 解析)后 pip-audit;本地 pypi 不可达,仅 CI 可跑。
+        # --no-deps + --disable-pip:uv export 的输出已是完整解析结果(含传递依赖),不需要
+        # pip-audit 再解析一遍;缺任一参数时 pip-audit 会报
+        # "the --disable-pip flag can only be used with a hashed requirements files..."
         run: |
           uv export --format requirements-txt --no-hashes > /tmp/requirements.txt
-          uvx pip-audit -r /tmp/requirements.txt --disable-pip
+          uvx pip-audit -r /tmp/requirements.txt --no-deps --disable-pip
 
   # ------------------------------------------------------------------
   # Job 4/9：affected-js——JS/TS affected lint + typecheck + build，再逐项目跑 test + coverage
