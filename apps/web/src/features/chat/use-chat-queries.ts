@@ -124,6 +124,17 @@ export function useChatQueries(activeConversationId: string | null) {
     enabled: Boolean(activeRunId),
     retry: false,
   });
+  // 步骤投影不进事件流,单独按 run 拉;终态后不再变,停轮询。
+  const stepsQuery = useQuery({
+    queryKey: queryKeys.runSteps(activeRunId as string),
+    queryFn: () => runsApi.steps(activeRunId as string),
+    enabled: Boolean(activeRunId),
+    retry: false,
+    refetchInterval: () =>
+      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
+        ? false
+        : 1500,
+  });
 
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
@@ -263,6 +274,7 @@ export function useChatQueries(activeConversationId: string | null) {
     connected,
     reconnecting,
     toolCalls,
+    steps: stepsQuery.data ?? [],
     plan: planQuery.data,
     liveRun,
     runPaused,

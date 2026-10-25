@@ -19,6 +19,7 @@ vi.mock('@/lib/runs-api', async () => {
       create: vi.fn(),
       get: vi.fn(),
       getPlan: vi.fn(),
+      steps: vi.fn(async () => []),
       events: vi.fn(),
       generatePlan: vi.fn(),
       updatePlan: vi.fn(),

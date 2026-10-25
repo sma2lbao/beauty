@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator import metrics
-from agent_orchestrator.graph import delta
+from agent_orchestrator.graph import delta, steps
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run, RunEvent
 from agent_orchestrator.repositories import MessageRepository, RunEventRepository
@@ -140,6 +140,74 @@ async def _delta_stream(
         await sink.close()
 
 
+class _RunStepSink:
+    """图调用期间的步骤 span 收集器:调用边界统一落成 run.step.v1。"""
+
+    def __init__(self) -> None:
+        self.spans: list[steps.StepSpan] = []
+
+    def push(self, span: steps.StepSpan) -> None:
+        self.spans.append(span)
+
+
+async def _flush_steps(session: AsyncSession, run: Run, sink: _RunStepSink) -> None:
+    """把本次图调用的 span 落成 run.step.v1(展示/归因记录,不进 outbox)。
+
+    round 是该 (attempt, node) 的第几次执行:恢复/返工会让同一节点再跑一遍,
+    序号由已落库的步骤事件数推进,step_id 因此稳定可寻址(07 S1 契约)。
+    """
+    if not sink.spans:
+        return
+    repository = RunEventRepository(session)
+    rounds: dict[tuple[int, str], int] = {}
+    for event in await repository.list_for_run(run.tenant_id, run.id):
+        if event.type != steps.EVENT_TYPE:
+            continue
+        payload = event.payload or {}
+        key = (int(payload.get("attempt") or 0), str(payload.get("node") or ""))
+        rounds[key] = rounds.get(key, 0) + 1
+    for span in sink.spans:
+        key = (run.attempts, span.node)
+        round_no = rounds.get(key, 0) + 1
+        rounds[key] = round_no
+        await append_event(
+            session,
+            run,
+            steps.EVENT_TYPE,
+            {
+                "step_id": f"{run.id}:{run.attempts}:{span.node}:{round_no}",
+                "node": span.node,
+                "phase": span.phase,
+                "attempt": run.attempts,
+                "round": round_no,
+                "status": span.status,
+                "started_at": span.started_at.isoformat(),
+                "finished_at": (
+                    span.finished_at.isoformat() if span.finished_at else None
+                ),
+                "duration_ms": span.duration_ms,
+            },
+            record_outbox=False,
+        )
+    sink.spans.clear()
+
+
+@asynccontextmanager
+async def _step_stream(
+    session: AsyncSession, run: Run
+) -> AsyncIterator[steps.StepProjector]:
+    """图调用边界:采集节点步骤(异常退出也落库,失败 span 已带失败状态)。
+
+    退出顺序保证"步骤 → 终态":本上下文先于调用方的 except 兜底执行,
+    所以 run.failed.v1 一定排在失败步骤之后。
+    """
+    sink = _RunStepSink()
+    try:
+        yield steps.StepProjector(sink)
+    finally:
+        await _flush_steps(session, run, sink)
+
+
 async def _append_assistant_message(
     session: AsyncSession, run: Run, content: str
 ) -> None:
@@ -188,7 +256,12 @@ async def _fail_run(
 async def list_events(
     session: AsyncSession, tenant_id: str, run_id: str, after: int = 0
 ) -> list[RunEvent]:
-    """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。"""
-    return await RunEventRepository(session).list_for_run(
+    """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。
+
+    run.step.v1 是步骤视图(S1)的底层记录,不进用户事件回放——步骤时间线
+    统一走 GET /runs/{id}/steps,避免事件流被每节点一条的噪声淹没。
+    """
+    events = await RunEventRepository(session).list_for_run(
         tenant_id, run_id, after=after
     )
+    return [event for event in events if event.type != steps.EVENT_TYPE]

@@ -62,20 +62,31 @@ def test_stream_replays_and_closes_on_terminal(client: TestClient) -> None:
         "run.completed.v1",
         "stream.end",
     ]
-    assert [e[0] for e in events[:5]] == ["1", "2", "3", "4", "5"]  # id 即 seq 游标
+    # id 即 seq 游标:因为 run.step.v1(S1 步骤记录)也占用 seq 但不出现在
+    # 用户事件流里,可见事件的 id 只保证严格递增,不一定连续。
+    ids = [int(e[0] or 0) for e in events[:5]]
+    assert ids[0] == 1
+    assert ids == sorted(ids)
+    assert len(set(ids)) == 5
     assert events[-1][2] == {"status": "completed"}
 
 
 def test_stream_resumes_from_last_event_id(client: TestClient) -> None:
     run_id = _completed_run(client)
-    events = _parse_sse(_read_stream(client, run_id, {"Last-Event-ID": "2"}))
+    replay = _parse_sse(_read_stream(client, run_id))
+    cursor = replay[1][0]  # planned 事件(第 2 条可见事件)的 seq
+    assert cursor is not None
+    events = _parse_sse(_read_stream(client, run_id, {"Last-Event-ID": cursor}))
     assert [e[1] for e in events] == [
         "run.approved.v1",
         "run.delivered.v1",
         "run.completed.v1",
         "stream.end",
     ]
-    assert [e[0] for e in events[:3]] == ["3", "4", "5"]
+    # 续传游标语义:只回放 seq > cursor 的事件(step 记录占号,故 id 不连续)
+    ids = [int(e[0] or 0) for e in events[:3]]
+    assert all(sid > int(cursor) for sid in ids)
+    assert ids == sorted(ids)
 
 
 def test_stream_unknown_run_404(client: TestClient) -> None:

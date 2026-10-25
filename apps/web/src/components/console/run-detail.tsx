@@ -17,6 +17,7 @@ import {
 } from '@/components/console/ui';
 import { Markdown } from '@/components/console/markdown';
 import { RunArtifacts } from '@/components/console/run-artifacts';
+import { RunStepTimeline } from '@/components/console/run-step-timeline';
 import { RunEvents } from '@/components/runs/run-events';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import {
@@ -24,7 +25,7 @@ import {
   isRunQuiescent,
   relativeTime,
 } from '@/lib/presentation';
-import type { Run, RunStatus } from '@/lib/runs-api';
+import type { Run, RunStatus, RunStep } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/query-keys';
@@ -73,6 +74,18 @@ export function RunDetail({
     queryKey: queryKeys.instructions(runId),
     queryFn: () => runsApi.instructions(runId),
   });
+  // 步骤投影不进 SSE:执行中按 1.5s 轮询,静默终态(含 blocked)停。
+  const stepsQuery = useQuery({
+    queryKey: queryKeys.runSteps(runId),
+    queryFn: () => runsApi.steps(runId),
+    refetchInterval: (query) => {
+      const data = query.state.data as RunStep[] | undefined;
+      if (data === undefined) return 1500;
+      return runQuery.data && isRunQuiescent(runQuery.data.status)
+        ? false
+        : 1500;
+    },
+  });
   const { events, connected } = useRunEvents(runId);
 
   const refresh = async () => {
@@ -82,6 +95,7 @@ export function RunDetail({
       queryClient.invalidateQueries({
         queryKey: queryKeys.instructions(runId),
       }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runSteps(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
     ]);
   };
@@ -335,6 +349,21 @@ export function RunDetail({
               </ConsoleButton>
             </div>
           ) : null}
+        </ConsolePanel>
+
+        <ConsolePanel className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-semibold text-ha-text-2">
+              执行步骤
+            </span>
+            <span className="font-mono text-[11px] text-ha-faint">
+              {stepsQuery.data?.length ?? 0} 个节点
+            </span>
+          </div>
+          <RunStepTimeline
+            steps={stepsQuery.data ?? []}
+            className="mt-2 max-h-72 overflow-y-auto"
+          />
         </ConsolePanel>
 
         <ConsolePanel className="p-3">

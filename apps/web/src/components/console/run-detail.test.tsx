@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Plan, Run } from '@/lib/runs-api';
+import type { Plan, Run, RunStep } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
 import { RunDetail } from './run-detail';
@@ -18,6 +18,7 @@ vi.mock('@/lib/runs-api', () => ({
   runsApi: {
     get: vi.fn(),
     getPlan: vi.fn(),
+    steps: vi.fn(),
     instructions: vi.fn(),
     retry: vi.fn(),
     approve: vi.fn(),
@@ -54,10 +55,15 @@ const plan: Plan = {
   plan_markdown: '1. 改超时配置',
 };
 
-function renderDetail(status: Run['status'], onClose = vi.fn()) {
+function renderDetail(
+  status: Run['status'],
+  onClose = vi.fn(),
+  steps: RunStep[] = [],
+) {
   vi.mocked(runsApi.get).mockResolvedValue({ ...baseRun, status });
   vi.mocked(runsApi.getPlan).mockResolvedValue(plan);
   vi.mocked(runsApi.instructions).mockResolvedValue([]);
+  vi.mocked(runsApi.steps).mockResolvedValue(steps);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -98,6 +104,26 @@ describe('RunDetail', () => {
     await waitFor(() => {
       expect(runsApi.cancel).toHaveBeenCalledWith('run-1');
     });
+  });
+
+  it('渲染执行步骤时间线', async () => {
+    renderDetail('running', vi.fn(), [
+      {
+        seq: 2,
+        step_id: 'run-1:1:plan:1',
+        node: 'plan',
+        phase: 'plan',
+        attempt: 1,
+        round: 1,
+        status: 'completed',
+        started_at: '2026-10-01T00:00:00Z',
+        finished_at: '2026-10-01T00:00:02Z',
+        duration_ms: 2000,
+      },
+    ]);
+    expect(await screen.findByTestId('run-step-timeline')).toBeTruthy();
+    expect(screen.getByText('执行步骤')).toBeTruthy();
+    expect(screen.getByText(/^规划/)).toBeTruthy();
   });
 
   it('终态不出现取消按钮', async () => {

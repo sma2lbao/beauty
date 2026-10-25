@@ -47,6 +47,7 @@ vi.mock('@/lib/runs-api', async () => {
       list: vi.fn(async () => []),
       get: vi.fn(),
       getPlan: vi.fn(),
+      steps: vi.fn(async () => []),
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),

@@ -8,6 +8,7 @@
 - run_quota:准入闸(fail-open)与用量边界观测
 - run_execution:图调用边界(端口/增量注入)、审批编排与结果投影
 - run_stream:SSE 帧生成、断线续传(Last-Event-ID)与 keep-alive
+- run_steps:步骤视图投影(run.step.v1 → GET /runs/{id}/steps,零迁移,07 S1)
 
 本模块只做 re-export:调用方(api/v1/runs.py、jobs_worker、conversations、
 tests)一律经此取服务函数,拆分不改变任何对外名字与签名。
@@ -40,6 +41,7 @@ from agent_orchestrator.services.run_lifecycle import (
     queue_instruction,
     require_run,
 )
+from agent_orchestrator.services.run_steps import list_steps
 
 __all__ = [
     "_persist_artifact",
@@ -52,6 +54,7 @@ __all__ = [
     "list_events",
     "list_instructions",
     "list_runs",
+    "list_steps",
     "plan_run",
     "queue_instruction",
     "reject_run",

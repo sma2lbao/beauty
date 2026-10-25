@@ -6,6 +6,8 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 
 - run 垂直切片:`POST /api/v1/runs` 创建,`GET /runs/{id}` 查询,
   `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端),
+  `GET /runs/{id}/steps` 节点步骤投影(S1:每个图节点一条 `run.step.v1` 的
+  只读升序投影;该事件不进事件流),
   `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
   断线续传,run 终态(completed/failed/cancelled)自动 `stream.end` 收线;
@@ -24,6 +26,15 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE=false` 可关回"每跑必审";有 DANGER
   工具才 interrupt 人工放行。checkpointer 按 DATABASE_URL 自动选择:
   postgres → `langgraph-checkpoint-postgres`(图线程跨进程可恢复),sqlite/dev → InMemorySaver;
+- **节点步骤投影(S1,2026-10-25)**:plan/execute/tool_exec/verify/deliver 每个节点
+  执行完落一条 `run.step.v1`(payload `step_id`/`node`/`phase`/`attempt`/`round`/
+  `status`/`started_at`/`finished_at`/`duration_ms`,`record_outbox=False`),
+  `step_id = {run_id}:{attempt}:{node}:{round}` 是可寻址身份;`GET /runs/{id}/steps`
+  按 seq 升序返回投影,前端「执行步骤」时间线读它。该事件**不进** `GET /events`
+  与 SSE(避免淹没用户事件流,所以可见事件 seq 有空洞,只能当单调游标);采集在
+  一次图调用边界完成,执行中的节点要等该次 `ainvoke` 返回后才出现(未接 astream);
+  usage 的 step 维度(S2)与 step↔checkpoint/rewind(S3)未做,见
+  `docs/gap-2026-10/07-run-step-model.md`;
 - 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(等待人工审批时编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、

@@ -96,6 +96,7 @@ export function ChatPage() {
           status={queries.status}
           events={queries.events}
           toolCalls={queries.toolCalls}
+          steps={queries.steps}
           connected={queries.connected}
           reconnecting={queries.reconnecting}
           runId={queries.activeRunId}

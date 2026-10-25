@@ -244,13 +244,15 @@
 
 ### 4.4 落地顺序与验收（建议）
 
-| 阶段 | 内容                                                                                                                        | 规模        | 验收标准                                                                                                                 |
-| ---- | --------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
-| S1   | 事件 payload 契约（step 字段）+ `GET /runs/{id}/steps` 内存投影 + 前端步骤时间线读投影                                      | S（1–2 天） | 一个含"规划→审批→执行 2 轮→验收→交付"的 run 能渲染 ≥5 个 step，每个 step 有 node/phase/status/起止时间；不改表、不改迁移 |
-| S2   | usage 采集与上报带 `step_id/phase`；`usage_events` 加 `step_id/phase/cost_usd`（account 迁移）；summary 增加 run/phase 维度 | M（3–5 天） | `/usage/summary` 可返回指定 run 的阶段成本；上报失败可重试（P0-1 一并做）                                                |
-| S3   | `GET /runs/{id}/checkpoints` + `POST /runs/{id}/rewind` + `resume-from-step`；可选物化 `run_steps`（事件重建）              | L（1–2 周） | 能从第 N 步 fork 出新 run，原 run 事件不变；checkpoint 列表可按 step 定位                                                |
+| 阶段  | 内容                                                                                                                        | 规模        | 验收标准                                                                                                                 |
+| ----- | --------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| S1 ✅ | 事件 payload 契约（step 字段）+ `GET /runs/{id}/steps` 内存投影 + 前端步骤时间线读投影                                      | S（1–2 天） | 一个含"规划→审批→执行 2 轮→验收→交付"的 run 能渲染 ≥5 个 step，每个 step 有 node/phase/status/起止时间；不改表、不改迁移 |
+| S2    | usage 采集与上报带 `step_id/phase`；`usage_events` 加 `step_id/phase/cost_usd`（account 迁移）；summary 增加 run/phase 维度 | M（3–5 天） | `/usage/summary` 可返回指定 run 的阶段成本；上报失败可重试（P0-1 一并做）                                                |
+| S3    | `GET /runs/{id}/checkpoints` + `POST /runs/{id}/rewind` + `resume-from-step`；可选物化 `run_steps`（事件重建）              | L（1–2 周） | 能从第 N 步 fork 出新 run，原 run 事件不变；checkpoint 列表可按 step 定位                                                |
 
 S1 可与 P0-2 收尾同批（只动事件 payload 与只读 API）；S2 紧跟 P0-1；S3 即 P1-4 本体。**不在 P0-2 里做表迁移。**
+
+**S1 落地记录（2026-10-25）**：✅ 已实现——`graph/steps.py`（`StepProjector` + 用 `instrument_node` 包 5 个异步节点）、`services/run_events.py`（`_step_stream` 在 3 个 `ainvoke` 边界 flush，`_flush_steps` 生成 `step_id`）、事件 `run.step.v1`（payload 同本表约定，`record_outbox=False`）、只读 `GET /api/v1/runs/{id}/steps`（`services/run_steps.py`）、前端 `RunStepTimeline`（会话执行步骤 tab 与 run 详情抽屉）；测试 `tests/test_run_steps.py` 4 项（全生命周期 5 步、reject→resume 的 attempt=2、失败节点事件先于 `run.failed.v1`、租户隔离）+ `tests/test_sse.py` 按「seq 单调不连续」调整。零迁移。已知边界：步骤在 `ainvoke` 返回后才落库、可见事件 seq 有空洞、取消时该次 invoke 的步骤仍落库。**未做**：§4.3 提到的 P0-2 收尾「终态事件 payload 带 `node/phase/attempt`」仍为可选。
 
 ### 4.5 不建议做的事
 

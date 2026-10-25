@@ -26,6 +26,36 @@ export const RUN_PHASE_LABELS: Record<string, string> = {
   deliver: '整理交付物',
 };
 
+/** 执行步骤的节点标签(step.node):与 graph 的五个异步节点一一对应。 */
+export const STEP_NODE_LABELS: Record<string, string> = {
+  plan: '规划',
+  execute: '执行',
+  tool_exec: '工具执行',
+  verify: '验收',
+  deliver: '交付',
+  fail: '失败',
+};
+
+/** 步骤状态标签:running 只在执行期的内存采集器里出现。 */
+export const STEP_STATUS_LABELS: Record<string, string> = {
+  running: '运行中',
+  completed: '完成',
+  failed: '失败',
+  blocked: '阻塞',
+};
+
+/**
+ * 步骤耗时:毫秒 → 人类可读。
+ *
+ * 只用于步骤时间线,所以精度到 0.1s 就够;空值返回空串,调用方直接拼进元信息。
+ */
+export function formatStepDuration(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
+}
+
 export function runStatusTone(status: RunStatus): Tone {
   switch (status) {
     case 'running':

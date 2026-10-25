@@ -394,7 +394,7 @@ run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自�
      任一非终态 ──cancel──> cancelled
 ```
 
-> 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS`，默认 0=关闭，生产建议审批 86400s / 确认 600s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收。完整状态时间线（status_changed 事件 + step 投影）仍缺，见 07-run-step-model.md。
+> 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS`，默认 0=关闭，生产建议审批 86400s / 确认 600s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收。完整状态时间线（`run.status_changed.v1` 事件）仍缺，见 07-run-step-model.md；节点级步骤投影（S1）已于 2026-10-25 落地，见 §11.5。
 
 - 执行引擎 **LangGraph + PG checkpointer**（生产 Postgres 用 `AsyncPostgresSaver`；SQLite 开发用 InMemorySaver）；
 - run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行；**心跳与 lease 续租未实现**（job 60s lease 无续租，多实例下存在重复领取风险，见 06 P0-3）；
@@ -459,6 +459,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 ### 11.5 事件溯源与对话
 
 - `run_events` 表：append-only、`seq` 单调编号、`type` + payload（JSONB），落 Postgres；Redis Streams 只做实时分发；**SSE 断线回放从 Postgres 读**（`Last-Event-ID`）；
+- **节点步骤（S1，2026-10-25）**：`plan/execute/tool_exec/verify/deliver` 每个节点执行完落一条 `run.step.v1`（payload `{step_id, node, phase, attempt, round, status, started_at, finished_at, duration_ms}`，`record_outbox=False`），`step_id = {run_id}:{attempt}:{node}:{round}` 是可寻址身份；该事件**不进** `GET /runs/{id}/events` 与 SSE（避免淹没用户事件流，可见事件 seq 因此有空洞，只能当单调游标），专用只读端点 `GET /api/v1/runs/{id}/steps` 按 seq 升序返回投影，前端「执行步骤」时间线读它；采集发生在一个 `ainvoke` 边界（`graph/steps.py` 的 `StepProjector` + `instrument_node`，由 services 层 `_step_stream` flush），所以执行中的节点要等该次图调用返回后才出现（未接 `astream`），工具明细仍走 `run.tool.called.v1`；S2（usage 的 step 维度）与 S3（step ↔ checkpoint / rewind）未做，见 `07-run-step-model.md`；
 - `token.delta.v1` 是正文增量（payload `{text, phase}`，phase ∈ plan/execute/verify/deliver）：执行图四个正文节点把模型流式输出攒批落成事件，前端订阅 run 事件流就能在 run 还没终态时看到正文；增量事件不进 outbox，开关 `RUN_DELTA_STREAMING`（默认 true）；
 - 跨服务事件走 `events.outbox`：状态改了事件一定发、事务回滚一定不发；投递至少一次，消费方用 `mark_processed` 幂等；失败按 `backoff_seconds` 退避，超 `max_attempts` 落 failed 留痕；
 - **对话先分流**：消息先判 chat（简单对话）还是 task（复杂任务）——显式指定（自动/对话/任务）优先，其次模型判别，失败退回 task；chat 由模型直接答一条（不建 run、不需审批、正文边产出边渲染），task 进 §11.1 流程；

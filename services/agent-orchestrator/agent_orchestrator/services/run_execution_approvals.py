@@ -13,6 +13,7 @@ from agent_orchestrator import metrics
 from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.ports import ApprovalDecision, GraphPorts
 from agent_orchestrator.graph.runtime import GRAPH_RUNTIME_KEY, GraphRuntime
+from agent_orchestrator.graph.steps import StepProjector
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     TOOL_CALLED_EVENT,
@@ -31,6 +32,7 @@ from agent_orchestrator.services.run_events import (
     _append_assistant_message,
     _delta_stream,
     _fail_run,
+    _step_stream,
     append_event,
     is_cancelled,
 )
@@ -97,8 +99,12 @@ def _tool_context(run: Run):
     )
 
 
-def _config(run: Run, projector: delta.DeltaProjector | None = None) -> dict[str, Any]:
-    """graph 线程标识 + 本次调用的运行期依赖(端口/增量投影器显式注入)。
+def _config(
+    run: Run,
+    projector: delta.DeltaProjector | None = None,
+    step_projector: StepProjector | None = None,
+) -> dict[str, Any]:
+    """graph 线程标识 + 本次调用的运行期依赖(端口/增量/步骤投影器显式注入)。
 
     同一 run 的每次 blocked→resume 周期一个新线程;运行期依赖随调用传递,
     节点不再读进程级上下文变量。
@@ -109,6 +115,7 @@ def _config(run: Run, projector: delta.DeltaProjector | None = None) -> dict[str
             GRAPH_RUNTIME_KEY: GraphRuntime(
                 ports=_GRAPH_PORTS,
                 delta=projector or delta.DeltaProjector(),
+                steps=step_projector or StepProjector(),
             ),
         }
     }
@@ -240,10 +247,14 @@ async def approve_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run) as projector, _usage_boundary(run):
+            async with (
+                _delta_stream(session, run) as projector,
+                _step_stream(session, run) as step_projector,
+                _usage_boundary(run),
+            ):
                 values = await graph.ainvoke(
                     Command(resume={"action": "approve", "instructions": instructions}),
-                    config=_config(run, projector),
+                    config=_config(run, projector, step_projector),
                 )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
@@ -305,7 +316,11 @@ async def confirm_run(
     instructions = await _consume_instructions(session, run)
     try:
         with _tool_context(run):
-            async with _delta_stream(session, run) as projector, _usage_boundary(run):
+            async with (
+                _delta_stream(session, run) as projector,
+                _step_stream(session, run) as step_projector,
+                _usage_boundary(run),
+            ):
                 values = await graph.ainvoke(
                     Command(
                         resume={
@@ -314,7 +329,7 @@ async def confirm_run(
                             "instructions": instructions,
                         }
                     ),
-                    config=_config(run, projector),
+                    config=_config(run, projector, step_projector),
                 )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")

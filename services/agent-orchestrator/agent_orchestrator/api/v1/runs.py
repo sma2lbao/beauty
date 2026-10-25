@@ -30,6 +30,7 @@ from agent_orchestrator.schemas.runs import (
     RunEventRead,
     RunRead,
     RunStatus,
+    StepRead,
 )
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import mcp as mcp_service
@@ -115,6 +116,14 @@ async def list_run_events(
     await runs_service.require_run(session, tenant_id, run_id)
     events = await runs_service.list_events(session, tenant_id, run_id)
     return [RunEventRead.model_validate(event) for event in events]
+
+
+@router.get("/{run_id}/steps", response_model=list[StepRead])
+async def list_run_steps(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> list[StepRead]:
+    """步骤时间线(S1):事件投影,含节点/阶段/轮次与起止时间(零迁移)。"""
+    return await runs_service.list_steps(session, tenant_id, run_id)
 
 
 @router.get("/{run_id}/plan", response_model=PlanRead)

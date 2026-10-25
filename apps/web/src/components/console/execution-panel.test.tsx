@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import type { Run, RunEvent, RunStatus } from '@/lib/runs-api';
+import type { Run, RunEvent, RunStatus, RunStep } from '@/lib/runs-api';
 import type { ToolCall } from '@/lib/presentation';
 
 import { ExecutionPanel } from './execution-panel';
@@ -45,9 +45,15 @@ const toolCalls: ToolCall[] = [
   },
 ];
 
-function renderPanel(status: RunStatus = 'running', connected = true) {
+function renderPanel(
+  status: RunStatus = 'running',
+  connected = true,
+  steps: RunStep[] = [],
+) {
   // 变更 tab 里的 RunArtifacts 走 react-query,需要 Provider(拿不到数据时空态)。
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ExecutionPanel
@@ -55,6 +61,7 @@ function renderPanel(status: RunStatus = 'running', connected = true) {
         status={status}
         events={events}
         toolCalls={toolCalls}
+        steps={steps}
         connected={connected}
         runId="run-1"
       />
@@ -74,6 +81,27 @@ describe('ExecutionPanel', () => {
     // 1 成功 1 失败的状态文案
     expect(screen.getByText(/完成/)).toBeTruthy();
     expect(screen.getByText(/失败/)).toBeTruthy();
+  });
+
+  it('执行步骤时间线列出节点步骤、尝试次数与耗时', () => {
+    renderPanel('running', true, [
+      {
+        seq: 3,
+        step_id: 'run-1:1:execute:1',
+        node: 'execute',
+        phase: 'execute',
+        attempt: 2,
+        round: 1,
+        status: 'completed',
+        started_at: '2026-10-01T00:00:00Z',
+        finished_at: '2026-10-01T00:00:01.500Z',
+        duration_ms: 1500,
+      },
+    ]);
+    expect(screen.getByTestId('run-step-timeline')).toBeTruthy();
+    expect(screen.getByText('执行')).toBeTruthy();
+    expect(screen.getByText(/第 2 次尝试/)).toBeTruthy();
+    expect(screen.getByText(/1\.5s/)).toBeTruthy();
   });
 
   it('变更 tab 统计工具调用次数并列出清单', () => {

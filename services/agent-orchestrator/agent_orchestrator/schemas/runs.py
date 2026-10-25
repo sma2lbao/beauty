@@ -69,6 +69,25 @@ class RunEventRead(BaseModel):
     occurred_at: str
 
 
+class StepRead(BaseModel):
+    """run 步骤视图(S1):run.step.v1 的事件投影,不是表(07-run-step-model.md)。
+
+    node/phase 是步骤归属的节点与阶段;round 是该 (attempt, node) 的第几次执行;
+    started_at/finished_at/duration_ms 给出可定位的时间线。
+    """
+
+    seq: int
+    step_id: str
+    node: str
+    phase: str
+    attempt: int
+    round: int
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+
+
 class PlanUpdate(BaseModel):
     """审批前编辑计划(§6.1:plan 是可编辑工件)。"""
 

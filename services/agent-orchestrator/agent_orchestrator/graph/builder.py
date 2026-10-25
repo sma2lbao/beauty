@@ -34,6 +34,7 @@ from agent_orchestrator.graph.ports import (
     ToolkitFactory,
 )
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.graph.steps import instrument_node
 
 MAX_REWORK_ROUNDS = 3
 
@@ -76,7 +77,7 @@ def build_run_graph(
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
-    builder.add_node("plan", make_plan_node(llm))
+    builder.add_node("plan", instrument_node("plan", "plan", make_plan_node(llm)))
     builder.add_node(
         "approval_gate",
         make_approval_gate_node(
@@ -85,15 +86,27 @@ def build_run_graph(
     )
     builder.add_node(
         "execute",
-        make_execute_node(llm, toolkit_factory, mcp_tools_factory),
+        instrument_node(
+            "execute",
+            "execute",
+            make_execute_node(llm, toolkit_factory, mcp_tools_factory),
+        ),
     )
     builder.add_node("confirm_gate", confirm_gate_node)
     builder.add_node(
         "tool_exec",
-        make_tool_exec_node(toolkit_factory, mcp_tools_factory),
+        instrument_node(
+            "tool_exec",
+            "execute",
+            make_tool_exec_node(toolkit_factory, mcp_tools_factory),
+        ),
     )
-    builder.add_node("verify", make_verify_node(llm))
-    builder.add_node("deliver", make_deliver_node(llm))
+    builder.add_node(
+        "verify", instrument_node("verify", "verify", make_verify_node(llm))
+    )
+    builder.add_node(
+        "deliver", instrument_node("deliver", "deliver", make_deliver_node(llm))
+    )
     builder.add_node("fail", fail_node)
 
     builder.add_edge(START, "plan")

@@ -23,6 +23,7 @@ from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
+    _step_stream,
     append_event,
 )
 from agent_orchestrator.services.run_execution_approvals import (
@@ -120,8 +121,14 @@ async def _invoke_plan(
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
         with _tool_context(run):
-            async with _delta_stream(session, run) as projector, _usage_boundary(run):
-                values = await graph.ainvoke(state, config=_config(run, projector))
+            async with (
+                _delta_stream(session, run) as projector,
+                _step_stream(session, run) as step_projector,
+                _usage_boundary(run),
+            ):
+                values = await graph.ainvoke(
+                    state, config=_config(run, projector, step_projector)
+                )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="plan")
         return

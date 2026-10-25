@@ -11,6 +11,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { RunArtifacts } from '@/components/console/run-artifacts';
+import { RunStepTimeline } from '@/components/console/run-step-timeline';
 import { ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import {
   RUN_STATUS_LABELS,
@@ -18,7 +19,7 @@ import {
   summarizeArguments,
   type ToolCall,
 } from '@/lib/presentation';
-import type { Run, RunEvent, RunStatus } from '@/lib/runs-api';
+import type { Run, RunEvent, RunStatus, RunStep } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
 type PanelTab = 'steps' | 'changes' | 'terminal';
@@ -28,6 +29,7 @@ export function ExecutionPanel({
   status,
   events,
   toolCalls,
+  steps = [],
   connected,
   reconnecting = false,
   runId,
@@ -37,6 +39,8 @@ export function ExecutionPanel({
   status: RunStatus;
   events: readonly RunEvent[];
   toolCalls: readonly ToolCall[];
+  /** 节点级步骤投影(§6.3):比工具调用粗一级,带尝试/轮次/耗时。 */
+  steps?: readonly RunStep[];
   connected: boolean;
   reconnecting?: boolean;
   /** 交付物统一走多件列表(报告 + 真实文件);没有 run 时给空态。 */
@@ -66,11 +70,32 @@ export function ExecutionPanel({
 
       {tab === 'steps' ? (
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-          {toolCalls.length === 0 ? (
+          {steps.length > 0 ? (
+            <>
+              <div className="flex items-center justify-between px-0.5">
+                <span className="text-[11px] font-semibold text-ha-dim">
+                  节点步骤
+                </span>
+                <ToneBadge tone="neutral">{steps.length} 个</ToneBadge>
+              </div>
+              <RunStepTimeline steps={steps} />
+            </>
+          ) : null}
+
+          {steps.length === 0 && toolCalls.length === 0 ? (
             <div className="rounded-md border border-dashed border-ha-border px-4 py-8 text-center text-[12px] leading-5 text-ha-dim">
               {running
                 ? '正在整理执行步骤…工具调用会实时出现在这里。'
                 : '本次运行还没有工具调用记录。'}
+            </div>
+          ) : null}
+
+          {toolCalls.length > 0 ? (
+            <div className="flex items-center justify-between px-0.5 pt-1">
+              <span className="text-[11px] font-semibold text-ha-dim">
+                工具调用
+              </span>
+              <ToneBadge tone="neutral">{toolCalls.length} 次</ToneBadge>
             </div>
           ) : null}
 

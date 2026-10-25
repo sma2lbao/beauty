@@ -44,6 +44,31 @@ export type RunEvent = {
   occurred_at?: string;
 };
 
+/**
+ * 一个执行步骤(架构 §6.3):来自 `GET /runs/{id}/steps` 的内存投影。
+ *
+ * 后端把每个 graph 节点的执行起止与结果固化成 `run.step.v1` 事件,但该事件
+ * 不进用户事件流/SSE(避免噪声),所以步骤要按 run 单独拉取。字段比工具调用
+ * 粗一级:node/phase/尝试次数/轮次/耗时,是排障时定位到「哪一段」的锚点。
+ */
+export type RunStep = {
+  /** run 内事件序号,升序即步骤顺序。 */
+  seq: number;
+  /** 可寻址身份:`{run_id}:{attempt}:{node}:{round}`。 */
+  step_id: string;
+  node: string;
+  phase: string;
+  attempt: number;
+  round: number;
+  status: StepStatus;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+};
+
+/** 步骤状态:运行中只在进程内的采集器里出现,落库后是终值。 */
+export type StepStatus = 'running' | 'completed' | 'failed' | 'blocked';
+
 export type Plan = {
   run_id: string;
   status: RunStatus;
@@ -99,6 +124,9 @@ export const runsApi = {
   getPlan: (runId: string) => http.request<Plan>(`/api/v1/runs/${runId}/plan`),
   events: (runId: string) =>
     http.request<RunEvent[]>(`/api/v1/runs/${runId}/events`),
+  /** 节点级步骤投影:独立于事件流(表内 seq 有空洞是正常的,别按连续 id 判断)。 */
+  steps: (runId: string) =>
+    http.request<RunStep[]>(`/api/v1/runs/${runId}/steps`),
   generatePlan: (runId: string) =>
     http.request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>
