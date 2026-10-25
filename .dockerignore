@@ -1,0 +1,27 @@
+# 容器构建上下文排除项（W4 R-36 收口补：R-36 交付描述里建议的根 .dockerignore）
+# 目的：compose build 时不要把 node_modules / .venv / 本地库 / 缓存送进 daemon。
+.git
+.gitignore
+.github
+.nx
+.cache
+.uv-cache
+.uv-python
+.venv
+node_modules
+**/node_modules
+dist
+**/dist
+out
+**/out
+out-tsc
+doc_build
+reports
+coverage
+test-output
+**/*.db
+**/.env
+**/.env.*
+*.tsbuildinfo
+.DS_Store
+docs
