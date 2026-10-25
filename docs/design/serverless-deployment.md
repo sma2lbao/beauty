@@ -35,7 +35,7 @@
 - **Fly.io**：改造最小（同一镜像、长连接无请求时长上限、scale-to-zero 用 auto_stop/suspend），代价是它更像「托管 VM」而非函数平台，且背景任务/数据库仍要自己拼。
 - **Modal**：Python 原生 + 内置 Sandboxes，可把 orchestrator/tool-service/沙箱放一个平台；代价是与现有 8 服务 + BFF 的容器编排模型不同，需重写部署描述（不是代码）。
 - **AWS（Lambda Web Adapter + ECS Fargate）**：只在组织已经重仓 AWS 且能接受「SSE 15 分钟断流 + 常驻进程另开 Fargate」时选。
-- **不推荐**：Cloudflare Workers（Python/FastAPI 不匹配、CPU 5 分钟上限、128MB）、Vercel Functions（30 分钟上限、无后台进程）、Render/Railway 常驻型（没有真正的 scale-to-zero）。
+- **不推荐**：Cloudflare Workers（Python 运行时不是 CPython 全量、CPU 5 分钟上限、128MB）；Vercel Functions（官方支持 FastAPI，但函数时长 Hobby 300s / Pro 800s（1800s Beta）、无长期后台进程，整仓后端只能走混合方案，见 §7.6）；Render/Railway 常驻型（没有真正的 scale-to-zero）。
 
 ### 1.2 改造分级（全量见 §5）
 
@@ -141,19 +141,20 @@
 
 ### 3.2 平台对比矩阵
 
-矩阵只列「能承载 8 个 FastAPI 服务」的候选；纯函数平台（Vercel/Workers）单独在 §3.3 说明为什么排除。数值来自各平台官方文档（2026-10 抓取；本环境访问受限的条目已标注以官方为准）。
+矩阵只列「能承载 8 个 FastAPI 服务」的候选；函数平台里 Vercel 官方支持 FastAPI/ASGI，但函数时长与后台进程有硬约束，单独列一行并在 §3.3 与 §7.6 说明可行边界；Cloudflare Workers 因 Python 运行时不是 CPython 全量而排除。数值来自各平台官方文档（2026-10 抓取；本环境访问受限的条目已标注以官方为准）。
 
-| 平台                                 | 形态                         | SSE / 流式                                 | 单请求上限                                                            | 后台循环                                                      | 缩容到 0                      | 镜像复用                       | 隔离沙箱                                        | 结论                   |
-| ------------------------------------ | ---------------------------- | ------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------- | ------------------------------ | ----------------------------------------------- | ---------------------- |
-| **Cloud Run**（services）            | 托管容器                     | 原生支持，逐块透传                         | 请求超时最长 60 分钟（服务级配置，官方文档为准）                      | 需 worker pools（request 驱动不可靠）                         | 是（min-instances 0）         | 是                             | 平台无 KVM；2026 新增 code execution 能力待验证 | **首选**               |
-| **Cloud Run**（worker pools + Jobs） | 托管容器池 / 批处理          | worker pools 无外部 HTTP 入口；Jobs 无 SSE | Jobs 任务超时上限 24 小时                                             | **是**（worker pools 承载常驻循环）                           | worker pools 可 0（会停循环） | 是                             | 同上                                            | **首选方案的后台平面** |
-| **AWS Lambda + Web Adapter**         | 函数                         | LWA 支持 response streaming                | 15 分钟（异步/事件源 90 分钟的 Managed Instances 不适用于 HTTP 同步） | 否                                                            | 是                            | 需打包 LWA                     | 无（Lambda MicroVMs 是另一产品）                | 仅备选                 |
-| **AWS ECS Fargate / App Runner**     | 托管容器                     | 原生                                       | 无硬上限（ALB 空闲超时可调）                                          | 是                                                            | 否（Fargate 常驻计费）        | 是                             | 无 KVM                                          | 仅备选                 |
-| **AWS Lambda MicroVMs**              | 有状态 microVM（2026-10 新） | 需自建网关                                 | 以官方为准                                                            | 否                                                            | 是                            | 需镜像适配                     | 有（microVM）                                   | 沙箱候选               |
-| **Azure Container Apps**             | 托管容器                     | 原生                                       | ingress 默认 240s，可配到 2400s（40 分钟）                            | Jobs 支持定时/事件触发；无 ingress 的常驻循环需 minReplicas≥1 | 是（min 0）                   | 是                             | 无 KVM                                          | 备选（Azure 亲和时）   |
-| **Fly.io Machines**                  | serverless VM（Firecracker） | 无请求时长上限（长连接友好）               | 无                                                                    | 是（进程常驻，自动停/启）                                     | 是（auto_stop=suspend）       | 是                             | **Machines 本身是 microVM**，可作为沙箱池       | **次选（改造最小）**   |
-| **Modal**                            | Python 原生 serverless       | Web Functions / Streaming endpoints        | 以官方为准（函数有超时上限，长流需设计）                              | 是（定时/队列/常驻容器）                                      | 是                            | 部分（Python 代码，ASGI 可挂） | **Sandboxes 一等公民**（argv/文件/快照）        | **沙箱与批处理补充**   |
-| **E2B**                              | 沙箱 PaaS                    | 不适用（只做沙箱）                         | 不适用                                                                | 不适用                                                        | 不适用                        | 不适用                         | **有**（Firecracker，SDK exec）                 | 沙箱 provider 候选     |
+| 平台                                                          | 形态                           | SSE / 流式                                 | 单请求上限                                                                       | 后台循环                                                                                         | 缩容到 0                      | 镜像复用                                | 隔离沙箱                                                                       | 结论                                        |
+| ------------------------------------------------------------- | ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------- |
+| **Cloud Run**（services）                                     | 托管容器                       | 原生支持，逐块透传                         | 请求超时最长 60 分钟（服务级配置，官方文档为准）                                 | 需 worker pools（request 驱动不可靠）                                                            | 是（min-instances 0）         | 是                                      | 平台无 KVM；2026 新增 code execution 能力待验证                                | **首选**                                    |
+| **Cloud Run**（worker pools + Jobs）                          | 托管容器池 / 批处理            | worker pools 无外部 HTTP 入口；Jobs 无 SSE | Jobs 任务超时上限 24 小时                                                        | **是**（worker pools 承载常驻循环）                                                              | worker pools 可 0（会停循环） | 是                                      | 同上                                                                           | **首选方案的后台平面**                      |
+| **AWS Lambda + Web Adapter**                                  | 函数                           | LWA 支持 response streaming                | 15 分钟（异步/事件源 90 分钟的 Managed Instances 不适用于 HTTP 同步）            | 否                                                                                               | 是                            | 需打包 LWA                              | 无（Lambda MicroVMs 是另一产品）                                               | 仅备选                                      |
+| **AWS ECS Fargate / App Runner**                              | 托管容器                       | 原生                                       | 无硬上限（ALB 空闲超时可调）                                                     | 是                                                                                               | 否（Fargate 常驻计费）        | 是                                      | 无 KVM                                                                         | 仅备选                                      |
+| **AWS Lambda MicroVMs**                                       | 有状态 microVM（2026-10 新）   | 需自建网关                                 | 以官方为准                                                                       | 否                                                                                               | 是                            | 需镜像适配                              | 有（microVM）                                                                  | 沙箱候选                                    |
+| **Azure Container Apps**                                      | 托管容器                       | 原生                                       | ingress 默认 240s，可配到 2400s（40 分钟）                                       | Jobs 支持定时/事件触发；无 ingress 的常驻循环需 minReplicas≥1                                    | 是（min 0）                   | 是                                      | 无 KVM                                                                         | 备选（Azure 亲和时）                        |
+| **Vercel**（Functions + Queues + Cron + Sandbox + Workflows） | 函数 + 托管队列 + microVM 沙箱 | 支持 `StreamingResponse`；单个请求内可流式 | Hobby 300s；Pro/Ent 默认 300s、最大 800s（GA），1800s 为 Beta；Edge runtime 300s | 无长期进程：Queues worker / Cron（Pro 最小 1 分钟，Hobby 每天一次）/ Workflows（持久步骤，Beta） | 是                            | 否（Vercel 自建 Python 包，不复用镜像） | **Vercel Sandbox**（Firecracker microVM，Python SDK；argv 支持、stdin 不支持） | 前端 + BFF + 短服务可行，整仓需混合（§7.6） |
+| **Fly.io Machines**                                           | serverless VM（Firecracker）   | 无请求时长上限（长连接友好）               | 无                                                                               | 是（进程常驻，自动停/启）                                                                        | 是（auto_stop=suspend）       | 是                                      | **Machines 本身是 microVM**，可作为沙箱池                                      | **次选（改造最小）**                        |
+| **Modal**                                                     | Python 原生 serverless         | Web Functions / Streaming endpoints        | 以官方为准（函数有超时上限，长流需设计）                                         | 是（定时/队列/常驻容器）                                                                         | 是                            | 部分（Python 代码，ASGI 可挂）          | **Sandboxes 一等公民**（argv/文件/快照）                                       | **沙箱与批处理补充**                        |
+| **E2B**                                                       | 沙箱 PaaS                      | 不适用（只做沙箱）                         | 不适用                                                                           | 不适用                                                                                           | 不适用                        | 不适用                                  | **有**（Firecracker，SDK exec）                                                | 沙箱 provider 候选                          |
 
 > 说明：Cloud Run 的「请求超时 60 分钟 / Jobs 24 小时 / 默认并发 80」本环境无法访问官方正文（`cloud.google.com` 抓取失败），文档按官方文档既有口径记录并在验收阶段复核；Azure ACA 的 2400s 上限来自官方 `requestTimeoutSeconds` 文档与 Microsoft Q&A。
 
@@ -175,7 +176,15 @@
 
 **Azure Container Apps（Azure 亲和时）**。镜像复用、scale-to-zero、Jobs 做迁移、KEDA 规则；SSE 受 ingress 40 分钟上限约束，需续流；常驻后台循环放在无 ingress 的容器且 `minReplicas≥1`（无法缩到 0），成本略高；沙箱需外部 provider。
 
-**Vercel**：只继续托管 `apps/site`（现状 [architecture.md:517](../architecture.md) 已写明 Vercel 只部署官网）。Functions 虽支持流式，但最长 30 分钟、无后台循环、无长连接常驻进程，不能承载 BFF/orchestrator。可作为前端静态托管的可选项，但 `/api` 同源反代仍需 LB 或自定义域路由。
+**Vercel（可以部署 FastAPI，但不是整仓后端的唯一平台）**。Vercel 的 Python runtime 官方支持 ASGI/WSGI，FastAPI 零配置即可作为 Functions 运行，`StreamingResponse`、lifespan events、build commands 都支持（[官方 FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi)）。因此「Vercel 不能部署 FastAPI」是错误表述，本文档此前把它写成「只托官网」也过粗，已按官方文档更正。准确边界有三条：
+
+① **函数时长封顶**：Hobby 300s；Pro/Enterprise 默认 300s、最大 800s（GA），1800s（30 分钟）为 Beta 且需函数级配置与特定 Python 版本，超时返回 504 `FUNCTION_INVOCATION_TIMEOUT`；
+
+② **没有长期进程**：outbox dispatcher（1s 轮询）、jobs worker（60s 租约）、interrupts sweeper（15s）、sandbox reaper 都不能常驻，只能改成 Vercel Queues 的 worker function（push 消费）或 Cron（Pro 最小 1 分钟、Hobby 每天一次）；
+
+③ **没有 KVM**：microsandbox 用不了，需换 Vercel Sandbox（Firecracker microVM，Python SDK，单 session 上限 Hobby 45 分钟 / Pro·Enterprise 24 小时）。
+
+结论：Vercel 适合承载 `apps/web` + BFF + 无状态短请求服务（account/llm-gateway/connector/knowledge/tool 只读），orchestrator 与 workspace 的常驻部分要外置；完整路线与改造清单见 §7.6。
 
 **Cloudflare Workers/Containers**：CPU 时间 Paid 上限 5 分钟、内存 128MB、Python Workers 不支持 FastAPI/ASGI（不是 CPython 全量运行时），与现有服务不兼容；Containers 可跑镜像但等于托管容器且受 CPU/内存/网络约束更严；R2 可作对象存储。结论：不用它承载后端，如需要边缘缓存可在 CDN 层叠加。
 
@@ -185,14 +194,15 @@
 
 ### 3.4 分场景推荐
 
-| 场景                                                        | 推荐                                                                                   | 理由                                                                                  |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 最小改造、单人/小团队维护、要尽快上线                       | **Fly.io Machines 全量**                                                               | 镜像不变、SSE 无请求上限、Machines 兼作沙箱、`auto_stop=suspend` 控成本；约 6-10 人日 |
-| 标准云、需要托管 PG/对象存储/密钥/审计、团队 3 人以上       | **Cloud Run（services + worker pools + Jobs）+ Cloud SQL/Neon + GCS + E2B/Modal 沙箱** | 生态完整、按请求计费、与 GitHub Actions/WIF 集成好；约 13-19 人日                     |
-| 已深度使用 AWS（IAM/VPC/账单）                              | **ECS Fargate 常驻 + Lambda Web Adapter 接 HTTP/SSE + Aurora Serverless v2 + S3**      | 避免跨云；代价是双层部署与 LWA 适配，25 人日以上                                      |
-| 主要在 Azure                                                | **Azure Container Apps + Azure Database for PostgreSQL + Blob Storage**                | ACA 与现有镜像兼容；注意 40 分钟 ingress 上限与常驻 worker 成本                       |
-| 想保留 Python 原生开发体验、重沙箱/批处理（评测、批量生成） | **Modal 托管 orchestrator/tool-service + Sandboxes；前端与 BFF 仍在 Cloud Run/Fly**    | Modal 的 Sandbox/Queue/定时能力最贴合 agent 场景                                      |
-| 只托管官网与静态前端                                        | **Vercel / Cloudflare Pages + 独立 API 域名**                                          | 与后端解耦；注意 Cookie 同源约束需 LB 路由 `/api`                                     |
+| 场景                                                        | 推荐                                                                                                            | 理由                                                                                           |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 最小改造、单人/小团队维护、要尽快上线                       | **Fly.io Machines 全量**                                                                                        | 镜像不变、SSE 无请求上限、Machines 兼作沙箱、`auto_stop=suspend` 控成本；约 6-10 人日          |
+| 标准云、需要托管 PG/对象存储/密钥/审计、团队 3 人以上       | **Cloud Run（services + worker pools + Jobs）+ Cloud SQL/Neon + GCS + E2B/Modal 沙箱**                          | 生态完整、按请求计费、与 GitHub Actions/WIF 集成好；约 13-19 人日                              |
+| 已深度使用 AWS（IAM/VPC/账单）                              | **ECS Fargate 常驻 + Lambda Web Adapter 接 HTTP/SSE + Aurora Serverless v2 + S3**                               | 避免跨云；代价是双层部署与 LWA 适配，25 人日以上                                               |
+| 主要在 Azure                                                | **Azure Container Apps + Azure Database for PostgreSQL + Blob Storage**                                         | ACA 与现有镜像兼容；注意 40 分钟 ingress 上限与常驻 worker 成本                                |
+| 想保留 Python 原生开发体验、重沙箱/批处理（评测、批量生成） | **Modal 托管 orchestrator/tool-service + Sandboxes；前端与 BFF 仍在 Cloud Run/Fly**                             | Modal 的 Sandbox/Queue/定时能力最贴合 agent 场景                                               |
+| 团队偏好 Vercel 生态、希望前端与 API 同平台                 | **Vercel（web + BFF + 短请求服务）+ 外部常驻 orchestrator/workspace（Cloud Run 或 Fly）+ Vercel Sandbox/Modal** | FastAPI 官方支持、同源部署最省事；但函数 ≤800s 且无长期进程，长 run 与后台循环必须外置（§7.6） |
+| 只托管官网与静态前端                                        | **Vercel / Cloudflare Pages + 独立 API 域名**                                                                   | 与后端解耦；注意 Cookie 同源约束需 LB 路由 `/api`                                              |
 
 ## 4. 目标架构（以 Cloud Run 主线为例）
 
@@ -485,7 +495,7 @@ destroy(name)        -> sandbox.kill()
 4. 缓存：`assets/*`（带 hash）`Cache-Control: public, max-age=31536000, immutable`；`index.html` `no-cache`；
 5. 前端环境：`VITE_AUTH_MODE=session`、`VITE_RUNS_API_URL` 留空（同源），构建时注入；不要在前端打包任何密钥。
 
-Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成公网/internal 服务地址；Modal/其他平台同理，静态层可继续用 Vercel/Cloudflare Pages + 自定义域把 `/api` 反代到 BFF（需确认该平台支持 SSE 反代）。
+Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成公网/internal 服务地址；Modal/其他平台同理，静态层可继续用 Vercel/Cloudflare Pages + 自定义域把 `/api` 反代到 BFF（Vercel rewrites 可反代 SSE，但代理链同样受函数/请求时长约束，长流仍要 `Last-Event-ID` 续流）。
 
 **验收**：直接访问 `https://app.example.com/runs` 返回 SPA（不是 404）；`https://app.example.com/api/health` 返回 BFF 健康；Cookie 在 https 下正常下发。
 
@@ -676,13 +686,62 @@ def sweep():
 
 ### 7.5 路线对比
 
-| 路线              | 改造量                      | 长流上限                        | 后台循环                      | 沙箱                       | 成本量级 | 主要风险                              |
-| ----------------- | --------------------------- | ------------------------------- | ----------------------------- | -------------------------- | -------- | ------------------------------------- |
-| Cloud Run（主线） | 中（13-19 人日）            | 60 分钟 + 续流                  | worker pools（可 1 实例常驻） | 外部 provider（Modal/E2B） | 中       | 沙箱外置；Cloud Run 数值需 spike 复核 |
-| Fly.io            | 小（6-10 人日）             | 无硬上限                        | process group 常驻            | 自建 Fly Machines provider | 低       | 出网策略弱、沙箱自运维                |
-| Modal             | 中（8-12 人日，含后台重写） | Streaming（需实测）             | 定时/队列短任务               | 原生 Sandboxes（最优）     | 低-中    | 平台绑定、后台模型改造                |
-| AWS               | 大（25+ 人日）              | 15 分钟（Lambda）/无（Fargate） | Fargate 常驻                  | Lambda MicroVMs 或外部     | 高       | 双层网络、复杂度、连接池              |
-| Azure ACA         | 中（12-16 人日）            | 40 分钟 + 续流                  | minReplicas≥1                 | 外部 provider              | 中       | 常驻 worker 无法缩容                  |
+| 路线              | 改造量                      | 长流上限                           | 后台循环                       | 沙箱                       | 成本量级 | 主要风险                              |
+| ----------------- | --------------------------- | ---------------------------------- | ------------------------------ | -------------------------- | -------- | ------------------------------------- |
+| Cloud Run（主线） | 中（13-19 人日）            | 60 分钟 + 续流                     | worker pools（可 1 实例常驻）  | 外部 provider（Modal/E2B） | 中       | 沙箱外置；Cloud Run 数值需 spike 复核 |
+| Fly.io            | 小（6-10 人日）             | 无硬上限                           | process group 常驻             | 自建 Fly Machines provider | 低       | 出网策略弱、沙箱自运维                |
+| Modal             | 中（8-12 人日，含后台重写） | Streaming（需实测）                | 定时/队列短任务                | 原生 Sandboxes（最优）     | 低-中    | 平台绑定、后台模型改造                |
+| AWS               | 大（25+ 人日）              | 15 分钟（Lambda）/无（Fargate）    | Fargate 常驻                   | Lambda MicroVMs 或外部     | 高       | 双层网络、复杂度、连接池              |
+| Azure ACA         | 中（12-16 人日）            | 40 分钟 + 续流                     | minReplicas≥1                  | 外部 provider              | 中       | 常驻 worker 无法缩容                  |
+| Vercel（D1 混合） | 中-大（15-22 人日）         | 800s（Pro GA）/1800s（Beta）+ 续流 | 无（改 Queues/Cron）+ 外部常驻 | 原生 Vercel Sandbox        | 低-中    | 函数时长硬顶、两套部署、平台绑定最深  |
+
+### 7.6 Vercel 路线（前端 + BFF + Functions + 外部常驻 worker）
+
+先纠正一个表述：Vercel 的 Python runtime 官方支持 ASGI/WSGI，**FastAPI 可以零配置作为 Functions 运行**（[Vercel 官方 FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi)），`StreamingResponse`、lifespan events、build commands 都支持。所以正确的结论不是「Vercel 不能部署」，而是「本仓库 8 个 FastAPI 服务不能整体原样搬到 Vercel」。根因只有两条，与 FastAPI 支持无关：
+
+- **单次函数时长封顶**：Hobby 300s；Pro/Enterprise 默认 300s，`maxDuration` 最大 800s（GA），1800s（30 分钟）为 Beta 且需函数级配置与特定 Python 版本；超时 504 `FUNCTION_INVOCATION_TIMEOUT`。
+- **没有长期进程**：outbox dispatcher（1s 轮询）、jobs worker（60s 租约）、interrupts sweeper（15s）、sandbox reaper 都是常驻循环，Vercel 只能给 Cron（Pro 最小 1 分钟、Hobby 每天一次）、Queues worker functions（push 消费）或 Workflows（持久步骤 + sleep/hooks，Python SDK 可用但较新）。
+
+据此给出两条路线：**D1 混合（推荐）**＝Vercel 只承接「前端 + BFF + 无状态短请求」，orchestrator / workspace 与沙箱外置；**D2 全 Vercel**＝后台循环与 run 编排全部改成 Queues/Cron/Workflows，平台绑定最深、改造最大。
+
+#### D1：Vercel 托管 web + BFF + 短请求服务（15-22 人日）
+
+| 部署单元                                                             | 承载                                                      | 说明                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                                                           | Vercel Static（CDN）                                      | SPA 产物直接部署，`rewrites` 把 `/api/*` 指向 BFF function，保持同源 Cookie/CSRF                                                                                                                                                                                                                          |
+| `bff`                                                                | Vercel Function（FastAPI ASGI）                           | 短请求 + SSE 代理；`maxDuration` 设 800（Pro GA），超过由前端 `Last-Event-ID` 续流兜底（run 事件流已实现，chat 流断线靠消息重拉）                                                                                                                                                                         |
+| `account` / `llm-gateway` / `connector` / `knowledge` / `tool`（读） | 每服务一个 Vercel project（或一个 project 多入口）        | 都是短请求；knowledge 本地嵌入冷启动慢，给足 `maxDuration` 与内存（Pro 最大 4GB/2vCPU）；llm-gateway 的 `request_timeout_seconds=60` 在函数时长内                                                                                                                                                         |
+| `tool-service`（写路径）                                             | Vercel Function                                           | 写操作本身短；沙箱/文件由外部 sandbox provider 承担，函数只做编排                                                                                                                                                                                                                                         |
+| `agent-orchestrator`（API 面）                                       | Vercel Function（可选拆分）                               | 建 run / 查 run / 审批 / 回答等短请求可放函数；**图执行与 SSE 长连接不放函数**                                                                                                                                                                                                                            |
+| `agent-orchestrator`（执行面）                                       | **外部常驻**（Cloud Run worker / Fly Machine / 任意容器） | 三个后台循环 + LangGraph 图执行 + 分钟级 SSE；与 Vercel 函数经内部 JWT（TokenBroker）通信                                                                                                                                                                                                                 |
+| `workspace-service`                                                  | **外部常驻**                                              | 沙箱 reaper 与 SandboxProvider 需要常驻进程；Vercel 无 KVM，microsandbox 不可用                                                                                                                                                                                                                           |
+| 沙箱                                                                 | **Vercel Sandbox** 或 Modal/E2B                           | 用 Vercel Sandbox 可少一个供应商：Python SDK（`vercel.sandbox`）支持 `run_process(command, args=[...])` 的 argv 形式、文件读写、snapshot、持久沙箱；**不支持 stdin**；默认 5 分钟超时可用 `timeout` 配置并 `extendTimeout()`，单 session 上限 Hobby 45 分钟 / Pro·Ent 24 小时，并发 Hobby 10 / Pro 10,000 |
+| 数据库                                                               | **Neon**（推荐，带 pooler）或 Supabase/外部 PG            | Vercel 无托管 PG；函数侧用短连接 + Neon pooler，同 §5.4                                                                                                                                                                                                                                                   |
+| 对象存储                                                             | **Cloudflare R2**（S3 兼容）或 Vercel Blob                | 把 §5.5 的 S3 实现指向 R2 即零改；Vercel Blob 需再加一个 ArtifactStore 后端                                                                                                                                                                                                                               |
+| 密钥                                                                 | Vercel 环境变量（加密）                                   | account 签名密钥改 `ACCOUNT__SIGNING_KEY_PEM`（函数无持久卷，`SIGNING_KEY_PATH` 语义不适用，与 §5.8 一致）                                                                                                                                                                                                |
+| 迁移                                                                 | GitHub Actions job 或外部 Cloud Run Job                   | 不用 Vercel Cron 跑迁移（无一次性 Job 语义、并发与滚动发布难控制）                                                                                                                                                                                                                                        |
+| 可观测                                                               | Vercel Observability + OTel 导出；Sentry 保留             | 函数日志进 Vercel；trace 跨到外部 worker 需 OTel 上下文透传                                                                                                                                                                                                                                               |
+
+D1 的改造要点（相对 Cloud Run 主线）：
+
+1. 8 个服务改成 8 个 Vercel project（或 monorepo 多 project），每个入口 `api/index.py` 暴露 ASGI app；`vercel.json` 按入口文件设 `maxDuration`、内存、区域。
+2. `apps/web` 与 BFF 同域：自定义域 + `rewrites`，`VITE_AUTH_MODE=session` 不变；若分域，Cookie 需 `SameSite=None; Secure`（与 §5.8 同）。
+3. 外部 orchestrator/workspace 要暴露公网入口（或 Vercel Secure Compute 私网，企业版），服务间调用从内网 URL 改成公网 + 内部 JWT；BFF 的 `*_BASE_URL` 指向外部域名。
+4. 函数侧数据库连接改成「短连接 + pooler」，不用长生命周期连接池；LangGraph checkpointer 仍指向 PG（外部地址）。
+5. tool-service 的沙箱 helper 协议要适配 **stdin 缺失**：把 `{tool, arguments, policy}` 写进 `/workspace/.bm/req-<id>.json`，argv 只传该路径（小参数可走 argv）。该 fallback 同时适用于 Modal/E2B 中不支持 stdin 的实现（§5.6 已列）。
+6. CI 增加 `vercel deploy --prebuilt`（或 Git 集成），迁移与外部 worker 仍由 Actions/Cloud Run 管理；web/BFF 与 worker 的版本要一起发，协议兼容按 §5.4 expand/contract。
+7. 成本：Vercel Pro 20 美元/座/月起 + 函数用量；Vercel Sandbox Active CPU 0.128 美元/vCPU·小时、内存 0.0212 美元/GB·小时；外部 worker 仍有 Cloud Run/Fly 固定成本。
+
+#### D2：全 Vercel（25-35 人日，不推荐本期）
+
+如果坚持「后端全部在 Vercel」，还要再做四件事：
+
+1. **后台循环改造**：outbox dispatcher 从 1s 轮询改成「写 outbox 时 publish 到 Vercel Queues，由 worker function 消费」；jobs worker 改成 Queue consumer 或 Workflows step；interrupts sweeper / sandbox reaper 改成每分钟 Cron（粒度变粗，审批/提问超时误差到分钟级，且多副本仍要幂等）。
+2. **图执行改造**：LangGraph 图放进函数内单次执行（≤800s/1800s），超时靠 PG checkpointer + 下一请求 resume；但节点重放会重复 LLM 调用，需要把长步骤拆成 Workflows step（持久步骤 + sleep + hooks）。这会替换编排层的一部分语义（审批/提问挂起改用 hook + 事件等待），与现有 `interrupt` 语义不完全等价，前端 SSE 也要重新适配。
+3. **沙箱**：只能用 Vercel Sandbox（无 KVM），tool-service 的 provider 换成它，并解决 stdin 缺失与 session 时长（Hobby 45 分钟）问题；本地仍用 microsandbox，语义分裂风险同 §8.1 R12。
+4. **数据面**：Neon + R2/Blob + 环境变量密钥；迁移用外部 CI job。
+
+代价：失去「一份 compose 本地全栈」与云端部署形态的一致性（本地仍是容器 + microsandbox），平台绑定最深；收益是前端与 API 同平台、复用 Vercel 的 Git 工作流与预览环境。**结论：Vercel 作为「web + BFF + 短请求面」是一等选择，作为本仓库唯一后端平台不建议；若组织已重仓 Vercel，选 D1 而不是 D2。**
 
 ## 8. 风险与开放问题
 
@@ -705,12 +764,13 @@ def sweep():
 
 ### 8.2 已拍板问题
 
-| 编号 | 问题                                                                     | 结论                                                        | 依据                                                       |
-| ---- | ------------------------------------------------------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------- |
-| A    | 是否选定 GCP？是否要求云中立（Terraform 抽象、双栈）                     | 选 GCP Cloud Run 为主线；Terraform 只抽接口，不做双栈       | 双栈成本翻倍且拖慢落地；Terraform 已隔离大部分差异         |
-| B    | 沙箱三选一：自建嵌套虚拟化 K8s / Modal·E2B / Cloud Run Sandboxes Preview | Modal Sandboxes 为 v1，E2B 备选，Fly Machines 若选 Fly 平台 | 契约匹配度、出网 deny、Python SDK、按秒计费；自建 K8s 排除 |
-| C    | 长 run 语义：HTTP 请求内跑完 vs 异步 run + 重连                          | 保持 HTTP 内跑完 + Last-Event-ID 续流；异步任务化列 P3+     | Cloud Run 3600s 硬顶可接受；改异步要动状态机与前端         |
-| D    | BFF/orchestrator 常驻 min-instances 成本是否可接受                       | 接受：worker 1 实例，BFF/orchestrator 关键路径 min=1        | 首请求体验与 SSE 稳定性优先                                |
+| 编号 | 问题                                                                     | 结论                                                                                                                | 依据                                                                                         |
+| ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| A    | 是否选定 GCP？是否要求云中立（Terraform 抽象、双栈）                     | 选 GCP Cloud Run 为主线；Terraform 只抽接口，不做双栈                                                               | 双栈成本翻倍且拖慢落地；Terraform 已隔离大部分差异                                           |
+| B    | 沙箱三选一：自建嵌套虚拟化 K8s / Modal·E2B / Cloud Run Sandboxes Preview | Modal Sandboxes 为 v1，E2B 备选，Fly Machines 若选 Fly 平台                                                         | 契约匹配度、出网 deny、Python SDK、按秒计费；自建 K8s 排除                                   |
+| C    | 长 run 语义：HTTP 请求内跑完 vs 异步 run + 重连                          | 保持 HTTP 内跑完 + Last-Event-ID 续流；异步任务化列 P3+                                                             | Cloud Run 3600s 硬顶可接受；改异步要动状态机与前端                                           |
+| D    | BFF/orchestrator 常驻 min-instances 成本是否可接受                       | 接受：worker 1 实例，BFF/orchestrator 关键路径 min=1                                                                | 首请求体验与 SSE 稳定性优先                                                                  |
+| E    | Vercel 是否可作为主线/唯一平台                                           | 不作为主线；若团队偏好 Vercel，采用 §7.6 路线 D1 混合（web/BFF/短服务在 Vercel，orchestrator/workspace 与沙箱外置） | FastAPI 官方支持但函数 ≤800s、无长期进程；全 Vercel（D2）需重写编排与后台循环，约 25-35 人日 |
 
 ### 8.3 仍开放的问题
 
@@ -771,7 +831,8 @@ def sweep():
 
 ### 9.4 平台事实来源与限制
 
-- 已抓取正文：AWS Lambda 配额（15 分钟/90 分钟、10240MB、1000 并发）、Lambda Web Adapter README、Fly Machines/Autostop 文档、Modal Sandboxes/Web Functions 文档、E2B 文档索引与沙箱页、Cloudflare Workers 限制、Vercel Functions 限制、Azure Container Apps ingress/Jobs 文档。
+- 已抓取正文：AWS Lambda 配额（15 分钟/90 分钟、10240MB、1000 并发）、Lambda Web Adapter README、Fly Machines/Autostop 文档、Modal Sandboxes/Web Functions 文档、E2B 文档索引与沙箱页、Cloudflare Workers 限制、Azure Container Apps ingress/Jobs 文档。
+- Vercel 官方文档（`.md` 后缀可直接取 markdown 正文：`https://vercel.com/docs/<path>.md`；`docs/` 路径本身是 JS 壳）：`/docs/functions/limitations`（Hobby 300s、Pro 800s、1800s Beta、内存 4GB/2vCPU、并发 30,000、默认区域 iad1）、`/docs/frameworks/backend/fastapi`（FastAPI 官方支持、`StreamingResponse`、lifespan、`maxDuration`）、`/docs/cron-jobs/usage-and-pricing`（Pro 每分钟一次、Hobby 每天一次）、`/docs/queues`（持久投递、push/poll、Workflows 底层）、`/docs/sandbox` 与 `/docs/sandbox/python-sdk-reference`（`run_process(command, args=[...])`、stdin 不支持、`create_sandbox(timeout=...)`、`extendTimeout`）、`/docs/sandbox/pricing`（默认 5 分钟、Hobby 45 分钟 / Pro·Ent 24 小时 session、并发 Hobby 10）、`/docs/workflows`（持久步骤、sleep/hooks、Python SDK）。
 - 未能抓取正文：`cloud.google.com`（网络限制）→ Cloud Run 请求超时/Jobs/worker pools/并发数值以官方文档为准，阶段 0 spike 复核；E2B 部分页面 CSS 阻塞正文。
 - 价格为转引（Fly 汇总文章，2026-09/10），下单前以官方价目复核。
 
@@ -787,7 +848,7 @@ def sweep():
 1. Cloud Run 请求超时 / Jobs 任务超时 / worker pools / 并发的准确数值与 2026-10 政策。
 2. Cloud Run code execution（2026 新增）是否支持任意 argv + 文件系统读写，能否替代外部沙箱。
 3. LangGraph `AsyncPostgresSaver.setup()` 在并发冷启动下是否幂等（建议放进迁移 Job 建表）。
-4. 各沙箱 provider 的 exec stdin 与 argv 实际行为（PoC 验证，特别是 E2B 命令字符串语义）。
+4. 各沙箱 provider 的 exec stdin 与 argv 实际行为：Vercel Sandbox 已从官方 Python SDK 文档确认「argv 支持、stdin 不支持」（tool-service helper 需改成临时文件传参）；E2B 命令字符串语义、Modal stdin 待 PoC。
 5. 平台对跨域 Cookie（`SameSite=None; Secure`）与 CORS credentials 的默认行为。
 6. 平台 Secret 挂载为只读文件时，account 的「缺失则写盘」逻辑是否安全（现有实现仅缺失时写）。
 
