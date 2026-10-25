@@ -651,7 +651,12 @@ async def stream_message(
                 # 对话内 function-calling:complete 轮次 + 工具事件;
                 # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
                 final = ""
-                policies = await approval_service.load_policies(session, tenant_id)
+                # 第一段事务已在 yield meta 前结束,此处必须开新事务:
+                # 复用已 close 的 session 会隐式 autobegin 再签出连接,无人归还
+                async with session_scope(factory) as policy_session:
+                    policies = await approval_service.load_policies(
+                        policy_session, tenant_id
+                    )
                 async for kind, payload in chat.run_tool_loop(
                     llm, prompt, toolkit, policies=policies
                 ):
