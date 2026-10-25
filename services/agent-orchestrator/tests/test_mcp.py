@@ -290,7 +290,7 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     assert listing_after_patch[0]["auto_approve"] is True
 
     # 测试连接:用假 client,不发真实网络
-    from agent_orchestrator.services import mcp as mcp_service
+    from agent_orchestrator.services import mcp_runtime
 
     class FakeClient:
         async def initialize(self) -> dict:
@@ -311,12 +311,12 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
         async def aclose(self) -> None:
             return None
 
-    original = mcp_service.build_client
+    original = mcp_runtime.build_client
 
     def fake_build(server, secret, *, transport=None):
         return FakeClient()
 
-    mcp_service.build_client = fake_build  # type: ignore[assignment]
+    mcp_runtime.build_client = fake_build  # type: ignore[assignment]
     try:
         tested = client.post(
             f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
@@ -329,7 +329,7 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
         assert listing[0]["tools"][0]["name"] == "echo"
         assert listing[0]["last_status"] == "ok"
     finally:
-        mcp_service.build_client = original  # type: ignore[assignment]
+        mcp_runtime.build_client = original  # type: ignore[assignment]
 
     deleted = client.delete(f"/api/v1/mcp/servers/{created['id']}", headers=TENANT)
     assert deleted.status_code == 204
@@ -341,6 +341,7 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
 
     from agent_orchestrator.models.mcp import MCPServer
     from agent_orchestrator.services import mcp as mcp_service
+    from agent_orchestrator.services import mcp_runtime
 
     server = MCPServer(
         tenant_id="t",
@@ -376,7 +377,7 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
 
     monkeypatch.setattr(mcp_service, "MCPServerRepository", FakeRepo)
     monkeypatch.setattr(
-        mcp_service, "build_client", lambda *args, **kwargs: FakeClient()
+        mcp_runtime, "build_client", lambda *args, **kwargs: FakeClient()
     )
 
     async def scenario() -> None:
@@ -396,7 +397,7 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
 def test_test_server_reports_auth_required(client: TestClient) -> None:
     """401 时测试端点落 last_status=auth_required,并回结构化标记给前端。"""
     created = _create_server(client)
-    from agent_orchestrator.services import mcp as mcp_service
+    from agent_orchestrator.services import mcp_runtime
 
     class UnauthorizedClient:
         async def initialize(self) -> dict:
@@ -411,8 +412,8 @@ def test_test_server_reports_auth_required(client: TestClient) -> None:
         async def aclose(self) -> None:
             return None
 
-    original = mcp_service.build_client
-    mcp_service.build_client = lambda *args, **kwargs: UnauthorizedClient()  # type: ignore[assignment]
+    original = mcp_runtime.build_client
+    mcp_runtime.build_client = lambda *args, **kwargs: UnauthorizedClient()  # type: ignore[assignment]
     try:
         tested = client.post(
             f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
@@ -428,7 +429,7 @@ def test_test_server_reports_auth_required(client: TestClient) -> None:
         assert listing[0]["last_status"] == "auth_required"
         assert "MCPAuthRequired" in (listing[0]["last_error"] or "")
     finally:
-        mcp_service.build_client = original  # type: ignore[assignment]
+        mcp_runtime.build_client = original  # type: ignore[assignment]
 
 
 def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> None:
@@ -437,6 +438,7 @@ def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> Non
 
     from agent_orchestrator.models.mcp import MCPServer
     from agent_orchestrator.services import mcp as mcp_service
+    from agent_orchestrator.services import mcp_runtime
 
     server = MCPServer(
         id="srv-1",
@@ -477,7 +479,7 @@ def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> Non
 
     monkeypatch.setattr(mcp_service, "MCPServerRepository", FakeRepo)
     monkeypatch.setattr(
-        mcp_service, "build_client", lambda *args, **kwargs: UnauthorizedClient()
+        mcp_runtime, "build_client", lambda *args, **kwargs: UnauthorizedClient()
     )
 
     async def scenario() -> None:

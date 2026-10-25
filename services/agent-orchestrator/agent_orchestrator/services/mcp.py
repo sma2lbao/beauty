@@ -1,4 +1,4 @@
-"""MCP Client 业务:注册表 CRUD、测试/刷新工具、工具规格生成(M1 + P2 stdio)。
+"""MCP Client 业务:注册表 CRUD、测试端点与工具装配入口。
 
 两种传输共用同一张表与同一套读端契约,分支只出现在"怎么连"上:
 
@@ -7,13 +7,12 @@
 
 安全口径:env/token 只存密文,读端只回 has_*/尾号/key 名;stdio 命令必须命中
 白名单(能力即权限边界)。
+
+连接/调用/handler 装配的实现见 services/mcp_runtime.py(R-29 后继拆分)。
 """
 
 from __future__ import annotations
 
-import json
-import re
-import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -37,30 +36,123 @@ from agent_orchestrator.schemas.mcp import (
     MCPServerRead,
     MCPServerUpdate,
     MCPTestRead,
-    MCPToolRead,
 )
 from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.mcp_client import (
     MCPAuthRequired,
-    MCPClient,
     MCPError,
 )
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
+from agent_orchestrator.services.mcp_runtime import (
+    TRANSPORT_HTTP,
+    TRANSPORT_STDIO,
+    TokenProvider,
+    _allowed,
+    _cache_tools,
+    _call_tool_once,
+    _client_with_token,
+    _decrypt_env,
+    _encrypt_env,
+    _env_keys,
+    _make_http_handler,
+    _make_stdio_handler,
+    _provider_token,
+    _slug,
+    _stdio_request,
+    _test_stdio_server,
+    _wrap_tool,
+    build_client,
+)
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
-from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 
 logger = get_logger(__name__)
 
-TRANSPORT_HTTP = "http"
-TRANSPORT_STDIO = "stdio"
+#: 对外保留的实现(历史调用方/测试按 mcp.<name> 取用);实现细节已移入 mcp_runtime。
+#: 下划线名的几项是 mcp_runtime 的机制函数,仅测试直取,不对外。
+__all__ = [
+    "TRANSPORT_HTTP",
+    "TRANSPORT_STDIO",
+    "_allowed",
+    "_call_tool_once",
+    "_make_http_handler",
+    "_make_stdio_handler",
+    "_provider_token",
+    "_stdio_request",
+    "build_client",
+    "create_server",
+    "delete_server",
+    "list_servers",
+    "reference_note",
+    "resolve_selected",
+    "test_server",
+    "tool_specs",
+    "update_server",
+]
 
-#: 调用前解析 OAuth token 的回调:第二参为 True 表示强制刷新(401 后重试)
-TokenProvider = Callable[[str, bool], Awaitable[str | None]]
 
+async def tool_specs(
+    session: AsyncSession,
+    tenant_id: str,
+    *,
+    secret: str,
+    pool: StdioSandboxPool | None = None,
+    on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
+    token_provider: TokenProvider | None = None,
+    server_ids: Sequence[str] | None = None,
+) -> list[ToolSpec]:
+    """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
 
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_") or "server"
+    tools_cache 只由 test 端点刷新:P2 不在每次 run 前重新 list(冷启动代价高);
+    P4 再做 tools_cache 的哈希校验(TODO)。
+
+    server_ids 非空 = 用户显式引用了这些 server(§6.7):只装配它们;
+    None / 空序列维持现状(全部已启用的 server)。
+    """
+    servers = await MCPServerRepository(session).list_scoped(
+        tenant_id, MCPServer.enabled.is_(True), order_by=[MCPServer.created_at]
+    )
+    if server_ids:
+        wanted = set(server_ids)
+        servers = [server for server in servers if server.id in wanted]
+    specs: list[ToolSpec] = []
+    for server in servers:
+        stdio = (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO
+        if stdio and pool is None:
+            logger.warning(
+                "stdio MCP 已跳过:沙箱未启用(mcp_stdio_enabled/sandbox_enabled)",
+                server=server.name,
+            )
+            continue
+        slug = _slug(server.name)
+        for tool in server.tools_cache or []:
+            wrapped = _wrap_tool(tool)
+            if not wrapped.name or not _allowed(server, wrapped.name):
+                continue
+            handler = (
+                _make_stdio_handler(tenant_id, server, wrapped.name, secret, pool)
+                if stdio
+                else _make_http_handler(
+                    server,
+                    wrapped.name,
+                    secret,
+                    on_auth_required,
+                    token_provider,
+                )
+            )
+            specs.append(
+                ToolSpec(
+                    name=f"mcp__{slug}__{wrapped.name}",
+                    description=wrapped.description or f"MCP {server.name} 工具",
+                    parameters=wrapped.input_schema or {"type": "object"},
+                    handler=handler,
+                    # 未信任 server 的工具可能对外产生不可逆副作用 → DANGER;
+                    # 用户开了 auto_approve(信任该 server)→ WRITE,自动执行。
+                    # 对话路径没有审批流,所以 DANGER 工具在 chat 里一律不执行。
+                    risk=(ToolRisk.WRITE if server.auto_approve else ToolRisk.DANGER),
+                )
+            )
+    return specs
 
 
 async def resolve_selected(
@@ -109,42 +201,6 @@ def reference_note(servers: Sequence[MCPServer]) -> str:
         f"用户在本次消息里明确引用了 MCP server:{refs}。"
         "请优先使用这些被引用的 server 提供的工具;未列出的 MCP server 本次不可用。"
     )
-
-
-def _wrap_tool(tool: dict[str, Any]) -> MCPToolRead:
-    schema = tool.get("inputSchema") or tool.get("input_schema") or {}
-    return MCPToolRead(
-        name=str(tool.get("name") or ""),
-        description=str(tool.get("description") or ""),
-        input_schema=schema if isinstance(schema, dict) else {},
-    )
-
-
-def _encrypt_env(secret: str, env: dict[str, str]) -> str | None:
-    """env 整体加密成一段密文(空 env 不落库,读端自然 has_env=False)。"""
-    if not env:
-        return None
-    return encrypt_token(secret, json.dumps(env, ensure_ascii=False))
-
-
-def _decrypt_env(server: MCPServer, secret: str) -> dict[str, str]:
-    if not server.encrypted_env:
-        return {}
-    try:
-        value = json.loads(decrypt_token(secret, server.encrypted_env))
-    except (AppError, ValueError) as exc:
-        raise AppError("mcp.env_unreadable", "MCP env 无法解密") from exc
-    if not isinstance(value, dict):
-        raise AppError("mcp.env_unreadable", "MCP env 不是 JSON 对象")
-    return {str(key): str(item) for key, item in value.items()}
-
-
-def _env_keys(server: MCPServer, secret: str) -> list[str]:
-    """读端只暴露 key 名;解密失败(密钥轮换)降级为空,不泄漏也不 500。"""
-    try:
-        return sorted(_decrypt_env(server, secret))
-    except AppError:
-        return []
 
 
 def _oauth_fields(auth: MCPServerAuth | None, server: MCPServer) -> dict[str, Any]:
@@ -196,24 +252,6 @@ def _to_read(
         last_error=server.last_error,
         created_at=server.created_at,
         **_oauth_fields(auth, server),
-    )
-
-
-def build_client(
-    server: MCPServer,
-    secret: str,
-    *,
-    token: str | None = None,
-    transport=None,
-) -> MCPClient:
-    """建客户端:显式 token(OAuth 授权行)优先,否则解静态 encrypted_token。"""
-    if token is None and server.encrypted_token:
-        token = decrypt_token(secret, server.encrypted_token)
-    return MCPClient(
-        server.url,
-        token=token,
-        timeout_seconds=server.timeout_seconds,
-        transport=transport,
     )
 
 
@@ -417,125 +455,6 @@ async def delete_server(session: AsyncSession, tenant_id: str, server_id: str) -
     await MCPServerRepository(session).delete(server)
 
 
-def _cache_tools(server: MCPServer, tools: list[MCPToolRead]) -> None:
-    server.tools_cache = [
-        {
-            "name": tool.name,
-            "description": tool.description,
-            "inputSchema": tool.input_schema,
-        }
-        for tool in tools
-    ]
-
-
-def _stdio_request(
-    server: MCPServer,
-    secret: str,
-    *,
-    action: str,
-    tool: str | None = None,
-    arguments: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """probe 的输入契约:{command, args, env, timeout, action, tool?, arguments?}。"""
-    request: dict[str, Any] = {
-        "command": server.command or "",
-        "args": list(server.args or []),
-        "env": _decrypt_env(server, secret),
-        "timeout": int(server.timeout_seconds or 10),
-        "action": action,
-    }
-    if tool is not None:
-        request["tool"] = tool
-        request["arguments"] = arguments or {}
-    return request
-
-
-async def _test_stdio_server(
-    tenant_id: str,
-    server: MCPServer,
-    secret: str,
-    pool: StdioSandboxPool | None,
-    now: datetime,
-) -> MCPTestRead:
-    """临时沙箱上跑一次 tools/list:成功刷新 tools_cache,失败只记 last_error。"""
-    if pool is None:
-        detail = "stdio MCP 需要启用沙箱(mcp_stdio_enabled + sandbox_enabled)"
-        server.last_status = "error"
-        server.last_error = detail
-        server.last_checked_at = now
-        return MCPTestRead(ok=False, detail=detail, tools=[])
-    key = f"test:{server.id}:{uuid.uuid4().hex}"
-    try:
-        result = await pool.run(
-            tenant_id,
-            key,
-            server,
-            _stdio_request(server, secret, action="tools/list"),
-        )
-        raw_tools = result.get("tools") if isinstance(result, dict) else None
-        tools = [_wrap_tool(tool) for tool in raw_tools or [] if isinstance(tool, dict)]
-        _cache_tools(server, tools)
-        server.last_status = "ok"
-        server.last_error = None
-        server.last_checked_at = now
-        return MCPTestRead(
-            ok=True, detail=f"连接成功，发现 {len(tools)} 个工具", tools=tools
-        )
-    except Exception as exc:  # noqa: BLE001 - 测试端点必须返回可读失败
-        server.last_status = "error"
-        server.last_error = f"{type(exc).__name__}: {exc}"[:500]
-        server.last_checked_at = now
-        return MCPTestRead(ok=False, detail=server.last_error, tools=[])
-    finally:
-        await pool.release(tenant_id, key)
-
-
-async def _provider_token(
-    provider: TokenProvider | None, server_id: str, *, force: bool
-) -> str | None:
-    """解析 OAuth token;任何失败都按"无 token"处理(让调用走到 401 语义)。"""
-    if provider is None:
-        return None
-    try:
-        return await provider(server_id, force)
-    except Exception as exc:  # noqa: BLE001 - token 解析失败不阻断调用
-        logger.warning(
-            "mcp oauth token 解析失败",
-            server_id=server_id,
-            error=f"{type(exc).__name__}: {exc}",
-        )
-        return None
-
-
-def _client_with_token(
-    server: MCPServer,
-    secret: str,
-    token: str | None,
-    transport=None,
-) -> MCPClient:
-    """token 为 None 时走 build_client(server, secret) 的静态 token 路径。"""
-    if token is not None:
-        return build_client(server, secret, token=token, transport=transport)
-    if transport is not None:
-        return build_client(server, secret, transport=transport)
-    return build_client(server, secret)
-
-
-async def _call_tool_once(
-    server: MCPServer,
-    secret: str,
-    token: str | None,
-    tool_name: str,
-    arguments: dict[str, Any],
-) -> str:
-    client = _client_with_token(server, secret, token)
-    try:
-        await client.initialize()
-        return await client.call_tool(tool_name, arguments)
-    finally:
-        await client.aclose()
-
-
 async def test_server(
     session: AsyncSession,
     tenant_id: str,
@@ -597,196 +516,3 @@ async def test_server(
         return MCPTestRead(ok=False, detail=server.last_error, tools=[])
     finally:
         await client.aclose()
-
-
-def _allowed(server: MCPServer, tool_name: str) -> bool:
-    allowlist = list(server.tools_allowlist or [])
-    return not allowlist or tool_name in allowlist
-
-
-async def tool_specs(
-    session: AsyncSession,
-    tenant_id: str,
-    *,
-    secret: str,
-    pool: StdioSandboxPool | None = None,
-    on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
-    token_provider: TokenProvider | None = None,
-    server_ids: Sequence[str] | None = None,
-) -> list[ToolSpec]:
-    """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
-
-    tools_cache 只由 test 端点刷新:P2 不在每次 run 前重新 list(冷启动代价高);
-    P4 再做 tools_cache 的哈希校验(TODO)。
-
-    server_ids 非空 = 用户显式引用了这些 server(§6.7):只装配它们;
-    None / 空序列维持现状(全部已启用的 server)。
-    """
-    servers = await MCPServerRepository(session).list_scoped(
-        tenant_id, MCPServer.enabled.is_(True), order_by=[MCPServer.created_at]
-    )
-    if server_ids:
-        wanted = set(server_ids)
-        servers = [server for server in servers if server.id in wanted]
-    specs: list[ToolSpec] = []
-    for server in servers:
-        stdio = (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO
-        if stdio and pool is None:
-            logger.warning(
-                "stdio MCP 已跳过:沙箱未启用(mcp_stdio_enabled/sandbox_enabled)",
-                server=server.name,
-            )
-            continue
-        slug = _slug(server.name)
-        for tool in server.tools_cache or []:
-            wrapped = _wrap_tool(tool)
-            if not wrapped.name or not _allowed(server, wrapped.name):
-                continue
-            handler = (
-                _make_stdio_handler(tenant_id, server, wrapped.name, secret, pool)
-                if stdio
-                else _make_http_handler(
-                    server,
-                    wrapped.name,
-                    secret,
-                    on_auth_required,
-                    token_provider,
-                )
-            )
-            specs.append(
-                ToolSpec(
-                    name=f"mcp__{slug}__{wrapped.name}",
-                    description=wrapped.description or f"MCP {server.name} 工具",
-                    parameters=wrapped.input_schema or {"type": "object"},
-                    handler=handler,
-                    # 未信任 server 的工具可能对外产生不可逆副作用 → DANGER;
-                    # 用户开了 auto_approve(信任该 server)→ WRITE,自动执行。
-                    # 对话路径没有审批流,所以 DANGER 工具在 chat 里一律不执行。
-                    risk=(ToolRisk.WRITE if server.auto_approve else ToolRisk.DANGER),
-                )
-            )
-    return specs
-
-
-def _content_text(result: dict[str, Any]) -> str:
-    """tools/call 的 result → 回喂文本(与 MCPClient.call_tool 同口径)。"""
-    if result.get("isError"):
-        return json.dumps(
-            {"error": "MCP 工具返回错误", "content": result.get("content")},
-            ensure_ascii=False,
-        )
-    content = result.get("content")
-    if isinstance(content, list):
-        texts = [
-            str(item.get("text"))
-            for item in content
-            if isinstance(item, dict) and item.get("text") is not None
-        ]
-        if texts:
-            return "\n".join(texts)
-    return json.dumps(result, ensure_ascii=False)
-
-
-def _make_http_handler(
-    server: MCPServer,
-    tool_name: str,
-    secret: str,
-    on_auth_required: Callable[[str, str], Awaitable[None]] | None = None,
-    token_provider: TokenProvider | None = None,
-):
-    async def handler(args: dict[str, Any]) -> str:
-        token = await _provider_token(token_provider, server.id, force=False)
-        try:
-            return await _call_tool_once(server, secret, token, tool_name, args)
-        except MCPAuthRequired as first:
-            # 401:若是浏览器授权 server,强制刷新一次 token 再重试(只重试一次)
-            detail = str(first)
-            refreshed = (
-                await _provider_token(token_provider, server.id, force=True)
-                if token_provider is not None
-                else None
-            )
-            if refreshed is not None and refreshed != token:
-                try:
-                    return await _call_tool_once(
-                        server, secret, refreshed, tool_name, args
-                    )
-                except MCPAuthRequired as again:
-                    detail = str(again)
-                except Exception as error:  # noqa: BLE001 - 工具失败回喂错误文本
-                    return json.dumps(
-                        {"error": f"{type(error).__name__}: {error}"},
-                        ensure_ascii=False,
-                    )
-            # 刷新不可用/仍 401:结构化回喂模型(不执行工具),并标记需要授权
-            await _report_auth_required(on_auth_required, server.id, detail)
-            return json.dumps(
-                {
-                    "error": "该 MCP server 需要重新授权，工具未执行",
-                    "code": "mcp.auth_required",
-                    "detail": detail,
-                    "hint": "请重新授权或更新该 server 的访问令牌后重试",
-                },
-                ensure_ascii=False,
-            )
-        except Exception as exc:  # noqa: BLE001 - 工具失败回喂错误文本
-            return json.dumps(
-                {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
-            )
-
-    return handler
-
-
-async def _report_auth_required(
-    callback: Callable[[str, str], Awaitable[None]] | None,
-    server_id: str,
-    detail: str,
-) -> None:
-    """调用期 401 上报给上层落 last_status;标记失败绝不影响工具返回。"""
-    if callback is None:
-        return
-    try:
-        await callback(server_id, detail)
-    except Exception as exc:  # noqa: BLE001 - 状态标记是尽力而为
-        logger.warning(
-            "mcp auth_required 状态写库失败",
-            server_id=server_id,
-            error=f"{type(exc).__name__}: {exc}",
-        )
-
-
-def _make_stdio_handler(
-    tenant_id: str,
-    server: MCPServer,
-    tool_name: str,
-    secret: str,
-    pool: StdioSandboxPool | None,
-):
-    """stdio 工具 handler:按调用上下文(对话/run)选沙箱,失败回喂错误文本。"""
-
-    async def handler(args: dict[str, Any]) -> str:
-        if pool is None:  # 防御:tool_specs 已过滤,理论上到不了这里
-            return json.dumps({"error": "stdio MCP 需要启用沙箱"}, ensure_ascii=False)
-        context = current_tool_context()
-        scope = context.sandbox_scope if context is not None else "anonymous"
-        key = f"{scope}:{server.id}"
-        try:
-            result = await pool.run(
-                tenant_id,
-                key,
-                server,
-                _stdio_request(
-                    server,
-                    secret,
-                    action="tools/call",
-                    tool=tool_name,
-                    arguments=args,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - 工具失败回喂错误文本
-            return json.dumps(
-                {"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False
-            )
-        return _content_text(result)
-
-    return handler

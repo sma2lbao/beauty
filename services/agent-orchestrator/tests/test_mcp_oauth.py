@@ -21,7 +21,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.models.mcp import MCPServer, MCPServerAuth
 from agent_orchestrator.repositories import MCPServerAuthRepository
 from agent_orchestrator.services import mcp as mcp_service
-from agent_orchestrator.services import mcp_oauth
+from agent_orchestrator.services import mcp_oauth, mcp_runtime
 from agent_orchestrator.services.mcp_client import MCPAuthRequired
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
 from tests.conftest import _settings as base_settings
@@ -538,7 +538,7 @@ def test_read_exposes_oauth_entry_after_auth_required() -> None:
 
 def _patch_client(monkeypatch, calls: list[tuple[str, str | None]]) -> None:
     monkeypatch.setattr(
-        mcp_service,
+        mcp_runtime,
         "build_client",
         lambda server, secret, *, token=None, transport=None: FakeToolClient(
             token, calls
