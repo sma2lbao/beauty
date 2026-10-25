@@ -18,7 +18,7 @@ from common.tools import (
 )
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-10-25.p3"
+CATALOG_VERSION = "2026-10-25.p4"
 
 READ = ToolDescriptor(
     name="read",
@@ -114,8 +114,9 @@ LIST_DIR = ToolDescriptor(
 WRITE = ToolDescriptor(
     name="write",
     description=(
-        "把完整内容写入工作区文件(原子替换)。写已有文件前通常需要先 read(读前置校验);"
-        "可用 expected_sha256 做乐观锁,overwrite=false 时拒绝覆盖。"
+        "把完整内容写入工作区文件(原子替换)。新建文件(目标不存在)可直接写、无需先 read;"
+        "覆盖已有文件前必须先 read 该路径(读前置校验),"
+        "也可用 expected_sha256 做乐观锁,overwrite=false 时拒绝覆盖。"
     ),
     input_schema={
         "type": "object",
@@ -187,6 +188,35 @@ SEARCH_KNOWLEDGE = ToolDescriptor(
     timeout_seconds=20.0,
 )
 
+FETCH = ToolDescriptor(
+    name="fetch",
+    description=(
+        "用 HTTP GET 抓取公网 URL 的文本内容(只读)。支持 HTML、JSON、XML、"
+        "Markdown 与纯文本;不下载图片/二进制;内网、回环与保留地址一律拒绝。"
+        "返回 final_url、status、content_type、bytes、truncated 与 text"
+        "(超长按字符截断)。GitHub 可用 api.github.com(JSON API)与 "
+        "raw.githubusercontent.com(文件原文)读取仓库内容。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 2048,
+                "pattern": "^https?://",
+                "description": "要抓取的 http/https URL;可含查询串,不允许用户名/密码。",
+            },
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.READ,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.HTTP,
+    timeout_seconds=20.0,
+)
+
 ASK_QUESTION = ToolDescriptor(
     name="ask_question",
     description=(
@@ -248,7 +278,7 @@ ASK_QUESTION = ToolDescriptor(
     enabled=True,
 )
 
-#: 全部工具(P2:read/glob/grep/list_dir/write/edit/search_knowledge/ask_question)。
+#: 全部工具(read/glob/grep/list_dir/write/edit/search_knowledge/fetch/ask_question)。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,
@@ -257,6 +287,7 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     WRITE,
     EDIT,
     SEARCH_KNOWLEDGE,
+    FETCH,
     ASK_QUESTION,
 )
 

@@ -54,8 +54,17 @@ RunnerDep = Annotated[ToolRunner, Depends(get_tool_runner)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+def _is_available(name: str, settings: Settings) -> bool:
+    """外部 I/O 类工具只在服务端开关打开时暴露(能力即权限边界)。"""
+
+    if name == "fetch":
+        return settings.fetch_enabled
+    return True
+
+
 @router.get("", response_model=ToolListRead)
 async def list_tools(
+    settings: SettingsDep,
     kind: Annotated[str | None, Query()] = None,
     scope: Annotated[str | None, Query()] = None,
 ) -> ToolListRead:
@@ -64,7 +73,8 @@ async def list_tools(
     items = [
         tool
         for tool in descriptors()
-        if (kind is None or str(tool.kind) == kind)
+        if _is_available(tool.name, settings)
+        and (kind is None or str(tool.kind) == kind)
         and (scope is None or scope in tool.scopes)
     ]
     return ToolListRead(
@@ -74,11 +84,15 @@ async def list_tools(
 
 
 @router.get("/{name}", response_model=ToolDescriptorRead)
-async def get_tool(name: str) -> ToolDescriptorRead:
+async def get_tool(name: str, settings: SettingsDep) -> ToolDescriptorRead:
     """按正式名或别名取单个工具描述。"""
 
     descriptor = find_descriptor(name)
-    if descriptor is None or not descriptor.enabled:
+    if (
+        descriptor is None
+        or not descriptor.enabled
+        or not _is_available(descriptor.name, settings)
+    ):
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     return ToolDescriptorRead.from_descriptor(descriptor)
 
@@ -192,7 +206,7 @@ async def _preflight(
             if error is not None:
                 return _reject(descriptor, context, error), None
         if settings.read_before_write_enabled:
-            internal = await _read_gate(session, context, arguments)
+            internal = await _read_gate(session, context, descriptor, arguments)
             if internal is _READ_REQUIRED:
                 return (
                     _reject(
@@ -202,7 +216,8 @@ async def _preflight(
                             code="tool.read_required",
                             message="写之前必须先 read 目标文件",
                             hint=(
-                                "先用 read 查看 path(会记录读取版本),再执行 write/edit"
+                                "先用 read 查看 path(会记录读取版本),再执行 edit;"
+                                "新建文件请直接用 write(目标不存在时无需先读)"
                             ),
                             retryable=False,
                         ),
@@ -219,9 +234,17 @@ _READ_REQUIRED = object()
 async def _read_gate(
     session: AsyncSession,
     context: ExecutionContext,
+    descriptor: ToolDescriptor,
     arguments: dict[str, Any],
 ) -> dict[str, Any] | object | None:
-    """读前置校验:同 scope 内必须读过同 path;返回期望 sha(内部参数)。"""
+    """读前置校验:改已有文件必须先读过;新建文件免读。
+
+    读到过 → 返回读到的 sha256,由 write/edit 的乐观锁保证「不是盲改」;
+    没读到过时,只对 `write` 放行并附内部标记 `_read_gate_absent`:沙箱内的
+    write 执行器会确认目标确实不存在,已存在则回 `tool.read_required`。
+    不存在的文件永远读不出 `file_reads` 记录,若不这样放行,新建文件会与
+    read(not_found) 互相锁死;放行的安全性由执行器的存在性检查兜底。
+    """
 
     if context.run_id is None and context.conversation_id is None:
         return None
@@ -237,9 +260,11 @@ async def _read_gate(
     record = await FileReadRepository(session).find_read(
         context.tenant_id, scope_key=scope_key, path=path
     )
-    if record is None:
-        return _READ_REQUIRED
-    return {"_expected_read_sha256": record.sha256}
+    if record is not None:
+        return {"_expected_read_sha256": record.sha256}
+    if descriptor.name == "write":
+        return {"_read_gate_absent": True}
+    return _READ_REQUIRED
 
 
 async def _remember_read(

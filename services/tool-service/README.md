@@ -1,6 +1,6 @@
 # tool-service(工具服务, :8008)
 
-内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
+内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
 
 ## 职责边界
 
@@ -9,6 +9,7 @@
 | 工具目录(catalog)、参数 schema、限额 | tool-service(代码即真源,`tool_service/services/catalog.py`) |
 | 工具执行(沙箱内 helper 脚本) | tool-service → workspace-service 沙箱 |
 | 知识库只读检索(`search_knowledge`) | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱) |
+| 公网文本抓取(`fetch`,默认关) | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令) |
 | 审批决策(allow/ask/deny) | orchestrator 保留;tool-service 只做风险下限防御 |
 | run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events |
 | 调用审计与幂等(`tool_calls` 表) | tool-service |
@@ -46,6 +47,11 @@
 | `TOOL__MAX_WRITES_PER_RUN` | `50` | 单 run 写操作次数上限(P1) |
 | `TOOL__MAX_WRITE_BYTES_PER_RUN` | `5242880` | 单 run 写入字节上限(P1) |
 | `TOOL__MAX_TOOL_CALLS_PER_RUN` | `60` | 单 run 工具调用总次数上限(P1) |
+| `TOOL__FETCH_ENABLED` | `false` | 开启 `fetch`(只读抓公网文本);关闭时目录不暴露该工具(P3) |
+| `TOOL__FETCH_TIMEOUT_SECONDS` | `15` | fetch HTTP 超时(descriptor 另设 20s 上限) |
+| `TOOL__FETCH_MAX_BYTES` | `1048576` | 单次响应体字节上限(超出截断) |
+| `TOOL__FETCH_MAX_REDIRECTS` | `3` | 最多跟随的重定向跳数 |
+| `TOOL__FETCH_ALLOWED_HOSTS` | 空 | 出口收紧:逗号分隔主机允许列表(空=任意公网,`example.com` 含子域) |
 
 ## 知识库检索代理(P2)
 
@@ -54,6 +60,13 @@
 - 返回形状沿用旧 orchestrator 工具:`{"query","provider","model","hits":[{"title","score","content"}]}`, `chunk_id/document_id` 等内部字段不喂给模型。
 - 错误映射:下游 404 → `tool.not_found`;其余 4xx → `tool.invalid_args`;5xx/连接失败 → `tool.upstream_unavailable`(retryable);`httpx` 超时 → `tool.timeout`(retryable);internal secret 缺失属于配置问题,`tool.upstream_unavailable` 但 `retryable=false`。
 - 只读代理:不建表、不发事件、不产生副作用;未知 HTTP 工具名一律 `tool.executor_unavailable`。
+
+## 联网抓取(P3)
+
+- `fetch` 是 `risk=read`、`executor=http` 的函数工具:参数只有 `url`(http/https,≤2048),返回 `{ok,url,final_url,status,content_type,bytes,truncated,text}`。
+- 边界:只允许 http/https、拒绝 URL 内嵌凭证;解析出的**所有**地址必须是公网单播(内网/回环/链路本地/组播/保留段拒绝);每一跳重定向重新校验;只收文本 content-type;响应 ≤1 MiB、文本 ≤20,000 字符、最多 3 跳、超时 15s(descriptor 20s)。
+- 开关关闭时 `GET /v1/tools` 不出现、`GET /v1/tools/fetch` 404、执行回 `tool.executor_unavailable`;打开后 chat 与任务两种模式都可用(READ 自动放行)。
+- 典型用途:读 GitHub 仓库元数据(`api.github.com` JSON)与文件原文(`raw.githubusercontent.com` 纯文本),无需 `git` 或沙箱命令执行。
 
 ## 交互工具(P2)
 

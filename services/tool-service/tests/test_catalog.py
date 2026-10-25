@@ -9,7 +9,7 @@ from tool_service.services import catalog
 
 
 def test_catalog_version_is_exposed() -> None:
-    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-10-25.p3"
+    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-10-25.p4"
 
 
 def test_enabled_tools_are_the_function_slice() -> None:
@@ -22,17 +22,20 @@ def test_enabled_tools_are_the_function_slice() -> None:
         "write",
         "edit",
         "search_knowledge",
+        "fetch",
         "ask_question",
     ]
     risk_by_name = {tool.name: tool.risk for tool in catalog.descriptors()}
     assert risk_by_name["write"] is ToolRisk.WRITE
     assert risk_by_name["edit"] is ToolRisk.WRITE
     assert risk_by_name["search_knowledge"] is ToolRisk.READ
+    assert risk_by_name["fetch"] is ToolRisk.READ
     assert risk_by_name["ask_question"] is ToolRisk.READ
     executor_by_name = {tool.name: tool.executor for tool in catalog.descriptors()}
     for sandbox_name in ("read", "glob", "grep", "list_dir", "write", "edit"):
         assert executor_by_name[sandbox_name] is ExecutorKind.SANDBOX
     assert executor_by_name["search_knowledge"] is ExecutorKind.HTTP
+    assert executor_by_name["fetch"] is ExecutorKind.HTTP
     assert executor_by_name["ask_question"] is ExecutorKind.NONE
 
 
@@ -46,6 +49,7 @@ def test_interaction_tool_schema_is_decoupled() -> None:
         "write",
         "edit",
         "search_knowledge",
+        "fetch",
         "ask_question",
     ]
     assert catalog.find_descriptor("write").enabled is True
@@ -85,6 +89,22 @@ def test_search_knowledge_descriptor_shape() -> None:
     }
 
 
+def test_fetch_descriptor_shape() -> None:
+    fetch = catalog.find_descriptor("fetch")
+    assert fetch is not None
+    assert fetch.risk is ToolRisk.READ
+    assert fetch.kind is ToolKind.FUNCTION
+    assert fetch.executor is ExecutorKind.HTTP
+    assert fetch.timeout_seconds == 20.0
+    schema = fetch.input_schema
+    assert schema["required"] == ["url"]
+    assert schema["additionalProperties"] is False
+    url = schema["properties"]["url"]
+    assert url["type"] == "string"
+    assert url["pattern"] == "^https?://"
+    assert url["maxLength"] == 2048
+
+
 def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,7 +121,7 @@ def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
 
 def test_openai_tools_shape() -> None:
     tools = catalog.openai_tools()
-    assert len(tools) == 8
+    assert len(tools) == 9
     for item in tools:
         assert item["type"] == "function"
         function = item["function"]
@@ -121,6 +141,7 @@ def test_descriptors_payload_roundtrip() -> None:
         "write",
         "edit",
         "search_knowledge",
+        "fetch",
         "ask_question",
     ]
 

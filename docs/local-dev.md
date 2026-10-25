@@ -153,8 +153,8 @@ curl -s http://127.0.0.1:8002/mcp \
   沙箱内执行（不再直读服务进程本机目录）。开启方式：orchestrator 侧设
   `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`（默认 false，compose 演示也默认关），并确认 tool-service 的
   `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service；关掉即回到进程内工具（只剩文档/知识库与 MCP/skill，见下方「旧进程内路径」）。
-- **工具面（P2 收口后）**：`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`/`ask_question`；对话只挂只读工具
-  （`read`/`glob`/`grep`/`list_dir`/`search_knowledge`），写工具与 `ask_question` 只在任务模式装配。
+- **工具面（P2 收口后）**：`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`/`ask_question`；P3 起可选 `fetch`（只读抓公网文本，`TOOL__FETCH_ENABLED=true` 时出现在目录里，chat 与任务模式都可用）；对话只挂只读工具
+  （`read`/`glob`/`grep`/`list_dir`/`search_knowledge`，开着 fetch 时再含 `fetch`），写工具与 `ask_question` 只在任务模式装配。
 - **受控写（P1）**：`write`/`edit` 风险等级为 `write`；租户策略为 confirm 时先落 `pending_writes` 等人工确认，确认后
   `POST /runs/{id}/confirm` 再带 `approved=true` 执行；tool-service 侧未带 approved 的写请求一律 403 `tool.confirmation_required`。
 - **读前置与限额**：同 run 内必须先 `read` 过目标路径（tool-service 的 `file_reads` 表），否则 `tool.read_required`；

@@ -6,12 +6,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from common.service_testkit import app_client
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
     OTHER,
     TENANT,
+    FakeKnowledgeClient,
     FakeSandboxProvider,
     _settings,
     read_envelope,
@@ -20,6 +23,8 @@ from tests.conftest import (
 )
 from tool_service.main import create_app
 from tool_service.services import catalog
+from tool_service.services.executors.fetch import FetchClient
+from tool_service.services.executors.http import HttpToolExecutor
 
 
 def _execute(
@@ -353,14 +358,17 @@ def test_write_requires_confirmation(client: TestClient) -> None:
     assert resp.json()["code"] == "tool.confirmation_required"
 
 
-def test_write_without_read_is_rejected_with_envelope(
+def test_write_new_file_without_read_is_allowed(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:
+    """新建文件(目标不存在)无需先 read:放行并附内部「可能不存在」标记。"""
+
+    sandbox_provider.stdout = write_envelope("new.txt", sha_before=None)
     resp = _execute(
         client,
         {
             "tool_call_id": "call-9",
-            "arguments": {"path": "a.txt", "content": "x"},
+            "arguments": {"path": "new.txt", "content": "x"},
             "approved": True,
             "run_id": "run-write",
         },
@@ -369,10 +377,60 @@ def test_write_without_read_is_rejected_with_envelope(
 
     assert resp.status_code == 200
     body = resp.json()
+    assert body["ok"] is True
+    assert len(sandbox_provider.exec_calls) == 1
+    request = json.loads(sandbox_provider.exec_calls[0]["stdin"])
+    assert request["arguments"]["_read_gate_absent"] is True
+    assert "_expected_read_sha256" not in request["arguments"]
+    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    assert audit.json()["items"][0]["ok"] is True
+
+
+def test_write_new_file_in_conversation_scope_is_allowed(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """会话作用域(无 run_id)同样支持新建文件免读。"""
+
+    sandbox_provider.stdout = write_envelope("book.md", sha_before=None)
+    resp = _execute(
+        client,
+        {
+            "tool_call_id": "call-9b",
+            "arguments": {"path": "book.md", "content": "# 书"},
+            "approved": True,
+            "conversation_id": "c-1",
+        },
+        tool="write",
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    request = json.loads(sandbox_provider.exec_calls[0]["stdin"])
+    assert request["arguments"]["_read_gate_absent"] is True
+
+
+def test_edit_without_read_is_rejected_with_envelope(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """edit 必须有读记录:改已有内容不能靠「新建」放行。"""
+
+    resp = _execute(
+        client,
+        {
+            "tool_call_id": "call-9c",
+            "arguments": {"path": "a.txt", "old_string": "hello", "new_string": "hi"},
+            "approved": True,
+            "run_id": "run-write",
+        },
+        tool="edit",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
     assert body["ok"] is False
     assert body["error"]["code"] == "tool.read_required"
     assert sandbox_provider.exec_calls == []
-    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    audit = client.get("/v1/tool-calls", params={"tool_name": "edit"}, headers=TENANT)
     assert audit.json()["items"][0]["error_code"] == "tool.read_required"
 
 
@@ -462,3 +520,72 @@ def test_write_quota_is_enforced(tmp_path: Path) -> None:
     assert resp.status_code == 200
     assert resp.json()["error"]["code"] == "tool.budget_exceeded"
     assert provider.exec_calls == []
+
+
+def _mock_fetcher(handler: Any) -> FetchClient:
+    """注入 MockTransport 与固定公网解析结果,零网络。"""
+
+    async def resolver(host: str, port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    return FetchClient(transport=httpx.MockTransport(handler), resolver=resolver)
+
+
+def test_fetch_is_hidden_until_enabled(client: TestClient) -> None:
+    """能力即权限边界:未开 fetch 时目录不暴露,执行也明确报不可用。"""
+
+    names = [tool["name"] for tool in client.get("/v1/tools").json()["tools"]]
+    assert "fetch" not in names
+
+    missing = client.get("/v1/tools/fetch")
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "tool.not_found"
+
+    resp = _execute(
+        client,
+        {
+            "tool_call_id": "call-fetch-off",
+            "arguments": {"url": "https://example.com/"},
+        },
+        tool="fetch",
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "tool.executor_unavailable"
+
+
+def test_fetch_is_listed_and_executed_when_enabled(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"# ai-infra-book", headers={"content-type": "text/plain"}
+        )
+
+    fetcher = _mock_fetcher(handler)
+    app = create_app(
+        _settings(tmp_path, fetch_enabled=True),
+        verifier(),
+        sandbox_provider=FakeSandboxProvider(),
+        http_executor=HttpToolExecutor(
+            knowledge=FakeKnowledgeClient(), fetcher=fetcher
+        ),
+    )
+    with app_client(app) as client:
+        names = [tool["name"] for tool in client.get("/v1/tools").json()["tools"]]
+        assert "fetch" in names
+
+        resp = _execute(
+            client,
+            {
+                "tool_call_id": "call-fetch-on",
+                "arguments": {"url": "https://example.com/readme"},
+            },
+            tool="fetch",
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["text"] == "# ai-infra-book"
+    assert body["final_url"] == "https://example.com/readme"
+    assert body["status"] == 200

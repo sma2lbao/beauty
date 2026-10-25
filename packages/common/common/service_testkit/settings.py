@@ -26,6 +26,7 @@ NETWORK_SWITCHES: tuple[str, ...] = (
     "sandbox_enabled",
     "mcp_stdio_enabled",
     "jobs_enabled",
+    "fetch_enabled",
 )
 
 

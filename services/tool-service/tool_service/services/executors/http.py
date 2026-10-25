@@ -1,9 +1,11 @@
-"""HTTP 执行器:把跨服务只读工具(search_knowledge)代理到知识库。
+"""HTTP 执行器:把只读工具代理到下游服务,或直接抓取公网文本。
 
 工具执行分两类:文件类工具经沙箱(workspace-service)执行;知识库检索这类
 跨服务只读能力没有沙箱语义,由本模块用服务间 token(TokenBroker,
-subject=svc-tool)带租户 JWT 调下游 HTTP API,并把响应/失败归一成统一工具
-信封。HTTP 执行器只做只读代理:参数在 journal 层已校验,这里不做写操作、
+subject=svc-tool)带租户 JWT 调下游 HTTP API。`fetch` 属于第三种:不代理
+任何下游服务,由本模块直连公网(SSRF 防护与大小上限见
+tool_service/services/executors/fetch.py)。两类都把响应/失败归一成统一工具
+信封。HTTP 执行器只做只读动作:参数在 journal 层已校验,这里不做写操作、
 不建表、不发事件(设计 §8.2)。
 """
 
@@ -19,6 +21,7 @@ from common.security.token_broker import TokenBroker
 from common.tools import ToolError, ToolExecuteResponse
 
 from tool_service.core.config import Settings
+from tool_service.services.executors.fetch import FetchClient, FetchError
 from tool_service.services.sandbox import SERVICE_SUBJECT
 
 #: 知识库检索路径(对应 knowledge-service 的 POST /v1/knowledge/search)。
@@ -162,10 +165,16 @@ def _status_error(exc: UpstreamStatusError) -> ToolExecuteResponse:
 
 
 class HttpToolExecutor:
-    """HTTP 工具执行器:只代理只读能力,返回统一工具信封。"""
+    """HTTP 工具执行器:只做只读动作,返回统一工具信封。"""
 
-    def __init__(self, *, knowledge: KnowledgeClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        knowledge: KnowledgeClient | None = None,
+        fetcher: FetchClient | None = None,
+    ) -> None:
         self._knowledge = knowledge
+        self._fetcher = fetcher
 
     async def execute(
         self, tenant_id: str, tool_name: str, arguments: dict[str, Any]
@@ -174,6 +183,8 @@ class HttpToolExecutor:
 
         if tool_name == "search_knowledge":
             return await self._search_knowledge(tenant_id, arguments)
+        if tool_name == "fetch":
+            return await self._fetch(arguments)
         return _error(
             "tool.executor_unavailable",
             f"http 执行器不支持工具 {tool_name}",
@@ -206,6 +217,36 @@ class HttpToolExecutor:
                 str(exc),
                 hint=str(exc.details.get("body", "")),
                 retryable=exc.code != _AUTH_NOT_RETRYABLE,
+            )
+        return ToolExecuteResponse(ok=True, result=result)
+
+    async def _fetch(self, arguments: dict[str, Any]) -> ToolExecuteResponse:
+        """抓取公网文本;未装配抓取客户端说明服务端没开 fetch。"""
+
+        if self._fetcher is None:
+            return _error(
+                "tool.executor_unavailable",
+                "fetch 未启用",
+                hint="服务端未开启 TOOL__FETCH_ENABLED",
+            )
+        url = str(arguments.get("url") or "")
+        try:
+            result = await self._fetcher.get(url)
+        except FetchError as exc:
+            return _error(
+                exc.code,
+                exc.message,
+                hint=exc.hint,
+                retryable=exc.retryable,
+            )
+        except httpx.TimeoutException:
+            return _error("tool.timeout", "抓取超时", retryable=True)
+        except httpx.HTTPError as exc:
+            return _error(
+                "tool.fetch_failed",
+                "抓取失败",
+                hint=str(exc),
+                retryable=True,
             )
         return ToolExecuteResponse(ok=True, result=result)
 

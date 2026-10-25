@@ -560,6 +560,33 @@ def test_write_stale_read_sha_rejected(workspace: Path) -> None:
     assert code == "tool.stale_read"
 
 
+def test_write_read_gate_absent_new_file_is_created(workspace: Path) -> None:
+    """读前置放行新建:目标不存在 → 直接创建(内部标记只放行「新建」)。"""
+
+    result = ok_result(
+        workspace,
+        "write",
+        {"path": "fresh.txt", "content": "abc\n", "_read_gate_absent": True},
+    )
+
+    assert result["created"] is True
+    assert result["changed"] is True
+    assert (workspace / "fresh.txt").read_text(encoding="utf-8") == "abc\n"
+
+
+def test_write_read_gate_absent_existing_file_rejected(workspace: Path) -> None:
+    """读前置放行的只是新建:目标已存在仍然回 tool.read_required(防盲改)。"""
+
+    code = error_code(
+        workspace,
+        "write",
+        {"path": "a.txt", "content": "x", "_read_gate_absent": True},
+    )
+
+    assert code == "tool.read_required"
+    assert (workspace / "a.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+
+
 def test_write_create_parents_false_rejects_missing_parent(workspace: Path) -> None:
     code = error_code(
         workspace,

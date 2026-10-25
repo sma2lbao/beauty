@@ -425,7 +425,7 @@ ToolDescriptor {   # v2 契约，真源 packages/common/common/tools.py
 }
 ```
 
-> 状态注记（2026-10-25，P2 收口）：v2 契约真源是 `packages/common/common/tools.py` 的 `ToolDescriptor`（设计见 [tool-service.md](./design/tool-service.md) §6.1）；内置文件/知识工具已迁到独立 `tool-service`（:8008，`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`），orchestrator 经 `RemoteToolkit` 消费该契约，装配开关 `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED`；旧 `code_*` 进程内实现与 alias 已于 P2 删除，进程内只剩 `list_documents`/`read_document`/`search_knowledge` 与 MCP/skill 工具。审批策略仍由 `approval_policies` 表控制（见 06 §2.3 #6）。
+> 状态注记（2026-10-25，P2 收口）：v2 契约真源是 `packages/common/common/tools.py` 的 `ToolDescriptor`（设计见 [tool-service.md](./design/tool-service.md) §6.1）；内置文件/知识/联网工具已迁到独立 `tool-service`（:8008，`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`，P3 起可选只读 `fetch`，默认 `TOOL__FETCH_ENABLED=false`），orchestrator 经 `RemoteToolkit` 消费该契约，装配开关 `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED`；旧 `code_*` 进程内实现与 alias 已于 P2 删除，进程内只剩 `list_documents`/`read_document`/`search_knowledge` 与 MCP/skill 工具。审批策略仍由 `approval_policies` 表控制（见 06 §2.3 #6）。
 
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；

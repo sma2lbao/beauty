@@ -796,6 +796,13 @@ def tool_write(arguments: dict[str, Any], policy: dict[str, Any]) -> dict[str, A
     exists = os.path.exists(target)
     if exists and os.path.isdir(target):
         raise ToolFailure("tool.is_directory", "path 指向目录")
+    if exists and bool(arguments.get("_read_gate_absent")):
+        # 读前置放行的只是「新建」:目标其实已存在 → 仍要求先 read(防盲改)。
+        raise ToolFailure(
+            "tool.read_required",
+            "写之前必须先 read 目标文件",
+            "目标文件已存在;先 read 查看内容(会记录读取版本),再 write/edit",
+        )
     if exists and not bool(arguments.get("overwrite", True)):
         raise ToolFailure("tool.exists", "目标文件已存在且 overwrite=false")
     before = _hash_file(target) if exists else None

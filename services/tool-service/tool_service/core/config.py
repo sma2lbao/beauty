@@ -36,3 +36,11 @@ class Settings(ServiceSettings):
     max_writes_per_run: int = 50
     max_write_bytes_per_run: int = 5 * 1024 * 1024
     max_tool_calls_per_run: int = 60
+    # P3:fetch 只读抓取公网文本(http/https);内网/回环/链路本地地址一律拒绝。
+    # 会发起外部 I/O,因此属于 NETWORK_SWITCHES:测试默认钉成 False(零网络)。
+    fetch_enabled: bool = False
+    fetch_timeout_seconds: float = 15.0
+    fetch_max_bytes: int = 1024 * 1024
+    fetch_max_redirects: int = 3
+    #: 允许抓取的主机(逗号分隔;空 = 任意公网主机)。example.com 含其子域。
+    fetch_allowed_hosts: str = ""
