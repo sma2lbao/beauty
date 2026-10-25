@@ -1,28 +1,23 @@
-"""服务入口:create_app 工厂 + lifespan。
+"""服务入口:create_app 工厂 + lifespan(装配细节见 core/container.py)。
 
 启动(项目目录内):uv run uvicorn agent_orchestrator.main:app --port 8002
 Nx(仓库根):npx nx run agent-orchestrator:serve
+
+本模块只做三件事:声明可注入依赖、组装 FastAPI(中间件/路由)、把生命周期
+交给 AppContainer;所有外部客户端的装配与逆序关闭都在容器里。
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
-from functools import partial
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
-from common.logging import get_logger, setup_logging
 from common.middleware import RequestContextMiddleware, install_app_error_handler
-from common.observability import install_observability
 from common.tracing import exclude_telemetry
-from database.base import Base
-from database.session import create_session_factory, session_scope
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
-from events.bus import EventBus, InMemoryEventBus
-from events.outbox import OutboxDispatcher
+from events.bus import EventBus
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -31,8 +26,8 @@ from agent_orchestrator.api.internal import router as internal_router
 from agent_orchestrator.api.mcp_server import router as mcp_server_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.core.container import AppContainer, ToolkitFactory
 from agent_orchestrator.graph import delta
-from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
     conversations as conversations_models,
@@ -40,421 +35,27 @@ from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对�
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
-from agent_orchestrator.services import mcp as mcp_service
-from agent_orchestrator.services import mcp_oauth
-from agent_orchestrator.services import quota as quota_service
-from agent_orchestrator.services import usage as usage_service
-from agent_orchestrator.services.artifacts import build_store
-from agent_orchestrator.services.documents import DocumentLibrary
-from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
-from agent_orchestrator.services.jobs_worker import start_worker
-from agent_orchestrator.services.knowledge import KnowledgeClient
-from agent_orchestrator.services.llm import GatewayClient, LLMClient
+from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_server import (
     ApiKeyVerifier,
     OAuthTokenIntrospector,
 )
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
-from agent_orchestrator.services.outbox import (
-    record_run_event,
-    register_consumers,
-)
-from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
+from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skill_runner import SkillRunner
-from agent_orchestrator.services.skills import load_skills
-from agent_orchestrator.services.token_broker import TokenBroker
-from agent_orchestrator.services.tool_context import current_tool_context
-from agent_orchestrator.services.tools import (
-    ToolExtrasFactory,
-    ToolRegistry,
-    ToolSpec,
-    build_tools,
-)
-from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
-
-logger = get_logger(__name__)
-
-ToolkitFactory = Callable[[str], ToolRegistry]
+from agent_orchestrator.services.tools import ToolExtrasFactory
+from agent_orchestrator.services.workspace import Workspace
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings: Settings = app.state.settings
-    setup_logging(settings)
-    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
-    install_observability(app, settings)
-    app.state.skills = load_skills(settings.skills_dir or None)
-
-    key_verifier: ApiKeyVerifier | None = app.state.api_key_verifier
-    owns_key_verifier = False
-    if key_verifier is None and settings.mcp_server_enabled:
-        key_verifier = ApiKeyVerifier(
-            base_url=settings.account_service_url,
-            internal_secret=settings.internal_auth_secret,
-        )
-        owns_key_verifier = True
-    app.state.api_key_verifier = key_verifier
-
-    oauth_introspector: OAuthTokenIntrospector | None = app.state.oauth_introspector
-    owns_oauth_introspector = False
-    if oauth_introspector is None and settings.mcp_server_enabled:
-        oauth_introspector = OAuthTokenIntrospector(
-            base_url=settings.account_service_url,
-            internal_secret=settings.internal_auth_secret,
-        )
-        owns_oauth_introspector = True
-    app.state.oauth_introspector = oauth_introspector
-
-    # token 预算(P0-3):进程级固定,0 = 不限制
-    usage_service.configure_budget(settings.run_token_budget)
-
-    # 配额快照(P0-2):建 run 前读 account 的租户配额;密钥缺失即关闭
-    owns_quota_client = quota_service.client() is None and (
-        quota_service.configure_client(
-            base_url=settings.account_service_url,
-            internal_secret=settings.internal_auth_secret,
-        )
-        is not None
-    )
-
-    # 用量上报(P0-1):密钥缺失即关闭(不裸调),测试默认零网络
-    owns_usage_reporter = False
-    if usage_service.reporter() is None:
-        owns_usage_reporter = (
-            usage_service.configure_reporter(
-                base_url=settings.account_service_url,
-                internal_secret=settings.internal_auth_secret,
-            )
-            is not None
-        )
-
-    factory = create_session_factory(settings.database_url)
-    app.state.session_factory = factory
-    if settings.auto_create_tables:
-        # dev/test 直建表;生产一律 alembic 迁移
-        async with factory.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    # LLM 装配(架构 §5 唯一出口):测试注入优先;否则 enabled 时起网关客户端
-    llm: LLMClient | None = app.state.llm_client
-    owns_llm = False
-    if llm is None and settings.llm_enabled:
-        llm = GatewayClient(
-            base_url=settings.llm_gateway_url,
-            timeout_seconds=settings.llm_timeout_seconds,
-            model=settings.llm_model,
-            retry_attempts=settings.llm_retry_attempts,
-            retry_backoff_seconds=settings.llm_retry_backoff_seconds,
-        )
-        owns_llm = True
-    # 发布解析后的客户端:直接对话(§6.7)与执行图共用同一个;
-    # create_app 里存的是"测试注入值",生产路径为 None,这里补齐
-    app.state.llm_client = llm
-
-    # 工具装配(架构 §8):测试注入 toolkit_factory 优先;
-    # 否则 tools_enabled 时按子开关装配各能力提供方(未开启的不暴露)
-    toolkit_factory: ToolkitFactory | None = app.state.toolkit_factory
-    knowledge: KnowledgeClient | None = None
-    # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
-    # 签名 claim,不再有 X-Tenant-Id 裸调路径;密钥未配置时在换发处明确报错
-    broker = TokenBroker(
-        base_url=settings.auth_issuer,  # 签发方即 account-service
-        internal_secret=settings.internal_auth_secret,
-    )
-    token_provider = broker.token
-    if toolkit_factory is None and settings.tools_enabled:
-        documents = (
-            DocumentLibrary(settings.documents_root, settings.documents_max_bytes)
-            if settings.documents_enabled
-            else None
-        )
-        knowledge = (
-            KnowledgeClient(
-                settings.knowledge_service_url,
-                settings.knowledge_timeout_seconds,
-                token_provider=token_provider,
-            )
-            if settings.knowledge_enabled
-            else None
-        )
-        toolkit_factory = partial(
-            build_tools,
-            documents=documents,
-            knowledge=knowledge,
-            code_roots=settings.code_workspace_roots,
-        )
-
-    # 外部工具装配(P2 MCP + P3-C skill_run):同一个 extras factory 合并,
-    # 在 execute/tool_exec 的工具调用边界被调用——context 已由 services 层
-    # 绑定(bind_tool_context),所以这里能读到 run_id。
-    # 测试注入优先;否则 MCP / skill 执行子开关打开时才装配。
-    # 装配结果总是发布到 app.state:chat 直接对话(§6.8)与执行图共用同一个工厂。
-    extras_factory: ToolExtrasFactory | None = app.state.tool_extras_factory
-    if extras_factory is None and (
-        settings.mcp_enabled or settings.skill_execution_enabled
-    ):
-
-        async def _load_extras(tenant_id: str) -> list[ToolSpec]:
-            """run 绑定了可执行技能包 → skill_run;有 MCP → 追加 MCP 工具。
-
-            skill 与 MCP 互不阻断:MCP 故障只降级 MCP 工具(沿用 _load_toolkit
-            的降级口径);chat 路径没有 run_id,自然看不到 skill_run。
-            """
-            specs: list[ToolSpec] = []
-            runner: SkillRunner | None = getattr(app.state, "skill_runner", None)
-            ctx = current_tool_context()
-            # 显式引用的 MCP server:对话路径从 contextvar 读;run 路径读 run 快照
-            selected: tuple[str, ...] | None = None
-            if ctx is not None and ctx.mcp_server_ids:
-                selected = ctx.mcp_server_ids
-            if ctx is not None and ctx.run_id:
-                async with session_scope(factory) as session:
-                    run = await session.get(runs_models.Run, ctx.run_id)
-                    if run is not None and run.tenant_id == tenant_id:
-                        if runner is not None and run.skill_object_key:
-                            specs.append(runner.spec(run))
-                        if run.mcp_server_ids:
-                            selected = tuple(run.mcp_server_ids)
-            if settings.mcp_enabled:
-
-                async def _mark_mcp_auth_required(server_id: str, detail: str) -> None:
-                    """调用期 401 落库:/mcp 页不必手动测试也能看到"需要授权"。"""
-                    async with session_scope(factory) as session:
-                        server = await session.get(mcp_models.MCPServer, server_id)
-                        if server is None or server.tenant_id != tenant_id:
-                            return
-                        server.last_status = "auth_required"
-                        server.last_error = detail[:500]
-                        server.last_checked_at = datetime.now(UTC)
-
-                async def _mcp_token(server_id: str, force: bool) -> str | None:
-                    """调用前解析 OAuth token(过期自动刷新;401 时 force 刷新)。"""
-                    if not settings.mcp_oauth_enabled:
-                        return None
-                    async with session_scope(factory) as session:
-                        return await mcp_oauth.access_token(
-                            session,
-                            tenant_id,
-                            server_id,
-                            settings=settings,
-                            secret=settings.mcp_secret,
-                            force_refresh=force,
-                        )
-
-                try:
-                    async with session_scope(factory) as session:
-                        # stdio MCP 的沙箱池在 lifespan 后段装配,这里按调用时取值
-                        specs += await mcp_service.tool_specs(
-                            session,
-                            tenant_id,
-                            secret=settings.mcp_secret,
-                            pool=getattr(app.state, "mcp_stdio_pool", None),
-                            on_auth_required=_mark_mcp_auth_required,
-                            token_provider=_mcp_token,
-                            server_ids=selected,
-                        )
-                except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
-                    logger.warning(
-                        "mcp tool specs failed",
-                        tenant_id=tenant_id,
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
-            return specs
-
-        extras_factory = _load_extras
-    app.state.tool_extras_factory = extras_factory
-
-    # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
-    verifier: JwtVerifier | None = app.state.token_verifier
-    owns_verifier = False
-    if verifier is None and settings.auth_enabled:
-        verifier = JwtVerifier(
-            issuer=settings.auth_issuer,
-            audience=settings.auth_audience,
-            jwks_url=settings.auth_jwks_url,
-            tenant_claim=settings.auth_tenant_claim,
-        )
-        owns_verifier = True
-    app.state.token_verifier = verifier
-
-    # 交付物镜像到工作区(§7):测试注入优先;独立于工具箱开关
-    workspace: WorkspaceClient | None = app.state.workspace_client
-    if workspace is None and settings.workspace_enabled:
-        workspace = WorkspaceClient(
-            settings.workspace_service_url,
-            settings.workspace_timeout_seconds,
-            token_provider=token_provider,
-        )
-    app.state.workspace_client = workspace
-
-    # 沙箱客户端装配(P1:接入 workspace-service 的内部 /v1/sandboxes):
-    # 测试注入优先;未开启时不起客户端、不碰网络——P1 不新增工具,
-    # 也不改变任何既有行为(引擎与生命周期在 workspace-service 侧)
-    sandbox: Sandbox | None = app.state.sandbox_client
-    owns_sandbox = False
-    if sandbox is None and settings.sandbox_enabled:
-        sandbox = SandboxClient(
-            settings.sandbox_service_url,
-            settings.sandbox_timeout_seconds,
-            token_provider=token_provider,
-        )
-        owns_sandbox = True
-    app.state.sandbox_client = sandbox
-
-    # stdio MCP 沙箱池(P2):沙箱客户端就绪后装配;测试注入优先。
-    # 两个开关都开才建池——没有沙箱就没有"在沙箱里跑 MCP 进程"这回事
-    mcp_stdio_pool: StdioSandboxPool | None = app.state.mcp_stdio_pool
-    if mcp_stdio_pool is None and settings.mcp_stdio_enabled and sandbox is not None:
-        mcp_stdio_pool = StdioSandboxPool(
-            sandbox,
-            ttl_seconds=settings.mcp_stdio_sandbox_ttl_seconds,
-            network=settings.mcp_stdio_network,
-            python_image=settings.mcp_stdio_python_image,
-            node_image=settings.mcp_stdio_node_image,
-            timeout_seconds=int(settings.sandbox_timeout_seconds),
-        )
-    app.state.mcp_stdio_pool = mcp_stdio_pool
-
-    # 交付物存储装配(§7 阶段 B):测试注入优先;否则按配置选后端
-    # (database 模式为 None——内容留在 run_artifacts.content 列)
-    store: ArtifactStore | None = app.state.artifact_store
-    if store is None:
-        store = build_store(settings)
-    app.state.artifact_store = store
-
-    # 外链文件抓取(§7 阶段 B):工具/MCP 返回的 http(s) 文件链接在执行时下载
-    # 成真实交付物。测试注入优先;关闭时不建下载器(只落报告件,不碰网络)。
-    downloader: FileDownloader | None = getattr(app.state, "artifact_downloader", None)
-    if downloader is None and settings.artifact_download_enabled:
-        downloader = HttpFileDownloader(
-            timeout_seconds=settings.artifact_download_timeout_seconds,
-            max_bytes=settings.artifact_download_max_bytes,
-        )
-    app.state.artifact_downloader = downloader
-
-    # 上传技能包执行(P3-C):测试注入优先;否则 skill_execution_enabled 且
-    # sandbox/workspace 都在时才装配(缺任一依赖 → 不暴露 skill_run,
-    # 宁可不给能力也不在 orchestrator 进程里直接跑上传代码)。
-    skill_runner: SkillRunner | None = app.state.skill_runner
-    if (
-        skill_runner is None
-        and settings.skill_execution_enabled
-        and sandbox is not None
-        and workspace is not None
-    ):
-        skill_runner = SkillRunner(
-            factory,
-            sandbox=sandbox,
-            workspace=workspace,
-            store=store,
-            settings=settings,
-        )
-    app.state.skill_runner = skill_runner
-
-    # 事务性 outbox(§6.3/§8):测试注入优先 —— recorder 挂在 session.info,
-    # dispatcher 后台投递;首个消费者是"交付物自动入知识库"
-    bus: EventBus = app.state.event_bus or InMemoryEventBus()
-    app.state.event_bus = bus
-    recorder = None
-    dispatcher: OutboxDispatcher | None = None
-    outbox_stop: asyncio.Event | None = None
-    outbox_task: asyncio.Task[None] | None = None
-    ingest_knowledge: KnowledgeClient | None = None
-    if settings.outbox_enabled:
-        recorder = record_run_event
-        if settings.knowledge_ingest_enabled:
-            ingest_knowledge = KnowledgeClient(
-                settings.knowledge_service_url,
-                settings.knowledge_timeout_seconds,
-                token_provider=token_provider,
-            )
-            consumers = register_consumers(
-                bus,
-                knowledge=ingest_knowledge,
-                session_factory=factory,
-                store=store,
-            )
-            app.state.outbox_consumers = consumers
-        dispatcher = OutboxDispatcher(
-            factory,
-            bus,
-            batch_size=settings.outbox_batch_size,
-            max_attempts=settings.outbox_max_attempts,
-        )
-        outbox_stop = asyncio.Event()
-        outbox_task = asyncio.create_task(
-            dispatcher.run_forever(
-                interval_seconds=settings.outbox_dispatch_interval_seconds,
-                stop=outbox_stop,
-            )
-        )
-    app.state.outbox_recorder = recorder
-    app.state.outbox_dispatcher = dispatcher
-    worker_task: asyncio.Task | None = None
-
+    """启动装配 / 关闭回收都委托给 AppContainer。"""
+    container: AppContainer = app.state.container
+    await container.start()
     try:
-        if settings.database_url.startswith("postgres"):
-            # postgres:图线程跨进程可恢复(架构 §6.4;setup 幂等建 checkpoint 表)。
-            # 惰性导入:sqlite/dev 环境不需要 psycopg,模块加载零成本
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-            pg_url = settings.database_url.replace(
-                "postgresql+asyncpg://", "postgresql://", 1
-            )
-            async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
-                await saver.setup()
-                app.state.run_graph = build_run_graph(
-                    checkpointer=saver,
-                    llm=llm,
-                    toolkit_factory=toolkit_factory,
-                    mcp_tools_factory=extras_factory,
-                    plan_auto_approve=settings.plan_auto_approve,
-                )
-                if settings.jobs_enabled:
-                    worker_task = start_worker(app)
-                yield
-        else:
-            # sqlite/dev:进程内 checkpointer
-            app.state.run_graph = build_run_graph(
-                llm=llm,
-                toolkit_factory=toolkit_factory,
-                mcp_tools_factory=extras_factory,
-                plan_auto_approve=settings.plan_auto_approve,
-            )
-            if settings.jobs_enabled:
-                worker_task = start_worker(app)
-            yield
+        yield
     finally:
-        if worker_task is not None:
-            worker_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await worker_task
-        if outbox_stop is not None:
-            outbox_stop.set()
-        if outbox_task is not None:
-            outbox_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await outbox_task
-        if ingest_knowledge is not None:
-            await ingest_knowledge.aclose()
-        if owns_llm:
-            await llm.aclose()
-        if owns_verifier:
-            await verifier.aclose()
-        if owns_key_verifier and key_verifier is not None:
-            await key_verifier.aclose()
-        if owns_oauth_introspector and oauth_introspector is not None:
-            await oauth_introspector.aclose()
-        if knowledge is not None:
-            await knowledge.aclose()
-        if owns_usage_reporter:
-            await usage_service.close_reporter()
-        if owns_quota_client:
-            await quota_service.close_client()
-        if owns_sandbox and sandbox is not None:
-            await sandbox.aclose()
-        await broker.aclose()
-        await factory.engine.dispose()
+        await container.stop()
 
 
 def create_app(
@@ -480,37 +81,43 @@ def create_app(
         # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
         telemetry={"exclude": exclude_telemetry},
     )
-    app.state.settings = settings or Settings()
+    # 容器同时把 settings 与注入项发布到 app.state(既有测试按名读取)
+    container = AppContainer(
+        app,
+        settings or Settings(),
+        llm_client=llm_client,
+        toolkit_factory=toolkit_factory,
+        tool_extras_factory=tool_extras_factory,
+        token_verifier=token_verifier,
+        artifact_store=artifact_store,
+        workspace_client=workspace_client,
+        sandbox_client=sandbox_client,
+        skill_runner=skill_runner,
+        mcp_stdio_pool=mcp_stdio_pool,
+        event_bus=event_bus,
+        api_key_verifier=api_key_verifier,
+        oauth_introspector=oauth_introspector,
+    )
+    container.install()
+
     # 正文增量流是进程级通道配置(节点→services 的 sink),按启动时的 settings 固定
     delta.configure(
-        enabled=app.state.settings.run_delta_streaming,
-        flush_chars=app.state.settings.run_delta_flush_chars,
-        flush_seconds=app.state.settings.run_delta_flush_seconds,
+        enabled=container.settings.run_delta_streaming,
+        flush_chars=container.settings.run_delta_flush_chars,
+        flush_seconds=container.settings.run_delta_flush_seconds,
     )
-    app.state.llm_client = llm_client
-    app.state.toolkit_factory = toolkit_factory
-    app.state.tool_extras_factory = tool_extras_factory
-    app.state.token_verifier = token_verifier
-    app.state.artifact_store = artifact_store
-    app.state.workspace_client = workspace_client
-    app.state.sandbox_client = sandbox_client
-    app.state.skill_runner = skill_runner
-    app.state.mcp_stdio_pool = mcp_stdio_pool
-    app.state.event_bus = event_bus
-    app.state.api_key_verifier = api_key_verifier
-    app.state.oauth_introspector = oauth_introspector
 
-    if app.state.settings.cors_allow_origins:
+    if container.settings.cors_allow_origins:
         # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=app.state.settings.cors_allow_origins,
+            allow_origins=container.settings.cors_allow_origins,
             allow_methods=["*"],
             allow_headers=["*"],
         )
 
     install_app_error_handler(app)
-    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
+    app.add_middleware(RequestContextMiddleware, settings=container.settings)
 
     app.include_router(health_router)
     app.include_router(internal_router)

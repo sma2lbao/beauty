@@ -10,6 +10,7 @@ from common.errors import AppError, UnauthorizedError
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from agent_orchestrator.api.deps import get_container
 from agent_orchestrator.services.mcp_server import (
     MCPPrincipal,
     handle_jsonrpc,
@@ -27,7 +28,7 @@ def _auth_header(authorization: str | None, x_api_key: str | None) -> str:
 
 
 def _auth_challenge(request: Request) -> str:
-    settings = request.app.state.settings
+    settings = get_container(request).settings
     parsed = urlsplit(settings.mcp_resource_url)
     metadata = urlunsplit(
         (parsed.scheme, parsed.netloc, "/.well-known/oauth-protected-resource", "", "")
@@ -36,12 +37,13 @@ def _auth_challenge(request: Request) -> str:
 
 
 async def _authenticate(request: Request, key: str) -> MCPPrincipal:
+    container = get_container(request)
     if key.startswith("bm_live_"):
-        verifier = getattr(request.app.state, "api_key_verifier", None)
+        verifier = container.api_key_verifier
         if verifier is None:
             raise UnauthorizedError("mcp.auth_unavailable", "API Key 鉴权未配置")
         return await verifier.verify(key)
-    introspector = getattr(request.app.state, "oauth_introspector", None)
+    introspector = container.oauth_introspector
     if introspector is None:
         raise UnauthorizedError("mcp.auth_unavailable", "OAuth 鉴权未配置")
     principal = await introspector.introspect(key)
@@ -61,7 +63,7 @@ def _rpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
 @router.get("/.well-known/oauth-protected-resource")
 async def protected_resource_metadata(request: Request) -> dict[str, Any]:
     """RFC 9728:MCP 客户端据此发现授权服务器。"""
-    settings = request.app.state.settings
+    settings = get_container(request).settings
     return {
         "resource": settings.mcp_resource_url,
         "authorization_servers": [settings.auth_issuer],

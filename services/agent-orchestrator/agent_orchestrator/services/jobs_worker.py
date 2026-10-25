@@ -1,7 +1,8 @@
 """本地 job worker(M0-04):轮询领取、执行、lease/重试。
 
 SQLite 下单进程轮询即可;PG 多实例由 claim_next 的 FOR UPDATE SKIP LOCKED
-保证不重复领取。
+保证不重复领取。worker 只依赖 AppContainer(执行图/交付物存储/工作区客户端),
+不再读 app.state——装配细节由容器负责。
 """
 
 from __future__ import annotations
@@ -9,37 +10,47 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from common import metrics
 from common.logging import bind_request_context, clear_request_context
 from database.session import session_scope
-from fastapi import FastAPI
 
 from agent_orchestrator.models.runs import Job
 from agent_orchestrator.repositories import JobRepository
 from agent_orchestrator.services import runs as runs_service
 
+if TYPE_CHECKING:
+    from agent_orchestrator.core.container import AppContainer
+
 logger = structlog.get_logger(__name__)
 WORKER_ID = f"local-{os.getpid()}"
 
 
-async def _dispatch(app: FastAPI, session, job: Job) -> None:
-    graph = app.state.run_graph
+async def _dispatch(container: AppContainer, session, job: Job) -> None:
+    graph = container.run_graph
     kind = job.kind
     payload: dict[str, Any] = job.payload or {}
-    if kind == "plan":
-        await runs_service.plan_run(
+    common = {
+        "jobs_enabled": False,
+        "downloader": container.artifact_downloader,
+        "max_download_files": container.settings.artifact_download_max_files,
+    }
+    if kind in {"plan", "resume", "retry"}:
+        action = {
+            "plan": runs_service.plan_run,
+            "resume": runs_service.resume_run,
+            "retry": runs_service.retry_run,
+        }[kind]
+        await action(
             session,
             graph,
             job.tenant_id,
             job.run_id,
-            jobs_enabled=False,
-            store=app.state.artifact_store,
-            workspace=app.state.workspace_client,
-            downloader=getattr(app.state, "artifact_downloader", None),
-            max_download_files=app.state.settings.artifact_download_max_files,
+            store=container.artifact_store,
+            workspace=container.workspace_client,
+            **common,
         )
         return
     if kind == "approve":
@@ -48,12 +59,10 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
             graph,
             job.tenant_id,
             job.run_id,
-            app.state.artifact_store,
-            app.state.workspace_client,
-            jobs_enabled=False,
+            container.artifact_store,
+            container.workspace_client,
             emit_approved=False,
-            downloader=getattr(app.state, "artifact_downloader", None),
-            max_download_files=app.state.settings.artifact_download_max_files,
+            **common,
         )
         return
     if kind == "confirm":
@@ -64,47 +73,20 @@ async def _dispatch(app: FastAPI, session, job: Job) -> None:
             job.run_id,
             str(payload.get("action") or "approve"),
             payload.get("reason"),
-            app.state.artifact_store,
-            app.state.workspace_client,
-            jobs_enabled=False,
+            container.artifact_store,
+            container.workspace_client,
             emit_confirmation=False,
-            downloader=getattr(app.state, "artifact_downloader", None),
-            max_download_files=app.state.settings.artifact_download_max_files,
-        )
-        return
-    if kind == "resume":
-        await runs_service.resume_run(
-            session,
-            graph,
-            job.tenant_id,
-            job.run_id,
-            jobs_enabled=False,
-            store=app.state.artifact_store,
-            workspace=app.state.workspace_client,
-            downloader=getattr(app.state, "artifact_downloader", None),
-            max_download_files=app.state.settings.artifact_download_max_files,
-        )
-        return
-    if kind == "retry":
-        await runs_service.retry_run(
-            session,
-            graph,
-            job.tenant_id,
-            job.run_id,
-            jobs_enabled=False,
-            store=app.state.artifact_store,
-            workspace=app.state.workspace_client,
-            downloader=getattr(app.state, "artifact_downloader", None),
-            max_download_files=app.state.settings.artifact_download_max_files,
+            **common,
         )
         return
     raise ValueError(f"unknown job kind: {kind}")
 
 
-async def process_one(app: FastAPI) -> bool:
+async def process_one(container: AppContainer) -> bool:
     """领取并执行一个 job;返回是否实际领到任务。"""
-    settings = app.state.settings
-    factory = app.state.session_factory
+    settings = container.settings
+    factory = container.session_factory
+    assert factory is not None
     tenant_id: str | None = None
     job_id: str | None = None
     async with session_scope(factory) as session:
@@ -123,7 +105,7 @@ async def process_one(app: FastAPI) -> bool:
         try:
             async with session_scope(factory) as session:
                 job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
-                await _dispatch(app, session, job)
+                await _dispatch(container, session, job)
         except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
             logger.exception("job failed", job_id=job_id)
             async with session_scope(factory) as session:
@@ -151,16 +133,16 @@ async def process_one(app: FastAPI) -> bool:
         clear_request_context()
 
 
-async def worker_loop(app: FastAPI) -> None:
-    settings = app.state.settings
+async def worker_loop(container: AppContainer) -> None:
+    settings = container.settings
     while True:
         try:
-            processed = await process_one(app)
+            processed = await process_one(container)
         except Exception:  # noqa: BLE001 - 轮询循环不能因单次异常退出
             logger.exception("job worker loop error")
             processed = False
         await asyncio.sleep(0 if processed else settings.jobs_poll_interval_seconds)
 
 
-def start_worker(app: FastAPI) -> asyncio.Task:
-    return asyncio.create_task(worker_loop(app), name="orchestrator-jobs")
+def start_worker(container: AppContainer) -> asyncio.Task:
+    return asyncio.create_task(worker_loop(container), name="orchestrator-jobs")

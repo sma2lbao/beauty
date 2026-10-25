@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from database.session import session_scope
-from fastapi import APIRouter, HTTPException, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from agent_orchestrator.api.deps import get_session
 
 health_router = APIRouter()
+
+DBSession = Annotated[AsyncSession, Depends(get_session)]
 
 
 @health_router.get("/healthz")
@@ -16,11 +22,10 @@ async def healthz() -> dict[str, str]:
 
 
 @health_router.get("/readyz")
-async def readyz(request: Request) -> dict[str, str]:
+async def readyz(session: DBSession) -> dict[str, str]:
     """就绪探针:数据库可用才算就绪。"""
     try:
-        async with session_scope(request.app.state.session_factory) as session:
-            await session.execute(text("SELECT 1"))
+        await session.execute(text("SELECT 1"))
     except Exception as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
     return {"status": "ready"}

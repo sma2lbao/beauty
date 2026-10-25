@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
 
 from common.errors import AppError
@@ -23,12 +22,24 @@ from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.models.runs import RunEvent
-from agent_orchestrator.schemas.runs import RunEventRead, RunStatus
+from agent_orchestrator.core.sse import comment_frame, run_end_frame, run_event_frame
+from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services.run_events import list_events
 from agent_orchestrator.services.run_lifecycle import require_run
 
 TERMINAL_STATUSES = (RunStatus.COMPLETED.value, RunStatus.FAILED.value)
+
+
+async def ensure_stream_target(
+    factory: async_sessionmaker[AsyncSession], tenant_id: str, run_id: str
+) -> None:
+    """开流前的 404 预检。
+
+    SSE 是长连接:预检必须用**独立短事务**,不能占着请求级 session——
+    游标非法(400)与 run 不存在(404)都在建流之前返回,不产生半开流。
+    """
+    async with session_scope(factory) as session:
+        await require_run(session, tenant_id, run_id)
 
 
 def parse_last_event_id(last_event_id: str | None) -> int:
@@ -39,12 +50,6 @@ def parse_last_event_id(last_event_id: str | None) -> int:
         return int(last_event_id)
     except ValueError:
         raise AppError("sse.bad_cursor", "Last-Event-ID 必须是整数") from None
-
-
-def sse_chunk(event: RunEvent) -> str:
-    """把一条 run 事件编码成 SSE 帧(见契约 1)。"""
-    data = RunEventRead.model_validate(event).model_dump_json()
-    return f"id: {event.seq}\nevent: {event.type}\ndata: {data}\n\n"
 
 
 async def event_stream(
@@ -63,12 +68,12 @@ async def event_stream(
             run = await require_run(session, tenant_id, run_id)
         for event in events:
             last_seq = event.seq
-            yield sse_chunk(event)
+            yield run_event_frame(event)
         if run.status in TERMINAL_STATUSES:
-            yield f"event: stream.end\ndata: {json.dumps({'status': run.status})}\n\n"
+            yield run_end_frame(run.status)
             return
         if not events:
             idle_polls += 1
             if idle_polls % settings.sse_keepalive_polls == 0:
-                yield ": keep-alive\n\n"
+                yield comment_frame("keep-alive")
             await asyncio.sleep(settings.sse_poll_interval_seconds)

@@ -1,46 +1,32 @@
 """conversation 端点:参数校验 → 调 service → 返回 schema,不写业务逻辑。
 
-发消息有两个入口,共用同一套分流与上下文口径:
-
-- POST /messages:一次拿全文(脚本/内部调用省事);
-- POST /messages/stream:SSE 逐段增量(对话页"边输出边显示"用)。
+会话 CRUD、消息回放与附件收发在这里;发消息(一次全文 / SSE 流式)拆到
+conversation_messages.py(R-29),两者共用同一套分流与上下文口径。
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from urllib.parse import quote
 
 from common.artifacts import ArtifactStore
-from common.errors import AppError, ConflictError, NotFoundError
-from database.session import session_scope
+from common.errors import AppError
 from fastapi import (
     APIRouter,
     Depends,
     File,
     Query,
-    Request,
     Response,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
-from langgraph.graph.state import CompiledStateGraph
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
     get_artifact_store,
-    get_file_downloader,
-    get_llm_client,
-    get_run_graph,
     get_session,
     get_settings,
-    get_skills,
     get_tenant_id,
-    get_tool_extras_factory,
-    get_toolkit_factory,
     get_workspace_client,
 )
 from agent_orchestrator.schemas.conversations import (
@@ -50,19 +36,10 @@ from agent_orchestrator.schemas.conversations import (
     ConversationPage,
     ConversationRead,
     ConversationUpdate,
-    MessageCreate,
-    MessagePostResult,
     MessageRead,
 )
-from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
-from agent_orchestrator.services import mcp as mcp_service
-from agent_orchestrator.services import skill_packages, triage
-from agent_orchestrator.services.file_capture import FileDownloader
-from agent_orchestrator.services.llm import LLMClient
-from agent_orchestrator.services.skill_packages import SkillDefinition
-from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -70,59 +47,9 @@ attachments_router = APIRouter(prefix="/attachments", tags=["attachments"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
-RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
-LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
-SkillDep = Annotated[SkillRegistry, Depends(get_skills)]
-ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
-ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
-# 自动放行的 run 会在 plan 里跑到终态,交付物落库/镜像/外链抓取需要同样依赖
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
-FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
-
-
-async def _resolve_skill(
-    session: AsyncSession,
-    tenant_id: str,
-    skills: SkillRegistry,
-    skill_id: str | None,
-) -> SkillDefinition | None:
-    """消息可选绑定 Skill(内置或上传包):未知 id 在落库前 404,不建半残 run。"""
-    if not skill_id:
-        return None
-    definition = await skill_packages.resolve_skill(
-        session, tenant_id, skill_id, skills
-    )
-    if definition is None:
-        raise NotFoundError("skill.not_found", "Skill 不存在")
-    return definition
-
-
-async def _resolve_mcp(
-    session: AsyncSession,
-    tenant_id: str,
-    settings: Any,
-    server_ids: list[str],
-) -> tuple[list[str], str]:
-    """解析显式引用的 MCP server → (规范 id 列表, 提示词片段)。
-
-    校验在落库前完成:未知 404、停用 409、MCP 未启用 409,不留半残引用。
-    """
-    if not server_ids:
-        return [], ""
-    if not settings.mcp_enabled:
-        raise ConflictError("mcp.disabled", "MCP 能力未启用")
-    servers = await mcp_service.resolve_selected(session, tenant_id, server_ids)
-    return [server.id for server in servers], mcp_service.reference_note(servers)
-
-
-#: SSE 标准头:不缓存、禁代理缓冲(否则增量会被攒成一坨)
-SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-
-
-def _sse(name: str, data: dict[str, Any]) -> str:
-    """一个具名 SSE 帧(前端按 event 名分发:meta / delta / done / error)。"""
-    return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+SettingsDep = Annotated[Any, Depends(get_settings)]
 
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
@@ -252,7 +179,7 @@ async def upload_attachment(
     conversation_id: str,
     session: DBSession,
     tenant_id: TenantId,
-    settings: Annotated[Any, Depends(get_settings)],
+    settings: SettingsDep,
     file: Annotated[UploadFile, File()],
 ) -> AttachmentRead:
     """上传附件:本地最小版,内容存 DB;类型/大小在 service 校验。"""
@@ -303,161 +230,3 @@ async def delete_attachment(
     attachment_id: str, session: DBSession, tenant_id: TenantId
 ) -> None:
     await attachments_service.delete_attachment(session, tenant_id, attachment_id)
-
-
-@router.post(
-    "/{conversation_id}/messages",
-    response_model=MessagePostResult,
-    status_code=status.HTTP_201_CREATED,
-)
-async def post_message(
-    body: MessageCreate,
-    conversation_id: str,
-    session: DBSession,
-    tenant_id: TenantId,
-    graph: RunGraph,
-    llm: LLM,
-    settings: Annotated[Any, Depends(get_settings)],
-    skills: SkillDep,
-    toolkit_factory: ToolkitFactory,
-    tool_extras_factory: ToolExtrasFactory,
-    store: ArtifactStoreDep,
-    workspace: WorkspaceDep,
-    downloader: FileDownloaderDep,
-) -> MessagePostResult:
-    """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
-    skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
-    mcp_ids, mcp_note = await _resolve_mcp(
-        session, tenant_id, settings, body.mcp_server_ids
-    )
-    message, run, reply, mode = await conversations_service.post_message(
-        session,
-        graph,
-        llm,
-        tenant_id,
-        conversation_id,
-        body.content,
-        mode=body.mode,
-        attachment_ids=body.attachment_ids,
-        jobs_enabled=settings.jobs_enabled,
-        skill=skill,
-        mcp_server_ids=mcp_ids,
-        mcp_reference_note=mcp_note,
-        toolkit_factory=toolkit_factory,
-        extras_factory=tool_extras_factory,
-        store=store,
-        workspace=workspace,
-        downloader=downloader,
-        max_download_files=settings.artifact_download_max_files,
-    )
-    return MessagePostResult(
-        message=MessageRead.model_validate(message),
-        run=RunRead.model_validate(run) if run is not None else None,
-        reply=MessageRead.model_validate(reply) if reply is not None else None,
-        mode=mode,
-    )
-
-
-def _message_frames(
-    events: AsyncIterator[tuple[str, dict[str, Any]]],
-) -> AsyncIterator[str]:
-    """service 事件 → SSE 帧(ORM/schema 的转换只在这一层做)。"""
-
-    async def _gen() -> AsyncIterator[str]:
-        async for name, payload in events:
-            if name == "meta":
-                run = payload.get("run")
-                data: dict[str, Any] = {
-                    "mode": payload["mode"],
-                    "message": MessageRead.model_validate(
-                        payload["message"]
-                    ).model_dump(mode="json"),
-                    "run": (
-                        RunRead.model_validate(run).model_dump(mode="json")
-                        if run is not None
-                        else None
-                    ),
-                }
-            elif name == "delta":
-                data = {"text": payload["text"]}
-            elif name == "tool":
-                data = {
-                    "name": payload["name"],
-                    "arguments": payload["arguments"],
-                    "ok": payload["ok"],
-                }
-            elif name == "done":
-                reply = payload.get("reply")
-                data = {
-                    "mode": payload["mode"],
-                    "reply": (
-                        MessageRead.model_validate(reply).model_dump(mode="json")
-                        if reply is not None
-                        else None
-                    ),
-                }
-            else:  # error
-                data = {"code": payload["code"], "message": payload["message"]}
-            yield _sse(name, data)
-
-    return _gen()
-
-
-@router.post("/{conversation_id}/messages/stream")
-async def stream_message(
-    body: MessageCreate,
-    conversation_id: str,
-    request: Request,
-    tenant_id: TenantId,
-    graph: RunGraph,
-    llm: LLM,
-    settings: Annotated[Any, Depends(get_settings)],
-    skills: SkillDep,
-    toolkit_factory: ToolkitFactory,
-    tool_extras_factory: ToolExtrasFactory,
-    store: ArtifactStoreDep,
-    workspace: WorkspaceDep,
-    downloader: FileDownloaderDep,
-) -> StreamingResponse:
-    """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;
-    失败以 error 帧收尾。
-
-    模型没开且显式要 chat 时在开流前就 409(否则只能发一帧错误,状态码已是 200)。
-    """
-    triage.require_available(body.mode, llm)
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    async with session_scope(factory) as session:
-        await conversations_service.require_conversation(  # 404 校验
-            session, tenant_id, conversation_id
-        )
-        # 技能/MCP 解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
-        skill = await _resolve_skill(session, tenant_id, skills, body.skill_id)
-        mcp_ids, mcp_note = await _resolve_mcp(
-            session, tenant_id, settings, body.mcp_server_ids
-        )
-    return StreamingResponse(
-        _message_frames(
-            conversations_service.stream_message(
-                factory,
-                graph,
-                llm,
-                tenant_id,
-                conversation_id,
-                body.content,
-                mode=body.mode,
-                attachment_ids=body.attachment_ids,
-                jobs_enabled=settings.jobs_enabled,
-                skill=skill,
-                mcp_server_ids=mcp_ids,
-                mcp_reference_note=mcp_note,
-                toolkit_factory=toolkit_factory,
-                extras_factory=tool_extras_factory,
-                store=store,
-                workspace=workspace,
-                downloader=downloader,
-                max_download_files=settings.artifact_download_max_files,
-            )
-        ),
-        media_type="text/event-stream",
-        headers=SSE_HEADERS,
-    )

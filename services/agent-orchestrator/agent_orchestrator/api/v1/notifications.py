@@ -14,19 +14,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from database.session import session_scope
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_orchestrator.api.deps import get_tenant_id
+from agent_orchestrator.api.deps import get_container, get_tenant_id
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.repositories import RunRepository
+from agent_orchestrator.core.sse import comment_frame, event_id_frame
+from agent_orchestrator.services.notifications import scan_changed
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -80,18 +78,6 @@ def diff_notifications(
     return next_snapshot, out
 
 
-async def _scan(
-    factory: async_sessionmaker[AsyncSession], tenant_id: str, settings: Settings
-) -> list[Any]:
-    since = datetime.now(UTC) - timedelta(
-        seconds=settings.notifications_lookback_seconds
-    )
-    async with session_scope(factory) as session:
-        return await RunRepository(session).list_changed_since(
-            tenant_id, since, limit=settings.notifications_batch_limit
-        )
-
-
 async def notification_stream(
     factory: async_sessionmaker[AsyncSession],
     settings: Settings,
@@ -103,24 +89,21 @@ async def notification_stream(
     idle_polls = 0
     first = True
     while True:
-        runs = await _scan(factory, tenant_id, settings)
+        runs = await scan_changed(factory, tenant_id, settings)
         if first:
             snapshot = {run.id: run.status for run in runs}
             first = False
-            yield ": ready\n\n"
+            yield comment_frame("ready")
             await asyncio.sleep(settings.notifications_poll_interval_seconds)
             continue
         snapshot, notifications = diff_notifications(snapshot, runs)
         for payload in notifications:
             seq += 1
-            yield (
-                f"id: {seq}\nevent: run.status_changed.v1\n"
-                f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            )
+            yield event_id_frame(seq, "run.status_changed.v1", payload)
         if not notifications:
             idle_polls += 1
             if idle_polls % settings.sse_keepalive_polls == 0:
-                yield ": keep-alive\n\n"
+                yield comment_frame("keep-alive")
         await asyncio.sleep(settings.notifications_poll_interval_seconds)
 
 
@@ -136,10 +119,11 @@ async def stream_notifications(
     漏掉一条事件等价于多一次轮询,客户端会从 /runs 列表补齐真实状态)。
     """
     del last_event_id
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    settings: Settings = request.app.state.settings
+    container = get_container(request)
+    assert container.session_factory is not None
+    settings: Settings = container.settings
     return StreamingResponse(
-        notification_stream(factory, settings, tenant_id),
+        notification_stream(container.session_factory, settings, tenant_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

@@ -19,11 +19,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from common.errors import NotFoundError
 from common.logging import get_logger
 from database.session import session_scope
 from events.bus import EventBus
 from events.envelope import EventEnvelope
-from events.outbox import OutboxRepository, is_processed, mark_processed
+from events.outbox import (
+    DISPATCHED,
+    FAILED,
+    PENDING,
+    OutboxRepository,
+    is_processed,
+    mark_processed,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.models.runs import Run, RunArtifact
@@ -168,3 +176,53 @@ def register_consumers(
         bus.subscribe(DELIVERED_EVENT, consumer)
         registered.append(consumer.name)
     return registered
+
+
+# --- 运维查询(§6.3):API 端点的仓储访问收敛在这里 ---
+# api 层只做参数校验与响应构造,事件表怎么查/怎么重放由 service 决定。
+
+
+async def list_events(
+    session: AsyncSession,
+    tenant_id: str,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Any]:
+    """列本租户事件(最新在前),可按状态过滤。"""
+    return await OutboxRepository(session).list_events(
+        tenant_id=tenant_id, status=status, limit=limit, offset=offset
+    )
+
+
+async def stats(session: AsyncSession, tenant_id: str) -> dict[str, int]:
+    """本租户各状态计数(缺省 0,便于端点直接取三项)。"""
+    counts = await OutboxRepository(session).stats(tenant_id=tenant_id)
+    return {
+        PENDING: counts.get(PENDING, 0),
+        DISPATCHED: counts.get(DISPATCHED, 0),
+        FAILED: counts.get(FAILED, 0),
+    }
+
+
+async def requeue_event(session: AsyncSession, tenant_id: str, event_id: str) -> Any:
+    """人工重放单条:回到 pending,等 dispatcher 下一轮投递。
+
+    跨租户一律 404(不泄漏存在性),与其它资源同一约定。
+    """
+    repository = OutboxRepository(session)
+    event = await repository.get_by_id(event_id)
+    if event is None or event.tenant_id != tenant_id:
+        raise NotFoundError(
+            "outbox.event_not_found",
+            "outbox 事件不存在",
+            details={"event_id": event_id},
+        )
+    await repository.requeue(event)
+    return event
+
+
+async def requeue_failed(session: AsyncSession, tenant_id: str) -> int:
+    """批量重放本租户所有 failed 事件(消费者恢复后一键补投)。"""
+    return await OutboxRepository(session).requeue_failed(tenant_id=tenant_id)
