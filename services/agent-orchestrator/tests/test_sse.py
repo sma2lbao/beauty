@@ -94,6 +94,29 @@ def test_stream_bad_cursor_rejected(client: TestClient) -> None:
     assert resp.json()["code"] == "sse.bad_cursor"
 
 
+async def test_event_stream_emits_keepalive_comment_frame(tmp_path) -> None:
+    """空轮询按 sse_keepalive_polls 周期发注释帧,客户端解析时跳过(契约 3)。"""
+    factory = create_session_factory(f"sqlite+aiosqlite:///{tmp_path}/k.db")
+    async with factory.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with session_scope(factory) as session:
+        run = await runs_service.create_run(
+            session, "t-1", RunCreate(title="心跳", goal="看注释帧")
+        )
+
+    settings = Settings(
+        _env_file=None,
+        env="dev",
+        sse_poll_interval_seconds=0.01,
+        sse_keepalive_polls=1,
+    )
+    stream = _event_stream(factory, settings, "t-1", run.id, after=0)
+    assert "run.created.v1" in await anext(stream)
+    assert await anext(stream) == ": keep-alive\n\n"
+    await stream.aclose()
+    await factory.engine.dispose()
+
+
 async def test_event_stream_stays_open_until_terminal(tmp_path) -> None:
     """非终态 run:生成器重放完不结束,可随时干净关闭(断线重连的根基)。
 
