@@ -1,7 +1,7 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W3 已收口（RFC-004，2026-10-25）；W4 待立项；最近更新：2026-10-25 09:25 +08:00
+- 当前波次：W4 进行中（RFC-005，2026-10-25）；W3 已收口；最近更新：2026-10-25 09:40 +08:00
 - 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md，W3 见 docs/refactoring/retro/w3.md 与 docs/refactoring/verification/004-w3.md
 
 ## W0（已收口 · 7 项）
@@ -88,6 +88,8 @@
 
 ## 遗留项（跟踪）
 
+W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分）、R-40（env.py×3 + AO conftest + metrics 归属）；其余继续跟踪。
+
 | 项                                                                                               | 来源      | 跟踪                                                                     |
 | ------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------ |
 | dependabot 两个 PR 分支（b6b2dc6 / 33d7ec0）CI 红：分支上是旧 ci.yml                             | CI 修复   | 重基即可恢复；合并前确认 actions 版本与 Node 22 兼容                     |
@@ -105,17 +107,33 @@
 | web 剩余 4 个 >400 行源文件（workspace-switcher 543 / message-list 528 / runs 448 / skills 432） | W2 结构   | W4 评估                                                                  |
 | alembic_kit 落地后 3 处 env.py 仍未接（AO/account/knowledge）                                    | R-24      | W4                                                                       |
 
-## W4 预排（未立项）
+## W4（进行中 · 7 项 R-34..R-40）
 
-| ID   | 项                                         | 规模 | 风险 | 说明                                             |
-| ---- | ------------------------------------------ | ---- | ---- | ------------------------------------------------ |
-| R-34 | 发布流程：版本策略、CHANGELOG、nx release  | M    | 低   | 无 CHANGELOG；版本号 0.0.0/0.1.0/1.0.0 并存      |
-| R-35 | 依赖更新与安全扫描（Dependabot + audit）   | S    | 低   | 无更新策略、无安全扫描入 CI                      |
-| R-36 | 容器化：Dockerfile / compose / nginx TLS   | L    | 中   | 依赖 R-37；deploy/README 过时                    |
-| R-37 | 健康探针统一（/healthz 与 /readyz 全服务） | M    | 低   | /readyz 仅部分服务；nginx 不暴露探针             |
-| R-38 | 工作区卫生收口（生成物口径核对等）         | S    | 低   | 链接检查已由 R-16 完成，剩余归档规则与生成物核对 |
+- 立项：docs/refactoring/rfc/005-w4.md（approved，13KB，§7 指标 14 行 / §8 风险表 / §9 分工）
+- 目标：发布可重复、安全扫描进 CI、容器化可跑、探针一致、体量 ≤500、W3 接线收口、工作区卫生有检查
 
-另：W4 需承接 W3 遗留（≤500 行体量收紧、5 个超大测试文件、AO conftest 接 testkit、3 处 env.py 接 alembic_kit、分支覆盖率评估、metrics 归属）。
+| ID    | 重构项                                            | 规模 | 风险 | 实施者       | 任务    | 状态                   |
+| ----- | ------------------------------------------------- | ---- | ---- | ------------ | ------- | ---------------------- |
+| R-34  | 发布流程：单一版本 0.1.0 + nx release + CHANGELOG | M    | 低   | w0-ci        | task-33 | ⬜ 未开始              |
+| R-35  | 依赖更新与安全扫描（dependabot + audit 入 CI）    | S    | 低   | w0-ci        | task-33 | ⬜ 未开始              |
+| R-36  | 容器化：2 Dockerfile + 全栈 compose + README      | L    | 中   | audit-ops    | task-38 | ⬜ 未开始（依赖 R-37） |
+| R-37  | 探针统一（bff /readyz + nginx 探针/TLS）          | M    | 低   | w0-gate      | task-32 | ⬜ 未开始              |
+| R-38  | 工作区卫生（.gitignore + check-workspace.sh）     | S    | 低   | w0-docs      | task-34 | ⬜ 未开始              |
+| R-39a | 源文件体量 ≤500（10 个文件）                      | L    | 中   | audit-python | task-35 | ⬜ 未开始              |
+| R-39b | 测试文件体量 ≤500（6 个文件）                     | M    | 中   | audit-ts     | task-36 | ⬜ 未开始              |
+| R-40  | 接线收口（env.py×3 + AO conftest + metrics 归属） | M    | 中   | w1-api       | task-37 | ⬜ 未开始              |
+
+复核：task-39（review-doc，依赖 task-32..38）。
+
+### W4 出口检查（勾选前须有实测输出）
+
+- [ ] 版本 18 处全 0.1.0，check-versions.sh EXIT 0，nx release dry-run EXIT 0
+- [ ] security-audit job 绿；npm 生产依赖阻断通过；允许清单未过期
+- [ ] 2 个 Dockerfile + compose config EXIT 0 + CI docker-build 绿；deploy README 覆盖 TLS/迁移/回滚
+- [ ] /healthz /readyz 7/7 且契约一致；nginx 2 个探针 location
+- [ ] 最大 Python 源文件 ≤500、最大测试文件 ≤500；pytest ≥727、vitest ≥498、golden 9/9
+- [ ] check-workspace.sh EXIT 0 且入 gate+CI；5/5 env.py 接 alembic_kit；AO conftest 接 testkit
+- [ ] 全仓 lint 16/16、docs 0 失败、入口 chunk ≤336KB、CI 全绿
 
 ## 波次总览
 
@@ -125,4 +143,4 @@
 | W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
 | W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25） |
 | W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | ✅ 收口（2026-10-25） |
-| W4   | 发布与运维（R-34..R-38）+ W3 遗留                      | 待立项                |
+| W4   | 发布与运维（R-34..R-40）+ W3 遗留                      | 进行中（2026-10-25）  |
