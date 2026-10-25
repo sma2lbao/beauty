@@ -56,7 +56,7 @@ git push origin main --follow-tags
 [ ] 8. 打 tag 后用 git tag --list 'v*' 确认存在；verification 报告回填 release commit 与 tag
 ```
 
-- **DoD（完成定义）**：CI 绿 + tag 已打 + 验证报告无「待回填」字样，三者缺一不得宣称「已发布」。
+- **DoD（完成定义）**：CI 绿 + tag 已打 + 验证报告所有字段均已填实，三者缺一不得宣称「已发布」。
 - 发布失败回滚：未推送的 tag 用 git tag -d；已推送用新补丁版本修正（不改历史）。
 
 ## 5. 相关文件
