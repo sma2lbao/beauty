@@ -366,6 +366,16 @@ def _settings(tmp_path: Path, name: str = "test.db", **overrides: Any) -> Settin
         "sandbox_enabled": False,
         "mcp_stdio_enabled": False,
         "jobs_enabled": False,
+        # R-32 补钉:.env 会被 Nx 注入任务环境(AGENT_ORCHESTRATOR__* 前缀),
+        # 这几项开着时 quota 用例的执行图会去连外部服务,被 pytest-socket 拦成
+        # SocketBlockedError → run failed。默认钉 False,与直跑口径一致。
+        "documents_enabled": False,
+        "knowledge_enabled": False,
+        "skill_execution_enabled": False,
+        # 内部服务地址:默认 127.0.0.1:8001,装配配额/用量时会建真实 httpx 客户端;
+        # 禁网门禁下这会变成 SocketBlockedError 放大成 run failed。测试要覆盖
+        # 配额/上报就自己 configure_client/configure_reporter(MockTransport)。
+        "account_service_url": "",
         # 计划审批:关掉自动放行——既有用例覆盖的是"人工审批"路径;
         # 自动放行由 tests/test_plan_auto_approve.py 显式开启。
         "plan_auto_approve": False,

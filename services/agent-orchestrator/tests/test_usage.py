@@ -170,6 +170,31 @@ async def test_reporter_skips_empty_samples() -> None:
     assert calls == []
 
 
+async def test_reporter_swallows_non_http_errors() -> None:
+    """非 HTTPError 也不能上抛:上报发生在 run 的 finally,抛出即判 run failed。
+
+    回归自 R-32:禁网后异步传输层抛的是任务组包装的 ExceptionGroup,原先只捕
+    httpx.HTTPError,异常逃出 _usage_boundary 把 quota 用例全带成 failed。
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("transport exploded")
+
+    reporter = usage.UsageReporter(
+        base_url="http://account.test",
+        internal_secret="s3cret",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        await reporter.report(
+            tenant_id="t-1",
+            run_id="r-1",
+            samples=[usage.UsageSample("m", 1, 2, 3)],
+        )
+    finally:
+        await reporter.aclose()
+
+
 def _create_conversation(client) -> str:
     resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
     assert resp.status_code == 201

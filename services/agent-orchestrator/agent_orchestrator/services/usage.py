@@ -116,7 +116,10 @@ class UsageReporter:
                     json=body,
                     headers={SECRET_HEADER: self._secret},
                 )
-            except httpx.HTTPError as exc:
+            except Exception as exc:  # noqa: BLE001 - 上报是观测数据,任何异常都不能连带打死 run
+                # 不只是 httpx.HTTPError:异步传输层异常(事件循环关闭、
+                # 任务组包装的 ExceptionGroup)同样会在这里冒出,一旦上抛就会
+                # 把 run 判成 failed(契约见 run_quota._usage_boundary)。
                 self._failed(log, tenant_id, run_id, sample, str(exc))
                 return
             if resp.status_code >= 400:
