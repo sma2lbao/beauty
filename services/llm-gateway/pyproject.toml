@@ -8,6 +8,7 @@ dependencies = [
     # 共享库(uv workspace,本地 editable)
     "common",
     "fastapi>=0.143.0",
+    "httpx>=0.28.1",
     "litellm>=1.105.0",
     "uvicorn>=0.53.0",
 ]

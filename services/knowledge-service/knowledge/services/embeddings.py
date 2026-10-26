@@ -10,11 +10,14 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 import httpx
 from common.errors import UpstreamError
+from common.logging import current_context
 from common.middleware import inject_request_headers
+from common.security import SECRET_HEADER, TENANT_HEADER
 
 LOCAL_PROVIDER = "local"
 GATEWAY_PROVIDER = "gateway"
@@ -60,6 +63,27 @@ class LocalHashingEmbeddingProvider:
         return [value / norm for value in vector]
 
 
+def _identity_headers_hook(
+    internal_secret: str,
+) -> Callable[[httpx.Request], Awaitable[None]]:
+    """出站钩子:先透传 request_id/traceparent,再补租户与内部密钥。
+
+    llm-gateway 按租户解析 BYOK 密钥,依赖 X-Tenant-Id + X-Internal-Secret 两个头;
+    租户取当前 contextvars(请求边界由 common.middleware 绑定),内部密钥取本服务
+    配置。两个头都用 setdefault:上游显式给了头时不覆盖。
+    """
+
+    async def _hook(request: httpx.Request) -> None:
+        await inject_request_headers(request)
+        tenant_id = current_context().get("tenant_id")
+        if tenant_id:
+            request.headers.setdefault(TENANT_HEADER, str(tenant_id))
+        if internal_secret:
+            request.headers.setdefault(SECRET_HEADER, internal_secret)
+
+    return _hook
+
+
 class GatewayEmbeddingProvider:
     """经 llm-gateway 取嵌入:平台内不直连模型提供商(§5)。"""
 
@@ -71,13 +95,16 @@ class GatewayEmbeddingProvider:
         model: str,
         timeout_seconds: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        internal_secret: str = "",
     ) -> None:
         self.model = model
+        # 网关 BYOK:租户头 + 内部密钥头(密钥留空时只带租户,走平台默认密钥)
+        self.internal_secret = internal_secret
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout_seconds,
             transport=transport,
-            event_hooks={"request": [inject_request_headers]},
+            event_hooks={"request": [_identity_headers_hook(internal_secret)]},
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -119,14 +146,22 @@ def _error_detail(response: httpx.Response) -> dict[str, str]:
 
 
 def build_embedder(
-    provider: str, *, model: str, gateway_url: str, timeout_seconds: float = 60.0
+    provider: str,
+    *,
+    model: str,
+    gateway_url: str,
+    timeout_seconds: float = 60.0,
+    internal_secret: str = "",
 ) -> EmbeddingProvider:
     """按配置装配嵌入提供方;未知配置在启动时就报错(不带病上线)。"""
     if provider == LOCAL_PROVIDER:
         return LocalHashingEmbeddingProvider()
     if provider == GATEWAY_PROVIDER:
         return GatewayEmbeddingProvider(
-            gateway_url, model, timeout_seconds=timeout_seconds
+            gateway_url,
+            model,
+            timeout_seconds=timeout_seconds,
+            internal_secret=internal_secret,
         )
     raise ValueError(f"未知的嵌入提供方:{provider}(支持 local/gateway)")
 

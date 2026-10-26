@@ -36,8 +36,19 @@ class Settings(BaseAppSettings):
     # 社交 OAuth(Google/GitHub);client id/secret 留空即该 provider 关闭
     oauth_state_secret: str = ""  # 留空回退 internal_secret;两者都空则 OAuth 关闭
     oauth_state_ttl_seconds: int = 600
-    # BYOK 应用层加密密钥(M0-11 占位;生产必须换随机长密钥/KMS)
+    # BYOK 信封加密:KMS 实现 local(Fernet + 本地密钥材料)或 vault(Vault Transit)。
+    # byok_secret 是**当前 kid**(byok_kek_id)的密钥材料;轮换时把旧密钥挪进
+    # byok_previous_secrets(env JSON: ACCOUNT__BYOK_PREVIOUS_SECRETS={"local-1":"…"}),
+    # 再改 byok_kek_id + byok_secret——旧密文在轮换完成前仍可解。
+    byok_kms: str = "local"
     byok_secret: str = "dev-byok-secret-change-me"
+    byok_kek_id: str = "local-1"
+    byok_previous_secrets: dict[str, str] = {}
+    byok_vault_url: str = ""
+    byok_vault_token: str = ""
+    byok_vault_mount: str = "transit"
+    byok_vault_key: str = "byok"
+    byok_vault_timeout_seconds: float = 5.0
     # MCP OAuth 2.1(M3-04):客户端动态注册 + 授权码 + PKCE
     oauth21_enabled: bool = True
     oauth21_web_origin: str = "http://localhost:5173"  # 授权页所在的 SPA

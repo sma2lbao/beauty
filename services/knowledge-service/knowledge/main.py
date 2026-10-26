@@ -28,6 +28,7 @@ async def _startup(app: FastAPI) -> None:
         model=settings.embedding_model,
         gateway_url=settings.llm_gateway_url,
         timeout_seconds=settings.embedding_timeout_seconds,
+        internal_secret=settings.internal_secret,
     )
 
 

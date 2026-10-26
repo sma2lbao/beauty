@@ -260,6 +260,8 @@ class AppContainer(ContainerAssemblyMixin):
                 model=settings.llm_model,
                 retry_attempts=settings.llm_retry_attempts,
                 retry_backoff_seconds=settings.llm_retry_backoff_seconds,
+                # 网关 BYOK 解析:租户头随上下文注入,内部密钥取本服务配置
+                internal_secret=settings.internal_auth_secret,
             )
             self._closers.append(("llm", llm.aclose))
         # 发布解析后的客户端:直接对话(§6.7)与执行图共用同一个;

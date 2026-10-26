@@ -13,6 +13,7 @@ from database.session import session_scope
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from account.core.byok_kms import BYOKKms
 from account.core.config import Settings
 
 
@@ -24,6 +25,11 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_byok_kms(request: Request) -> BYOKKms:
+    """BYOK KMS:lifespan 装配(测试可经 create_app 注入),业务层只依赖协议。"""
+    return request.app.state.byok_kms
 
 
 async def get_internal_tenant_id(

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from llm_gateway.api.health import health_router
 from llm_gateway.api.v1.router import api_router
 from llm_gateway.core.config import Settings
+from llm_gateway.services.byok import ByokResolver
 
 
 @asynccontextmanager
@@ -22,10 +23,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging(settings)
     # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
     install_observability(app, settings)
-    yield
+    try:
+        yield
+    finally:
+        # 关闭 BYOK 连接池(懒建,未解析过则 no-op)。
+        resolver: ByokResolver | None = getattr(app.state, "byok_resolver", None)
+        if resolver is not None:
+            await resolver.aclose()
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    byok_resolver: ByokResolver | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="llm-gateway",
         version="0.1.0",
@@ -34,6 +45,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         telemetry={"exclude": exclude_telemetry},
     )
     app.state.settings = settings or Settings()
+    # BYOK 解析器:测试可注入(带 MockTransport),默认按配置自建(懒建连接池)。
+    app.state.byok_resolver = byok_resolver or ByokResolver(app.state.settings)
 
     install_app_error_handler(app)
     app.add_middleware(RequestContextMiddleware, settings=app.state.settings)

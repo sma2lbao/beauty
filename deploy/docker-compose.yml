@@ -165,6 +165,10 @@ services:
       LLM_GATEWAY__API_KEY: ${LLM_GATEWAY_API_KEY:-}
       LLM_GATEWAY__API_BASE: ${LLM_GATEWAY_API_BASE:-}
       LLM_GATEWAY__DEFAULT_MODEL: ${LLM_GATEWAY_DEFAULT_MODEL:-deepseek/deepseek-chat}
+      # BYOK:按 X-Tenant-Id + X-Internal-Secret 解析租户密钥(与 account 同源)
+      LLM_GATEWAY__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
+      # 容器内必须走服务名:默认 127.0.0.1:8001 会指向网关自身,BYOK 解析全失败
+      LLM_GATEWAY__ACCOUNT_BASE_URL: http://account-service:8001
     restart: unless-stopped
 
   connector-service:
@@ -194,6 +198,8 @@ services:
       # 演示用本地词法嵌入(零网络);接真嵌入模型时改为网关提供方。
       KNOWLEDGE__EMBEDDING_PROVIDER: local
       KNOWLEDGE__LLM_GATEWAY_URL: http://llm-gateway:8003
+      # 与 account/gateway 的 INTERNAL_SECRET 同源:网关按租户解析 BYOK 密钥
+      KNOWLEDGE__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
     depends_on: *db-depends
     restart: unless-stopped
 

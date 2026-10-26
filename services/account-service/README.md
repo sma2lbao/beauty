@@ -43,6 +43,45 @@
 | `INTERNAL_SECRET`     | 空         | `/v1/auth/issue` 的共享密钥,留空即关闭内部签发                                         |
 | `AUTH_ENABLED`        | true       | 校验 Bearer 并从 token claim 解析租户(自建 IdP 即本服务;显式关闭走旧临时头,仅特殊部署) |
 
+## BYOK(信封加密 + KMS 抽象)
+
+用户自带的模型 API key 以**信封 v2** 落库:密文是 JSON
+`{"v":2,"kms":"local","kid":"local-1","ct":"…"}`,`kid` 指向加密它的 KEK。
+KMS 有 `local`(Fernet + 本地密钥材料)与 `vault`(Vault Transit)两种实现,
+见 `account/core/byok_kms.py`;测试/特殊部署可经 `create_app(byok_kms=…)` 注入。
+
+- `PUT /v1/byok/{provider}`:按当前 KMS 加密保存(响应只回 masked key);
+- `GET /v1/byok` / `DELETE /v1/byok/{provider}`:列表(不回明文)与删除;
+- `GET /v1/byok/{provider}/secret`:**内部解析明文**(`X-Internal-Secret` +
+  `X-Tenant-Id`),供 llm-gateway 取用;响应带 `Cache-Control: no-store`。
+  历史密文在读取时**懒轮换**到当前 kid,轮换失败只记 warning,仍返回明文;
+- `POST /v1/byok/rotate`:**内部**把租户全部密文重加密到当前 KMS key,
+  逐条容错,返回 `{rotated,failed}`(失败记 `byok.rotate_failed`,不抛错)。
+
+升级/轮换步骤(零停机):
+
+1. 把当前 `BYOK_SECRET` 挪进 `BYOK_PREVIOUS_SECRETS`(JSON,key = 旧 kid);
+2. 设新的 `BYOK_KEK_ID` + `BYOK_SECRET`,重启——旧密文仍可解;
+3. 逐租户调 `POST /v1/byok/rotate` 把存量密文重加密到新 kid;
+4. 确认 `failed=0` 后删掉 `BYOK_PREVIOUS_SECRETS`。
+
+v2 之前的**裸 Fernet token** 保持可解(依次尝试当前/历史密钥),在读取或更新时
+自动升级为 v2。从 `local` 迁到 `vault` 前必须先用 `local` 跑完一次轮换
+(Vault 无法解裸 token)。解密失败统一 `500 byok.unreadable`,KMS 不可用统一
+`502 byok.kms_unavailable`——都不泄漏密文/密钥内容。
+
+| 变量                         | 默认    | 说明                                          |
+| ---------------------------- | ------- | --------------------------------------------- |
+| `BYOK_KMS`                   | local   | `local` 或 `vault`(未知取值启动即失败)        |
+| `BYOK_KEK_ID`                | local-1 | 当前 KEK 标识,写进信封 `kid`                   |
+| `BYOK_SECRET`                | dev 占位 | `local` 当前 kid 的密钥材料                  |
+| `BYOK_PREVIOUS_SECRETS`      | {}      | 历史 kid → 旧密钥材料的 JSON 映射(轮换期用)   |
+| `BYOK_VAULT_URL`             | 空      | Vault 地址(如 `http://vault:8200`)            |
+| `BYOK_VAULT_TOKEN`           | 空      | Vault token(`vault` 模式必填)                 |
+| `BYOK_VAULT_MOUNT`           | transit | Transit secrets engine 挂载点                 |
+| `BYOK_VAULT_KEY`             | byok    | Transit key 名                                |
+| `BYOK_VAULT_TIMEOUT_SECONDS` | 5       | Vault HTTP 超时                               |
+
 ## 迁移
 
 users 表 `password_hash`(空 = 未设密码,存量/被邀请用户);

@@ -25,6 +25,7 @@ from account.api.v1 import auth as auth_api
 from account.api.v1 import oauth as oauth_api
 from account.api.v1 import oidc as oidc_api
 from account.api.v1.router import api_router
+from account.core.byok_kms import BYOKKms, build_byok_kms
 from account.core.config import Settings
 from account.core.idp import IdPSigner, load_or_create_signer
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
@@ -43,6 +44,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with factory.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
+    # BYOK KMS:测试可经 create_app(byok_kms=…) 注入,否则按配置装配
+    if app.state.byok_kms is None:
+        app.state.byok_kms = build_byok_kms(settings)
+
     # 鉴权装配(§10):认证交给 IdP,这里只解析当前租户
     verifier: JwtVerifier | None = app.state.token_verifier
     owns_verifier = False
@@ -59,6 +64,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        kms: BYOKKms | None = app.state.byok_kms
+        if kms is not None:
+            await kms.aclose()
         if owns_verifier:
             await verifier.aclose()
         await factory.engine.dispose()
@@ -68,8 +76,10 @@ def create_app(
     settings: Settings | None = None,
     token_verifier: JwtVerifier | None = None,
     oauth_transport=None,
+    byok_kms: BYOKKms | None = None,
 ) -> FastAPI:
-    """测试注入:token_verifier(假 JWKS)、oauth_transport(假 OAuth HTTP)。"""
+    """测试注入:token_verifier(假 JWKS)、oauth_transport(假 OAuth HTTP)、
+    byok_kms(假 KMS);未注入时 lifespan 按 Settings 装配。"""
     app = FastAPI(
         title="account-service",
         version="0.1.0",
@@ -81,6 +91,7 @@ def create_app(
     app.state.settings = settings
     app.state.token_verifier = token_verifier
     app.state.oauth_transport = oauth_transport
+    app.state.byok_kms = byok_kms
     app.state.oauth_register_limiter = SlidingWindowLimiter(
         settings.oauth21_register_limit_per_hour, window_seconds=3600.0
     )

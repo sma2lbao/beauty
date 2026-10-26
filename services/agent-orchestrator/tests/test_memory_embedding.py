@@ -14,6 +14,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from common.logging import bind_request_context, clear_request_context
+from common.security import SECRET_HEADER, TENANT_HEADER
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -69,6 +71,8 @@ class _ConstantVectorProvider:
 
 def _gateway_provider(
     handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    internal_secret: str = "",
 ) -> tuple[embedding_service.GatewayEmbeddingProvider, httpx.AsyncClient]:
     """构造走 MockTransport 的网关 provider,调用方负责关闭 client。"""
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -77,6 +81,7 @@ def _gateway_provider(
         "bge-m3",
         3.0,
         client=client,
+        internal_secret=internal_secret,
     )
     return provider, client
 
@@ -200,6 +205,52 @@ async def test_gateway_provider_maps_network_error() -> None:
     async with client:
         with pytest.raises(embedding_service.EmbeddingUnavailable, match="不可达"):
             await provider.embed(["a"])
+
+
+async def test_gateway_provider_injects_tenant_and_secret_headers() -> None:
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, json={"model": "bge-m3", "embeddings": [[1.0]]})
+
+    provider, client = _gateway_provider(handler, internal_secret="s3cret")
+    bind_request_context(tenant_id="t-1")
+    try:
+        async with client:
+            await provider.embed(["a"])
+    finally:
+        clear_request_context()
+    assert seen[0][TENANT_HEADER] == "t-1"
+    assert seen[0][SECRET_HEADER] == "s3cret"
+
+
+async def test_gateway_provider_without_identity_sends_no_headers() -> None:
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, json={"model": "bge-m3", "embeddings": [[1.0]]})
+
+    provider, client = _gateway_provider(handler)
+    clear_request_context()
+    async with client:
+        await provider.embed(["a"])
+    assert TENANT_HEADER not in seen[0]
+    assert SECRET_HEADER not in seen[0]
+
+
+def test_build_embedding_provider_passes_internal_secret(tmp_path: Path) -> None:
+    settings = _settings(
+        tmp_path,
+        "embed-secret.db",
+        memory_embedding_provider="gateway",
+        llm_gateway_url="http://gateway.test",
+        internal_auth_secret="s3cret",
+    )
+    provider = embedding_service.build_embedding_provider(settings)
+    assert isinstance(provider, embedding_service.GatewayEmbeddingProvider)
+    assert provider.internal_secret == "s3cret"
 
 
 # ---- 回退与配置 ----

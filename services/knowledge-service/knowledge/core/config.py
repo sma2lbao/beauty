@@ -19,6 +19,9 @@ class Settings(ServiceSettings):
     embedding_model: str = "bge-m3"
     llm_gateway_url: str = "http://127.0.0.1:8003"
     embedding_timeout_seconds: float = 60.0
+    # 服务间内部密钥:须与 account-service / llm-gateway 的 INTERNAL_SECRET 一致;
+    # 留空则 llm-gateway 拒绝 BYOK 解析(gateway 提供方在生产必须配置)
+    internal_secret: str = ""
     # 分块与检索
     chunk_size: int = 400
     chunk_overlap: int = 60

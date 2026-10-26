@@ -43,6 +43,7 @@ dependencies = [
     { name = "common" },
     { name = "database" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic", extra = ["email"] },
     { name = "uvicorn" },
 ]
@@ -63,6 +64,7 @@ requires-dist = [
     { name = "common", editable = "packages/common" },
     { name = "database", editable = "packages/database" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.5" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]
@@ -2157,6 +2159,7 @@ source = { editable = "services/llm-gateway" }
 dependencies = [
     { name = "common" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "litellm" },
     { name = "uvicorn" },
 ]
@@ -2171,6 +2174,7 @@ dev = [
 requires-dist = [
     { name = "common", editable = "packages/common" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "litellm", specifier = ">=1.105.0" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]

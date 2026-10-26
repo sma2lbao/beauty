@@ -7,22 +7,22 @@
 
 ## 0. 最终选型（2026-10 拍板）
 
-| 领域              | 生产                                                | 开发环境                                     | 状态                                                                        |
-| ----------------- | --------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）       | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                                         |
-| Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                      |
-| 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                         |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**                                    |
-| 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底   | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                            |
-| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                        |
-| 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                                              |
-| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 仅加密存储、调用面未接，订阅后续 |
-| 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                       |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                                                   |
-| BFF               | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                                                   |
-| LLM 推理          | **继续用 API**（litellm 网关 :8003）                | 本地/API                                     | ✅ 已实施                                                                   |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）        | 本地 Next dev                                | ✅ 已实施                                                                   |
-| 多区域 / 数据驻留 | 不做                                                | —                                            | ⏸ 后续                                                                     |
+| 领域              | 生产                                                | 开发环境                                     | 状态                                                                                                                 |
+| ----------------- | --------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）       | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                                                                                  |
+| Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                                                               |
+| 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**                                                                             |
+| 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底   | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                                                                     |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                                                                 |
+| 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                                                                                       |
+| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按租户注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
+| 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                                                                |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                                                                                            |
+| BFF               | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                                                                                            |
+| LLM 推理          | **继续用 API**（litellm 网关 :8003）                | 本地/API                                     | ✅ 已实施                                                                                                            |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）        | 本地 Next dev                                | ✅ 已实施                                                                                                            |
+| 多区域 / 数据驻留 | 不做                                                | —                                            | ⏸ 后续                                                                                                              |
 
 ### 0.1 两种部署形态（同一套代码）
 
@@ -52,7 +52,7 @@
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                      |
 | 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                         |
 | 007 | BFF httpOnly Cookie + 短时 JWT           | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                     |
-| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 仅加密存储、gateway 未消费（06 P0-6）                                                                                                       |
+| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按租户解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                |
 | 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                           |
 | 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                                                                                  |
 | 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                         |
@@ -112,7 +112,7 @@ Browser
 | services/bff       | 容器 :8007            | BFF：认证、代理、下载、限流                                                             | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                      |
 | agent-orchestrator | 容器 :8002            | 会话/run/skill/MCP/worker                                                               | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                              |
 | tool-service       | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）        | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md) |
-| llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK、计量、预算                                                                                       |
+| llm-gateway        | 容器 :8003            | 模型唯一出口、路由、降级、预算、usage                                                   | BYOK（按租户注入）、计量、预算                                                                         |
 | connector-service  | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密                                              |
 | knowledge-service  | 容器 :8006            | 摄取、检索、重排、引用                                                                  | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)   |
 | workspace-service  | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                                                         |
@@ -244,7 +244,7 @@ packages/design    组件库（bd- 前缀 BEM + --bd-* 令牌）
 - **身份**：account-service 维持自建 IdP（邮箱密码 + 计划补 Google/GitHub OAuth）；各服务沿用 JWT/JWKS 验签（同一个 `JwtVerifier`，不设后门；换 IdP 时各服务只改 `AUTH_ISSUER`）；
 - **会话**：BFF httpOnly Cookie；服务间短时 JWT；API Key 独立通道；
 - **Free 配额**：`usage_ledger` 记录 token 用量（tool call / 存储维度待补，见 06 P0-1）；按月聚合 → 配额检查（402/429）；
-- **BYOK**：租户级 provider key 已应用层加密存储（KMS 后置），但 **llm-gateway 仍只用 `settings.api_key`、未按租户选 key**（06 P0-6）；BYOK 不扣模型 credits；
+- **BYOK**：租户级 provider key 经**信封 v2 加密**存储，KMS 可切 `local` / Vault Transit；llm-gateway 按 `X-Tenant-Id` + `X-Internal-Secret` 向 account 的内部端点解析并短时缓存（300s / 负缓存 30s），**失败一律回退平台 `settings.api_key`**；租户 key 只覆盖 `api_key`、不覆盖 `api_base`；BYOK 不扣模型 credits（用量来源尚未在 `usage_events` 区分，属 06 P0-1）。契约见 [design/byok.md](./design/byok.md)；
 - **订阅/支付**：Stripe 暂不做；先只支持 Free 档 + 手动开通内部档；付费自助后续补；
 - **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；租户/IP/Key 三级；Turnstile 后置；
 - **公开分享**：不可猜测 token、可撤销、可过期（后置）。
@@ -523,18 +523,18 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 
 ## 13. 风险与待定
 
-| 风险                                     | 缓解                                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------------------- |
-| coding agent 无执行环境（沙箱执行后置）  | microsandbox P1-P3 已落地，受控执行；终端/预览不承诺                          |
-| 多实例 + filesystem 产物                 | 生产强制 database 模式；对象存储接入后替换                                    |
-| 云 PG 与 SQLite 行为差异（时区/JSON/锁） | CI 对云 PG 跑迁移+集成；SQLite 仅开发                                         |
-| Redis 成为单点                           | 只用于限流/锁/缓存；关键状态落 PG；Redis 不可用时降级；**业务未接（R-P1-8）** |
-| PG job 队列吞吐                          | 小团队/MVP 足够；量级上来换专业队列                                           |
-| 自建认证的安全负担                       | 沿用现有旋转刷新令牌/JWKS；补社交 OAuth 时做安全评审                          |
-| 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC                       |
-| BFF/代理 SSE 超时                        | 长流直连 runtime；BFF 仅短流，Nginx 关闭缓冲并放宽 read timeout               |
-| BYOK 密钥安全（无 KMS）                  | 应用层加密 + 密钥轮换 + 不落日志；KMS 后置                                    |
-| 云 PG/Redis 未接入（M0-03）              | roadmap R-36 跟踪；M0-03 云接入依赖它                                         |
+| 风险                                     | 缓解                                                                                                                                                                             |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| coding agent 无执行环境（沙箱执行后置）  | microsandbox P1-P3 已落地，受控执行；终端/预览不承诺                                                                                                                             |
+| 多实例 + filesystem 产物                 | 生产强制 database 模式；对象存储接入后替换                                                                                                                                       |
+| 云 PG 与 SQLite 行为差异（时区/JSON/锁） | CI 对云 PG 跑迁移+集成；SQLite 仅开发                                                                                                                                            |
+| Redis 成为单点                           | 只用于限流/锁/缓存；关键状态落 PG；Redis 不可用时降级；**业务未接（R-P1-8）**                                                                                                    |
+| PG job 队列吞吐                          | 小团队/MVP 足够；量级上来换专业队列                                                                                                                                              |
+| 自建认证的安全负担                       | 沿用现有旋转刷新令牌/JWKS；补社交 OAuth 时做安全评审                                                                                                                             |
+| 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC                                                                                                                          |
+| BFF/代理 SSE 超时                        | 长流直连 runtime；BFF 仅短流，Nginx 关闭缓冲并放宽 read timeout                                                                                                                  |
+| BYOK 密钥安全                            | 信封 v2 加密 + 可切换 KMS（local / Vault Transit）+ 懒/批量轮换 + 脱敏日志 + 内部端点 `no-store`；无独立审计表（见 [design/byok.md](./design/byok.md) §12）；默认 dev 密钥必须换 |
+| 云 PG/Redis 未接入（M0-03）              | roadmap R-36 跟踪；M0-03 云接入依赖它                                                                                                                                            |
 
 **待定**
 

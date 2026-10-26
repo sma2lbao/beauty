@@ -1,13 +1,14 @@
-"""用量聚合与 BYOK 存取(M0-11 本地版)。"""
+"""用量聚合与 BYOK 存取(信封加密 v2,KMS 见 account.core.byok_kms)。"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from common.errors import AppError
-from common.security import SecretBox
+from common.errors import AppError, NotFoundError
+from common.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from account.core.byok_kms import BYOKKms
 from account.models.account import BYOKKey, UsageEvent
 from account.repositories import (
     BYOKRepository,
@@ -16,12 +17,16 @@ from account.repositories import (
 )
 from account.schemas.insights import (
     BYOKRead,
+    BYOKRotateResult,
+    BYOKSecretRead,
     BYOKUpsert,
     UsageByModel,
     UsageEventCreate,
     UsageQuota,
     UsageSummary,
 )
+
+log = get_logger("account.insights")
 
 
 def _aware(value: datetime) -> datetime:
@@ -129,14 +134,14 @@ async def upsert_byok(
     provider: str,
     data: BYOKUpsert,
     *,
-    secret: str,
+    kms: BYOKKms,
 ) -> BYOKRead:
     normalized = provider.strip().lower()
     if not normalized or len(normalized) > 32:
         raise AppError("byok.invalid_provider", "provider 无效")
     repo = BYOKRepository(session)
     record = await repo.find_for_provider(tenant_id, normalized)
-    encrypted = SecretBox(secret).encrypt(data.api_key)
+    encrypted = await kms.encrypt(data.api_key)
     hint = data.api_key[-4:]
     if record is None:
         record = BYOKKey(
@@ -150,6 +155,69 @@ async def upsert_byok(
         record.encrypted_key = encrypted
         record.key_hint = hint
     return _to_read(record)
+
+
+async def get_byok_secret(
+    session: AsyncSession,
+    tenant_id: str,
+    provider: str,
+    *,
+    kms: BYOKKms,
+) -> BYOKSecretRead:
+    """内部解析明文 key(llm-gateway 按租户取用)。
+
+    历史密文(kid 不是当前 kid / v2 之前的裸 Fernet token)在读取时懒轮换为
+    当前信封;轮换失败只记 warning,仍返回明文(下次读再试,不阻断调用面)。
+    """
+    record = await BYOKRepository(session).find_for_provider(
+        tenant_id, provider.strip().lower()
+    )
+    if record is None:
+        raise NotFoundError("byok.not_found", "BYOK 密钥不存在")
+    plaintext = await kms.decrypt(record.encrypted_key)
+    if kms.needs_rotation(record.encrypted_key):
+        try:
+            record.encrypted_key = await kms.rotate(record.encrypted_key)
+        except AppError as exc:
+            log.warning(
+                "byok.rotate_failed",
+                tenant_id=tenant_id,
+                provider=record.provider,
+                key_id=kms.key_id,
+                code=exc.code,
+            )
+    return BYOKSecretRead(
+        provider=record.provider,
+        api_key=plaintext,
+        key_hint=record.key_hint,
+        key_id=kms.key_id,
+    )
+
+
+async def rotate_byok(
+    session: AsyncSession, tenant_id: str, *, kms: BYOKKms
+) -> BYOKRotateResult:
+    """把租户全部 BYOK 密文重加密到当前 KMS key;逐条容错、不抛。"""
+    records = await BYOKRepository(session).list_scoped(
+        tenant_id, order_by=[BYOKKey.provider]
+    )
+    rotated = 0
+    failed = 0
+    for record in records:
+        try:
+            record.encrypted_key = await kms.rotate(record.encrypted_key)
+            rotated += 1
+        except AppError as exc:
+            failed += 1
+            log.warning(
+                "byok.rotate_failed",
+                tenant_id=tenant_id,
+                provider=record.provider,
+                key_id=kms.key_id,
+                code=exc.code,
+            )
+    log.info("byok.rotated", tenant_id=tenant_id, key_id=kms.key_id, rotated=rotated)
+    return BYOKRotateResult(rotated=rotated, failed=failed)
 
 
 async def delete_byok(session: AsyncSession, tenant_id: str, provider: str) -> None:

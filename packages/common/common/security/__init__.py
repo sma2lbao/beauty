@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from common.security.internal_secret import (
     SECRET_HEADER,
+    TENANT_HEADER,
     make_internal_secret_dependency,
     require_internal_secret,
 )
@@ -17,6 +18,7 @@ from common.security.token_broker import TokenBroker
 
 __all__ = [
     "SECRET_HEADER",
+    "TENANT_HEADER",
     "SecretBox",
     "SlidingWindowLimiter",
     "TokenBroker",

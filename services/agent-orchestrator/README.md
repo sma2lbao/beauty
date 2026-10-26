@@ -100,6 +100,10 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - LLM 接入(架构 §5 唯一出口):`LLM_ENABLED=true` 时 plan/execute/verify 经
   `llm-gateway` 生成计划、执行结果与逐条验收判定(节点工厂注入,见 `graph/nodes.py`);
   false 或网关未起时回退确定性桩。测试注入 FakeLLM,零网络零 token。
+  调用网关时随上下文注入 `X-Tenant-Id` 与 `X-Internal-Secret`(取
+  `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,与 account/llm-gateway 的
+  `INTERNAL_SECRET` 一致),网关据此解析该租户的 BYOK 密钥;密钥留空时只带
+  租户头,按平台默认密钥解析。
 - 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
   耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
 - 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——

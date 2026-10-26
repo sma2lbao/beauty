@@ -198,7 +198,7 @@ orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
 
 - `/usage`：今日/本月 tokens、请求次数、按模型分布；没有数据时显示空态。
 - 顶栏模型 chip 读取 llm-gateway 的 `/v1/models`（当前默认 `deepseek/deepseek-chat`）。
-- 设置页 BYOK：应用层加密存储，只显示尾号；**暂不参与模型调用**。
+- 设置页 BYOK：**已参与模型调用**——保存后 llm-gateway 按租户向 account 解析密钥，命中即用租户 key、否则回退平台 `LLM_GATEWAY__API_KEY`；列表只回掩码与末 4 位。契约见 [design/byok.md](./design/byok.md)。
 - 本地没有模型 key 时用量页为空是正常现象；可用 account-service 的内部上报接口造数：
 
 ```sh
@@ -210,6 +210,26 @@ curl -X POST http://127.0.0.1:8001/v1/usage/events \
  -H "X-Internal-Secret: <internal-secret>" \
  -H 'Content-Type: application/json' \
  -d '{"model":"deepseek/deepseek-chat","prompt_tokens":1200,"completion_tokens":400}'
+```
+
+BYOK 本地联调要点（契约见 [design/byok.md](./design/byok.md)）：
+
+1. 三个服务配**同一个**内部密钥再重启：`ACCOUNT__INTERNAL_SECRET`、`LLM_GATEWAY__INTERNAL_SECRET`、`KNOWLEDGE__INTERNAL_SECRET`。任一处留空都等于 BYOK 静默停用（account 内部端点关闭 / 网关不解析）。
+2. 设置页保存一把 key（等价 `PUT /v1/byok/deepseek`），列表只显示 `••••` + 末 4 位。
+3. 发一条对话，llm-gateway 日志出现 `byok_resolved` 且 `key_hint` 与录入一致即生效；只有 `llm_byok_lookups_total{status="negative"}` 抬头，说明该 provider 没配上（provider 名要与 `model` 前缀一致）。
+4. 回退验证：`LLM_GATEWAY__BYOK_ENABLED=false` 重启网关，所有租户立即回平台 key，account 数据不动。
+
+```sh
+# 写入(access token 来自登录;provider 取模型前缀)
+curl -X PUT http://127.0.0.1:8001/v1/byok/deepseek \
+ -H "Authorization: Bearer <access-token>" \
+ -H 'Content-Type: application/json' \
+ -d '{"api_key":"sk-..."}'
+
+# 验证明文解析(仅服务间;两个头都要,internal-secret 与 account/gateway 同值)
+curl http://127.0.0.1:8001/v1/byok/deepseek/secret \
+ -H "X-Internal-Secret: <internal-secret>" \
+ -H "X-Tenant-Id: <tenant-id>"
 ```
 
 ## 5. 演示数据
@@ -252,22 +272,23 @@ npm run dev:reset -- --yes # 不确认
 
 ## 7. 日志与排障
 
-| 现象                | 处理                                                                                                                                                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 端口被占用          | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                                                                                                                                                              |
-| 前端 401/502        | 检查 BFF :8007 是否启动;npm run dev:status                                                                                                                                                                            |
-| 登录后页面空        | 检查 account-service :8001 与 BFF 日志                                                                                                                                                                                |
-| 会话接口 404/旧结构 | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                          |
-| 官网打不开          | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                         |
-| SQLite 表结构不对   | npm run dev:reset 后重启                                                                                                                                                                                              |
-| 想用真实模型        | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                                                                                                                           |
-| 附件上传失败        | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                                                                                                                         |
-| 要串一条请求链路    | 浏览器 Network 看响应头 `X-Request-ID`,再在服务日志里筛 `request_id="..."`;规则见 `docs/observability.md` §5                                                                                                          |
-| 想强开 JSON 日志    | `<SERVICE>__LOG_JSON=true`(dev 默认人读格式);关访问日志用 `<SERVICE>__ACCESS_LOG_ENABLED=false`,慢请求阈值 `<SERVICE>__SLOW_REQUEST_MS`                                                                               |
-| 想看指标            | 抓 `GET /internal/metrics`(Prometheus 文本,只在服务进程内,不经 BFF);关掉用 `<SERVICE>__METRICS_ENABLED=false`,要令牌用 `<SERVICE>__METRICS_TOKEN`                                                                     |
-| 想接 Sentry         | 配 `<SERVICE>__SENTRY_DSN`(+可选 `SERVICE__SENTRY_RELEASE`);不配则完全不初始化,内网形态零副作用                                                                                                                       |
-| 想看链路追踪        | 配 `<SERVICE>__OTLP_ENDPOINT`(完整 `…/v1/traces`,OTLP/HTTP)才会导出;不配则 span 只在进程内,日志里用 `trace_id`/`span_id` 串联。采样 `<SERVICE>__TRACE_SAMPLE_RATIO`(默认 0.1),关掉 `<SERVICE>__TRACING_ENABLED=false` |
-| 想看模型请求/正文   | 网关日志里 `llm_request`/`llm_response` 带 provider、model、token 用量与耗时；要看 prompt/响应正文置 `LLM_GATEWAY__LOG_CONTENT=true`（各截断 2KB，含用户数据，仅本地开）                                              |
+| 现象                   | 处理                                                                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 端口被占用             | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                                                                                                                                                              |
+| 前端 401/502           | 检查 BFF :8007 是否启动;npm run dev:status                                                                                                                                                                            |
+| 登录后页面空           | 检查 account-service :8001 与 BFF 日志                                                                                                                                                                                |
+| 会话接口 404/旧结构    | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                          |
+| 官网打不开             | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                         |
+| SQLite 表结构不对      | npm run dev:reset 后重启                                                                                                                                                                                              |
+| 想用真实模型           | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                                                                                                                           |
+| BYOK 不生效/烧平台 key | 三处 internal_secret 必须同一值（account/gateway/knowledge）；容器内 `ACCOUNT_BASE_URL` 要指向 `http://account-service:8001`；看 `llm_byok_lookups_total{status}` 与 `byok_lookup_failed` 日志                        |
+| 附件上传失败           | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                                                                                                                         |
+| 要串一条请求链路       | 浏览器 Network 看响应头 `X-Request-ID`,再在服务日志里筛 `request_id="..."`;规则见 `docs/observability.md` §5                                                                                                          |
+| 想强开 JSON 日志       | `<SERVICE>__LOG_JSON=true`(dev 默认人读格式);关访问日志用 `<SERVICE>__ACCESS_LOG_ENABLED=false`,慢请求阈值 `<SERVICE>__SLOW_REQUEST_MS`                                                                               |
+| 想看指标               | 抓 `GET /internal/metrics`(Prometheus 文本,只在服务进程内,不经 BFF);关掉用 `<SERVICE>__METRICS_ENABLED=false`,要令牌用 `<SERVICE>__METRICS_TOKEN`                                                                     |
+| 想接 Sentry            | 配 `<SERVICE>__SENTRY_DSN`(+可选 `SERVICE__SENTRY_RELEASE`);不配则完全不初始化,内网形态零副作用                                                                                                                       |
+| 想看链路追踪           | 配 `<SERVICE>__OTLP_ENDPOINT`(完整 `…/v1/traces`,OTLP/HTTP)才会导出;不配则 span 只在进程内,日志里用 `trace_id`/`span_id` 串联。采样 `<SERVICE>__TRACE_SAMPLE_RATIO`(默认 0.1),关掉 `<SERVICE>__TRACING_ENABLED=false` |
+| 想看模型请求/正文      | 网关日志里 `llm_request`/`llm_response` 带 provider、model、token 用量与耗时；要看 prompt/响应正文置 `LLM_GATEWAY__LOG_CONTENT=true`（各截断 2KB，含用户数据，仅本地开）                                              |
 
 ## 8. 测试
 

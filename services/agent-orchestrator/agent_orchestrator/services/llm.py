@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
 from common.errors import UpstreamError
-from common.logging import get_logger
+from common.logging import current_context, get_logger
 from common.middleware import inject_request_headers
+from common.security import SECRET_HEADER, TENANT_HEADER
 
 from agent_orchestrator import metrics
 from agent_orchestrator.services import usage as usage_service
@@ -142,6 +143,27 @@ def _parse_usage(raw: Any, model: str | None) -> usage_service.UsageSample | Non
     )
 
 
+def _identity_headers_hook(
+    internal_secret: str,
+) -> Callable[[httpx.Request], Awaitable[None]]:
+    """出站钩子:先透传 request_id/traceparent,再补租户与内部密钥。
+
+    llm-gateway 按租户解析 BYOK 密钥,依赖 X-Tenant-Id + X-Internal-Secret 两个头;
+    租户取当前 contextvars(请求/job 边界由 api/deps 与 jobs_worker 绑定),内部密钥取
+    本服务配置。两个头都用 setdefault:上游显式给了头时不覆盖。
+    """
+
+    async def _hook(request: httpx.Request) -> None:
+        await inject_request_headers(request)
+        tenant_id = current_context().get("tenant_id")
+        if tenant_id:
+            request.headers.setdefault(TENANT_HEADER, str(tenant_id))
+        if internal_secret:
+            request.headers.setdefault(SECRET_HEADER, internal_secret)
+
+    return _hook
+
+
 class GatewayClient:
     """llm-gateway HTTP 客户端:任何失败统一映射 UpstreamError(502)。"""
 
@@ -153,15 +175,18 @@ class GatewayClient:
         transport: httpx.AsyncBaseTransport | None = None,
         retry_attempts: int = 2,
         retry_backoff_seconds: float = 1.5,
+        internal_secret: str = "",
     ) -> None:
         self.model = model  # None:走网关默认路由
         self.retry_attempts = max(0, retry_attempts)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        # 网关 BYOK:租户头 + 内部密钥头(密钥留空时只带租户,走平台默认密钥)
+        self.internal_secret = internal_secret
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout_seconds,
             transport=transport,
-            event_hooks={"request": [inject_request_headers]},
+            event_hooks={"request": [_identity_headers_hook(internal_secret)]},
         )
 
     async def _backoff(

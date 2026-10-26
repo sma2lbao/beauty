@@ -16,6 +16,11 @@
 - `gateway`:经 `llm-gateway` 的 `/v1/embeddings`(litellm 路由,如 bge-m3),
   失败统一 502 `llm.embedding_error`。
 
+`gateway` 模式下,服务调用网关时会带 `X-Tenant-Id`(当前租户)与
+`X-Internal-Secret`(`KNOWLEDGE__INTERNAL_SECRET`),网关据此解析该租户的
+BYOK 密钥;该值须与 account-service / llm-gateway 的 `INTERNAL_SECRET` 一致,
+留空则只按平台默认密钥解析(`gateway` 提供方在生产必须配置)。
+
 阶段 A 的边界:向量以 JSON 存在 `document_chunks.embedding` 列,检索时在
 Python 侧算余弦相似度(小语料够用);换 pgvector/专用向量库是阶段 B,
 读端契约不变。

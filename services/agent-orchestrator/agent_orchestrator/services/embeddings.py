@@ -16,7 +16,8 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 import httpx
-from common.logging import get_logger
+from common.logging import current_context, get_logger
+from common.security import SECRET_HEADER, TENANT_HEADER
 
 from agent_orchestrator.core.config import Settings
 
@@ -103,12 +104,24 @@ class GatewayEmbeddingProvider:
         model: str,
         timeout_seconds: float = 10.0,
         client: httpx.AsyncClient | None = None,
+        internal_secret: str = "",
     ) -> None:
         self.model = model
         self._base_url = base_url.rstrip("/")
         # 注入的 client 归调用方关闭(MockTransport/连接池复用);自建的在这里关。
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
+        self.internal_secret = internal_secret
+
+    def _identity_headers(self) -> dict[str, str]:
+        """BYOK 身份头:租户 + 内部密钥(密钥留空只带租户)。"""
+        headers: dict[str, str] = {}
+        tenant_id = current_context().get("tenant_id")
+        if tenant_id:
+            headers[TENANT_HEADER] = str(tenant_id)
+        if self.internal_secret:
+            headers[SECRET_HEADER] = self.internal_secret
+        return headers
 
     async def aclose(self) -> None:
         """关闭自建的 HTTP 客户端;注入的 client 不越权关闭。"""
@@ -129,6 +142,7 @@ class GatewayEmbeddingProvider:
             response = await self._client.post(
                 f"{self._base_url}/v1/embeddings",
                 json={"model": self.model, "input": texts},
+                headers=self._identity_headers(),
             )
         except httpx.HTTPError as exc:
             raise EmbeddingUnavailable(f"嵌入网关不可达: {exc}") from exc
@@ -193,6 +207,7 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
             base_url=gateway_url,
             model=settings.memory_embedding_model,
             timeout_seconds=settings.memory_embedding_timeout_seconds,
+            internal_secret=settings.internal_auth_secret,
         )
     return LocalHashProvider()
 

@@ -4,7 +4,9 @@
 
 - `llm_upstream_errors_total{service,provider,code}`:上游错误计数;
 - `llm_tokens_total{service,model,direction}`:token 用量(input/output);
-- `llm_request_duration_seconds{service,provider,model}`:调用耗时(含上游排队)。
+- `llm_request_duration_seconds{service,provider,model}`:调用耗时(含上游排队);
+- `llm_byok_lookups_total{service,status}`:BYOK 密钥解析计数
+  (status=disabled/negative/error/byok/cache_hit)。
 
 `service` 标签统一走 `common.metrics.service_label`。
 """
@@ -29,6 +31,11 @@ llm_request_duration_seconds = Histogram(
     "模型调用耗时(秒,含上游排队)",
     ("service", "provider", "model"),
     buckets=(0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0),
+)
+llm_byok_lookups_total = Counter(
+    "llm_byok_lookups_total",
+    "BYOK 密钥解析计数(按结果状态)",
+    ("service", "status"),
 )
 
 
@@ -56,6 +63,14 @@ def observe_llm_tokens(
         model=model or "unknown",
         direction=direction,
     ).inc(tokens)
+
+
+def observe_byok_lookup(*, status: str, service: str | None = None) -> None:
+    """记录一次 BYOK 解析结果(disabled/negative/error/byok/cache_hit)。"""
+    llm_byok_lookups_total.labels(
+        service=service_label(service),
+        status=status or "unknown",
+    ).inc()
 
 
 def observe_llm_latency(

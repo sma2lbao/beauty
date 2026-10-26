@@ -91,15 +91,26 @@ docker compose -f deploy/docker-compose.yml run --rm --entrypoint sh migrate -c 
 
 compose 里所有可覆盖项都写成 `${VAR:-演示默认值}`，可用环境变量或 `deploy/.env` 覆盖。**演示默认值仅供 `compose up` 开箱可用，不是生产值**：
 
-| 变量                                                                         | 用途                                  | 生产要求                                                                                 |
-| ---------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `INTERNAL_SECRET`                                                            | BFF/account/AO 服务间内部调用共享密钥 | 随机长串，三处必须一致（compose 已共享同一变量）                                         |
-| `BFF_SESSION_SECRET`                                                         | BFF Cookie 会话签名                   | 随机长串；**不能等于**默认值 `dev-bff-session-secret-change-me`，否则 `/readyz` 返回 503 |
-| `MCP_SECRET`                                                                 | MCP 相关签名                          | 随机长串                                                                                 |
-| `CONNECTOR_CREDENTIAL_SECRET`                                                | 连接器凭证加密                        | 随机长串；换值后旧凭证无法解密                                                           |
-| `LLM_GATEWAY_API_KEY` / `LLM_GATEWAY_API_BASE` / `LLM_GATEWAY_DEFAULT_MODEL` | 模型网关                              | 真实 key；`LLM_ENABLED=true` 才真正调用模型                                              |
-| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                    | 默认 `session`（同源 BFF Cookie）；见 §4.2                                               |
-| `READY_PROBE_UPSTREAMS`                                                      | BFF `/readyz` 是否探上游              | 编排层想用就绪探针时设 `true`                                                            |
+| 变量                                                                         | 用途                                                                            | 生产要求                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `INTERNAL_SECRET`                                                            | BFF/account/AO/gateway/knowledge 内部调用共享密钥（**同时是 BYOK 解析总开关**） | 随机长串，六处必须一致（compose 已共享同一变量）；留空则 BYOK 静默停用                   |
+| `BFF_SESSION_SECRET`                                                         | BFF Cookie 会话签名                                                             | 随机长串；**不能等于**默认值 `dev-bff-session-secret-change-me`，否则 `/readyz` 返回 503 |
+| `MCP_SECRET`                                                                 | MCP 相关签名                                                                    | 随机长串                                                                                 |
+| `CONNECTOR_CREDENTIAL_SECRET`                                                | 连接器凭证加密                                                                  | 随机长串；换值后旧凭证无法解密                                                           |
+| `LLM_GATEWAY_API_KEY` / `LLM_GATEWAY_API_BASE` / `LLM_GATEWAY_DEFAULT_MODEL` | 模型网关                                                                        | 真实 key；`LLM_ENABLED=true` 才真正调用模型                                              |
+| `LLM_GATEWAY__ACCOUNT_BASE_URL`                                              | 网关向 account 解析 BYOK 的地址                                                 | 容器内必须为 `http://account-service:8001`（默认 `127.0.0.1:8001` 在容器里指向网关自身） |
+| `ACCOUNT__BYOK_KMS`                                                          | BYOK 密钥托管方式                                                               | `local`（默认）或 `vault`；生产建议 `vault` + `ACCOUNT__BYOK_VAULT_URL/TOKEN`            |
+| `ACCOUNT__BYOK_SECRET`                                                       | local 模式 KEK 密钥材料                                                         | 随机长串；**不能等于** `dev-byok-secret-change-me`；换值前先按 BYOK 设计的轮换步骤做     |
+| `LLM_GATEWAY__BYOK_ENABLED`                                                  | 网关是否启用租户 key 解析                                                       | `true`（默认）；出问题置 `false` 即可一键回退平台 key                                    |
+| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                                                              | 默认 `session`（同源 BFF Cookie）；见 §4.2                                               |
+| `READY_PROBE_UPSTREAMS`                                                      | BFF `/readyz` 是否探上游                                                        | 编排层想用就绪探针时设 `true`                                                            |
+
+**BYOK（租户自带模型密钥）部署要点**：契约见 [docs/design/byok.md](../../docs/design/byok.md)，服务侧操作见 [account-service README](../../services/account-service/README.md) 与 [llm-gateway README](../../services/llm-gateway/README.md)。容器里有两处**必须显式配**：
+
+- `LLM_GATEWAY__INTERNAL_SECRET`——compose 已从 `INTERNAL_SECRET` 同源注入；留空等于关闭 BYOK（同时模型端点也不鉴权，仅本地 dev 可接受）；
+- `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`——compose 已提供该覆盖（2026-10-26 补齐）；自建编排必须显式补，否则网关解析全部失败、静默回退平台 key（表现就是「BYOK 保存了但不生效」）。
+
+换 `ACCOUNT__BYOK_SECRET`（或从 `local` 切 `vault`）前先按 [docs/design/byok.md](../../docs/design/byok.md) §6.5 的轮换步骤加 `ACCOUNT__BYOK_PREVIOUS_SECRETS` 并跑 `POST /v1/byok/rotate`，否则存量密文会 `byok.unreadable`；网关侧最多 `BYOK_CACHE_TTL_SECONDS`（默认 300s）后生效。
 
 `VITE_*` 是**构建期**变量：改了要 `up -d --build web` 重新构建，运行期改环境变量无效。
 
@@ -198,15 +209,16 @@ cat backup.sql | docker compose -f deploy/docker-compose.yml exec -T postgres ps
 
 ## 9. 排障
 
-| 现象                          | 排查                                                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `up` 卡在 migrate             | `docker compose -f deploy/docker-compose.yml logs migrate`；常见是数据库连接串/库不存在（要 `down -v` 重新 initdb） |
-| 服务 unhealthy                | `docker compose ... logs <service>`；`/healthz` 只证明进程活着，业务错看日志/500                                    |
-| web 打开白屏                  | 镜像是否重建（`VITE_*` 是构建期的）；`logs web` 看 nginx                                                            |
-| `/api` 502                    | BFF 未健康；先 `logs bff`，再看它依赖的七服务                                                                       |
-| `/readyz` 503                 | 多半是 `BFF_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d bff`                    |
-| 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 六个各自指向 `beauty_<服务>`                                             |
-| 构建很慢/上下文巨大           | 仓库根缺 `.dockerignore`（见下节建议）                                                                              |
+| 现象                          | 排查                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `up` 卡在 migrate             | `docker compose -f deploy/docker-compose.yml logs migrate`；常见是数据库连接串/库不存在（要 `down -v` 重新 initdb）                                                                     |
+| 服务 unhealthy                | `docker compose ... logs <service>`；`/healthz` 只证明进程活着，业务错看日志/500                                                                                                        |
+| web 打开白屏                  | 镜像是否重建（`VITE_*` 是构建期的）；`logs web` 看 nginx                                                                                                                                |
+| `/api` 502                    | BFF 未健康；先 `logs bff`，再看它依赖的七服务                                                                                                                                           |
+| `/readyz` 503                 | 多半是 `BFF_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d bff`                                                                                        |
+| BYOK 保存了但一直用平台 key   | 看网关日志有无 `byok_resolved`；确认 `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`、内部密钥与 account 一致；指标 `llm_byok_lookups_total{status="error"}` 抬头即解析失败 |
+| 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 六个各自指向 `beauty_<服务>`                                                                                                                 |
+| 构建很慢/上下文巨大           | 仓库根缺 `.dockerignore`（见下节建议）                                                                                                                                                  |
 
 ## 10. 建议补的仓库根 `.dockerignore`
 

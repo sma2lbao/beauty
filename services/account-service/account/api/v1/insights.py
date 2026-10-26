@@ -1,21 +1,23 @@
-"""用量与 BYOK 端点(M0-11 本地版)。"""
+"""用量与 BYOK 端点(M0-11 本地版;BYOK 信封 v2 见 core.byok_kms)。"""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.api.deps import (
+    get_byok_kms,
     get_internal_tenant_id,
     get_session,
-    get_settings,
     get_tenant_id,
 )
-from account.core.config import Settings
+from account.core.byok_kms import BYOKKms
 from account.schemas.insights import (
     BYOKRead,
+    BYOKRotateResult,
+    BYOKSecretRead,
     BYOKUpsert,
     UsageEventCreate,
     UsageQuota,
@@ -28,7 +30,7 @@ router = APIRouter(tags=["insights"])
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 InternalTenantId = Annotated[str, Depends(get_internal_tenant_id)]
-SettingsDep = Annotated[Settings, Depends(get_settings)]
+Kms = Annotated[BYOKKms, Depends(get_byok_kms)]
 
 
 @router.get("/usage/summary", response_model=UsageSummary)
@@ -64,13 +66,34 @@ async def put_byok(
     body: BYOKUpsert,
     session: DBSession,
     tenant_id: TenantId,
-    settings: SettingsDep,
+    kms: Kms,
 ) -> BYOKRead:
     return await insights_service.upsert_byok(
-        session, tenant_id, provider, body, secret=settings.byok_secret
+        session, tenant_id, provider, body, kms=kms
     )
 
 
 @router.delete("/byok/{provider}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_byok(provider: str, session: DBSession, tenant_id: TenantId) -> None:
     await insights_service.delete_byok(session, tenant_id, provider)
+
+
+@router.get("/byok/{provider}/secret", response_model=BYOKSecretRead)
+async def get_byok_secret(
+    provider: str,
+    response: Response,
+    session: DBSession,
+    tenant_id: InternalTenantId,
+    kms: Kms,
+) -> BYOKSecretRead:
+    """内部解析明文 BYOK(仅服务间,llm-gateway 取用):响应禁止缓存。"""
+    response.headers["Cache-Control"] = "no-store"
+    return await insights_service.get_byok_secret(session, tenant_id, provider, kms=kms)
+
+
+@router.post("/byok/rotate", response_model=BYOKRotateResult)
+async def rotate_byok(
+    session: DBSession, tenant_id: InternalTenantId, kms: Kms
+) -> BYOKRotateResult:
+    """内部批量轮换:把租户全部 BYOK 密文重加密到当前 KMS key(运维触发)。"""
+    return await insights_service.rotate_byok(session, tenant_id, kms=kms)

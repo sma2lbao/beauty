@@ -25,14 +25,27 @@ def _normalize_embeddings(payload: object) -> list[list[float]]:
     return vectors
 
 
-async def embed(settings: Settings, data: EmbeddingRequest) -> EmbeddingResponse:
+async def embed(
+    settings: Settings,
+    data: EmbeddingRequest,
+    *,
+    api_key: str | None = None,
+) -> EmbeddingResponse:
     model = data.model or settings.default_embedding_model
     log = get_logger("llm_gateway.embeddings")
+    extra: dict[str, object] = {}
+    if api_key:
+        # BYOK:请求级密钥覆盖平台凭据;provider 由 litellm 模型串前缀给出
+        # (无前缀说明模型名没带提供商,不猜——交回 litellm 自行识别)。
+        extra["api_key"] = api_key
+        if "/" in str(model):
+            extra["provider"] = str(model).split("/", 1)[0]
     try:
         resp = await litellm.aembedding(
             model=model,
             input=data.input,
             timeout=settings.request_timeout_seconds,
+            **extra,
         )
     except Exception as exc:
         metrics.observe_llm_error(

@@ -17,6 +17,8 @@ from fastapi import Header, Request
 from common.errors import UnauthorizedError
 
 SECRET_HEADER = "X-Internal-Secret"
+#: 内部调用的租户头(服务间按租户取资源,如 llm-gateway 的 BYOK 解析)
+TENANT_HEADER = "X-Tenant-Id"
 
 
 def make_internal_secret_dependency(

@@ -113,11 +113,16 @@ def _log_content(settings: Settings, log: Any, direction: str, payload: Any) -> 
         log.info("llm_content", direction=direction, payload=payload)
 
 
-def _provider_kwargs(settings: Settings) -> dict[str, Any]:
-    """把平台配置的模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。"""
+def _provider_kwargs(settings: Settings, api_key: str | None = None) -> dict[str, Any]:
+    """把模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。
+
+    api_key 是请求级密钥(BYOK 解析结果):优先于平台 key,但 api_base 仍用
+    平台配置(租户只带密钥,不接管路由终点)。
+    """
     extra: dict[str, Any] = {}
-    if settings.api_key:
-        extra["api_key"] = settings.api_key
+    effective_key = api_key or settings.api_key
+    if effective_key:
+        extra["api_key"] = effective_key
     if settings.api_base:
         extra["api_base"] = settings.api_base
     return extra
@@ -192,7 +197,12 @@ class _ToolCallAssembler:
         ]
 
 
-async def complete(settings: Settings, data: CompletionRequest) -> CompletionResponse:
+async def complete(
+    settings: Settings,
+    data: CompletionRequest,
+    *,
+    api_key: str | None = None,
+) -> CompletionResponse:
     model = data.model or settings.default_model
     log = get_logger("llm_gateway.completions")
     extra = _extra(data)
@@ -221,7 +231,7 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
             messages=[m.model_dump(exclude_none=True) for m in data.messages],
             temperature=data.temperature,
             timeout=settings.request_timeout_seconds,
-            **_provider_kwargs(settings),
+            **_provider_kwargs(settings, api_key),
             **extra,
         )
     except Exception as exc:
@@ -263,7 +273,10 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
 
 
 async def stream(
-    settings: Settings, data: CompletionRequest
+    settings: Settings,
+    data: CompletionRequest,
+    *,
+    api_key: str | None = None,
 ) -> AsyncIterator[CompletionChunk]:
     """流式补全:逐片产出增量正文,最后一片 done=true 带全文、用量与 tool_calls。
 
@@ -301,7 +314,7 @@ async def stream(
             temperature=data.temperature,
             timeout=settings.request_timeout_seconds,
             stream=True,
-            **_provider_kwargs(settings),
+            **_provider_kwargs(settings, api_key),
             **extra,
         )
     except Exception as exc:

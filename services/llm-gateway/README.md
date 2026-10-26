@@ -24,9 +24,42 @@
   指标 `llm_tokens_total{direction}` 与 `llm_request_duration_seconds` 见
   `GET /internal/metrics`。正文默认不落日志,联调要看去 `.env` 里开
   `LLM_GATEWAY__LOG_CONTENT=true`(messages 与响应各截断 2KB,含用户数据,别在生产开);
-- 密钥由 litellm 直接读进程环境变量,网关不落盘(密钥库方案见架构 §10)。
+- 平台凭据显式入参给 litellm(`LLM_GATEWAY__API_KEY`/`API_BASE`),不依赖进程
+  环境变量;租户自带密钥(BYOK)按下文向 account-service 解析,命中时代替平台 key;
+  网关不落盘密钥(密钥库方案见架构 §10)。
 
-阶段 B 补齐:embeddings 端点、租户级配额与限流、模型路由按区域切换(§9)、
-调用审计落库、LiteLLM proxy 配置化(fallback/guardrails)。
+## BYOK(按租户注入密钥)
+
+网关仍是全平台唯一模型出口,但密钥可以归属租户:调用方带上租户标识,网关向
+account-service 换该租户配置的提供商密钥(共享内部密钥保护),拿不到就回退平台 key
+(`LLM_GATEWAY__API_KEY`)。BYOK 是**增强**而不是前置条件——它坏了平台照常出模型。
+
+- **内部鉴权**:三个模型出口(`POST /v1/completions`、`POST /v1/completions/stream`、
+  `POST /v1/embeddings`)在配置了 `INTERNAL_SECRET` 后必须带 `X-Internal-Secret`
+  (常量时间比较),否则 401 `auth.internal_forbidden`;留空 = 本地 dev 放行。
+  `GET /v1/models` 与探针免鉴权(只读元数据,不烧 token)。**生产必须配**
+  `INTERNAL_SECRET`,否则内网任意进程都能调模型(尤其注意:配了它 BYOK 才会启用)。
+- **租户头**:`X-Tenant-Id`(可选;缺失 = 不做 BYOK 查询,直接用平台 key)。值由上游
+  服务从自己的 JWT claim 解出后透传;网关不自行验证租户归属,只把它原样转给 account。
+- **解析**:`GET {ACCOUNT_BASE_URL}/v1/byok/{provider}/secret`(带内部密钥与租户头),
+  取 `api_key`/`key_hint`/`key_id`;`provider` 取 litellm 模型串前缀
+  (`deepseek/deepseek-chat` → `deepseek`),没有前缀时不猜(直接回退平台 key);
+  embedding 命中 BYOK 时额外把 provider 显式传给 litellm。
+- **缓存**:正缓存 `BYOK_CACHE_TTL_SECONDS`(默认 300s,也是密钥轮换生效延迟上限);
+  404(租户没配该 provider)走更短的负缓存 `BYOK_NEGATIVE_CACHE_TTL_SECONDS`
+  (默认 30s);非 200/超时/网络错误**不缓存**,下一请求立即重试;条目上限
+  `BYOK_CACHE_MAX_ENTRIES`(LRU 淘汰);未命中解析用单把锁串行化,并发只穿透一次。
+- **回退与失败语义**:`BYOK_ENABLED=false`、`INTERNAL_SECRET` 为空、无租户头、租户
+  没配 key(404)、account 超时/5xx/坏响应——一律回退平台 key,不因 BYOK 故障拖垮
+  模型调用;只有内部鉴权失败才拒绝(401)。
+- **观测**:命中/缓存命中打 `byok_resolved` 审计日志(tenant/provider/key_hint/source,
+  **不含 api_key**);指标 `llm_byok_lookups_total{status}`,status ∈
+  disabled/negative/error/byok/cache_hit。
+- **安全边界**:租户只提供密钥、不接管路由终点(`api_base` 仍是平台配置,避免租户把
+  平台流量引到任意地址);密钥不进日志/指标标签、网关不落盘;共享密钥只在服务间
+  传递,前端不经手。account-service 侧按 `X-Tenant-Id` 返回自己的密钥,越权由它兜底。
+
+阶段 B 补齐:租户级配额与限流、模型路由按区域切换(§9)、调用审计落库、
+LiteLLM proxy 配置化(fallback/guardrails)。
 
 命令(仓库根):`npx nx run llm-gateway:serve`(:8003)/ `npx nx test llm-gateway`

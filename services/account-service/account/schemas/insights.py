@@ -49,3 +49,19 @@ class BYOKRead(BaseModel):
     masked_key: str
     key_hint: str
     updated_at: datetime
+
+
+class BYOKSecretRead(BaseModel):
+    """内部解析结果(**明文**):仅服务间调用,响应必须 no-store。"""
+
+    provider: str
+    api_key: str
+    key_hint: str
+    key_id: str
+
+
+class BYOKRotateResult(BaseModel):
+    """批量轮换结果:逐条容错,失败计数不回滚已成功的条目。"""
+
+    rotated: int
+    failed: int
