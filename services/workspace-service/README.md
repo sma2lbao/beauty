@@ -80,9 +80,13 @@
 
 ## 沙箱(§7 阶段 B / P1)
 
-执行底座是 [microsandbox](https://github.com/superradcompany/microsandbox)(microVM
-隔离),为后续**用户 skill / stdio MCP** 提供执行环境。**P1 已落地**:provider 抽象、
-沙箱实例生命周期、HTTP API 与过期回收;stdio MCP / skill 打包在 P2/P3。
+执行底座默认是 [microsandbox](https://github.com/superradcompany/microsandbox)
+(microVM 隔离),为后续**用户 skill / stdio MCP** 提供执行环境。**P1 已落地**:provider
+抽象、沙箱实例生命周期、HTTP API 与过期回收;stdio MCP / skill 打包在 P2/P3。
+
+`WORKSPACE__SANDBOX_PROVIDER` 有三个取值:`microsandbox`(**默认**,生产/多租户唯一
+推荐)、`local`(宿主目录 + 宿主子进程,**无隔离**,仅本地开发/单租户可信环境,见下文
+「local provider」)与 `unavailable`(调用即 502,供没有 runtime 的 dev 显式失败)。
 
 接口:
 
@@ -103,6 +107,8 @@
 
 - 业务层只依赖 `SandboxProvider` 协议;microsandbox **惰性导入**,
   测试与没有 runtime 的 dev 启动不加载 SDK;
+- provider 在 lifespan 由 `build_sandbox_provider` 按 `WORKSPACE__SANDBOX_PROVIDER`
+  装配;未知取值**启动即失败** `sandbox.provider_unknown`,不静默降级;
 - 创建时**先落库** `status=creating` 再拉起运行时;失败保留
   `status=failed` + `last_error`(可追踪),对外统一 502;
 - 过期实例在 exec/文件操作前校验:先销毁运行时,再返回 409 `sandbox.expired`;
@@ -121,21 +127,80 @@
 
 配置(env 前缀 `WORKSPACE__`,括号内为默认值):
 
-| 配置项                                                                  | 说明                                                                         |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox` 用真 microVM;`unavailable` 显式返回 502,供没有 runtime 的 dev |
-| `SANDBOX_DEFAULT_IMAGE`(python)                                         | microsandbox 镜像别名                                                        |
-| `SANDBOX_DEFAULT_TTL_SECONDS`(1800) / `SANDBOX_MAX_TTL_SECONDS`(7200)   | 默认/上限 TTL                                                                |
-| `SANDBOX_DEFAULT_CPUS`(1.0) / `SANDBOX_DEFAULT_MEMORY_MB`(512)          | 默认配额                                                                     |
-| `SANDBOX_NETWORK`(deny)                                                 | 默认网络策略(`deny`/`public`)                                                |
-| `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                       |
-| `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                            |
-| `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                     |
+| 配置项                                                                  | 说明                                                                                                               |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox`(**默认**,生产/多租户唯一推荐)真 microVM;`local` 宿主执行、**无隔离**(见下);`unavailable` 调用即 502 |
+| `SANDBOX_LOCAL_ROOT`(./.sandboxes)                                      | 仅 `provider=local`:宿主根目录,每个沙箱 `<root>/<name>/{workspace,home,tmp}`,相对**服务进程工作目录**              |
+| `SANDBOX_DEFAULT_IMAGE`(python)                                         | microsandbox 镜像别名                                                                                              |
+| `SANDBOX_DEFAULT_TTL_SECONDS`(1800) / `SANDBOX_MAX_TTL_SECONDS`(7200)   | 默认/上限 TTL                                                                                                      |
+| `SANDBOX_DEFAULT_CPUS`(1.0) / `SANDBOX_DEFAULT_MEMORY_MB`(512)          | 默认配额                                                                                                           |
+| `SANDBOX_NETWORK`(deny)                                                 | 默认网络策略(`deny`/`public`)                                                                                      |
+| `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                                                             |
+| `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                                                                  |
+| `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                                                           |
 
-**无 runtime / 部署注意**:
+### local provider(宿主执行,无隔离)
+
+`WORKSPACE__SANDBOX_PROVIDER=local` 时,一个沙箱就是**宿主上的一个目录 + 直接拉起的
+子进程**:命令以 workspace-service 进程身份在同一台机器上执行,没有 microVM、没有容器。
+
+目录布局(根由 `WORKSPACE__SANDBOX_LOCAL_ROOT` 指定,默认 `./.sandboxes`,相对
+**服务进程工作目录**;沙箱名由服务端生成,形如 `bm-` + 20 位 hex):
+
+```text
+<root>/
+└── bm-1f2e3d4c5b6a79887f6e/   # 一个沙箱 = 一个目录
+    ├── workspace/              # 沙箱内 /workspace 映射到这里
+    ├── home/                   # 子进程的 HOME
+    └── tmp/                    # 子进程的 TMPDIR
+```
+
+- exec 默认工作目录是沙箱的 `workspace/`;`cwd` 与文件路径都只接受以 `/` 开头的
+  绝对路径,其中 `/workspace/...` 映射进沙箱目录(`/workspace/a` →
+  `<root>/<name>/workspace/a`),路径穿越与符号链接逃逸被 400
+  `sandbox.path_invalid` 挡住;其他宿主绝对路径(如 `/tmp`)按宿主语义透传——命令
+  本来就是宿主进程(见下);
+- 文件路径校验与 microsandbox 一致:必须以 `/workspace` 开头、不能含 `..`、防符号
+  链接逃逸,违规 400 `sandbox.path_invalid`;沙箱内文件不存在 404
+  `sandbox.file_not_found`;
+- `DELETE /v1/sandboxes/{id}` 与过期回收 = 幂等删掉整个 `<root>/<name>` 目录
+  (workspace/home/tmp 一并清空),目录本来不存在时静默成功。
+
+**没有隔离 —— 这是本 provider 的核心限制**:
+
+- 命令**以 workspace-service 进程身份在宿主执行**:该用户能读写的宿主文件、能访问的
+  网络、能起的常驻进程,沙箱内命令同样可以;`argv` 不经 shell,超时按**进程组**
+  SIGKILL(仅 POSIX,Windows 退化为单进程),但这些都不构成安全边界;
+- 镜像 / CPU / 内存 / 网络策略在 local 下**无法强制执行**:请求里的
+  `image`/`cpus`/`memory_mb` 不改变实际执行环境,`sandbox_network=deny` 也挡不住
+  出网,它们只留在 DB 行里供审计;
+- 启动时 lifespan 会打一条 warning 日志,提示命令直接在宿主执行、无隔离。
+
+适用场景与禁用:
+
+- **适用**:没有 microVM runtime 的本地开发(零运行时依赖跑通 stdio MCP / skill 执行
+  链路)、单租户可信环境、桌面应用「本地电脑模式」;
+- **禁用**:**多租户 / 生产**。local 下不可信代码等同在宿主机上执行;生产继续用默认的
+  `microsandbox`(要求可写 `SANDBOX_MSB_HOME`,且 runtime 能访问 OCI registry)。
+
+服务目录 `.env` 示例(`services/*/.sandboxes/` 已在 `.gitignore` 中):
+
+```sh
+WORKSPACE__SANDBOX_PROVIDER=local
+# local provider 的宿主根目录:相对服务进程工作目录,也可给绝对路径
+WORKSPACE__SANDBOX_LOCAL_ROOT=./.sandboxes
+```
+
+错误码沿用上面的表:local 下会出现 `sandbox.path_invalid`(400)、
+`sandbox.file_not_found`(404)、`sandbox.exec_timeout`(502)与
+`sandbox.provider_error`(502,本地目录已存在、创建/删除目录失败、沙箱名不合法);
+`sandbox.provider_unavailable` 只属于 `microsandbox`/`unavailable`,不会出现在 local。
+
+### 无 runtime / 部署注意
 
 - 没有 microsandbox runtime 或 SDK 未安装时,创建沙箱返回明确的
-  `502 sandbox.provider_unavailable`,**不提供"看起来能用"的空接口**;
+  `502 sandbox.provider_unavailable`,**不提供"看起来能用"的空接口**;需要在没有
+  runtime 的机器上跑通执行链路时,改用 `provider=local`(无隔离,见上);
 - 部署时 `MSB_HOME`(或 `WORKSPACE__SANDBOX_MSB_HOME`)必须指向**可写目录**
   ——默认的 `~/.microsandbox` 在容器/受限环境里往往不可写;
 - 首次创建需要拉 OCI 镜像,runtime 必须能访问 registry(如 index.docker.io);

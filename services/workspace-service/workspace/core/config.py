@@ -28,6 +28,7 @@ class Settings(BaseAppSettings):
     auth_jwks_url: str | None = None
     auth_tenant_claim: str = "tenant_id"
     # 沙箱(§7 阶段 B / P1):provider=microsandbox 用真 microVM;
+    # provider=local 直接在宿主目录/宿主进程上跑(无隔离,仅本地单租户可信环境);
     # provider=unavailable 供没有 runtime 的 dev 使用(调用即得到明确 502,不静默)
     sandbox_provider: str = "microsandbox"
     sandbox_default_image: str = "python"  # microsandbox 镜像别名
@@ -43,3 +44,6 @@ class Settings(BaseAppSettings):
     # microsandbox runtime home(空 = 用 SDK 默认 ~/.microsandbox);
     # 部署时必须指向可写目录,且 runtime 需要能访问 OCI registry
     sandbox_msb_home: str = ""
+    # local provider 的沙箱根目录:每个沙箱一个 <root>/<name>/ 目录,
+    # /workspace 映射到其中的 workspace/;默认落在服务目录下并被 gitignore
+    sandbox_local_root: str = "./.sandboxes"

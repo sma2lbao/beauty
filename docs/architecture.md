@@ -13,7 +13,7 @@
 | Redis             | **云 Redis，提供 URL**                              | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                      |
 | 对象存储          | **暂不引入**                                        | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                         |
 | 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**         | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**                                    |
-| 沙箱              | **microsandbox provider（P1）**                     | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                            |
+| 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底   | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                            |
 | 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                        |
 | 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                                              |
 | 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 仅加密存储、调用面未接，订阅后续 |
@@ -461,6 +461,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 - **P1（2026-10-20）**：`workspace-service` 沙箱模块——`SandboxProvider` 抽象、microsandbox 实现、`sandboxes` 实例表（租户/TTL/资源/状态）、生命周期 API（create/exec/files/touch/destroy）、过期回收 job；`agent-orchestrator` 增加沙箱 HTTP 客户端（默认关闭）。测试零网络；真实 microVM 需宿主可写 `MSB_HOME` 且允许 OCI registry 出网；
 - **P2（2026-10-20）**：stdio MCP 接入——命令在沙箱内拉起，`StdioSandboxPool` 按对话级复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；`env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换；
 - **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
+- **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单租户可信环境（桌面本地模式），启动即打 warning；生产/多租户仍只用 microsandbox；
 - **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
 

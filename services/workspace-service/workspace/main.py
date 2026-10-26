@@ -89,6 +89,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if provider is None:
         provider = build_sandbox_provider(settings)
     app.state.sandbox_provider = provider
+    if provider.provider == "local":
+        # 本地 provider 在宿主上直接执行命令,没有隔离:启动时就明确告警
+        logger.warning(
+            "sandbox provider=local:命令直接在宿主执行、无隔离,"
+            "仅限本地/单租户可信环境,生产请用 microsandbox"
+        )
 
     # 过期回收:后台任务,失败不阻塞启动;shutdown 取消
     reaper_task: asyncio.Task[None] | None = None

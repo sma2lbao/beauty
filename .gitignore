@@ -61,6 +61,8 @@ Thumbs.db
 services/*/*.db
 services/*/migrations/*.db
 services/*/.artifacts/
+# local 沙箱 provider 的宿主目录(workspace-service 默认 ./.sandboxes)
+services/*/.sandboxes/
 # 仓库根也曾残留散落 db(W3 实测 connector.db/workspace.db);只匹配根级,不误伤深层路径
 /*.db
 .claude/worktrees
