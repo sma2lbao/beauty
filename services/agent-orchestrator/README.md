@@ -50,7 +50,10 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `GET /conversations/{id}`(附进行中的 `active_run_id`,前端据此接 SSE)、
   `GET /conversations/{id}/messages` 消息回放、`POST /conversations/{id}/messages` 发消息、
   `POST /conversations/{id}/messages/stream` **SSE 流式**发消息
-  (`meta` → `delta`\* → `done`,失败以 `error` 帧收尾;直接对话的正文边产出边下发;
+  (`meta` → (`delta`\* / `tool`\*)\* → `done`,失败以 `error` 帧收尾;直接对话的
+  正文边产出边下发;**带工具的对话轮次也是真流式**——每轮模型输出实时进 `delta` 帧,
+  工具调用以 `tool` 帧穿插在轮次之间,中间轮次的过渡说明同样下发并随最终 assistant
+  回复一起落库(落库正文 = 各轮正文拼接,不再"只保留最后一轮");
   任务是建 run,正文走 run 事件流的 `token.delta.v1`,所以这里只有 `meta`/`done`);
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;

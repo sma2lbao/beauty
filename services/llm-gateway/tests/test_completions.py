@@ -170,8 +170,27 @@ def test_tool_role_message_shape_passthrough(client: TestClient, monkeypatch) ->
     }
 
 
-def _fake_stream(pieces: list[str], captured: dict | None = None):
-    """litellm 流式:异步生成器,每片一个 choices[0].delta.content。"""
+def _chunk(piece, as_dict: bool = False):
+    """造一片 litellm 流片:str 是正文增量,dict 是 delta 的其余字段。"""
+    model = "deepseek/deepseek-chat"
+    delta = {"content": piece} if isinstance(piece, str) else dict(piece)
+    delta.setdefault("content", None)
+    if as_dict:
+        return {"choices": [{"delta": delta}], "model": model}
+    delta_obj = type("D", (), delta)()
+    return type(
+        "Chunk",
+        (),
+        {"choices": [type("C", (), {"delta": delta_obj})()], "model": model},
+    )()
+
+
+def _fake_stream(pieces: list, captured: dict | None = None, as_dict: bool = False):
+    """litellm 流式:异步生成器,每片一个 choices[0].delta。
+
+    pieces 里的 str 是正文增量、dict 是 delta 字段(如 tool_calls 分片);
+    as_dict=True 时整片用字典形态,覆盖 litellm 的 dict 响应分支。
+    """
 
     async def fake_acompletion(**kwargs):
         if captured is not None:
@@ -179,17 +198,27 @@ def _fake_stream(pieces: list[str], captured: dict | None = None):
 
         async def chunks():
             for piece in pieces:
-                delta = type("D", (), {"content": piece})()
-                choice = type("C", (), {"delta": delta})()
-                yield type(
-                    "Chunk",
-                    (),
-                    {"choices": [choice], "model": "deepseek/deepseek-chat"},
-                )()
+                yield _chunk(piece, as_dict)
 
         return chunks()
 
     return fake_acompletion
+
+
+def _function(name=None, arguments=None, as_dict: bool = False):
+    if as_dict:
+        return {"name": name, "arguments": arguments}
+    return type("F", (), {"name": name, "arguments": arguments})()
+
+
+def _fragment(index=None, call_id=None, name=None, arguments=None, as_dict=False):
+    """litellm 流式 tool_calls 分片;index=None 表示该片不带 index(单调用)。"""
+    fragment = {"id": call_id, "function": _function(name, arguments, as_dict)}
+    if index is not None:
+        fragment["index"] = index
+    if as_dict:
+        return fragment
+    return type("TC", (), fragment)()
 
 
 def _sse_frames(text: str) -> list[dict]:
@@ -252,6 +281,172 @@ def test_completion_stream_midway_failure_keeps_deltas(
     assert frames[0]["delta"] == "前半段"  # 已产出的增量不丢
     assert frames[-1]["error"]["code"] == "llm.upstream_error"
     assert "连接断了" in frames[-1]["error"]["message"]
+
+
+_CALL_SEARCH = {
+    "id": "call_1",
+    "type": "function",
+    "function": {"name": "search_knowledge", "arguments": '{"query":"本周"}'},
+}
+
+
+def test_completion_stream_assembles_single_tool_call(
+    client: TestClient, monkeypatch
+) -> None:
+    """单调用:首片带 id/name,arguments 跨片拼接;工具调用只在 done 帧。"""
+    monkeypatch.setattr(
+        litellm,
+        "acompletion",
+        _fake_stream(
+            [
+                "查一下",
+                {
+                    "tool_calls": [
+                        _fragment(0, "call_1", "search_knowledge", '{"query":')
+                    ]
+                },
+                {"tool_calls": [_fragment(arguments='"本周"')]},  # index 缺省按 0
+                {"tool_calls": [_fragment(arguments="}")]},
+            ]
+        ),
+    )
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert [frame.get("delta") for frame in frames[:-1]] == ["查一下"]
+    assert all("tool_calls" not in frame for frame in frames[:-1])  # 半截不外泄
+    assert frames[-1]["done"] is True
+    assert frames[-1]["content"] == "查一下"
+    assert frames[-1]["tool_calls"] == [_CALL_SEARCH]
+
+
+def test_completion_stream_assembles_parallel_tool_calls(
+    client: TestClient, monkeypatch
+) -> None:
+    """多调用 index=0/1 交错下发,按 index 各归各位;无 arguments 补 "{}"。"""
+    monkeypatch.setattr(
+        litellm,
+        "acompletion",
+        _fake_stream(
+            [
+                {
+                    "tool_calls": [
+                        _fragment(0, "call_1", "search_knowledge", '{"query":')
+                    ]
+                },
+                {"tool_calls": [_fragment(1, "call_2", "list_connections")]},
+                {"tool_calls": [_fragment(0, arguments='"本周"}')]},
+            ]
+        ),
+    )
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert frames[-1]["tool_calls"] == [
+        _CALL_SEARCH,
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "list_connections", "arguments": "{}"},
+        },
+    ]
+
+
+def test_completion_stream_content_and_tool_calls(
+    client: TestClient, monkeypatch
+) -> None:
+    """正文增量与工具调用并存:delta 帧逐字下发,done 帧两者一起带出。"""
+    monkeypatch.setattr(
+        litellm,
+        "acompletion",
+        _fake_stream(
+            [
+                "正在查",
+                {
+                    "tool_calls": [
+                        _fragment(0, "call_1", "search_knowledge", '{"query":')
+                    ]
+                },
+                "…",
+                {"tool_calls": [_fragment(arguments='"本周"}')]},
+            ]
+        ),
+    )
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert [frame.get("delta") for frame in frames[:-1]] == ["正在查", "…"]
+    assert all("tool_calls" not in frame for frame in frames[:-1])
+    assert frames[-1]["content"] == "正在查…"
+    assert frames[-1]["tool_calls"] == [_CALL_SEARCH]
+
+
+def test_completion_stream_without_tool_calls_omits_key(
+    client: TestClient, monkeypatch
+) -> None:
+    """无工具调用:done 帧省略 tool_calls(不输出空数组);空 choices 尾片忽略。"""
+
+    async def fake_acompletion(**kwargs):
+        async def chunks():
+            yield _chunk("纯正文")
+            yield type("Chunk", (), {"choices": [], "model": "m"})()
+
+        return chunks()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert frames[-1]["done"] is True
+    assert frames[-1]["content"] == "纯正文"
+    assert "tool_calls" not in frames[-1]  # 无工具调用不输出空数组
+
+
+def test_completion_stream_dict_style_tool_calls(
+    client: TestClient, monkeypatch
+) -> None:
+    """litellm dict 响应形态:分片是普通字典时同样按 index 装配。"""
+    monkeypatch.setattr(
+        litellm,
+        "acompletion",
+        _fake_stream(
+            [
+                {
+                    "tool_calls": [
+                        _fragment(
+                            0,
+                            "call_1",
+                            "search_knowledge",
+                            '{"query":',
+                            as_dict=True,
+                        )
+                    ]
+                },
+                {"tool_calls": [_fragment(arguments='"本周"}', as_dict=True)]},
+            ],
+            as_dict=True,
+        ),
+    )
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert frames[-1]["tool_calls"] == [_CALL_SEARCH]
+
+
+def test_completion_stream_midway_failure_drops_partial_tool_calls(
+    client: TestClient, monkeypatch
+) -> None:
+    """工具分片到一半断流:不落 done 帧,error 帧也不带半截 tool_calls。"""
+
+    async def midway(**kwargs):
+        async def chunks():
+            yield _chunk(
+                {"tool_calls": [_fragment(0, "call_1", "search_knowledge", '{"q')]}
+            )
+            raise RuntimeError("连接断了")
+
+        return chunks()
+
+    monkeypatch.setattr(litellm, "acompletion", midway)
+    frames = _sse_frames(client.post("/v1/completions/stream", json=BODY).text)
+
+    assert frames[-1]["error"]["code"] == "llm.upstream_error"
+    assert all("tool_calls" not in frame for frame in frames)
 
 
 def test_provider_credentials_passed_to_litellm(monkeypatch) -> None:

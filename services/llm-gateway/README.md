@@ -10,7 +10,9 @@
   归一化为 OpenAI 嵌套形状(`function.name/arguments`);消息支持
   `assistant.tool_calls` 与 `tool` 角色(`tool_call_id`),历史回传无需转换;
 - `POST /v1/completions/stream`:同上的 **SSE 流式**入口(litellm `stream=True`),
-  每帧 `data: {"delta": "..."}`,收尾帧 `{"done": true, "content": "<全文>"}`;
+  正文每帧 `data: {"delta": "..."}`,收尾帧 `{"done": true, "content": "<全文>",
+  "model", "usage"}`;function-calling 的 `tool_calls` 按 `index` 装配后**只随收尾帧**
+  整包带出(中途失败不会吐出半截 JSON;无工具调用时省略该键);
   失败帧 `{"error": {"code", "message"}}`——HTTP 头已按 200 发出,错误只能换载体
   (与 complete 的 502 同 code);对话据此"边输出边显示";
 - `POST /v1/embeddings`:文本批量向量化(litellm `aembedding`,默认

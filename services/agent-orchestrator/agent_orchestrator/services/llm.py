@@ -50,11 +50,24 @@ class LLMReply:
     tool_calls: tuple[ToolCall, ...] = ()
 
 
+@dataclass(frozen=True)
+class LLMStreamEvent:
+    """流式事件:正文增量,或收尾片里的工具调用(二者不同时出现)。
+
+    网关契约:正文 delta 帧只带 delta;工具调用只出现在收尾 done 帧,
+    所以工具调用一定在所有正文增量之后才作为一个事件出现。
+    """
+
+    text: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+
+
 class LLMClient(Protocol):
     """模型调用接口:OpenAI 风格消息进,回复(正文/工具调用)出。
 
-    两种取法共用同一套消息形状:complete 一次拿全文(节点执行用),
-    stream 逐段拿增量(对话"边输出边显示"用)。
+    三种取法共用同一套消息形状:complete 一次拿全文(节点执行用);
+    stream 逐段拿增量(对话"边输出边显示"用);stream_events 是流式的
+    结构化版本——正文增量之外还能拿到收尾片里的工具调用(工具轮用)。
     """
 
     async def complete(
@@ -72,6 +85,14 @@ class LLMClient(Protocol):
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]: ...
+
+    async def stream_events(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[LLMStreamEvent]: ...
 
 
 def _error_detail(resp: httpx.Response) -> dict[str, str]:
@@ -211,14 +232,18 @@ class GatewayClient:
         )
         return LLMReply(content=data.get("content") or "", tool_calls=calls)
 
-    async def stream(
+    async def stream_events(
         self,
         messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
-    ) -> AsyncIterator[str]:
-        """流式调用:逐段产出正文增量;网关的 error 片转 UpstreamError。
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """流式调用:逐段产出正文增量,收尾片里的工具调用单独成一个事件。
+
+        网关契约(POST /v1/completions/stream):正文帧 {"delta": "..."};
+        收尾帧 {"done": true, "content": "<全文>", "tool_calls": [...]}(无工具时
+        省略该键),工具调用**只在** done 片出现,所以工具轮可以边收正文边执行。
 
         流一旦开始就无法改状态码,所以失败分两处:开流前(非 200)直接抛;
         流中途(error 片 / 连接断)在产出若干增量后抛——调用方自行决定
@@ -232,6 +257,7 @@ class GatewayClient:
         if tools:
             payload["tools"] = tools
         chunks: list[str] = []
+        calls: tuple[ToolCall, ...] = ()
         usage_sample: usage_service.UsageSample | None = None
         attempt = 0
         while True:
@@ -269,16 +295,18 @@ class GatewayClient:
                                     str(error.get("code") or "llm.upstream_error"),
                                     str(error.get("message") or "模型流式调用失败"),
                                 )
-                            if data.get("done") and data.get("usage"):
-                                # done 片带 usage(网关契约):收尾时记一次用量
-                                usage_sample = _parse_usage(
-                                    data.get("usage"), data.get("model") or chosen
-                                )
+                            if data.get("done"):
+                                # done 片:usage 与 tool_calls 都只在这里出现一次
+                                if data.get("usage"):
+                                    usage_sample = _parse_usage(
+                                        data.get("usage"), data.get("model") or chosen
+                                    )
+                                calls = _parse_tool_calls(data.get("tool_calls"))
                             delta = data.get("delta")
                             if isinstance(delta, str) and delta:
                                 started = True
                                 chunks.append(delta)
-                                yield delta
+                                yield LLMStreamEvent(text=delta)
             except httpx.TransportError as exc:
                 if started or attempt >= self.retry_attempts:
                     raise _upstream_error(
@@ -295,8 +323,24 @@ class GatewayClient:
             model=chosen,
             prompt_chars=sum(len(str(m.get("content") or "")) for m in messages),
             chars=len("".join(chunks)),
+            tool_calls=len(calls),
             retries=attempt,
         )
+        if calls:
+            # 工具调用在所有正文增量之后才下发:调用方据此决定"这一轮是工具轮"
+            yield LLMStreamEvent(tool_calls=calls)
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[str]:
+        """流式调用(只要正文):stream_events 的薄包装,现有调用方零改动。"""
+        async for event in self.stream_events(messages, model=model, tools=tools):
+            if event.text:
+                yield event.text
 
     async def aclose(self) -> None:
         await self._client.aclose()

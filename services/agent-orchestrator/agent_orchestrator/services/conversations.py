@@ -471,10 +471,15 @@ async def stream_message(
     """流式发消息:yield (事件名, 载荷)。
 
     - meta:分流结论(含用户消息,chat 时 run 为空);
-    - delta:正文增量(仅 chat);
+    - delta:正文增量(仅 chat;工具轮也是真流式,逐段原样转发);
     - tool:chat 内只读工具调用(对话内 function-calling,§6.8);
     - done:收尾(chat 带落库后的 assistant 回复);
     - error:失败(流已按 200 开头,只能用帧报错)。
+
+    工具轮的正文不再"跑完整个工具循环再按字补发":每轮模型输出边产出边进
+    delta 帧,工具事件夹在轮次之间;中间轮次的过渡说明同样实时下发,并随
+    parts 一起落库,最终 assistant 回复 = 各轮正文拼接(与客户端看到的逐帧
+    内容完全一致)。
 
     客户端中途断开时,已产出的增量仍会落库(不丢半截回复);全部失败则不留
     assistant 消息,由对话页展示错误。
@@ -568,9 +573,8 @@ async def stream_message(
                     parts.append(delta)
                     yield "delta", {"text": delta}
             else:
-                # 对话内 function-calling:complete 轮次 + 工具事件;
-                # 最终正文一次性按字切分补发 delta(无工具轮时退化为一段输出)
-                final = ""
+                # 对话内 function-calling:每轮正文真流式下发、工具事件实时转发;
+                # 中间轮(模型过渡说明)的正文也下发并落库,不再只保留最后一轮。
                 # 第一段事务已在 yield meta 前结束,此处必须开新事务:
                 # 复用已 close 的 session 会隐式 autobegin 再签出连接,无人归还
                 async with session_scope(factory) as policy_session:
@@ -578,17 +582,14 @@ async def stream_message(
                         policy_session, tenant_id
                     )
                 async for kind, payload in chat.run_tool_loop(
-                    llm, prompt, toolkit, policies=policies
+                    llm, prompt, toolkit, policies=policies, stream=True
                 ):
-                    if kind == "tool":
+                    if kind == "delta":
+                        delta = str(payload["text"])
+                        parts.append(delta)
+                        yield "delta", {"text": delta}
+                    elif kind == "tool":
                         yield "tool", payload
-                    elif kind == "content":
-                        final = str(payload)
-                text = final
-                for i in range(len(text)):
-                    delta = text[i]
-                    parts.append(delta)
-                    yield "delta", {"text": delta}
     except UpstreamError as exc:
         failure = exc
     finally:

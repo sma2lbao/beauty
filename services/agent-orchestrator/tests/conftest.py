@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import usage as usage_service
-from agent_orchestrator.services.llm import LLMReply, ToolCall
+from agent_orchestrator.services.llm import LLMReply, LLMStreamEvent, ToolCall
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 
 _IDP = TestIdP()
@@ -46,12 +46,18 @@ class FakeLLM:
     """按调用次序吐回复:字符串自动包成 LLMReply(content=...)。"""
 
     def __init__(
-        self, responses: list[str | LLMReply], fail_on_call: int | None = None
+        self,
+        responses: list[str | LLMReply],
+        fail_on_call: int | None = None,
+        *,
+        chunks: dict[int, list[str]] | None = None,
     ):
         self.responses = list(responses)
         self.fail_on_call = fail_on_call
         self.calls: list[list[dict[str, Any]]] = []
         self.tools_seen: list[list[dict[str, Any]] | None] = []
+        # 调用序号(1 起)→ 正文块;指定后流式按这些多字符块吐出(验证不重切)
+        self.chunks = dict(chunks or {})
 
     async def complete(
         self,
@@ -69,6 +75,26 @@ class FakeLLM:
             response if isinstance(response, LLMReply) else LLMReply(content=response)
         )
 
+    async def stream_events(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """流式(结构化):先吐正文块,有工具调用再吐一个工具事件。
+
+        内部仍走 complete(),所以调用序号与失败注入(fail_on_call)与旧路径一致;
+        默认按字切分,``chunks`` 可按调用序号指定多字符块——用于断言服务端
+        原样转发、不重新按字切分。
+        """
+        reply = await self.complete(messages, model=model, tools=tools)
+        chunks = self.chunks.get(len(self.calls))
+        for piece in chunks if chunks is not None else list(reply.content):
+            yield LLMStreamEvent(text=piece)
+        if reply.tool_calls:
+            yield LLMStreamEvent(tool_calls=reply.tool_calls)
+
     async def stream(
         self,
         messages: list[dict[str, Any]],
@@ -76,14 +102,10 @@ class FakeLLM:
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[str]:
-        """流式:复用 complete 的脚本(调用序号与失败注入一致),按字切分。
-
-        与真实网关一致:内容先整段算出,再逐段吐出——测试因此能断言
-        "第几段该是什么",而不必关心切分粒度以外的实现细节。
-        """
-        reply = await self.complete(messages, model=model, tools=tools)
-        for char in reply.content:
-            yield char
+        """流式(只要正文):委托 stream_events,保持调用序号/失败注入一致。"""
+        async for event in self.stream_events(messages, model=model, tools=tools):
+            if event.text:
+                yield event.text
 
 
 class FakeDangerTool:

@@ -61,6 +61,8 @@ class CompletionChunk(BaseModel):
     """流式分片:增量文本进 delta;最后一片 done=true 带全文(便于调用方对账)。
 
     错误以单独一片(error 非空)送达——流一旦开始,状态码就改不了了。
+    tool_calls 只在收尾片整体带出(中途不吐半截 JSON);无工具调用时为 None,
+    SSE 序列化按 exclude_none 省略该键。
     """
 
     delta: str = ""
@@ -68,4 +70,5 @@ class CompletionChunk(BaseModel):
     content: str | None = None
     model: str | None = None
     usage: UsageOut | None = None
+    tool_calls: list[ToolCall] | None = None
     error: StreamError | None = None

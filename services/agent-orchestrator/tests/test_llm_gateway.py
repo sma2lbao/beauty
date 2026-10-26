@@ -270,3 +270,60 @@ async def test_gateway_client_stream_never_retries_after_first_delta() -> None:
     assert pieces == ["half"]
     assert exc_info.value.code == "llm.upstream_error"
     assert len(calls) == 1
+
+
+async def test_gateway_client_stream_events_delta_then_tool_calls() -> None:
+    """stream_events:正文增量逐个下发,工具调用只在收尾统一成一个事件。"""
+    captured: dict = {}
+    frames = [
+        {"delta": "先查"},
+        {"delta": "一下"},
+        {
+            "done": True,
+            "content": "先查一下",
+            "model": "m",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "search_knowledge",
+                        "arguments": '{"query": "本周日程"}',
+                    },
+                }
+            ],
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        body = "".join(
+            f"data: {json.dumps(frame, ensure_ascii=False)}\n\n" for frame in frames
+        )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(body + "data: [DONE]\n\n").encode(),
+        )
+
+    client = GatewayClient("http://test", transport=httpx.MockTransport(handler))
+    tools = [{"type": "function", "function": {"name": "search_knowledge"}}]
+    try:
+        events = [
+            event
+            async for event in client.stream_events(
+                [{"role": "user", "content": "hi"}], tools=tools
+            )
+        ]
+    finally:
+        await client.aclose()
+    assert captured["tools"] == tools
+    # 正文增量在前、工具调用在后(契约:工具只在 done 片出现)
+    assert [event.text for event in events] == ["先查", "一下", ""]
+    assert events[0].tool_calls == () and events[1].tool_calls == ()
+    assert events[-1].tool_calls == (
+        ToolCall(
+            id="call_1", name="search_knowledge", arguments='{"query": "本周日程"}'
+        ),
+    )

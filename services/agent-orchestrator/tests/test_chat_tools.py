@@ -200,5 +200,47 @@ def test_chat_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
         assert len(tool_events) == 5
         # 收束那次不下发工具,逼模型用已有结果写结论
         assert fake.tools_seen[-1] is None
-        deltas = "".join(data["text"] for name, data in events if name == "delta")
-        assert deltas == "收束:日程已读取,共 1 条"
+        deltas = [data["text"] for name, data in events if name == "delta"]
+        # 真流式:每一轮的正文都实时下发,不再"只保留最后一轮正文"
+        assert "".join(deltas) == (
+            "第 1 轮小结第 2 轮小结第 3 轮小结第 4 轮小结第 5 轮小结"
+            "收束:日程已读取,共 1 条"
+        )
+        # 落库正文 = 各轮正文拼接(中间轮的过渡说明也不丢)
+        assert events[-1][1]["reply"]["content"] == "".join(deltas)
+
+
+def test_chat_tool_loop_streams_model_chunks_verbatim(tmp_path) -> None:
+    """工具轮真流式:模型给的多字符块原样进 delta 帧,服务端不再按字重切。
+
+    顺序应为 meta → (首轮过渡正文) → tool → (最终正文两块) → done;
+    中间轮正文随 parts 落库,最终回复 = 各轮正文拼接。
+    """
+    knowledge = FakeKnowledge()
+    fake = FakeLLM(
+        [
+            LLMReply(
+                content="先查一下知识库。",
+                tool_calls=(
+                    ToolCall(
+                        id="call-1",
+                        name="search_knowledge",
+                        arguments='{"query": "本周日程"}',
+                    ),
+                ),
+            ),
+            "第一段第二段",
+        ],
+        chunks={1: ["先查一下知识库。"], 2: ["第一段", "第二段"]},
+    )
+    for client in _tool_client(tmp_path, fake, knowledge):
+        conversation_id = _create_conversation(client)
+
+        _, events = _stream(client, conversation_id, "查日程")
+
+        names = [name for name, _ in events]
+        assert names == ["meta", "delta", "tool", "delta", "delta", "done"]
+        deltas = [data["text"] for name, data in events if name == "delta"]
+        # 按字重切的话这里会碎成多段;真流式必须原样是模型给的块
+        assert deltas == ["先查一下知识库。", "第一段", "第二段"]
+        assert events[-1][1]["reply"]["content"] == "先查一下知识库。第一段第二段"

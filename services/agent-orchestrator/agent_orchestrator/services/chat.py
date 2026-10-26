@@ -28,7 +28,7 @@ from agent_orchestrator.repositories import MessageRepository
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history
-from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.llm import LLMClient, ToolCall
 from agent_orchestrator.services.tools import ToolRisk
 
 MAX_CHAT_TOOL_ROUNDS = 5  # 对话内 function-calling 轮次上限
@@ -107,18 +107,20 @@ def _tool_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
-def _assistant_tool_message(reply) -> dict[str, Any]:
+def _assistant_tool_message(
+    content: str, calls: tuple[ToolCall, ...]
+) -> dict[str, Any]:
     """模型的工具请求回填进消息历史(OpenAI 嵌套形状,与 execute 节点一致)。"""
     return {
         "role": "assistant",
-        "content": reply.content or None,
+        "content": content or None,
         "tool_calls": [
             {
                 "id": call.id,
                 "type": "function",
                 "function": {"name": call.name, "arguments": call.arguments},
             }
-            for call in reply.tool_calls
+            for call in calls
         ],
     }
 
@@ -127,67 +129,102 @@ def _tool_message(call_id: str, output: str) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call_id, "content": output}
 
 
+async def _execute_calls(
+    messages: list[dict[str, Any]],
+    toolkit,
+    calls: tuple[ToolCall, ...],
+    policies: list[dict[str, str]] | None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """执行一轮工具调用:回填 tool 消息,逐个产出 ("tool", ...) 事件。"""
+    for call in calls:
+        # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
+        risk = str(toolkit.risk(call.name))
+        decision = approval_service.decide(policies, call.name, ToolRisk(risk))
+        duration_ms = 0
+        if decision is approval_service.ApprovalAction.DENY:
+            output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
+        elif decision is approval_service.ApprovalAction.CONFIRM:
+            # 需要人工确认的动作在 chat 中不执行:回喂错误让模型引导走任务
+            output = _tool_error(
+                "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
+            )
+        else:
+            started = time.perf_counter()
+            # 对话没有审批流:approved 恒 False,写工具由服务端风险下限兜底。
+            output = await toolkit.execute(call.name, call.arguments, approved=False)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+        messages.append(_tool_message(call.id, output))
+        result_fields = tool_result_fields(output)
+        yield (
+            "tool",
+            {
+                "name": call.name,
+                "arguments": call.arguments,
+                "ok": not is_tool_error(output),
+                "risk": risk,
+                "decision": _DECISION_TEXT[decision],
+                "error_code": parse_tool_error(output),
+                "duration_ms": duration_ms,
+                "result_chars": len(output),
+                "truncated": result_fields.get("truncated"),
+            },
+        )
+
+
 async def run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
     toolkit,
     *,
     policies: list[dict[str, str]] | None = None,
+    stream: bool = False,
 ) -> AsyncIterator[tuple[str, dict[str, Any] | str]]:
     """对话内 function-calling 循环(只读 + 受控写,§6.7)。
 
     产出 ("tool", {name, arguments, ok, risk, error_code, duration_ms}) 事件
-    供流式层转发;最终一轮产出 ("content", 正文)。只读与受控写工具自动执行;
-    **危险操作(DANGER)不执行**,
+    供流式层转发;正文的产法由 ``stream`` 决定:
+
+    - ``stream=False``(answer() 用):每轮 ``complete`` 一次拿全文,最终一轮产出
+      ("content", 正文);
+    - ``stream=True``(对话流式用):每轮消费 ``stream_events``,收到正文增量立刻
+      产出 ("delta", {"text": ...}) 原样转发(不重切);收到工具调用就执行工具、
+      进入下一轮,某轮没有工具调用即最终正文轮,直接返回——正文已经实时下发。
+
+    只读与受控写工具自动执行;**危险操作(DANGER)不执行**,
     回喂错误文本引导走任务路径(对话没有审批流);租户策略 ``deny`` 的工具同样不执行。
     轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
-    工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底。
+    工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底(仅非流式)。
     """
     schemas = toolkit.schemas()
     last_text = ""
     for _ in range(MAX_CHAT_TOOL_ROUNDS):
-        reply = await llm.complete(messages, tools=schemas)
-        last_text = reply.content or last_text
-        if not reply.tool_calls:
-            yield "content", reply.content
-            return
-        messages.append(_assistant_tool_message(reply))
-        for call in reply.tool_calls:
-            # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
-            risk = str(toolkit.risk(call.name))
-            decision = approval_service.decide(policies, call.name, ToolRisk(risk))
-            duration_ms = 0
-            if decision is approval_service.ApprovalAction.DENY:
-                output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
-            elif decision is approval_service.ApprovalAction.CONFIRM:
-                # 需要人工确认的动作在 chat 中不执行:回喂错误让模型引导走任务
-                output = _tool_error(
-                    "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
-                )
-            else:
-                started = time.perf_counter()
-                # 对话没有审批流:approved 恒 False,写工具由服务端风险下限兜底。
-                output = await toolkit.execute(
-                    call.name, call.arguments, approved=False
-                )
-                duration_ms = int((time.perf_counter() - started) * 1000)
-            messages.append(_tool_message(call.id, output))
-            result_fields = tool_result_fields(output)
-            yield (
-                "tool",
-                {
-                    "name": call.name,
-                    "arguments": call.arguments,
-                    "ok": not is_tool_error(output),
-                    "risk": risk,
-                    "decision": _DECISION_TEXT[decision],
-                    "error_code": parse_tool_error(output),
-                    "duration_ms": duration_ms,
-                    "result_chars": len(output),
-                    "truncated": result_fields.get("truncated"),
-                },
-            )
+        if stream:
+            text, calls = "", ()
+            async for event in llm.stream_events(messages, tools=schemas):
+                if event.text:
+                    text += event.text
+                    yield "delta", {"text": event.text}
+                if event.tool_calls:
+                    calls = event.tool_calls
+            if not calls:
+                # 最终正文轮:正文已边产出边下发,这里不再补发
+                return
+        else:
+            reply = await llm.complete(messages, tools=schemas)
+            text, calls = reply.content, reply.tool_calls
+            if not calls:
+                yield "content", reply.content
+                return
+            last_text = text or last_text
+        messages.append(_assistant_tool_message(text, calls))
+        async for item in _execute_calls(messages, toolkit, calls, policies):
+            yield item
     # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里
+    if stream:
+        async for event in llm.stream_events(messages):
+            if event.text:
+                yield "delta", {"text": event.text}
+        return
     reply = await llm.complete(messages)
     last_text = reply.content or last_text
     yield "content", last_text

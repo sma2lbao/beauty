@@ -142,6 +142,56 @@ def _delta_text(chunk: Any) -> str:
     return str(_get(delta, "content") or "")
 
 
+class _ToolCallAssembler:
+    """流式 tool_calls 装配:litellm 按 index 分片下发,这里合并成完整调用。
+
+    分片规则(OpenAI 兼容):``id``/``name`` 通常只在首片出现,``arguments`` 是字符串
+    片段、按到达顺序拼接;对象式与 dict 式分片都要兼容。半截调用不单独下发——
+    完整列表只随收尾 done 片整包带出,中途失败时不会有半截 JSON 漏给调用方。
+    """
+
+    def __init__(self) -> None:
+        self._parts: dict[int, dict[str, str]] = {}
+
+    def add(self, chunk: Any) -> None:
+        """吸收一片流式响应里的 tool_calls 分片(该片没有则跳过)。"""
+        choices = _get(chunk, "choices") or []
+        if not choices:
+            return
+        delta = _get(choices[0], "delta")
+        for raw in _get(delta, "tool_calls") or []:
+            index = _get(raw, "index")
+            # index 缺省(部分提供商单调用不分片标号)按 0 处理
+            slot = self._parts.setdefault(
+                index if isinstance(index, int) else 0,
+                {"id": "", "name": "", "arguments": ""},
+            )
+            call_id = _get(raw, "id")
+            if call_id:
+                slot["id"] = str(call_id)
+            function = _get(raw, "function")
+            name = _get(function, "name")
+            if name:
+                slot["name"] = str(name)
+            arguments = _get(function, "arguments")
+            if arguments:
+                slot["arguments"] += str(arguments)
+
+    def calls(self) -> list[ToolCall] | None:
+        """装配结果:按 index 排序;没有任何分片时返回 None(调用方据 None 省键)。"""
+        if not self._parts:
+            return None
+        return [
+            ToolCall(
+                id=slot["id"],
+                function=ToolFunction(
+                    name=slot["name"], arguments=slot["arguments"] or "{}"
+                ),
+            )
+            for _, slot in sorted(self._parts.items())
+        ]
+
+
 async def complete(settings: Settings, data: CompletionRequest) -> CompletionResponse:
     model = data.model or settings.default_model
     log = get_logger("llm_gateway.completions")
@@ -215,11 +265,12 @@ async def complete(settings: Settings, data: CompletionRequest) -> CompletionRes
 async def stream(
     settings: Settings, data: CompletionRequest
 ) -> AsyncIterator[CompletionChunk]:
-    """流式补全:逐片产出增量,最后一片 done=true 带全文与用量。
+    """流式补全:逐片产出增量正文,最后一片 done=true 带全文、用量与 tool_calls。
 
     失败一律以 error 片收尾——HTTP 头早已发出(200),状态码改不了;
     调用方按 error.code 处理(与 complete 的 502 语义对齐,只是换了载体)。
-    工具调用的增量拼装暂无调用方,这里只透传正文(需要时再补)。
+    上游的 tool_calls 分片按 index 装配,只随 done 片整包带出:中途失败时
+    不会吐出半截 JSON,正文增量片也不带 tool_calls。
     """
     model = data.model or settings.default_model
     log = get_logger("llm_gateway.completions")
@@ -260,12 +311,14 @@ async def stream(
         )
         return
     parts: list[str] = []
+    tool_calls_in = _ToolCallAssembler()
     usage_out: UsageOut | None = None
     resolved_model = model
     try:
         async for chunk in resp:
             resolved_model = str(_get(chunk, "model") or resolved_model)
             usage_out = _usage(_get(chunk, "usage")) or usage_out
+            tool_calls_in.add(chunk)
             delta = _delta_text(chunk)
             if delta:
                 parts.append(delta)
@@ -277,6 +330,7 @@ async def stream(
         )
         return
     content = "".join(parts)
+    tool_calls = tool_calls_in.calls()
     duration_seconds = time.perf_counter() - started
     _record_usage(usage_out, resolved_model)
     metrics.observe_llm_latency(
@@ -291,10 +345,15 @@ async def stream(
         prompt_tokens=usage_out.prompt_tokens if usage_out else 0,
         completion_tokens=usage_out.completion_tokens if usage_out else 0,
         total_tokens=usage_out.total_tokens if usage_out else 0,
+        tool_calls=len(tool_calls or []),
         chars=len(content),
         duration_ms=round(duration_seconds * 1000, 1),
     )
     _log_content(settings, log, "response", _clip(content))
     yield CompletionChunk(
-        done=True, content=content, model=resolved_model, usage=usage_out
+        done=True,
+        content=content,
+        model=resolved_model,
+        usage=usage_out,
+        tool_calls=tool_calls,
     )
