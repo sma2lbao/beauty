@@ -275,3 +275,84 @@ export async function execSandbox(
     truncated: raw.truncated === true,
   };
 }
+
+/** 持久 shell 会话句柄(session_id 用于 input/stream/close)。 */
+export type SandboxSession = {
+  sessionId: string;
+  sandboxId: string;
+  cwd: string;
+  createdAt: string;
+};
+
+type RawSession = {
+  session_id?: string;
+  sandbox_id?: string;
+  cwd?: string;
+  created_at?: string;
+};
+
+const sessionPath = (sandboxId: string, sessionId: string) =>
+  `${SANDBOXES}/${encodeURIComponent(sandboxId)}/sessions/${encodeURIComponent(sessionId)}`;
+
+/**
+ * 开一个持久 shell 会话(真 TTY)。
+ *
+ * 会话活到显式 close / 空闲超时 / 沙箱销毁,不随 HTTP 请求结束——
+ * 终端页签据此在挂载时开一次,后续输入输出都挂在同一会话上。
+ */
+export async function openSandboxSession(
+  sandboxId: string,
+  options: { cwd?: string; cols?: number; rows?: number } = {},
+): Promise<SandboxSession> {
+  const body: Record<string, unknown> = {
+    cols: options.cols ?? 120,
+    rows: options.rows ?? 32,
+  };
+  if (options.cwd) body.cwd = options.cwd;
+  const raw = await http.request<RawSession>(
+    `${SANDBOXES}/${encodeURIComponent(sandboxId)}/sessions`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return {
+    sessionId: raw.session_id ?? '',
+    sandboxId: raw.sandbox_id ?? sandboxId,
+    cwd: raw.cwd ?? '/workspace',
+    createdAt: raw.created_at ?? '',
+  };
+}
+
+/** 向会话 stdin 写文本:原样写入,不自动补换行(由调用方决定是否加 \n)。 */
+export async function sendSandboxSessionInput(
+  sandboxId: string,
+  sessionId: string,
+  data: string,
+): Promise<void> {
+  await http.request<void>(`${sessionPath(sandboxId, sessionId)}/input`, {
+    method: 'POST',
+    body: JSON.stringify({ data }),
+  });
+}
+
+/** 关闭会话(幂等);终端页签在切换沙箱时尽力调用,卸载时交给空闲回收。 */
+export async function closeSandboxSession(
+  sandboxId: string,
+  sessionId: string,
+): Promise<void> {
+  await http.request<void>(sessionPath(sandboxId, sessionId), {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * 会话输出流的完整地址(交给 fetch 读 SSE)。
+ *
+ * BFF 对以 `/stream` 结尾的路径做流式转发,所以这里必须带上 base 前缀;
+ * 帧格式为 `id: <seq>` / `event: output|exit|error` / `data: <json>`,
+ * 断线可用 Last-Event-ID 从上次 seq 之后续传。
+ */
+export function sandboxSessionStreamUrl(
+  sandboxId: string,
+  sessionId: string,
+): string {
+  return `${BASE}${sessionPath(sandboxId, sessionId)}/stream`;
+}

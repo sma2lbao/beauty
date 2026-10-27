@@ -131,6 +131,7 @@ export function ChatPage() {
         <ExecutionPanel
           run={queries.run}
           status={queries.status}
+          conversationId={activeConversationId ?? undefined}
           toolCalls={queries.toolCalls}
           steps={queries.steps}
           sandbox={sandbox.data ?? null}
@@ -155,6 +156,7 @@ export function ChatPage() {
       </div>
       {viewer ? (
         <SandboxFileViewer
+          conversationId={activeConversationId ?? undefined}
           sandbox={sandbox.data ?? null}
           sandboxLoading={sandbox.isPending}
           sandboxError={sandbox.error instanceof Error ? sandbox.error : null}

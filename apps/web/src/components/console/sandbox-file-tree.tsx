@@ -7,6 +7,10 @@
  *
  * 工具调用触碰过的文件会带一个强调点:用户从「步骤」里看到写了哪个文件,
  * 在文件树里能对上。
+ *
+ * 传了 conversationId 时还会叠加本会话的增删行数(来自会话级 tool-calls 审计):
+ * 文件行在大小右侧显示 +N/−M,目录行显示其子树汇总。端点降级或没传会话 id 时
+ * 保持原来的纯文件树。
  */
 import { File, FileQuestion, Folder, FolderOpen, Link2, RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -22,31 +26,65 @@ import {
   type SandboxTreeNode,
 } from '@/lib/sandbox-tree';
 import { sandboxTree } from '@/lib/sandbox-api';
+import {
+  fileLineStats,
+  useConversationToolCalls,
+  type FileLineStat,
+} from '@/lib/tool-calls-api';
 import { cn } from '@/lib/utils';
 
 /** 首屏拉取的层级:够看到 src/ 下的常见结构,又不至于一次拉满整棵树。 */
 const INITIAL_DEPTH = 3;
 const ROOT = '/workspace';
 
+/** 查看器/文件树可见时的统计刷新间隔:Agent 继续写文件时要能更新。 */
+const STATS_REFETCH_MS = 15_000;
+
 type TreeSharedProps = {
   sandboxId: string;
   expanded: ReadonlySet<string>;
   selectedPath: string | null;
   touched: ReadonlySet<string>;
+  /** 相对路径 → 本会话增删行数;没有会话 id 或端点降级时为 null。 */
+  stats: ReadonlyMap<string, FileLineStat> | null;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
 };
+
+/** 汇总某个路径的增删行数:文件取自身,目录取整棵子树(按 'dir/' 前缀)。 */
+function lineChangesUnder(
+  stats: ReadonlyMap<string, FileLineStat>,
+  relative: string,
+  isDir: boolean,
+): FileLineStat | null {
+  if (!isDir) return stats.get(relative) ?? null;
+  const prefix = relative ? relative + '/' : '';
+  let added = 0;
+  let removed = 0;
+  let hit = false;
+  for (const [key, stat] of stats) {
+    if (prefix === '' || key === relative || key.startsWith(prefix)) {
+      added += stat.added;
+      removed += stat.removed;
+      hit = true;
+    }
+  }
+  return hit ? { added, removed } : null;
+}
 
 export function SandboxFileTree({
   sandboxId,
   touchedPaths,
   selectedPath,
+  conversationId,
   onSelect,
 }: {
   sandboxId: string;
   /** 本会话工具调用触碰过的路径(tool-meta 的 paths)。 */
   touchedPaths?: readonly string[];
   selectedPath?: string | null;
+  /** 会话 id:有值时叠加本会话增删行数;缺省时不请求,行为与旧版一致。 */
+  conversationId?: string;
   onSelect: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
@@ -54,6 +92,17 @@ export function SandboxFileTree({
   );
   const queryClient = useQueryClient();
   const touched = useMemo(() => touchedPathSet(touchedPaths), [touchedPaths]);
+
+  // 统计只做展示,拿不到(未传 id / 降级 / 失败)就当没有,不打扰用户。
+  const toolCalls = useConversationToolCalls(conversationId, {
+    refetchInterval: STATS_REFETCH_MS,
+  });
+  const stats = useMemo(() => {
+    if (!conversationId || toolCalls.data?.degraded) return null;
+    if (!toolCalls.data) return null;
+    const map = fileLineStats(toolCalls.data);
+    return map.size > 0 ? map : null;
+  }, [conversationId, toolCalls.data]);
 
   const tree = useQuery({
     queryKey: queryKeys.sandboxTree(sandboxId, ROOT, INITIAL_DEPTH),
@@ -84,6 +133,7 @@ export function SandboxFileTree({
     expanded,
     selectedPath: selectedPath ?? null,
     touched,
+    stats,
     onToggle: toggle,
     onSelect,
   };
@@ -186,13 +236,22 @@ function TreeRow({
     ? hasTouchedUnder(shared.touched, node.path)
     : shared.touched.has(relative);
   const size = !isDir && node.sizeBytes !== null ? formatBytes(node.sizeBytes) : null;
+  const changes = shared.stats
+    ? lineChangesUnder(shared.stats, relative, isDir)
+    : null;
+  const added = changes && changes.added > 0 ? changes.added : 0;
+  const removed = changes && changes.removed > 0 ? changes.removed : 0;
+  const title =
+    added > 0 || removed > 0
+      ? '本会话 +' + String(added) + ' −' + String(removed) + ' 行'
+      : relative || node.path;
 
   return (
     <li>
       <button
         type="button"
         onClick={() => (isDir ? shared.onToggle(node.path) : shared.onSelect(node.path))}
-        title={relative || node.path}
+        title={title}
         aria-expanded={isDir ? open : undefined}
         className={cn(
           'flex w-full items-center gap-1.5 rounded px-1.5 py-[3px] text-left font-mono text-[12px] leading-5 transition-colors',
@@ -215,6 +274,16 @@ function TreeRow({
         ) : null}
         {size ? (
           <span className="shrink-0 text-[10px] text-ha-faint">{size}</span>
+        ) : null}
+        {added > 0 || removed > 0 ? (
+          <span className="shrink-0 font-mono text-[10px]">
+            {added > 0 ? (
+              <span className="text-ha-success">{'+' + String(added)}</span>
+            ) : null}
+            {removed > 0 ? (
+              <span className="text-ha-danger">{'−' + String(removed)}</span>
+            ) : null}
+          </span>
         ) : null}
       </button>
       {isDir && open ? (

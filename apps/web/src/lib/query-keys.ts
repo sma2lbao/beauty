@@ -42,10 +42,14 @@ export const queryKeys = {
    * 会话沙箱域(执行现场的「文件 / 终端」页签):
    * - conversationSandbox:['conversation-sandbox', conversationId] 会话对应沙箱;
    * - sandboxTree:['sandbox-tree', sandboxId, path, depth] 目录列表;
-   * - sandboxFile:['sandbox-file', sandboxId, path] 文件内容。
+   * - sandboxFile:['sandbox-file', sandboxId, path] 文件内容;
+   * - conversationToolCalls:['conversation-tool-calls', conversationId]
+   *   会话级工具调用审计(服务端补丁与增删行数的来源)。
    */
   conversationSandbox: (conversationId: string) =>
     ['conversation-sandbox', conversationId] as const,
+  conversationToolCalls: (conversationId: string) =>
+    ['conversation-tool-calls', conversationId] as const,
   sandboxTree: (sandboxId: string, path: string, depth: number) =>
     ['sandbox-tree', sandboxId, path, depth] as const,
   sandboxFile: (sandboxId: string, path: string) =>

@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setStoredToken } from './auth';
 import {
+  closeSandboxSession,
   conversationSandbox,
   execSandbox,
   listSandboxes,
+  openSandboxSession,
   readSandboxFile,
+  sandboxSessionStreamUrl,
   sandboxTree,
+  sendSandboxSessionInput,
 } from './sandbox-api';
 
 function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
@@ -176,5 +180,71 @@ describe('sandboxApi', () => {
       durationMs: 34,
       truncated: true,
     });
+  });
+
+  it('开会话默认 cols/rows 并归一 camelCase', async () => {
+    const fetchMock = mockFetch(201, {
+      session_id: 'ss-1',
+      sandbox_id: 'sb-1',
+      cwd: '/workspace',
+      created_at: '2026-10-01T00:00:00Z',
+    });
+
+    const session = await openSandboxSession('sb-1');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/workspace-api/v1/sandboxes/sb-1/sessions');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ cols: 120, rows: 32 });
+    expect(session).toEqual({
+      sessionId: 'ss-1',
+      sandboxId: 'sb-1',
+      cwd: '/workspace',
+      createdAt: '2026-10-01T00:00:00Z',
+    });
+  });
+
+  it('开会话可指定 cwd/cols/rows', async () => {
+    const fetchMock = mockFetch(201, { session_id: 'ss-2' });
+
+    await openSandboxSession('sb-1', {
+      cwd: '/workspace/src',
+      cols: 80,
+      rows: 24,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      cwd: '/workspace/src',
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it('输入原样写进会话 stdin(不补换行)', async () => {
+    const fetchMock = mockFetch(204);
+
+    await sendSandboxSessionInput('sb-1', 'ss-1', 'ls -la');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/workspace-api/v1/sandboxes/sb-1/sessions/ss-1/input');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ data: 'ls -la' });
+  });
+
+  it('关闭会话走 DELETE,并把沙箱/会话 id 编进路径', async () => {
+    const fetchMock = mockFetch(204);
+
+    await closeSandboxSession('sb/1', 'ss 1');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/workspace-api/v1/sandboxes/sb%2F1/sessions/ss%201');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('流地址是同源可用的完整 URL(相对前缀 + 编码后的 id)', () => {
+    expect(sandboxSessionStreamUrl('sb-1', 'ss-1')).toBe(
+      '/workspace-api/v1/sandboxes/sb-1/sessions/ss-1/stream',
+    );
   });
 });

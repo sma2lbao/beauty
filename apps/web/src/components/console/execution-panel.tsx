@@ -40,6 +40,7 @@ export function ExecutionPanel({
   onRetrySandbox,
   onOpenFile,
   selectedFilePath = null,
+  conversationId,
 }: {
   run?: Run;
   status: RunStatus;
@@ -56,6 +57,8 @@ export function ExecutionPanel({
   onOpenFile?: (path: string) => void;
   /** 查看器当前打开的文件(树里高亮)。 */
   selectedFilePath?: string | null;
+  /** 当前会话 id:文件树/文件查看器按会话取补丁时需要(可选,缺失时走本地数据)。 */
+  conversationId?: string;
 }) {
   const [tab, setTab] = useState<PanelTab>('steps');
   const running = status === 'running' || status === 'planning';
@@ -183,6 +186,7 @@ export function ExecutionPanel({
               <SandboxFileTree
                 key={active.id}
                 sandboxId={active.id}
+                conversationId={conversationId}
                 touchedPaths={touchedPaths}
                 selectedPath={selectedFilePath}
                 onSelect={(path) => onOpenFile?.(path)}

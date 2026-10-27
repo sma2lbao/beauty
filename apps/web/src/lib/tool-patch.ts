@@ -23,6 +23,8 @@ export type SynthesizedPatch = {
   diff: string;
   /** 附注:空文件、替换全部匹配等。 */
   note: string | null;
+  /** 该条工具调用的发生时间(事件带时才有),用于在补丁头部显示时刻。 */
+  occurredAt?: string;
 };
 
 export type TruncatedPatch = {
@@ -92,6 +94,7 @@ function buildWritePatch(
     path,
     diff: [diffHeader(path), hunkHeader(0, lines.length), ...body].join('\n'),
     note: lines.length === 0 ? '写入空文件' : null,
+    ...(call.occurredAt ? { occurredAt: call.occurredAt } : {}),
   };
 }
 
@@ -126,6 +129,7 @@ function buildEditPatch(
       ...body,
     ].join('\n'),
     note: notes.length > 0 ? notes.join(' · ') : null,
+    ...(call.occurredAt ? { occurredAt: call.occurredAt } : {}),
   };
 }
 

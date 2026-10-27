@@ -192,37 +192,62 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('这个会话还没有运行中的沙箱。')).toBeTruthy();
   });
 
-  it('终端在沙箱里执行命令并显示输出与退出码', async () => {
-    const fetchMock = mockFetch({
-      exit_code: 0,
-      stdout: 'hi',
-      stderr: '',
-      duration_ms: 12,
-      truncated: false,
+  it('终端页签走持久 shell 会话:流式输出并显示退出码', async () => {
+    const encoder = new TextEncoder();
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const frames = [
+      'id: 1\nevent: output\ndata: {"seq":1,"data":"hi\\n"}\n\n',
+      'id: 2\nevent: exit\ndata: {"seq":2,"exit_code":0}\n\n',
+    ].join('');
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init: init ?? {} });
+      if (url.endsWith('/sessions')) {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            session_id: 'ss-1',
+            sandbox_id: 'sb-1',
+            cwd: '/workspace',
+            created_at: '2026-10-01T00:00:00Z',
+          }),
+        };
+      }
+      if (url.endsWith('/stream')) {
+        return {
+          ok: true,
+          status: 200,
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode(frames));
+              controller.close();
+            },
+          }),
+        };
+      }
+      return { ok: true, status: 204, json: async () => undefined };
     });
+    vi.stubGlobal('fetch', fetchMock);
     renderPanel({ sandbox });
 
     fireEvent.click(screen.getByRole('tab', { name: '终端' }));
-    expect(await screen.findByText('这是沙箱内的验证终端')).toBeTruthy();
+    const output = await screen.findByTestId('sandbox-terminal-output');
+    await waitFor(() => expect(output.textContent).toContain('hi'));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('sandbox-terminal-exit').textContent,
+      ).toContain('退出码 0'),
+    );
 
-    const input = screen.getByLabelText('终端命令');
-    fireEvent.change(input, { target: { value: 'echo hi' } });
-    const form = input.closest('form');
-    if (!form) throw new Error('终端输入框不在 form 里');
-    fireEvent.submit(form);
-
-    expect(await screen.findByText('hi')).toBeTruthy();
-    expect(screen.getByText('退出码 0')).toBeTruthy();
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe('/workspace-api/v1/sandboxes/sb-1/exec');
-    expect(JSON.parse(String(init.body))).toMatchObject({
-      argv: ['sh', '-lc', 'echo hi'],
-      cwd: '/workspace',
-    });
-    await waitFor(() => expect(screen.getByText('echo hi')).toBeTruthy());
+    const session = calls.find((call) => call.url.endsWith('/sessions'));
+    expect(session?.url).toBe('/workspace-api/v1/sandboxes/sb-1/sessions');
+    const stream = calls.find((call) => call.url.endsWith('/stream'));
+    expect(stream?.url).toBe(
+      '/workspace-api/v1/sandboxes/sb-1/sessions/ss-1/stream',
+    );
+    // 持久会话模式不应退回单命令 exec
+    expect(calls.some((call) => call.url.endsWith('/exec'))).toBe(false);
   });
 
   it('沙箱查询失败时给出错误与重试', () => {
