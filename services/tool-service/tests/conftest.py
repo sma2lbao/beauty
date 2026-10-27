@@ -127,6 +127,7 @@ class FakeSandboxProvider:
         sandbox_id: str,
         argv: list[str],
         *,
+        cwd: str = "/workspace",
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:
@@ -137,6 +138,7 @@ class FakeSandboxProvider:
                 "tenant_id": tenant_id,
                 "sandbox_id": sandbox_id,
                 "argv": argv,
+                "cwd": cwd,
                 "stdin": stdin,
                 "timeout_seconds": timeout_seconds,
             }
@@ -197,6 +199,7 @@ class SlowSandboxProvider(FakeSandboxProvider):
         sandbox_id: str,
         argv: list[str],
         *,
+        cwd: str = "/workspace",
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:

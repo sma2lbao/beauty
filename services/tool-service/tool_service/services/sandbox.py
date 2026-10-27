@@ -15,6 +15,7 @@ from common.security.token_broker import TokenBroker
 
 from tool_service.constants import SANDBOX_TOOL_TTL_SECONDS
 from tool_service.core.config import Settings
+from tool_service.services.helpers import WORKSPACE_ROOT
 
 #: scope_key 前缀:对话级优先,其次任务级,最后租户级兜底。
 SCOPE_CONVERSATION_PREFIX = "conversation:"
@@ -37,6 +38,7 @@ class SandboxProvider(Protocol):
         sandbox_id: str,
         argv: list[str],
         *,
+        cwd: str = WORKSPACE_ROOT,
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult: ...
@@ -88,6 +90,7 @@ class HttpSandboxProvider:
         sandbox_id: str,
         argv: list[str],
         *,
+        cwd: str = WORKSPACE_ROOT,
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:
@@ -95,6 +98,7 @@ class HttpSandboxProvider:
             tenant_id,
             sandbox_id,
             argv,
+            cwd=cwd,
             stdin=stdin,
             timeout_seconds=timeout_seconds,
         )

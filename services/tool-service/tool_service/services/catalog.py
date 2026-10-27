@@ -17,8 +17,10 @@ from common.tools import (
     ToolRisk,
 )
 
+from tool_service.constants import DEFAULT_EXEC_TIMEOUT_SECONDS
+
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-10-25.p4"
+CATALOG_VERSION = "2026-10-27.p5"
 
 READ = ToolDescriptor(
     name="read",
@@ -162,6 +164,46 @@ EDIT = ToolDescriptor(
     enabled=True,
 )
 
+EXEC = ToolDescriptor(
+    name="exec",
+    description=(
+        "在工作区沙箱内执行一条 shell 命令(/bin/sh -lc),返回退出码与 stdout/stderr。"
+        "用于跑测试、构建、脚本等必须有进程的场景;读文件优先用 read 工具。"
+        "命令在沙箱内执行且沙箱默认无网络;输出会被截断,"
+        "超长输出请重定向到文件后用 read 分段读取。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000,
+                "description": "交给 /bin/sh -lc 的完整命令;可用管道、重定向与 &&。",
+            },
+            "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "工作目录,相对路径按 /workspace 解析;默认 /workspace。",
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 120,
+                "description": "本次命令超时(秒),默认 60。",
+            },
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.DESTRUCTIVE,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.SANDBOX,
+    timeout_seconds=DEFAULT_EXEC_TIMEOUT_SECONDS,
+    enabled=True,
+)
+
 SEARCH_KNOWLEDGE = ToolDescriptor(
     name="search_knowledge",
     description=(
@@ -278,7 +320,8 @@ ASK_QUESTION = ToolDescriptor(
     enabled=True,
 )
 
-#: 全部工具(read/glob/grep/list_dir/write/edit/search_knowledge/fetch/ask_question)。
+#: 全部工具:read、glob、grep、list_dir、write、edit、exec、
+#: search_knowledge、fetch、ask_question。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,
@@ -286,6 +329,7 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     LIST_DIR,
     WRITE,
     EDIT,
+    EXEC,
     SEARCH_KNOWLEDGE,
     FETCH,
     ASK_QUESTION,

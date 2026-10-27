@@ -42,6 +42,7 @@ from tool_service.services.execution import (
     arguments_digest,
     audit_columns,
     failure_outcome,
+    is_available,
 )
 from tool_service.services.quota import check_total_calls, check_write_quota
 from tool_service.services.sandbox import scope_key_for
@@ -52,14 +53,6 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 TenantDep = Annotated[str, Depends(get_tenant_id)]
 RunnerDep = Annotated[ToolRunner, Depends(get_tool_runner)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-
-
-def _is_available(name: str, settings: Settings) -> bool:
-    """外部 I/O 类工具只在服务端开关打开时暴露(能力即权限边界)。"""
-
-    if name == "fetch":
-        return settings.fetch_enabled
-    return True
 
 
 @router.get("", response_model=ToolListRead)
@@ -73,7 +66,7 @@ async def list_tools(
     items = [
         tool
         for tool in descriptors()
-        if _is_available(tool.name, settings)
+        if is_available(tool.name, settings)
         and (kind is None or str(tool.kind) == kind)
         and (scope is None or scope in tool.scopes)
     ]
@@ -91,7 +84,7 @@ async def get_tool(name: str, settings: SettingsDep) -> ToolDescriptorRead:
     if (
         descriptor is None
         or not descriptor.enabled
-        or not _is_available(descriptor.name, settings)
+        or not is_available(descriptor.name, settings)
     ):
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     return ToolDescriptorRead.from_descriptor(descriptor)
@@ -115,6 +108,9 @@ async def execute_tool(
 
     descriptor = find_descriptor(name)
     if descriptor is None or not descriptor.enabled:
+        raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
+    # 能力开关与目录一致:关闭的工具(exec/fetch)连执行入口都不存在。
+    if not is_available(descriptor.name, settings):
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     repository = ToolCallRepository(session)
     digest = arguments_digest(body.arguments)

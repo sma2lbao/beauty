@@ -9,7 +9,7 @@ from tool_service.services import catalog
 
 
 def test_catalog_version_is_exposed() -> None:
-    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-10-25.p4"
+    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-10-27.p5"
 
 
 def test_enabled_tools_are_the_function_slice() -> None:
@@ -21,6 +21,7 @@ def test_enabled_tools_are_the_function_slice() -> None:
         "list_dir",
         "write",
         "edit",
+        "exec",
         "search_knowledge",
         "fetch",
         "ask_question",
@@ -28,11 +29,12 @@ def test_enabled_tools_are_the_function_slice() -> None:
     risk_by_name = {tool.name: tool.risk for tool in catalog.descriptors()}
     assert risk_by_name["write"] is ToolRisk.WRITE
     assert risk_by_name["edit"] is ToolRisk.WRITE
+    assert risk_by_name["exec"] is ToolRisk.DESTRUCTIVE
     assert risk_by_name["search_knowledge"] is ToolRisk.READ
     assert risk_by_name["fetch"] is ToolRisk.READ
     assert risk_by_name["ask_question"] is ToolRisk.READ
     executor_by_name = {tool.name: tool.executor for tool in catalog.descriptors()}
-    for sandbox_name in ("read", "glob", "grep", "list_dir", "write", "edit"):
+    for sandbox_name in ("read", "glob", "grep", "list_dir", "write", "edit", "exec"):
         assert executor_by_name[sandbox_name] is ExecutorKind.SANDBOX
     assert executor_by_name["search_knowledge"] is ExecutorKind.HTTP
     assert executor_by_name["fetch"] is ExecutorKind.HTTP
@@ -48,6 +50,7 @@ def test_interaction_tool_schema_is_decoupled() -> None:
         "list_dir",
         "write",
         "edit",
+        "exec",
         "search_knowledge",
         "fetch",
         "ask_question",
@@ -121,7 +124,7 @@ def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
 
 def test_openai_tools_shape() -> None:
     tools = catalog.openai_tools()
-    assert len(tools) == 9
+    assert len(tools) == 10
     for item in tools:
         assert item["type"] == "function"
         function = item["function"]
@@ -140,6 +143,7 @@ def test_descriptors_payload_roundtrip() -> None:
         "list_dir",
         "write",
         "edit",
+        "exec",
         "search_knowledge",
         "fetch",
         "ask_question",

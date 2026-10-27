@@ -55,6 +55,23 @@ MAX_TOOL_CHARS = 25_000
 MAX_TOOL_CALLS_PER_RUN = 60
 MAX_ASK_CYCLES = 3
 
+# ---- exec(危险工具,默认关闭;设计见 docs/design/tool-execution.md) ------
+#: 命令字符串上限(字符);超出由 schema 拒绝。
+MAX_EXEC_COMMAND_CHARS = 4000
+#: cwd 参数上限(字符)。
+MAX_EXEC_CWD_CHARS = 512
+#: 默认命令超时(秒),也是 descriptor 声明上限。
+DEFAULT_EXEC_TIMEOUT_SECONDS = 60.0
+#: 单条命令超时硬上限(秒),请求可在此范围内覆盖。
+MAX_EXEC_TIMEOUT_SECONDS = 120
+#: stdout 截断字符数(保留头部)。
+MAX_EXEC_STDOUT_CHARS = 16_000
+#: stderr 截断字符数(保留尾部,错误摘要通常在最后)。
+MAX_EXEC_STDERR_CHARS = 8_000
+#: 整包回缩时两路输出各自保留的最小可读长度。
+MIN_EXEC_STDOUT_CHARS = 2_000
+MIN_EXEC_STDERR_CHARS = 1_000
+
 # ---- 路径策略 -----------------------------------------------------------
 # 只读拒绝的目录/文件名片段(按路径段匹配,大小写不敏感)。
 DENY_READ_PARTS = frozenset(

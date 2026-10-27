@@ -44,3 +44,7 @@ class Settings(ServiceSettings):
     fetch_max_redirects: int = 3
     #: 允许抓取的主机(逗号分隔;空 = 任意公网主机)。example.com 含其子域。
     fetch_allowed_hosts: str = ""
+    # P1-L:exec 在工作区沙箱内执行 shell 命令(destructive,需人工确认)。
+    # 一旦出现在启用目录里,orchestrator 的 plan 闸会对所有 run 触发确认,
+    # 因此默认关闭;开启前请确认沙箱用 microsandbox + network=deny。
+    exec_enabled: bool = False

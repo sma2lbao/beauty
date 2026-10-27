@@ -549,10 +549,9 @@ def test_fetch_is_hidden_until_enabled(client: TestClient) -> None:
         },
         tool="fetch",
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert body["error"]["code"] == "tool.executor_unavailable"
+    # 执行入口与目录一致 404:关闭的工具不是“存在但不可用”,而是不存在。
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "tool.not_found"
 
 
 def test_fetch_is_listed_and_executed_when_enabled(tmp_path: Path) -> None:

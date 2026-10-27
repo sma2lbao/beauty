@@ -36,6 +36,9 @@
 | P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                                       | 仅回退写工具注册(catalog feature 开关)          | 已落地(2026-10-25)           |
 | P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `search_knowledge` 代理（`documents` 延后） + `code_*` alias 下线 | catalog 关 interaction 工具 + 前端隐藏卡片      | 已落地(2026-10-25)           |
 | P3  | 只读 `fetch`（公网文本抓取）：catalog + HTTP 执行器 + SSRF/允许列表/大小上限 + 开关默认关                                                               | `TOOL__FETCH_ENABLED=false`（目录不暴露该工具） | 已落地(2026-10-25)           |
+| P4  | 受控 `exec`（P1-L）：沙箱内 `/bin/sh -lc` 执行、risk=`destructive`、默认关 + 逐次确认 + 截断/审计（设计见 [tool-execution.md](./tool-execution.md)）    | `TOOL__EXEC_ENABLED=false`（目录不暴露该工具）  | 已落地(2026-10-27)           |
+
+> **D13 修订（2026-10-27，P1-L）**：D13 原写「**不**引入任意命令执行、**不**开沙箱联网」。沙箱（microVM + `network=deny`）已提供隔离执行面，缺的只是受控暴露，因此新增 `exec` 作为**例外通道**：risk=`destructive`、默认关闭（`TOOL__EXEC_ENABLED=false`）、开启后逐次人工确认、输出截断 + 审计；**沙箱联网仍不开**。文件 helper 仍不执行命令。详见 [tool-execution.md](./tool-execution.md) §1/§7。
 
 ## 2. 背景
 

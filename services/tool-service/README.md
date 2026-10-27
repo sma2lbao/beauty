@@ -1,6 +1,6 @@
 # tool-service(工具服务, :8008)
 
-内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
+内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),P1-L 起新增沙箱内命令执行 `exec`(默认关闭,risk=destructive),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
 
 ## 职责边界
 
@@ -8,6 +8,7 @@
 | --- | --- |
 | 工具目录(catalog)、参数 schema、限额 | tool-service(代码即真源,`tool_service/services/catalog.py`) |
 | 工具执行(沙箱内 helper 脚本) | tool-service → workspace-service 沙箱 |
+| 命令执行(`exec`,默认关) | tool-service → workspace-service 沙箱 `POST /exec`(`/bin/sh -lc`,不经 helper) |
 | 知识库只读检索(`search_knowledge`) | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱) |
 | 公网文本抓取(`fetch`,默认关) | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令) |
 | 审批决策(allow/ask/deny) | orchestrator 保留;tool-service 只做风险下限防御 |
@@ -52,6 +53,7 @@
 | `TOOL__FETCH_MAX_BYTES` | `1048576` | 单次响应体字节上限(超出截断) |
 | `TOOL__FETCH_MAX_REDIRECTS` | `3` | 最多跟随的重定向跳数 |
 | `TOOL__FETCH_ALLOWED_HOSTS` | 空 | 出口收紧:逗号分隔主机允许列表(空=任意公网,`example.com` 含子域) |
+| `TOOL__EXEC_ENABLED` | `false` | 开启沙箱内命令执行 `exec`(risk=destructive);关闭时目录不暴露、执行 404(P1-L) |
 
 ## 知识库检索代理(P2)
 
@@ -65,8 +67,18 @@
 
 - `fetch` 是 `risk=read`、`executor=http` 的函数工具:参数只有 `url`(http/https,≤2048),返回 `{ok,url,final_url,status,content_type,bytes,truncated,text}`。
 - 边界:只允许 http/https、拒绝 URL 内嵌凭证;解析出的**所有**地址必须是公网单播(内网/回环/链路本地/组播/保留段拒绝);每一跳重定向重新校验;只收文本 content-type;响应 ≤1 MiB、文本 ≤20,000 字符、最多 3 跳、超时 15s(descriptor 20s)。
-- 开关关闭时 `GET /v1/tools` 不出现、`GET /v1/tools/fetch` 404、执行回 `tool.executor_unavailable`;打开后 chat 与任务两种模式都可用(READ 自动放行)。
+- 开关关闭时 `GET /v1/tools` 不出现、`GET /v1/tools/fetch` 404、执行同样 404 `tool.not_found`(可用性检查前移到执行入口);打开后 chat 与任务两种模式都可用(READ 自动放行)。
 - 典型用途:读 GitHub 仓库元数据(`api.github.com` JSON)与文件原文(`raw.githubusercontent.com` 纯文本),无需 `git` 或沙箱命令执行。
+
+## 命令执行(exec,P1-L)
+
+- `exec` 是 `risk=destructive`(legacy `danger`)、`executor=sandbox` 的函数工具:参数 `command`(1..4000 字符,交 `/bin/sh -lc`)、`cwd`(≤512 字符,相对 `/workspace`,绝对路径也必须落在其内)、`timeout_seconds`(1..120,默认 60)。
+- **默认关闭**(`TOOL__EXEC_ENABLED=false`):关闭时目录不暴露、GET/execute 一律 404 `tool.not_found`。开启后 orchestrator 的 plan 闸与 confirm 闸都会因危险工具而中断,需人工放行。
+- **不进 helper**:文件工具走沙箱内 helper 脚本(JSON 协议 + 路径 jail),exec 直接调 `SandboxProvider.exec`,拿真实退出码/信号;argv 固定 `[/bin/sh, -lc, command]`,不支持持久会话/PTY(M2 再议)。
+- **非零退出码不是失败**:`ok=true`,失败信息在 `stderr`(模型据此修正);`exit_code=124` 表示被超时终止。
+- **输出可控**:stdout 截断到 16,000 字符(保头)、stderr 到 8,000 字符(保尾),再按整包 JSON 回缩到 `MAX_TOOL_CHARS`(25,000)以内,`notes` 提示「重定向到文件后用 `read` 分段读取」;exec 不会回 `tool.too_large`。
+- 沙箱边界不变:`network=deny`(装依赖会失败,这是有意的)、`/workspace` 为工作目录、执行后 `touch` 续 TTL;审计行记 `tool_name/risk/decision/arguments/duration_ms/sandbox_id`。
+- 设计见 `docs/design/tool-execution.md`(P1-L;修订了 `docs/design/tool-service.md` 的 D13)。
 
 ## 交互工具(P2)
 

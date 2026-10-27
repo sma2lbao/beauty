@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import posixpath
 import time
 from dataclasses import dataclass, replace
 from typing import Any
@@ -24,12 +25,21 @@ from common.tools import (
     validate_arguments,
 )
 
-from tool_service.constants import DEFAULT_TOOL_TIMEOUT_SECONDS, MAX_TOOL_CHARS
+from tool_service.constants import (
+    DEFAULT_TOOL_TIMEOUT_SECONDS,
+    MAX_EXEC_CWD_CHARS,
+    MAX_EXEC_STDERR_CHARS,
+    MAX_EXEC_STDOUT_CHARS,
+    MAX_EXEC_TIMEOUT_SECONDS,
+    MAX_TOOL_CHARS,
+    MIN_EXEC_STDERR_CHARS,
+    MIN_EXEC_STDOUT_CHARS,
+)
 from tool_service.core.config import Settings
 from tool_service.repositories import WRITE_TOOL_NAMES
 from tool_service.services.catalog import find_descriptor
 from tool_service.services.executors.http import HttpToolExecutor
-from tool_service.services.helpers import build_request, helper_argv
+from tool_service.services.helpers import WORKSPACE_ROOT, build_request, helper_argv
 from tool_service.services.sandbox import SandboxProvider, scope_key_for
 
 #: 审计里最多记录的路径条数(避免大 grep 结果把事件撑爆)。
@@ -42,6 +52,10 @@ ERROR_DETAIL_CHARS = 300
 ARGUMENTS_AUDIT_CHARS = 2000
 #: 写工具的服务端补丁字段:只落库,回给编排器/模型的结果里必须剥离。
 PATCH_FIELDS = ("patch", "lines_added", "lines_removed", "patch_truncated")
+#: exec 的固定 argv 前缀:命令字符串交给 /bin/sh -lc 解释(支持管道与重定向)。
+EXEC_SHELL = "/bin/sh"
+#: exec 结果 notes 的体积预留(回缩到上限时先扣掉,避免加提示后越界)。
+EXEC_NOTES_RESERVE = 600
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +101,98 @@ def arguments_digest(arguments: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+# ---- 能力开关与 exec 辅助 ------------------------------------------------
+
+
+def is_available(name: str, settings: Settings) -> bool:
+    """能力即权限边界:开关关闭的工具在目录、详情与执行三处一致地"不存在"。"""
+
+    if name == "fetch":
+        return bool(settings.fetch_enabled)
+    if name == "exec":
+        return bool(settings.exec_enabled)
+    return True
+
+
+def resolve_exec_cwd(raw: Any, *, workspace_root: str = WORKSPACE_ROOT) -> str | None:
+    """把 exec 的 cwd 夹到工作区内;越界或非法返回 None。"""
+
+    if raw is None:
+        return workspace_root
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return workspace_root
+    if len(text) > MAX_EXEC_CWD_CHARS or chr(0) in text or chr(92) in text:
+        return None
+    candidate = text if text.startswith("/") else posixpath.join(workspace_root, text)
+    normalized = posixpath.normpath(candidate)
+    if normalized == workspace_root or normalized.startswith(workspace_root + "/"):
+        return normalized
+    return None
+
+
+def _clip_exec_stream(raw: str | None, limit: int, *, keep: str) -> tuple[str, bool]:
+    """按上限裁一路输出(keep=tail 保留末尾,适合错误栈)。"""
+
+    text = raw or ""
+    if len(text) <= limit:
+        return text, False
+    if keep == "tail":
+        return text[-limit:], True
+    return text[:limit], True
+
+
+def _payload_chars(result: dict[str, Any]) -> int:
+    """结果字典的近似序列化体积(按回包 JSON 口径)。"""
+
+    return len(json.dumps(result, ensure_ascii=False, default=str))
+
+
+def _fit_exec_result(result: dict[str, Any], limit: int) -> tuple[dict[str, Any], bool]:
+    """把整包结果回缩到 limit 字符内(先减 stdout 再减 stderr,到底再对半砍)。"""
+
+    adjusted = dict(result)
+    shrunk = False
+    while _payload_chars(adjusted) > limit:
+        overflow = _payload_chars(adjusted) - limit
+        reduced = False
+        for field, floor, keep_head in (
+            ("stdout", MIN_EXEC_STDOUT_CHARS, True),
+            ("stderr", MIN_EXEC_STDERR_CHARS, False),
+        ):
+            text = str(adjusted.get(field) or "")
+            if len(text) <= floor:
+                continue
+            cut = min(len(text) - floor, max(overflow + 64, 256))
+            adjusted[field] = text[: len(text) - cut] if keep_head else text[cut:]
+            reduced = True
+            shrunk = True
+            break
+        if reduced:
+            continue
+        half = False
+        for field in ("stdout", "stderr"):
+            text = str(adjusted.get(field) or "")
+            if text:
+                adjusted[field] = text[: len(text) // 2]
+                half = True
+        if not half:
+            break
+        shrunk = True
+    return adjusted, shrunk
+
+
+def _is_exec_timeout(exc: UpstreamError) -> bool:
+    """识别沙箱侧超时:上游用 sandbox.exec_timeout 区分超时与其它故障。"""
+
+    if str(getattr(exc, "code", "") or "") == "sandbox.exec_timeout":
+        return True
+    details = getattr(exc, "details", None)
+    return "sandbox.exec_timeout" in f"{exc} {details!r}"
+
+
 class ToolRunner:
     """按目录分派工具执行;一个实例可被并发请求复用(无状态)。"""
 
@@ -119,6 +225,9 @@ class ToolRunner:
         descriptor = find_descriptor(name)
         if descriptor is None or not descriptor.enabled:
             raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
+        if not is_available(descriptor.name, self._settings):
+            # 能力开关与目录一致:关闭的工具连执行入口都不存在(设计 §1)。
+            raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
         if (
             descriptor.risk in (ToolRisk.WRITE, ToolRisk.DESTRUCTIVE)
             and not context.approved
@@ -150,6 +259,9 @@ class ToolRunner:
                     tool_call_id=context.tool_call_id,
                 ),
             )
+        if descriptor.name == "exec":
+            # exec 需要真实退出码与 stderr,不走 helper 的 JSON 信封(设计 §6)。
+            return await self._run_exec(context, descriptor, arguments, started)
         if descriptor.executor is ExecutorKind.SANDBOX:
             return await self._run_sandbox(
                 context, descriptor, arguments, started, internal_arguments
@@ -215,6 +327,165 @@ class ToolRunner:
                 duration_ms=_elapsed_ms(started),
             )
         return ExecutionOutcome(descriptor=descriptor, response=response)
+
+    # ---- exec 执行 ------------------------------------------------------
+
+    async def _run_exec(
+        self,
+        context: ExecutionContext,
+        descriptor: ToolDescriptor,
+        arguments: dict[str, Any],
+        started: float,
+    ) -> ExecutionOutcome:
+        """在沙箱工作区内直跑一条 shell 命令(不经 helper,拿真实退出码)。"""
+
+        cwd = resolve_exec_cwd(arguments.get("cwd"))
+        if cwd is None:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.invalid_args",
+                "cwd 必须落在工作区 /workspace 内",
+                hint="用相对路径(如 reports)或 /workspace 下的绝对路径",
+                duration_ms=_elapsed_ms(started),
+            )
+        command = str(arguments["command"])
+        timeout = self._exec_timeout(context, descriptor, arguments)
+        scope_key = scope_key_for(
+            context.tenant_id,
+            sandbox_scope=context.sandbox_scope,
+            conversation_id=context.conversation_id,
+            run_id=context.run_id,
+        )
+        try:
+            sandbox_id = await asyncio.wait_for(
+                self._sandbox.ensure(
+                    context.tenant_id, scope_key=scope_key, run_id=context.run_id
+                ),
+                timeout + SANDBOX_CALL_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.timeout",
+                "获取沙箱超时",
+                hint="稍后重试;持续超时请检查 workspace-service",
+                retryable=True,
+                duration_ms=_elapsed_ms(started),
+            )
+        except UpstreamError as exc:
+            return self._upstream_failure(context, descriptor, exc, started)
+        try:
+            result = await asyncio.wait_for(
+                self._sandbox.exec(
+                    context.tenant_id,
+                    sandbox_id,
+                    [EXEC_SHELL, "-lc", command],
+                    cwd=cwd,
+                    timeout_seconds=max(1, int(timeout)),
+                ),
+                timeout + SANDBOX_CALL_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            return self._failure(
+                context,
+                descriptor,
+                "tool.timeout",
+                f"命令执行超时({int(timeout)} 秒)",
+                hint="缩小命令范围或提高 timeout_seconds;长任务请拆成小步执行",
+                retryable=True,
+                duration_ms=_elapsed_ms(started),
+                sandbox_id=sandbox_id,
+            )
+        except UpstreamError as exc:
+            return self._upstream_failure(
+                context, descriptor, exc, started, sandbox_id=sandbox_id
+            )
+        finally:
+            await self._touch(context, sandbox_id)
+        duration_ms = result.duration_ms or _elapsed_ms(started)
+        stdout, stdout_clipped = _clip_exec_stream(
+            result.stdout, MAX_EXEC_STDOUT_CHARS, keep="head"
+        )
+        stderr, stderr_clipped = _clip_exec_stream(
+            result.stderr, MAX_EXEC_STDERR_CHARS, keep="tail"
+        )
+        payload: dict[str, Any] = {
+            "exit_code": result.exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "cwd": cwd,
+            "duration_ms": duration_ms,
+        }
+        payload, shrunk = _fit_exec_result(payload, MAX_TOOL_CHARS - EXEC_NOTES_RESERVE)
+        notes: list[str] = []
+        if stdout_clipped or (shrunk and stdout):
+            notes.append("stdout 已截断:超长输出请重定向到文件后用 read 分段读取")
+        if stderr_clipped or (shrunk and stderr):
+            notes.append("stderr 已截断(保留末尾):完整错误请重定向到文件后用 read 读取")
+        if notes:
+            payload["notes"] = notes
+        response = ToolExecuteResponse(
+            ok=True,
+            result=payload,
+            truncated=bool(result.truncated)
+            or stdout_clipped
+            or stderr_clipped
+            or shrunk,
+            duration_ms=duration_ms,
+            tool_call_id=context.tool_call_id,
+            idempotent_replay=False,
+        )
+        return ExecutionOutcome(
+            descriptor=descriptor, response=response, sandbox_id=sandbox_id
+        )
+
+    def _exec_timeout(
+        self,
+        context: ExecutionContext,
+        descriptor: ToolDescriptor,
+        arguments: dict[str, Any],
+    ) -> float:
+        """exec 超时:参数里的 timeout_seconds 覆盖默认,夹在 [1, 120]。"""
+
+        requested = arguments.get("timeout_seconds")
+        if isinstance(requested, bool) or not isinstance(requested, int):
+            return self._timeout_seconds(context, descriptor)
+        return float(min(max(requested, 1), MAX_EXEC_TIMEOUT_SECONDS))
+
+    def _upstream_failure(
+        self,
+        context: ExecutionContext,
+        descriptor: ToolDescriptor,
+        exc: UpstreamError,
+        started: float,
+        *,
+        sandbox_id: str | None = None,
+    ) -> ExecutionOutcome:
+        """沙箱侧故障:超时归 tool.timeout(命令被终止),其余归 tool.upstream_error。"""
+
+        if _is_exec_timeout(exc):
+            return self._failure(
+                context,
+                descriptor,
+                "tool.timeout",
+                "沙箱内命令执行超时",
+                hint="命令被沙箱超时终止(exit_code 124);请提高 timeout_seconds",
+                retryable=True,
+                duration_ms=_elapsed_ms(started),
+                sandbox_id=sandbox_id,
+            )
+        return self._failure(
+            context,
+            descriptor,
+            "tool.upstream_error",
+            "沙箱不可用或返回异常",
+            hint=str(exc)[:ERROR_DETAIL_CHARS],
+            retryable=True,
+            duration_ms=_elapsed_ms(started),
+            sandbox_id=sandbox_id,
+        )
 
     # ---- 沙箱执行 -------------------------------------------------------
 

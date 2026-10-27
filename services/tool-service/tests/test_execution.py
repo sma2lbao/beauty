@@ -402,6 +402,7 @@ class SlowExecProvider(FakeSandboxProvider):
         sandbox_id: str,
         argv: list[str],
         *,
+        cwd: str = "/workspace",
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:
