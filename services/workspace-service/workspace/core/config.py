@@ -47,3 +47,13 @@ class Settings(BaseAppSettings):
     # local provider 的沙箱根目录:每个沙箱一个 <root>/<name>/ 目录,
     # /workspace 映射到其中的 workspace/;默认落在服务目录下并被 gitignore
     sandbox_local_root: str = "./.sandboxes"
+    # 持久 shell 会话(#2):进程内管理器,单实例假设(见 README 限制)。
+    # 空闲 TTL 到点由 sweeper 关闭;关闭后的会话在内存里保留一段时间,
+    # 让晚到的 SSE 连接仍能回放 ring buffer 与退出码。
+    sandbox_shell_idle_seconds: int = 1800
+    sandbox_shell_closed_retention_seconds: int = 300
+    sandbox_shell_sweep_interval_seconds: int = 30
+    sandbox_shell_ring_bytes: int = 65_536
+    sandbox_shell_heartbeat_seconds: float = 15.0
+    sandbox_shell_max_per_sandbox: int = 8
+    sandbox_shell_max_subscribers: int = 32

@@ -163,6 +163,43 @@ class SandboxTreeRead(BaseModel):
     truncated: bool
 
 
+MAX_SHELL_INPUT_CHARS = 8 * 1024
+MAX_SHELL_COLS = 500
+MAX_SHELL_ROWS = 200
+
+
+class SandboxSessionCreate(BaseModel):
+    """开一个持久 shell 会话;不传 cwd 时落在 /workspace。"""
+
+    cwd: str | None = Field(default=None, max_length=MAX_PATH_LENGTH)
+    cols: int = Field(default=120, ge=1, le=MAX_SHELL_COLS)
+    rows: int = Field(default=32, ge=1, le=MAX_SHELL_ROWS)
+
+    @field_validator("cwd")
+    @classmethod
+    def _check_cwd(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.startswith("/") or ".." in value.split("/"):
+            raise ValueError("cwd 必须是以 / 开头的绝对路径,且不能包含 ..")
+        return value
+
+
+class SandboxSessionRead(BaseModel):
+    """会话句柄:session_id 用于后续 input/stream/delete。"""
+
+    session_id: str
+    sandbox_id: str
+    cwd: str
+    created_at: datetime
+
+
+class SandboxSessionInput(BaseModel):
+    """向 shell 写输入(原样写入,不自动补换行);上限 8KB 字符。"""
+
+    data: str = Field(max_length=MAX_SHELL_INPUT_CHARS)
+
+
 def ensure_workspace_path(path: str) -> str:
     """校验沙箱文件路径:必须落在 /workspace 下、不得含 .. 或 NUL。
 

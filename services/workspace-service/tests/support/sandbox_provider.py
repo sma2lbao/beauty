@@ -46,6 +46,98 @@ class FakeExecOutput:
         self.exit_code = exit_code
 
 
+class FakeExecEventType:
+    """真 SDK 是 StrEnum;provider 只做 str() 比较,这里给等值字符串。"""
+
+    STARTED = "started"
+    STDOUT = "stdout"
+    STDERR = "stderr"
+    EXITED = "exited"
+    FAILED = "failed"
+    STDIN_ERROR = "stdin_error"
+
+
+class FakeExecEvent:
+    def __init__(
+        self,
+        event_type: str,
+        data: bytes | None = None,
+        code: int | None = None,
+    ) -> None:
+        self.event_type = event_type
+        self.pid = 4242
+        self.data = data
+        self.code = code
+
+
+class FakeStdin:
+    """真 SDK 的 Stdin;provider 只把 pipe() 的结果透传给 exec_stream。"""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+
+    @classmethod
+    def pipe(cls) -> FakeStdin:
+        return cls("pipe")
+
+    @classmethod
+    def null(cls) -> FakeStdin:
+        return cls("null")
+
+
+class FakeExecSink:
+    def __init__(self, sdk: FakeSdk) -> None:
+        self._sdk = sdk
+        self.closed = False
+
+    async def write(self, data: bytes) -> None:
+        if self.closed:
+            raise FakeSdkError("sink closed")
+        self._sdk.sink_writes.append(data)
+
+    async def close(self) -> None:
+        self.closed = True
+        self._sdk.sink_close_calls += 1
+
+
+class FakeExecHandle:
+    """假 ExecHandle:事件从 sdk.shell_events 逐帧取,耗尽后返回 None(=EOF)。"""
+
+    def __init__(self, sdk: FakeSdk, name: str) -> None:
+        self._sdk = sdk
+        self._name = name
+        self.id = "exec-1"
+        self.sink = FakeExecSink(sdk)
+
+    def take_stdin(self) -> FakeExecSink | None:
+        return None if self._sdk.take_stdin_none else self.sink
+
+    async def recv(self) -> FakeExecEvent | None:
+        if self._sdk.recv_error is not None:
+            raise self._sdk.recv_error
+        if self._sdk.shell_events:
+            return self._sdk.shell_events.pop(0)
+        return None
+
+    async def wait(self) -> tuple[int, bool]:
+        return (self._sdk.shell_wait_code, True)
+
+    async def kill(self) -> None:
+        self._sdk.handle_kill_calls += 1
+
+    async def resize(self, rows: int, cols: int) -> None:
+        self._sdk.handle_resize_calls.append((rows, cols))
+
+    def __aiter__(self) -> FakeExecHandle:
+        return self
+
+    async def __anext__(self) -> FakeExecEvent:
+        event = await self.recv()
+        if event is None:
+            raise StopAsyncIteration
+        return event
+
+
 class FsEntryKind(Enum):
     """假 SDK 的条目类型(真 SDK 是 Enum,provider 只读 .name)。"""
 
@@ -144,6 +236,40 @@ class FakeSandbox:
             exit_code=self._sdk.exit_code,
         )
 
+    async def exec_stream(
+        self,
+        cmd: str,
+        args: list[str] | None = None,
+        *,
+        cwd: str | None = None,
+        user: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
+        stdin: FakeStdin | bytes | None = None,
+        tty: bool = False,
+        rlimits: Any = None,
+    ) -> FakeExecHandle:
+        self._sdk.exec_stream_calls.append(
+            {
+                "name": self._name,
+                "cmd": cmd,
+                "args": args,
+                "cwd": cwd,
+                "user": user,
+                "env": env,
+                "timeout": timeout,
+                "stdin_mode": getattr(stdin, "mode", "bytes"),
+                "tty": tty,
+            }
+        )
+        if self._sdk.exec_stream_errors:
+            error = self._sdk.exec_stream_errors.pop(0)
+            if error is not None:
+                raise error
+        if self._sdk.exec_stream_error is not None:
+            raise self._sdk.exec_stream_error
+        return FakeExecHandle(self._sdk, self._name)
+
 
 class FakeHandle:
     def __init__(self, sdk: FakeSdk, name: str) -> None:
@@ -208,6 +334,9 @@ class FakeSdk:
     RuntimeNotInstalledError = RuntimeNotInstalledError
     RuntimeIncompleteError = RuntimeIncompleteError
     ExecTimeoutError = ExecTimeoutError
+    ExecEventType = FakeExecEventType
+    ExecEvent = FakeExecEvent
+    Stdin = FakeStdin
     NetworkProfile = FakeNetworkProfile
 
     def __init__(self) -> None:
@@ -240,6 +369,19 @@ class FakeSdk:
         self.read_error: BaseException | None = None
         self.list_error: BaseException | None = None
         self.write_errors: list[BaseException] = []
+        # 持久 shell:exec_stream 入参、事件队列、sink/handle 调用记录
+        self.exec_stream_calls: list[dict[str, Any]] = []
+        self.shell_events: list[FakeExecEvent] = []
+        self.exec_stream_error: BaseException | None = None
+        # 按调用顺序注入异常(None = 该次正常),用于覆盖 shell 候选回退
+        self.exec_stream_errors: list[BaseException | None] = []
+        self.recv_error: BaseException | None = None
+        self.take_stdin_none = False
+        self.sink_writes: list[bytes] = []
+        self.sink_close_calls = 0
+        self.handle_kill_calls = 0
+        self.handle_resize_calls: list[tuple[int, int]] = []
+        self.shell_wait_code = 0
         self.Network = FakeNetworkApi(self)
         self.Sandbox = FakeSandboxApi(self)
 

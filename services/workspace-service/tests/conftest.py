@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 from common.errors import NotFoundError, UpstreamError
 from common.service_testkit import client_fixture, settings_factory
@@ -37,6 +40,58 @@ _settings = settings_factory(
 )
 
 
+class FakeShellSession:
+    """零网络 shell 会话替身:写进 `written`,输出由测试 `emit` 推、`finish` 收尾。"""
+
+    tty = True
+
+    def __init__(self, *, cwd: str, cols: int, rows: int) -> None:
+        self.cwd = cwd
+        self.cols = cols
+        self.rows = rows
+        self.written: list[bytes] = []
+        self.exit_code: int | None = None
+        self.closed = False
+        self.fail_write: Exception | None = None
+        self.fail_read: Exception | None = None
+        self.fail_close: Exception | None = None
+        self.close_ends_read = True
+        self._queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
+
+    async def read(self) -> bytes | None:
+        if self.fail_read is not None:
+            raise self.fail_read
+        item = await self._queue.get()
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def write(self, data: bytes) -> None:
+        if self.fail_write is not None:
+            raise self.fail_write
+        self.written.append(data)
+
+    async def close(self) -> None:
+        self.closed = True
+        if self.close_ends_read:
+            self._queue.put_nowait(None)
+        if self.fail_close is not None:
+            raise self.fail_close
+
+    def emit(self, data: bytes) -> None:
+        """模拟 shell 产出(pty/管道里的一批字节)。"""
+        self._queue.put_nowait(data)
+
+    def finish(self, exit_code: int = 0) -> None:
+        """模拟 shell 进程退出(EOF + 退出码)。"""
+        self.exit_code = exit_code
+        self._queue.put_nowait(None)
+
+    def emit_error(self, error: BaseException) -> None:
+        """模拟下一次 read() 直接抛异常(读循环的失败分支)。"""
+        self._queue.put_nowait(error)
+
+
 class FakeSandboxProvider:
     """零网络/零 runtime 的 provider 替身:内存文件表 + 固定执行输出。"""
 
@@ -59,6 +114,10 @@ class FakeSandboxProvider:
         self.list_calls: list[tuple[str, str, int]] = []
         self.fail_list = False
         self.list_error: Exception | None = None
+        # 持久 shell 会话:open_shell 的入参与起过的会话句柄
+        self.shells: list[FakeShellSession] = []
+        self.shell_calls: list[dict[str, Any]] = []
+        self.fail_shell = False
 
     async def create(self, spec: SandboxSpec) -> None:
         if self.fail_create:
@@ -93,6 +152,24 @@ class FakeSandboxProvider:
             duration_ms=7,
             truncated=self.truncated,
         )
+
+    async def open_shell(
+        self,
+        name: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        cols: int = 120,
+        rows: int = 32,
+    ) -> FakeShellSession:
+        if self.fail_shell:
+            raise UpstreamError("sandbox.provider_error", "模拟 shell 启动失败")
+        self.shell_calls.append(
+            {"name": name, "cwd": cwd, "env": env, "cols": cols, "rows": rows}
+        )
+        shell = FakeShellSession(cwd=cwd or "", cols=cols, rows=rows)
+        self.shells.append(shell)
+        return shell
 
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         self.files.setdefault(name, {})[path] = data

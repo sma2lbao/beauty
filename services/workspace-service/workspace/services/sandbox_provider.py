@@ -9,6 +9,10 @@
 microsandbox SDK 只在真正创建/执行时**惰性导入**——测试与没有 runtime 的
 dev 启动不依赖它。所有 SDK 异常在这里统一收口为 `UpstreamError`,
 不把堆栈/底层错误直接泄漏成 API 的 500。
+
+除一次性 exec 外,协议还提供 **持久 shell 会话**(`open_shell`):microsandbox
+用 `exec_stream(tty=True)` 拿真 TTY,local provider 用 POSIX pty(pty 不可用的
+环境退化为管道,不是 TTY),输出/输入以字节流暴露给上层的会话管理器。
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import os
 import re
 import shutil
 import signal
+import struct
 import sys
 import time
 from contextlib import suppress
@@ -25,6 +30,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any, Protocol
+
+try:  # POSIX pty 支持;Windows 上导入失败 → local provider 退化管道 shell
+    import fcntl
+    import pty
+    import termios
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+    pty = None  # type: ignore[assignment]
+    termios = None  # type: ignore[assignment]
 
 from common.errors import AppError, NotFoundError, UpstreamError
 
@@ -34,6 +48,16 @@ from workspace.schemas.sandbox import WORKSPACE_ROOT, ensure_workspace_path
 DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024
 DEFAULT_EXEC_TIMEOUT_SECONDS = 60
 MAX_ERROR_DETAIL_CHARS = 300
+# 持久 shell 会话:每次从流里读多少字节、默认终端尺寸
+SHELL_READ_CHUNK = 65_536
+DEFAULT_SHELL_COLS = 120
+DEFAULT_SHELL_ROWS = 32
+# 沙箱镜像里常见的交互式 shell;按顺序尝试,取第一个能起来的
+_SHELL_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("/bin/sh", ("-i",)),
+    ("/bin/bash", ("-i",)),
+    ("sh", ("-i",)),
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +101,32 @@ class FileEntry:
     modified: float | None = None
 
 
+class ShellSession(Protocol):
+    """一个持久交互式 shell(真 TTY,或退化后的管道)。
+
+    - `read()` 返回下一段原始输出字节,EOF 返回 None;UTF-8 解码由上层做;
+    - `write()` 把调用方输入**原样**写入(不补换行);
+    - `close()` 幂等,尽力结束子进程/句柄;
+    - `exit_code` 在进程退出后才有值,之前为 None;
+    - `tty` 表示这个会话是否真的拿到了终端(local 退化管道时为 False)。
+    """
+
+    tty: bool
+    exit_code: int | None
+
+    async def read(self) -> bytes | None:
+        """读下一段输出;EOF 返回 None(不抛异常)。"""
+        ...
+
+    async def write(self, data: bytes) -> None:
+        """写输入;会话已结束时抛 `sandbox.session_closed`。"""
+        ...
+
+    async def close(self) -> None:
+        """关闭会话并结束子进程(幂等)。"""
+        ...
+
+
 class SandboxProvider(Protocol):
     """沙箱运行时协议:创建/执行/文件读写/销毁,全部 async。"""
 
@@ -118,6 +168,18 @@ class SandboxProvider(Protocol):
 
     async def destroy(self, name: str) -> None:
         """销毁沙箱;运行时已不存在时静默成功(幂等)。"""
+        ...
+
+    async def open_shell(
+        self,
+        name: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """在沙箱内开一个持久交互式 shell;起不来抛 `sandbox.provider_error`。"""
         ...
 
 
@@ -192,6 +254,106 @@ def _fs_entry_size(entry: Any) -> int:
 def _fs_entry_modified(entry: Any) -> float | None:
     value = getattr(entry, "modified", None)
     return None if value is None else float(value)
+
+
+class MicroShellSession:
+    """microsandbox `exec_stream(tty=True)` 上的真 PTY shell。
+
+    输出走 SDK 的事件流:STDOUT/STDERR 事件带 data 字节(已合流,顺序即终端
+    实际写出的顺序),EXITED 事件的 code 即退出码;写输入走 `take_stdin()`
+    拿到的 ExecSink。`read()` 用 `recv()` 逐帧消费,SDK 异常统一转 502。
+    """
+
+    tty = True
+
+    def __init__(self, sandbox_name: str, handle: Any, sink: Any) -> None:
+        self._sandbox_name = sandbox_name
+        self._handle = handle
+        self._sink = sink
+        self._exit_code: int | None = None
+        self._closed = False
+        self._eof = False
+
+    @property
+    def exit_code(self) -> int | None:
+        return self._exit_code
+
+    async def read(self) -> bytes | None:
+        if self._eof:
+            return None
+        while True:
+            try:
+                event = await self._handle.recv()
+            except Exception as exc:
+                raise UpstreamError(
+                    "sandbox.provider_error",
+                    "读取 shell 输出失败",
+                    details=_error_details(self._sandbox_name, exc),
+                ) from exc
+            if event is None:
+                await self._finish(None)
+                return None
+            kind = str(getattr(event, "event_type", ""))
+            if kind in ("stdout", "stderr"):
+                data = bytes(getattr(event, "data", None) or b"")
+                if data:
+                    return data
+                continue
+            if kind == "exited":
+                await self._finish(getattr(event, "code", None))
+                return None
+            if kind == "failed":
+                code = getattr(event, "code", None)
+                self._exit_code = int(code) if code is not None else None
+                raise UpstreamError(
+                    "sandbox.provider_error",
+                    "沙箱内 shell 异常退出",
+                    details={
+                        "sandbox_name": self._sandbox_name,
+                        "exit_code": self._exit_code,
+                    },
+                )
+            # started / stdin_error 等事件不产生输出,继续等下一帧
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or self._eof or self._sink is None:
+            raise UpstreamError("sandbox.session_closed", "shell 会话已结束,无法再写入")
+        try:
+            await self._sink.write(data)
+        except Exception as exc:
+            self._eof = True
+            raise UpstreamError(
+                "sandbox.session_closed",
+                "shell 会话已结束,无法再写入",
+                details=_error_details(self._sandbox_name, exc),
+            ) from exc
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._eof = True
+        if self._sink is not None:
+            with suppress(Exception):
+                await self._sink.close()
+            self._sink = None
+        # kill 对已退出的 handle 是 no-op;SDK 各版本都可能抛,一律静默
+        with suppress(Exception):
+            await self._handle.kill()
+        with suppress(Exception):
+            code, _forced = await asyncio.wait_for(self._handle.wait(), timeout=5)
+            if self._exit_code is None:
+                self._exit_code = int(code)
+
+    async def _finish(self, code: Any) -> None:
+        if code is not None:
+            self._exit_code = int(code)
+        if self._eof:
+            return
+        self._eof = True
+        if self._sink is not None:
+            with suppress(Exception):
+                await self._sink.close()
 
 
 class MicrosandboxProvider:
@@ -337,6 +499,45 @@ class MicrosandboxProvider:
             stderr=stderr,
             duration_ms=duration_ms,
             truncated=stdout_cut or stderr_cut,
+        )
+
+    async def open_shell(
+        self,
+        name: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """用 `exec_stream` + `tty=True` 起一个真 PTY 的交互式 shell。"""
+        sdk = _import_sdk()
+        sandbox = await self._connect(name)
+        last_error: BaseException | None = None
+        for shell, shell_args in _SHELL_CANDIDATES:
+            try:
+                handle = await sandbox.exec_stream(
+                    shell,
+                    list(shell_args),
+                    cwd=cwd,
+                    env=env or None,
+                    stdin=sdk.Stdin.pipe(),
+                    tty=True,
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
+            sink: Any = None
+            with suppress(Exception):
+                sink = handle.take_stdin()
+            # 终端尺寸只是 best-effort:拿不到不影响读写
+            with suppress(Exception):
+                await handle.resize(rows, cols)
+            return MicroShellSession(name, handle, sink)
+        raise UpstreamError(
+            "sandbox.provider_error",
+            "沙箱内无法启动交互式 shell",
+            details=_error_details(name, last_error or RuntimeError("没有可用 shell")),
         )
 
     async def write_file(self, name: str, path: str, data: bytes) -> None:
@@ -485,6 +686,213 @@ def _local_entry_meta(entry: os.DirEntry[str], parent: str) -> tuple[FileEntry, 
     ), Path(entry.path)
 
 
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    """结束子进程:POSIX 按进程组杀,避免 shell 的孙进程残留。"""
+    if process.returncode is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    with suppress(Exception):
+        await asyncio.wait_for(process.wait(), timeout=5)
+
+
+async def _process_exit_code(
+    process: asyncio.subprocess.Process, *, timeout: float = 5
+) -> int:
+    """等子进程退出并取退出码;超时先杀进程组,再取不到就用 -1。"""
+    try:
+        code = await asyncio.wait_for(process.wait(), timeout=timeout)
+    except TimeoutError:
+        await _terminate_process(process)
+        with suppress(Exception):
+            await asyncio.wait_for(process.wait(), timeout=timeout)
+        code = process.returncode
+    return int(code) if code is not None else -1
+
+
+def _set_winsize(fd: int, cols: int, rows: int) -> None:
+    """设置 pty 窗口大小(TIOCSWINSZ);失败不影响读写。"""
+    if fcntl is None or termios is None:
+        return
+    with suppress(OSError):
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+
+def _pty_child_setup(slave_fd: int) -> Any:
+    """子进程 fork 后:新建会话并把这个 pty 设为控制终端(拿到真 TTY 语义)。"""
+    if fcntl is None or termios is None:
+        return None
+
+    def _setup() -> None:
+        os.setsid()
+        with suppress(OSError):
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+    return _setup
+
+
+def _pipe_shell_argv() -> list[str]:
+    """没有 pty 时的退化 shell 命令(POSIX 用 sh -i,Windows 用 COMSPEC)。"""
+    if sys.platform == "win32":
+        return [os.environ.get("COMSPEC", "cmd.exe")]
+    return ["/bin/sh", "-i"]
+
+
+class LocalPipeShellSession:
+    """管道版 shell:stdin/stdout 是普通管道,**不是 TTY**。
+
+    pty 不可用时(Windows、没有 /dev/ptmx 的受限容器)的退化实现:没有行编辑、
+    补全、回显与作业控制,`isatty()` 为 False(很多程序因此切到非交互模式)。
+    stderr 已合流到 stdout,所以 read() 只有一条流。
+    """
+
+    tty = False
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self._exit_code: int | None = None
+        self._closed = False
+        self._eof = False
+
+    @property
+    def exit_code(self) -> int | None:
+        return self._exit_code
+
+    async def read(self) -> bytes | None:
+        if self._eof:
+            return None
+        stdout = self._process.stdout
+        if stdout is None:
+            self._eof = True
+            return None
+        data = await stdout.read(SHELL_READ_CHUNK)
+        if not data:
+            self._eof = True
+            if self._exit_code is None:
+                self._exit_code = await _process_exit_code(self._process)
+            return None
+        return bytes(data)
+
+    async def write(self, data: bytes) -> None:
+        stdin = self._process.stdin
+        if self._closed or stdin is None:
+            raise UpstreamError("sandbox.session_closed", "shell 会话已结束,无法再写入")
+        try:
+            stdin.write(data)
+            await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, RuntimeError) as exc:
+            raise UpstreamError(
+                "sandbox.session_closed", "shell 会话已结束,无法再写入"
+            ) from exc
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._eof = True
+        if self._process.stdin is not None:
+            with suppress(Exception):
+                self._process.stdin.close()
+        await _terminate_process(self._process)
+        if self._exit_code is None:
+            self._exit_code = await _process_exit_code(self._process)
+
+
+class LocalPtyShellSession:
+    """POSIX pty 上的真 TTY shell:有行编辑/补全/回显,`isatty()` 为 True。
+
+    master fd 交给事件循环的 add_reader,读到 EOF(对端全关,Linux 上 EIO)
+    时投递 None 作为流结束;写输入按 pty 缓冲分块并等待可写,避免阻塞事件循环。
+    """
+
+    tty = True
+
+    # 单次 os.write 的字节数:pty 缓冲通常 4KB,分块写避免一次塞满阻塞
+    _WRITE_CHUNK = 1024
+    _WRITE_TIMEOUT_SECONDS = 5
+
+    def __init__(self, process: asyncio.subprocess.Process, master_fd: int) -> None:
+        self._process = process
+        self._master_fd = master_fd
+        self._loop = asyncio.get_running_loop()
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._exit_code: int | None = None
+        self._closed = False
+        self._eof = False
+        self._loop.add_reader(master_fd, self._on_readable)
+
+    @property
+    def exit_code(self) -> int | None:
+        return self._exit_code
+
+    def _on_readable(self) -> None:
+        try:
+            chunk = os.read(self._master_fd, SHELL_READ_CHUNK)
+        except BlockingIOError:
+            return
+        except OSError:
+            chunk = b""
+        if chunk:
+            self._queue.put_nowait(bytes(chunk))
+            return
+        self._remove_reader()
+        self._queue.put_nowait(None)
+
+    def _remove_reader(self) -> None:
+        with suppress(Exception):
+            self._loop.remove_reader(self._master_fd)
+
+    async def read(self) -> bytes | None:
+        if self._eof:
+            return None
+        chunk = await self._queue.get()
+        if chunk is None:
+            self._eof = True
+            if self._exit_code is None:
+                self._exit_code = await _process_exit_code(self._process)
+            return None
+        return chunk
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or self._eof:
+            raise UpstreamError("sandbox.session_closed", "shell 会话已结束,无法再写入")
+        remaining = memoryview(data)
+        deadline = time.monotonic() + self._WRITE_TIMEOUT_SECONDS
+        while remaining:
+            try:
+                written = os.write(self._master_fd, remaining[: self._WRITE_CHUNK])
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise UpstreamError(
+                        "sandbox.session_closed", "shell 输入写入超时"
+                    ) from None
+                await asyncio.sleep(0.005)
+                continue
+            except OSError as exc:
+                raise UpstreamError(
+                    "sandbox.session_closed", "shell 会话已结束,无法再写入"
+                ) from exc
+            remaining = remaining[written:]
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._eof = True
+        self._remove_reader()
+        with suppress(OSError):
+            os.close(self._master_fd)
+        await _terminate_process(self._process)
+        if self._exit_code is None:
+            self._exit_code = await _process_exit_code(self._process)
+        self._queue.put_nowait(None)
+
+
 class LocalSandboxProvider:
     """宿主本地实现:每个沙箱就是一个目录 + 直接起子进程。
 
@@ -604,17 +1012,7 @@ class LocalSandboxProvider:
 
     async def _terminate(self, process: asyncio.subprocess.Process) -> None:
         """超时/取消时尽力结束子进程:POSIX 按进程组杀,避免孙进程残留。"""
-        if process.returncode is not None:
-            return
-        try:
-            if sys.platform == "win32":
-                process.kill()
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        with suppress(Exception):
-            await asyncio.wait_for(process.wait(), timeout=5)
+        await _terminate_process(process)
 
     async def exec(
         self,
@@ -694,6 +1092,97 @@ class LocalSandboxProvider:
             duration_ms=duration_ms,
             truncated=stdout_cut or stderr_cut,
         )
+
+    async def open_shell(
+        self,
+        name: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """优先 POSIX pty(真 TTY);pty 不可用时退化为管道 shell(不是 TTY)。"""
+        self._require_sandbox(name)
+        workdir = self._resolve_cwd(name, cwd)
+        if not workdir.is_dir():
+            raise UpstreamError(
+                "sandbox.provider_error",
+                f"沙箱内工作目录不存在:{cwd if cwd is not None else WORKSPACE_ROOT}",
+                details={"sandbox_name": name, "cwd": str(workdir)},
+            )
+        child_env = self._child_env(name, env)
+        pty_session = await self._open_pty_shell(name, workdir, child_env, cols, rows)
+        if pty_session is not None:
+            return pty_session
+        return await self._open_pipe_shell(name, workdir, child_env)
+
+    async def _open_pty_shell(
+        self, name: str, workdir: Path, env: dict[str, str], cols: int, rows: int
+    ) -> ShellSession | None:
+        """试着用 pty 起真 TTY shell;pty 设备拿不到时返回 None(由调用方退化)。"""
+        if pty is None or fcntl is None or termios is None or sys.platform == "win32":
+            return None
+        last_error: BaseException | None = None
+        for shell, shell_args in _SHELL_CANDIDATES:
+            master_fd = -1
+            slave_fd = -1
+            try:
+                master_fd, slave_fd = pty.openpty()
+            except OSError:
+                # 这台机器/这个沙箱没有 pty 设备(如受限容器),整体退化为管道
+                return None
+            try:
+                _set_winsize(slave_fd, cols, rows)
+                os.set_blocking(master_fd, False)
+                process = await asyncio.create_subprocess_exec(
+                    shell,
+                    *shell_args,
+                    cwd=str(workdir),
+                    env=env,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    preexec_fn=_pty_child_setup(slave_fd),
+                )
+            except OSError as exc:
+                last_error = exc
+                with suppress(OSError):
+                    os.close(master_fd)
+                with suppress(OSError):
+                    os.close(slave_fd)
+                continue
+            # 子进程已 dup slave fd,父进程侧关掉,EOF 语义才正确
+            with suppress(OSError):
+                os.close(slave_fd)
+            return LocalPtyShellSession(process, master_fd)
+        raise UpstreamError(
+            "sandbox.provider_error",
+            "本地沙箱无法启动交互式 shell",
+            details=_error_details(name, last_error or RuntimeError("没有可用 shell")),
+        )
+
+    async def _open_pipe_shell(
+        self, name: str, workdir: Path, env: dict[str, str]
+    ) -> ShellSession:
+        argv = _pipe_shell_argv()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(workdir),
+                env=env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=sys.platform != "win32",
+            )
+        except OSError as exc:
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "本地沙箱无法启动交互式 shell",
+                details=_error_details(name, exc),
+            ) from exc
+        return LocalPipeShellSession(process)
 
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         self._require_sandbox(name)
@@ -819,6 +1308,17 @@ class UnavailableSandboxProvider:
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> ExecResult:
+        raise self._unavailable()
+
+    async def open_shell(
+        self,
+        name: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
         raise self._unavailable()
 
     async def write_file(self, name: str, path: str, data: bytes) -> None:

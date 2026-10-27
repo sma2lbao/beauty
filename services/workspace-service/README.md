@@ -109,7 +109,16 @@
   `size_bytes` 恒为 0、`modified` 是 epoch 秒;路径同样必须在 `/workspace` 下,
   `depth` 1–4(默认 1),超过 500 条截断并置 `truncated=true`;
 - `POST /v1/sandboxes/{id}/touch`:显式续期;
-- `DELETE /v1/sandboxes/{id}`(204):先销毁运行时,再删记录。
+- `DELETE /v1/sandboxes/{id}`(204):先销毁运行时,再删记录;同时关闭该沙箱的
+  **全部持久 shell 会话**;
+- `POST /v1/sandboxes/{id}/sessions`(201):开一个**持久 shell 会话**(见下文
+  「持久 shell 会话」),body `{cwd?, cols?=120, rows?=32}`,返回
+  `{session_id, sandbox_id, cwd, created_at}`;
+- `POST /v1/sandboxes/{id}/sessions/{sid}/input`(204):向 shell 的 stdin 写
+  UTF-8 文本(单次上限 8KB,超出 422);会话不存在/跨租户 404,已关闭 409;
+- `GET /v1/sandboxes/{id}/sessions/{sid}/stream`:`text/event-stream` 输出流
+  (先回放环形缓冲,再跟随实时输出;支持 `Last-Event-ID` 续传);
+- `DELETE /v1/sandboxes/{id}/sessions/{sid}`(204):关闭会话(幂等)。
 
 实现要点:
 
@@ -146,6 +155,105 @@
 | `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                                                             |
 | `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                                                                  |
 | `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                                                           |
+| `SANDBOX_SHELL_IDLE_SECONDS`(1800)                                       | 持久 shell 会话空闲回收 TTL(无输入/输出/订阅满该时长即关)                                                          |
+| `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS`(30)                               | 空闲回收 sweeper 周期                                                                                              |
+| `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(300)                            | 已关闭会话在内存里保留多久,供断线重连回放(之后按 404 处理)                                                          |
+| `SANDBOX_SHELL_RING_BYTES`(65536)                                        | 每会话输出环形缓冲上限(最近 64KB,断线回放用)                                                                        |
+| `SANDBOX_SHELL_HEARTBEAT_SECONDS`(15)                                    | SSE 心跳注释行间隔(也决定 BFF/代理的读超时下限)                                                                     |
+| `SANDBOX_SHELL_MAX_PER_SANDBOX`(8)                                       | 单沙箱活跃会话上限,超出 409 `sandbox.session_limit`                                                                 |
+| `SANDBOX_SHELL_MAX_SUBSCRIBERS`(32)                                      | 单会话 SSE 订阅者上限,超出 409 `sandbox.session_busy`                                                               |
+
+### 持久 shell 会话(#2)
+
+`POST /v1/sandboxes/{id}/exec` 是**一次性 exec**:每条命令一个独立进程,`cd`/`env`/
+交互式程序(REPL、`git rebase -i`、`ssh`)**都不成立**。本服务因此提供**持久 shell
+会话**:开会话 → 写 stdin → SSE 读 stdout/stderr → 关闭,会话不随 HTTP 请求结束而结束。
+
+契约(全部在 `/v1/sandboxes/{sandbox_id}/sessions` 下):
+
+| 方法与路径                | 语义                                                                                     |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST ...`               | 201 `{session_id, sandbox_id, cwd, created_at}`;body `{cwd?, cols?=120, rows?=32}`     |
+| `POST .../{sid}/input`   | 204,body `{data: str}`,UTF-8 编码后写入 stdin,**单次上限 8KB**(超出 422)                 |
+| `GET .../{sid}/stream`   | `text/event-stream`:先回放 ring buffer,再跟随实时输出;断开**只取消订阅**,不关会话      |
+| `DELETE .../{sid}`       | 204,幂等关闭;重复关闭仍 204                                                              |
+
+`cwd` 只接受沙箱内绝对路径(默认 `/workspace`,不能含 `..`);`cols`/`rows` 上限
+500/200。沙箱状态校验与 exec 一致:未知/跨租户 404、过期 409、`stopped/failed` 409。
+
+SSE 事件(JSON data,每帧带 `id` 供 `Last-Event-ID` 续传):
+
+```text
+id: 0
+event: output
+data: {"seq": 0, "data": "$ ls\r\nREADME.md\r\n"}
+
+id: 1
+event: exit
+data: {"seq": 1, "exit_code": 0}
+
+id: 2
+event: error
+data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
+```
+
+- `output`:`data` 是增量 UTF-8 **文本**(跨 `read()` 边界的多字节字符由增量解码器拼好;
+  非法字节以 U+FFFD 替换),换行/回车原样保留(pty 下是 `\r\n`);
+- `exit`:`exit_code` 为 shell 进程退出码;退出码拿不到时填 `-1`;
+- `error`:`code`/`message` 描述读循环失败(provider 侧异常等);
+- 心跳:空闲超过 `SANDBOX_SHELL_HEARTBEAT_SECONDS`(15s)发一行 SSE 注释(`:\n`)保活;
+- 响应头固定 `Cache-Control: no-store`、`X-Accel-Buffering: no`(禁 nginx 缓冲);
+- 断线重连:带上 `Last-Event-ID: <最后收到的 seq>` 即可跳过已回放部分;`seq` 单调递增,
+  ring buffer 按字节淘汰(只保留最近 `SANDBOX_SHELL_RING_BYTES`)——被淘汰的历史无法回放,
+  从当前可用的最早事件继续。
+
+错误码(与沙箱既有契约一致):
+
+| 场景                             | 错误码                      | HTTP |
+| -------------------------------- | --------------------------- | ---- |
+| 会话不存在 / 跨租户 / 沙箱未知   | `sandbox.not_found` / `sandbox.session_not_found` | 404  |
+| 向已关闭的会话写输入             | `sandbox.session_closed`   | 409  |
+| 单沙箱活跃会话超限(`SANDBOX_SHELL_MAX_PER_SANDBOX`) | `sandbox.session_limit` | 409 |
+| 单会话订阅者超限(`SANDBOX_SHELL_MAX_SUBSCRIBERS`)    | `sandbox.session_busy`  | 409 |
+| `Last-Event-ID` 不是合法整数     | `sandbox.bad_cursor`       | 400  |
+| `cwd`/`cols`/`rows` 非法 / 输入超 8KB     | —(FastAPI 校验)            | 422  |
+| provider 起不来 / 沙箱过期        | `sandbox.provider_error` / `sandbox.expired` | 502 / 409 |
+
+两路 provider 的实现差异(**TTY 是否成立**):
+
+- `microsandbox`:`Sandbox.exec_stream(cmd, tty=True, stdin=Stdin.pipe())` 起
+  `/bin/sh -i`(失败回退 `/bin/bash -i`),**真 TTY**:pty 语义(`echo`/`isatty`/`TERM`)
+  成立;stdin 通过 `handle.take_stdin()` 的 sink 写,stdout/stderr 事件合并为输出流,
+  `exited` 事件带退出码;`cols/rows` 通过 `handle.resize()` 生效;
+- `local`:`pty.openpty()` + `asyncio.create_subprocess_exec`(stdin/stdout/stderr 接
+  slave fd、`setsid`、`TIOCSWINSZ` 设窗口大小),POSIX 上**也是真 TTY**;拿不到 pty
+  设备(受限容器)/ Windows 时**自动退化为管道 shell**,`tty=False`——读写语义不变,
+  但没有行缓冲/回显/终端控制序列,**不是 TTY**。local 无隔离(见下节)。
+
+生命周期与资源回收:
+
+- 会话表在**进程内**(键 `tenant_id/sandbox_id/session_id`),不落库;进程重启即丢;
+- 空闲回收:后台 sweeper 每 `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS` 扫一遍,超过
+  `SANDBOX_SHELL_IDLE_SECONDS`(30 分钟)无输入/输出/订阅的会话被关闭;
+- 已关闭会话在内存里保留 `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(5 分钟)供回放,
+  之后再访问按「会话不存在」404;
+- 沙箱 `DELETE` / 过期回收时联动关闭它的全部会话;进程关停(lifespan shutdown)兜底
+  关闭所有会话。
+
+**限制(务必在部署前确认)**:
+
+- **单实例假设**:会话表是进程内字典,不做跨实例共享/粘性路由。多副本部署时,
+  `POST .../sessions`、`.../input`、`.../stream`、`DELETE ...` 必须落在**同一个实例**
+  (否则表现为会话不存在 404);水平扩展需要粘性会话或把会话状态外置(未实现);
+- **长连接**:SSE 是长期占用的 HTTP 连接。BFF 的 httpx 读超时是**两次收数据**的间隔
+  (30s),服务端 15s 心跳 < 30s,因此不会被掐断;但任何代理/网关都要关闭响应缓冲
+  (`X-Accel-Buffering: no` 只对 nginx 生效,其他网关需自行配置);
+- **资源**:每个会话一个 provider 侧进程 + 一个后台读任务 + 最多 32 个订阅队列;
+  单沙箱最多 8 个会话。异常路径靠 sweeper/沙箱回收兜底,不做跨进程强制清理——
+  provider 侧进程若在服务崩溃后残留,需要 provider 自己的生命周期(microVM TTL /
+  宿主进程组)清理;
+- **回放不是持久化**:ring buffer 只保留最近 64KB,且只存在于存活实例的内存里;
+  断线太久或实例重启后不可回放。
 
 ### local provider(宿主执行,无隔离)
 

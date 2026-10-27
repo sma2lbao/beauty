@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from workspace.core.config import Settings
 from workspace.services.sandbox_provider import SandboxProvider
+from workspace.services.shell_sessions import ShellSessionManager
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -40,6 +41,16 @@ def get_sandbox_provider(request: Request) -> SandboxProvider:
     if provider is None:
         raise UpstreamError("sandbox.provider_unavailable", "沙箱 provider 尚未装配")
     return provider
+
+
+def get_shell_sessions(request: Request) -> ShellSessionManager:
+    """lifespan 装配的进程内 shell 会话管理器(每个进程一个实例)。"""
+    manager: ShellSessionManager | None = getattr(
+        request.app.state, "shell_sessions", None
+    )
+    if manager is None:
+        raise UpstreamError("sandbox.provider_unavailable", "shell 会话管理器尚未装配")
+    return manager
 
 
 async def get_tenant_id(

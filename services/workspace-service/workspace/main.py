@@ -31,6 +31,10 @@ from workspace.services.sandbox_provider import (
     SandboxProvider,
     build_sandbox_provider,
 )
+from workspace.services.shell_sessions import (
+    ShellSessionManager,
+    build_shell_session_manager,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -40,14 +44,31 @@ async def _sandbox_reaper_loop(app: FastAPI) -> None:
     settings: Settings = app.state.settings
     provider: SandboxProvider = app.state.sandbox_provider
     factory = app.state.session_factory
+    shell_sessions: ShellSessionManager = app.state.shell_sessions
     while True:
         try:
-            reaped = await reap_expired(factory, provider)
+            reaped = await reap_expired(
+                factory, provider, on_reaped=shell_sessions.close_sandbox
+            )
             if reaped:
                 logger.info("sandbox reaper swept expired sandboxes", count=reaped)
         except Exception:  # noqa: BLE001 - 回收循环不能因单次异常退出
             logger.exception("sandbox reaper loop error")
         await asyncio.sleep(settings.sandbox_reaper_interval_seconds)
+
+
+async def _sandbox_shell_sweeper_loop(app: FastAPI) -> None:
+    """shell 会话回收循环:空闲 TTL 关会话 + 清过保留期的已关闭会话。"""
+    settings: Settings = app.state.settings
+    manager: ShellSessionManager = app.state.shell_sessions
+    while True:
+        await asyncio.sleep(settings.sandbox_shell_sweep_interval_seconds)
+        try:
+            closed = await manager.sweep()
+            if closed:
+                logger.info("shell session sweeper closed idle sessions", count=closed)
+        except Exception:  # noqa: BLE001 - 循环不能因单次异常退出
+            logger.exception("shell session sweeper loop error")
 
 
 @asynccontextmanager
@@ -96,12 +117,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "仅限本地/单租户可信环境,生产请用 microsandbox"
         )
 
-    # 过期回收:后台任务,失败不阻塞启动;shutdown 取消
+    # 持久 shell 会话(#2):进程内管理器,测试注入优先
+    shell_sessions: ShellSessionManager | None = app.state.shell_sessions
+    if shell_sessions is None:
+        shell_sessions = build_shell_session_manager(settings)
+    app.state.shell_sessions = shell_sessions
+
+    # 过期回收 + shell 会话回收:后台任务,失败不阻塞启动;shutdown 取消
     reaper_task: asyncio.Task[None] | None = None
     if settings.sandbox_reaper_enabled:
         reaper_task = asyncio.create_task(
             _sandbox_reaper_loop(app), name="workspace-sandbox-reaper"
         )
+    sweeper_task = asyncio.create_task(
+        _sandbox_shell_sweeper_loop(app), name="workspace-shell-sweeper"
+    )
 
     try:
         yield
@@ -110,6 +140,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reaper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reaper_task
+        sweeper_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper_task
+        # 进程退出兜底:关掉所有还活着的 shell 会话
+        await shell_sessions.shutdown()
         if owns_verifier:
             await verifier.aclose()
         await factory.engine.dispose()
@@ -120,8 +155,9 @@ def create_app(
     artifact_store: ArtifactStore | None = None,
     token_verifier: JwtVerifier | None = None,
     sandbox_provider: SandboxProvider | None = None,
+    shell_sessions: ShellSessionManager | None = None,
 ) -> FastAPI:
-    """测试注入:artifact_store(假存储)、token_verifier(假 JWKS)、sandbox_provider。"""
+    """测试注入:假存储 / 假 JWKS / provider / shell 会话管理器。"""
     app = FastAPI(
         title="workspace-service",
         version="0.1.0",
@@ -133,6 +169,7 @@ def create_app(
     app.state.artifact_store = artifact_store
     app.state.token_verifier = token_verifier
     app.state.sandbox_provider = sandbox_provider
+    app.state.shell_sessions = shell_sessions
 
     install_app_error_handler(app)
     app.add_middleware(RequestContextMiddleware, settings=app.state.settings)

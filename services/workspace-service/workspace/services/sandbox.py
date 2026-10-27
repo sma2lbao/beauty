@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -362,6 +363,26 @@ async def require_sandbox(
     return await SandboxRepository(session).require_for_tenant(tenant_id, sandbox_id)
 
 
+async def require_usable_sandbox(
+    session: AsyncSession,
+    tenant_id: str,
+    sandbox_id: str,
+    provider: SandboxProvider,
+) -> SandboxInstance:
+    """取本租户沙箱并做运行前检查(404/409 语义与 exec 一致)。
+
+    shell 会话等长生命周期操作复用这一入口:跨租户仍是 404,过期/停止仍是 409。
+    """
+    record = await require_sandbox(session, tenant_id, sandbox_id)
+    await _ensure_usable(session, record, provider)
+    return record
+
+
+def renew_sandbox(record: SandboxInstance, settings: Settings) -> None:
+    """滑动续期(不查库):shell 会话有输入/连流时由调用方续一次。"""
+    _renew(record, settings)
+
+
 async def _ensure_usable(
     session: AsyncSession,
     record: SandboxInstance,
@@ -567,11 +588,16 @@ async def reap_expired(
     provider: SandboxProvider,
     *,
     limit: int = 100,
+    on_reaped: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> int:
     """回收过期沙箱:逐个销毁,失败只记 last_error,不阻塞其他实例。
 
     返回本轮成功回收的数量。记录保留(status=stopped)以便审计;
     显式 DELETE 才真正删行。
+
+    `on_reaped(tenant_id, sandbox_id)` 是可选的联动回调(进程装配时传
+    shell 会话管理器的 close_sandbox):运行时被回收后,该沙箱上的 shell
+    会话也一并关闭,避免内存里留下"永远等不到 EOF"的会话。
     """
     now = _now()
     reaped = 0
@@ -594,4 +620,13 @@ async def reap_expired(
             record.status = "stopped"
             record.last_error = None
             reaped += 1
+            if on_reaped is not None:
+                try:
+                    await on_reaped(record.tenant_id, record.id)
+                except Exception as exc:  # noqa: BLE001 - 清理失败不影响回收结果
+                    logger.warning(
+                        "sandbox reap callback failed",
+                        sandbox_id=record.id,
+                        error=_error_text(exc),
+                    )
     return reaped
