@@ -212,7 +212,8 @@
 
 1. **hooks / 插件 / SDK / webhook**：全缺（1.2）。后果：外部系统只能轮询 REST；无法在工具调用前后做企业策略拦截。
 2. **死配置清理**：7 个键无消费方（§4.2）。后果：运维按文档调参不生效，排障时误判。
-3. **/v1/tool-calls 无消费方**：仅测试调用。后果：审计面形同虚设——要么接前端/导出，要么删。
+3. ~~**/v1/tool-calls 无消费方**~~：仅测试调用。后果：审计面形同虚设——要么接前端/导出，要么删。
+   > **2026-10-27 后记（已解决）**：orchestrator 新增会话级聚合端点 `GET /api/v1/conversations/{conversation_id}/tool-calls`（tool-service 不可达时 200 + `degraded=true`），前端接服务端补丁；tool-service 侧 `GET /v1/tool-calls` 增 `conversation_id` 过滤与 `include_patch`；write/edit 已产出服务端 unified diff 落 `tool_calls.patch`（迁移 `0003_tool_call_patches`）。
 4. **fake sandbox provider 不存在**：只有 microsandbox/local/unavailable。后果：CI/本地只能用宿主 local（无隔离）或真 microVM，没有「假沙箱」这一档。
 5. **MCP 协议版本（2025-03-26）与 elicitation/tasks 扩展**：待核实对齐成本。
 6. **记忆模块已知差距**（docs/design/memory.md §16）：无 user scope、无质量评估集、无 memory.\* 审计事件、sweeper 多副本无锁、TTL 语义漂移、`GET /memories/search` 有写副作用。
@@ -222,14 +223,14 @@
 
 ### 4.1 有壳无实（接口在、能力不在）
 
-| 位置                                                | 现象                                     | 证据                                                                                             |
-| --------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Skill manifest `permissions` / `triggers` / billing | 字段存在但无消费方/无实现                | `schemas/skills.py:18-38`（字段）、`grep permissions` 仅 `:30`；无 trigger 匹配、无 billing 字段 |
-| `oauth21_enabled`                                   | 开关无消费方，端点恒开                   | `services/account-service/account/core/config.py:53`（唯一命中）                                 |
-| 通知 `Last-Event-ID`                                | 头存在但服务端不回放                     | `api/v1/notifications.py:120-124`（del last_event_id，注释「服务端不做回放」）                   |
-| `/v1/tool-calls` 审计面                             | 有表/有 API，无前端/无 orchestrator 消费 | `api/v1/tool_calls.py:24/56`；消费方仅 `tests/test_api_tool_calls.py`                            |
-| OAuth 2.1 token/authorize 端点                      | 仓内无消费方（外部客户端用）             | `api/oauth21.py`；`api/oauth_metadata.py:24` 只做元数据广告 → **待核实**是否有真实外部接入       |
-| `run_token_budget`                                  | 键存在、默认 0，等价关闭                 | `core/config.py:113`、`core/container.py:237`                                                    |
+| 位置                                                | 现象                                               | 证据                                                                                                                                                                   |
+| --------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Skill manifest `permissions` / `triggers` / billing | 字段存在但无消费方/无实现                          | `schemas/skills.py:18-38`（字段）、`grep permissions` 仅 `:30`；无 trigger 匹配、无 billing 字段                                                                       |
+| `oauth21_enabled`                                   | 开关无消费方，端点恒开                             | `services/account-service/account/core/config.py:53`（唯一命中）                                                                                                       |
+| 通知 `Last-Event-ID`                                | 头存在但服务端不回放                               | `api/v1/notifications.py:120-124`（del last_event_id，注释「服务端不做回放」）                                                                                         |
+| `/v1/tool-calls` 审计面                             | ~~无前端/无 orchestrator 消费~~ 已接（2026-10-27） | `api/v1/tool_calls.py:24/56`；现由 `services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py` 会话级端点与前端 `apps/web/src/lib/tool-calls-api.ts` 消费 |
+| OAuth 2.1 token/authorize 端点                      | 仓内无消费方（外部客户端用）                       | `api/oauth21.py`；`api/oauth_metadata.py:24` 只做元数据广告 → **待核实**是否有真实外部接入                                                                             |
+| `run_token_budget`                                  | 键存在、默认 0，等价关闭                           | `core/config.py:113`、`core/container.py:237`                                                                                                                          |
 
 ### 4.2 死配置（settings 键在服务包内零消费；已排除 `packages/common` 消费的 `database_url`/`service_name`）
 

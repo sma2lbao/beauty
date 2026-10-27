@@ -59,6 +59,7 @@ Thumbs.db
 
 # 本地运行时的 sqlite 库与产物目录(服务目录直写,dev 起法生成)
 services/*/*.db
+services/*/*.db-journal
 services/*/migrations/*.db
 services/*/.artifacts/
 # local 沙箱 provider 的宿主目录(workspace-service 默认 ./.sandboxes)
