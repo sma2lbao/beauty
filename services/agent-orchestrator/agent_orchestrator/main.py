@@ -43,6 +43,7 @@ from agent_orchestrator.services.mcp_server import (
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skill_runner import SkillRunner
+from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.tools import ToolExtrasFactory
 from agent_orchestrator.services.workspace import Workspace
 
@@ -62,6 +63,7 @@ def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
+    tool_client: ToolClient | None = None,
     tool_extras_factory: ToolExtrasFactory | None = None,
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
@@ -87,6 +89,7 @@ def create_app(
         settings or Settings(),
         llm_client=llm_client,
         toolkit_factory=toolkit_factory,
+        tool_client=tool_client,
         tool_extras_factory=tool_extras_factory,
         token_verifier=token_verifier,
         artifact_store=artifact_store,

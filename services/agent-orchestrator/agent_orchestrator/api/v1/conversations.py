@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from urllib.parse import quote
 
 from common.artifacts import ArtifactStore
-from common.errors import AppError
+from common.errors import AppError, UpstreamError
 from fastapi import (
     APIRouter,
     Depends,
@@ -27,6 +27,7 @@ from agent_orchestrator.api.deps import (
     get_session,
     get_settings,
     get_tenant_id,
+    get_tool_client,
     get_workspace_client,
 )
 from agent_orchestrator.schemas.conversations import (
@@ -38,8 +39,13 @@ from agent_orchestrator.schemas.conversations import (
     ConversationUpdate,
     MessageRead,
 )
+from agent_orchestrator.schemas.tool_calls import (
+    ConversationToolCallPage,
+    ConversationToolCallRead,
+)
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
+from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -50,6 +56,7 @@ TenantId = Annotated[str, Depends(get_tenant_id)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 SettingsDep = Annotated[Any, Depends(get_settings)]
+ToolClientDep = Annotated[ToolClient | None, Depends(get_tool_client)]
 
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
@@ -168,6 +175,45 @@ async def list_messages(
         session, tenant_id, conversation_id
     )
     return [MessageRead.model_validate(item) for item in messages]
+
+
+@router.get("/{conversation_id}/tool-calls", response_model=ConversationToolCallPage)
+async def list_conversation_tool_calls(
+    conversation_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    tool_client: ToolClientDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ConversationToolCallPage:
+    """会话级工具调用审计:跨 run 聚合,附服务端生成的 unified diff。
+
+    先校验会话归属(跨租户一律 404,不泄漏存在性)。tool-service 未启用或
+    不可达时**不炸请求**:返回 200 + degraded=true 的空页,前端据此回退到
+    从事件参数本地重建补丁。
+    """
+    await conversations_service.require_conversation(
+        session, tenant_id, conversation_id
+    )
+    if tool_client is None:
+        return ConversationToolCallPage(limit=limit, offset=offset, degraded=True)
+    try:
+        payload = await tool_client.list_tool_calls(
+            tenant_id, conversation_id=conversation_id, limit=limit, offset=offset
+        )
+        items = [
+            ConversationToolCallRead.model_validate(item)
+            for item in payload.get("items", [])
+        ]
+    except (UpstreamError, ValueError):
+        return ConversationToolCallPage(limit=limit, offset=offset, degraded=True)
+    total = payload.get("total")
+    return ConversationToolCallPage(
+        items=items,
+        total=total if isinstance(total, int) else len(items),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(

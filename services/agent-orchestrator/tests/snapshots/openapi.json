@@ -524,6 +524,220 @@
         "title": "ConversationRead",
         "type": "object"
       },
+      "ConversationToolCallPage": {
+        "description": "一页审计行;degraded=true 表示 tool-service 不可达,前端回退本地重建。",
+        "properties": {
+          "degraded": {
+            "default": false,
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationToolCallRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": ["limit", "offset"],
+        "title": "ConversationToolCallPage",
+        "type": "object"
+      },
+      "ConversationToolCallRead": {
+        "description": "一条工具调用审计行;patch 仅在 include_patch=true 时有内容。",
+        "properties": {
+          "bytes_written": {
+            "default": 0,
+            "title": "Bytes Written",
+            "type": "integer"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lines_added": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lines Added"
+          },
+          "lines_removed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lines Removed"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "patch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patch"
+          },
+          "patch_truncated": {
+            "default": false,
+            "title": "Patch Truncated",
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "result_chars": {
+            "title": "Result Chars",
+            "type": "integer"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "sandbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sandbox Id"
+          },
+          "sha256_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256 After"
+          },
+          "sha256_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256 Before"
+          },
+          "tool_call_id": {
+            "title": "Tool Call Id",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "tool_version": {
+            "title": "Tool Version",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "tool_call_id",
+          "tool_name",
+          "tool_version",
+          "risk",
+          "decision",
+          "ok",
+          "duration_ms",
+          "result_chars",
+          "truncated",
+          "created_at"
+        ],
+        "title": "ConversationToolCallRead",
+        "type": "object"
+      },
       "ConversationUpdate": {
         "description": "会话局部更新:重命名 / 归档 / 取消归档(至少一项)。",
         "properties": {
@@ -3515,6 +3729,102 @@
           }
         },
         "summary": "Stream Message",
+        "tags": ["conversations"]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/tool-calls": {
+      "get": {
+        "description": "会话级工具调用审计:跨 run 聚合,附服务端生成的 unified diff。\n\n先校验会话归属(跨租户一律 404,不泄漏存在性)。tool-service 未启用或\n不可达时**不炸请求**:返回 200 + degraded=true 的空页,前端据此回退到\n从事件参数本地重建补丁。",
+        "operationId": "list_conversation_tool_calls_api_v1_conversations__conversation_id__tool_calls_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationToolCallPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversation Tool Calls",
         "tags": ["conversations"]
       }
     },

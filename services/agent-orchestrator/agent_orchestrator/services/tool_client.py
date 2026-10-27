@@ -115,14 +115,7 @@ class ToolClient:
         """
 
         headers: dict[str, str] = {"content-type": "application/json"}
-        if self._token_provider is not None:
-            try:
-                token = await self._token_provider(tenant_id)
-            except Exception as exc:  # noqa: BLE001 - 换发失败按上游故障回喂
-                raise UpstreamError(
-                    UNREACHABLE_CODE, f"获取服务间 token 失败: {type(exc).__name__}"
-                ) from exc
-            headers["authorization"] = f"Bearer {token}"
+        headers.update(await self._auth_headers(tenant_id))
         url = f"/v1/tools/{quote(tool_name, safe='')}:execute"
         try:
             response = await self._client.post(
@@ -164,6 +157,61 @@ class ToolClient:
                 ),
                 tool_call_id=request.tool_call_id,
             )
+
+    async def list_tool_calls(
+        self,
+        tenant_id: str,
+        *,
+        conversation_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """按会话跨 run 查询工具调用审计(含服务端补丁)。
+
+        前端原本只能从工具调用参数本地重建补丁,受事件参数截断
+        (MAX_EVENT_ARGUMENTS_CHARS=2000)影响;这里改读 tool-service 落库的
+        unified diff,补丁长度不再受事件体限制。返回原始 JSON,由 API 层用
+        schema 逐条校验。
+        """
+
+        params: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "include_patch": "true",
+            "limit": limit,
+            "offset": offset,
+        }
+        try:
+            response = await self._client.get(
+                "/v1/tool-calls",
+                params=params,
+                headers=await self._auth_headers(tenant_id),
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                UNREACHABLE_CODE, f"tool-service 不可达: {type(exc).__name__}"
+            ) from exc
+        payload = _decode_json(response, expected="工具调用审计")
+        if not isinstance(payload.get("items"), list):
+            raise UpstreamError(UPSTREAM_ERROR_CODE, "tool-service 审计响应缺少 items")
+        if not isinstance(payload.get("total"), int):
+            raise UpstreamError(UPSTREAM_ERROR_CODE, "tool-service 审计响应 total 非法")
+        return payload
+
+    async def _auth_headers(self, tenant_id: str) -> dict[str, str]:
+        """现取服务间 token 并拼 Bearer 头;换发失败按上游故障处理。
+
+        不缓存明文 token:租户来自签名 claim,每次调用现取。
+        """
+
+        if self._token_provider is None:
+            return {}
+        try:
+            token = await self._token_provider(tenant_id)
+        except Exception as exc:  # noqa: BLE001 - 换发失败按上游故障回喂
+            raise UpstreamError(
+                UNREACHABLE_CODE, f"获取服务间 token 失败: {type(exc).__name__}"
+            ) from exc
+        return {"authorization": f"Bearer {token}"}
 
 
 class ToolCatalog:

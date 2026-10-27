@@ -83,6 +83,7 @@ ToolkitFactory = Callable[[str], ToolkitPort]
 INJECTED = (
     "llm_client",
     "toolkit_factory",
+    "tool_client",
     "tool_extras_factory",
     "token_verifier",
     "artifact_store",
@@ -106,6 +107,7 @@ class AppContainer(ContainerAssemblyMixin):
         *,
         llm_client: LLMClient | None = None,
         toolkit_factory: ToolkitFactory | None = None,
+        tool_client: ToolClient | None = None,
         tool_extras_factory: ToolExtrasFactory | None = None,
         token_verifier: JwtVerifier | None = None,
         artifact_store: ArtifactStore | None = None,
@@ -130,6 +132,7 @@ class AppContainer(ContainerAssemblyMixin):
         self.settings = settings
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
+        self.tool_client = tool_client
         self.tool_extras_factory = tool_extras_factory
         self.token_verifier = token_verifier
         self.artifact_store = artifact_store
@@ -293,17 +296,24 @@ class AppContainer(ContainerAssemblyMixin):
         self._closers.append(("token broker", broker.aclose))
         self._token_provider = broker.token
 
-        toolkit_factory = self.toolkit_factory
-        knowledge: KnowledgeClient | None = None
-        if toolkit_factory is None and settings.tool_service_enabled:
-            # 内置工具服务(设计 §12.3):目录与执行都在 tool-service(:8008)。
-            # 与旧 tools_enabled 同时开启时以服务为准(迁移期口径,见 §15.5)。
+        # 会话级补丁查询与工具执行共用一个客户端:注入的测试替身优先,否则
+        # 按开关自建(自建的才登记 closer,注入的不由容器关闭)。
+        tool_client = self.tool_client
+        if tool_client is None and settings.tool_service_enabled:
             tool_client = ToolClient(
                 settings.tool_service_url,
                 timeout_seconds=settings.tool_service_timeout_seconds,
                 token_provider=broker.token,
             )
             self._closers.append(("tool client", tool_client.aclose))
+        self._publish("tool_client", tool_client)
+
+        toolkit_factory = self.toolkit_factory
+        knowledge: KnowledgeClient | None = None
+        if toolkit_factory is None and settings.tool_service_enabled:
+            # 内置工具服务(设计 §12.3):目录与执行都在 tool-service(:8008)。
+            # 与旧 tools_enabled 同时开启时以服务为准(迁移期口径,见 §15.5)。
+            assert tool_client is not None  # 开关打开时上面必然已建好
             catalog = ToolCatalog()
             toolkit_factory = partial(
                 RemoteToolkit, client=tool_client, catalog=catalog

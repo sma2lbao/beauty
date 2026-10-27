@@ -33,6 +33,7 @@ from agent_orchestrator.services.post_commit import (
     drain_after_commit,
 )
 from agent_orchestrator.services.skills import SkillRegistry
+from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.workspace import Workspace
 
 
@@ -94,6 +95,15 @@ def get_toolkit_factory(request: Request):
     run 执行图与 chat 直接对话(§6.8 对话内 function-calling)共用同一工厂。
     """
     return get_container(request).toolkit_factory
+
+
+def get_tool_client(request: Request) -> ToolClient | None:
+    """tool-service 客户端;未启用(TOOL_SERVICE_ENABLED=false)且无注入时为 None。
+
+    会话级工具调用审计(跨 run 补丁查询)用它;为 None 时端点降级返回
+    degraded=true,前端回退到从事件参数本地重建补丁。
+    """
+    return get_container(request).tool_client
 
 
 def get_tool_extras_factory(request: Request):

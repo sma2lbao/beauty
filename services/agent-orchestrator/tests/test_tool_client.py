@@ -761,3 +761,134 @@ async def test_hybrid_restricted() -> None:
     assert only_read.names == ["read"]
     assert only_read.risk("skill_run") == "danger"
     await client.aclose()
+
+
+# ------------------------------------------------------ 会话级工具调用审计
+
+
+def _audit_item(**overrides: Any) -> dict[str, Any]:
+    """一条 tool-service 审计行(字段与 ToolCallRead 对齐)。"""
+
+    item: dict[str, Any] = {
+        "id": "tc-1",
+        "tool_call_id": "call-1",
+        "run_id": "run-1",
+        "conversation_id": "c-1",
+        "tool_name": "write",
+        "tool_version": "1",
+        "risk": "write",
+        "decision": "auto",
+        "ok": True,
+        "error_code": None,
+        "duration_ms": 12,
+        "result_chars": 40,
+        "bytes_written": 12,
+        "truncated": False,
+        "sha256_before": None,
+        "sha256_after": "a" * 64,
+        "paths": ["a.txt"],
+        "patch": "--- a/a.txt\n+++ b/a.txt\n",
+        "lines_added": 1,
+        "lines_removed": 1,
+        "patch_truncated": False,
+        "sandbox_id": "sbx-1",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    item.update(overrides)
+    return item
+
+
+def _audit_page(*items: dict[str, Any], total: int | None = None) -> dict[str, Any]:
+    return {
+        "items": list(items),
+        "total": len(items) if total is None else total,
+        "limit": 50,
+        "offset": 0,
+    }
+
+
+async def test_list_tool_calls_sends_filters_and_bearer() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_audit_page(_audit_item()))
+
+    client = _client(handler, token_provider=_token)
+    payload = await client.list_tool_calls(
+        "t-9", conversation_id="c-1", limit=10, offset=5
+    )
+
+    assert payload["total"] == 1
+    assert payload["items"][0]["patch"].startswith("--- a/")
+    request = seen[0]
+    assert request.method == "GET"
+    assert request.url.path == "/v1/tool-calls"
+    assert request.url.params["conversation_id"] == "c-1"
+    assert request.url.params["include_patch"] == "true"
+    assert request.url.params["limit"] == "10"
+    assert request.url.params["offset"] == "5"
+    assert request.headers["authorization"] == "Bearer tok-t-9"
+    await client.aclose()
+
+
+async def test_list_tool_calls_without_token_provider_sends_no_auth() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_audit_page())
+
+    client = _client(handler)
+    await client.list_tool_calls("t-1", conversation_id="c-1")
+    assert "authorization" not in seen[0].headers
+    assert seen[0].url.params["include_patch"] == "true"
+    await client.aclose()
+
+
+async def test_list_tool_calls_rejects_missing_items() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"total": 0, "limit": 50, "offset": 0})
+
+    client = _client(handler)
+    with pytest.raises(UpstreamError) as exc_info:
+        await client.list_tool_calls("t-1", conversation_id="c-1")
+    assert exc_info.value.code == UPSTREAM_ERROR_CODE
+    assert "items" in exc_info.value.message
+    await client.aclose()
+
+
+async def test_list_tool_calls_rejects_missing_total() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": []})
+
+    client = _client(handler)
+    with pytest.raises(UpstreamError) as exc_info:
+        await client.list_tool_calls("t-1", conversation_id="c-1")
+    assert exc_info.value.code == UPSTREAM_ERROR_CODE
+    assert "total" in exc_info.value.message
+    await client.aclose()
+
+
+async def test_list_tool_calls_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    client = _client(handler)
+    with pytest.raises(UpstreamError) as exc_info:
+        await client.list_tool_calls("t-1", conversation_id="c-1")
+    assert exc_info.value.code == UNREACHABLE_CODE
+    await client.aclose()
+
+
+async def test_list_tool_calls_http_error_uses_service_code() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503, json={"code": "tool_service.down", "message": "维护中"}
+        )
+
+    client = _client(handler)
+    with pytest.raises(UpstreamError) as exc_info:
+        await client.list_tool_calls("t-1", conversation_id="c-1")
+    assert exc_info.value.code == "tool_service.down"
+    await client.aclose()

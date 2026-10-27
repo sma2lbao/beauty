@@ -555,6 +555,10 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "documents_enabled": False,
     "knowledge_enabled": False,
     "skill_execution_enabled": False,
+    # 工具服务同理:开了会装配 RemoteToolkit(HTTP 到 :8008),执行图里的
+    # 工具调用会被 pytest-socket 拦成 SocketBlockedError。需要工具路径的用例
+    # 注入 toolkit_factory / tool_client 替身,或显式传 True。
+    "tool_service_enabled": False,
     # 内部服务地址:默认 127.0.0.1:8001,装配配额/用量时会建真实 httpx 客户端;
     # 禁网门禁下这会变成 SocketBlockedError 放大成 run failed。测试要覆盖
     # 配额/上报就自己 configure_client/configure_reporter(MockTransport)。
