@@ -48,10 +48,13 @@ export function ToolCallCard({
   call,
   live = false,
   defaultOpen = false,
+  onOpenFile,
 }: {
   call: ToolCall;
   live?: boolean;
   defaultOpen?: boolean;
+  /** 点路径时打开文件查看器;不传则路径保持纯文本(其他页面复用本卡片不受影响)。 */
+  onOpenFile?: (path: string) => void;
 }) {
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? (defaultOpen || live);
@@ -172,15 +175,28 @@ export function ToolCallCard({
                 <>
                   <dt className="text-ha-faint">路径</dt>
                   <dd className="flex min-w-0 flex-wrap items-center gap-1">
-                    {visiblePaths.map((path, index) => (
-                      <span
-                        key={path + ':' + index}
-                        title={path}
-                        className="max-w-[240px] truncate rounded-[3px] bg-ha-panel-2 px-1 py-0.5 text-ha-muted"
-                      >
-                        {path}
-                      </span>
-                    ))}
+                    {visiblePaths.map((path, index) =>
+                      onOpenFile ? (
+                        <button
+                          key={path + ':' + index}
+                          type="button"
+                          title={path + '（点击查看文件）'}
+                          aria-label={'查看文件 ' + path}
+                          onClick={() => onOpenFile(path)}
+                          className="max-w-[240px] truncate rounded-[3px] bg-ha-panel-2 px-1 py-0.5 text-ha-muted underline decoration-ha-ghost decoration-dotted transition-colors hover:bg-ha-accent-soft hover:text-ha-text"
+                        >
+                          {path}
+                        </button>
+                      ) : (
+                        <span
+                          key={path + ':' + index}
+                          title={path}
+                          className="max-w-[240px] truncate rounded-[3px] bg-ha-panel-2 px-1 py-0.5 text-ha-muted"
+                        >
+                          {path}
+                        </span>
+                      ),
+                    )}
                     {hiddenPathCount > 0 ? (
                       <span className="text-ha-faint">
                         {'+' + hiddenPathCount}

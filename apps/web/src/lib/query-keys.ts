@@ -38,6 +38,19 @@ export const queryKeys = {
   conversationAttachments: (conversationId: string) =>
     ['conversation-attachments', conversationId] as const,
 
+  /**
+   * 会话沙箱域(执行现场的「文件 / 终端」页签):
+   * - conversationSandbox:['conversation-sandbox', conversationId] 会话对应沙箱;
+   * - sandboxTree:['sandbox-tree', sandboxId, path, depth] 目录列表;
+   * - sandboxFile:['sandbox-file', sandboxId, path] 文件内容。
+   */
+  conversationSandbox: (conversationId: string) =>
+    ['conversation-sandbox', conversationId] as const,
+  sandboxTree: (sandboxId: string, path: string, depth: number) =>
+    ['sandbox-tree', sandboxId, path, depth] as const,
+  sandboxFile: (sandboxId: string, path: string) =>
+    ['sandbox-file', sandboxId, path] as const,
+
   /** 工作区域。 */
   workspaces: ['workspaces'] as const,
   defaultWorkspace: ['workspace', 'default'] as const,

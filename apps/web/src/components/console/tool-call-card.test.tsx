@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCall } from '@/lib/presentation';
 
@@ -78,5 +78,36 @@ describe('ToolCallCard', () => {
     expect(screen.getByText('+1')).toBeTruthy();
     expect(screen.getByText('11111111 → 22222222')).toBeTruthy();
     expect(screen.queryByText('src/d.ts')).toBeNull();
+  });
+
+  it('传入 onOpenFile 时路径变成可点按钮,回调带原始路径', () => {
+    const onOpenFile = vi.fn();
+    render(
+      <ToolCallCard
+        call={{ ...LEGACY_CALL, paths: ['src/a.ts', '/workspace/src/b.ts'] }}
+        onOpenFile={onOpenFile}
+        defaultOpen
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '查看文件 src/a.ts' }));
+    expect(onOpenFile).toHaveBeenCalledWith('src/a.ts');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看文件 /workspace/src/b.ts' }),
+    );
+    expect(onOpenFile).toHaveBeenCalledWith('/workspace/src/b.ts');
+  });
+
+  it('不传 onOpenFile 时路径保持纯文本,不产生伪按钮', () => {
+    render(
+      <ToolCallCard
+        call={{ ...LEGACY_CALL, paths: ['src/a.ts'] }}
+        defaultOpen
+      />,
+    );
+
+    expect(screen.getByText('src/a.ts')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '查看文件 src/a.ts' })).toBeNull();
   });
 });

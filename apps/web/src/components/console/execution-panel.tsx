@@ -1,55 +1,69 @@
 /**
- * 工作台右侧执行面板(384px):执行步骤 / 变更 / 终端。
+ * 工作台右侧执行面板(384px):执行步骤 / 文件 / 终端。
  *
- * 对应设计稿《01 主控台》右侧面板。数据全部来自 run 事件流:
- * - 执行步骤 = 工具调用记录 + 当前状态;
- * - 变更 = 本次运行的交付物与写操作记录(没有就诚实说没有);
- * - 终端 = 原始事件流水(seq/type),SSE 连接状态在这里显示。
+ * 对应设计稿《01 主控台》右侧面板。数据来源分两路:
+ * - 执行步骤 = run 事件流里的工具调用 + 当前状态;
+ * - 文件 / 终端 = 会话沙箱(workspace-service),沙箱按会话 scope_key 查,
+ *   没有就诚实说没有(不是所有会话都跑过工具)。
+ *
+ * 事件流水已下线:SSE 连接状态在底部状态栏,这里只留人能直接用的东西。
  */
-import { Check, Circle, Loader2, Terminal, X } from 'lucide-react';
-import { useState } from 'react';
+import { Check, Circle, Loader2, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { RunArtifacts } from '@/components/console/run-artifacts';
+import { SandboxFileTree } from '@/components/console/sandbox-file-tree';
+import { SandboxTerminal } from '@/components/console/sandbox-terminal';
+import { ConsoleButton, ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import { RunStepTimeline } from '@/components/console/run-step-timeline';
-import { ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import {
   RUN_STATUS_LABELS,
   runStatusTone,
   summarizeArguments,
   type ToolCall,
 } from '@/lib/presentation';
-import type { Run, RunEvent, RunStatus, RunStep } from '@/lib/runs-api';
+import type { Run, RunStatus, RunStep } from '@/lib/runs-api';
+import type { SandboxInfo } from '@/lib/sandbox-api';
 import { cn } from '@/lib/utils';
 
-type PanelTab = 'steps' | 'changes' | 'terminal';
+type PanelTab = 'steps' | 'files' | 'terminal';
 
 export function ExecutionPanel({
   run,
   status,
-  events,
   toolCalls,
   steps = [],
-  connected,
-  reconnecting = false,
-  runId,
   footerAction,
+  sandbox = null,
+  sandboxLoading = false,
+  sandboxError = null,
+  onRetrySandbox,
+  onOpenFile,
+  selectedFilePath = null,
 }: {
   run?: Run;
   status: RunStatus;
-  events: readonly RunEvent[];
   toolCalls: readonly ToolCall[];
   /** 节点级步骤投影(§6.3):比工具调用粗一级,带尝试/轮次/耗时。 */
   steps?: readonly RunStep[];
-  connected: boolean;
-  reconnecting?: boolean;
-  /** 交付物统一走多件列表(报告 + 真实文件);没有 run 时给空态。 */
-  runId?: string | null;
+  /** 交付物统一走 footer 的 RunFooterAction;面板不再单开变更页签。 */
   footerAction?: ReactNode;
+  sandbox?: SandboxInfo | null;
+  sandboxLoading?: boolean;
+  sandboxError?: Error | null;
+  onRetrySandbox?: () => void;
+  /** 点文件树里的文件时打开查看器。 */
+  onOpenFile?: (path: string) => void;
+  /** 查看器当前打开的文件(树里高亮)。 */
+  selectedFilePath?: string | null;
 }) {
   const [tab, setTab] = useState<PanelTab>('steps');
   const running = status === 'running' || status === 'planning';
   const done = toolCalls.filter((call) => call.ok).length;
+  const touchedPaths = useMemo(
+    () => toolCalls.flatMap((call) => call.paths ?? []),
+    [toolCalls],
+  );
 
   return (
     <aside
@@ -62,7 +76,7 @@ export function ExecutionPanel({
           onChange={setTab}
           items={[
             { value: 'steps', label: '执行步骤' },
-            { value: 'changes', label: '变更' },
+            { value: 'files', label: '文件' },
             { value: 'terminal', label: '终端' },
           ]}
         />
@@ -157,112 +171,39 @@ export function ExecutionPanel({
         </div>
       ) : null}
 
-      {tab === 'changes' ? (
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-          {runId ? (
-            <RunArtifacts
-              runId={runId}
-              className="border-0 bg-transparent p-0"
-            />
-          ) : (
-            <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] leading-5 text-ha-dim">
-              本次运行还没有交付物。任务完成时会在这里出现。
-            </p>
-          )}
-
-          <div className="flex items-center justify-between px-0.5 pt-2">
-            <span className="text-[11px] font-semibold text-ha-dim">
-              工具调用
-            </span>
-            <ToneBadge tone="neutral">{toolCalls.length} 次</ToneBadge>
-          </div>
-          {toolCalls.length === 0 ? (
-            <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] text-ha-dim">
-              暂无写操作或读取记录。
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {toolCalls.map((call) => (
-                <li
-                  key={call.seq}
-                  className="flex items-center justify-between gap-2 rounded-md border border-ha-border bg-ha-panel px-2.5 py-2"
-                >
-                  <span className="truncate font-mono text-[11px] text-ha-text-2">
-                    {call.name}
-                  </span>
-                  <span
-                    className={cn(
-                      'shrink-0 font-mono text-[11px]',
-                      call.ok ? 'text-ha-success' : 'text-ha-danger',
-                    )}
-                  >
-                    {call.ok ? 'ok' : 'failed'}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+      {tab === 'files' ? (
+        <div className="flex min-h-0 flex-1 flex-col p-3">
+          <SandboxGate
+            sandbox={sandbox}
+            loading={sandboxLoading}
+            error={sandboxError}
+            onRetry={onRetrySandbox}
+          >
+            {(active) => (
+              <SandboxFileTree
+                key={active.id}
+                sandboxId={active.id}
+                touchedPaths={touchedPaths}
+                selectedPath={selectedFilePath}
+                onSelect={(path) => onOpenFile?.(path)}
+              />
+            )}
+          </SandboxGate>
         </div>
       ) : null}
 
       {tab === 'terminal' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <div className="mb-2 flex items-center justify-between px-0.5">
-            <span className="text-[11px] font-semibold text-ha-dim">
-              事件流水
-            </span>
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5 font-mono text-[11px]',
-                connected
-                  ? 'text-ha-success'
-                  : reconnecting
-                    ? 'text-ha-warning'
-                    : 'text-ha-dim',
-              )}
-            >
-              <span
-                className={cn(
-                  'h-1.5 w-1.5 rounded-full',
-                  connected
-                    ? 'animate-pulse bg-ha-success'
-                    : reconnecting
-                      ? 'animate-pulse bg-ha-warning'
-                      : 'bg-ha-ghost',
-                )}
-              />
-              {connected
-                ? 'SSE 已连接'
-                : reconnecting
-                  ? 'SSE 重连中'
-                  : 'SSE 未连接'}
-            </span>
-          </div>
-          {events.length === 0 ? (
-            <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] text-ha-dim">
-              还没有事件。
-            </p>
-          ) : (
-            <ol className="space-y-1">
-              {events.map((event) => (
-                <li
-                  key={event.seq}
-                  className="flex items-start gap-2 rounded px-1.5 py-1 font-mono text-[11px] hover:bg-ha-panel"
-                >
-                  <span className="w-8 shrink-0 text-right text-ha-faint">
-                    {event.seq}
-                  </span>
-                  <Terminal
-                    aria-hidden="true"
-                    className="mt-0.5 h-3 w-3 shrink-0 text-ha-ghost"
-                  />
-                  <span className="min-w-0 flex-1 break-all text-ha-muted">
-                    {event.type}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
+        <div className="flex min-h-0 flex-1 flex-col p-3">
+          <SandboxGate
+            sandbox={sandbox}
+            loading={sandboxLoading}
+            error={sandboxError}
+            onRetry={onRetrySandbox}
+          >
+            {(active) => (
+              <SandboxTerminal key={active.id} sandboxId={active.id} />
+            )}
+          </SandboxGate>
         </div>
       ) : null}
 
@@ -275,6 +216,60 @@ export function ExecutionPanel({
         {footerAction}
       </div>
     </aside>
+  );
+}
+
+/**
+ * 沙箱三态闸门:加载中 / 失败(可重试) / 没有沙箱。
+ * 只有拿到运行中的沙箱才渲染 children(文件树、终端)。
+ */
+function SandboxGate({
+  sandbox,
+  loading,
+  error,
+  onRetry,
+  children,
+}: {
+  sandbox: SandboxInfo | null;
+  loading: boolean;
+  error: Error | null;
+  onRetry?: () => void;
+  children: (sandbox: SandboxInfo) => ReactNode;
+}) {
+  if (sandbox) return <>{children(sandbox)}</>;
+  if (loading) {
+    return (
+      <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] leading-5 text-ha-dim">
+        正在查找会话沙箱…
+      </p>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center">
+        <p className="text-[12px] leading-5 text-ha-danger">
+          {error.message || '沙箱信息读取失败'}
+        </p>
+        {onRetry ? (
+          <ConsoleButton
+            size="sm"
+            variant="secondary"
+            className="mt-2"
+            onClick={onRetry}
+          >
+            重试
+          </ConsoleButton>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <p className="rounded-md border border-dashed border-ha-border px-4 py-6 text-center text-[12px] leading-5 text-ha-dim">
+      这个会话还没有运行中的沙箱。
+      <span className="mt-1 block text-[11px] text-ha-faint">
+        Agent 在沙箱里跑过工具后，文件与终端会出现在这里。
+      </span>
+    </p>
   );
 }
 

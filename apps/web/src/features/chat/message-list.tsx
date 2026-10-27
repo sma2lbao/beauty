@@ -45,6 +45,8 @@ export type ChatMessageListProps = {
   activeConversationId: string | null;
   showArtifact: boolean;
   onToggleArtifact: () => void;
+  /** 点工具卡路径时打开文件查看器(由页面提供)。 */
+  onOpenFile?: (path: string) => void;
   error: unknown;
   unauthorized: boolean;
 };
@@ -60,6 +62,7 @@ export function ChatMessageList({
   activeConversationId,
   showArtifact,
   onToggleArtifact,
+  onOpenFile,
   error,
   unauthorized,
 }: ChatMessageListProps) {
@@ -295,6 +298,7 @@ export function ChatMessageList({
               <ToolCallCard
                 key={call.seq}
                 call={call}
+                onOpenFile={onOpenFile}
                 live={
                   (status === 'running' || status === 'planning') &&
                   index === toolCalls.length - 1 &&
