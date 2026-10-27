@@ -211,6 +211,11 @@ export async function setupChatTest(): Promise<void> {
   );
   vi.mocked(runsApi.get).mockResolvedValue(makeRun());
   vi.mocked(runsApi.steps).mockResolvedValue([]);
+  vi.mocked(runsApi.todos).mockResolvedValue({
+    todos: [],
+    counts: { pending: 0, in_progress: 0, completed: 0 },
+    revision: 0,
+  });
 }
 
 /* ── vi.mock 工厂:测试文件里动态 import 本文件后调用 ─────────────── */
@@ -258,6 +263,11 @@ export async function runsModuleMock() {
       get: vi.fn(),
       getPlan: vi.fn(),
       steps: vi.fn(async () => []),
+      todos: vi.fn(async () => ({
+        todos: [],
+        counts: { pending: 0, in_progress: 0, completed: 0 },
+        revision: 0,
+      })),
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),

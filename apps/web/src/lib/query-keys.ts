@@ -18,6 +18,8 @@ export const queryKeys = {
   instructions: (runId: string) => ['instructions', runId] as const,
   /** 执行步骤投影:['run-steps', runId]。 */
   runSteps: (runId: string) => ['run-steps', runId] as const,
+  /** 任务清单投影:['run-todos', runId]。 */
+  runTodos: (runId: string) => ['run-todos', runId] as const,
   runArtifacts: (runId: string) => ['run-artifacts', runId] as const,
   runArtifactPreview: (runId: string, previewId: string | null | undefined) =>
     ['run-artifact-preview', runId, previewId] as const,

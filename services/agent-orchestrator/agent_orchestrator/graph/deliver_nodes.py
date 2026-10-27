@@ -11,6 +11,7 @@ from agent_orchestrator.graph.plan_nodes import (
     _criteria_block,
     _instructions_block,
     _text_reply,
+    _todo_block,
 )
 from agent_orchestrator.graph.ports import (
     LLMPort,
@@ -65,7 +66,11 @@ def make_verify_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": VERIFY_SYSTEM_PROMPT + _context_block(state),
+                    "content": (
+                        VERIFY_SYSTEM_PROMPT
+                        + _context_block(state)
+                        + _todo_block(state)
+                    ),
                 },
                 {
                     "role": "user",
@@ -139,7 +144,11 @@ def make_deliver_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": DELIVER_SYSTEM_PROMPT + _context_block(state),
+                    "content": (
+                        DELIVER_SYSTEM_PROMPT
+                        + _context_block(state)
+                        + _todo_block(state)
+                    ),
                 },
                 {
                     "role": "user",

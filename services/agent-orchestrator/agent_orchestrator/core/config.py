@@ -111,6 +111,13 @@ class Settings(BaseAppSettings):
     # P0-3 token 预算:单次执行(plan 或 approve 的一次图调用)允许的最大模型用量,
     # 0 = 不限制。用尽时该次执行 failed(可在新 run 里续做)。
     run_token_budget: int = 0
+    # run 级任务清单(M4,见 docs/design/tool-execution.md 第 13 节):模型用
+    # todo_write 覆盖写清单,快照落 runs.todos(一行 JSON),变更落
+    # run.todo.updated.v1;execute 每轮把最新清单注入提示词。默认开——
+    # 清单是纯增量收益,不用清单的 run 行为不变。
+    todo_enabled: bool = True
+    todo_max_items: int = 20
+    todo_max_content_chars: int = 200
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库;
     # 代码类工具由 tool-service 提供,见下方的 tool_service_enabled)
     tools_enabled: bool = False

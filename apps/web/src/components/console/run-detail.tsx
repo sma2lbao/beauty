@@ -18,6 +18,7 @@ import {
 import { Markdown } from '@/components/console/markdown';
 import { RunArtifacts } from '@/components/console/run-artifacts';
 import { RunStepTimeline } from '@/components/console/run-step-timeline';
+import { RunTodoList } from '@/components/console/run-todo-list';
 import { RunEvents } from '@/components/runs/run-events';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import {
@@ -87,6 +88,13 @@ export function RunDetail({
         : 1500;
     },
   });
+  // 任务清单同样不进 SSE:执行中与步骤同频轮询,静默终态停。
+  const todosQuery = useQuery({
+    queryKey: queryKeys.runTodos(runId),
+    queryFn: () => runsApi.todos(runId),
+    refetchInterval: () =>
+      runQuery.data && isRunQuiescent(runQuery.data.status) ? false : 1500,
+  });
   const { events, connected } = useRunEvents(runId);
 
   const refresh = async () => {
@@ -97,6 +105,7 @@ export function RunDetail({
         queryKey: queryKeys.instructions(runId),
       }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runSteps(runId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runTodos(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
     ]);
   };
@@ -365,6 +374,7 @@ export function RunDetail({
             steps={stepsQuery.data ?? []}
             className="mt-2 max-h-72 overflow-y-auto"
           />
+          <RunTodoList todos={todosQuery.data?.todos ?? []} className="mt-3" />
         </ConsolePanel>
 
         <ConsolePanel className="p-3">

@@ -2560,6 +2560,71 @@
         "title": "StepRead",
         "type": "object"
       },
+      "TodoCounts": {
+        "properties": {
+          "completed": {
+            "default": 0,
+            "title": "Completed",
+            "type": "integer"
+          },
+          "in_progress": {
+            "default": 0,
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          }
+        },
+        "title": "TodoCounts",
+        "type": "object"
+      },
+      "TodoItem": {
+        "description": "任务清单项(M4):位置即顺序,status 是模型自己维护的三态。",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "status": {
+            "enum": ["pending", "in_progress", "completed"],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["content", "status"],
+        "title": "TodoItem",
+        "type": "object"
+      },
+      "TodoRead": {
+        "description": "任务清单视图(M4):runs.todos 快照 + 最近一次变更的 revision。\n\nrevision 来自 run.todo.updated.v1 的最新事件,前端用它判断\"清单变过没有\";\n快照列本身不带版本号。",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/TodoCounts"
+          },
+          "revision": {
+            "default": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "todos": {
+            "items": {
+              "$ref": "#/components/schemas/TodoItem"
+            },
+            "title": "Todos",
+            "type": "array"
+          }
+        },
+        "required": ["run_id"],
+        "title": "TodoRead",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -6858,6 +6923,79 @@
           }
         },
         "summary": "List Run Steps",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/todos": {
+      "get": {
+        "description": "任务清单(M4):runs.todos 快照 + 最新 revision(没有清单也不是 404)。",
+        "operationId": "get_run_todos_api_v1_runs__run_id__todos_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Todos",
         "tags": ["runs"]
       }
     },

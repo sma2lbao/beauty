@@ -137,6 +137,17 @@ export function useChatQueries(activeConversationId: string | null) {
         : 1500,
   });
 
+  // 任务清单投影:与步骤同频轮询,终态后停;旧 run/没调用过 todo 工具时为空数组。
+  const todosQuery = useQuery({
+    queryKey: queryKeys.runTodos(activeRunId as string),
+    queryFn: () => runsApi.todos(activeRunId as string),
+    enabled: Boolean(activeRunId),
+    retry: false,
+    refetchInterval: () =>
+      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
+        ? false
+        : 1500,
+  });
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
   const conversation = conversationQuery.data;
@@ -279,6 +290,7 @@ export function useChatQueries(activeConversationId: string | null) {
     reconnecting,
     toolCalls,
     steps: stepsQuery.data ?? [],
+    todos: todosQuery.data?.todos ?? [],
     plan: planQuery.data,
     liveRun,
     runPaused,

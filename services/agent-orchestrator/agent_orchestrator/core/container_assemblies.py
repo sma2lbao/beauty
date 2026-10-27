@@ -14,6 +14,7 @@ from agent_orchestrator.models import runs as runs_models
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.memory_tools import build_memory_tools
+from agent_orchestrator.services.todos import build_todo_tool
 from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import (
     ToolExtrasFactory,
@@ -111,6 +112,16 @@ class ContainerAssemblyMixin:
             # 多给两个永远不可用的工具只会污染工具面(§6.5/§6.6)。
             # 用 getattr 容错:测试里的极简容器桩可能没装配上下文属性。
             if ctx is not None and ctx.run_id:
+                # 任务清单(M4):清单要 run 上下文(快照列 + 事件),对话路径
+                # 没有 run 也没有地方存,所以只在 run 上下文暴露。
+                if settings.todo_enabled:
+                    specs.append(
+                        build_todo_tool(
+                            factory,
+                            max_items=settings.todo_max_items,
+                            max_content_chars=settings.todo_max_content_chars,
+                        )
+                    )
                 policy = getattr(self, "context_policy", None)
                 if policy is not None and policy.skill_loading_enabled:
                     specs.append(build_load_skill_tool(factory, policy=policy))

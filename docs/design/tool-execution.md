@@ -1,6 +1,6 @@
 # 工具执行面设计:exec / web_search / todo(P1-L)
 
-> 状态:**exec MVP 已落地(2026-10-27)**;web_search 与 todo 仅为契约与分期,未实施。范围:`services/tool-service`(exec 契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链)。
+> 状态:**exec MVP(2026-10-27)与 todo 第一轮(2026-10-27)已落地**;web_search 仅为契约与分期,未实施。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。
 > 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload)。
 
 ## 1. 摘要
@@ -9,7 +9,7 @@
 
 - **exec(已落地)**:`tool-service` 目录新增一等工具,在**工作区沙箱内**执行一条 shell 命令。风险档 `destructive`(legacy `danger`),默认关闭,开启后必须人工确认;输出自带截断与回读提示。
 - **web_search(待实施)**:联网检索(与只读抓取的 `fetch` 不同,检索需要搜索提供方与引用协议);依赖出口策略,见 §11。
-- **todo(待实施)**:`todo_write`/`todo_read` 属产品面(计划/条目状态),依赖事件分类学(P1-D)把 plan 做成一等 item,暂不单独立项。
+- **todo(已落地,第一轮)**:`todo_write` 是 **orchestrator 进程内**的 run 级工具(不进 tool-service 目录):模型把任务清单整包覆盖写进 `runs.todos` 快照、落 `run.todo.updated.v1` 事件,并在每轮 execute/verify/deliver 的系统提示里注入极简清单;只读端点 `GET /api/v1/runs/{id}/todos`,前端在 run 详情与会话右栏显示「任务清单」。依赖 P1-D 的 item 化不在本期(差异见 §13.4)。
 
 五条关键决策:
 
@@ -207,12 +207,12 @@ orchestrator 侧无新配置:危险工具经目录自动进入审批链。
 
 ## 11. 分期与验收
 
-| 期  | 内容                                                           | 状态                                 |
-| --- | -------------------------------------------------------------- | ------------------------------------ |
-| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**               |
-| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话) |
-| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | 待启动(先定提供方与成本口径)         |
-| M4  | `todo`:item 化任务清单                                         | 依赖 P1-D(事件分类学)                |
+| 期  | 内容                                                           | 状态                                  |
+| --- | -------------------------------------------------------------- | ------------------------------------- |
+| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                |
+| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)  |
+| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | 待启动(先定提供方与成本口径)          |
+| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化待 P1-D |
 
 M1 验收:
 
@@ -252,3 +252,91 @@ M1 验收:
 - **chat 路径用不到 exec**:对话侧只保留 `risk=read`,而 exec 是 `destructive`;想让对话助手跑命令需 P1-A policy 做命令前缀 allowlist 后再单独开 READ 档通道。
 - **无持久 shell/后台任务**:每次调用一条 `sh -lc`,`cd`/环境变量/后台进程都不跨调用保存(M2)。
 - **输出仍受 `MAX_TOOL_CHARS` 约束**:exec 自行回缩到 25K 以内,与 P1-F 的 offload 没有串联(offload 目前只覆盖 orchestrator 侧工具结果信封;exec 超长输出应「重定向到文件 → read」)。
+
+## 13. todo 实施记录(M4 第一轮,2026-10-27)
+
+### 13.1 位置:orchestrator 进程内,不进 tool-service 目录
+
+- tool-service 是无状态执行器:不知道 run 上下文、graph state 与 run 事件;`todo_write` 要写 run 快照、发事件、把清单注入图内提示,这些只在 orchestrator 侧成立。
+- 同层先例:`services/memory_tools.py`、`context/skills.py` 的 `load_skill` 都是进程内工具;挂载点在 `core/container_assemblies.py` 的 `ctx.run_id` gate,chat 路径不暴露(对话没有 run,也没有地方存清单)。
+- 目录是「能力/权限边界」,描述沙箱与外部副作用;todo 是 run 内状态、不是沙箱能力,因此不占 `CATALOG_VERSION` 版本位,也不落 tool-service 的 `tool_calls` 审计表(清单本身就是状态流水)。
+
+### 13.2 契约
+
+| 项       | 值                                                                                |
+| -------- | --------------------------------------------------------------------------------- |
+| 工具名   | `todo_write`(`risk=write`、`kind=function`)                                       |
+| 参数     | `todos`:数组,必填,1..`todo_max_items`(20)项                                       |
+| 单项     | `content`:去首尾空白后 1..200 字符;`status`:`pending`/`in_progress`/`completed`   |
+| 约束     | 同时最多一项 `in_progress`;超项数/超长/未知状态直接拒绝(不落库)                   |
+| 写语义   | 覆盖写全量(没有 add/done/remove 之类的增量工具)                                   |
+| 幂等     | 与当前清单逐字相同 -> `updated=false`,不写库、不落事件                            |
+| 成功信封 | `{ok, updated, todos, counts:{pending,in_progress,completed}, revision, summary}` |
+| 失败     | `{"error": ...}`(参数/上下文/租户错误,`tool.invalid_args` 口径)                   |
+
+为什么覆盖写:模型每轮都能看到整份清单(§13.4),增量动作会让「当前清单」依赖一串历史动作,回放与幂等成本更高;20 项上限让整包写的代价可控。
+
+### 13.3 数据与事件
+
+- `runs.todos`:`JSON NOT NULL DEFAULT '[]'` 快照列(迁移 `b9e4d1f7c2a8`,接在 `b7d1e9c3a5f2` 之后);读路径宽松清洗,坏数据不 500。
+- `run.todo.updated.v1`:`{todos, counts, revision, source:"tool"}`;`revision = 该 run 同类事件数 + 1`。
+- 为什么「快照 + 最新事件 revision」而不是纯事件投影:todo 是覆盖写的最新状态,投影要回放全部事件才能得到当前清单;快照一次读即可,事件补充 revision 与流水。P1-D 落地后把该事件升级为 `item`(kind=todo),列与端点不用改。
+
+### 13.4 提示注入
+
+- 每轮重建 `_execute_messages` 时按 state 追加最新清单;`verify`/`deliver` 也注入(只读),让交付前收尾看得到未完成项。**不**写进 `context_block` 快照(那是起图时冻结的 run 级上下文,清单每轮会变)。
+- 格式极简、非 JSON:
+
+  ```text
+  当前任务清单(2/3 完成):
+  - [x] 读需求文档
+  - [~] 改实现
+  - [ ] 跑测试
+  ```
+
+- 替换式注入:历史消息里不累积清单块,只有系统提示携带最新一份。
+- resume/retry:services 层从 `runs.todos` 重新装载进 state;旧 checkpoint 没有该字段时按无清单处理。
+- 工具描述写明纪律:开工前落 3-8 项、开始某项前设 `in_progress`、同时最多一项、做完立刻 `completed`、每次传完整清单。
+
+### 13.5 API 与前端
+
+- `GET /api/v1/runs/{run_id}/todos` -> `{run_id, todos, counts, revision}`;租户隔离走 `require_run`(跨租户 404)。不内联进 `RunRead`,避免 run 列表每次带清单。
+- 前端:`apps/web/src/lib/runs-api.ts` 的 `runsApi.todos`;`apps/web/src/components/console/run-todo-list.tsx` 渲染「任务清单」块;run 详情执行中 1.5s 轮询、终态停止;会话右栏只在有 `activeRunId` 时请求;空清单整块不渲染。
+
+### 13.6 文件清单
+
+| 文件                                              | 改动                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `agent_orchestrator/graph/todos.py`               | 新增:常量/计数/清洗/校验/渲染(graph 层单一来源,不依赖 services) |
+| `agent_orchestrator/services/todos.py`            | 新增:`todo_write` 装配 + `list_todos` 读端 + 事件常量           |
+| `migrations/versions/b9e4d1f7c2a8_run_todos.py`   | 新增:`runs.todos` JSON 列(server_default `'[]'`)                |
+| `agent_orchestrator/models/runs.py`               | `todos` 列                                                      |
+| `agent_orchestrator/graph/state.py`               | `todos` state 字段                                              |
+| `agent_orchestrator/graph/plan_nodes.py`          | `_todo_block()`                                                 |
+| `agent_orchestrator/graph/nodes.py`               | execute/tool_exec 注入 + 工具结果回写 state                     |
+| `agent_orchestrator/graph/deliver_nodes.py`       | verify/deliver 注入                                             |
+| `agent_orchestrator/services/run_execution.py`    | 起图时从 `runs.todos` 装载 state                                |
+| `agent_orchestrator/core/config.py`               | `todo_enabled`/`todo_max_items`/`todo_max_content_chars`        |
+| `agent_orchestrator/core/container_assemblies.py` | run 上下文挂载 `todo_write`                                     |
+| `agent_orchestrator/schemas/runs.py`              | `TodoItem`/`TodoCounts`/`TodoRead`                              |
+| `agent_orchestrator/services/runs.py`             | 导出 `list_todos`                                               |
+| `agent_orchestrator/api/v1/runs.py`               | `GET /{run_id}/todos`                                           |
+| `apps/web/src/lib/runs-api.ts` 等 8 个前端文件    | 类型/query key/清单组件/详情与会话接线/测试                     |
+
+### 13.7 验证
+
+- `npx nx test agent-orchestrator`:**858 passed**,覆盖率 **87.1%**(本次 87.11%,门禁 82)。
+- 定向新增:`tests/test_todos.py` 26 例(纯逻辑/工具/读端/图注入)+ `tests/test_todo_graph.py` 4 例(节点回写 state、失败信封不覆盖、提示词带清单)+ `tests/test_todo_api.py` 6 例(API/租户隔离/开关/挂载 gate),共 36 例,全部零网络。
+- 迁移:临时 sqlite 上 `alembic upgrade head` 到 `b9e4d1f7c2a8`,`alembic check` 输出 `No new upgrade operations detected.`。
+- OpenAPI 契约快照 `tests/snapshots/openapi.json` 已更新(新增 `GET /runs/{run_id}/todos`,`TodoItem`/`TodoCounts`/`TodoRead` schema)。
+- 既有 6 个断言工具面的测试补上 `todo_write`(`test_container_context`/`test_skill_runner_extras`/`test_knowledge_tools`/`test_tools_providers`/`test_mcp_references`);前端 `npx nx test @beauty/web -- --run` 67 files / 462 tests 通过,`typecheck` 与 `lint` 干净。
+- 文档:本文 §1/§11/§13、`docs/design/tool-service.md` 的「todo 本期不做」修订注记、`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面」行。
+
+### 13.8 已知残留(未在本期解决)
+
+- **不做 gate 拦截**:清单不阻塞交付(交付前不强制所有项 completed)。加 interrupt 会破坏「interrupt 之前无副作用」的既有约束,留给 M4b 用 verify 提示约束。
+- **不做 in_progress 停留提醒/超时提醒**(M4b):需要按轮次/时间判断,当前只在提示词里给纪律。
+- **不合并 plan_markdown**:计划(markdown 审批)与任务清单(结构化三态)是两份东西,不互相解析初始化。
+- **chat 路径不暴露** `todo_write`:对话没有 run,清单无处落库。
+- **清单不跨 run 复用**:每个 run 从空清单开始(retry 沿用同一 run 的快照,符合「同一 run 可复现」)。
+- **P1-D item 化未做**:`run.todo.updated.v1` 目前是独立事件类型,P1-D 落地后应提升为 `item`(kind=todo,content→title、status→state)。

@@ -91,7 +91,11 @@ export function ChatPage() {
     if (!activeConversationId) return;
     const sandboxPath = toSandboxPath(path);
     if (!sandboxPath) return;
-    setOpenFile({ conversationId: activeConversationId, path: sandboxPath, tab });
+    setOpenFile({
+      conversationId: activeConversationId,
+      path: sandboxPath,
+      tab,
+    });
   }
 
   return (
@@ -134,6 +138,7 @@ export function ChatPage() {
           conversationId={activeConversationId ?? undefined}
           toolCalls={queries.toolCalls}
           steps={queries.steps}
+          todos={queries.todos}
           sandbox={sandbox.data ?? null}
           sandboxLoading={sandbox.isPending}
           sandboxError={sandbox.error instanceof Error ? sandbox.error : null}

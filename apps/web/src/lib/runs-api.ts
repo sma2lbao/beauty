@@ -70,6 +70,22 @@ export type RunStep = {
 /** 步骤状态:运行中只在进程内的采集器里出现,落库后是终值。 */
 export type StepStatus = 'running' | 'completed' | 'failed' | 'blocked';
 
+/**
+ * 任务清单条目(GET /runs/{id}/todos):由 todo 工具的服务端投影给出。
+ * status 只有三态;清单是 run 级快照,revision 随每次写入递增。
+ */
+export type RunTodoItem = {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+};
+
+/** 任务清单:旧 run / 从未调用 todo 工具时 todos 为空、counts 全 0、revision 为 0。 */
+export type RunTodos = {
+  todos: RunTodoItem[];
+  counts: { pending: number; in_progress: number; completed: number };
+  revision: number;
+};
+
 export type Plan = {
   run_id: string;
   status: RunStatus;
@@ -173,6 +189,9 @@ export const runsApi = {
   /** 节点级步骤投影:独立于事件流(表内 seq 有空洞是正常的,别按连续 id 判断)。 */
   steps: (runId: string) =>
     http.request<RunStep[]>(`/api/v1/runs/${runId}/steps`),
+  /** 任务清单投影:空清单是合法结果(旧 run/没调用过 todo 工具),不是错误。 */
+  todos: (runId: string) =>
+    http.request<RunTodos>(`/api/v1/runs/${runId}/todos`),
   generatePlan: (runId: string) =>
     http.request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>

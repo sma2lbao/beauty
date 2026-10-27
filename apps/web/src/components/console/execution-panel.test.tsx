@@ -11,7 +11,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SandboxInfo } from '@/lib/sandbox-api';
-import type { Run, RunStatus, RunStep } from '@/lib/runs-api';
+import type { Run, RunStatus, RunStep, RunTodoItem } from '@/lib/runs-api';
 import type { ToolCall } from '@/lib/presentation';
 
 import { ExecutionPanel } from './execution-panel';
@@ -58,6 +58,7 @@ const sandbox: SandboxInfo = {
 type PanelOptions = {
   status?: RunStatus;
   steps?: RunStep[];
+  todos?: RunTodoItem[];
   sandbox?: SandboxInfo | null;
   sandboxLoading?: boolean;
   sandboxError?: Error | null;
@@ -75,6 +76,7 @@ function renderPanel(options: PanelOptions = {}) {
         status={options.status ?? 'running'}
         toolCalls={toolCalls}
         steps={options.steps ?? []}
+        todos={options.todos ?? []}
         sandbox={options.sandbox ?? null}
         sandboxLoading={options.sandboxLoading}
         sandboxError={options.sandboxError}
@@ -137,6 +139,45 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText(/1\.5s/)).toBeTruthy();
   });
 
+  it('任务清单按三态渲染图标与完成计数', () => {
+    renderPanel({
+      todos: [
+        { content: '读取配置', status: 'completed' },
+        { content: '实现工具', status: 'in_progress' },
+        { content: '补充测试', status: 'pending' },
+      ],
+    });
+    expect(screen.getByText('任务清单')).toBeTruthy();
+    expect(screen.getByText('1/3')).toBeTruthy();
+
+    const list = screen.getByTestId('run-todo-list');
+    const items = Array.from(list.querySelectorAll('li'));
+    expect(items).toHaveLength(3);
+    // completed:成功色对勾 + 删除线
+    expect(items[0].querySelector('svg')?.getAttribute('class')).toContain(
+      'text-ha-success',
+    );
+    expect(screen.getByText('读取配置').className).toContain('line-through');
+    // in_progress:旋转图标 + 正常文本
+    expect(items[1].querySelector('svg')?.getAttribute('class')).toContain(
+      'animate-spin',
+    );
+    expect(screen.getByText('实现工具').className).not.toContain(
+      'line-through',
+    );
+    // pending:灰圈 + dim 文本
+    expect(items[2].querySelector('svg')?.getAttribute('class')).toContain(
+      'text-ha-ghost',
+    );
+    expect(screen.getByText('补充测试').className).toContain('text-ha-dim');
+  });
+
+  it('没有任务清单时整块不渲染', () => {
+    renderPanel();
+    expect(screen.queryByText('任务清单')).toBeNull();
+    expect(screen.queryByTestId('run-todo-list')).toBeNull();
+  });
+
   it('没有沙箱时文件页给出空态而不是假文件树', () => {
     renderPanel();
     fireEvent.click(screen.getByRole('tab', { name: '文件' }));
@@ -177,9 +218,9 @@ describe('ExecutionPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: '文件' }));
     expect(await screen.findByText('工作区文件')).toBeTruthy();
     expect(await screen.findByText('src')).toBeTruthy();
-    expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe(
-      '/workspace-api/v1/sandboxes/sb-1/tree?path=%2Fworkspace&depth=3',
-    );
+    expect(
+      (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[0],
+    ).toBe('/workspace-api/v1/sandboxes/sb-1/tree?path=%2Fworkspace&depth=3');
 
     fireEvent.click(screen.getByText('src'));
     fireEvent.click(await screen.findByText('app.tsx'));
@@ -235,9 +276,9 @@ describe('ExecutionPanel', () => {
     const output = await screen.findByTestId('sandbox-terminal-output');
     await waitFor(() => expect(output.textContent).toContain('hi'));
     await waitFor(() =>
-      expect(
-        screen.getByTestId('sandbox-terminal-exit').textContent,
-      ).toContain('退出码 0'),
+      expect(screen.getByTestId('sandbox-terminal-exit').textContent).toContain(
+        '退出码 0',
+      ),
     );
 
     const session = calls.find((call) => call.url.endsWith('/sessions'));
@@ -254,7 +295,9 @@ describe('ExecutionPanel', () => {
     const onRetrySandbox = vi.fn();
     render(
       <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
       >
         <ExecutionPanel
           run={run}

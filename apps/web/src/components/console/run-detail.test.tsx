@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Plan, Run, RunStep } from '@/lib/runs-api';
+import type { Plan, Run, RunStep, RunTodoItem } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
 import { RunDetail } from './run-detail';
@@ -19,6 +19,7 @@ vi.mock('@/lib/runs-api', () => ({
     get: vi.fn(),
     getPlan: vi.fn(),
     steps: vi.fn(),
+    todos: vi.fn(),
     instructions: vi.fn(),
     retry: vi.fn(),
     approve: vi.fn(),
@@ -59,11 +60,21 @@ function renderDetail(
   status: Run['status'],
   onClose = vi.fn(),
   steps: RunStep[] = [],
+  todos: RunTodoItem[] = [],
 ) {
   vi.mocked(runsApi.get).mockResolvedValue({ ...baseRun, status });
   vi.mocked(runsApi.getPlan).mockResolvedValue(plan);
   vi.mocked(runsApi.instructions).mockResolvedValue([]);
   vi.mocked(runsApi.steps).mockResolvedValue(steps);
+  vi.mocked(runsApi.todos).mockResolvedValue({
+    todos,
+    counts: {
+      pending: todos.filter((todo) => todo.status === 'pending').length,
+      in_progress: todos.filter((todo) => todo.status === 'in_progress').length,
+      completed: todos.filter((todo) => todo.status === 'completed').length,
+    },
+    revision: todos.length > 0 ? 1 : 0,
+  });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -124,6 +135,22 @@ describe('RunDetail', () => {
     expect(await screen.findByTestId('run-step-timeline')).toBeTruthy();
     expect(screen.getByText('执行步骤')).toBeTruthy();
     expect(screen.getByText(/^规划/)).toBeTruthy();
+  });
+
+  it('渲染任务清单与完成计数', async () => {
+    renderDetail(
+      'running',
+      vi.fn(),
+      [],
+      [
+        { content: '读取配置', status: 'completed' },
+        { content: '实现工具', status: 'in_progress' },
+        { content: '补充测试', status: 'pending' },
+      ],
+    );
+    expect(await screen.findByTestId('run-todo-list')).toBeTruthy();
+    expect(screen.getByText('任务清单')).toBeTruthy();
+    expect(screen.getByText('1/3')).toBeTruthy();
   });
 
   it('终态不出现取消按钮', async () => {

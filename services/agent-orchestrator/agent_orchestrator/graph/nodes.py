@@ -56,6 +56,7 @@ from agent_orchestrator.graph.plan_nodes import _memory_block as _memory_block
 from agent_orchestrator.graph.plan_nodes import _skill_block as _skill_block
 from agent_orchestrator.graph.plan_nodes import _stub_plan as _stub_plan
 from agent_orchestrator.graph.plan_nodes import _text_reply as _text_reply
+from agent_orchestrator.graph.plan_nodes import _todo_block as _todo_block
 from agent_orchestrator.graph.plan_nodes import make_plan_node as make_plan_node
 from agent_orchestrator.graph.ports import (
     KIND_FUNCTION,
@@ -71,6 +72,7 @@ from agent_orchestrator.graph.ports import (
 )
 from agent_orchestrator.graph.runtime import GraphRuntime, runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.graph.todos import TODO_TOOL_NAME, sanitize_todos
 from agent_orchestrator.graph.tool_results import (
     is_tool_error,
     parse_tool_error,
@@ -211,7 +213,9 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
     return [
         {
             "role": "system",
-            "content": EXECUTE_SYSTEM_PROMPT + _context_block(state),
+            "content": (
+                EXECUTE_SYSTEM_PROMPT + _context_block(state) + _todo_block(state)
+            ),
         },
         {
             "role": "user",
@@ -223,6 +227,30 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
             ),
         },
     ]
+
+
+def _todos_update(name: str, output: str) -> list[dict[str, str]] | None:
+    """工具结果里带清单(todo_write 成功信封)时取出,供节点回写 state。
+
+    解析失败返回 None:回写是增强,不能因为脏结果打断执行——与"工具失败回喂
+    错误文本"同一个降级思路。清单很小,offload 不会命中,但仍按原样防御。
+    """
+
+    if name != TODO_TOOL_NAME or not output:
+        return None
+    try:
+        payload = json.loads(output)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or "todos" not in payload:
+        return None
+    return sanitize_todos(payload.get("todos"))
+
+
+def _todos_state(todos: list[dict[str, str]] | None) -> dict[str, Any]:
+    """清单回写增量:没有变化就不带这个键,避免无谓覆盖 state。"""
+
+    return {"todos": todos} if todos is not None else {}
 
 
 def _assistant_tool_message(reply: ToolReplyPort) -> dict[str, Any]:
@@ -519,6 +547,7 @@ def make_execute_node(
         schemas = toolkit.schemas()
         records: list[dict[str, Any]] = []
         reply: ToolReplyPort | None = None
+        latest_todos: list[dict[str, str]] | None = None
         exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
             runtime.ports.usage.check_budget()
@@ -586,6 +615,7 @@ def make_execute_node(
                     "tool_history": messages[len(base) :],
                     "pending_question": question,
                     "tool_calls": records,
+                    **_todos_state(latest_todos),
                 }
             if ask_call is not None:
                 # 不能挂起(轮次用尽/参数非法):如实回喂,本轮其余工具照常执行
@@ -653,6 +683,9 @@ def make_execute_node(
                     tool_call_id=getattr(call, "id", None),
                     approved=True,
                 )
+                update = _todos_update(call.name, output)
+                if update is not None:
+                    latest_todos = update
                 # 大结果 offload:回喂模型的 tool 消息与审计都记信封,
                 # result_chars 因此是信封长度(原始长度在 record 里)。
                 output, offload_record = await _maybe_offload(
@@ -676,6 +709,7 @@ def make_execute_node(
                     "tool_history": messages[len(base) :],
                     "pending_writes": pending,
                     "tool_calls": records,
+                    **_todos_state(latest_todos),
                 }
         if exhausted and records:
             # 轮次用尽仍在要工具:再给一次"不带工具"的收束调用,把已拿到的
@@ -698,6 +732,7 @@ def make_execute_node(
             "tool_calls": records,
             "tool_history": messages[len(base) :],
             "pending_writes": [],
+            **_todos_state(latest_todos),
         }
 
     return execute_node
@@ -743,6 +778,7 @@ def make_tool_exec_node(
         if toolkit is not None and allowed is not None:
             toolkit = toolkit.restricted(allowed)
         records: list[dict[str, Any]] = []
+        latest_todos: list[dict[str, str]] | None = None
         for call in pending:
             name = str(call.get("name") or "")
             arguments = str(call.get("arguments") or "{}")
@@ -758,6 +794,9 @@ def make_tool_exec_node(
                 output = await toolkit.execute(
                     name, arguments, tool_call_id=call_id, approved=True
                 )
+                update = _todos_update(name, output)
+                if update is not None:
+                    latest_todos = update
                 output, offload_record = await _maybe_offload(offloader, name, output)
             records.append(
                 _record(
@@ -778,6 +817,7 @@ def make_tool_exec_node(
             "writes_approved": False,
             "tool_calls": records,
             "confirm_cycles": 1,
+            **_todos_state(latest_todos),
         }
 
     return tool_exec_node

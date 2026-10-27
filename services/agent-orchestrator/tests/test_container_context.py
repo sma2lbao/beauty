@@ -250,8 +250,10 @@ def test_extras_exposes_load_skill_and_read_offloaded(
             client.app.state, ToolContext(tenant_id=TENANT_ID, run_id="r-1")
         )
         names = [spec.name for spec in specs]
-        assert names == ["load_skill", "read_offloaded"]
-        assert all(spec.risk is ToolRisk.READ for spec in specs)
+        # todo_write 是 run 级写工具(M4),排在只读上下文工具之前
+        assert names == ["todo_write", "load_skill", "read_offloaded"]
+        assert specs[0].risk is ToolRisk.WRITE
+        assert all(spec.risk is ToolRisk.READ for spec in specs[1:])
 
 
 def test_extras_chat_path_has_no_run_only_tools(
@@ -272,7 +274,7 @@ def test_extras_without_sandbox_only_has_load_skill(tmp_path: Any) -> None:
         specs = _extras(
             client.app.state, ToolContext(tenant_id=TENANT_ID, run_id="r-1")
         )
-        assert [spec.name for spec in specs] == ["load_skill"]
+        assert [spec.name for spec in specs] == ["todo_write", "load_skill"]
 
 
 def test_extras_not_assembled_when_context_switches_off(tmp_path: Any) -> None:

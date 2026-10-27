@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.todos import sanitize_todos
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     RunRepository,
@@ -203,6 +204,11 @@ async def _invoke_plan(
             state["context_block"] = built.block
             state["context_snapshot"] = built.snapshot
             await context_service.append_context_event(session, run, built)
+    # 任务清单(M4):快照随状态进图(节点是纯函数,不查库);resume 时同一条
+    # 装载路径会重新读 runs.todos,checkpoint 里没有清单也不影响显示。
+    loaded_todos = sanitize_todos(run.todos)
+    if loaded_todos:
+        state["todos"] = loaded_todos
     try:
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)

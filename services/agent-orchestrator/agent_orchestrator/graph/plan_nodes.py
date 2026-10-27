@@ -10,6 +10,7 @@ from agent_orchestrator.graph.ports import (
 )
 from agent_orchestrator.graph.runtime import GraphRuntime, runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
+from agent_orchestrator.graph.todos import render_todo_block
 
 PLAN_SYSTEM_PROMPT = (
     "你是任务规划助手。依据目标与验收标准产出 Markdown 执行计划:"
@@ -73,6 +74,19 @@ def _context_block(state: RunGraphState) -> str:
     if block:
         return f"\n\n{block}"
     return _skill_block(state) + _memory_block(state)
+
+
+def _todo_block(state: RunGraphState) -> str:
+    """任务清单块(M4):每轮消息重建时注入最新清单,空清单返回空串。
+
+    替换式而不是累积式:历史 tool 消息里已经有一份清单快照,再往系统提示里
+    叠就等于同一份清单占两处上下文;这里始终只用 state 里的最新一份。
+    """
+
+    block = render_todo_block(state.get("todos"))
+    if not block:
+        return ""
+    return f"\n\n{block}"
 
 
 def _criteria_block(criteria: list[str]) -> str:

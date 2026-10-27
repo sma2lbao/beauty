@@ -91,6 +91,32 @@ class StepRead(BaseModel):
     duration_ms: int | None = None
 
 
+class TodoItem(BaseModel):
+    """任务清单项(M4):位置即顺序,status 是模型自己维护的三态。"""
+
+    content: str
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class TodoCounts(BaseModel):
+    pending: int = 0
+    in_progress: int = 0
+    completed: int = 0
+
+
+class TodoRead(BaseModel):
+    """任务清单视图(M4):runs.todos 快照 + 最近一次变更的 revision。
+
+    revision 来自 run.todo.updated.v1 的最新事件,前端用它判断"清单变过没有";
+    快照列本身不带版本号。
+    """
+
+    run_id: str
+    todos: list[TodoItem] = Field(default_factory=list)
+    counts: TodoCounts = Field(default_factory=TodoCounts)
+    revision: int = 0
+
+
 class PlanUpdate(BaseModel):
     """审批前编辑计划(§6.1:plan 是可编辑工件)。"""
 

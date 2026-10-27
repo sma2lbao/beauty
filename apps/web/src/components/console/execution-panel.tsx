@@ -16,13 +16,14 @@ import { SandboxFileTree } from '@/components/console/sandbox-file-tree';
 import { SandboxTerminal } from '@/components/console/sandbox-terminal';
 import { ConsoleButton, ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import { RunStepTimeline } from '@/components/console/run-step-timeline';
+import { RunTodoList } from '@/components/console/run-todo-list';
 import {
   RUN_STATUS_LABELS,
   runStatusTone,
   summarizeArguments,
   type ToolCall,
 } from '@/lib/presentation';
-import type { Run, RunStatus, RunStep } from '@/lib/runs-api';
+import type { Run, RunStatus, RunStep, RunTodoItem } from '@/lib/runs-api';
 import type { SandboxInfo } from '@/lib/sandbox-api';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +34,7 @@ export function ExecutionPanel({
   status,
   toolCalls,
   steps = [],
+  todos = [],
   footerAction,
   sandbox = null,
   sandboxLoading = false,
@@ -47,6 +49,8 @@ export function ExecutionPanel({
   toolCalls: readonly ToolCall[];
   /** 节点级步骤投影(§6.3):比工具调用粗一级,带尝试/轮次/耗时。 */
   steps?: readonly RunStep[];
+  /** 任务清单投影:空数组表示没有清单,整块不渲染。 */
+  todos?: readonly RunTodoItem[];
   /** 交付物统一走 footer 的 RunFooterAction;面板不再单开变更页签。 */
   footerAction?: ReactNode;
   sandbox?: SandboxInfo | null;
@@ -98,6 +102,8 @@ export function ExecutionPanel({
               <RunStepTimeline steps={steps} />
             </>
           ) : null}
+
+          <RunTodoList todos={todos} />
 
           {steps.length === 0 && toolCalls.length === 0 ? (
             <div className="rounded-md border border-dashed border-ha-border px-4 py-8 text-center text-[12px] leading-5 text-ha-dim">

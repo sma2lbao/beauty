@@ -31,6 +31,9 @@ class RunGraphState(TypedDict, total=False):
     # 分段/策略快照写进 state,节点只读不改;缺省=没装配(旧 checkpoint 兼容)。
     context_block: str
     context_snapshot: dict[str, Any]
+    # 任务清单(M4):services 层起图/resume 时从 runs.todos 装载,execute 节点在
+    # 工具结果里拿到新清单后回写;缺省=无清单(旧 checkpoint 兼容,.get 读)。
+    todos: list[dict[str, str]]
     skill_id: str  # Skill 绑定(run 创建时快照)
     skill_system_prompt: str  # Skill 的系统提示词
     # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/

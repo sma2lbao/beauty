@@ -31,6 +31,7 @@ from agent_orchestrator.schemas.runs import (
     RunRead,
     RunStatus,
     StepRead,
+    TodoRead,
 )
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import mcp as mcp_service
@@ -124,6 +125,14 @@ async def list_run_steps(
 ) -> list[StepRead]:
     """步骤时间线(S1):事件投影,含节点/阶段/轮次与起止时间(零迁移)。"""
     return await runs_service.list_steps(session, tenant_id, run_id)
+
+
+@router.get("/{run_id}/todos", response_model=TodoRead)
+async def get_run_todos(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> TodoRead:
+    """任务清单(M4):runs.todos 快照 + 最新 revision(没有清单也不是 404)。"""
+    return await runs_service.list_todos(session, tenant_id, run_id)
 
 
 @router.get("/{run_id}/plan", response_model=PlanRead)

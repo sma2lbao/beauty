@@ -43,6 +43,7 @@ from agent_orchestrator.services.run_lifecycle import (
     require_run,
 )
 from agent_orchestrator.services.run_steps import list_steps
+from agent_orchestrator.services.todos import list_todos
 
 __all__ = [
     "_persist_artifact",
@@ -57,6 +58,7 @@ __all__ = [
     "list_instructions",
     "list_runs",
     "list_steps",
+    "list_todos",
     "plan_run",
     "queue_instruction",
     "reject_run",

@@ -64,6 +64,9 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 对话消息显式引用的 MCP server 快照:非空时本 run 只装配这些 server 的工具
     mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # 任务清单快照(M4):模型用 todo_write 覆盖写的全量清单,起图/resume 时装载进
+    # 图状态;历史变更在 run.todo.updated.v1 事件里,这一列只保留最新状态。
+    todos: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

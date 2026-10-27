@@ -87,7 +87,8 @@ def test_knowledge_tool_flows_through_graph(tmp_path: Path) -> None:
 
         # 只暴露知识库能力;检索片段经 tool 消息回喂模型
         assert {item["function"]["name"] for item in fake.tools_seen[1]} == {
-            "search_knowledge"
+            "search_knowledge",
+            "todo_write",
         }
         tool_messages = [m for m in fake.calls[2] if m["role"] == "tool"]
         assert tool_messages and "报价单" in tool_messages[0]["content"]
