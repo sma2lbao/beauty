@@ -40,6 +40,8 @@ SANDBOX_CALL_GRACE_SECONDS = 10.0
 ERROR_DETAIL_CHARS = 300
 #: 审计 arguments 列的截断长度。
 ARGUMENTS_AUDIT_CHARS = 2000
+#: 写工具的服务端补丁字段:只落库,回给编排器/模型的结果里必须剥离。
+PATCH_FIELDS = ("patch", "lines_added", "lines_removed", "patch_truncated")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +59,23 @@ class ExecutionContext:
 
 
 @dataclass(frozen=True, slots=True)
+class PatchAudit:
+    """写工具的服务端补丁审计(已从工具结果里剥离)。"""
+
+    patch: str | None = None
+    lines_added: int | None = None
+    lines_removed: int | None = None
+    patch_truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionOutcome:
     """执行结果 + 可落审计的附加信息。"""
 
     descriptor: ToolDescriptor
     response: ToolExecuteResponse
     sandbox_id: str | None = None
+    patch: PatchAudit | None = None
 
 
 def arguments_digest(arguments: dict[str, Any]) -> str:
@@ -320,6 +333,8 @@ class ToolRunner:
             tool_call_id=context.tool_call_id,
             idempotent_replay=False,
         )
+        # 补丁只用于审计:先剥离,再算结果体积/回包,避免进模型上下文。
+        patch, response = _split_patch(response)
         oversized = self._result_chars(response) > MAX_TOOL_CHARS
         if oversized and response.ok:
             return self._failure(
@@ -336,6 +351,7 @@ class ToolRunner:
             descriptor=descriptor,
             response=response,
             sandbox_id=sandbox_id,
+            patch=patch,
         )
 
     async def _touch(self, context: ExecutionContext, sandbox_id: str) -> None:
@@ -468,6 +484,7 @@ def audit_columns(
     response = outcome.response
     result = response.result or {}
     error = response.error
+    patch = outcome.patch
     return {
         "tool_name": outcome.descriptor.name,
         "tool_version": outcome.descriptor.version,
@@ -486,6 +503,10 @@ def audit_columns(
         "paths": json.dumps(_result_paths(result), ensure_ascii=False),
         "sha256_before": _optional_str(result.get("sha256_before")),
         "sha256_after": _optional_str(result.get("sha256_after")),
+        "patch": patch.patch if patch is not None else None,
+        "lines_added": patch.lines_added if patch is not None else None,
+        "lines_removed": patch.lines_removed if patch is not None else None,
+        "patch_truncated": patch.patch_truncated if patch is not None else False,
         "sandbox_id": outcome.sandbox_id,
     }
 
@@ -524,8 +545,36 @@ def _result_paths(result: dict[str, Any]) -> list[str]:
     return raw[:MAX_AUDIT_PATHS]
 
 
+def _split_patch(
+    response: ToolExecuteResponse,
+) -> tuple[PatchAudit | None, ToolExecuteResponse]:
+    """把写工具的补丁字段从结果信封里剥离,返回(补丁审计, 干净信封)。
+
+    编排器会把 tool result 原样喂回模型,补丁可能上万字符,必须只留在
+    tool-service 的审计表里。
+    """
+
+    result = response.result
+    if not response.ok or not result:
+        return None, response
+    if not any(field in result for field in PATCH_FIELDS):
+        return None, response
+    patch = PatchAudit(
+        patch=_optional_str(result.get("patch")),
+        lines_added=_optional_int(result.get("lines_added")),
+        lines_removed=_optional_int(result.get("lines_removed")),
+        patch_truncated=bool(result.get("patch_truncated")),
+    )
+    cleaned = {key: value for key, value in result.items() if key not in PATCH_FIELDS}
+    return patch, replace(response, result=cleaned)
+
+
 def _optional_str(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    return value if isinstance(value, int) else None
 
 
 def _elapsed_ms(started: float) -> int:

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT
+from tests.conftest import OTHER, TENANT, FakeSandboxProvider
 
 
 def _execute(
@@ -14,6 +15,7 @@ def _execute(
     tool_call_id: str,
     *,
     run_id: str | None = None,
+    conversation_id: str | None = None,
     path: str = "a.txt",
 ) -> Any:
     payload: dict[str, Any] = {
@@ -22,6 +24,8 @@ def _execute(
     }
     if run_id is not None:
         payload["run_id"] = run_id
+    if conversation_id is not None:
+        payload["conversation_id"] = conversation_id
     return client.post("/v1/tools/read:execute", json=payload, headers=TENANT)
 
 
@@ -139,3 +143,91 @@ def test_list_requires_bearer_token(client: TestClient) -> None:
 
     assert resp.status_code == 401
     assert resp.json()["code"] == "auth.token_missing"
+
+
+def test_list_filters_by_conversation_id(client: TestClient) -> None:
+    _execute(client, "call-1", conversation_id="c-1")
+    _execute(client, "call-2", conversation_id="c-2")
+
+    resp = client.get(
+        "/v1/tool-calls", params={"conversation_id": "c-2"}, headers=TENANT
+    )
+
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["tool_call_id"] == "call-2"
+    assert body["items"][0]["conversation_id"] == "c-2"
+
+
+_PATCH = "--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n hello\n-world\n+there\n"
+
+
+def _write_with_patch(
+    client: TestClient,
+    sandbox_provider: FakeSandboxProvider,
+    tool_call_id: str,
+    *,
+    conversation_id: str | None = None,
+) -> Any:
+    """先 read 满足读前置,再让沙箱返回带补丁的 write 信封。"""
+
+    _execute(client, f"{tool_call_id}-read", conversation_id=conversation_id)
+    sandbox_provider.stdout = json.dumps(
+        {
+            "ok": True,
+            "path": "a.txt",
+            "created": False,
+            "changed": True,
+            "bytes": 12,
+            "lines": 2,
+            "sha256_before": "0" * 64,
+            "sha256_after": "1" * 64,
+            "notes": [],
+            "patch": _PATCH,
+            "lines_added": 1,
+            "lines_removed": 1,
+            "patch_truncated": False,
+        }
+    )
+    payload: dict[str, Any] = {
+        "tool_call_id": tool_call_id,
+        "arguments": {"path": "a.txt", "content": "hello\nthere\n"},
+        "approved": True,
+    }
+    if conversation_id is not None:
+        payload["conversation_id"] = conversation_id
+    return client.post("/v1/tools/write:execute", json=payload, headers=TENANT)
+
+
+def test_include_patch_controls_patch_payload(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    write = _write_with_patch(client, sandbox_provider, "call-w", conversation_id="c-1")
+
+    assert write.status_code == 200
+    # 回给编排器/模型的工具结果不含补丁(补丁只落审计库)。
+    assert "patch" not in write.json()
+    assert "lines_added" not in write.json()
+
+    plain = client.get(
+        "/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT
+    ).json()["items"][0]
+    assert plain["patch"] is None
+    assert plain["lines_added"] == 1
+    assert plain["lines_removed"] == 1
+    assert plain["patch_truncated"] is False
+
+    listed = client.get(
+        "/v1/tool-calls",
+        params={"tool_name": "write", "include_patch": "true"},
+        headers=TENANT,
+    ).json()["items"][0]
+    assert listed["patch"] == _PATCH
+
+    detail = client.get(
+        "/v1/tool-calls/call-w", params={"include_patch": "true"}, headers=TENANT
+    )
+    assert detail.json()["patch"] == _PATCH
+
+    detail_plain = client.get("/v1/tool-calls/call-w", headers=TENANT)
+    assert detail_plain.json()["patch"] is None

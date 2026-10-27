@@ -11,6 +11,7 @@ helper 自己再做一次 realpath + 拒绝名单校验,不信任上游校验结
 from __future__ import annotations
 
 import contextlib
+import difflib
 import fnmatch
 import hashlib
 import json
@@ -27,6 +28,8 @@ from typing import Any
 WORKSPACE_ROOT = os.path.realpath(os.environ.get("BM_WORKSPACE_ROOT") or "/workspace")
 MAX_GREP_FILE_BYTES_FALLBACK = 2 * 1024 * 1024
 MAX_TEXT_BYTES_FALLBACK = 8 * 1024 * 1024
+#: 服务端 unified diff 的字符上限;超出截断,并置 patch_truncated=true。
+PATCH_MAX_CHARS = 64 * 1024
 
 
 class ToolFailure(Exception):
@@ -191,6 +194,61 @@ def _decode_text(data: bytes) -> tuple[str, bool]:
 
 def _display_path(parts: list[str]) -> str:
     return "/".join(parts)
+
+
+def _build_patch(
+    before: str | None,
+    after: str,
+    path: str,
+    *,
+    created: bool,
+) -> dict[str, Any]:
+    """服务端 unified diff(n=3)+ 增删行数;新建文件 A 侧用 /dev/null。
+
+    这些字段只由 tool-service 落库,回给编排器/模型的结果里会被剥离
+    (见 services/execution.py),因此可以带完整上下文而不占事件预算。
+    """
+
+    lines = list(
+        difflib.unified_diff(
+            [] if before is None else before.splitlines(),
+            after.splitlines(),
+            fromfile="/dev/null" if created else f"a/{path}",
+            tofile=f"b/{path}",
+            n=3,
+            lineterm="",
+        )
+    )
+    patch = "\n".join(lines)
+    if patch:
+        patch += "\n"
+    added = sum(
+        1 for line in lines if line.startswith("+") and not line.startswith("+++")
+    )
+    removed = sum(
+        1 for line in lines if line.startswith("-") and not line.startswith("---")
+    )
+    truncated = len(patch) > PATCH_MAX_CHARS
+    if truncated:
+        patch = patch[:PATCH_MAX_CHARS]
+    return {
+        "patch": patch,
+        "lines_added": added,
+        "lines_removed": removed,
+        "patch_truncated": truncated,
+    }
+
+
+def _read_text_for_patch(target: str, policy: dict[str, Any]) -> str | None:
+    """尽力读旧文本用于生成补丁:超限/二进制/编码不支持时放弃,不影响写入。"""
+
+    limit = int(policy.get("max_edit_file_bytes") or 2 * 1024 * 1024)
+    try:
+        data = _read_bytes(target, limit=limit)
+        text, _bom = _decode_text(data)
+    except ToolFailure:
+        return None
+    return text
 
 
 # ---- read ---------------------------------------------------------------
@@ -823,6 +881,13 @@ def tool_write(arguments: dict[str, Any], policy: dict[str, Any]) -> dict[str, A
             "sha256_after": after,
             "notes": notes,
         }
+    patch_fields: dict[str, Any] = {}
+    if exists:
+        before_text = _read_text_for_patch(target, policy)
+        if before_text is not None:
+            patch_fields = _build_patch(before_text, content, display, created=False)
+    else:
+        patch_fields = _build_patch(None, content, display, created=True)
     _atomic_write(target, payload, existing=exists)
     return {
         "ok": True,
@@ -834,6 +899,7 @@ def tool_write(arguments: dict[str, Any], policy: dict[str, Any]) -> dict[str, A
         "sha256_before": before,
         "sha256_after": after,
         "notes": notes,
+        **patch_fields,
     }
 
 
@@ -914,15 +980,18 @@ def tool_edit(arguments: dict[str, Any], policy: dict[str, Any]) -> dict[str, An
             f"上限 {max_bytes} 字节",
         )
     after = _sha256(new_payload)
+    display = _display_path(parts)
+    patch_fields = _build_patch(text, updated, display, created=False)
     _atomic_write(target, new_payload, existing=True)
     return {
         "ok": True,
-        "path": _display_path(parts),
+        "path": display,
         "replacements": count if replace_all else 1,
         "sha256_before": before,
         "sha256_after": after,
         "bytes": len(new_payload),
         "notes": [],
+        **patch_fields,
     }
 
 

@@ -79,3 +79,4 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
     assert "ix_tool_calls_run" in indexes
     assert "ix_tool_calls_tool" in indexes
     assert {"tool_call_id", "tenant_id", "tool_name", "arguments_sha256"} <= columns
+    assert {"patch", "lines_added", "lines_removed", "patch_truncated"} <= columns

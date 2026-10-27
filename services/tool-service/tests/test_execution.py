@@ -15,6 +15,7 @@ from common.errors import NotFoundError, PermissionDeniedError, UpstreamError
 from common.tools import ExecutorKind, ToolRisk
 
 from tests.conftest import FakeKnowledgeClient, FakeSandboxProvider, _settings
+from tool_service.constants import MAX_TOOL_CHARS
 from tool_service.services import catalog, execution
 from tool_service.services.execution import (
     ExecutionContext,
@@ -155,6 +156,89 @@ async def test_write_with_approval_merges_internal_arguments(tmp_path: Path) -> 
     # 审计只记录调用方参数,内部参数不落库
     assert json.loads(columns["arguments"]) == arguments
     assert columns["bytes_written"] == 7
+
+
+# ---- 服务端补丁:只落审计,不进模型可见结果 -----------------------------
+
+_PATCH = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-hello\n+hi\n"
+
+
+def _write_patch_envelope(*, patch: str = _PATCH) -> str:
+    return json.dumps(
+        {
+            "ok": True,
+            "path": "a.txt",
+            "created": False,
+            "changed": True,
+            "bytes": 3,
+            "lines": 1,
+            "sha256_before": "0" * 64,
+            "sha256_after": "1" * 64,
+            "notes": [],
+            "patch": patch,
+            "lines_added": 1,
+            "lines_removed": 1,
+            "patch_truncated": False,
+        }
+    )
+
+
+async def test_write_patch_is_stripped_from_model_visible_result(
+    tmp_path: Path,
+) -> None:
+    provider = FakeSandboxProvider()
+    provider.stdout = _write_patch_envelope()
+    runner = _runner(tmp_path, provider)
+    context = _context(approved=True)
+    arguments = {"path": "a.txt", "content": "hi"}
+
+    outcome = await runner.execute(context, "write", arguments)
+    columns = audit_columns(outcome, context, arguments, decision="approved")
+
+    result = outcome.response.result or {}
+    assert "patch" not in result
+    assert "lines_added" not in result
+    assert "lines_removed" not in result
+    assert "patch_truncated" not in result
+    assert "patch" not in outcome.response.envelope()
+    assert outcome.patch is not None
+    assert outcome.patch.patch == _PATCH
+    assert columns["patch"] == _PATCH
+    assert columns["lines_added"] == 1
+    assert columns["lines_removed"] == 1
+    assert columns["patch_truncated"] is False
+
+
+async def test_large_patch_does_not_trip_result_size_limit(tmp_path: Path) -> None:
+    """补丁可能上万字符:剥离后不能触发 MAX_TOOL_CHARS,也不能回给模型。"""
+
+    huge_patch = "x" * (MAX_TOOL_CHARS + 100)
+    provider = FakeSandboxProvider()
+    provider.stdout = _write_patch_envelope(patch=huge_patch)
+    runner = _runner(tmp_path, provider)
+    context = _context(approved=True)
+
+    outcome = await runner.execute(context, "write", {"path": "a.txt", "content": "hi"})
+
+    assert outcome.response.ok is True
+    assert outcome.patch is not None
+    assert outcome.patch.patch == huge_patch
+    assert "patch" not in (outcome.response.result or {})
+
+
+async def test_read_result_has_no_patch_audit(tmp_path: Path) -> None:
+    provider = FakeSandboxProvider()
+    runner = _runner(tmp_path, provider)
+    context = _context()
+
+    outcome = await runner.execute(context, "read", {"path": "a.txt"})
+    columns = audit_columns(outcome, context, {"path": "a.txt"}, decision="auto")
+
+    assert outcome.patch is None
+    assert columns["patch"] is None
+    assert columns["lines_added"] is None
+    assert columns["lines_removed"] is None
+    assert columns["patch_truncated"] is False
 
 
 async def test_destructive_requires_approval(

@@ -95,6 +95,11 @@ class ToolCallRead(BaseModel):
     sha256_before: str | None = None
     sha256_after: str | None = None
     paths: list[str] = Field(default_factory=list)
+    # 服务端补丁:默认不回包(列表/详情都要显式 include_patch=true)。
+    patch: str | None = None
+    lines_added: int | None = None
+    lines_removed: int | None = None
+    patch_truncated: bool = False
     sandbox_id: str | None = None
     created_at: datetime
 

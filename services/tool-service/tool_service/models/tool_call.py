@@ -67,6 +67,17 @@ class ToolCall(UUIDMixin, TenantMixin, Base):
     sandbox_id: Mapped[str | None] = mapped_column(
         String(128), nullable=True, default=None
     )
+    # 写工具的服务端 unified diff:只落审计库,不回给编排器/模型。
+    patch: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    lines_added: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    lines_removed: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    patch_truncated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

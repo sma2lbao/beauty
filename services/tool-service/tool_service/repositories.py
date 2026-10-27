@@ -61,12 +61,18 @@ class ToolCallRepository(TenantRepository[ToolCall]):
         tenant_id: str,
         *,
         run_id: str | None = None,
+        conversation_id: str | None = None,
         tool_name: str | None = None,
         ok: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[ToolCall]:
-        criteria = self._filters(run_id=run_id, tool_name=tool_name, ok=ok)
+        criteria = self._filters(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            tool_name=tool_name,
+            ok=ok,
+        )
         return await self.list_scoped(
             tenant_id,
             *criteria,
@@ -80,10 +86,16 @@ class ToolCallRepository(TenantRepository[ToolCall]):
         tenant_id: str,
         *,
         run_id: str | None = None,
+        conversation_id: str | None = None,
         tool_name: str | None = None,
         ok: bool | None = None,
     ) -> int:
-        criteria = self._filters(run_id=run_id, tool_name=tool_name, ok=ok)
+        criteria = self._filters(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            tool_name=tool_name,
+            ok=ok,
+        )
         statement = (
             select(func.count())
             .select_from(ToolCall)
@@ -113,12 +125,15 @@ class ToolCallRepository(TenantRepository[ToolCall]):
         self,
         *,
         run_id: str | None,
+        conversation_id: str | None,
         tool_name: str | None,
         ok: bool | None,
     ) -> tuple[ColumnElement[bool], ...]:
         criteria: list[ColumnElement[bool]] = []
         if run_id is not None:
             criteria.append(ToolCall.run_id == run_id)
+        if conversation_id is not None:
+            criteria.append(ToolCall.conversation_id == conversation_id)
         if tool_name is not None:
             criteria.append(ToolCall.tool_name == tool_name)
         if ok is not None:
@@ -126,8 +141,11 @@ class ToolCallRepository(TenantRepository[ToolCall]):
         return tuple(criteria)
 
 
-def to_read(entity: ToolCall) -> ToolCallRead:
-    """ORM → HTTP schema(集中处理 paths JSON 解码)。"""
+def to_read(entity: ToolCall, *, include_patch: bool = False) -> ToolCallRead:
+    """ORM → HTTP schema(集中处理 paths JSON 解码)。
+
+    补丁默认不回包(可能很大):显式 include_patch=true 才带,行数字段照常。
+    """
 
     return ToolCallRead(
         id=entity.id,
@@ -147,6 +165,10 @@ def to_read(entity: ToolCall) -> ToolCallRead:
         sha256_before=entity.sha256_before,
         sha256_after=entity.sha256_after,
         paths=decode_paths(entity.paths),
+        patch=entity.patch if include_patch else None,
+        lines_added=entity.lines_added,
+        lines_removed=entity.lines_removed,
+        patch_truncated=entity.patch_truncated,
         sandbox_id=entity.sandbox_id,
         created_at=entity.created_at,
     )
