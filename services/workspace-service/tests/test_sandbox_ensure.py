@@ -128,6 +128,41 @@ def test_ensure_detail_and_list_expose_scope_key(
     assert listed.json()[0]["scope_key"] == "run:r-1"
 
 
+def test_list_filters_by_scope_key(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """执行现场按会话定位:GET /v1/sandboxes?scope_key=... 精确命中。"""
+    first, _ = _post_ensure(client, "conv:c-1")
+    second, _ = _post_ensure(client, "run:r-1")
+    plain = client.post("/v1/sandboxes", json={}, headers=TENANT).json()
+
+    hit = client.get("/v1/sandboxes", params={"scope_key": "conv:c-1"}, headers=TENANT)
+    assert hit.status_code == 200
+    assert [item["id"] for item in hit.json()] == [first["sandbox"]["id"]]
+
+    miss = client.get(
+        "/v1/sandboxes", params={"scope_key": "conv:none"}, headers=TENANT
+    )
+    assert miss.status_code == 200
+    assert miss.json() == []
+
+    # 过滤只收窄、不改既有排序与租户范围
+    all_ids = {
+        item["id"] for item in client.get("/v1/sandboxes", headers=TENANT).json()
+    }
+    assert all_ids == {
+        first["sandbox"]["id"],
+        second["sandbox"]["id"],
+        plain["id"],
+    }
+    assert (
+        client.get(
+            "/v1/sandboxes", params={"scope_key": "conv:c-1"}, headers=OTHER
+        ).json()
+        == []
+    )
+
+
 def test_plain_create_keeps_scope_key_empty(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:

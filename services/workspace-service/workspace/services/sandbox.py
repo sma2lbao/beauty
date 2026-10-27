@@ -26,6 +26,8 @@ from workspace.core.config import Settings
 from workspace.models.sandbox import SandboxInstance
 from workspace.repositories import CrossTenantSandboxRepository, SandboxRepository
 from workspace.schemas.sandbox import (
+    MAX_TREE_DEPTH,
+    MAX_TREE_ENTRIES,
     SandboxCreate,
     SandboxExecRequest,
     SandboxFileWrite,
@@ -33,6 +35,7 @@ from workspace.schemas.sandbox import (
 )
 from workspace.services.sandbox_provider import (
     ExecResult,
+    FileEntry,
     SandboxProvider,
     SandboxSpec,
 )
@@ -342,10 +345,13 @@ async def ensure_sandbox(
 
 
 async def list_sandboxes(
-    session: AsyncSession, tenant_id: str
+    session: AsyncSession, tenant_id: str, *, scope_key: str | None = None
 ) -> list[SandboxInstance]:
+    """列本租户沙箱(新→旧);scope_key 精确匹配,用于按会话定位"执行现场"。"""
+    criteria = () if scope_key is None else (SandboxInstance.scope_key == scope_key,)
     return await SandboxRepository(session).list_scoped(
         tenant_id,
+        *criteria,
         order_by=[SandboxInstance.created_at.desc(), SandboxInstance.id.desc()],
     )
 
@@ -520,6 +526,40 @@ async def read_file(
             "读取沙箱文件失败",
             details={"sandbox_id": record.id, "path": safe_path},
         ) from exc
+
+
+async def list_tree(
+    session: AsyncSession,
+    tenant_id: str,
+    sandbox_id: str,
+    path: str,
+    depth: int,
+    provider: SandboxProvider,
+) -> tuple[list[FileEntry], bool]:
+    """列沙箱内目录树:路径必须落在 /workspace 下;超条目上限截断并标记。
+
+    返回 (entries, truncated);depth 在这里再夹一次(防御调用方绕过 Query 校验)。
+    """
+    record = await require_sandbox(session, tenant_id, sandbox_id)
+    await _ensure_usable(session, record, provider)
+    safe_path = ensure_workspace_path(path)
+    bounded = max(1, min(depth, MAX_TREE_DEPTH))
+    try:
+        entries = await provider.list_dir(
+            record.external_name, safe_path, depth=bounded
+        )
+    except AppError:
+        raise
+    except Exception as exc:
+        raise UpstreamError(
+            "sandbox.provider_error",
+            "列举沙箱目录失败",
+            details={"sandbox_id": record.id, "path": safe_path},
+        ) from exc
+    truncated = len(entries) > MAX_TREE_ENTRIES
+    if truncated:
+        return list(entries[:MAX_TREE_ENTRIES]), True
+    return list(entries), False
 
 
 async def reap_expired(

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 import pytest
@@ -45,6 +46,33 @@ class FakeExecOutput:
         self.exit_code = exit_code
 
 
+class FsEntryKind(Enum):
+    """假 SDK 的条目类型(真 SDK 是 Enum,provider 只读 .name)。"""
+
+    FILE = "file"
+    DIRECTORY = "directory"
+    SYMLINK = "symlink"
+    OTHER = "other"
+
+
+class FsEntry:
+    """假 SDK 的目录条目;name 留空时 provider 会从 path 尾段取名。"""
+
+    def __init__(
+        self,
+        path: str,
+        kind: FsEntryKind = FsEntryKind.FILE,
+        size: int = 0,
+        modified: float | None = None,
+        name: str | None = None,
+    ) -> None:
+        self.path = path
+        self.kind = kind
+        self.size = size
+        self.modified = modified
+        self.name = name
+
+
 class FakeFs:
     def __init__(self, sdk: FakeSdk) -> None:
         self._sdk = sdk
@@ -63,6 +91,12 @@ class FakeFs:
 
     async def mkdir(self, path: str) -> None:
         self._sdk.mkdir_calls.append(path)
+
+    async def list(self, path: str) -> list[FsEntry]:
+        self._sdk.list_calls.append(path)
+        if self._sdk.list_error is not None:
+            raise self._sdk.list_error
+        return list(self._sdk.list_entries.get(path, []))
 
 
 class FakeSandbox:
@@ -190,6 +224,8 @@ class FakeSdk:
         self.removed: list[str] = []
         self.write_calls: list[tuple[str, bytes]] = []
         self.mkdir_calls: list[str] = []
+        self.list_calls: list[str] = []
+        self.list_entries: dict[str, list[FsEntry]] = {}
         self.files: dict[str, bytes] = {}
         self.stdout = "ok\n"
         self.stderr = ""
@@ -202,12 +238,17 @@ class FakeSdk:
         self.destroy_error: BaseException | None = None
         self.remove_error: BaseException | None = None
         self.read_error: BaseException | None = None
+        self.list_error: BaseException | None = None
         self.write_errors: list[BaseException] = []
         self.Network = FakeNetworkApi(self)
         self.Sandbox = FakeSandboxApi(self)
 
     def next_write_error(self) -> BaseException | None:
         return self.write_errors.pop(0) if self.write_errors else None
+
+    def add_entries(self, path: str, *entries: FsEntry) -> None:
+        """给某个目录预置子条目(list 返回固定顺序,provider 负责排序)。"""
+        self.list_entries.setdefault(path, []).extend(entries)
 
 
 def _use_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> FakeSdk:

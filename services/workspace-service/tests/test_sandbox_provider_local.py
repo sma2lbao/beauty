@@ -362,6 +362,107 @@ async def test_symlink_escape_is_rejected(
     assert excinfo.value.code == "sandbox.path_invalid"
 
 
+# --- 目录列举 ---------------------------------------------------------------
+
+
+async def test_list_dir_marks_kinds_and_sorts(
+    provider: LocalSandboxProvider, sandbox: str, local_root: Path
+) -> None:
+    workspace = _workspace_of(local_root)
+    (workspace / "a.txt").write_bytes(b"123")
+    (workspace / "sub").mkdir()
+    (workspace / "sub" / "b.txt").write_bytes(b"x")
+
+    entries = await provider.list_dir(sandbox, "/workspace")
+
+    assert [entry.path for entry in entries] == [
+        "/workspace/a.txt",
+        "/workspace/sub",
+    ]
+    by_path = {entry.path: entry for entry in entries}
+    assert by_path["/workspace/a.txt"].kind == "file"
+    assert by_path["/workspace/a.txt"].size == 3
+    assert isinstance(by_path["/workspace/a.txt"].modified, float)
+    assert by_path["/workspace/sub"].kind == "dir"
+    assert by_path["/workspace/sub"].size == 0
+
+
+@posix_only
+async def test_list_dir_marks_symlink_without_following(
+    provider: LocalSandboxProvider, sandbox: str, local_root: Path
+) -> None:
+    workspace = _workspace_of(local_root)
+    (workspace / "sub").mkdir()
+    (workspace / "sub" / "inner.txt").write_bytes(b"x")
+    (workspace / "linkdir").symlink_to(workspace / "sub", target_is_directory=True)
+    (workspace / "link.txt").symlink_to(workspace / "sub" / "inner.txt")
+
+    entries = await provider.list_dir(sandbox, "/workspace", depth=3)
+
+    by_path = {entry.path: entry for entry in entries}
+    assert by_path["/workspace/linkdir"].kind == "symlink"
+    assert by_path["/workspace/link.txt"].kind == "symlink"
+    # 符号链接只标记、不进入:不会有 /workspace/linkdir/... 的条目
+    assert not [path for path in by_path if path.startswith("/workspace/linkdir/")]
+    assert by_path["/workspace/sub/inner.txt"].kind == "file"
+
+
+async def test_list_dir_respects_depth(
+    provider: LocalSandboxProvider, sandbox: str, local_root: Path
+) -> None:
+    workspace = _workspace_of(local_root)
+    (workspace / "sub").mkdir()
+    (workspace / "sub" / "c.txt").write_bytes(b"c")
+    (workspace / "sub" / "deep").mkdir()
+    (workspace / "sub" / "deep" / "d.txt").write_bytes(b"d")
+
+    one = await provider.list_dir(sandbox, "/workspace", depth=1)
+    assert [entry.path for entry in one] == ["/workspace/sub"]
+
+    two = await provider.list_dir(sandbox, "/workspace", depth=2)
+    assert [entry.path for entry in two] == [
+        "/workspace/sub",
+        "/workspace/sub/c.txt",
+        "/workspace/sub/deep",
+    ]
+
+    three = await provider.list_dir(sandbox, "/workspace", depth=3)
+    assert three[-1].path == "/workspace/sub/deep/d.txt"
+
+
+async def test_list_dir_missing_dir_is_not_found(
+    provider: LocalSandboxProvider, sandbox: str
+) -> None:
+    with pytest.raises(NotFoundError) as excinfo:
+        await provider.list_dir(sandbox, "/workspace/nope")
+
+    assert excinfo.value.code == "sandbox.file_not_found"
+    assert excinfo.value.details == {
+        "sandbox_name": sandbox,
+        "path": "/workspace/nope",
+    }
+
+
+async def test_list_dir_on_missing_sandbox_is_provider_error(
+    provider: LocalSandboxProvider,
+) -> None:
+    with pytest.raises(UpstreamError) as excinfo:
+        await provider.list_dir(NAME, "/workspace")
+
+    assert excinfo.value.code == "sandbox.provider_error"
+    assert excinfo.value.details["sandbox_name"] == NAME
+
+
+@pytest.mark.parametrize("path", ["/etc", "/workspace/../etc", "workspace/a"])
+async def test_list_dir_rejects_invalid_path(
+    provider: LocalSandboxProvider, sandbox: str, path: str
+) -> None:
+    with pytest.raises(AppError) as excinfo:
+        await provider.list_dir(sandbox, path)
+
+    assert excinfo.value.code == "sandbox.path_invalid"
+
+
 # --- 沙箱不存在 / 截断 / 销毁 ----------------------------------------------
 
 
@@ -466,6 +567,27 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
         assert base64.b64decode(read.json()["content_base64"]) == payload
         assert read.json()["size_bytes"] == len(payload)
         assert (sandbox_dir / "workspace/notes/hello.txt").read_bytes() == payload
+
+        # 执行现场:根目录只列直接子项,进一层才看到文件
+        root_tree = client.get(
+            f"/v1/sandboxes/{body['id']}/tree", headers=TENANT
+        ).json()
+        assert root_tree["path"] == "/workspace"
+        assert [(item["name"], item["kind"]) for item in root_tree["entries"]] == [
+            ("notes", "dir")
+        ]
+
+        notes_tree = client.get(
+            f"/v1/sandboxes/{body['id']}/tree",
+            params={"path": "/workspace/notes", "depth": 2},
+            headers=TENANT,
+        )
+        assert notes_tree.status_code == 200, notes_tree.text
+        assert notes_tree.json()["truncated"] is False
+        assert [
+            (item["name"], item["kind"], item["size_bytes"])
+            for item in notes_tree.json()["entries"]
+        ] == [("hello.txt", "file", len(payload))]
 
         deleted = client.delete(f"/v1/sandboxes/{body['id']}", headers=TENANT)
         assert deleted.status_code == 204

@@ -61,6 +61,22 @@ class ExecResult:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class FileEntry:
+    """文件树里的一个条目(扁平列表的一项)。
+
+    - `path` 是**沙箱内**绝对路径(如 `/workspace/src/a.ts`);
+    - `kind` 只取 file / dir / symlink / other;
+    - `size` 是字节数,目录恒为 0(目录大小按文件系统语义没有可比性);
+    - `modified` 是 mtime(epoch 秒),取不到时为 None。
+    """
+
+    path: str
+    kind: str
+    size: int
+    modified: float | None = None
+
+
 class SandboxProvider(Protocol):
     """沙箱运行时协议:创建/执行/文件读写/销毁,全部 async。"""
 
@@ -89,6 +105,15 @@ class SandboxProvider(Protocol):
 
     async def read_file(self, name: str, path: str) -> bytes:
         """读取沙箱内 path;不存在抛 `sandbox.file_not_found`。"""
+        ...
+
+    async def list_dir(
+        self, name: str, path: str, *, depth: int = 1
+    ) -> list[FileEntry]:
+        """列目录:返回扁平列表(含各级嵌套项);depth=1 只列直接子项。
+
+        符号链接只标记 `kind=symlink`,**不递归进入**(避免环与越界)。
+        """
         ...
 
     async def destroy(self, name: str) -> None:
@@ -122,6 +147,51 @@ def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
     if len(raw) <= limit:
         return text, False
     return raw[:limit].decode("utf-8", "ignore"), True
+
+
+# microsandbox FsEntry.kind → 契约 kind;未知取值一律 other(不猜)
+FS_ENTRY_KINDS = {
+    "FILE": "file",
+    "DIRECTORY": "dir",
+    "SYMLINK": "symlink",
+}
+
+
+def _child_path(parent: str, name: str) -> str:
+    """拼沙箱内绝对路径;parent 末尾有无 / 都归一(`/workspace` → /a)。"""
+    return f"{parent.rstrip('/')}/{name}" if name else parent
+
+
+def _fs_entry_path(entry: Any, parent: str) -> str:
+    """推导条目在沙箱内的绝对路径,兼容 SDK 的 path 语义差异。
+
+    microsandbox 的 `FsEntry` 只有 `path`(没有 `name`),而 Rust 实现没把
+    `path` 语义写进文档:可能是绝对路径、相对列举目录的子路径,或只是名字。
+    这里按形状归一——只取 basename 再拼会把 `/workspace/src/a.ts` 摊平成
+    `/workspace/a.ts`,整棵子树的层级都会错。
+    """
+    raw = str(getattr(entry, "path", "") or "")
+    if not raw or ".." in PurePosixPath(raw).parts:
+        return ""
+    candidate = raw if raw.startswith("/") else _child_path(parent, raw)
+    normalized = PurePosixPath(candidate).as_posix()
+    return normalized if normalized.startswith("/") else ""
+
+
+def _fs_entry_kind(entry: Any) -> str:
+    """FsEntry.kind 可能是字符串或枚举,统一取 .name 后查表。"""
+    raw = getattr(entry, "kind", None)
+    key = str(getattr(raw, "name", raw) or "").upper()
+    return FS_ENTRY_KINDS.get(key, "other")
+
+
+def _fs_entry_size(entry: Any) -> int:
+    return max(0, int(getattr(entry, "size", 0) or 0))
+
+
+def _fs_entry_modified(entry: Any) -> float | None:
+    value = getattr(entry, "modified", None)
+    return None if value is None else float(value)
 
 
 class MicrosandboxProvider:
@@ -304,6 +374,51 @@ class MicrosandboxProvider:
                 details=_error_details(name, exc),
             ) from exc
 
+    async def list_dir(
+        self, name: str, path: str, *, depth: int = 1
+    ) -> list[FileEntry]:
+        sdk = _import_sdk()
+        sandbox = await self._connect(name)
+        try:
+            return await self._walk(sandbox, path, max(1, depth))
+        except AppError:
+            raise
+        except sdk.PathNotFoundError as exc:
+            raise NotFoundError(
+                "sandbox.file_not_found",
+                f"沙箱内目录不存在:{path}",
+                details={"sandbox_name": name, "path": path},
+            ) from exc
+        except Exception as exc:
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "列举沙箱目录失败",
+                details=_error_details(name, exc),
+            ) from exc
+
+    async def _walk(
+        self, sandbox: Any, path: str, depth: int, out: list[FileEntry] | None = None
+    ) -> list[FileEntry]:
+        """DFS 递归收集条目:同级按名字排序,目录项先于其子项。"""
+        collected = [] if out is None else out
+        entries = await sandbox.fs.list(path)
+        derived = [(entry, _fs_entry_path(entry, path)) for entry in entries]
+        for entry, child in sorted(derived, key=lambda pair: pair[1]):
+            if not child or child == path:  # 无名/自指条目:跳过,避免自己套自己
+                continue
+            kind = _fs_entry_kind(entry)
+            collected.append(
+                FileEntry(
+                    path=child,
+                    kind=kind,
+                    size=0 if kind == "dir" else _fs_entry_size(entry),
+                    modified=_fs_entry_modified(entry),
+                )
+            )
+            if kind == "dir" and depth > 1:
+                await self._walk(sandbox, child, depth - 1, collected)
+        return collected
+
     async def destroy(self, name: str) -> None:
         sdk = _import_sdk()
         try:
@@ -347,6 +462,27 @@ def _check_local_name(name: str) -> str:
             details={"sandbox_name": str(name)[:MAX_ERROR_DETAIL_CHARS]},
         )
     return name
+
+
+def _local_entry_meta(entry: os.DirEntry[str], parent: str) -> tuple[FileEntry, Path]:
+    """把一个 DirEntry 翻译成 FileEntry(不跟随符号链接),并给出宿主路径。"""
+    child = _child_path(parent, entry.name)
+    stat = entry.stat(follow_symlinks=False)
+    if entry.is_symlink():
+        kind = "symlink"
+    elif entry.is_dir(follow_symlinks=False):
+        kind = "dir"
+    elif entry.is_file(follow_symlinks=False):
+        kind = "file"
+    else:
+        kind = "other"
+    size = 0 if kind == "dir" else max(0, stat.st_size)
+    return FileEntry(
+        path=child,
+        kind=kind,
+        size=size,
+        modified=float(stat.st_mtime),
+    ), Path(entry.path)
 
 
 class LocalSandboxProvider:
@@ -598,6 +734,44 @@ class LocalSandboxProvider:
 
         return await asyncio.to_thread(_read)
 
+    async def list_dir(
+        self, name: str, path: str, *, depth: int = 1
+    ) -> list[FileEntry]:
+        self._require_sandbox(name)
+        target = self._host_path(name, path)
+        levels = max(1, depth)
+        collected: list[FileEntry] = []
+
+        def _scan(root: Path, parent: str, remaining: int) -> None:
+            with os.scandir(root) as iterator:
+                children = sorted(
+                    (_local_entry_meta(entry, parent) for entry in iterator),
+                    key=lambda item: item[0].path,
+                )
+            for entry, host_path in children:
+                collected.append(entry)
+                # 只递归真实目录:符号链接由 kind 标记,不进入(防环/防越界)
+                if entry.kind == "dir" and remaining > 1:
+                    _scan(host_path, entry.path, remaining - 1)
+
+        try:
+            await asyncio.to_thread(_scan, target, path, levels)
+        except AppError:
+            raise
+        except FileNotFoundError as exc:
+            raise NotFoundError(
+                "sandbox.file_not_found",
+                f"沙箱内目录不存在:{path}",
+                details={"sandbox_name": name, "path": path},
+            ) from exc
+        except OSError as exc:
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "列举沙箱目录失败",
+                details=_error_details(name, exc),
+            ) from exc
+        return collected
+
     async def destroy(self, name: str) -> None:
         sandbox_dir = self._sandbox_dir(name)
 
@@ -651,6 +825,11 @@ class UnavailableSandboxProvider:
         raise self._unavailable()
 
     async def read_file(self, name: str, path: str) -> bytes:
+        raise self._unavailable()
+
+    async def list_dir(
+        self, name: str, path: str, *, depth: int = 1
+    ) -> list[FileEntry]:
         raise self._unavailable()
 
     async def destroy(self, name: str) -> None:

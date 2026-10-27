@@ -23,6 +23,9 @@ MAX_PATH_LENGTH = 512
 MAX_ENV_ITEMS = 64
 MAX_STDIN_CHARS = 1_000_000
 MAX_BASE64_CHARS = 16_000_000
+# 文件树列举:深度与条目数硬上限(服务层按这两个值再截断一次)
+MAX_TREE_DEPTH = 4
+MAX_TREE_ENTRIES = 500
 # ensure 幂等键(设计 §11.2):conv:<conversation_id> / run:<run_id>,最长 96
 MAX_SCOPE_KEY_LENGTH = 96
 SCOPE_KEY_PATTERN = r"^[a-z0-9:_-]+$"
@@ -137,6 +140,27 @@ class SandboxFileRead(BaseModel):
     path: str
     content_base64: str
     size_bytes: int
+
+
+SandboxFileKind = Literal["file", "dir", "symlink", "other"]
+
+
+class SandboxFileEntry(BaseModel):
+    """文件树里的一个条目;path 是沙箱内绝对路径(如 /workspace/src/a.ts)。"""
+
+    path: str
+    name: str
+    kind: SandboxFileKind
+    size_bytes: int | None = None
+    modified: float | None = None
+
+
+class SandboxTreeRead(BaseModel):
+    """列目录响应:entries 是扁平列表(含各级嵌套项),超上限时 truncated=true。"""
+
+    path: str
+    entries: list[SandboxFileEntry]
+    truncated: bool
 
 
 def ensure_workspace_path(path: str) -> str:

@@ -94,12 +94,20 @@
   `image`、`ttl_seconds`、`cpus`、`memory_mb`、`network`(deny|public)、
   `workspace_id`、`run_id`;不传资源时用服务端默认值。`deny` 完全断网;
   `public` 只放公网(走 microsandbox `NetworkProfile.PUBLIC`),**不包含宿主/私网**;
+- `GET /v1/sandboxes?scope_key=`:沙箱列表(仅本租户,新建在前);`scope_key`
+  精确过滤到某个会话/run(例如工具调用按 `conv:<id>` 找回执行现场);
 - `GET /v1/sandboxes/{id}`:实例详情;
 - `POST /v1/sandboxes/{id}/exec`:执行命令(`argv` 不经过 shell),
   返回 `exit_code/stdout/stderr/duration_ms/truncated`,成功后滑动续期
   (单次 TTL 上限 `sandbox_max_ttl_seconds`);
 - `PUT /v1/sandboxes/{id}/files`(204)、`GET /v1/sandboxes/{id}/files?path=`:
   文件读写,内容 Base64;路径必须在 `/workspace` 下且不能含 `..`;
+- `GET /v1/sandboxes/{id}/tree?path=/workspace&depth=1`:文件树。返回
+  `{path, entries, truncated}`,`entries` 是**扁平列表**(含各级嵌套项),
+  每项 `{path, name, kind, size_bytes, modified}`:`path` 是沙箱内绝对路径、
+  `kind` 取 `file|dir|symlink|other`(符号链接只标记、不递归)、目录
+  `size_bytes` 恒为 0、`modified` 是 epoch 秒;路径同样必须在 `/workspace` 下,
+  `depth` 1–4(默认 1),超过 500 条截断并置 `truncated=true`;
 - `POST /v1/sandboxes/{id}/touch`:显式续期;
 - `DELETE /v1/sandboxes/{id}`(204):先销毁运行时,再删记录。
 
@@ -123,7 +131,7 @@
 | 沙箱过期                       | `sandbox.expired`                                 | 409  |
 | 沙箱不存在/跨租户              | `sandbox.not_found`                               | 404  |
 | 路径非法(非 /workspace、含 ..) | `sandbox.path_invalid`                            | 400  |
-| 沙箱内文件不存在               | `sandbox.file_not_found`                          | 404  |
+| 沙箱内文件/目录不存在          | `sandbox.file_not_found`                          | 404  |
 
 配置(env 前缀 `WORKSPACE__`,括号内为默认值):
 

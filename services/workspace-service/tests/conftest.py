@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from workspace.core.config import Settings
 from workspace.main import create_app
-from workspace.services.sandbox_provider import ExecResult, SandboxSpec
+from workspace.services.sandbox_provider import ExecResult, FileEntry, SandboxSpec
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
@@ -54,6 +54,11 @@ class FakeSandboxProvider:
         self.stderr = ""
         self.truncated = False
         self.last_exec: dict[str, object] = {}
+        # 文件树:按沙箱名预置条目;list_dir 按 path 前缀 + depth 过滤后排序返回
+        self.tree: dict[str, list[FileEntry]] = {}
+        self.list_calls: list[tuple[str, str, int]] = []
+        self.fail_list = False
+        self.list_error: Exception | None = None
 
     async def create(self, spec: SandboxSpec) -> None:
         if self.fail_create:
@@ -101,6 +106,37 @@ class FakeSandboxProvider:
                 "文件不存在",
                 details={"path": path},
             ) from exc
+
+    def add_entry(
+        self,
+        name: str,
+        path: str,
+        kind: str = "file",
+        size: int = 0,
+        modified: float | None = None,
+    ) -> None:
+        """给替身沙箱加一条文件树条目(测试里造树用)。"""
+        self.tree.setdefault(name, []).append(
+            FileEntry(path=path, kind=kind, size=size, modified=modified)
+        )
+
+    async def list_dir(
+        self, name: str, path: str, *, depth: int = 1
+    ) -> list[FileEntry]:
+        if self.list_error is not None:
+            raise self.list_error
+        if self.fail_list:
+            raise UpstreamError("sandbox.provider_error", "模拟列举失败")
+        self.list_calls.append((name, path, depth))
+        base = path.rstrip("/")
+        prefix = f"{base}/"
+        picked = [
+            entry
+            for entry in self.tree.get(name, [])
+            if entry.path.startswith(prefix)
+            and entry.path[len(prefix) :].count("/") < depth
+        ]
+        return sorted(picked, key=lambda entry: entry.path)
 
     async def destroy(self, name: str) -> None:
         if self.fail_destroy:

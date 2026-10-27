@@ -1,8 +1,12 @@
-"""沙箱端点:创建/幂等 ensure/查询/列表/执行/文件读写/续期/删除(§7 阶段 B / P1)。"""
+"""沙箱端点:创建/幂等 ensure/查询/列表/执行/文件读写/目录树/续期/删除。
+
+(§7 阶段 B / P1)
+"""
 
 from __future__ import annotations
 
 import base64
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -17,14 +21,20 @@ from workspace.api.deps import (
 from workspace.core.config import Settings
 from workspace.schemas.sandbox import (
     MAX_PATH_LENGTH,
+    MAX_SCOPE_KEY_LENGTH,
+    MAX_TREE_DEPTH,
+    WORKSPACE_ROOT,
     SandboxCreate,
     SandboxEnsure,
     SandboxEnsureRead,
     SandboxExecRead,
     SandboxExecRequest,
+    SandboxFileEntry,
+    SandboxFileKind,
     SandboxFileRead,
     SandboxFileWrite,
     SandboxRead,
+    SandboxTreeRead,
 )
 from workspace.services import sandbox as sandbox_service
 from workspace.services.sandbox_provider import SandboxProvider
@@ -35,6 +45,26 @@ DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ProviderDep = Annotated[SandboxProvider, Depends(get_sandbox_provider)]
+
+_TREE_KINDS: dict[str, SandboxFileKind] = {
+    "file": "file",
+    "dir": "dir",
+    "symlink": "symlink",
+    "other": "other",
+}
+
+
+def _entry_of(
+    path: str, kind: str, size: int, modified: float | None
+) -> SandboxFileEntry:
+    """provider 的 FileEntry → 契约条目;name 取路径尾段,未知 kind 归 other。"""
+    return SandboxFileEntry(
+        path=path,
+        name=PurePosixPath(path).name,
+        kind=_TREE_KINDS.get(kind, "other"),
+        size_bytes=size,
+        modified=modified,
+    )
 
 
 @router.post("", response_model=SandboxRead, status_code=status.HTTP_201_CREATED)
@@ -80,9 +110,17 @@ async def ensure_sandbox(
 
 
 @router.get("", response_model=list[SandboxRead])
-async def list_sandboxes(session: DBSession, tenant_id: TenantId) -> list[SandboxRead]:
-    """沙箱列表(仅本租户,新建在前)。"""
-    records = await sandbox_service.list_sandboxes(session, tenant_id)
+async def list_sandboxes(
+    session: DBSession,
+    tenant_id: TenantId,
+    scope_key: Annotated[
+        str | None, Query(min_length=1, max_length=MAX_SCOPE_KEY_LENGTH)
+    ] = None,
+) -> list[SandboxRead]:
+    """沙箱列表(仅本租户,新建在前);scope_key 精确过滤到某个会话/run。"""
+    records = await sandbox_service.list_sandboxes(
+        session, tenant_id, scope_key=scope_key
+    )
     return [SandboxRead.model_validate(record) for record in records]
 
 
@@ -146,6 +184,31 @@ async def read_sandbox_file(
         path=path,
         content_base64=base64.b64encode(data).decode("ascii"),
         size_bytes=len(data),
+    )
+
+
+@router.get("/{sandbox_id}/tree", response_model=SandboxTreeRead)
+async def list_sandbox_tree(
+    sandbox_id: str,
+    session: DBSession,
+    tenant_id: TenantId,
+    provider: ProviderDep,
+    path: Annotated[
+        str, Query(min_length=1, max_length=MAX_PATH_LENGTH)
+    ] = WORKSPACE_ROOT,
+    depth: Annotated[int, Query(ge=1, le=MAX_TREE_DEPTH)] = 1,
+) -> SandboxTreeRead:
+    """列沙箱目录树:/workspace 下的扁平条目列表,超上限时 truncated=true。"""
+    entries, truncated = await sandbox_service.list_tree(
+        session, tenant_id, sandbox_id, path, depth, provider
+    )
+    return SandboxTreeRead(
+        path=path,
+        entries=[
+            _entry_of(item.path, item.kind, item.size, item.modified)
+            for item in entries
+        ],
+        truncated=truncated,
     )
 
 
