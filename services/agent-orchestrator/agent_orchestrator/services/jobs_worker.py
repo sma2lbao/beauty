@@ -57,6 +57,8 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             workspace=container.workspace_client,
             # 后台 job 也要带上配置:记忆召回在 _invoke_plan 里按开关执行
             settings=container.settings,
+            # 上下文策略同 API 路径:起图时快照,与入队侧口径一致
+            context=container.context_pipeline,
             **common,
         )
         return

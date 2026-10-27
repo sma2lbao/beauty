@@ -169,6 +169,40 @@ class Settings(BaseAppSettings):
     context_compact_threshold_tokens: int = 6000
     context_keep_recent_messages: int = 8
     context_summary_max_chars: int = 2000
+    # 上下文工程管线(P1-F,§7.1):把「AGENTS.md 注入 + 技能卡片 + 记忆段 +
+    # 短期压缩 + 大结果 offload」收敛成一条可插拔管线。默认全开;缺沙箱/
+    # 缺模块时各段自行降级(不阻断 run),总开关关闭时退回旧提示词装配。
+    context_pipeline_enabled: bool = True
+    # 分段注入顺序;值域 agents_md/skills/memory,未知段忽略(空表回退默认序)
+    context_section_order: list[str] = ["agents_md", "skills", "memory"]
+    # AGENTS.md(§6.4):从沙箱工作区按相对深度发现并注入,多文件合并限预算
+    context_agents_md_enabled: bool = True
+    context_agents_md_names: list[str] = ["AGENTS.md"]
+    # 全部命中文件合并后的注入预算(超出按文件顺序截断,末尾标注)
+    context_agents_md_max_chars: int = 4000
+    # 单文件注入预算:防止一个超大 AGENTS.md 挤掉后面的文件
+    context_agents_md_file_max_chars: int = 2000
+    # 发现范围:相对工作区根的最大目录深度与最多文件数(防遍历失控)
+    context_agents_md_max_depth: int = 2
+    context_agents_md_max_files: int = 8
+    # 大工具结果 offload(§6.6):超过阈值时完整内容写入沙箱工作区文件,
+    # 消息里只留引用信封 + 预览;模型需要细节时用 read_offloaded 分段回读。
+    # 阈值取 8000:低于工具服务 25K 的硬上限,覆盖"长但还能塞进上下文"区间。
+    context_offload_enabled: bool = True
+    context_offload_threshold_chars: int = 8000
+    context_offload_preview_chars: int = 1200
+    # offload 落盘目录(相对沙箱工作区根,只允许在其下读写)
+    context_offload_dir: str = ".agent/offload"
+    # 单次落盘硬上限:超出部分截断并在信封里标注(防撑爆沙箱配额)
+    context_offload_max_chars: int = 200_000
+    # SKILL.md 渐进加载(§6.5):系统提示常驻短卡片,正文由 load_skill 分页拉取
+    context_skill_loading_enabled: bool = True
+    # 卡片预算(~100 token):保证多个技能同时可见仍不挤占正文上下文
+    context_skill_card_max_chars: int = 400
+    # load_skill 单页正文大小(过小会多次往返,过大等于没做渐进加载)
+    context_skill_body_page_chars: int = 4000
+    # 上下文相关沙箱操作(AGENTS.md 发现/offload 读写)复用沙箱的 TTL(秒)
+    context_sandbox_ttl_seconds: int = 900
     # 事务性 outbox(§6.3/§8):run 事件与业务同事务入发件箱,再由 dispatcher
     # 至少一次投递(失败退避重试);阶段 A 用进程内总线
     outbox_enabled: bool = False

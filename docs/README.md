@@ -22,6 +22,7 @@
 | [docs/design/tool-service.md](./design/tool-service.md)                   | 内置工具服务设计（catalog/执行/审计/ask_question，含 OSS 对比与实施步骤） | Lead       | 工具契约或实施进度变化时   |
 | [docs/design/serverless-deployment.md](./design/serverless-deployment.md) | serverless 部署方案（平台对比/改造清单/分期）                             | Lead       | 部署形态或平台变化时       |
 | [docs/design/byok.md](./design/byok.md)                                   | BYOK 设计（信任边界/解析与回退/信封 v2 与 KMS/轮换/配置/威胁模型）        | Lead       | BYOK 契约或 KMS 形态变化时 |
+| [docs/design/context-engineering.md](./design/context-engineering.md)     | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）    | Lead       | 上下文策略或实现变化时     |
 | [docs/gap-2026-10/](./gap-2026-10/)                                       | 能力缺口需求池（未落地的能力缺口）                                        | Lead       | 缺口状态变化时             |
 | [apps/\*/README.md](../apps/)                                             | 应用运行说明                                                              | 应用 owner | 应用行为变化时             |
 | [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md)   | PR 模板                                                                   | Lead       | 流程变化时                 |

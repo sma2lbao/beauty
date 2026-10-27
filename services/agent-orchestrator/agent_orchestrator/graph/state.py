@@ -27,6 +27,10 @@ class RunGraphState(TypedDict, total=False):
     # 长期记忆召回(§6.7):services 层起图时按目标检索并拼成提示块,节点只读不改;
     # 缺省=没召回(旧 checkpoint 兼容,节点统一用 .get 读)。
     memory_block: str
+    # 上下文工程管线装配结果(§7.3):services 层起图前把渲染好的注入块与
+    # 分段/策略快照写进 state,节点只读不改;缺省=没装配(旧 checkpoint 兼容)。
+    context_block: str
+    context_snapshot: dict[str, Any]
     skill_id: str  # Skill 绑定(run 创建时快照)
     skill_system_prompt: str  # Skill 的系统提示词
     # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/

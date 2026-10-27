@@ -155,7 +155,9 @@ def _tool_event_payload(record: Mapping[str, Any]) -> dict[str, Any]:
     P0 字段 name/arguments/ok/detail 原样保留(detail 仍截 200 字符),
     P1 扩充审计字段(§11.1/§12.3):tool_call_id、risk、decision、
     error_code、duration_ms、result_chars、truncated、paths、
-    sha256_before/after。事件 type 与 seq 语义不变,新字段全部可选。
+    sha256_before/after。P1-F 再加 offloaded/offload_path/original_chars:
+    工具结果被 offload 成文件时,事件能回答"原文落在哪个文件、多大"。
+    事件 type 与 seq 语义不变,新字段全部可选。
     """
 
     arguments = _event_text(record.get("arguments"), MAX_EVENT_ARGUMENTS_CHARS)
@@ -174,6 +176,11 @@ def _tool_event_payload(record: Mapping[str, Any]) -> dict[str, Any]:
         "paths": _event_paths(record.get("paths")),
         "sha256_before": _event_sha(record.get("sha256_before")),
         "sha256_after": _event_sha(record.get("sha256_after")),
+        # P1-F:大结果 offload 后事件里留引用(模型只看到信封,审计要看全文去哪了)
+        "offloaded": bool(record.get("offloaded")),
+        "offload_path": _event_text(record.get("offload_path"), MAX_EVENT_PATH_CHARS)
+        or None,
+        "original_chars": _event_int(record.get("original_chars")),
     }
     return _fit_tool_event(payload)
 

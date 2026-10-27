@@ -24,6 +24,7 @@ from fastapi import Header, Request
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.container import AppContainer
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
@@ -78,6 +79,15 @@ def get_skills(request: Request) -> SkillRegistry:
 def get_run_graph(request: Request) -> CompiledStateGraph:
     """启动时装配的 run 执行图。"""
     return get_container(request).run_graph
+
+
+def get_context_pipeline(request: Request) -> ContextPipeline | None:
+    """上下文工程管线(P1-F);策略关闭或未装配时为 None(执行图退回 legacy 注入)。
+
+    每请求从容器取同一个实例:策略快照在每次起图时投影一次,run 之间不共享状态。
+    容器未装配该属性(老装配路径/刻意关闭)时按 None 处理,不炸端点。
+    """
+    return getattr(get_container(request), "context_pipeline", None)
 
 
 def get_llm_client(request: Request) -> LLMClient | None:

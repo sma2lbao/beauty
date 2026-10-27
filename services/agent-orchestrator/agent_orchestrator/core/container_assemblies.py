@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from common.logging import get_logger
 from database.session import session_scope
 
+from agent_orchestrator.context.offload import build_read_offloaded_tool
+from agent_orchestrator.context.skills import build_load_skill_tool
 from agent_orchestrator.models import mcp as mcp_models
 from agent_orchestrator.models import runs as runs_models
 from agent_orchestrator.services import mcp as mcp_service
@@ -104,6 +106,21 @@ class ContainerAssemblyMixin:
                     max_content_chars=settings.memory_max_content_chars,
                     default_limit=settings.memory_recall_limit,
                 )
+            # 上下文工程(§7.2):技能正文分页读取与 offload 结果回读都是只读
+            # 工具,只对 run 上下文暴露——对话路径没有 run、也不会 offload,
+            # 多给两个永远不可用的工具只会污染工具面(§6.5/§6.6)。
+            # 用 getattr 容错:测试里的极简容器桩可能没装配上下文属性。
+            if ctx is not None and ctx.run_id:
+                policy = getattr(self, "context_policy", None)
+                if policy is not None and policy.skill_loading_enabled:
+                    specs.append(build_load_skill_tool(factory, policy=policy))
+                offloader = getattr(self, "tool_offloader", None)
+                if (
+                    policy is not None
+                    and policy.offload_enabled
+                    and offloader is not None
+                ):
+                    specs.append(build_read_offloaded_tool(offloader))
             return specs
 
         return _load_extras

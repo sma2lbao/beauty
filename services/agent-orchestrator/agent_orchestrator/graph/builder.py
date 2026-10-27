@@ -31,6 +31,7 @@ from agent_orchestrator.graph.nodes import (
 )
 from agent_orchestrator.graph.ports import (
     LLMPort,
+    OffloadPort,
     ToolExtrasFactory,
     ToolkitFactory,
 )
@@ -82,6 +83,7 @@ def build_run_graph(
     *,
     plan_auto_approve: bool = True,
     question_timeout_seconds: int = 900,
+    offloader: OffloadPort | None = None,
 ) -> CompiledStateGraph:
     checkpointer = checkpointer or InMemorySaver()
     builder = StateGraph(RunGraphState)
@@ -102,6 +104,7 @@ def build_run_graph(
                 toolkit_factory,
                 mcp_tools_factory,
                 question_timeout_seconds=question_timeout_seconds,
+                offloader=offloader,
             ),
         ),
     )
@@ -112,7 +115,9 @@ def build_run_graph(
         instrument_node(
             "tool_exec",
             "execute",
-            make_tool_exec_node(toolkit_factory, mcp_tools_factory),
+            make_tool_exec_node(
+                toolkit_factory, mcp_tools_factory, offloader=offloader
+            ),
         ),
     )
     builder.add_node(

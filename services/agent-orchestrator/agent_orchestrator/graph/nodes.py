@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -42,6 +43,9 @@ from agent_orchestrator.graph.deliver_nodes import (
 from agent_orchestrator.graph.deliver_nodes import make_verify_node as make_verify_node
 from agent_orchestrator.graph.plan_nodes import PLAN_SYSTEM_PROMPT as PLAN_SYSTEM_PROMPT
 from agent_orchestrator.graph.plan_nodes import (
+    _context_block as _context_block,
+)
+from agent_orchestrator.graph.plan_nodes import (
     _conversation_block as _conversation_block,
 )
 from agent_orchestrator.graph.plan_nodes import _criteria_block as _criteria_block
@@ -59,6 +63,7 @@ from agent_orchestrator.graph.ports import (
     RISK_DANGER,
     ApprovalDecision,
     LLMPort,
+    OffloadPort,
     ToolExtrasFactory,
     ToolkitFactory,
     ToolkitPort,
@@ -206,9 +211,7 @@ def _execute_messages(state: RunGraphState) -> list[dict[str, Any]]:
     return [
         {
             "role": "system",
-            "content": EXECUTE_SYSTEM_PROMPT
-            + _skill_block(state)
-            + _memory_block(state),
+            "content": EXECUTE_SYSTEM_PROMPT + _context_block(state),
         },
         {
             "role": "user",
@@ -266,6 +269,7 @@ def _record(
     risk: str = RISK_DANGER,
     decision: str = DECISION_AUTO,
     duration_ms: int = 0,
+    offload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """一次工具调用的审计记录(设计 §11.1)。
 
@@ -276,11 +280,13 @@ def _record(
     - error_code:从结果信封解析(parse_tool_error),成功为 None;
     - duration_ms:调用方用 perf_counter 计时;result_chars 是原始结果长度;
     - truncated/paths/sha256_before|after:来自成功信封(§7.2/§7.3),
-      没有就缺省(False/[]/None),事件 payload 侧再按 16KB 上限裁剪。
+      没有就缺省(False/[]/None),事件 payload 侧再按 16KB 上限裁剪;
+    - offload:OffloadPort 的决策记录(offloaded/offload_path/original_chars),
+      非空时原样并入(长结果被换成引用信封后,result_chars 是信封长度)。
     """
 
     fields = tool_result_fields(output)
-    return {
+    record: dict[str, Any] = {
         "name": name,
         "arguments": arguments,
         "ok": not is_tool_error(output),
@@ -296,6 +302,26 @@ def _record(
         "sha256_before": fields.get("sha256_before"),
         "sha256_after": fields.get("sha256_after"),
     }
+    if offload:
+        # offload 决策自带审计字段;graph 侧只负责并入,不解释其语义。
+        record.update(dict(offload))
+    return record
+
+
+async def _maybe_offload(
+    offloader: OffloadPort | None,
+    tool_name: str,
+    output: str,
+) -> tuple[str, Mapping[str, Any] | None]:
+    """按注入的 offload 口决定是否把大结果换成引用信封(§6.6)。
+
+    未注入 offloader 时原样返回(与改造前完全一致);落盘、配额与失败降级
+    都由 OffloadPort 实现负责,graph 侧不感知沙箱细节。
+    """
+    if offloader is None:
+        return output, None
+    decision = await offloader.maybe_offload(tool_name, output)
+    return decision.content, decision.record
 
 
 def _tool_error(message: str) -> str:
@@ -452,6 +478,7 @@ def make_execute_node(
     extras_factory: ToolExtrasFactory | None = None,
     *,
     question_timeout_seconds: int = 900,
+    offloader: OffloadPort | None = None,
 ):
     """execute 节点工厂:LLM 执行;有工具时跑 function-calling 循环(§6.1)。
 
@@ -626,6 +653,11 @@ def make_execute_node(
                     tool_call_id=getattr(call, "id", None),
                     approved=True,
                 )
+                # 大结果 offload:回喂模型的 tool 消息与审计都记信封,
+                # result_chars 因此是信封长度(原始长度在 record 里)。
+                output, offload_record = await _maybe_offload(
+                    offloader, call.name, output
+                )
                 records.append(
                     _record(
                         call.name,
@@ -635,6 +667,7 @@ def make_execute_node(
                         risk=risk,
                         decision=DECISION_AUTO,
                         duration_ms=_elapsed_ms(started),
+                        offload=offload_record,
                     )
                 )
                 messages.append(_tool_message(call.id, output))
@@ -693,6 +726,8 @@ def confirm_gate_node(state: RunGraphState) -> dict:
 def make_tool_exec_node(
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ToolExtrasFactory | None = None,
+    *,
+    offloader: OffloadPort | None = None,
 ):
     """执行已确认的危险操作:结果回喂同一消息流,交回 execute 继续(§6.2)。"""
 
@@ -714,13 +749,16 @@ def make_tool_exec_node(
             call_id = str(call.get("id") or "") or None
             risk = toolkit.risk(name) if toolkit is not None else RISK_DANGER
             started = time.perf_counter()
+            offload_record: Mapping[str, Any] | None = None
             if toolkit is None:
+                # 装配缺失的错误信封不 offload(无内容可省,且要保持 ok=False)。
                 output = _tool_error("工具未配置,写操作未执行")
             else:
                 # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
                 output = await toolkit.execute(
                     name, arguments, tool_call_id=call_id, approved=True
                 )
+                output, offload_record = await _maybe_offload(offloader, name, output)
             records.append(
                 _record(
                     name,
@@ -730,6 +768,7 @@ def make_tool_exec_node(
                     risk=str(risk),
                     decision=DECISION_APPROVED,
                     duration_ms=_elapsed_ms(started),
+                    offload=offload_record,
                 )
             )
             messages.append(_tool_message(str(call.get("id") or ""), output))

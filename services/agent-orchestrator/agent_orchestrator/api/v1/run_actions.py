@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
     get_artifact_store,
+    get_context_pipeline,
     get_file_downloader,
     get_run_graph,
     get_session,
@@ -21,6 +22,7 @@ from agent_orchestrator.api.deps import (
     get_tenant_id,
     get_workspace_client,
 )
+from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import (
     CancelRequest,
@@ -46,6 +48,7 @@ ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+ContextPipelineDep = Annotated[ContextPipeline | None, Depends(get_context_pipeline)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -62,6 +65,7 @@ async def plan_run(
     workspace: WorkspaceDep,
     downloader: FileDownloaderDep,
     settings: SettingsDep,
+    context: ContextPipelineDep,
 ) -> PlanRead:
     """生成计划;无 DANGER 工具时自动放行并执行到终态(§6.2)。
 
@@ -78,6 +82,7 @@ async def plan_run(
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
         settings=settings,
+        context=context,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -146,6 +151,7 @@ async def resume_run(
     workspace: WorkspaceDep,
     downloader: FileDownloaderDep,
     settings: SettingsDep,
+    context: ContextPipelineDep,
 ) -> PlanRead:
     """blocked → 重新进审批闸,保留已编辑计划(§6.2 goal 语义)。"""
     run = await runs_service.resume_run(
@@ -159,6 +165,7 @@ async def resume_run(
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
         settings=settings,
+        context=context,
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -173,6 +180,7 @@ async def retry_run(
     workspace: WorkspaceDep,
     downloader: FileDownloaderDep,
     settings: SettingsDep,
+    context: ContextPipelineDep,
 ) -> RunRead:
     """failed → 另起一跑并继承目标/验收标准/已批准计划(§6.2);返回**新 run**。"""
     run = await runs_service.retry_run(
@@ -186,6 +194,7 @@ async def retry_run(
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
         settings=settings,
+        context=context,
     )
     return RunRead.model_validate(run)
 

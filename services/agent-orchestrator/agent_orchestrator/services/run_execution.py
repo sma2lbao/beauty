@@ -13,6 +13,7 @@ from common.logging import get_logger
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
@@ -20,6 +21,7 @@ from agent_orchestrator.repositories import (
 )
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
+from agent_orchestrator.services import context_service
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services.file_capture import FileDownloader
@@ -134,6 +136,7 @@ async def _invoke_plan(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context: ContextPipeline | None = None,
 ) -> None:
     """起图跑到审批闸;resume 场景保留用户已编辑的计划。
 
@@ -187,6 +190,19 @@ async def _invoke_plan(
         # 记忆只在起图时召回一次:resume 走 checkpoint 恢复,state 里带出同一块
         # (召回结果进 state 而不是每次调用重算,审批/确认恢复时上下文保持一致)。
         state["memory_block"] = await _recall_memory_block(session, run, settings)
+    if context is not None:
+        # P1-F:按策略快照装配上下文,注入 state 并落 run.context.assembled.v1;
+        # 失败降级为 None——节点读不到 context_block 时回退 legacy 注入
+        built = await context_service.build_run_context(
+            session,
+            run,
+            pipeline=context,
+            memory_block=state.get("memory_block", ""),
+        )
+        if built is not None:
+            state["context_block"] = built.block
+            state["context_snapshot"] = built.snapshot
+            await context_service.append_context_event(session, run, built)
     try:
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
@@ -243,6 +259,7 @@ async def plan_run(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context: ContextPipeline | None = None,
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     require_transition(run, "plan")
@@ -258,6 +275,7 @@ async def plan_run(
         downloader=downloader,
         max_download_files=max_download_files,
         settings=settings,
+        context=context,
     )
     return run
 
@@ -289,6 +307,7 @@ async def retry_run(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context: ContextPipeline | None = None,
 ) -> Run:
     """failed → **另起一跑**并继承上下文(§6.2:failed 是终态,不重放旧图)。
 
@@ -339,6 +358,7 @@ async def retry_run(
             downloader=downloader,
             max_download_files=max_download_files,
             settings=settings,
+            context=context,
         )
     return child
 
@@ -355,6 +375,7 @@ async def resume_run(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context: ContextPipeline | None = None,
 ) -> Run:
     """blocked → 新 attempt 重新进审批闸,计划保留(§6.2 goal 语义)。"""
     run = await require_run(session, tenant_id, run_id)
@@ -375,5 +396,6 @@ async def resume_run(
         downloader=downloader,
         max_download_files=max_download_files,
         settings=settings,
+        context=context,
     )
     return run

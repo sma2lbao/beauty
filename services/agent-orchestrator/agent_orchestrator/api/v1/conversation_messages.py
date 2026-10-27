@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_orchestrator.api.deps import (
     get_artifact_store,
     get_container,
+    get_context_pipeline,
     get_file_downloader,
     get_llm_client,
     get_run_graph,
@@ -29,6 +30,7 @@ from agent_orchestrator.api.deps import (
     get_toolkit_factory,
     get_workspace_client,
 )
+from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.sse import named_event_frame
 from agent_orchestrator.schemas.conversations import (
     MessageCreate,
@@ -56,6 +58,7 @@ ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
+ContextPipelineDep = Annotated[ContextPipeline | None, Depends(get_context_pipeline)]
 
 #: SSE 标准头:不缓存、禁代理缓冲(否则增量会被攒成一坨)
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -80,6 +83,7 @@ async def post_message(
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
     downloader: FileDownloaderDep,
+    context_pipeline: ContextPipelineDep,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     target = await conversations_service.resolve_message_target(
@@ -110,6 +114,7 @@ async def post_message(
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
         settings=settings,
+        context_pipeline=context_pipeline,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -191,6 +196,7 @@ async def stream_message(
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
     downloader: FileDownloaderDep,
+    context_pipeline: ContextPipelineDep,
 ) -> StreamingResponse:
     """SSE 流式发消息:meta(分流结果)→ delta/tool(增量/工具调用)→ done;
     失败以 error 帧收尾。
@@ -233,6 +239,7 @@ async def stream_message(
                 downloader=downloader,
                 max_download_files=settings.artifact_download_max_files,
                 settings=settings,
+                context_pipeline=context_pipeline,
             )
         ),
         media_type="text/event-stream",

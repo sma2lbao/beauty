@@ -31,6 +31,8 @@ from database.session import session_scope
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.context.pipeline import ContextPipeline
+from agent_orchestrator.context.policy import policy_from_settings
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import Run
@@ -160,16 +162,19 @@ async def _prepare_chat_context(
     summary, covered_until = await compaction.summary_for(
         session, message.tenant_id, message.conversation_id
     )
-    if settings is not None and settings.context_compaction_enabled:
+    # 压缩参数统一由 ContextPolicy 投影(P1-F §6.1):策略是唯一真源,
+    # 配置项散读容易与执行图/管线里那份口径漂开
+    compaction_policy = policy_from_settings(settings).compaction()
+    if compaction_policy.enabled:
         result = await compaction.compact_conversation(
             session,
             message.tenant_id,
             message.conversation_id,
             llm,
             message=message,
-            threshold_tokens=settings.context_compact_threshold_tokens,
-            keep_recent=settings.context_keep_recent_messages,
-            summary_max_chars=settings.context_summary_max_chars,
+            threshold_tokens=compaction_policy.threshold_tokens,
+            keep_recent=compaction_policy.keep_recent_messages,
+            summary_max_chars=compaction_policy.summary_max_chars,
         )
         if result is not None:
             summary, covered_until = result.summary, result.covered_until
@@ -290,7 +295,8 @@ async def _task_compaction(
     压缩放在这里而不是执行图里:建 run 的请求边界有 LLM 客户端,压缩只发生
     一次;执行图只读已落库的摘要(见 run_lifecycle._conversation_history)。
     """
-    if settings is None or not settings.context_compaction_enabled or llm is None:
+    cfg = policy_from_settings(settings).compaction()
+    if not cfg.enabled or llm is None:
         return None
     if await active_run(session, conversation.tenant_id, conversation.id) is not None:
         return None
@@ -300,9 +306,9 @@ async def _task_compaction(
         conversation.id,
         llm,
         message=message,
-        threshold_tokens=settings.context_compact_threshold_tokens,
-        keep_recent=settings.context_keep_recent_messages,
-        summary_max_chars=settings.context_summary_max_chars,
+        threshold_tokens=cfg.threshold_tokens,
+        keep_recent=cfg.keep_recent_messages,
+        summary_max_chars=cfg.summary_max_chars,
     )
 
 
@@ -346,6 +352,7 @@ async def post_message(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context_pipeline: ContextPipeline | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -355,6 +362,9 @@ async def post_message(
     chat 路径携带只读工具(toolkit_factory + extras_factory):对话内
     function-calling(§6.8);外部工具(MCP)里 requires_confirmation 的会被
     chat.run_tool_loop 拒绝并提示改用「任务」(对话没有审批流,§6.7)。
+
+    context_pipeline 非空时透传给建 run 的路径:起图那一刻按策略快照上下文
+    (AGENTS.md/技能卡片/记忆),chat 路径用不到(它自己拼多轮上下文)。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     message = await _persist_user_message(
@@ -442,6 +452,7 @@ async def post_message(
         max_download_files=max_download_files,
         compaction=compaction_result,
         settings=settings,
+        context_pipeline=context_pipeline,
     )
     return message, run, None, outcome
 
@@ -467,6 +478,7 @@ async def stream_message(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
     settings: Settings | None = None,
+    context_pipeline: ContextPipeline | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -540,6 +552,7 @@ async def stream_message(
                 max_download_files=max_download_files,
                 compaction=compaction_result,
                 settings=settings,
+                context_pipeline=context_pipeline,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:

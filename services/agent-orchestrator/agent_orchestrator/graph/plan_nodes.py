@@ -61,6 +61,20 @@ def _memory_block(state: RunGraphState) -> str:
     return f"\n\n{block}"
 
 
+def _context_block(state: RunGraphState) -> str:
+    """上下文工程注入块(P1-F,§7.3):统一 plan/execute/verify/deliver 装配。
+
+    有 context_block(services 层用 ContextPipeline 渲染好的 AGENTS.md /
+    技能卡片 / 记忆段)时用它;没有(旧 checkpoint、未装配)时回退改造前的
+    「技能约束 + 记忆召回」两段,行为与旧版严格一致。返回值可直接拼进系统
+    提示词(自带前置空行),空串=两段都没有。
+    """
+    block = state.get("context_block")
+    if block:
+        return f"\n\n{block}"
+    return _skill_block(state) + _memory_block(state)
+
+
 def _criteria_block(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) or "(无显式验收标准)"
 
@@ -135,9 +149,7 @@ def make_plan_node(llm: LLMPort | None):
             [
                 {
                     "role": "system",
-                    "content": (
-                        PLAN_SYSTEM_PROMPT + _skill_block(state) + _memory_block(state)
-                    ),
+                    "content": PLAN_SYSTEM_PROMPT + _context_block(state),
                 },
                 {
                     "role": "user",

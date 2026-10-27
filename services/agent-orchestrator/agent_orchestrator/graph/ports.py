@@ -139,6 +139,29 @@ class ApprovalPort(Protocol):
     ) -> ApprovalDecision: ...
 
 
+class OffloadedOutputLike(Protocol):
+    """offload 决策结果(§6.6):回喂模型的正文 + 合并进审计记录的字段。
+
+    record 为 None 表示未 offload(或实现降级);非空时由 graph 侧原样并入
+    _record 的审计字段(offloaded/offload_path/original_chars 等)。
+    """
+
+    content: str
+    record: Mapping[str, Any] | None
+
+
+class OffloadPort(Protocol):
+    """大工具结果 offload 口(§6.6):超阈值落盘,模型只看引用信封。
+
+    graph 侧只依赖本协议与结果的 .content/.record——落盘位置、配额、沙箱
+    上下文与失败降级都由 services 层实现;未注入时行为与改造前一致。
+    """
+
+    async def maybe_offload(self, tool_name: str, output: str) -> OffloadedOutputLike:
+        """决定是否 offload;不满足条件时原样返回 output 且 record=None。"""
+        ...
+
+
 #: 租户 → 基础工具注册表(services 层按需装配,可为 None 表示无工具)。
 ToolkitFactory = Callable[[str], ToolkitPort]
 #: 租户 → 外部工具(如 MCP)的 specs;graph 侧不关心具体类型,交给注册表合并。

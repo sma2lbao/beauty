@@ -8,8 +8,8 @@
     日志/观测/Skills → api_key_verifier → oauth_introspector → token 预算 →
     配额客户端 → 用量上报 → DB session factory → LLM → 记忆嵌入提供方 →
     工具工厂/外部工具工厂 → JWT verifier → 工作区/沙箱 → stdio MCP 池 →
-    交付物存储 → 外链下载器 → skill runner → 事件总线 + outbox →
-    run 执行图(Postgres 时可恢复)→ job worker → 记忆清扫
+    交付物存储 → 外链下载器 → skill runner → 上下文管线/offload 端口 →
+    事件总线 + outbox → run 执行图(Postgres 时可恢复)→ job worker → 记忆清扫
 
 发布契约:容器把每个装配结果同时写到 app.state(测试与依赖注入都从这里取,
 见 tests 里的 app.state.* 断言);api 层不直接读 app.state,统一经
@@ -34,6 +34,16 @@ from events.outbox import OutboxDispatcher
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.context.agents import AgentsMdProvider
+from agent_orchestrator.context.offload import ToolOutputOffloader
+from agent_orchestrator.context.pipeline import (
+    ContextPipeline,
+    MemorySectionProvider,
+    SectionProvider,
+)
+from agent_orchestrator.context.policy import ContextPolicy, policy_from_settings
+from agent_orchestrator.context.sandbox_files import SandboxWorkspaceFiles
+from agent_orchestrator.context.skills import SkillCardProvider
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.core.container_assemblies import ContainerAssemblyMixin
 from agent_orchestrator.graph.builder import build_run_graph
@@ -143,6 +153,11 @@ class AppContainer(ContainerAssemblyMixin):
         self.event_bus = event_bus
         self.api_key_verifier = api_key_verifier
         self.oauth_introspector = oauth_introspector
+        # 上下文工程(§7.2):策略快照由 settings 构造一次(不可变),管线与
+        # offload 端口在沙箱就绪后的 _assemble_context 里装配并发布
+        self.context_policy: ContextPolicy = policy_from_settings(settings)
+        self.context_pipeline: ContextPipeline | None = None
+        self.tool_offloader: ToolOutputOffloader | None = None
         self.artifact_downloader: FileDownloader | None = None
         self.skills = None
         self.outbox_recorder = None
@@ -167,6 +182,8 @@ class AppContainer(ContainerAssemblyMixin):
         """启动前重新采信 app.state:允许测试在 create_app 之后替换注入项。"""
         state = self._state
         self.settings = state.settings
+        # settings 可能被测试在 create_app 之后替换:策略快照随之重建
+        self.context_policy = policy_from_settings(self.settings)
         for name in INJECTED:
             setattr(self, name, getattr(state, name, None))
         self.artifact_downloader = getattr(state, "artifact_downloader", None)
@@ -205,6 +222,7 @@ class AppContainer(ContainerAssemblyMixin):
         if knowledge is not None:
             self._closers.append(("knowledge client", knowledge.aclose))
         await self._assemble_graph_deps()
+        self._assemble_context()
         await self._assemble_outbox()
         await self._assemble_graph()
 
@@ -340,6 +358,7 @@ class AppContainer(ContainerAssemblyMixin):
             )
         self._publish("toolkit_factory", toolkit_factory)
 
+        policy = self.context_policy
         extras_factory = self.tool_extras_factory
         if extras_factory is None and (
             settings.mcp_enabled
@@ -347,6 +366,10 @@ class AppContainer(ContainerAssemblyMixin):
             # 记忆工具也走 extras 通道(§6.7):MCP/技能全关但记忆开着时,
             # 记忆读写工具仍要进执行图与对话的工具面,否则开关形同虚设。
             or settings.memory_enabled
+            # 上下文工程(§7.2):load_skill / read_offloaded 同样经 extras
+            # 通道下发,否则上面三项全关时这两个工具永远不出现。
+            or policy.skill_loading_enabled
+            or policy.offload_enabled
         ):
             extras_factory = self._extras_factory()
         self._publish("tool_extras_factory", extras_factory)
@@ -434,6 +457,42 @@ class AppContainer(ContainerAssemblyMixin):
             )
         self._publish("skill_runner", runner)
 
+    def _assemble_context(self) -> None:
+        """上下文工程(§7.2):只装配端口,不读库、不碰网络。
+
+        policy 是不可变快照,管线/offloader 与沙箱共用同一份 WorkspaceFiles;
+        沙箱未启用时没有文件介质:agents_md 段不注册(管线记 not_registered),
+        offload 发布 None(执行节点退回原样回填),启动不因此失败。
+        """
+        policy = self.context_policy
+        # 发布策略快照:services 侧事件(run.context.assembled.v1)与测试都取它
+        self._publish("context_policy", policy)
+        files = (
+            SandboxWorkspaceFiles(
+                self.sandbox_client,
+                ttl_seconds=self.settings.context_sandbox_ttl_seconds,
+            )
+            if self.sandbox_client is not None
+            else None
+        )
+        pipeline: ContextPipeline | None = None
+        if self.settings.context_pipeline_enabled:
+            providers: list[SectionProvider] = [
+                SkillCardProvider(policy),
+                MemorySectionProvider(),
+            ]
+            if files is not None:
+                # 顺序即渲染顺序:工作区约定在前,技能卡片其次,记忆最后
+                providers.insert(0, AgentsMdProvider(files, policy))
+            pipeline = ContextPipeline(policy, providers=providers)
+        self._publish("context_pipeline", pipeline)
+        offloader = (
+            ToolOutputOffloader(files, policy)
+            if files is not None and policy.offload_enabled
+            else None
+        )
+        self._publish("tool_offloader", offloader)
+
     async def _assemble_outbox(self) -> None:
         settings = self.settings
         bus: EventBus = self.event_bus or InMemoryEventBus()
@@ -509,6 +568,7 @@ class AppContainer(ContainerAssemblyMixin):
                     llm=self.llm_client,
                     toolkit_factory=self.toolkit_factory,
                     mcp_tools_factory=self.tool_extras_factory,
+                    offloader=self.tool_offloader,
                     plan_auto_approve=settings.plan_auto_approve,
                     question_timeout_seconds=settings.question_timeout_seconds,
                 ),
@@ -521,6 +581,7 @@ class AppContainer(ContainerAssemblyMixin):
                     llm=self.llm_client,
                     toolkit_factory=self.toolkit_factory,
                     mcp_tools_factory=self.tool_extras_factory,
+                    offloader=self.tool_offloader,
                     plan_auto_approve=settings.plan_auto_approve,
                     question_timeout_seconds=settings.question_timeout_seconds,
                 ),

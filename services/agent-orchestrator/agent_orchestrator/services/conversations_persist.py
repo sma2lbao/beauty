@@ -40,6 +40,7 @@ from agent_orchestrator.services.workspace import Workspace
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agent_orchestrator.context.pipeline import ContextPipeline
     from agent_orchestrator.core.config import Settings
     from agent_orchestrator.graph.ports import ToolkitPort
     from agent_orchestrator.services.compaction import CompactionResult
@@ -122,11 +123,15 @@ async def _task_path(
     max_download_files: int = 10,
     compaction: CompactionResult | None = None,
     settings: Settings | None = None,
+    context_pipeline: ContextPipeline | None = None,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。
 
     compaction 是建 run 前刚完成的对话压缩(服务层算好传入,这里只透传给
     create_run 记 run.compacted.v1 事件;压缩本身不在这层做,避免重复调模型)。
+
+    context_pipeline 只在同步规划(未入队 job)时透传给 plan_run:起图那一刻
+    按策略快照上下文;入队时由 worker 从容器取同一份策略,口径一致。
     """
     run = await active_run(session, conversation.tenant_id, conversation.id)
     if run is not None:
@@ -165,6 +170,7 @@ async def _task_path(
             downloader=downloader,
             max_download_files=max_download_files,
             settings=settings,
+            context=context_pipeline,
         )
     return run, "run_created"
 

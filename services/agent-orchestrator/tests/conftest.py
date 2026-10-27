@@ -571,6 +571,12 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     # test_compaction.py 用显式 settings 开启。
     "memory_enabled": False,
     "context_compaction_enabled": False,
+    # P1-F 上下文工程(设计 §7.1/§7.2):默认关——既有用例断言的是"工具面/系统
+    # 提示词里没有上下文段"的旧口径;管线/offload/技能加载由 tests/test_context_*.py
+    # 与 tests/test_container_context.py 用显式 settings 开启。
+    "context_pipeline_enabled": False,
+    "context_skill_loading_enabled": False,
+    "context_offload_enabled": False,
     # P2 记忆二期:自动抽取/巩固/sweeper 默认关——后台任务与额外 LLM 调用会
     # 打乱既有用例的事件序列/调用计数;P2 用例自己显式开启。
     "memory_auto_extract_enabled": False,
