@@ -23,8 +23,14 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
+from agent_orchestrator.services import models as models_service
 from agent_orchestrator.services import usage as usage_service
-from agent_orchestrator.services.llm import LLMReply, LLMStreamEvent, ToolCall
+from agent_orchestrator.services.llm import (
+    LLMReply,
+    LLMStreamEvent,
+    ToolCall,
+    notify_fallbacks,
+)
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 
 _IDP = TestIdP()
@@ -51,11 +57,17 @@ class FakeLLM:
         fail_on_call: int | None = None,
         *,
         chunks: dict[int, list[str]] | None = None,
+        fallbacks: list[dict[str, Any]] | None = None,
     ):
         self.responses = list(responses)
         self.fail_on_call = fail_on_call
         self.calls: list[list[dict[str, Any]]] = []
         self.tools_seen: list[list[dict[str, Any]] | None] = []
+        # 每次调用显式传入的 model / response_format(断言调用契约用)
+        self.models: list[str | None] = []
+        self.response_formats: list[dict[str, Any] | None] = []
+        # 模拟网关回退:非空时每次调用都触发一次 fallback 观察者
+        self.fallbacks = list(fallbacks or [])
         # 调用序号(1 起)→ 正文块;指定后流式按这些多字符块吐出(验证不重切)
         self.chunks = dict(chunks or {})
 
@@ -65,11 +77,16 @@ class FakeLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMReply:
         self.calls.append(messages)
         self.tools_seen.append(tools)
+        self.models.append(model)
+        self.response_formats.append(response_format)
         if self.fail_on_call == len(self.calls):
             raise RuntimeError("模型挂了")
+        if self.fallbacks:
+            await notify_fallbacks(self.fallbacks)
         response = self.responses[len(self.calls) - 1]
         return (
             response if isinstance(response, LLMReply) else LLMReply(content=response)
@@ -81,6 +98,7 @@ class FakeLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """流式(结构化):先吐正文块,有工具调用再吐一个工具事件。
 
@@ -88,7 +106,12 @@ class FakeLLM:
         默认按字切分,``chunks`` 可按调用序号指定多字符块——用于断言服务端
         原样转发、不重新按字切分。
         """
-        reply = await self.complete(messages, model=model, tools=tools)
+        reply = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_format=response_format,
+        )
         chunks = self.chunks.get(len(self.calls))
         for piece in chunks if chunks is not None else list(reply.content):
             yield LLMStreamEvent(text=piece)
@@ -101,9 +124,12 @@ class FakeLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         """流式(只要正文):委托 stream_events,保持调用序号/失败注入一致。"""
-        async for event in self.stream_events(messages, model=model, tools=tools):
+        async for event in self.stream_events(
+            messages, model=model, tools=tools, response_format=response_format
+        ):
             if event.text:
                 yield event.text
 
@@ -542,6 +568,15 @@ def _reset_process_budget() -> Iterator[None]:
     usage_service.configure_budget(0)
 
 
+@pytest.fixture(autouse=True)
+def _reset_models_cache() -> Iterator[None]:
+    """模型列表缓存是进程级的(P1-G §6.3):用例间必须复位,否则上一个用例
+    拿到的网关结果会漏到下一个用例的白名单校验里。"""
+    models_service.reset_models_cache()
+    yield
+    models_service.reset_models_cache()
+
+
 #: AO 专属固定覆盖;共通三道防线(_env_file=None、env=dev、临时 sqlite +
 #: auto_create_tables、NETWORK_SWITCHES 全关)由 common.service_testkit 提供。
 _SETTINGS_DEFAULTS: dict[str, Any] = {
@@ -582,6 +617,16 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "memory_auto_extract_enabled": False,
     "memory_consolidation_enabled": False,
     "memory_sweep_interval_seconds": 0.0,
+    # P1-G 模型路由:白名单默认空(=不校验,避免 Nx 注入的 .env 把用例卡成 400);
+    # 图片预算显式钉默认值,让提示词形状断言不受宿主环境变量影响。
+    # .env 里的 LLM_MODEL 同样会被 Nx 注入:钉 None 才是"走网关默认路由"口径,
+    # 否则 GET /models 的 default_model 与请求体里的模型断言会随宿主环境漂移。
+    "llm_model": None,
+    "llm_models_cache_seconds": 0.0,
+    "llm_available_models": [],
+    "llm_image_max_count": 4,
+    "llm_image_max_bytes": 5_242_880,
+    "llm_image_max_total_bytes": 10_485_760,
 }
 
 #: 测试用配置:自足、零网络。保留 (tmp_path, name, **overrides) 签名,

@@ -47,6 +47,11 @@ export type Run = {
   agent_name?: string | null;
   /** 会话归属:由会话消息触发的 run 带;控制台直建为空。 */
   conversation_id: string | null;
+  /**
+   * run 创建时使用的模型快照(P1-G §7):创建后不随会话模型变更,
+   * 排障时要看的是「当时用了什么模型」;未指定模型(走网关默认)为 null。
+   */
+  model?: string | null;
   created_at: string;
 };
 

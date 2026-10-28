@@ -24,6 +24,7 @@ from llm_gateway.schemas.completions import (
     CompletionChunk,
     CompletionRequest,
     CompletionResponse,
+    validate_request,
 )
 from llm_gateway.services import completions as completions_service
 
@@ -35,22 +36,30 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 TenantHeader = Annotated[str | None, Header(alias=TENANT_HEADER)]
 
 
-def _provider(settings: Settings, model: str | None) -> str:
+def _provider(model: str) -> str:
     """BYOK 查询用的 provider = litellm 模型串的 provider/model 前缀。
 
     没有前缀时返回空串(不猜提供商):解析器会按 disabled 直接回退平台 key。
     """
-    resolved = str(model or settings.default_model)
-    return resolved.split("/", 1)[0] if "/" in resolved else ""
+    return model.split("/", 1)[0] if "/" in model else ""
+
+
+def _prepare(settings: Settings, body: CompletionRequest) -> str:
+    """入口层体检 + 主模型解析:必须早于开流,错误才能还是 400(§5.1/§3)。"""
+    validate_request(
+        body,
+        max_images=settings.max_images_per_request,
+        max_image_data_chars=settings.max_image_data_chars,
+    )
+    return completions_service.resolve_model(settings, body.model)
 
 
 async def _resolve_key(
-    request: Request, body: CompletionRequest, tenant_id: str | None
+    request: Request, tenant_id: str | None, model: str
 ) -> str | None:
-    settings: Settings = request.app.state.settings
     return await resolve_byok_api_key(
         request,
-        provider=_provider(settings, body.model),
+        provider=_provider(model),
         tenant_id=tenant_id,
     )
 
@@ -66,7 +75,8 @@ async def create_completion(
     x_tenant_id: TenantHeader = None,
 ) -> CompletionResponse:
     settings: Settings = request.app.state.settings
-    api_key = await _resolve_key(request, body, x_tenant_id)
+    model = _prepare(settings, body)
+    api_key = await _resolve_key(request, x_tenant_id, model)
     return await completions_service.complete(settings, body, api_key=api_key)
 
 
@@ -88,7 +98,8 @@ async def create_completion_stream(
     不会在流中途才暴露鉴权问题。
     """
     settings: Settings = request.app.state.settings
-    api_key = await _resolve_key(request, body, x_tenant_id)
+    model = _prepare(settings, body)
+    api_key = await _resolve_key(request, x_tenant_id, model)
     return StreamingResponse(
         _sse(completions_service.stream(settings, body, api_key=api_key)),
         media_type="text/event-stream",

@@ -39,6 +39,22 @@ TRIAGE_SYSTEM_PROMPT = (
 )
 
 
+#: 判别调用的结构化约束(P1-G §6.4):网关按 json_schema 约束输出,
+#: 但解析仍保留容错——模型/网关不认这个字段时照旧按文本解析。
+TRIAGE_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "triage",
+        "schema": {
+            "type": "object",
+            "properties": {"mode": {"enum": [CHAT, TASK]}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 def _parse_mode(text: str) -> str | None:
     """从模型回复里取 mode;不是合法 JSON 或取值非法 → None(交给兜底)。"""
     try:
@@ -78,7 +94,8 @@ async def decide(content: str, llm: LLMClient | None, *, mode: str = AUTO) -> st
             [
                 {"role": "system", "content": TRIAGE_SYSTEM_PROMPT},
                 {"role": "user", "content": content},
-            ]
+            ],
+            response_format=TRIAGE_RESPONSE_FORMAT,
         )
     except Exception:
         # 判别失败不该阻断消息:退回任务路径(失败也有 run.failed.v1 留痕)

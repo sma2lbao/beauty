@@ -39,6 +39,7 @@ from agent_orchestrator.schemas.conversations import (
 )
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import conversations as conversations_service
+from agent_orchestrator.services import models as models_service
 from agent_orchestrator.services import triage
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient
@@ -86,6 +87,7 @@ async def post_message(
     context_pipeline: ContextPipelineDep,
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
+    await models_service.validate_model(body.model, llm=llm, settings=settings)
     target = await conversations_service.resolve_message_target(
         session,
         tenant_id,
@@ -115,6 +117,7 @@ async def post_message(
         max_download_files=settings.artifact_download_max_files,
         settings=settings,
         context_pipeline=context_pipeline,
+        model=body.model,
     )
     return MessagePostResult(
         message=MessageRead.model_validate(message),
@@ -204,6 +207,8 @@ async def stream_message(
     模型没开且显式要 chat 时在开流前就 409(否则只能发一帧错误,状态码已是 200)。
     """
     triage.require_available(body.mode, llm)
+    # 非法模型在开流前 400(与 require_available 同理:开流后只能发错误帧)
+    await models_service.validate_model(body.model, llm=llm, settings=settings)
     container = get_container(request)
     assert container.session_factory is not None
     factory = container.session_factory
@@ -240,6 +245,7 @@ async def stream_message(
                 max_download_files=settings.artifact_download_max_files,
                 settings=settings,
                 context_pipeline=context_pipeline,
+                model=body.model,
             )
         ),
         media_type="text/event-stream",

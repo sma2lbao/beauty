@@ -6,6 +6,10 @@ common.service_testkit(见 AGENTS.md「测试编排」)。
 BYOK/内部鉴权也在这里钉死:默认不启用 BYOK(测试零网络,不向
 account-service 换密钥),INTERNAL_SECRET 留空(本地 dev 放行语义)。
 需要打开它们的用例自己 build_settings/注入 ByokResolver。
+
+模型白名单与 fallback 链也必须钉死:Nx 会把项目 `.env` 注入任务环境
+(环境变量优先于 `_env_file=None`),本地 dev 的 `AVAILABLE_MODELS` 会让
+"任意模型"用例意外收到 400,`FALLBACK_MODELS` 会让失败用例真的去试备用模型。
 """
 
 from __future__ import annotations
@@ -17,6 +21,13 @@ from llm_gateway.main import create_app
 
 _settings = settings_factory(
     Settings,
-    defaults={"byok_enabled": False, "internal_secret": ""},
+    defaults={
+        "byok_enabled": False,
+        "internal_secret": "",
+        "available_models": [],
+        "fallback_models": [],
+        "max_images_per_request": 8,
+        "max_image_data_chars": 8_000_000,
+    },
 )
 client = client_fixture(create_app, _settings)

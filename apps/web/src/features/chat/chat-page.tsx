@@ -44,6 +44,10 @@ export function ChatPage() {
   const [sendMode, setSendMode] = useState<SendMode>('auto');
   const [skillOverride, setSkillOverride] = useState<string | null>(null);
   const [mcpOverride, setMcpOverride] = useState<string | null>(null);
+  const [modelOverride, setModelOverride] = useState<{
+    conversationId: string | null;
+    modelId: string;
+  } | null>(null);
   const [artifactFor, setArtifactFor] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
 
@@ -53,12 +57,27 @@ export function ChatPage() {
   const selectedMcp = mcpOverride ?? mcpParam ?? '';
   const queries = useChatQueries(activeConversationId);
   const actions = useChatActions(queries.activeRunId);
+  // 会话默认模型以服务端为准;本地 override 只对当前会话生效(切走自动失效)。
+  // 新会话还没有 id,选中的模型先留在本地,发送时随建会话一起带上(C1 §6.3)。
+  const conversationModel = queries.conversation?.model ?? '';
+  const selectedModel =
+    modelOverride && modelOverride.conversationId === activeConversationId
+      ? modelOverride.modelId
+      : conversationModel;
+  const changeModel = (modelId: string) => {
+    setModelOverride({ conversationId: activeConversationId, modelId });
+    // 已有会话立即 PATCH(空串 = 回到默认模型);新会话不落库,等首条消息建会话时带
+    if (activeConversationId) {
+      actions.updateModel(activeConversationId, modelId || null);
+    }
+  };
   const stream = useChatStream({
     activeConversationId,
     activeWorkspaceId: queries.activeWorkspaceId,
     sendMode,
     selectedSkill,
     selectedMcp,
+    selectedModel,
     mcpServerName: queries.mcpServerName,
     settleConversation: queries.settleConversation,
     setManualRun: queries.setManualRun,
@@ -104,6 +123,7 @@ export function ChatPage() {
         title={queries.title}
         status={queries.activeRunId ? queries.status : null}
         workspace={queries.activeWorkspace?.name ?? null}
+        model={selectedModel || null}
       />
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col bg-ha-bg">
@@ -128,6 +148,8 @@ export function ChatPage() {
               onSkillChange={setSkillOverride}
               selectedMcp={selectedMcp}
               onMcpChange={setMcpOverride}
+              selectedModel={selectedModel}
+              onModelChange={changeModel}
               activeConversationId={activeConversationId}
             />
           )}

@@ -31,7 +31,9 @@
             "type": "array"
           }
         },
-        "required": ["index"],
+        "required": [
+          "index"
+        ],
         "title": "AnswerItem",
         "type": "object"
       },
@@ -39,7 +41,11 @@
         "description": "一条策略:工具名(或 ``*``)+ 动作。",
         "properties": {
           "action": {
-            "enum": ["auto", "confirm", "deny"],
+            "enum": [
+              "auto",
+              "confirm",
+              "deny"
+            ],
             "title": "Action",
             "type": "string"
           },
@@ -50,7 +56,10 @@
             "type": "string"
           }
         },
-        "required": ["tool", "action"],
+        "required": [
+          "tool",
+          "action"
+        ],
         "title": "ApprovalPolicyIn",
         "type": "object"
       },
@@ -65,7 +74,10 @@
             "type": "string"
           }
         },
-        "required": ["tool", "action"],
+        "required": [
+          "tool",
+          "action"
+        ],
         "title": "ApprovalPolicyRead",
         "type": "object"
       },
@@ -292,7 +304,9 @@
             "type": "string"
           }
         },
-        "required": ["file"],
+        "required": [
+          "file"
+        ],
         "title": "Body_upload_attachment_api_v1_conversations__conversation_id__attachments_post",
         "type": "object"
       },
@@ -305,7 +319,9 @@
             "type": "string"
           }
         },
-        "required": ["file"],
+        "required": [
+          "file"
+        ],
         "title": "Body_upload_skill_package_api_v1_skills_packages_post",
         "type": "object"
       },
@@ -332,7 +348,10 @@
         "description": "写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。",
         "properties": {
           "action": {
-            "enum": ["approve", "reject"],
+            "enum": [
+              "approve",
+              "reject"
+            ],
             "title": "Action",
             "type": "string"
           },
@@ -349,13 +368,28 @@
             "title": "Reason"
           }
         },
-        "required": ["action"],
+        "required": [
+          "action"
+        ],
         "title": "ConfirmRequest",
         "type": "object"
       },
       "ConversationCreate": {
         "description": "建对话:标题可空(首条消息会自动定题)。\n\nworkspace_id 显式指定对话所属工作区(不存在 → 404 workspace.not_found);\n不传则落租户默认工作区(workspace 客户端未启用/不可达时降级为空,不阻断建对话)。",
         "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "title": {
             "anyOf": [
               {
@@ -419,6 +453,17 @@
             "title": "Id",
             "type": "string"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -472,7 +517,9 @@
             "title": "Next Cursor"
           }
         },
-        "required": ["items"],
+        "required": [
+          "items"
+        ],
         "title": "ConversationPage",
         "type": "object"
       },
@@ -499,6 +546,17 @@
             "title": "Id",
             "type": "string"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -520,7 +578,12 @@
             "title": "Workspace Id"
           }
         },
-        "required": ["id", "title", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
         "title": "ConversationRead",
         "type": "object"
       },
@@ -553,7 +616,10 @@
             "type": "integer"
           }
         },
-        "required": ["limit", "offset"],
+        "required": [
+          "limit",
+          "offset"
+        ],
         "title": "ConversationToolCallPage",
         "type": "object"
       },
@@ -752,6 +818,19 @@
             ],
             "title": "Archived"
           },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "title": {
             "anyOf": [
               {
@@ -792,7 +871,9 @@
             "type": "string"
           }
         },
-        "required": ["content"],
+        "required": [
+          "content"
+        ],
         "title": "InstructionCreate",
         "type": "object"
       },
@@ -820,7 +901,13 @@
             "type": "string"
           }
         },
-        "required": ["id", "run_id", "content", "status", "created_at"],
+        "required": [
+          "id",
+          "run_id",
+          "content",
+          "status",
+          "created_at"
+        ],
         "title": "InstructionRead",
         "type": "object"
       },
@@ -846,7 +933,10 @@
             "type": "string"
           }
         },
-        "required": ["ok", "redirect_path"],
+        "required": [
+          "ok",
+          "redirect_path"
+        ],
         "title": "MCPOAuthCallbackRead",
         "type": "object"
       },
@@ -866,7 +956,10 @@
             "type": "string"
           }
         },
-        "required": ["state", "code"],
+        "required": [
+          "state",
+          "code"
+        ],
         "title": "MCPOAuthCallbackRequest",
         "type": "object"
       },
@@ -881,7 +974,10 @@
             "type": "integer"
           }
         },
-        "required": ["authorize_url", "expires_in"],
+        "required": [
+          "authorize_url",
+          "expires_in"
+        ],
         "title": "MCPOAuthStartRead",
         "type": "object"
       },
@@ -945,7 +1041,10 @@
           },
           "runtime": {
             "default": "python",
-            "enum": ["python", "node"],
+            "enum": [
+              "python",
+              "node"
+            ],
             "title": "Runtime",
             "type": "string"
           },
@@ -978,7 +1077,10 @@
           },
           "transport": {
             "default": "http",
-            "enum": ["http", "stdio"],
+            "enum": [
+              "http",
+              "stdio"
+            ],
             "title": "Transport",
             "type": "string"
           },
@@ -995,7 +1097,9 @@
             "title": "Url"
           }
         },
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "title": "MCPServerCreate",
         "type": "object"
       },
@@ -1314,7 +1418,10 @@
           "runtime": {
             "anyOf": [
               {
-                "enum": ["python", "node"],
+                "enum": [
+                  "python",
+                  "node"
+                ],
                 "type": "string"
               },
               {
@@ -1366,7 +1473,10 @@
           "transport": {
             "anyOf": [
               {
-                "enum": ["http", "stdio"],
+                "enum": [
+                  "http",
+                  "stdio"
+                ],
                 "type": "string"
               },
               {
@@ -1414,7 +1524,11 @@
             "type": "array"
           }
         },
-        "required": ["ok", "detail", "tools"],
+        "required": [
+          "ok",
+          "detail",
+          "tools"
+        ],
         "title": "MCPTestRead",
         "type": "object"
       },
@@ -1435,7 +1549,9 @@
             "type": "string"
           }
         },
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "title": "MCPToolRead",
         "type": "object"
       },
@@ -1450,7 +1566,12 @@
           },
           "kind": {
             "default": "note",
-            "enum": ["note", "preference", "fact", "procedure"],
+            "enum": [
+              "note",
+              "preference",
+              "fact",
+              "procedure"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -1461,7 +1582,10 @@
           },
           "scope": {
             "default": "tenant",
-            "enum": ["tenant", "workspace"],
+            "enum": [
+              "tenant",
+              "workspace"
+            ],
             "title": "Scope",
             "type": "string"
           },
@@ -1491,7 +1615,9 @@
             "title": "Workspace Id"
           }
         },
-        "required": ["content"],
+        "required": [
+          "content"
+        ],
         "title": "MemoryCreate",
         "type": "object"
       },
@@ -1503,7 +1629,9 @@
             "type": "integer"
           }
         },
-        "required": ["purged"],
+        "required": [
+          "purged"
+        ],
         "title": "MemoryPurgeResult",
         "type": "object"
       },
@@ -1624,7 +1752,10 @@
             "type": "string"
           }
         },
-        "required": ["query", "hits"],
+        "required": [
+          "query",
+          "hits"
+        ],
         "title": "MemorySearchResponse",
         "type": "object"
       },
@@ -1648,7 +1779,12 @@
             "type": "integer"
           }
         },
-        "required": ["total", "active", "pinned", "expired"],
+        "required": [
+          "total",
+          "active",
+          "pinned",
+          "expired"
+        ],
         "title": "MemoryStatsRead",
         "type": "object"
       },
@@ -1679,9 +1815,26 @@
           },
           "mode": {
             "default": "auto",
-            "enum": ["auto", "chat", "task"],
+            "enum": [
+              "auto",
+              "chat",
+              "task"
+            ],
             "title": "Mode",
             "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "skill_id": {
             "anyOf": [
@@ -1696,7 +1849,9 @@
             "title": "Skill Id"
           }
         },
-        "required": ["content"],
+        "required": [
+          "content"
+        ],
         "title": "MessageCreate",
         "type": "object"
       },
@@ -1707,7 +1862,11 @@
             "$ref": "#/components/schemas/MessageRead"
           },
           "mode": {
-            "enum": ["chat", "run_created", "instruction_queued"],
+            "enum": [
+              "chat",
+              "run_created",
+              "instruction_queued"
+            ],
             "title": "Mode",
             "type": "string"
           },
@@ -1732,7 +1891,10 @@
             ]
           }
         },
-        "required": ["message", "mode"],
+        "required": [
+          "message",
+          "mode"
+        ],
         "title": "MessagePostResult",
         "type": "object"
       },
@@ -1787,6 +1949,50 @@
           "created_at"
         ],
         "title": "MessageRead",
+        "type": "object"
+      },
+      "ModelOptionRead": {
+        "description": "可选模型:前端只用来展示/选择,语义由网关决定。",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "owned_by": {
+            "title": "Owned By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owned_by"
+        ],
+        "title": "ModelOptionRead",
+        "type": "object"
+      },
+      "ModelsRead": {
+        "description": "GET /api/v1/models:默认模型 + 可用模型(网关不可达时为配置回退)。",
+        "properties": {
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelOptionRead"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "title": "ModelsRead",
         "type": "object"
       },
       "OutboxEventRead": {
@@ -1876,7 +2082,11 @@
             "type": "integer"
           }
         },
-        "required": ["pending", "dispatched", "failed"],
+        "required": [
+          "pending",
+          "dispatched",
+          "failed"
+        ],
         "title": "OutboxStatsRead",
         "type": "object"
       },
@@ -1894,7 +2104,11 @@
             "$ref": "#/components/schemas/RunStatus"
           }
         },
-        "required": ["run_id", "status", "plan_markdown"],
+        "required": [
+          "run_id",
+          "status",
+          "plan_markdown"
+        ],
         "title": "PlanRead",
         "type": "object"
       },
@@ -1908,7 +2122,9 @@
             "type": "string"
           }
         },
-        "required": ["plan_markdown"],
+        "required": [
+          "plan_markdown"
+        ],
         "title": "PlanUpdate",
         "type": "object"
       },
@@ -1921,7 +2137,9 @@
             "type": "string"
           }
         },
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "title": "RejectRequest",
         "type": "object"
       },
@@ -1933,7 +2151,9 @@
             "type": "integer"
           }
         },
-        "required": ["requeued"],
+        "required": [
+          "requeued"
+        ],
         "title": "RequeueResultRead",
         "type": "object"
       },
@@ -1949,7 +2169,9 @@
             "$ref": "#/components/schemas/RunRead"
           }
         },
-        "required": ["run"],
+        "required": [
+          "run"
+        ],
         "title": "RunAnswerRead",
         "type": "object"
       },
@@ -1958,7 +2180,10 @@
         "properties": {
           "action": {
             "default": "answer",
-            "enum": ["answer", "decline"],
+            "enum": [
+              "answer",
+              "decline"
+            ],
             "title": "Action",
             "type": "string"
           },
@@ -1977,7 +2202,9 @@
             "type": "string"
           }
         },
-        "required": ["question_id"],
+        "required": [
+          "question_id"
+        ],
         "title": "RunAnswerRequest",
         "type": "object"
       },
@@ -2016,6 +2243,19 @@
             "title": "Mcp Server Ids",
             "type": "array"
           },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "skill_id": {
             "anyOf": [
               {
@@ -2048,7 +2288,10 @@
             "title": "Workspace Id"
           }
         },
-        "required": ["title", "goal"],
+        "required": [
+          "title",
+          "goal"
+        ],
         "title": "RunCreate",
         "type": "object"
       },
@@ -2080,7 +2323,14 @@
             "type": "string"
           }
         },
-        "required": ["id", "run_id", "seq", "type", "payload", "occurred_at"],
+        "required": [
+          "id",
+          "run_id",
+          "seq",
+          "type",
+          "payload",
+          "occurred_at"
+        ],
         "title": "RunEventRead",
         "type": "object"
       },
@@ -2148,7 +2398,12 @@
             "title": "Node"
           },
           "phase": {
-            "enum": ["started", "delta", "completed", "failed"],
+            "enum": [
+              "started",
+              "delta",
+              "completed",
+              "failed"
+            ],
             "title": "Phase",
             "type": "string"
           },
@@ -2264,6 +2519,17 @@
             },
             "title": "Mcp Server Ids",
             "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "parent_kind": {
             "anyOf": [
@@ -2430,7 +2696,9 @@
             "type": "integer"
           }
         },
-        "required": ["run_id"],
+        "required": [
+          "run_id"
+        ],
         "title": "RunUsageRead",
         "type": "object"
       },
@@ -2534,7 +2802,10 @@
           },
           "source": {
             "default": "builtin",
-            "enum": ["builtin", "uploaded"],
+            "enum": [
+              "builtin",
+              "uploaded"
+            ],
             "title": "Source",
             "type": "string"
           },
@@ -2589,7 +2860,10 @@
             "type": "string"
           }
         },
-        "required": ["id", "title"],
+        "required": [
+          "id",
+          "title"
+        ],
         "title": "SkillManifest",
         "type": "object"
       },
@@ -2729,7 +3003,13 @@
             "type": "string"
           }
         },
-        "required": ["id", "version", "size_bytes", "sha256", "created_at"],
+        "required": [
+          "id",
+          "version",
+          "size_bytes",
+          "sha256",
+          "created_at"
+        ],
         "title": "SkillVersionRead",
         "type": "object"
       },
@@ -2873,7 +3153,12 @@
             "$ref": "#/components/schemas/RunUsageTotals"
           }
         },
-        "required": ["run_id", "title", "status", "created_at"],
+        "required": [
+          "run_id",
+          "title",
+          "status",
+          "created_at"
+        ],
         "title": "SubagentRead",
         "type": "object"
       },
@@ -2906,12 +3191,19 @@
             "type": "string"
           },
           "status": {
-            "enum": ["pending", "in_progress", "completed"],
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed"
+            ],
             "title": "Status",
             "type": "string"
           }
         },
-        "required": ["content", "status"],
+        "required": [
+          "content",
+          "status"
+        ],
         "title": "TodoItem",
         "type": "object"
       },
@@ -2938,7 +3230,9 @@
             "type": "array"
           }
         },
-        "required": ["run_id"],
+        "required": [
+          "run_id"
+        ],
         "title": "TodoRead",
         "type": "object"
       },
@@ -2974,7 +3268,11 @@
             "type": "string"
           }
         },
-        "required": ["loc", "msg", "type"],
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
         "title": "ValidationError",
         "type": "object"
       }
@@ -3005,7 +3303,9 @@
           }
         },
         "summary": "Protected Resource Metadata",
-        "tags": ["mcp-server"]
+        "tags": [
+          "mcp-server"
+        ]
       }
     },
     "/api/v1/approval-policies": {
@@ -3072,7 +3372,9 @@
           }
         },
         "summary": "List Policies",
-        "tags": ["approval-policies"]
+        "tags": [
+          "approval-policies"
+        ]
       },
       "put": {
         "operationId": "update_policies_api_v1_approval_policies_put",
@@ -3147,7 +3449,9 @@
           }
         },
         "summary": "Update Policies",
-        "tags": ["approval-policies"]
+        "tags": [
+          "approval-policies"
+        ]
       }
     },
     "/api/v1/attachments/{attachment_id}": {
@@ -3212,7 +3516,9 @@
           }
         },
         "summary": "Delete Attachment",
-        "tags": ["attachments"]
+        "tags": [
+          "attachments"
+        ]
       },
       "get": {
         "description": "下载附件:附件接口不内联到消息 JSON,下载单独走这里。",
@@ -3281,7 +3587,9 @@
           }
         },
         "summary": "Download Attachment",
-        "tags": ["attachments"]
+        "tags": [
+          "attachments"
+        ]
       }
     },
     "/api/v1/conversations": {
@@ -3417,10 +3725,12 @@
           }
         },
         "summary": "List Conversations",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       },
       "post": {
-        "description": "建对话:标题可空(首条消息自动定题)。\n\n工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),\n不给则落租户默认工作区——\"对话必须在工作区中\"由服务层兜底。",
+        "description": "建对话:标题可空(首条消息自动定题)。\n\n工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),\n不给则落租户默认工作区——\"对话必须在工作区中\"由服务层兜底。\n模型偏好(P1-G):不在可用列表时 400,不落库。",
         "operationId": "create_conversation_api_v1_conversations_post",
         "parameters": [
           {
@@ -3497,7 +3807,9 @@
           }
         },
         "summary": "Create Conversation",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/conversations/{conversation_id}": {
@@ -3563,7 +3875,9 @@
           }
         },
         "summary": "Delete Conversation",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       },
       "get": {
         "description": "对话详情:附当前进行中的 run(前端据此接 SSE 事件流)。",
@@ -3634,10 +3948,12 @@
           }
         },
         "summary": "Get Conversation",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       },
       "patch": {
-        "description": "局部更新会话:重命名 / 归档 / 取消归档(至少给一项)。",
+        "description": "局部更新会话:重命名 / 归档 / 设置模型(至少给一项)。",
         "operationId": "update_conversation_api_v1_conversations__conversation_id__patch",
         "parameters": [
           {
@@ -3715,7 +4031,9 @@
           }
         },
         "summary": "Update Conversation",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/conversations/{conversation_id}/attachments": {
@@ -3791,7 +4109,9 @@
           }
         },
         "summary": "List Attachments",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       },
       "post": {
         "description": "上传附件:本地最小版,内容存 DB;类型/大小在 service 校验。",
@@ -3872,7 +4192,9 @@
           }
         },
         "summary": "Upload Attachment",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/conversations/{conversation_id}/messages": {
@@ -3949,7 +4271,9 @@
           }
         },
         "summary": "List Messages",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       },
       "post": {
         "description": "发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。",
@@ -4030,7 +4354,9 @@
           }
         },
         "summary": "Post Message",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/conversations/{conversation_id}/messages/stream": {
@@ -4111,7 +4437,9 @@
           }
         },
         "summary": "Stream Message",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/conversations/{conversation_id}/tool-calls": {
@@ -4207,7 +4535,9 @@
           }
         },
         "summary": "List Conversation Tool Calls",
-        "tags": ["conversations"]
+        "tags": [
+          "conversations"
+        ]
       }
     },
     "/api/v1/mcp/servers": {
@@ -4274,7 +4604,9 @@
           }
         },
         "summary": "List Servers",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       },
       "post": {
         "operationId": "create_server_api_v1_mcp_servers_post",
@@ -4345,7 +4677,9 @@
           }
         },
         "summary": "Create Server",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/v1/mcp/servers/{server_id}": {
@@ -4410,7 +4744,9 @@
           }
         },
         "summary": "Delete Server",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       },
       "patch": {
         "operationId": "update_server_api_v1_mcp_servers__server_id__patch",
@@ -4490,7 +4826,9 @@
           }
         },
         "summary": "Update Server",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/v1/mcp/servers/{server_id}/oauth/disconnect": {
@@ -4556,7 +4894,9 @@
           }
         },
         "summary": "Disconnect Oauth",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/v1/mcp/servers/{server_id}/oauth/start": {
@@ -4629,7 +4969,9 @@
           }
         },
         "summary": "Start Oauth",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/v1/mcp/servers/{server_id}/test": {
@@ -4701,7 +5043,9 @@
           }
         },
         "summary": "Test Server",
-        "tags": ["mcp"]
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/api/v1/memories": {
@@ -4733,7 +5077,12 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": ["note", "preference", "fact", "procedure"],
+                  "enum": [
+                    "note",
+                    "preference",
+                    "fact",
+                    "procedure"
+                  ],
                   "type": "string"
                 },
                 {
@@ -4832,7 +5181,9 @@
           }
         },
         "summary": "List Memories",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
       },
       "post": {
         "description": "写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。\n\nttl_days 未显式给(或给 0)时用部署配置的默认有效期(0 = 永久);\n条数上限也取配置,避免 API 与后台抽取各用一套额度。",
@@ -4904,7 +5255,9 @@
           }
         },
         "summary": "Create Memory",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
       }
     },
     "/api/v1/memories/purge-expired": {
@@ -4968,7 +5321,9 @@
           }
         },
         "summary": "Purge Expired Memories",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
       }
     },
     "/api/v1/memories/search": {
@@ -5011,7 +5366,12 @@
             "schema": {
               "anyOf": [
                 {
-                  "enum": ["note", "preference", "fact", "procedure"],
+                  "enum": [
+                    "note",
+                    "preference",
+                    "fact",
+                    "procedure"
+                  ],
                   "type": "string"
                 },
                 {
@@ -5089,7 +5449,9 @@
           }
         },
         "summary": "Search Memories",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
       }
     },
     "/api/v1/memories/stats": {
@@ -5153,7 +5515,9 @@
           }
         },
         "summary": "Get Memory Stats",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
       }
     },
     "/api/v1/memories/{memory_id}": {
@@ -5219,7 +5583,31 @@
           }
         },
         "summary": "Delete Memory",
-        "tags": ["memories"]
+        "tags": [
+          "memories"
+        ]
+      }
+    },
+    "/api/v1/models": {
+      "get": {
+        "description": "可用模型:网关不可达/未启用时回退 LLM_AVAILABLE_MODELS(空则空列表)。",
+        "operationId": "list_models_api_v1_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "models"
+        ]
       }
     },
     "/api/v1/notifications/stream": {
@@ -5297,7 +5685,9 @@
           }
         },
         "summary": "Stream Notifications",
-        "tags": ["notifications"]
+        "tags": [
+          "notifications"
+        ]
       }
     },
     "/api/v1/outbox/events": {
@@ -5405,7 +5795,9 @@
           }
         },
         "summary": "List Outbox Events",
-        "tags": ["outbox"]
+        "tags": [
+          "outbox"
+        ]
       }
     },
     "/api/v1/outbox/events/{event_id}/retry": {
@@ -5478,7 +5870,9 @@
           }
         },
         "summary": "Retry Outbox Event",
-        "tags": ["outbox"]
+        "tags": [
+          "outbox"
+        ]
       }
     },
     "/api/v1/outbox/retry-failed": {
@@ -5542,7 +5936,9 @@
           }
         },
         "summary": "Retry Failed Events",
-        "tags": ["outbox"]
+        "tags": [
+          "outbox"
+        ]
       }
     },
     "/api/v1/outbox/stats": {
@@ -5606,7 +6002,9 @@
           }
         },
         "summary": "Outbox Stats",
-        "tags": ["outbox"]
+        "tags": [
+          "outbox"
+        ]
       }
     },
     "/api/v1/runs": {
@@ -5686,9 +6084,12 @@
           }
         },
         "summary": "List Runs",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       },
       "post": {
+        "description": "建 run:body.model 不在可用模型列表时 400(校验见 services.models)。",
         "operationId": "create_run_api_v1_runs_post",
         "parameters": [
           {
@@ -5757,7 +6158,9 @@
           }
         },
         "summary": "Create Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}": {
@@ -5829,7 +6232,9 @@
           }
         },
         "summary": "Get Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/answer": {
@@ -5912,7 +6317,9 @@
           }
         },
         "summary": "Answer Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/approve": {
@@ -5985,7 +6392,9 @@
           }
         },
         "summary": "Approve Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/artifact": {
@@ -6058,7 +6467,9 @@
           }
         },
         "summary": "Get Run Artifact",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/artifacts": {
@@ -6135,7 +6546,9 @@
           }
         },
         "summary": "List Run Artifacts",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/artifacts/{artifact_id}/download": {
@@ -6215,7 +6628,9 @@
           }
         },
         "summary": "Download Run Artifact",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/cancel": {
@@ -6305,7 +6720,9 @@
           }
         },
         "summary": "Cancel Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/confirm": {
@@ -6388,7 +6805,9 @@
           }
         },
         "summary": "Confirm Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/events": {
@@ -6465,7 +6884,9 @@
           }
         },
         "summary": "List Run Events",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/events/stream": {
@@ -6552,7 +6973,9 @@
           }
         },
         "summary": "Stream Run Events",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/instructions": {
@@ -6629,7 +7052,9 @@
           }
         },
         "summary": "List Instructions",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       },
       "post": {
         "description": "追加指令(§6.5):排队,在下一个图边界(规划/放行/确认)被消费。",
@@ -6710,7 +7135,9 @@
           }
         },
         "summary": "Queue Instruction",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/items": {
@@ -6787,7 +7214,9 @@
           }
         },
         "summary": "List Run Items",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/plan": {
@@ -6859,7 +7288,9 @@
           }
         },
         "summary": "Get Run Plan",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       },
       "patch": {
         "description": "审批前编辑计划(§6.1 可编辑工件)。",
@@ -6940,7 +7371,9 @@
           }
         },
         "summary": "Update Run Plan",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       },
       "post": {
         "description": "生成计划;无 DANGER 工具时自动放行并执行到终态(§6.2)。\n\n有危险工具(未信任 MCP 的对外操作)时仍停在 awaiting_approval 等人工放行。",
@@ -7011,7 +7444,9 @@
           }
         },
         "summary": "Plan Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/reject": {
@@ -7094,7 +7529,9 @@
           }
         },
         "summary": "Reject Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/resume": {
@@ -7167,7 +7604,9 @@
           }
         },
         "summary": "Resume Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/retry": {
@@ -7240,7 +7679,9 @@
           }
         },
         "summary": "Retry Run",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/steps": {
@@ -7317,7 +7758,9 @@
           }
         },
         "summary": "List Run Steps",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/subagents": {
@@ -7394,7 +7837,9 @@
           }
         },
         "summary": "List Run Subagents",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/todos": {
@@ -7467,7 +7912,9 @@
           }
         },
         "summary": "Get Run Todos",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/runs/{run_id}/usage": {
@@ -7540,7 +7987,9 @@
           }
         },
         "summary": "Get Run Usage",
-        "tags": ["runs"]
+        "tags": [
+          "runs"
+        ]
       }
     },
     "/api/v1/skills": {
@@ -7608,7 +8057,9 @@
           }
         },
         "summary": "List Skills",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       }
     },
     "/api/v1/skills/packages": {
@@ -7676,7 +8127,9 @@
           }
         },
         "summary": "List Skill Packages",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       },
       "post": {
         "description": "上传技能包:校验 → 对象存储 → 版本化,返回含全部版本的包详情。",
@@ -7748,7 +8201,9 @@
           }
         },
         "summary": "Upload Skill Package",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       }
     },
     "/api/v1/skills/packages/{package_id}": {
@@ -7814,7 +8269,9 @@
           }
         },
         "summary": "Delete Skill Package",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       },
       "get": {
         "description": "包详情:跨租户/不存在一律 404(skill.package_not_found)。",
@@ -7885,7 +8342,9 @@
           }
         },
         "summary": "Get Skill Package",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       }
     },
     "/api/v1/skills/{skill_id}": {
@@ -7958,7 +8417,9 @@
           }
         },
         "summary": "Get Skill",
-        "tags": ["skills"]
+        "tags": [
+          "skills"
+        ]
       }
     },
     "/healthz": {
@@ -8039,7 +8500,9 @@
           }
         },
         "summary": "Mcp Oauth Callback",
-        "tags": ["internal"]
+        "tags": [
+          "internal"
+        ]
       }
     },
     "/mcp": {
@@ -8100,7 +8563,9 @@
           }
         },
         "summary": "Mcp Endpoint",
-        "tags": ["mcp-server"]
+        "tags": [
+          "mcp-server"
+        ]
       }
     },
     "/readyz": {

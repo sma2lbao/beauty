@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
     get_container,
+    get_llm_client,
     get_session,
     get_settings,
     get_skills,
@@ -38,8 +39,10 @@ from agent_orchestrator.schemas.runs import (
 )
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import mcp as mcp_service
+from agent_orchestrator.services import models as models_service
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services import skill_packages
+from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.run_stream import (
     ensure_stream_target,
     parse_last_event_id,
@@ -57,6 +60,7 @@ DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SkillsDep = Annotated[SkillRegistry, Depends(get_skills)]
+LLMDep = Annotated[LLMClient | None, Depends(get_llm_client)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -70,7 +74,10 @@ async def create_run(
     tenant_id: TenantId,
     settings: SettingsDep,
     skills: SkillsDep,
+    llm: LLMDep,
 ) -> RunRead:
+    """建 run:body.model 不在可用模型列表时 400(校验见 services.models)。"""
+    await models_service.validate_model(body.model, llm=llm, settings=settings)
     skill = None
     if body.skill_id:
         # 内置优先,其次租户上传包的最新版本;两者都没有 → 404(不建半残 run)

@@ -29,6 +29,7 @@ from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import memory_extraction
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.llm_binding import bind_run_llm
 from agent_orchestrator.services.run_artifacts import (
     _deliver_artifacts,
     _persist_artifact,
@@ -392,7 +393,7 @@ async def approve_run(
     # §6.5:放行边界消费排队指令,经 resume 载荷由审批闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
-        with _tool_context(run):
+        with bind_run_llm(session, run), _tool_context(run):
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
@@ -462,7 +463,7 @@ async def confirm_run(
     # §6.5:确认边界消费排队指令,经 resume 载荷由确认闸并入状态
     instructions = await _consume_instructions(session, run)
     try:
-        with _tool_context(run):
+        with bind_run_llm(session, run), _tool_context(run):
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
@@ -502,7 +503,7 @@ async def reject_run(
 ) -> Run:
     run = await require_run(session, tenant_id, run_id)
     require_transition(run, "reject")
-    with _tool_context(run):
+    with bind_run_llm(session, run), _tool_context(run):
         await graph.ainvoke(
             Command(resume={"action": "reject", "reason": reason}),
             config=_config(run),

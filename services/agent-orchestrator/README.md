@@ -144,6 +144,18 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,与 account/llm-gateway 的
   `INTERNAL_SECRET` 一致),网关据此解析该租户的 BYOK 密钥;密钥留空时只带
   租户头,按平台默认密钥解析。
+- 模型路由(P1-G,契约见 `docs/design/model-routing.md`):run/会话/消息都能指定
+  `model`,解析顺序是「消息 > 会话 > 网关默认」;run 在创建时把模型固化成快照
+  (`runs.model`),之后的 plan/审批/回答恢复都用同一快照(上下文绑定见
+  `services/llm_binding.py`,GatewayClient 取模型:调用参数 > `LLM_MODEL` > 绑定值)。
+  `GET /api/v1/models` 投影网关模型目录(进程内缓存 `LLM_MODELS_CACHE_SECONDS`),
+  网关不可达时回退 `LLM_AVAILABLE_MODELS`;写入口按这份白名单校验,不在列表返回
+  400 `llm.model_not_allowed`。网关发生模型回退时,run 落 `run.llm.fallback.v1`
+  事件(不进 outbox),直接对话只记 `llm_fallback` 日志。
+- 对话多模态(P1-G §7,仅直接对话路径):消息绑定的图片附件(≤`LLM_IMAGE_MAX_COUNT`
+  张、单张 ≤`LLM_IMAGE_MAX_BYTES`、合计 ≤`LLM_IMAGE_MAX_TOTAL_BYTES`)转成
+  `image_url` parts 随提示词回喂,历史轮次的图片同样带上(最近优先);task/run
+  路径不注入图片。
 - 返工循环(§6.1):验收未过 → 回 execute,带验收小结继续返工;≤3 轮;
   耗尽仍不过 → `fail_node` 诚实终结 failed(不伪装 completed);
 - 工具调用(架构 §8):`TOOLS_ENABLED=true` 时 execute 走 function-calling——

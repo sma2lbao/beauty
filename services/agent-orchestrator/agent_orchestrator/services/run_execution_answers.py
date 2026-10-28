@@ -28,6 +28,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.llm_binding import bind_run_llm
 from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
@@ -178,7 +179,7 @@ async def answer_run(
         )
         return run
     try:
-        with _tool_context(run):
+        with bind_run_llm(session, run), _tool_context(run):
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,

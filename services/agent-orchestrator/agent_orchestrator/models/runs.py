@@ -82,6 +82,10 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     # 子代理工具面快照(P1-E):为空表示继承父 run 的有效白名单(父也没有则不限)。
     # 非空时 execute 阶段只装配这些工具(见 _allowed_tools_from_snapshot)。
     agent_tools: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # 模型路由快照(P1-G,见 docs/design/model-routing.md §4):建 run 那一刻定下
+    # 用哪个模型(显式指定或继承所属对话),之后改会话模型不影响已建 run;
+    # 为空表示"未指定",执行时走网关默认路由。
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

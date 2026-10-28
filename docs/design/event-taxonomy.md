@@ -179,6 +179,9 @@ AG-UI 适配层留到后续(见 §9)。
   checkpoint 回退时可按 item 区间呈现。
 - **AG-UI(后续)**:`run.item.v1` 的 kind/phase 可直接映射到 AG-UI 的 activity
   事件族;Interrupts/State/Subagents 事件族不在本期(见 08a 矩阵第 7 条)。
+- **fallback(P1-G)**:`run.llm.fallback.v1` 是**普通 run 事件**,不是过程项 item——
+  没有 `item_id`/相位,`record_outbox=False` 但进 `GET /runs/{id}/events` 与 SSE 回放,
+  前端按事件流渲染(未知类型不影响正文);契约见 [model-routing.md](./model-routing.md)。
 - **不做**:P1-D 本身不改表(子代理的 `parent_kind`/`agent_*` 列属 P1-E);不把
   `token.delta.v1` 改成 item(正文流保持独立);item 不进 outbox(展示面事件);
   子 run 的事件树已随 P1-E 落地(父级 `kind=subagent` + 子 run 事件流同

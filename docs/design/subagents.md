@@ -31,7 +31,7 @@ context,结果是父上下文被细节淹没、长任务无法分治、成本无
 
 **非目标(本期不做)**
 
-- per-run 模型选择(属 P1-G;子 run 沿用父 run 的模型路由);
+- per-run 模型选择已随 P1-G 落地(2026-10-28,见 [model-routing.md](./model-routing.md));子 run 本期沿用父 run 的模型,按子代理覆盖模型留后续;
 - 子 run 异步 worker/并发编排(本期**内联执行**:工具调用期间阻塞父 run);
 - 子代理注册表/命名代理模板(只支持调用时传 `agent_name` + `instructions`);
 - AG-UI Subagents 事件族映射(适配层留待后续)。
@@ -227,7 +227,7 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
 
 ## 14. 后续
 
-- P1-G:per-run 模型选择(子代理可选更便宜模型);
+- 子代理可选更便宜模型(per-run 选择已随 P1-G 落地;子代理当前沿用父 run 模型);
 - 异步子 run / 并发编排(worker + 事件树实时增量);
 - 命名子代理注册表(可复用的 agent 模板与权限包);
 - AG-UI `Subagents` 事件族映射与跨端渲染。

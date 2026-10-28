@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from datetime import datetime
+from typing import Any
 
 from agent_orchestrator.models.conversations import ChatMessage
 
@@ -54,16 +55,23 @@ def to_prompt(
     *,
     summary: str = "",
     limit: int = HISTORY_MESSAGES_LIMIT,
-) -> list[dict[str, str]]:
+    images_by_message: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
     """ORM 消息 → 提示词用的 {role, content}(取最近若干条,单条截断)。
 
     summary 非空时,在最前面插入一条 system 摘要块——它代表"更早的轮次",
     与近期的原文消息一起构成完整上下文。
+
+    images_by_message 非空时(P1-G §7),带图的那一轮 content 变成多模态
+    parts 列表(text + image_url),与"当前消息"同一形状;没图仍是字符串,
+    旧模型/旧调用方零影响。
     """
-    messages = [
-        {"role": row.role, "content": (row.content or "")[:HISTORY_MESSAGE_CHARS]}
-        for row in recent(rows, limit=limit)
-    ]
+    messages: list[dict[str, Any]] = []
+    for row in recent(rows, limit=limit):
+        text = (row.content or "")[:HISTORY_MESSAGE_CHARS]
+        images = (images_by_message or {}).get(row.id) or []
+        content: Any = [{"type": "text", "text": text}, *images] if images else text
+        messages.append({"role": row.role, "content": content})
     if summary.strip():
         messages.insert(
             0,

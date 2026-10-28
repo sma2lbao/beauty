@@ -35,6 +35,7 @@ from agent_orchestrator.services.items import (
     plan_content,
     resolve_thread_id,
 )
+from agent_orchestrator.services.llm_binding import bind_run_llm
 from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
@@ -252,7 +253,7 @@ async def _invoke_plan(
     try:
         # 工具 handler 执行时读得到租户/run/对话(stdio MCP 沙箱作用域);
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
-        with _tool_context(run):
+        with bind_run_llm(session, run), _tool_context(run):
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
@@ -444,6 +445,8 @@ async def retry_run(
         parent_kind=PARENT_KIND_RETRY,
         conversation_id=parent.conversation_id,
         workspace_id=parent.workspace_id,
+        # 重试沿用父 run 的模型快照(P1-G):换模型重试不是这里的目标
+        model=parent.model,
     )
     await RunRepository(session).add(child)
     await append_event(

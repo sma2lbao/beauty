@@ -8,6 +8,7 @@ import { skillsApi } from '@/lib/skills-api';
 
 import {
   createRenderPage,
+  makeConversation,
   makeMessage,
   setRunEvents,
   setupChatTest,
@@ -28,6 +29,9 @@ vi.mock('@/lib/workspace-api', async () =>
 );
 vi.mock('@/lib/runs-api', async () =>
   (await import('./chat-test-harness')).runsModuleMock(),
+);
+vi.mock('@/lib/models-api', async () =>
+  (await import('./chat-test-harness')).modelsModuleMock(),
 );
 vi.mock('@/components/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
@@ -186,5 +190,114 @@ describe('ChatPage MCP 引用', () => {
     renderPage('/?conversation=c1');
 
     expect(await screen.findByText(/MCP · linear/)).toBeTruthy();
+  });
+});
+
+describe('ChatPage 模型路由（C1 §6.3）', () => {
+  async function waitForModelOptions() {
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-model-select').textContent).toContain(
+        'gpt-4o-mini',
+      ),
+    );
+  }
+
+  it('已有会话切换模型立即 PATCH,发送时随消息带 model', async () => {
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    await waitForModelOptions();
+
+    fireEvent.change(screen.getByTestId('chat-model-select'), {
+      target: { value: 'gpt-4o-mini' },
+    });
+
+    await waitFor(() =>
+      expect(conversationsApi.update).toHaveBeenCalledWith('c1', {
+        model: 'gpt-4o-mini',
+      }),
+    );
+    // 会话头部小字同步回显,不用等 PATCH 回来
+    expect(screen.getByTestId('topbar-model')).toHaveTextContent('gpt-4o-mini');
+
+    typeAndSend('用备用模型再答一次');
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        '用备用模型再答一次',
+        'auto',
+        expect.anything(),
+        [],
+        undefined,
+        undefined,
+        'gpt-4o-mini',
+      ),
+    );
+  });
+
+  it('切回「默认模型」PATCH null', async () => {
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    await waitForModelOptions();
+
+    const select = screen.getByTestId('chat-model-select');
+    fireEvent.change(select, { target: { value: 'gpt-4o-mini' } });
+    await waitFor(() =>
+      expect(conversationsApi.update).toHaveBeenCalledWith('c1', {
+        model: 'gpt-4o-mini',
+      }),
+    );
+
+    fireEvent.change(select, { target: { value: '' } });
+    await waitFor(() =>
+      expect(conversationsApi.update).toHaveBeenLastCalledWith('c1', {
+        model: null,
+      }),
+    );
+  });
+
+  it('会话已有默认模型时选择器预选并回显到头部', async () => {
+    vi.mocked(conversationsApi.get).mockResolvedValue(
+      makeConversation({ model: 'gpt-4o-mini' }),
+    );
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-model-select')).toHaveValue(
+        'gpt-4o-mini',
+      ),
+    );
+    expect(screen.getByTestId('topbar-model')).toHaveTextContent('gpt-4o-mini');
+  });
+
+  it('新会话的模型先留在本地,建会话与首条消息都带上', async () => {
+    renderPage();
+    await screen.findByText('会话将保存在「默认工作区」中。');
+    await waitForModelOptions();
+
+    fireEvent.change(screen.getByTestId('chat-model-select'), {
+      target: { value: 'gpt-4o-mini' },
+    });
+    // 新会话没有 id:不 PATCH,等建会话时落库
+    expect(conversationsApi.update).not.toHaveBeenCalled();
+
+    typeAndSend('把本周日程整理成周报');
+    await waitFor(() =>
+      expect(conversationsApi.create).toHaveBeenCalledWith({
+        workspace_id: 'ws-1',
+        model: 'gpt-4o-mini',
+      }),
+    );
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenCalledWith(
+        'c-new',
+        '把本周日程整理成周报',
+        'auto',
+        expect.anything(),
+        [],
+        undefined,
+        undefined,
+        'gpt-4o-mini',
+      ),
+    );
   });
 });

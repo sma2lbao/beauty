@@ -8,6 +8,7 @@ from agent_orchestrator.api.v1 import (
     conversations,
     mcp,
     memory,
+    models,
     notifications,
     outbox,
     run_actions,
@@ -29,3 +30,4 @@ api_router.include_router(skills.router)
 api_router.include_router(mcp.router)
 api_router.include_router(approval_policies.router)
 api_router.include_router(memory.router)
+api_router.include_router(models.router)

@@ -39,6 +39,9 @@ def _settings(**overrides) -> Settings:
         "byok_enabled": True,
         "internal_secret": SECRET,
         "account_base_url": "http://account.test",
+        # 钉死模型配置:Nx 会注入项目 .env,避免白名单/fl备用链影响本文件语义
+        "available_models": [],
+        "fallback_models": [],
     }
     values.update(overrides)
     return build_settings(Settings, **values)

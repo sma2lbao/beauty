@@ -81,7 +81,9 @@ async def test_tools_expose_documents(library: DocumentLibrary) -> None:
     assert read["truncated"] is False
 
     missing_arg = json.loads(await registry.execute("read_document", "{}"))
-    assert "缺少 path" in missing_arg["error"]
+    # P1-G §6.5:执行前统一校验参数,错误文本来自 common.tools.validate_arguments
+    assert "工具参数无效" in missing_arg["error"]
+    assert "path" in missing_arg["error"]
 
     # 越界读取在工具层同样收敛为错误文本(不炸图)
     evil = json.loads(await registry.execute("read_document", '{"path": "../x.md"}'))

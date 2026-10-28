@@ -389,6 +389,18 @@ class AttachmentRepository(TenantRepository[Attachment]):
             order_by=[Attachment.created_at, Attachment.id],
         )
 
+    async def list_for_messages(
+        self, tenant_id: str, message_ids: list[str]
+    ) -> list[Attachment]:
+        """多条消息的附件,按 created_at 倒序(P1-G 多模态:最近的消息先取)。"""
+        if not message_ids:
+            return []
+        return await self.list_scoped(
+            tenant_id,
+            Attachment.message_id.in_(message_ids),
+            order_by=[Attachment.created_at.desc(), Attachment.id.desc()],
+        )
+
 
 class MessageRepository(TenantRepository[ChatMessage]):
     model = ChatMessage

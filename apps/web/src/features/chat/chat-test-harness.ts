@@ -165,6 +165,7 @@ export async function setupChatTest(): Promise<void> {
   const { skillsApi } = await import('@/lib/skills-api');
   const { workspaceApi } = await import('@/lib/workspace-api');
   const { runsApi } = await import('@/lib/runs-api');
+  const { modelsApi } = await import('@/lib/models-api');
 
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([workspace]);
   vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(workspace);
@@ -184,6 +185,18 @@ export async function setupChatTest(): Promise<void> {
     makeMcpServer({ id: 'mcp-legacy', name: '旧 server', enabled: false }),
   ]);
   vi.mocked(skillsApi.list).mockResolvedValue([]);
+  vi.mocked(modelsApi.listModels).mockResolvedValue({
+    default_model: 'deepseek-chat',
+    models: [
+      { id: 'deepseek-chat', owned_by: 'deepseek' },
+      { id: 'gpt-4o-mini', owned_by: 'openai' },
+    ],
+  });
+  // 切换模型走 PATCH;回显按 patch 合并,便于断言选择器/头部不抖动
+  vi.mocked(conversationsApi.update).mockImplementation(
+    async (conversationId, patch) =>
+      makeConversation({ id: conversationId, ...patch }),
+  );
   vi.mocked(runsApi.getPlan).mockResolvedValue({
     run_id: 'run-1',
     status: 'pending',
@@ -223,9 +236,12 @@ export async function setupChatTest(): Promise<void> {
 export function conversationsModuleMock() {
   return {
     conversationsApi: {
+      page: vi.fn(),
       list: vi.fn(),
       create: vi.fn(),
       get: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
       messages: vi.fn(),
       postMessage: vi.fn(),
       attachments: vi.fn(async () => []),
@@ -233,6 +249,24 @@ export function conversationsModuleMock() {
       downloadAttachment: vi.fn(),
     },
     streamMessage: vi.fn(),
+  };
+}
+
+/**
+ * 可选模型目录 mock(C1 §6.3):默认给两个模型,选择器用例据此断言选项与 PATCH 参数。
+ * 与 legacy insights `/api/models` 分开,故单独成型。
+ */
+export function modelsModuleMock() {
+  return {
+    modelsApi: {
+      listModels: vi.fn(async () => ({
+        default_model: 'deepseek-chat',
+        models: [
+          { id: 'deepseek-chat', owned_by: 'deepseek' },
+          { id: 'gpt-4o-mini', owned_by: 'openai' },
+        ],
+      })),
+    },
   };
 }
 

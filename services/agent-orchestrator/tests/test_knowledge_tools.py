@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
-from agent_orchestrator.services.tools import MAX_KNOWLEDGE_LIMIT, build_tools
+from agent_orchestrator.services.tools import build_tools
 from tests.conftest import (
     TENANT,
     FakeKnowledge,
@@ -42,10 +42,17 @@ async def test_search_knowledge_argument_guards() -> None:
     registry = build_tools("t-1", knowledge=knowledge)
 
     missing = json.loads(await registry.execute("search_knowledge", "{}"))
-    assert "缺少 query" in missing["error"]
+    # P1-G §6.5:执行前统一校验参数,错误文本来自 common.tools.validate_arguments
+    assert "工具参数无效" in missing["error"]
+    assert "query" in missing["error"]
 
-    await registry.execute("search_knowledge", '{"query": "x", "limit": 999}')
-    assert knowledge.queries[-1][2] == MAX_KNOWLEDGE_LIMIT  # 夹取到上限
+    # 超上限的参数在执行前被 JSON Schema 校验拦下(不再进 handler 夹取)
+    over_limit = json.loads(
+        await registry.execute("search_knowledge", '{"query": "x", "limit": 999}')
+    )
+    assert "工具参数无效" in over_limit["error"]
+    assert "limit" in over_limit["error"]
+    assert knowledge.queries == []  # 未调用 handler
 
 
 async def test_search_knowledge_error_fed_back() -> None:

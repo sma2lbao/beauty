@@ -25,3 +25,28 @@ def test_models_uses_configured_list() -> None:
     with TestClient(app) as test_client:
         body = test_client.get("/v1/models").json()
     assert [item["id"] for item in body["data"]] == ["deepseek/chat", "qwen/plus"]
+
+
+def test_models_whitelist_rejects_unknown_model() -> None:
+    """§3/A 白名单:列表非空时,不在列表内的模型在入口层直接 400。"""
+    from llm_gateway.core.config import Settings
+    from llm_gateway.main import create_app
+
+    app = create_app(
+        Settings(
+            env="dev",
+            available_models=["deepseek/chat"],
+            fallback_models=[],
+            _env_file=None,
+        )
+    )
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/v1/completions",
+            json={
+                "model": "openai/gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert response.status_code == 400
+    assert response.json()["code"] == "llm.model_not_allowed"

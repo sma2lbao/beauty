@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.tool_results import (
     is_tool_error,
     parse_tool_error,
@@ -68,12 +69,17 @@ async def prompt(
     *,
     reference_note: str = "",
     context: ChatPromptContext | None = None,
-) -> list[dict[str, str]]:
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
     """直接对话的完整消息序列:系统提示 + 摘要/历史 + 本轮。
 
     非流式与流式共用——两条路径的上下文口径因此不会漂。
     reference_note 是本次消息显式引用 MCP server 的约束片段(空则不追加);
     context 带上压缩摘要与记忆召回(空则退化为只带近期原文,保持旧行为)。
+
+    P1-G §7 多模态:本轮与历史轮次绑定的图片附件都转成 image_url parts,
+    张数/字节受 settings.llm_image_* 预算限制(最近的消息优先);没有图片时
+    content 仍是纯字符串,提示词形状与原来一致。
     """
     if context is None:
         rows = await MessageRepository(session).list_before(
@@ -93,14 +99,36 @@ async def prompt(
         system_prompt = f"{system_prompt}\n\n{memory_block}"
     if reference_note:
         system_prompt = f"{system_prompt}\n\n{reference_note}"
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    messages.extend(history.to_prompt(rows, summary=summary))
+    max_count, max_bytes, max_total = attachments_service.image_limits(
+        settings.llm_image_max_count if settings is not None else None,
+        settings.llm_image_max_bytes if settings is not None else None,
+        settings.llm_image_max_total_bytes if settings is not None else None,
+    )
+    # 当前消息在最前 + 近期历史(由近及远):预算先给最新的消息/图片
+    history_rows = history.recent(rows, limit=history.HISTORY_MESSAGES_LIMIT)
+    image_ids = [message.id, *(row.id for row in reversed(history_rows))]
+    images_by_message = await attachments_service.image_parts_by_message(
+        session,
+        message.tenant_id,
+        image_ids,
+        max_count=max_count,
+        max_bytes=max_bytes,
+        max_total_bytes=max_total,
+    )
+    raw_messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    raw_messages.extend(
+        history.to_prompt(rows, summary=summary, images_by_message=images_by_message)
+    )
     attachment_context = await attachments_service.context_for_message(
         session, message.tenant_id, message.id
     )
-    content = message.content + attachment_context
-    messages.append({"role": "user", "content": content})
-    return messages
+    text = message.content + attachment_context
+    current_images = images_by_message.get(message.id) or []
+    content: Any = (
+        [{"type": "text", "text": text}, *current_images] if current_images else text
+    )
+    raw_messages.append({"role": "user", "content": content})
+    return raw_messages
 
 
 def _tool_error(message: str) -> str:
@@ -239,14 +267,20 @@ async def answer(
     reference_note: str = "",
     policies: list[dict[str, str]] | None = None,
     context: ChatPromptContext | None = None,
+    settings: Settings | None = None,
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
     toolkit 为空(未配置工具)时行为与原先完全一致:单轮直答。
     context 为空时只带近期原文(旧行为);服务层会传入压缩摘要与记忆召回。
+    settings 非空时按其中的多模态预算注入图片附件(P1-G §7)。
     """
     messages = await prompt(
-        session, message, reference_note=reference_note, context=context
+        session,
+        message,
+        reference_note=reference_note,
+        context=context,
+        settings=settings,
     )
     if toolkit is None or len(toolkit) == 0:
         reply = await llm.complete(messages)

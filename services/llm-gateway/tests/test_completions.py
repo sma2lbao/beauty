@@ -461,7 +461,14 @@ def test_provider_credentials_passed_to_litellm(monkeypatch) -> None:
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
     app = create_app(
-        Settings(env="dev", api_key="sk-test", api_base="http://provider.local")
+        Settings(
+            _env_file=None,
+            env="dev",
+            api_key="sk-test",
+            api_base="http://provider.local",
+            available_models=[],
+            fallback_models=[],
+        )
     )
     with TestClient(app) as client:
         resp = client.post("/v1/completions", json=BODY)

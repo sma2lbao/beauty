@@ -31,7 +31,10 @@ def _fake_response() -> Any:
 
 
 def _settings(**overrides: Any) -> Settings:
-    return Settings(_env_file=None, env="dev", log_level="DEBUG", **overrides)
+    # 钉死模型白名单/备用链:Nx 注入的项目 .env 会让任意模型被 400 拒掉
+    values: dict[str, Any] = {"available_models": [], "fallback_models": []}
+    values.update(overrides)
+    return Settings(_env_file=None, env="dev", log_level="DEBUG", **values)
 
 
 def _run(monkeypatch, settings: Settings) -> list[dict[str, Any]]:

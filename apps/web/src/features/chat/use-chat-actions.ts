@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { conversationsApi } from '@/lib/conversations-api';
 import type { RunAnswerPayload } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { queryKeys } from '@/lib/query-keys';
@@ -39,15 +40,36 @@ export function useChatActions(activeRunId: string | null) {
     await action.mutateAsync(() => runsApi.answerRunQuestion(runId, body));
   };
 
+  /**
+   * 切换已有会话的默认模型(§6.3):PATCH `ConversationUpdate.model`,
+   * null 表示回到「默认模型」。成功后会话详情与列表都失效,头部/选择器随之更新;
+   * 白名单拒绝(400 `llm.model_not_allowed`)由 error 走页面错误条展示。
+   */
+  const modelMutation = useMutation({
+    mutationFn: (input: { conversationId: string; model: string | null }) =>
+      conversationsApi.update(input.conversationId, { model: input.model }),
+    onSuccess: async (_data, input) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.conversation(input.conversationId),
+        }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+      ]);
+    },
+  });
+  const updateModel = (conversationId: string, model: string | null) =>
+    modelMutation.mutate({ conversationId, model });
+
   return {
     busy: action.isPending,
-    error: action.error,
+    error: action.error ?? modelMutation.error,
     rejectReason,
     setRejectReason,
     approve,
     rejectPlan,
     confirmDanger,
     answerQuestion,
+    updateModel,
   };
 }
 

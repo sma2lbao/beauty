@@ -19,6 +19,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
 from agent_orchestrator.services import compaction, history
 from agent_orchestrator.services.compaction import CompactionResult
+from agent_orchestrator.services.llm_binding import model_for_conversation
 from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.run_quota import _enforce_quota
 from agent_orchestrator.services.skill_packages import SkillDefinition
@@ -90,12 +91,18 @@ async def create_run(
     await _enforce_quota(session, tenant_id)
     manifest = skill.manifest if skill else None
     workspace_id = data.workspace_id
-    if workspace_id is None and data.conversation_id:
+    # P1-G 模型快照:显式指定优先,否则继承所属会话的模型偏好;
+    # 二者都为空即"未指定"(执行走网关默认路由)。
+    model = data.model
+    if data.conversation_id and (workspace_id is None or model is None):
         conversation = await ConversationRepository(session).get_for_tenant(
             tenant_id, data.conversation_id
         )
         if conversation is not None:
-            workspace_id = conversation.workspace_id
+            if workspace_id is None:
+                workspace_id = conversation.workspace_id
+            if model is None:
+                model = model_for_conversation(conversation)
     run = Run(
         tenant_id=tenant_id,
         title=data.title,
@@ -115,6 +122,7 @@ async def create_run(
         skill_network=skill.network if skill else None,
         skill_timeout_seconds=skill.timeout_seconds if skill else None,
         mcp_server_ids=list(data.mcp_server_ids or []),
+        model=model,
     )
     await RunRepository(session).add(run)
     await append_event(

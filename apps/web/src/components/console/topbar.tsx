@@ -1,8 +1,8 @@
 /**
  * 工作台顶栏:面包屑 + 模型/运行状态 + 分享 + 头像。
  *
- * 对应设计稿《01 主控台》的 52px 顶栏。模型选择是只读展示:
- * 平台统一走 llm-gateway 路由,前端没有逐会话换模型的接口,不伪造下拉能力。
+ * 对应设计稿《01 主控台》的 52px 顶栏。模型 pill 原来是只读「默认模型」展示;
+ * C1 逐会话模型后改为优先显示当前会话模型(选择器在输入区,这里只做轻量回显)。
  */
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -18,7 +18,7 @@ import { siteUrl } from '@/lib/site-links';
 import { consoleButtonClass } from '@/components/console/button-class';
 import { Avatar, RunStatusPill } from '@/components/console/ui';
 import { accountLabel } from '@/lib/auth';
-import { insightsApi } from '@/lib/insights-api';
+import { modelsApi } from '@/lib/models-api';
 import { useUiStore } from '@/stores/ui-store';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
@@ -28,19 +28,22 @@ export function ConsoleTopbar({
   title,
   status,
   workspace,
+  model,
 }: {
   title: string;
   status?: RunStatus | null;
   /** 当前工作区名(数据层字段是 workspace_id):面包屑里落在「工作台」与会话标题之间 */
   workspace?: string | null;
+  /** 当前会话显式指定的模型;null/undefined = 未指定,显示平台默认模型 */
+  model?: string | null;
 }) {
   const accountQuery = useQuery({
     queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
   });
   const modelsQuery = useQuery({
-    queryKey: queryKeys.models,
-    queryFn: insightsApi.models,
+    queryKey: queryKeys.chatModels,
+    queryFn: modelsApi.listModels,
     retry: false,
     staleTime: 60_000,
   });
@@ -116,11 +119,14 @@ export function ConsoleTopbar({
           <PanelLeft aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
         <span
+          data-testid="topbar-model"
           className="hidden h-[30px] max-w-[260px] items-center gap-1.5 rounded-md border border-ha-border-strong bg-ha-panel-2 px-2.5 font-mono text-[12px] text-ha-text-2 sm:inline-flex"
           title={
-            modelsQuery.data
-              ? `默认模型:${modelsQuery.data.default_model};平台统一经 llm-gateway 路由`
-              : '平台统一经 llm-gateway 路由'
+            model
+              ? `当前会话模型:${model};本次对话的消息优先用它`
+              : modelsQuery.data?.default_model
+                ? `默认模型:${modelsQuery.data.default_model};平台统一经 llm-gateway 路由`
+                : '平台统一经 llm-gateway 路由'
           }
         >
           <Cpu
@@ -128,7 +134,7 @@ export function ConsoleTopbar({
             className="h-3.5 w-3.5 shrink-0 text-ha-muted"
           />
           <span className="truncate">
-            {modelsQuery.data?.default_model ?? '自动路由'}
+            {model ?? modelsQuery.data?.default_model ?? '自动路由'}
           </span>
         </span>
 

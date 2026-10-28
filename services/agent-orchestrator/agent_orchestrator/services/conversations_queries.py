@@ -201,6 +201,17 @@ async def rename_conversation(
     return conversation
 
 
+async def set_model(
+    session: AsyncSession, tenant_id: str, conversation_id: str, model: str | None
+) -> Conversation:
+    """设置会话级模型偏好(P1-G);None 保留原值(局部更新语义)。"""
+    conversation = await require_conversation(session, tenant_id, conversation_id)
+    if model is not None:
+        conversation.model = model
+        conversation.updated_at = datetime.now(UTC)
+    return conversation
+
+
 async def set_archived(
     session: AsyncSession, tenant_id: str, conversation_id: str, archived: bool
 ) -> Conversation:

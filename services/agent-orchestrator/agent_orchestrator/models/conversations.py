@@ -38,6 +38,9 @@ class Conversation(UUIDMixin, TenantMixin, TimestampMixin, Base):
     # 弱引用(同 runs.conversation_id 惯例):workspace-service 的实体不在本库,
     # 加不了跨服务外键;归属正确性由服务层在创建时保证。
     workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 会话级模型偏好(P1-G,见 docs/design/model-routing.md §4):非空时本会话的
+    # 直接对话与新建 run 默认用该模型;消息级显式指定优先于它。
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

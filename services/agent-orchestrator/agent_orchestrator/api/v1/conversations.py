@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
     get_artifact_store,
+    get_llm_client,
     get_session,
     get_settings,
     get_tenant_id,
@@ -45,6 +46,8 @@ from agent_orchestrator.schemas.tool_calls import (
 )
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import conversations as conversations_service
+from agent_orchestrator.services import models as models_service
+from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.workspace import Workspace
 
@@ -57,6 +60,7 @@ ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 SettingsDep = Annotated[Any, Depends(get_settings)]
 ToolClientDep = Annotated[ToolClient | None, Depends(get_tool_client)]
+LLMDep = Annotated[LLMClient | None, Depends(get_llm_client)]
 
 
 @router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
@@ -65,18 +69,23 @@ async def create_conversation(
     session: DBSession,
     tenant_id: TenantId,
     workspace: WorkspaceDep,
+    llm: LLMDep,
+    settings: SettingsDep,
 ) -> ConversationRead:
     """建对话:标题可空(首条消息自动定题)。
 
     工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),
     不给则落租户默认工作区——"对话必须在工作区中"由服务层兜底。
+    模型偏好(P1-G):不在可用列表时 400,不落库。
     """
     data = body or ConversationCreate()
+    await models_service.validate_model(data.model, llm=llm, settings=settings)
     conversation = await conversations_service.create_conversation(
         session,
         tenant_id,
         data.title,
         workspace_id=data.workspace_id,
+        model=data.model,
         workspace=workspace,
     )
     return ConversationRead.model_validate(conversation)
@@ -121,11 +130,19 @@ async def update_conversation(
     body: ConversationUpdate,
     session: DBSession,
     tenant_id: TenantId,
+    llm: LLMDep,
+    settings: SettingsDep,
 ) -> ConversationRead:
-    """局部更新会话:重命名 / 归档 / 取消归档(至少给一项)。"""
-    if body.title is None and body.archived is None:
+    """局部更新会话:重命名 / 归档 / 设置模型(至少给一项)。"""
+    if body.title is None and body.archived is None and body.model is None:
         raise AppError("conversation.empty_update", "没有可更新的字段")
     conversation = None
+    if body.model is not None:
+        # 先校验再落库:非法模型不留半改状态(P1-G §6.3)
+        await models_service.validate_model(body.model, llm=llm, settings=settings)
+        conversation = await conversations_service.set_model(
+            session, tenant_id, conversation_id, body.model
+        )
     if body.title is not None:
         conversation = await conversations_service.rename_conversation(
             session, tenant_id, conversation_id, body.title
@@ -160,6 +177,7 @@ async def get_conversation(
         id=conversation.id,
         title=conversation.title,
         workspace_id=conversation.workspace_id,
+        model=conversation.model,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
         active_run_id=active.id if active else None,

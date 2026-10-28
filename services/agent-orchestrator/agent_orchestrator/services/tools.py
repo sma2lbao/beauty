@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from common.tools import validate_arguments
+
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import Knowledge
 
@@ -182,6 +184,11 @@ class ToolRegistry:
             return _error(f"工具参数不是合法 JSON:{exc}")
         if not isinstance(args, dict):
             return _error("工具参数必须是 JSON 对象")
+        # P1-G §6.5:执行前按 spec 的 JSON Schema 校验模型给的参数;
+        # 校验失败只回喂模型(不调 handler),不让坏参数炸进工具实现。
+        problems = validate_arguments(spec.parameters, args)
+        if problems:
+            return _error(f"工具参数无效: {problems[0].message}")
         try:
             return await spec.handler(args)
         except Exception as exc:

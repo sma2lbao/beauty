@@ -38,6 +38,12 @@ vi.mock('@/lib/conversations-api', () => ({
   streamMessage: vi.fn(),
 }));
 
+vi.mock('@/lib/models-api', () => ({
+  modelsApi: {
+    listModels: vi.fn(async () => ({ default_model: null, models: [] })),
+  },
+}));
+
 vi.mock('@/lib/runs-api', async () => {
   const actual =
     await vi.importActual<typeof import('@/lib/runs-api')>('@/lib/runs-api');

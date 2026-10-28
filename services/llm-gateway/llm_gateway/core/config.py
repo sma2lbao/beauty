@@ -21,7 +21,13 @@ class Settings(BaseAppSettings):
     default_model: str = "deepseek/deepseek-chat"  # litellm 路由格式 provider/model(§9)
     # 模型列表(M0-11 静态配置):留空时只返回 default_model
     available_models: list[str] = []
+    # 备用模型链(model-routing §5.3):主模型遇到限流/超时/5xx 时按序切换;
+    # 留空 = 关闭 fallback(主模型失败直接 502)
+    fallback_models: list[str] = []
     request_timeout_seconds: float = 60.0
+    # 多模态限制(§5.1):单次请求图片张数与单图 data URL 长度
+    max_images_per_request: int = 8
+    max_image_data_chars: int = 8_000_000
     # 提供商凭据:显式传给 litellm(不依赖 os.environ 注入)
     api_key: str = ""
     api_base: str = ""

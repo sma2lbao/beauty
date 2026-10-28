@@ -5,6 +5,8 @@
 - `llm_upstream_errors_total{service,provider,code}`:上游错误计数;
 - `llm_tokens_total{service,model,direction}`:token 用量(input/output);
 - `llm_request_duration_seconds{service,provider,model}`:调用耗时(含上游排队);
+- `llm_fallbacks_total{service,from_provider,to_provider,code}`:fallback 切换计数
+  (model-routing §5.3);
 - `llm_byok_lookups_total{service,status}`:BYOK 密钥解析计数
   (status=disabled/negative/error/byok/cache_hit)。
 
@@ -37,6 +39,16 @@ llm_byok_lookups_total = Counter(
     "BYOK 密钥解析计数(按结果状态)",
     ("service", "status"),
 )
+llm_fallbacks_total = Counter(
+    "llm_fallbacks_total",
+    "模型 fallback 切换计数",
+    ("service", "from_provider", "to_provider", "code"),
+)
+
+
+def _provider(model: str) -> str:
+    """litellm 模型串的 provider 前缀(``deepseek/deepseek-chat`` → ``deepseek``)。"""
+    return str(model).split("/", 1)[0] or "unknown"
 
 
 def observe_llm_error(*, provider: str, code: str, service: str | None = None) -> None:
@@ -86,3 +98,19 @@ def observe_llm_latency(
         provider=provider or "unknown",
         model=model or "unknown",
     ).observe(max(seconds, 0.0))
+
+
+def observe_llm_fallback(
+    *,
+    from_model: str,
+    to_model: str,
+    code: str,
+    service: str | None = None,
+) -> None:
+    """记录一次 fallback 切换:主模型临时故障后换到备用模型。"""
+    llm_fallbacks_total.labels(
+        service=service_label(service),
+        from_provider=_provider(from_model),
+        to_provider=_provider(to_model),
+        code=code or "unknown",
+    ).inc()

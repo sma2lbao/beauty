@@ -124,6 +124,7 @@ async def _task_path(
     compaction: CompactionResult | None = None,
     settings: Settings | None = None,
     context_pipeline: ContextPipeline | None = None,
+    model: str | None = None,
 ) -> tuple[Run, str]:
     """任务路径:并入进行中的 run 的追加指令,或新开一跑并立即规划。
 
@@ -151,6 +152,8 @@ async def _task_path(
             workspace_id=conversation.workspace_id,
             skill_id=skill.manifest.id if skill else None,
             mcp_server_ids=list(mcp_server_ids or []),
+            # 消息级模型覆盖(P1-G);为空时 create_run 会继承会话模型
+            model=model,
         ),
         skill=skill,
         compaction=compaction,

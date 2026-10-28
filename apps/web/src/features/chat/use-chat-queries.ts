@@ -6,6 +6,7 @@ import { useRunEvents } from '@/components/runs/use-run-events';
 import type { Attachment, ChatMessage } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
 import { mcpApi } from '@/lib/mcp-api';
+import { modelsApi } from '@/lib/models-api';
 import type { Plan, Run, RunStatus } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { skillsApi } from '@/lib/skills-api';
@@ -62,6 +63,14 @@ export function useChatQueries(activeConversationId: string | null) {
     queryKey: queryKeys.mcpServers,
     queryFn: mcpApi.list,
     retry: false,
+  });
+  // 可选模型目录(C1 §6.3):只读展示,选择器与顶栏共用同一份缓存;
+  // 拉取失败不阻塞对话(退化成只有「默认模型」一项),所以不进 queryError。
+  const modelsQuery = useQuery({
+    queryKey: queryKeys.chatModels,
+    queryFn: modelsApi.listModels,
+    retry: false,
+    staleTime: 60_000,
   });
   const conversations = conversationsQuery.data ?? [];
   // 选择器只列启用的 server;历史消息/URL 里可能引用已停用的 id,用全量列表展示名字
@@ -274,6 +283,8 @@ export function useChatQueries(activeConversationId: string | null) {
     selectWorkspace,
     conversations,
     skills: skillsQuery.data ?? [],
+    models: modelsQuery.data?.models ?? [],
+    defaultModel: modelsQuery.data?.default_model ?? null,
     mcpServers,
     enabledMcpServers,
     mcpServerName,

@@ -236,6 +236,14 @@ export function RunDetail({
               {RUN_STATUS_LABELS[status]}
               {run && run.rounds > 0 ? ' · 第 ' + run.rounds + ' 轮' : ''}
             </span>
+            {run?.model ? (
+              <span
+                className="font-mono text-[11px] text-ha-muted"
+                data-testid="run-model"
+              >
+                模型 {run.model}
+              </span>
+            ) : null}
             <span className="ml-auto font-mono text-[11px] text-ha-faint">
               {relativeTime(run?.created_at)}
             </span>

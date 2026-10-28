@@ -28,6 +28,11 @@ export type Conversation = {
   active_run_id?: string | null;
   /** 归档时间;null/未返回表示未归档 */
   archived_at?: string | null;
+  /**
+   * 会话默认模型(C1 模型路由 §6.3):null/未返回表示不指定,由网关默认路由。
+   * 单条消息还能用 `MessageCreate.model` 临时覆盖(优先级更高)。
+   */
+  model?: string | null;
 };
 
 export type ConversationPage = {
@@ -121,7 +126,7 @@ export const conversationsApi = {
     (await conversationsApi.page(params)).items,
   update: (
     conversationId: string,
-    patch: { title?: string; archived?: boolean },
+    patch: { title?: string; archived?: boolean; model?: string | null },
   ) =>
     http.request<Conversation>(`/api/v1/conversations/${conversationId}`, {
       method: 'PATCH',
@@ -134,12 +139,21 @@ export const conversationsApi = {
   /**
    * 建会话:workspace_id 决定会话归属(不传由服务端落租户默认工作区);
    * title 留空则等首条消息自动定题。空调用仍发 `{}`,保持旧契约。
+   * 新会话在输入区选的模型随建会话一并落库(§6.3 `ConversationCreate.model`)。
    */
-  create: (input: { title?: string; workspace_id?: string | null } = {}) => {
-    const body: { title?: string; workspace_id?: string } = {};
+  create: (
+    input: {
+      title?: string;
+      workspace_id?: string | null;
+      model?: string | null;
+    } = {},
+  ) => {
+    const body: { title?: string; workspace_id?: string; model?: string } = {};
     const title = input.title?.trim();
     if (title) body.title = title;
     if (input.workspace_id) body.workspace_id = input.workspace_id;
+    // 只在显式选了模型时才带;默认模型不落键,保持旧请求体形状
+    if (input.model) body.model = input.model;
     return http.request<Conversation>('/api/v1/conversations', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -158,6 +172,7 @@ export const conversationsApi = {
     attachmentIds: string[] = [],
     skillId?: string,
     mcpServerIds: string[] = [],
+    model?: string,
   ) =>
     http.request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
@@ -170,6 +185,8 @@ export const conversationsApi = {
           skill_id: skillId,
           // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
           mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
+          // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
+          model: model ?? undefined,
         }),
       },
     ),
@@ -268,6 +285,7 @@ export function parseSseFrame(
  *
  * 开流前的错误(404/409/422)仍是统一错误契约,直接抛 ApiError;
  * 开流后的失败由后端发 error 帧,走 onError(HTTP 已是 200,改不了)。
+ * `model` 是本轮临时覆盖(§6.3 优先级高于会话默认),默认不传。
  */
 export async function streamMessage(
   conversationId: string,
@@ -277,6 +295,7 @@ export async function streamMessage(
   attachmentIds: string[] = [],
   skillId?: string,
   mcpServerIds: string[] = [],
+  model?: string,
 ): Promise<void> {
   await connectSse(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
@@ -289,6 +308,8 @@ export async function streamMessage(
         skill_id: skillId,
         // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
         mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
+        // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
+        model: model ?? undefined,
       }),
       signal: handlers.signal,
       mapError: async (response) => {

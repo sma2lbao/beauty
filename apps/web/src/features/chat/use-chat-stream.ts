@@ -36,6 +36,11 @@ type UseChatStreamOptions = {
   sendMode: SendMode;
   selectedSkill: string;
   selectedMcp: string;
+  /**
+   * 本轮使用的模型(C1 §6.3):空串 = 默认模型,不往请求里带,
+   * 沿用会话默认/网关默认;非空时随建会话与流式消息一起带上。
+   */
+  selectedModel: string;
   mcpServerName: (id: string) => string;
   /** 失效会话消息/附件/会话列表(由数据层提供)。 */
   settleConversation: (conversationId: string) => Promise<void>;
@@ -52,6 +57,7 @@ export function useChatStream({
   sendMode,
   selectedSkill,
   selectedMcp,
+  selectedModel,
   mcpServerName,
   settleConversation,
   setManualRun,
@@ -171,6 +177,8 @@ export function useChatStream({
       if (!conversationId) {
         const created = await conversationsApi.create({
           workspace_id: activeWorkspaceId,
+          // 新会话:把输入区选的模型随建会话落库;默认模型不落键
+          model: selectedModel || undefined,
         });
         conversationId = created.id;
         // 新会话 id 由下方 effect 写进 URL(单点负责,避免与工作区写回互相覆盖)
@@ -232,35 +240,27 @@ export function useChatStream({
       const attachmentIds = selectedAttachments.map(
         (attachment) => attachment.id,
       );
-      // 不选的项照旧不传参数,保证原有调用形状(skill 为空、无 MCP 时只有 5 个参数)
-      if (mcpServerIds.length) {
-        await streamMessage(
-          targetConversationId,
-          text,
-          sendMode,
-          streamHandlers,
-          attachmentIds,
+      // 不选的项照旧不传参数,保证原有调用形状(skill 为空、无 MCP 时只有 5 个参数)。
+      // 选了模型才把实参补到第 8 位,既有调用形状不变(测试按实参个数断言)。
+      const streamArgs: Parameters<typeof streamMessage> = [
+        targetConversationId,
+        text,
+        sendMode,
+        streamHandlers,
+        attachmentIds,
+      ];
+      if (selectedModel) {
+        streamArgs.push(
           selectedSkill || undefined,
-          mcpServerIds,
+          mcpServerIds.length ? mcpServerIds : undefined,
+          selectedModel,
         );
+      } else if (mcpServerIds.length) {
+        streamArgs.push(selectedSkill || undefined, mcpServerIds);
       } else if (selectedSkill) {
-        await streamMessage(
-          targetConversationId,
-          text,
-          sendMode,
-          streamHandlers,
-          attachmentIds,
-          selectedSkill,
-        );
-      } else {
-        await streamMessage(
-          targetConversationId,
-          text,
-          sendMode,
-          streamHandlers,
-          attachmentIds,
-        );
+        streamArgs.push(selectedSkill);
       }
+      await streamMessage(...streamArgs);
     } catch (failure) {
       if ((failure as Error)?.name !== 'AbortError') {
         const error =

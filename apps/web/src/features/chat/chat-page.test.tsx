@@ -33,6 +33,9 @@ vi.mock('@/lib/workspace-api', async () =>
 vi.mock('@/lib/runs-api', async () =>
   (await import('./chat-test-harness')).runsModuleMock(),
 );
+vi.mock('@/lib/models-api', async () =>
+  (await import('./chat-test-harness')).modelsModuleMock(),
+);
 vi.mock('@/components/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
 );

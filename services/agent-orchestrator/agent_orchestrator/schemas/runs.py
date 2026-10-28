@@ -40,6 +40,8 @@ class RunCreate(BaseModel):
     skill_id: str | None = Field(default=None, max_length=80)
     # 显式引用的 MCP server:非空时只装配这些 server 的工具(空 = 全部已启用)
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
+    # 模型路由(P1-G):不传则从所属对话继承,再没有就走网关默认路由
+    model: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class RunRead(BaseModel):
@@ -61,6 +63,8 @@ class RunRead(BaseModel):
     workspace_id: str | None = None
     skill_id: str | None = None
     mcp_server_ids: list[str] = Field(default_factory=list)
+    # 模型路由快照(P1-G):为空表示建 run 时未指定(执行走网关默认)
+    model: str | None = None
     created_at: datetime
 
 

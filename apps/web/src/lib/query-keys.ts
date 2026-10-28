@@ -85,6 +85,12 @@ export const queryKeys = {
 
   /** 模型与用量域。 */
   models: ['models'] as const,
+  /**
+   * 对话可选模型目录(P1-G):`GET /api/v1/models` 的投影。
+   * 与 legacy `models`(insightsApi 的 `/api/models`,响应形状不同)分开建键,
+   * 避免两条 queryFn 共用同一缓存键互相覆盖。
+   */
+  chatModels: ['chat-models'] as const,
   usageSummary: ['usage-summary'] as const,
   apiKeys: ['api-keys'] as const,
 

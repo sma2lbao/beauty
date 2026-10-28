@@ -19,6 +19,8 @@ class ConversationCreate(BaseModel):
 
     title: str | None = Field(default=None, max_length=200)
     workspace_id: str | None = Field(default=None, max_length=32)
+    # 会话级模型偏好(P1-G):消息级显式指定优先于它,都为空走网关默认
+    model: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class ConversationRead(BaseModel):
@@ -27,6 +29,7 @@ class ConversationRead(BaseModel):
     id: str
     title: str
     workspace_id: str | None = None
+    model: str | None = None
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
@@ -44,6 +47,8 @@ class ConversationUpdate(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     archived: bool | None = None
+    # 模型偏好:显式给出才更新(None = 不改);空串非法(用 message 级覆盖)
+    model: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class ConversationDetail(ConversationRead):
@@ -83,6 +88,8 @@ class MessageCreate(BaseModel):
     mode: Literal["auto", "chat", "task"] = "auto"
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
     skill_id: str | None = Field(default=None, max_length=80)
+    # 本条消息的模型覆盖(P1-G):优先级 message > conversation > 网关默认
+    model: str | None = Field(default=None, min_length=1, max_length=120)
     # 显式引用的 MCP server(最多 10 个):非空时本次只装配这些 server 的工具
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
 

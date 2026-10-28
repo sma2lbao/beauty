@@ -14,11 +14,14 @@ export type ChatComposerProps = {
   onSkillChange: (skillId: string) => void;
   selectedMcp: string;
   onMcpChange: (serverId: string) => void;
+  /** 本轮使用的模型 id;空串 = 默认模型(不指定,由网关路由)。 */
+  selectedModel: string;
+  onModelChange: (modelId: string) => void;
   activeConversationId: string | null;
 };
 
 /**
- * 输入区:附件、发送方式/技能/MCP 选择与发送按钮。
+ * 输入区:模型、发送方式/技能/MCP 选择与发送按钮。
  * 只负责表单呈现,上传/发送逻辑由上层 hook 提供。
  */
 export function ChatComposer({
@@ -30,6 +33,8 @@ export function ChatComposer({
   onSkillChange,
   selectedMcp,
   onMcpChange,
+  selectedModel,
+  onModelChange,
   activeConversationId,
 }: ChatComposerProps) {
   const {
@@ -46,7 +51,14 @@ export function ChatComposer({
     submit,
     stop,
   } = stream;
-  const { skills, enabledMcpServers, mcpServerName, inFlight } = queries;
+  const {
+    skills,
+    models,
+    defaultModel,
+    enabledMcpServers,
+    mcpServerName,
+    inFlight,
+  } = queries;
   return (
     <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
       <form
@@ -108,7 +120,7 @@ export function ChatComposer({
           className="block w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-6 text-ha-text-body outline-none placeholder:text-ha-dim"
         />
         <div className="mt-2 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -133,6 +145,35 @@ export function ChatComposer({
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
+            <label
+              htmlFor="chat-model"
+              className="font-mono text-[11px] text-ha-faint"
+            >
+              模型
+            </label>
+            <select
+              id="chat-model"
+              data-testid="chat-model-select"
+              aria-label="选择模型"
+              title="本次对话使用的模型;默认模型由平台按网关配置路由"
+              value={selectedModel}
+              onChange={(event) => onModelChange(event.target.value)}
+              className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
+            >
+              <option value="">
+                默认模型{defaultModel ? `（${defaultModel}）` : ''}
+              </option>
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.id}
+                </option>
+              ))}
+              {/* 会话里存了已下线的模型(不在清单里):补兜底项,避免 value 失配 */}
+              {selectedModel &&
+              !models.some((model) => model.id === selectedModel) ? (
+                <option value={selectedModel}>{selectedModel}</option>
+              ) : null}
+            </select>
             <label
               htmlFor="send-mode"
               className="font-mono text-[11px] text-ha-faint"

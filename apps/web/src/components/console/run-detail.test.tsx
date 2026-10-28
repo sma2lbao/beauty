@@ -427,4 +427,23 @@ describe('RunDetail', () => {
     });
     expect(screen.queryByTestId('run-parent-subagent')).toBeNull();
   });
+
+  it('run 有模型快照时在状态行展示「模型 <name>」', async () => {
+    renderDetail('running', vi.fn(), [], [], [], {
+      run: { model: 'deepseek-chat' },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('run-model')).toHaveTextContent(
+        '模型 deepseek-chat',
+      );
+    });
+  });
+
+  it('未指定模型(网关默认路由)时不渲染模型行', async () => {
+    renderDetail('running');
+    await waitFor(() => {
+      expect(screen.getByText('修登录超时 bug')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('run-model')).toBeNull();
+  });
 });

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -23,6 +24,86 @@ from agent_orchestrator.services import usage as usage_service
 
 # 可重试状态:P0-7 语义是"上游临时故障",429 限流 + 5xx 网关/上游故障
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: 网关回退跳 message 的截断长度(见 docs/design/model-routing.md §5)
+FALLBACK_MESSAGE_CHARS = 500
+
+#: 模型路由(P1-G §6.1):调用链级模型偏好。由服务层入口(run 执行/对话)绑定,
+#: GatewayClient 取模型的顺序是"调用参数 > 构造配置 > 本 contextvar"。
+_model_var: ContextVar[str | None] = ContextVar("llm_model", default=None)
+
+
+def bind_model(model: str | None) -> Token[str | None]:
+    """绑定本次调用链的模型(返回 token,出栈时用 reset_model 还原)。"""
+    return _model_var.set(model)
+
+
+def reset_model(token: Token[str | None]) -> None:
+    """还原调用链模型绑定(与 bind_model 成对)。"""
+    _model_var.reset(token)
+
+
+def current_model() -> str | None:
+    """当前调用链绑定的模型;未绑定为 None(走网关默认路由)。"""
+    return _model_var.get()
+
+
+@dataclass(frozen=True)
+class FallbackHop:
+    """网关的一次模型回退跳(原模型 → 实际模型,带原因)。"""
+
+    from_model: str
+    to_model: str
+    code: str = ""
+    message: str = ""
+
+
+FallbackObserver = Callable[[tuple[FallbackHop, ...]], Awaitable[None]]
+
+_fallback_observer: ContextVar[FallbackObserver | None] = ContextVar(
+    "llm_fallback_observer", default=None
+)
+
+
+def bind_fallback_observer(
+    observer: FallbackObserver | None,
+) -> Token[FallbackObserver | None]:
+    """绑定回退观察者(run 落事件 / 对话记日志);退出时 reset。"""
+    return _fallback_observer.set(observer)
+
+
+def reset_fallback_observer(token: Token[FallbackObserver | None]) -> None:
+    _fallback_observer.reset(token)
+
+
+def parse_fallbacks(raw: Any) -> tuple[FallbackHop, ...]:
+    """网关 fallbacks 数组 → FallbackHop 元组(未切换时为空)。"""
+    if not isinstance(raw, list):
+        return ()
+    hops: list[FallbackHop] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        hops.append(
+            FallbackHop(
+                from_model=str(item.get("from_model") or ""),
+                to_model=str(item.get("to_model") or ""),
+                code=str(item.get("code") or ""),
+                message=str(item.get("message") or "")[:FALLBACK_MESSAGE_CHARS],
+            )
+        )
+    return tuple(hops)
+
+
+async def notify_fallbacks(raw: Any) -> tuple[FallbackHop, ...]:
+    """响应/收尾帧里的 fallbacks 交给当前观察者(无观察者时静默)。"""
+    hops = parse_fallbacks(raw)
+    if not hops:
+        return ()
+    observer = _fallback_observer.get()
+    if observer is not None:
+        await observer(hops)
+    return hops
 
 
 @dataclass(frozen=True)
@@ -77,6 +158,7 @@ class LLMClient(Protocol):
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMReply: ...
 
     def stream(
@@ -85,6 +167,7 @@ class LLMClient(Protocol):
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]: ...
 
     async def stream_events(
@@ -93,6 +176,7 @@ class LLMClient(Protocol):
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]: ...
 
 
@@ -202,18 +286,46 @@ class GatewayClient:
         )
         await asyncio.sleep(self.retry_backoff_seconds * (2**attempt))
 
+    def _chosen_model(self, model: str | None) -> str | None:
+        """取模型:调用参数 > 调用链绑定(P1-G §6.1)> 构造配置(LLM_MODEL)。
+
+        绑定优先于构造配置:run/会话级选择必须能覆盖部署时的 LLM_MODEL,
+        否则 dev(.env 里已填 LLM_MODEL)就永远选不到别的模型;只有调用链
+        没绑定(P1-G 之外的调用方)时才回落到构造配置。
+        """
+        return model or current_model() or self.model
+
+    @staticmethod
+    def _payload(
+        messages: list[dict[str, Any]],
+        *,
+        chosen: str | None,
+        tools: list[dict[str, Any]] | None,
+        response_format: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """请求体:模型为空时不带 model 键(交网关默认路由)。"""
+        payload: dict[str, Any] = {"messages": messages}
+        if chosen:
+            payload["model"] = chosen
+        if tools:
+            payload["tools"] = tools
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return payload
+
     async def complete(
         self,
         messages: list[dict[str, Any]],
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMReply:
-        chosen = model or self.model
+        chosen = self._chosen_model(model)
         log = get_logger("agent_orchestrator.llm")
-        payload: dict[str, Any] = {"model": chosen, "messages": messages}
-        if tools:
-            payload["tools"] = tools
+        payload = self._payload(
+            messages, chosen=chosen, tools=tools, response_format=response_format
+        )
         attempt = 0
         while True:
             try:
@@ -243,6 +355,8 @@ class GatewayClient:
                 )
             break
         data = resp.json()
+        # P1-G §6.2:网关发生模型回退时把跳数交给观察者(run 落事件/对话记日志)
+        await notify_fallbacks(data.get("fallbacks"))
         calls = _parse_tool_calls(data.get("tool_calls"))
         # P0-1 用量闭环:网关回传的 usage 记进当前采集器(无采集器时 no-op)
         usage_service.record(
@@ -263,6 +377,7 @@ class GatewayClient:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """流式调用:逐段产出正文增量,收尾片里的工具调用单独成一个事件。
 
@@ -276,11 +391,11 @@ class GatewayClient:
 
         重试只在"开流前":一旦已经吐出增量,重发会拼出重复正文,故绝不重试。
         """
-        chosen = model or self.model
+        chosen = self._chosen_model(model)
         log = get_logger("agent_orchestrator.llm")
-        payload: dict[str, Any] = {"model": chosen, "messages": messages}
-        if tools:
-            payload["tools"] = tools
+        payload = self._payload(
+            messages, chosen=chosen, tools=tools, response_format=response_format
+        )
         chunks: list[str] = []
         calls: tuple[ToolCall, ...] = ()
         usage_sample: usage_service.UsageSample | None = None
@@ -321,7 +436,8 @@ class GatewayClient:
                                     str(error.get("message") or "模型流式调用失败"),
                                 )
                             if data.get("done"):
-                                # done 片:usage 与 tool_calls 都只在这里出现一次
+                                # done 片:usage/tool_calls/fallbacks 都只在这里出现一次
+                                await notify_fallbacks(data.get("fallbacks"))
                                 if data.get("usage"):
                                     usage_sample = _parse_usage(
                                         data.get("usage"), data.get("model") or chosen
@@ -361,11 +477,46 @@ class GatewayClient:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         """流式调用(只要正文):stream_events 的薄包装,现有调用方零改动。"""
-        async for event in self.stream_events(messages, model=model, tools=tools):
+        async for event in self.stream_events(
+            messages, model=model, tools=tools, response_format=response_format
+        ):
             if event.text:
                 yield event.text
+
+    async def list_models(self) -> list[dict[str, str]] | None:
+        """网关可用模型(P1-G):失败/不可达/形状不对返回 None(调用方回退配置)。
+
+        llm-gateway GET /v1/models 的形状是
+        {"default_model": ..., "data": [{"id", "owned_by", ...}]};这里只投影
+        路由需要的两列,不把网关的 DTO 泄漏到 API 层。
+        """
+        try:
+            resp = await self._client.get("/v1/models")
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        raw = data.get("data") if isinstance(data, dict) else data
+        if not isinstance(raw, list):
+            return None
+        models: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            if not model_id:
+                continue
+            models.append(
+                {
+                    "id": str(model_id),
+                    "owned_by": str(item.get("owned_by") or "beauty-moon"),
+                }
+            )
+        return models
 
     async def aclose(self) -> None:
         await self._client.aclose()

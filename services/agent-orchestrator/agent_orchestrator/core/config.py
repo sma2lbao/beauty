@@ -108,6 +108,15 @@ class Settings(BaseAppSettings):
     # 流式只在"开流前"重试——增量一旦发出,重发会拼出重复正文。
     llm_retry_attempts: int = 2
     llm_retry_backoff_seconds: float = 1.5
+    # P1-G 模型路由(见 docs/design/model-routing.md):GET /v1/models 的可用模型
+    # 60s 缓存 TTL;网关不可达时回退 LLM_AVAILABLE_MODELS(空 = 不校验模型白名单)。
+    llm_models_cache_seconds: float = 60.0
+    llm_available_models: list[str] = []  # 网关不可达时的白名单回退(空 = 不校验)
+    # P1-G 多模态:直接对话把用户消息里绑定的图片附件以 data URL 注入模型输入。
+    # 张数与字节双上限(单张 + 合计),超限从最近往前截断,避免一次请求撑爆网关。
+    llm_image_max_count: int = 4
+    llm_image_max_bytes: int = 5_242_880
+    llm_image_max_total_bytes: int = 10_485_760
     # P0-3 token 预算:单次执行(plan 或 approve 的一次图调用)允许的最大模型用量,
     # 0 = 不限制。用尽时该次执行 failed(可在新 run 里续做)。
     run_token_budget: int = 0

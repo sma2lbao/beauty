@@ -27,8 +27,11 @@ class UsageLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMReply:
-        reply = await self.inner.complete(messages, model=model, tools=tools)
+        reply = await self.inner.complete(
+            messages, model=model, tools=tools, response_format=response_format
+        )
         self._record()
         return reply
 
@@ -38,8 +41,11 @@ class UsageLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
-        reply = await self.inner.complete(messages, model=model, tools=tools)
+        reply = await self.inner.complete(
+            messages, model=model, tools=tools, response_format=response_format
+        )
         self._record()
         for char in reply.content:
             yield char

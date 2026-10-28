@@ -119,8 +119,15 @@ from agent_orchestrator.services.conversations_queries import (
 from agent_orchestrator.services.conversations_queries import (
     set_archived as set_archived,
 )
+from agent_orchestrator.services.conversations_queries import (
+    set_model as set_model,
+)
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient, UpstreamError
+from agent_orchestrator.services.llm_binding import (
+    bind_dialogue_llm,
+    model_for_conversation,
+)
 from agent_orchestrator.services.skill_packages import SkillDefinition
 from agent_orchestrator.services.tool_context import (
     ToolContext,
@@ -318,14 +325,19 @@ async def create_conversation(
     title: str | None = None,
     *,
     workspace_id: str | None = None,
+    model: str | None = None,
     workspace: Workspace | None = None,
 ) -> Conversation:
-    """建对话:标题可空;workspace_id 显式给就校验,不给落租户默认工作区。"""
+    """建对话:标题可空;workspace_id 显式给就校验,不给落租户默认工作区。
+
+    model 是会话级模型偏好(P1-G):为空即"未指定",消息/run 走网关默认。
+    """
     resolved = await resolve_workspace_id(workspace, tenant_id, workspace_id)
     conversation = Conversation(
         tenant_id=tenant_id,
         title=title or DEFAULT_TITLE,
         workspace_id=resolved,
+        model=model,
     )
     await ConversationRepository(session).add(conversation)
     return conversation
@@ -353,6 +365,7 @@ async def post_message(
     max_download_files: int = 10,
     settings: Settings | None = None,
     context_pipeline: ContextPipeline | None = None,
+    model: str | None = None,
 ) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
     """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
 
@@ -365,6 +378,9 @@ async def post_message(
 
     context_pipeline 非空时透传给建 run 的路径:起图那一刻按策略快照上下文
     (AGENTS.md/技能卡片/记忆),chat 路径用不到(它自己拼多轮上下文)。
+
+    model 是本次消息的模型覆盖(P1-G):优先级 message > conversation > 网关默认;
+    chat 分支的模型调用(triage/压缩/直答)与新建 run 的快照都用它。
     """
     conversation = await require_conversation(session, tenant_id, conversation_id)
     message = await _persist_user_message(
@@ -384,18 +400,31 @@ async def post_message(
         attachment_context = await attachments_service.context_for_message(
             session, tenant_id, message.id
         )
-    decided = await triage.decide(content, llm, mode=mode)
+    resolved_model = model or model_for_conversation(conversation)
+    with bind_dialogue_llm(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        model=resolved_model,
+    ):
+        decided = await triage.decide(content, llm, mode=mode)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
         # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用);
         # mcp_server_ids 让外部工具工厂只装配被引用的 server
-        with bind_tool_context(
-            ToolContext(
+        with (
+            bind_dialogue_llm(
                 tenant_id=tenant_id,
                 conversation_id=conversation_id,
-                workspace_id=conversation.workspace_id,
-                mcp_server_ids=tuple(mcp_server_ids or ()),
-            )
+                model=resolved_model,
+            ),
+            bind_tool_context(
+                ToolContext(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    mcp_server_ids=tuple(mcp_server_ids or ()),
+                )
+            ),
         ):
             toolkit = await _toolkit_for(
                 toolkit_factory, extras_factory, tenant_id, read_only=True
@@ -412,6 +441,7 @@ async def post_message(
                 reference_note=mcp_reference_note,
                 policies=policies,
                 context=context,
+                settings=settings,
             )
         reply = await _persist_assistant_message(session, message, answer)
         # 有会话边界时推迟到提交后抽取(响应不等二次模型调用);服务层直调
@@ -453,6 +483,7 @@ async def post_message(
         compaction=compaction_result,
         settings=settings,
         context_pipeline=context_pipeline,
+        model=model,
     )
     return message, run, None, outcome
 
@@ -479,6 +510,7 @@ async def stream_message(
     max_download_files: int = 10,
     settings: Settings | None = None,
     context_pipeline: ContextPipeline | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """流式发消息:yield (事件名, 载荷)。
 
@@ -520,7 +552,13 @@ async def stream_message(
             attachment_context = await attachments_service.context_for_message(
                 session, tenant_id, message.id
             )
-        decided = await triage.decide(content, llm, mode=mode)
+        resolved_model = model or model_for_conversation(conversation)
+        with bind_dialogue_llm(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            model=resolved_model,
+        ):
+            decided = await triage.decide(content, llm, mode=mode)
         if decided == triage.CHAT and llm is not None:
             context = await _prepare_chat_context(
                 session, llm, message, conversation, settings
@@ -530,6 +568,7 @@ async def stream_message(
                 message,
                 reference_note=mcp_reference_note,
                 context=context,
+                settings=settings,
             )
             outcome = triage.CHAT
         else:
@@ -553,6 +592,7 @@ async def stream_message(
                 compaction=compaction_result,
                 settings=settings,
                 context_pipeline=context_pipeline,
+                model=model,
             )
     yield "meta", {"mode": outcome, "message": message, "run": run}
     if run is not None or llm is None:
@@ -569,13 +609,20 @@ async def stream_message(
     try:
         # 对话内工具执行的来源上下文(stdio MCP 沙箱按对话复用);
         # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
-        with bind_tool_context(
-            ToolContext(
+        with (
+            bind_dialogue_llm(
                 tenant_id=tenant_id,
                 conversation_id=conversation_id,
-                workspace_id=conversation.workspace_id,
-                mcp_server_ids=tuple(mcp_server_ids or ()),
-            )
+                model=resolved_model,
+            ),
+            bind_tool_context(
+                ToolContext(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    mcp_server_ids=tuple(mcp_server_ids or ()),
+                )
+            ),
         ):
             toolkit = await _toolkit_for(
                 toolkit_factory, extras_factory, tenant_id, read_only=True
