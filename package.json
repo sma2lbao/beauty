@@ -26,7 +26,7 @@
     "@swc/helpers": "~0.5.18",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "~4.1.0",
-    "eslint": "^9.0.0",
+    "eslint": "^10.13.0",
     "nx": "23.2.1",
     "prettier": "~3.6.2",
     "tslib": "^2.3.0",
