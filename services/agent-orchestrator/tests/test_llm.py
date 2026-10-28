@@ -76,7 +76,7 @@ def test_execute_llm_failure_marks_run_failed(tmp_path) -> None:
         failed = next(e for e in events if e["type"] == "run.failed.v1")
         assert failed["payload"]["stage"] == "execute"
         types = [e["type"] for e in events]
-        assert types == [
+        assert [t for t in types if t != "run.item.v1"] == [
             "run.created.v1",
             "run.planned.v1",
             "run.approved.v1",

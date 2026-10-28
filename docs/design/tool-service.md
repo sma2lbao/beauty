@@ -139,7 +139,7 @@
 3. **命名三派：PascalCase / snake_case / 内部 camelCase。** 在 OpenAI 兼容 function calling 下 snake_case 最稳；名字是权限规则、子代理白名单、hook 的键，**一旦发布就不该改**。具体名字见 §1.1 D3：`read` `write` `edit` `glob` `grep` `list_dir` `ask_question`（依据：用户明确点名 read/write/grep/ask_question、OpenCode/DSH 裸名先例、桌面端工具名统一、模型先验更好），旧名以 alias 过渡一个发布周期（§7.8）。
 4. **ask / todo / plan 是三件独立的事。** ask 是独立工具（Claude/Codex/Gemini/Cline/Continue 全部内置）；todo 可工具化（`write_todos`/`update_plan`/`Task*`）也可只做运行时状态；plan 在实现上**普遍是模式而不是工具**（`EnterPlanMode`/`ExitPlanMode`、Plan/Act、plan mode）。本设计：ask 纳入（P2 全栈，§10）；todo 本期不做（run 已有 `rounds`/`results` 状态）；plan 沿用现有审批闸，不新增模式工具。
 
-> **决策修订（2026-10-27，M4）**：「todo 本期不做」已修订。todo 作为 **orchestrator 进程内**的 run 级工具落地（`todo_write` 覆盖写全量 + `runs.todos` 快照列 + `run.todo.updated.v1` + 每轮提示注入 + `GET /api/v1/runs/{id}/todos`），**不进 tool-service 目录**：目录是「沙箱能力/权限边界」，todo 是 run 内状态、没有执行后端与外部副作用，也不占 `CATALOG_VERSION`。设计见 [tool-execution.md](./tool-execution.md) §13；P1-D 落地后再把该事件提升为 `item`（kind=todo）。
+> **决策修订（2026-10-27，M4）**：「todo 本期不做」已修订。todo 作为 **orchestrator 进程内**的 run 级工具落地（`todo_write` 覆盖写全量 + `runs.todos` 快照列 + `run.todo.updated.v1` + 每轮提示注入 + `GET /api/v1/runs/{id}/todos`），**不进 tool-service 目录**：目录是「沙箱能力/权限边界」，todo 是 run 内状态、没有执行后端与外部副作用，也不占 `CATALOG_VERSION`。设计见 [tool-execution.md](./tool-execution.md) §13。**item 化已随 P1-D 落地（2026-10-28）**：`todo_write` 写快照时追加 `kind=todo` 的 `run.item.v1`，`run.todo.updated.v1` 保留（见 [event-taxonomy.md](./event-taxonomy.md) §4/§7）。
 
 ### 3.3 read 的基线：行号 + 分页 + 显式截断
 

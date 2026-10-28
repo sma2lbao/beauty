@@ -28,6 +28,7 @@ from agent_orchestrator.schemas.runs import (
     PlanRead,
     RunCreate,
     RunEventRead,
+    RunItemRead,
     RunRead,
     RunStatus,
     StepRead,
@@ -125,6 +126,17 @@ async def list_run_steps(
 ) -> list[StepRead]:
     """步骤时间线(S1):事件投影,含节点/阶段/轮次与起止时间(零迁移)。"""
     return await runs_service.list_steps(session, tenant_id, run_id)
+
+
+@router.get("/{run_id}/items", response_model=list[RunItemRead])
+async def list_run_items(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> list[RunItemRead]:
+    """过程项视图(P1-D):run.item.v1 按 item_id 合并相位,按首现 seq 排序。
+
+    thread/turn/item 三级分类学的读端;没有 item 的 run 返回空数组(不是 404)。
+    """
+    return await runs_service.list_items(session, tenant_id, run_id)
 
 
 @router.get("/{run_id}/todos", response_model=TodoRead)

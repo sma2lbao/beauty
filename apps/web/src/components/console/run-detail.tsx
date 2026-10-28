@@ -17,6 +17,7 @@ import {
 } from '@/components/console/ui';
 import { Markdown } from '@/components/console/markdown';
 import { RunArtifacts } from '@/components/console/run-artifacts';
+import { RunItemTimeline } from '@/components/console/run-item-timeline';
 import { RunStepTimeline } from '@/components/console/run-step-timeline';
 import { RunTodoList } from '@/components/console/run-todo-list';
 import { RunEvents } from '@/components/runs/run-events';
@@ -26,7 +27,7 @@ import {
   isRunQuiescent,
   relativeTime,
 } from '@/lib/presentation';
-import type { Run, RunStatus, RunStep } from '@/lib/runs-api';
+import type { Run, RunItem, RunStatus, RunStep } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/query-keys';
@@ -88,6 +89,19 @@ export function RunDetail({
         : 1500;
     },
   });
+  // 统一过程项(计划/工具/文件变更/MCP/检索/清单)是 P1-D 新投影:
+  // 与步骤同频轮询,静默终态停;空数组是合法返回值(没有 item 事件)。
+  const itemsQuery = useQuery({
+    queryKey: queryKeys.runItems(runId),
+    queryFn: () => runsApi.items(runId),
+    refetchInterval: (query) => {
+      const data = query.state.data as RunItem[] | undefined;
+      if (data === undefined) return 1500;
+      return runQuery.data && isRunQuiescent(runQuery.data.status)
+        ? false
+        : 1500;
+    },
+  });
   // 任务清单同样不进 SSE:执行中与步骤同频轮询,静默终态停。
   const todosQuery = useQuery({
     queryKey: queryKeys.runTodos(runId),
@@ -105,6 +119,7 @@ export function RunDetail({
         queryKey: queryKeys.instructions(runId),
       }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runSteps(runId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runItems(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runTodos(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
     ]);
@@ -359,6 +374,21 @@ export function RunDetail({
               </ConsoleButton>
             </div>
           ) : null}
+        </ConsolePanel>
+
+        <ConsolePanel className="p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-semibold text-ha-text-2">
+              运行项
+            </span>
+            <span className="font-mono text-[11px] text-ha-faint">
+              {itemsQuery.data?.length ?? 0} 项
+            </span>
+          </div>
+          <RunItemTimeline
+            items={itemsQuery.data ?? []}
+            className="mt-2 max-h-96 overflow-y-auto"
+          />
         </ConsolePanel>
 
         <ConsolePanel className="p-3">

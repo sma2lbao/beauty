@@ -9,6 +9,7 @@
 - run_execution:图调用边界(端口/增量注入)、审批编排与结果投影
 - run_stream:SSE 帧生成、断线续传(Last-Event-ID)与 keep-alive
 - run_steps:步骤视图投影(run.step.v1 → GET /runs/{id}/steps,零迁移,07 S1)
+- run_items:过程项视图投影(run.item.v1 → GET /runs/{id}/items,零迁移,P1-D)
 
 本模块只做 re-export:调用方(api/v1/runs.py、jobs_worker、conversations、
 tests)一律经此取服务函数,拆分不改变任何对外名字与签名。
@@ -16,6 +17,7 @@ tests)一律经此取服务函数,拆分不改变任何对外名字与签名。
 
 from __future__ import annotations
 
+from agent_orchestrator.services.items import list_items
 from agent_orchestrator.services.run_artifacts import (
     _persist_artifact,
     get_artifact,
@@ -56,6 +58,7 @@ __all__ = [
     "get_artifact",
     "list_events",
     "list_instructions",
+    "list_items",
     "list_runs",
     "list_steps",
     "list_todos",

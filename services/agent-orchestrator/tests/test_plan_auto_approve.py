@@ -61,7 +61,12 @@ def test_plan_auto_approves_without_dangerous_tools(tmp_path: Path) -> None:
 
         events = _events(client, run_id)
         types = [event["type"] for event in events]
-        assert types[:3] == ["run.created.v1", "run.planned.v1", "run.approved.v1"]
+        lifecycle = [t for t in types if t != "run.item.v1"]
+        assert lifecycle[:3] == [
+            "run.created.v1",
+            "run.planned.v1",
+            "run.approved.v1",
+        ]
         assert "run.completed.v1" in types
         planned = next(e for e in events if e["type"] == "run.planned.v1")
         assert planned["payload"] == {"attempt": 1, "auto_approved": True}
@@ -122,7 +127,10 @@ def test_plan_auto_approve_switch_off_keeps_manual_gate(tmp_path: Path) -> None:
         run_id = _create_run(client)
         body = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
         assert body["status"] == "awaiting_approval"
-        assert _event_types(client, run_id) == ["run.created.v1", "run.planned.v1"]
+        assert [t for t in _event_types(client, run_id) if t != "run.item.v1"] == [
+            "run.created.v1",
+            "run.planned.v1",
+        ]
 
 
 async def test_skill_whitelist_narrows_away_dangerous_tools() -> None:

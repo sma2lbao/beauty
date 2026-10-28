@@ -8,6 +8,8 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `GET /runs/{id}/events` 事件回放(§6.3 事件溯源读端),
   `GET /runs/{id}/steps` 节点步骤投影(S1:每个图节点一条 `run.step.v1` 的
   只读升序投影;该事件不进事件流),
+  `GET /runs/{id}/items` 过程项投影(P1-D:`run.item.v1` 按 `item_id` 合并相位;
+  该事件**进**事件流与 SSE),
   `GET /runs/{id}/artifact` 取交付物;
   `GET /runs/{id}/events/stream` SSE 事件流:重放 + 实时推送,`Last-Event-ID`
   断线续传,run 终态(completed/failed/cancelled)自动 `stream.end` 收线;
@@ -35,6 +37,16 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   一次图调用边界完成,执行中的节点要等该次 `ainvoke` 返回后才出现(未接 astream);
   usage 的 step 维度(S2)与 step↔checkpoint/rewind(S3)未做,见
   `docs/gap-2026-10/07-run-step-model.md`;
+- **过程项分类学(P1-D,2026-10-28)**:`run.item.v1` 把 run 内原子过程项统一成
+  `kind`(plan/tool/file_change/mcp_call/search/todo)× `phase`(started/delta/
+  completed/failed),`item_id = {run_id}:{attempt}:{kind}:{n}`,plan 版本化用
+  `{run_id}:plan:{n}`(编辑计划落新版本并 `supersedes` 上一版);payload 带
+  `thread_id`(有会话用会话 id,否则沿 `parent_run_id` 上溯到根 `run:<root>`)、
+  `turn_id = run.id`、`step_id`(挂到当前 `run.step.v1` 步骤);事件 append-only、
+  `record_outbox=False` 但**对用户可见**(进 `GET /runs/{id}/events` 与 SSE 回放);
+  工具项由图节点经 `runtime.items` 上报、`_item_stream` 在图调用边界落库,plan 由
+  `_invoke_plan`/`update_plan` 直接落,todo 由 `todo_write` 快照落;契约见
+  `docs/design/event-taxonomy.md`;
 - 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(等待人工审批时编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、

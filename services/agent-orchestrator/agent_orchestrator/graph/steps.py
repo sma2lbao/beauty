@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -25,13 +25,17 @@ class StepSink(Protocol):
 
 @dataclass(slots=True)
 class StepSpan:
-    """一个节点的执行片段:节点名 + 阶段 + 起止时间 + 终态。"""
+    """一个节点的执行片段:节点名 + 阶段 + 步骤身份 + 起止时间 + 终态。"""
 
     node: str
     phase: str
     started_at: datetime
     finished_at: datetime | None = None
     status: str = "running"
+    #: 步骤身份 ``<run_id>:<attempt>:<node>:<round>``(item 的 step_id 锚点)。
+    step_id: str | None = None
+    attempt: int = 0
+    round: int = 0
 
     @property
     def duration_ms(self) -> int | None:
@@ -41,22 +45,52 @@ class StepSpan:
 
 
 class StepProjector:
-    """一次图调用的步骤采集器:没有 sink(直跑节点的单测)时全部 no-op。"""
+    """一次图调用的步骤采集器:没有 sink(直跑节点的单测)时全部 no-op。
 
-    def __init__(self, sink: StepSink | None = None) -> None:
+    ``begin`` 即分配 step_id(``<run_id>:<attempt>:<node>:<round>``):round 由构造
+    时预读的 ``(attempt, node)`` 历史计数推进,同一 run 重跑/多轮同名节点不撞号;
+    ``current_step_id`` 供 item 上报挂到当前步骤(契约 §7)。
+    """
+
+    def __init__(
+        self,
+        sink: StepSink | None = None,
+        *,
+        run_id: str | None = None,
+        attempt: int = 0,
+        rounds: Mapping[str, int] | None = None,
+    ) -> None:
         self._sink = sink
+        self._run_id = run_id
+        self._attempt = attempt
+        self._rounds: dict[str, int] = dict(rounds or {})
+        self._current: str | None = None
 
     def active(self) -> bool:
         return self._sink is not None
 
+    def current_step_id(self) -> str | None:
+        """最近开始的步骤 id(尚未 begin 或没有 sink 时为 None)。"""
+
+        return self._current
+
     def begin(self, node: str, phase: str) -> StepSpan | None:
         if self._sink is None:
             return None
+        round_no = self._rounds.get(node, 0) + 1
+        self._rounds[node] = round_no
+        step_id = None
+        if self._run_id is not None:
+            step_id = f"{self._run_id}:{self._attempt}:{node}:{round_no}"
+        self._current = step_id
         return StepSpan(
             node=node,
             phase=phase,
             started_at=datetime.now(UTC),
             status="running",
+            step_id=step_id,
+            attempt=self._attempt,
+            round=round_no,
         )
 
     def finish(self, span: StepSpan | None, status: str = "completed") -> None:

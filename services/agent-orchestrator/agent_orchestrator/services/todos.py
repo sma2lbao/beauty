@@ -15,11 +15,13 @@ state),tool-service 是无状态执行面;同层先例见 services/memory_tools.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.graph import items
 from agent_orchestrator.graph.todos import (
     TODO_STATUSES,
     TODO_TOOL_NAME,
@@ -30,6 +32,7 @@ from agent_orchestrator.graph.todos import (
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import RunEventRepository
 from agent_orchestrator.schemas.runs import TodoRead
+from agent_orchestrator.services.items import append_item_event, resolve_thread_id
 from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.run_lifecycle import require_run
 from agent_orchestrator.services.tool_context import current_tool_context
@@ -128,16 +131,33 @@ def build_todo_tool(
                     ensure_ascii=False,
                 )
             run.todos = todos
+            counts = todo_counts(todos)
             await append_event(
                 session,
                 run,
                 TODO_UPDATED_EVENT,
                 {
                     "todos": todos,
-                    "counts": todo_counts(todos),
+                    "counts": counts,
                     "revision": revision,
                     "source": "tool",
                 },
+            )
+            # P1-D:清单变更同时是一条 kind=todo 的一等过程项(§4/§7)——工具
+            # 项由图边界从运行时采集,清单快照在这里落,node/step_id 不挂步骤。
+            updated_at = datetime.now(UTC)
+            await append_item_event(
+                session,
+                run,
+                thread_id=await resolve_thread_id(session, run),
+                item_id=f"{run.id}:{run.attempts}:{items.KIND_TODO}:{revision}",
+                kind=items.KIND_TODO,
+                phase=items.PHASE_COMPLETED,
+                status=items.STATUS_COMPLETED,
+                title="更新任务清单",
+                data={"todos": todos, "counts": counts, "revision": revision},
+                started_at=updated_at,
+                finished_at=updated_at,
             )
         return json.dumps(
             _payload(todos, revision=revision, updated=True), ensure_ascii=False

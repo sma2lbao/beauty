@@ -91,6 +91,37 @@ class StepRead(BaseModel):
     duration_ms: int | None = None
 
 
+#: 过程项分类(事件分类学 §4):plan 一等项 + 工具执行细分的五类。
+RunItemKind = Literal["plan", "tool", "file_change", "mcp_call", "search", "todo"]
+
+#: 过程项相位(§5):started/delta/completed/failed;delta 当前预留。
+RunItemPhase = Literal["started", "delta", "completed", "failed"]
+
+
+class RunItemRead(BaseModel):
+    """run 过程项视图(P1-D):run.item.v1 按 item_id 合并后的投影,不是表。
+
+    同项多相位按 ``item_id`` 合并成一条:phase/status/finished_at/duration_ms
+    取最新相位,data 按 key 浅合并;seq 与静态字段取首条事件(排序锚点)。
+    """
+
+    item_id: str
+    thread_id: str
+    turn_id: str
+    kind: RunItemKind
+    phase: RunItemPhase
+    status: str
+    node: str | None = None
+    step_id: str | None = None
+    attempt: int
+    title: str
+    seq: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 class TodoItem(BaseModel):
     """任务清单项(M4):位置即顺序,status 是模型自己维护的三态。"""
 

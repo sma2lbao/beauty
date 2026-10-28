@@ -31,7 +31,11 @@ def test_plan_then_approve_full_lifecycle(client: TestClient) -> None:
     assert planned["status"] == "awaiting_approval"
     assert "整理本周日程生成周报" in planned["plan_markdown"]
     assert "- [ ] 覆盖 5 个工作日" in planned["plan_markdown"]
-    assert _event_types(client, run_id) == ["run.created.v1", "run.planned.v1"]
+    types = _event_types(client, run_id)
+    assert types[0] == "run.created.v1"
+    # P1-D:plan 的 started/completed 过程项与计划事件同批落库
+    assert types.count("run.item.v1") == 2
+    assert types[-1] == "run.planned.v1"
 
     # 审批前编辑计划
     edited = "# 我的计划\n\n按新计划执行"

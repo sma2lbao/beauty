@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_orchestrator.graph.delta import DeltaProjector
+from agent_orchestrator.graph.items import ItemProjector
 from agent_orchestrator.graph.ports import GraphPorts
 from agent_orchestrator.graph.steps import StepProjector
 
@@ -22,11 +23,12 @@ GRAPH_RUNTIME_KEY = "agent_orchestrator.graph_runtime"
 
 @dataclass(frozen=True, slots=True)
 class GraphRuntime:
-    """一次图调用的端口集合 + 正文增量投影器 + 步骤采集器。"""
+    """一次图调用的端口集合 + 正文增量投影器 + 步骤/过程项采集器。"""
 
     ports: GraphPorts = field(default_factory=GraphPorts)
     delta: DeltaProjector = field(default_factory=DeltaProjector)
     steps: StepProjector = field(default_factory=StepProjector)
+    items: ItemProjector = field(default_factory=ItemProjector)
 
 
 #: 未注入时的默认运行期:无预算限制、无增量、按风险默认审批。

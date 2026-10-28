@@ -53,7 +53,7 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
         assert artifact["filename"] is None
 
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
-        assert [e["type"] for e in events] == [
+        assert [e["type"] for e in events if e["type"] != "run.item.v1"] == [
             "run.created.v1",
             "run.planned.v1",
             "run.approved.v1",

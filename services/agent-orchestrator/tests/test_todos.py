@@ -213,9 +213,10 @@ async def test_write_persists_snapshot_and_event(
     assert await _stored_todos(factory, run_id) == ITEMS
 
     events = await _events(factory, run_id)
-    assert [event.type for event in events] == [TODO_UPDATED_EVENT]
-    assert events[0].tenant_id == TENANT
-    assert events[0].payload == {
+    todo_events = [event for event in events if event.type == TODO_UPDATED_EVENT]
+    assert [event.type for event in todo_events] == [TODO_UPDATED_EVENT]
+    assert todo_events[0].tenant_id == TENANT
+    assert todo_events[0].payload == {
         "todos": ITEMS,
         "counts": {"pending": 1, "in_progress": 1, "completed": 1},
         "revision": 1,
@@ -237,7 +238,12 @@ async def test_second_write_advances_revision(
     assert second["todos"] == changed
     assert await _stored_todos(factory, run_id) == changed
     events = await _events(factory, run_id)
-    assert [event.payload["revision"] for event in events] == [1, 2]
+    revisions = [
+        event.payload["revision"]
+        for event in events
+        if event.type == TODO_UPDATED_EVENT
+    ]
+    assert revisions == [1, 2]
 
 
 async def test_identical_list_is_idempotent(
@@ -253,7 +259,8 @@ async def test_identical_list_is_idempotent(
     assert again["updated"] is False
     # 幂等返回也带着同一个 revision,模型不会误以为版本倒退
     assert again["revision"] == 1
-    assert len(await _events(factory, run_id)) == 1
+    events = await _events(factory, run_id)
+    assert len([e for e in events if e.type == TODO_UPDATED_EVENT]) == 1
 
 
 async def test_invalid_arguments_return_error_without_side_effects(

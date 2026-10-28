@@ -2084,6 +2084,131 @@
         "title": "RunEventRead",
         "type": "object"
       },
+      "RunItemRead": {
+        "description": "run 过程项视图(P1-D):run.item.v1 按 item_id 合并后的投影,不是表。\n\n同项多相位按 ``item_id`` 合并成一条:phase/status/finished_at/duration_ms\n取最新相位,data 按 key 浅合并;seq 与静态字段取首条事件(排序锚点)。",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "plan",
+              "tool",
+              "file_change",
+              "mcp_call",
+              "search",
+              "todo"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "phase": {
+            "enum": ["started", "delta", "completed", "failed"],
+            "title": "Phase",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "thread_id",
+          "turn_id",
+          "kind",
+          "phase",
+          "status",
+          "attempt",
+          "title",
+          "seq"
+        ],
+        "title": "RunItemRead",
+        "type": "object"
+      },
       "RunRead": {
         "properties": {
           "acceptance_criteria": {
@@ -6393,6 +6518,83 @@
           }
         },
         "summary": "Queue Instruction",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/items": {
+      "get": {
+        "description": "过程项视图(P1-D):run.item.v1 按 item_id 合并相位,按首现 seq 排序。\n\nthread/turn/item 三级分类学的读端;没有 item 的 run 返回空数组(不是 404)。",
+        "operationId": "list_run_items_api_v1_runs__run_id__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunItemRead"
+                  },
+                  "title": "Response List Run Items Api V1 Runs  Run Id  Items Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Run Items",
         "tags": ["runs"]
       }
     },

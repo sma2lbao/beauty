@@ -71,6 +71,58 @@ export type RunStep = {
 export type StepStatus = 'running' | 'completed' | 'failed' | 'blocked';
 
 /**
+ * 过程项分类(P1-D 事件分类学,契约见 docs/design/event-taxonomy.md §4):
+ * 计划/工具/文件变更/MCP 调用/检索/任务清单。item 是「过程项」维度,与节点
+ * 步骤(step)正交,通过 `step_id` 挂到步骤上。
+ */
+export type RunItemKind =
+  | 'plan'
+  | 'tool'
+  | 'file_change'
+  | 'mcp_call'
+  | 'search'
+  | 'todo';
+
+/** 过程项生命周期相位(§5):started → delta → completed/failed。 */
+export type RunItemPhase = 'started' | 'delta' | 'completed' | 'failed';
+
+/** 过程项状态:started 相位投影为 running;终态细粒度含 denied(未执行)。 */
+export type RunItemStatus = 'running' | 'completed' | 'failed' | 'denied';
+
+/**
+ * 一个过程项(GET /runs/{id}/items):服务端把 `run.item.v1` 按 `item_id`
+ * 投影成「每项一条」(§6),字段保留后端 snake_case,与 `RunStep` 风格一致。
+ *
+ * `data` 是 kind 专属结构化内容:各相位按 key 浅合并,旧值先、新值后;
+ * 前端一律按可选字段防御性读取,缺字段不渲染空块。
+ */
+export type RunItem = {
+  /** 可寻址身份:`<run>:<attempt>:<kind>:<n>`,plan 为 `<run>:plan:<version>`。 */
+  item_id: string;
+  thread_id: string;
+  /** turn 即 run(`turn_id = run.id`)。 */
+  turn_id: string;
+  kind: RunItemKind;
+  /** 最新相位。 */
+  phase: RunItemPhase;
+  /** 终态细粒度;started 相位后端不带,投影为 running。 */
+  status: RunItemStatus | null;
+  /** 产出事件的图节点(plan/execute/tool_exec),计划编辑与 todo 快照为 null。 */
+  node: string | null;
+  /** 关联的 run.step.v1 步骤;拿不到时为 null。 */
+  step_id: string | null;
+  attempt: number;
+  /** 短标题,前端直接显示(如「写入 src/a.ts」「计划(第 2 版)」)。 */
+  title: string;
+  /** 首条事件的 seq,排序锚点。 */
+  seq: number;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  data: Record<string, unknown>;
+};
+
+/**
  * 任务清单条目(GET /runs/{id}/todos):由 todo 工具的服务端投影给出。
  * status 只有三态;清单是 run 级快照,revision 随每次写入递增。
  */
@@ -189,6 +241,12 @@ export const runsApi = {
   /** 节点级步骤投影:独立于事件流(表内 seq 有空洞是正常的,别按连续 id 判断)。 */
   steps: (runId: string) =>
     http.request<RunStep[]>(`/api/v1/runs/${runId}/steps`),
+  /**
+   * 过程项投影(P1-D):`run.item.v1` 按 item_id 合并成「每项一条」。
+   * 无 item 事件的旧 run 返回空数组,不是 404;不进 SSE,由前端轮询。
+   */
+  items: (runId: string) =>
+    http.request<RunItem[]>(`/api/v1/runs/${runId}/items`),
   /** 任务清单投影:空清单是合法结果(旧 run/没调用过 todo 工具),不是错误。 */
   todos: (runId: string) =>
     http.request<RunTodos>(`/api/v1/runs/${runId}/todos`),

@@ -9,7 +9,7 @@
 
 - **exec(已落地)**:`tool-service` 目录新增一等工具,在**工作区沙箱内**执行一条 shell 命令。风险档 `destructive`(legacy `danger`),默认关闭,开启后必须人工确认;输出自带截断与回读提示。
 - **web_search(待实施)**:联网检索(与只读抓取的 `fetch` 不同,检索需要搜索提供方与引用协议);依赖出口策略,见 §11。
-- **todo(已落地,第一轮)**:`todo_write` 是 **orchestrator 进程内**的 run 级工具(不进 tool-service 目录):模型把任务清单整包覆盖写进 `runs.todos` 快照、落 `run.todo.updated.v1` 事件,并在每轮 execute/verify/deliver 的系统提示里注入极简清单;只读端点 `GET /api/v1/runs/{id}/todos`,前端在 run 详情与会话右栏显示「任务清单」。依赖 P1-D 的 item 化不在本期(差异见 §13.4)。
+- **todo(已落地,第一轮)**:`todo_write` 是 **orchestrator 进程内**的 run 级工具(不进 tool-service 目录):模型把任务清单整包覆盖写进 `runs.todos` 快照、落 `run.todo.updated.v1` 事件,并在每轮 execute/verify/deliver 的系统提示里注入极简清单;只读端点 `GET /api/v1/runs/{id}/todos`,前端在 run 详情与会话右栏显示「任务清单」。item 化已随 P1-D 落地(2026-10-28):`todo_write` 写快照时追加 `kind=todo` 的 `run.item.v1`,`run.todo.updated.v1` 保留(见 §13.3)。
 
 五条关键决策:
 
@@ -207,12 +207,12 @@ orchestrator 侧无新配置:危险工具经目录自动进入审批链。
 
 ## 11. 分期与验收
 
-| 期  | 内容                                                           | 状态                                  |
-| --- | -------------------------------------------------------------- | ------------------------------------- |
-| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                |
-| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)  |
-| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | 待启动(先定提供方与成本口径)          |
-| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化待 P1-D |
+| 期  | 内容                                                           | 状态                                                     |
+| --- | -------------------------------------------------------------- | -------------------------------------------------------- |
+| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                                   |
+| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)                     |
+| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | 待启动(先定提供方与成本口径)                             |
+| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化已随 P1-D 落地(2026-10-28) |
 
 M1 验收:
 
@@ -280,7 +280,7 @@ M1 验收:
 
 - `runs.todos`:`JSON NOT NULL DEFAULT '[]'` 快照列(迁移 `b9e4d1f7c2a8`,接在 `b7d1e9c3a5f2` 之后);读路径宽松清洗,坏数据不 500。
 - `run.todo.updated.v1`:`{todos, counts, revision, source:"tool"}`;`revision = 该 run 同类事件数 + 1`。
-- 为什么「快照 + 最新事件 revision」而不是纯事件投影:todo 是覆盖写的最新状态,投影要回放全部事件才能得到当前清单;快照一次读即可,事件补充 revision 与流水。P1-D 落地后把该事件升级为 `item`(kind=todo),列与端点不用改。
+- 为什么「快照 + 最新事件 revision」而不是纯事件投影:todo 是覆盖写的最新状态,投影要回放全部事件才能得到当前清单;快照一次读即可,事件补充 revision 与流水。P1-D 已落地(2026-10-28):`todo_write` 写快照时追加 `kind=todo` 的 `run.item.v1`,列与端点不用改。
 
 ### 13.4 提示注入
 
@@ -339,4 +339,4 @@ M1 验收:
 - **不合并 plan_markdown**:计划(markdown 审批)与任务清单(结构化三态)是两份东西,不互相解析初始化。
 - **chat 路径不暴露** `todo_write`:对话没有 run,清单无处落库。
 - **清单不跨 run 复用**:每个 run 从空清单开始(retry 沿用同一 run 的快照,符合「同一 run 可复现」)。
-- **P1-D item 化未做**:`run.todo.updated.v1` 目前是独立事件类型,P1-D 落地后应提升为 `item`(kind=todo,content→title、status→state)。
+- **~~P1-D item 化未做~~ 已落地(2026-10-28)**:`todo_write` 写 `runs.todos` 快照时追加 `kind=todo` 的 `run.item.v1`;`run.todo.updated.v1` 与 `GET /runs/{id}/todos` 均保留,契约见 [event-taxonomy.md](./event-taxonomy.md) §4/§7。

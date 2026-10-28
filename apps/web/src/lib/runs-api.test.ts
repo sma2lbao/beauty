@@ -136,6 +136,43 @@ describe('runsApi', () => {
     expect(url).toBe('/api/v1/runs/r1/artifacts');
   });
 
+  it('运行项统一投影走 /items 端点并保留 data 原始字段', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          item_id: 'r1:plan:2',
+          thread_id: 'r1',
+          turn_id: 't1',
+          kind: 'plan',
+          phase: 'completed',
+          status: 'completed',
+          node: 'plan',
+          step_id: 'r1:1:plan:1',
+          attempt: 1,
+          title: '执行计划',
+          seq: 2,
+          started_at: '2026-01-01T00:00:00Z',
+          finished_at: '2026-01-01T00:00:01Z',
+          duration_ms: 1000,
+          data: { version: 2, supersedes: 'r1:plan:1', content: '计划正文' },
+        },
+      ],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const items = await runsApi.items('r1');
+
+    expect(items[0]).toMatchObject({
+      item_id: 'r1:plan:2',
+      kind: 'plan',
+      phase: 'completed',
+    });
+    expect(items[0]?.data.version).toBe(2);
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/items');
+  });
+
   it('下载交付物返回 Blob(走二进制端点,不解析 JSON)', async () => {
     setStoredToken('test-jwt');
     const blob = new Blob(['PNG'], { type: 'image/png' });

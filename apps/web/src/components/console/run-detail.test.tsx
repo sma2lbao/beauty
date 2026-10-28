@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Plan, Run, RunStep, RunTodoItem } from '@/lib/runs-api';
+import type { Plan, Run, RunItem, RunStep, RunTodoItem } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 
 import { RunDetail } from './run-detail';
@@ -19,6 +19,7 @@ vi.mock('@/lib/runs-api', () => ({
     get: vi.fn(),
     getPlan: vi.fn(),
     steps: vi.fn(),
+    items: vi.fn(),
     todos: vi.fn(),
     instructions: vi.fn(),
     retry: vi.fn(),
@@ -61,11 +62,13 @@ function renderDetail(
   onClose = vi.fn(),
   steps: RunStep[] = [],
   todos: RunTodoItem[] = [],
+  items: RunItem[] = [],
 ) {
   vi.mocked(runsApi.get).mockResolvedValue({ ...baseRun, status });
   vi.mocked(runsApi.getPlan).mockResolvedValue(plan);
   vi.mocked(runsApi.instructions).mockResolvedValue([]);
   vi.mocked(runsApi.steps).mockResolvedValue(steps);
+  vi.mocked(runsApi.items).mockResolvedValue(items);
   vi.mocked(runsApi.todos).mockResolvedValue({
     todos,
     counts: {
@@ -135,6 +138,60 @@ describe('RunDetail', () => {
     expect(await screen.findByTestId('run-step-timeline')).toBeTruthy();
     expect(screen.getByText('执行步骤')).toBeTruthy();
     expect(screen.getByText(/^规划/)).toBeTruthy();
+  });
+
+  it('渲染运行项时间线(plan 与 tool 统一投影)', async () => {
+    renderDetail(
+      'running',
+      vi.fn(),
+      [],
+      [],
+      [
+        {
+          item_id: 'run-1:plan:1',
+          thread_id: 'run-1',
+          turn_id: 'turn-1',
+          kind: 'plan',
+          phase: 'completed',
+          status: 'completed',
+          node: 'plan',
+          step_id: 'run-1:1:plan:1',
+          attempt: 1,
+          title: '执行计划',
+          seq: 1,
+          started_at: '2026-10-01T00:00:00Z',
+          finished_at: '2026-10-01T00:00:02Z',
+          duration_ms: 2000,
+          data: {
+            version: 1,
+            supersedes: null,
+            content: '1. 改超时配置',
+            chars: 12,
+          },
+        },
+        {
+          item_id: 'run-1:tool:1',
+          thread_id: 'run-1',
+          turn_id: 'turn-1',
+          kind: 'tool',
+          phase: 'completed',
+          status: 'completed',
+          node: 'execute',
+          step_id: 'run-1:1:tool:1',
+          attempt: 1,
+          title: '读取配置',
+          seq: 2,
+          started_at: '2026-10-01T00:00:02Z',
+          finished_at: '2026-10-01T00:00:03Z',
+          duration_ms: 1000,
+          data: { name: 'read_file', ok: true, arguments: '{}' },
+        },
+      ],
+    );
+    expect(await screen.findByTestId('run-item-timeline')).toBeTruthy();
+    expect(screen.getByText('运行项')).toBeTruthy();
+    expect(screen.getByText('执行计划')).toBeTruthy();
+    expect(screen.getByText('读取配置')).toBeTruthy();
   });
 
   it('渲染任务清单与完成计数', async () => {

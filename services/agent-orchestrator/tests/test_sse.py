@@ -54,7 +54,8 @@ def _parse_sse(text: str) -> list[tuple[str | None, str, dict | None]]:
 def test_stream_replays_and_closes_on_terminal(client: TestClient) -> None:
     run_id = _completed_run(client)
     events = _parse_sse(_read_stream(client, run_id))
-    assert [e[1] for e in events] == [
+    types = [e[1] for e in events]
+    assert [t for t in types if t != "run.item.v1"] == [
         "run.created.v1",
         "run.planned.v1",
         "run.approved.v1",
@@ -62,19 +63,21 @@ def test_stream_replays_and_closes_on_terminal(client: TestClient) -> None:
         "run.completed.v1",
         "stream.end",
     ]
+    # P1-D:plan 的 started/completed 过程项也在回放里(回放可见 item)。
+    assert types.count("run.item.v1") == 2
     # id 即 seq 游标:因为 run.step.v1(S1 步骤记录)也占用 seq 但不出现在
     # 用户事件流里,可见事件的 id 只保证严格递增,不一定连续。
-    ids = [int(e[0] or 0) for e in events[:5]]
+    ids = [int(e[0] or 0) for e in events[:-1]]
     assert ids[0] == 1
     assert ids == sorted(ids)
-    assert len(set(ids)) == 5
+    assert len(set(ids)) == len(ids)
     assert events[-1][2] == {"status": "completed"}
 
 
 def test_stream_resumes_from_last_event_id(client: TestClient) -> None:
     run_id = _completed_run(client)
     replay = _parse_sse(_read_stream(client, run_id))
-    cursor = replay[1][0]  # planned 事件(第 2 条可见事件)的 seq
+    cursor = next(e[0] for e in replay if e[1] == "run.planned.v1")
     assert cursor is not None
     events = _parse_sse(_read_stream(client, run_id, {"Last-Event-ID": cursor}))
     assert [e[1] for e in events] == [

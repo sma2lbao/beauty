@@ -252,6 +252,8 @@
 
 S1 可与 P0-2 收尾同批（只动事件 payload 与只读 API）；S2 紧跟 P0-1；S3 即 P1-4 本体。**不在 P0-2 里做表迁移。**
 
+**S2 锚点（P1-D 落地后）**：`run.item.v1` 的 `step_id` 即 S2 的成本/归因锚点——usage 采集与上报按 `step_id` 聚合即可，不需要新增 item 事件（见 [event-taxonomy.md](../design/event-taxonomy.md) §9）。
+
 **S1 落地记录（2026-10-25）**：✅ 已实现——`graph/steps.py`（`StepProjector` + 用 `instrument_node` 包 5 个异步节点）、`services/run_events.py`（`_step_stream` 在 3 个 `ainvoke` 边界 flush，`_flush_steps` 生成 `step_id`）、事件 `run.step.v1`（payload 同本表约定，`record_outbox=False`）、只读 `GET /api/v1/runs/{id}/steps`（`services/run_steps.py`）、前端 `RunStepTimeline`（会话执行步骤 tab 与 run 详情抽屉）；测试 `tests/test_run_steps.py` 4 项（全生命周期 5 步、reject→resume 的 attempt=2、失败节点事件先于 `run.failed.v1`、租户隔离）+ `tests/test_sse.py` 按「seq 单调不连续」调整。零迁移。已知边界：步骤在 `ainvoke` 返回后才落库、可见事件 seq 有空洞、取消时该次 invoke 的步骤仍落库。**未做**：§4.3 提到的 P0-2 收尾「终态事件 payload 带 `node/phase/attempt`」仍为可选。
 
 ### 4.5 不建议做的事

@@ -143,7 +143,12 @@ def test_delta_streaming_off_keeps_event_sequence(tmp_path: Path) -> None:
 
         types = [event["type"] for event in _events(client, run_id)]
         assert DELTA not in types
-        assert types[:3] == ["run.created.v1", "run.planned.v1", "run.approved.v1"]
+        lifecycle = [t for t in types if t != "run.item.v1"]
+        assert lifecycle[:3] == [
+            "run.created.v1",
+            "run.planned.v1",
+            "run.approved.v1",
+        ]
 
 
 def test_task_conversation_streams_run_deltas_and_projects_reply(

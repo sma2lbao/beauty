@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from langgraph.types import interrupt
 
-from agent_orchestrator.graph import delta
+from agent_orchestrator.graph import delta, items
 from agent_orchestrator.graph.deliver_nodes import (
     DELIVER_SYSTEM_PROMPT as DELIVER_SYSTEM_PROMPT,
 )
@@ -356,6 +356,84 @@ def _tool_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------- 过程项(P1-D)
+
+
+def _tool_item_begin(
+    runtime: GraphRuntime, name: str, arguments: str, *, node: str
+) -> tuple[str, items.ItemSpan | None]:
+    """上报工具项的 ``started`` 相位(§4/§5),返回 (kind, span) 供 finish 续用。
+
+    没有 sink(直跑节点的单测)时 span 为 None,后续 finish/denied 全部 no-op。
+    """
+
+    kind = items.classify_tool_kind(name)
+    span = runtime.items.begin(
+        kind,
+        items.tool_item_title(kind, name, arguments),
+        node=node,
+        data=items.tool_item_data(kind, name, arguments),
+    )
+    return kind, span
+
+
+def _tool_item_finish(
+    runtime: GraphRuntime,
+    kind: str,
+    name: str,
+    arguments: str,
+    span: items.ItemSpan | None,
+    record: dict[str, Any],
+) -> None:
+    """上报 ``completed`` 相位:data 复用节点 _record 产出的审计字段(§4)。"""
+
+    runtime.items.finish(span, data=items.tool_item_data(kind, name, arguments, record))
+
+
+def _tool_item_denied(
+    runtime: GraphRuntime,
+    name: str,
+    arguments: str,
+    record: dict[str, Any],
+    *,
+    node: str,
+) -> None:
+    """未执行的调用(策略禁止/确认拒绝/参数非法):只落一条 completed(§5)。
+
+    status=denied,不伪造 started 相位;data 里 decision/ok 如实保留。
+    """
+
+    kind = items.classify_tool_kind(name)
+    runtime.items.record(
+        kind,
+        items.tool_item_title(kind, name, arguments),
+        status=items.STATUS_DENIED,
+        node=node,
+        data=items.tool_item_data(kind, name, arguments, record),
+    )
+
+
+def _tool_item_fail(
+    runtime: GraphRuntime,
+    span: items.ItemSpan | None,
+    name: str,
+    arguments: str,
+    exc: Exception,
+) -> None:
+    """执行抛异常:把 started 项收成 failed 相位再向上抛(run.failed 由边界补)。"""
+
+    runtime.items.finish(
+        span,
+        status=items.STATUS_FAILED,
+        data={
+            "name": name,
+            "arguments": arguments,
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        },
+    )
+
+
 # ---------------------------------------------------------------- 交互提问(§10)
 
 
@@ -590,26 +668,30 @@ def make_execute_node(
                     if other is ask_call:
                         continue
                     output = _tool_error("本轮包含需要用户回答的提问,其余工具未执行")
-                    records.append(
-                        _record(
-                            other.name,
-                            other.arguments,
-                            output,
-                            tool_call_id=getattr(other, "id", None),
-                            risk=str(toolkit.risk(other.name)),
-                            decision=DECISION_DENIED,
-                        )
+                    record = _record(
+                        other.name,
+                        other.arguments,
+                        output,
+                        tool_call_id=getattr(other, "id", None),
+                        risk=str(toolkit.risk(other.name)),
+                        decision=DECISION_DENIED,
+                    )
+                    records.append(record)
+                    _tool_item_denied(
+                        runtime, other.name, other.arguments, record, node="execute"
                     )
                     messages.append(_tool_message(other.id, output))
-                records.append(
-                    _record(
-                        ask_call.name,
-                        ask_call.arguments,
-                        _tool_error("已向用户发起提问,等待回答"),
-                        tool_call_id=getattr(ask_call, "id", None),
-                        risk=str(toolkit.risk(ask_call.name)),
-                        decision=DECISION_AUTO,
-                    )
+                record = _record(
+                    ask_call.name,
+                    ask_call.arguments,
+                    _tool_error("已向用户发起提问,等待回答"),
+                    tool_call_id=getattr(ask_call, "id", None),
+                    risk=str(toolkit.risk(ask_call.name)),
+                    decision=DECISION_AUTO,
+                )
+                records.append(record)
+                _tool_item_denied(
+                    runtime, ask_call.name, ask_call.arguments, record, node="execute"
                 )
                 return {
                     "tool_history": messages[len(base) :],
@@ -620,15 +702,17 @@ def make_execute_node(
             if ask_call is not None:
                 # 不能挂起(轮次用尽/参数非法):如实回喂,本轮其余工具照常执行
                 output = _tool_error(ask_reason)
-                records.append(
-                    _record(
-                        ask_call.name,
-                        ask_call.arguments,
-                        output,
-                        tool_call_id=getattr(ask_call, "id", None),
-                        risk=str(toolkit.risk(ask_call.name)),
-                        decision=DECISION_DENIED,
-                    )
+                record = _record(
+                    ask_call.name,
+                    ask_call.arguments,
+                    output,
+                    tool_call_id=getattr(ask_call, "id", None),
+                    risk=str(toolkit.risk(ask_call.name)),
+                    decision=DECISION_DENIED,
+                )
+                records.append(record)
+                _tool_item_denied(
+                    runtime, ask_call.name, ask_call.arguments, record, node="execute"
                 )
                 messages.append(_tool_message(ask_call.id, output))
                 skip_ids.add(str(getattr(ask_call, "id", "")))
@@ -642,15 +726,17 @@ def make_execute_node(
                     output = _tool_error(
                         f"工具 {call.name} 被租户审批策略禁止使用,本次未执行"
                     )
-                    records.append(
-                        _record(
-                            call.name,
-                            call.arguments,
-                            output,
-                            tool_call_id=getattr(call, "id", None),
-                            risk=risk,
-                            decision=DECISION_DENIED,
-                        )
+                    record = _record(
+                        call.name,
+                        call.arguments,
+                        output,
+                        tool_call_id=getattr(call, "id", None),
+                        risk=risk,
+                        decision=DECISION_DENIED,
+                    )
+                    records.append(record)
+                    _tool_item_denied(
+                        runtime, call.name, call.arguments, record, node="execute"
                     )
                     messages.append(_tool_message(call.id, output))
                     continue
@@ -658,15 +744,17 @@ def make_execute_node(
                     if state.get("confirm_cycles", 0) >= MAX_CONFIRM_CYCLES:
                         # 确认次数达上限:不再打断,如实告知模型未执行
                         output = _tool_error("危险操作确认次数已达上限,本次未执行")
-                        records.append(
-                            _record(
-                                call.name,
-                                call.arguments,
-                                output,
-                                tool_call_id=getattr(call, "id", None),
-                                risk=risk,
-                                decision=DECISION_DENIED,
-                            )
+                        record = _record(
+                            call.name,
+                            call.arguments,
+                            output,
+                            tool_call_id=getattr(call, "id", None),
+                            risk=risk,
+                            decision=DECISION_DENIED,
+                        )
+                        records.append(record)
+                        _tool_item_denied(
+                            runtime, call.name, call.arguments, record, node="execute"
                         )
                         messages.append(_tool_message(call.id, output))
                         continue
@@ -676,13 +764,25 @@ def make_execute_node(
                     continue
                 # 策略 auto:审批流程已放行(不等于人工确认),照实执行并透传
                 # approved 作为服务端写操作的风险下限凭据。
+                item_kind = items.classify_tool_kind(call.name)
+                item_span: items.ItemSpan | None = None
+                if item_kind != items.KIND_TODO:
+                    # todo_write 的清单快照由 tools.py 落成 kind=todo item,
+                    # 这里不再重复报一条同名工具项(denied 分支仍如实上报)。
+                    item_kind, item_span = _tool_item_begin(
+                        runtime, call.name, call.arguments, node="execute"
+                    )
                 started = time.perf_counter()
-                output = await toolkit.execute(
-                    call.name,
-                    call.arguments,
-                    tool_call_id=getattr(call, "id", None),
-                    approved=True,
-                )
+                try:
+                    output = await toolkit.execute(
+                        call.name,
+                        call.arguments,
+                        tool_call_id=getattr(call, "id", None),
+                        approved=True,
+                    )
+                except Exception as exc:
+                    _tool_item_fail(runtime, item_span, call.name, call.arguments, exc)
+                    raise
                 update = _todos_update(call.name, output)
                 if update is not None:
                     latest_todos = update
@@ -691,17 +791,19 @@ def make_execute_node(
                 output, offload_record = await _maybe_offload(
                     offloader, call.name, output
                 )
-                records.append(
-                    _record(
-                        call.name,
-                        call.arguments,
-                        output,
-                        tool_call_id=getattr(call, "id", None),
-                        risk=risk,
-                        decision=DECISION_AUTO,
-                        duration_ms=_elapsed_ms(started),
-                        offload=offload_record,
-                    )
+                record = _record(
+                    call.name,
+                    call.arguments,
+                    output,
+                    tool_call_id=getattr(call, "id", None),
+                    risk=risk,
+                    decision=DECISION_AUTO,
+                    duration_ms=_elapsed_ms(started),
+                    offload=offload_record,
+                )
+                records.append(record)
+                _tool_item_finish(
+                    runtime, item_kind, call.name, call.arguments, item_span, record
                 )
                 messages.append(_tool_message(call.id, output))
             if pending:
@@ -789,17 +891,34 @@ def make_tool_exec_node(
             if toolkit is None:
                 # 装配缺失的错误信封不 offload(无内容可省,且要保持 ok=False)。
                 output = _tool_error("工具未配置,写操作未执行")
-            else:
-                # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
-                output = await toolkit.execute(
-                    name, arguments, tool_call_id=call_id, approved=True
+                record = _record(
+                    name,
+                    arguments,
+                    output,
+                    tool_call_id=call_id,
+                    risk=str(risk),
+                    decision=DECISION_APPROVED,
+                    duration_ms=_elapsed_ms(started),
                 )
+                records.append(record)
+                _tool_item_denied(runtime, name, arguments, record, node="tool_exec")
+            else:
+                item_kind, item_span = _tool_item_begin(
+                    runtime, name, arguments, node="tool_exec"
+                )
+                try:
+                    # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
+                    output = await toolkit.execute(
+                        name, arguments, tool_call_id=call_id, approved=True
+                    )
+                except Exception as exc:
+                    _tool_item_fail(runtime, item_span, name, arguments, exc)
+                    raise
                 update = _todos_update(name, output)
                 if update is not None:
                     latest_todos = update
                 output, offload_record = await _maybe_offload(offloader, name, output)
-            records.append(
-                _record(
+                record = _record(
                     name,
                     arguments,
                     output,
@@ -809,7 +928,10 @@ def make_tool_exec_node(
                     duration_ms=_elapsed_ms(started),
                     offload=offload_record,
                 )
-            )
+                records.append(record)
+                _tool_item_finish(
+                    runtime, item_kind, name, arguments, item_span, record
+                )
             messages.append(_tool_message(str(call.get("id") or ""), output))
         return {
             "tool_history": messages[len(base) :],

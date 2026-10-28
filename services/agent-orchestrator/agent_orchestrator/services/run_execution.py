@@ -6,6 +6,7 @@ GraphRuntime(端口 + 正文增量投影器)经 invocation config 显式注入�
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from common.artifacts import ArtifactStore
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph import items
 from agent_orchestrator.graph.todos import sanitize_todos
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
@@ -26,9 +28,17 @@ from agent_orchestrator.services import context_service
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.items import (
+    append_item_event,
+    latest_step_id,
+    next_plan_version,
+    plan_content,
+    resolve_thread_id,
+)
 from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
+    _item_stream,
     _step_stream,
     append_event,
 )
@@ -148,6 +158,25 @@ async def _invoke_plan(
     # P0-2:进图即 planning(前端/SSE 可见),不落事件——事件流保持
     # created → planned 的既有契约(计划真正产出后才发 planned)。
     run.status = RunStatus.PLANNING.value
+    # P1-D:计划是一等过程项——先落 started,成功后补 completed(§4/§7);
+    # version 跨 attempt 连续推进,item_id 因而在重试/编辑后仍唯一可寻址。
+    plan_thread_id = await resolve_thread_id(session, run)
+    plan_version, plan_supersedes = await next_plan_version(session, run)
+    plan_item_id = f"{run.id}:plan:{plan_version}"
+    plan_title = f"计划(第 {plan_version} 版)"
+    plan_started_at = datetime.now(UTC)
+    await append_item_event(
+        session,
+        run,
+        thread_id=plan_thread_id,
+        item_id=plan_item_id,
+        kind=items.KIND_PLAN,
+        phase=items.PHASE_STARTED,
+        title=plan_title,
+        node="plan",
+        data={"version": plan_version, "supersedes": plan_supersedes},
+        started_at=plan_started_at,
+    )
     state: dict[str, Any] = {
         "run_id": run.id,
         "tenant_id": run.tenant_id,
@@ -216,15 +245,59 @@ async def _invoke_plan(
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
+                _item_stream(
+                    session, run, step_projector, thread_id=plan_thread_id
+                ) as item_projector,
                 _usage_boundary(run),
             ):
                 values = await graph.ainvoke(
-                    state, config=_config(run, projector, step_projector)
+                    state,
+                    config=_config(run, projector, step_projector, item_projector),
                 )
     except Exception as exc:
+        await append_item_event(
+            session,
+            run,
+            thread_id=plan_thread_id,
+            item_id=plan_item_id,
+            kind=items.KIND_PLAN,
+            phase=items.PHASE_FAILED,
+            status=items.STATUS_FAILED,
+            title=plan_title,
+            node="plan",
+            data={
+                "version": plan_version,
+                "supersedes": plan_supersedes,
+                "reason": f"{type(exc).__name__}: {exc}",
+            },
+            started_at=plan_started_at,
+            finished_at=datetime.now(UTC),
+        )
         await _fail_run(session, run, exc, stage="plan")
         return
-    run.plan_markdown = values.get("plan_markdown", "")
+    run.plan_markdown = values.get("plan_markdown", "") or ""
+    plan_text, plan_chars, plan_truncated = plan_content(run.plan_markdown)
+    await append_item_event(
+        session,
+        run,
+        thread_id=plan_thread_id,
+        item_id=plan_item_id,
+        kind=items.KIND_PLAN,
+        phase=items.PHASE_COMPLETED,
+        status=items.STATUS_COMPLETED,
+        title=plan_title,
+        node="plan",
+        step_id=await latest_step_id(session, run, "plan"),
+        data={
+            "version": plan_version,
+            "supersedes": plan_supersedes,
+            "content": plan_text,
+            "chars": plan_chars,
+            "truncated": plan_truncated,
+        },
+        started_at=plan_started_at,
+        finished_at=datetime.now(UTC),
+    )
     if values.get("__interrupt__"):
         run.status = RunStatus.AWAITING_APPROVAL.value
         await append_event(session, run, "run.planned.v1", {"attempt": run.attempts})
@@ -297,6 +370,29 @@ async def update_plan(
     require_transition(run, "update_plan")
     await graph.aupdate_state(_config(run), {"plan_markdown": markdown}, as_node="plan")
     run.plan_markdown = markdown
+    # 编辑落新版 plan item(supersedes 上一版),与生成共用同一版本序列。
+    version, supersedes = await next_plan_version(session, run)
+    content, chars, truncated = plan_content(markdown)
+    edited_at = datetime.now(UTC)
+    await append_item_event(
+        session,
+        run,
+        thread_id=await resolve_thread_id(session, run),
+        item_id=f"{run.id}:plan:{version}",
+        kind=items.KIND_PLAN,
+        phase=items.PHASE_COMPLETED,
+        status=items.STATUS_COMPLETED,
+        title=f"计划(第 {version} 版)",
+        data={
+            "version": version,
+            "supersedes": supersedes,
+            "content": content,
+            "chars": chars,
+            "truncated": truncated,
+        },
+        started_at=edited_at,
+        finished_at=edited_at,
+    )
     await append_event(session, run, "run.plan.edited.v1", {"chars": len(markdown)})
     return run
 
