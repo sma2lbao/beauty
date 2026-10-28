@@ -23,12 +23,14 @@ npm install
 npm run dev            # 七个业务服务 + BFF + Vite SPA
 npm run dev:site       # 额外启动 Next.js 官网(:3000)
 npm run dev:status     # 只检查健康状态
+npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动前会自动执行)
 ```
 
 脚本行为:
 
 - 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
 - 缺 .env 自动创建;
+- 启动前把 6 个带 alembic 迁移的服务的 SQLite 库推到 head(见 §7.1),失败则中止启动;
 - 服务日志在 .cache/dev/\*.log;
 - Ctrl+C 停止由脚本启动的全部进程;
 - 任一子进程退出时整体退出,方便发现崩溃。
@@ -268,7 +270,7 @@ npm run dev:reset -- --yes # 不确认
 - .cache/dev(日志)
 
 保留 .env 与源码。服务运行中会拒绝删除;先 Ctrl+C 停 dev.sh,或加 --force。
-重置后重新 npm run dev,服务会在 AUTO_CREATE_TABLES=true 时自动建表。
+重置后重新 npm run dev,启动前会自动按 alembic 迁移建表(create_all 仍是兜底)。
 
 ## 7. 日志与排障
 
@@ -279,7 +281,7 @@ npm run dev:reset -- --yes # 不确认
 | 登录后页面空           | 检查 account-service :8001 与 BFF 日志                                                                                                                                                                                |
 | 会话接口 404/旧结构    | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                          |
 | 官网打不开             | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                         |
-| SQLite 表结构不对      | npm run dev:reset 后重启                                                                                                                                                                                              |
+| SQLite 表结构不对      | 启动时已自动迁移;仍报 no such column/迁移提示结构漂移时先 npm run dev:migrate 看原因,确实无法对齐再 npm run dev:reset                                                                                                 |
 | 想用真实模型           | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                                                                                                                           |
 | BYOK 不生效/烧平台 key | 三处 internal_secret 必须同一值（account/gateway/knowledge）；容器内 `ACCOUNT_BASE_URL` 要指向 `http://account-service:8001`；看 `llm_byok_lookups_total{status}` 与 `byok_lookup_failed` 日志                        |
 | 附件上传失败           | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                                                                                                                         |
@@ -289,6 +291,17 @@ npm run dev:reset -- --yes # 不确认
 | 想接 Sentry            | 配 `<SERVICE>__SENTRY_DSN`(+可选 `SERVICE__SENTRY_RELEASE`);不配则完全不初始化,内网形态零副作用                                                                                                                       |
 | 想看链路追踪           | 配 `<SERVICE>__OTLP_ENDPOINT`(完整 `…/v1/traces`,OTLP/HTTP)才会导出;不配则 span 只在进程内,日志里用 `trace_id`/`span_id` 串联。采样 `<SERVICE>__TRACE_SAMPLE_RATIO`(默认 0.1),关掉 `<SERVICE>__TRACING_ENABLED=false` |
 | 想看模型请求/正文      | 网关日志里 `llm_request`/`llm_response` 带 provider、model、token 用量与耗时；要看 prompt/响应正文置 `LLM_GATEWAY__LOG_CONTENT=true`（各截断 2KB，含用户数据，仅本地开）                                              |
+
+### 7.1 本地数据库迁移(自动)
+
+npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm run dev:migrate),把 6 个带 alembic 迁移的服务的 SQLite 库推到 head,失败则中止启动:
+
+- 空库/库不存在:从零迁移到 head;
+- 已登记 alembic_version:补齐落后的 revision;
+- create_all 建的旧库(无版本记录):先在临时副本上 stamp head + alembic check,结构一致才给真实库登记基线(收养),不一致则不动真实库并报错;
+- 非 SQLite(如 Postgres):跳过并提示手动 `alembic upgrade head`。
+
+它只负责「应用迁移」,不生成迁移:改 ORM 表结构仍必须新增 alembic 迁移脚本(见 AGENTS.md 的模型/迁移条目)。
 
 ## 8. 测试
 

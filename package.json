@@ -5,6 +5,7 @@
   "scripts": {
     "lint": "eslint .",
     "dev": "bash scripts/dev.sh",
+    "dev:migrate": "bash scripts/migrate-local.sh",
     "dev:site": "bash scripts/dev.sh --site",
     "dev:status": "bash scripts/dev.sh --status",
     "dev:reset": "bash scripts/reset-local.sh",

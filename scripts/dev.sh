@@ -2,6 +2,7 @@
 # 本地开发一键启动(无需 docker/云依赖):
 #   - 七个业务服务 + FastAPI BFF + Vite SPA
 #   - 缺 .env 时自动从 .env.example 复制
+#   - 启动前把本地 SQLite 库迁移到 alembic head(create_all 不给已有表加列)
 #   - 统一日志与 Ctrl+C 清理
 #
 # 用法:
@@ -39,7 +40,7 @@ for arg in "$@"; do
     --no-web) WITH_WEB=0 ;;
     --site) WITH_SITE=1 ;;
     -h|--help)
-      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -124,9 +125,9 @@ fi
 
 cleanup() {
   trap - INT TERM EXIT
-  echo ""
-  echo "停止本地开发进程..."
   if [ ${#PIDS[@]} -gt 0 ]; then
+    echo ""
+    echo "停止本地开发进程..."
     for pid in "${PIDS[@]}"; do
       # 先温和终止;进程可能已退出(正常或超时被 kill)。
       if kill -0 "$pid" 2>/dev/null; then
@@ -166,6 +167,16 @@ if [ ! -d "$ROOT/.venv" ] || [ "$ROOT/uv.lock" -nt "$ROOT/.venv" ]; then
   if ! (cd "$ROOT" && npx nx run agent-orchestrator:sync); then
     echo "⚠️  uv sync 失败,继续尝试启动(若服务报缺依赖,重跑前先手动 npx nx run <服务>:sync)" >&2
   fi
+fi
+
+# 启动服务前把本地 SQLite 库迁移到 alembic head:
+# 服务内 AUTO_CREATE_TABLES 的 create_all 只建缺失的表、不会给已有表加列;
+# ORM 加列(如 M4a 的 runs.todos)后旧库会持续 500(no such column)。
+# 迁移失败直接中止启动,避免带着错结构跑出一堆 500。
+if ! bash "$ROOT/scripts/migrate-local.sh"; then
+  echo "❌ 本地数据库迁移失败,已中止启动;" >&2
+  echo "   修复后重试,或 npm run dev:reset(会清空本地 SQLite/产物)。" >&2
+  exit 1
 fi
 
 # 本脚本记录已启动的端口(区分"我们启动的"与"外部占用的")。

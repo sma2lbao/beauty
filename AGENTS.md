@@ -39,6 +39,7 @@ npx nx graph                # 打开项目依赖关系图
 
 npm run dev                 # 本地一键启动(七服务 + BFF + web;详见 docs/local-dev.md)
 npm run dev:status          # 本地健康检查
+npm run dev:migrate         # 本地 SQLite 迁移到 alembic head(dev 启动前自动执行)
 npm run dev:seed            # 写入演示数据
 npm run dev:reset           # 清空本地 SQLite/产物
 ```
@@ -173,6 +174,6 @@ npx nx run common:sync                              # 变更后同步 .venv
 - **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service` 另跑 `npx nx test <项目>`。
 - **模型/迁移(易踩坑)**:改 ORM 表结构必须配 alembic 迁移——服务默认 `AUTO_CREATE_TABLES=false`,
   而测试走 `create_all` 会自动建表,**缺迁移在测试里看不出来、真实库上直接 500**;
-  改完在服务目录内跑 `uv run alembic check` 确认模型与迁移一致(dev 直建库无
-  `alembic_version` 记录,先 `alembic stamp <旧 head>` 对齐基线再 `upgrade head`)。
+  本地 dev 启动前由 `scripts/migrate-local.sh` 自动升级并按需「收养」SQLite 库
+  (见 `docs/local-dev.md` §7.1);改完在服务目录内跑 `uv run alembic check` 确认模型与迁移一致。
 - **依赖变更**:Python 先 `nx run <项目>:add/remove` 再 `nx run <项目>:sync`;JS 改 `package.json` 后根目录 `npm install`。
