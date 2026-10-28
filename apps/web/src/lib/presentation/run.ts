@@ -3,7 +3,7 @@
  *
  * 只依赖 runs-api 的类型;事件与工具调用的映射见 ./events.ts、./tools.ts。
  */
-import type { Run, RunStatus } from '@/lib/runs-api';
+import type { Run, RunParentKind, RunStatus } from '@/lib/runs-api';
 import { formatDuration, type Tone } from './format';
 
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
@@ -18,6 +18,17 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   failed: '已失败',
   cancelled: '已取消',
 };
+
+/** 血缘标签(P1-E §8):retry = 失败重试派生;subagent = 父 run 委派的子代理。 */
+export const RUN_PARENT_KIND_LABELS: Record<RunParentKind, string> = {
+  retry: '重试',
+  subagent: '子代理',
+};
+
+/** 是否子代理 run:看板加「子代理」徽标、详情按子代理文案标注归属。 */
+export function isSubagentRun(run: Pick<Run, 'parent_kind'>): boolean {
+  return run.parent_kind === 'subagent';
+}
 
 /** 任务执行阶段标签(token.delta.v1 的 phase):未知阶段由调用方兜底成「执行中」。 */
 export const RUN_PHASE_LABELS: Record<string, string> = {

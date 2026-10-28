@@ -62,18 +62,39 @@ def _memory_block(state: RunGraphState) -> str:
     return f"\n\n{block}"
 
 
+def _agent_block(state: RunGraphState) -> str:
+    """子代理角色块(P1-E):子 run 的角色名与角色提示词注入各阶段系统提示。
+
+    顶层 run 没有 ``agent_name``/``agent_prompt``(缺省),返回空串、行为不变;
+    子 run 由 services 层按 ``runs.agent_*`` 注入,模型据此扮演指定角色。
+    """
+
+    name = state.get("agent_name")
+    prompt = state.get("agent_prompt")
+    if not name and not prompt:
+        return ""
+    parts = ["\n\n子代理角色(必须遵循):"]
+    if name:
+        parts.append(f"名称:{name}")
+    if prompt:
+        parts.append(prompt)
+    return "\n".join(parts)
+
+
 def _context_block(state: RunGraphState) -> str:
     """上下文工程注入块(P1-F,§7.3):统一 plan/execute/verify/deliver 装配。
 
     有 context_block(services 层用 ContextPipeline 渲染好的 AGENTS.md /
     技能卡片 / 记忆段)时用它;没有(旧 checkpoint、未装配)时回退改造前的
     「技能约束 + 记忆召回」两段,行为与旧版严格一致。返回值可直接拼进系统
-    提示词(自带前置空行),空串=两段都没有。
+    提示词(自带前置空行),空串=两段都没有。子代理角色块始终最前(P1-E):
+    角色约束优先于通用上下文。
     """
+    agent = _agent_block(state)
     block = state.get("context_block")
     if block:
-        return f"\n\n{block}"
-    return _skill_block(state) + _memory_block(state)
+        return agent + f"\n\n{block}"
+    return agent + _skill_block(state) + _memory_block(state)
 
 
 def _todo_block(state: RunGraphState) -> str:

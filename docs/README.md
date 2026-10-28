@@ -25,6 +25,7 @@
 | [docs/design/context-engineering.md](./design/context-engineering.md)     | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）      | Lead       | 上下文策略或实现变化时     |
 | [docs/design/tool-execution.md](./design/tool-execution.md)               | 工具执行面设计（exec MVP：契约/审批/截断/审计，含 web_search 与 todo 分期） | Lead       | 执行面契约或实施进度变化时 |
 | [docs/design/event-taxonomy.md](./design/event-taxonomy.md)               | 事件分类学契约（thread/turn/item + plan 一等 item）                         | Lead       | 事件 kind/相位变化时       |
+| [docs/design/subagents.md](./design/subagents.md)                         | 子代理委派(P1-E):run 树/spawn_subagent/过程项 kind=subagent/用量投影        | Lead       | 子代理契约变化时           |
 | [docs/gap-2026-10/](./gap-2026-10/)                                       | 能力缺口需求池（未落地的能力缺口）                                          | Lead       | 缺口状态变化时             |
 | [apps/\*/README.md](../apps/)                                             | 应用运行说明                                                                | 应用 owner | 应用行为变化时             |
 | [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md)   | PR 模板                                                                     | Lead       | 流程变化时                 |
@@ -47,6 +48,7 @@
 - 可观测规范 → [observability.md](./observability.md)（唯一）
 - BYOK 契约（存储/解析/回退/KMS） → [design/byok.md](./design/byok.md)（唯一）
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
+- 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - Agent 行为契约 → 根 [AGENTS.md](../AGENTS.md)
 - 历史分析全部在 [archive/](./archive/)，不再更新、不作为依据
 - 每波重构结束时检查一次是否存在"双真源"（playbook §12.3）

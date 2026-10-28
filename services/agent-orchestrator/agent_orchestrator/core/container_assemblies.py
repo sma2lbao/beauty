@@ -14,6 +14,7 @@ from agent_orchestrator.models import runs as runs_models
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import mcp_oauth
 from agent_orchestrator.services.memory_tools import build_memory_tools
+from agent_orchestrator.services.subagents import build_spawn_tool
 from agent_orchestrator.services.todos import build_todo_tool
 from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import (
@@ -44,6 +45,7 @@ class ContainerAssemblyMixin:
             ctx = current_tool_context()
             # 显式引用的 MCP server:对话路径从 contextvar 读;run 路径读 run 快照
             selected: tuple[str, ...] | None = None
+            run: runs_models.Run | None = None
             if ctx is not None and ctx.mcp_server_ids:
                 selected = ctx.mcp_server_ids
             if ctx is not None and ctx.run_id:
@@ -132,6 +134,26 @@ class ContainerAssemblyMixin:
                     and offloader is not None
                 ):
                     specs.append(build_read_offloaded_tool(offloader))
+                # 子代理委派(P1-E):子代理自身不能再派生(深度上限=1 由这里
+                # 直接掐断,不给模型"试试看"的无效工具面)。
+                if (
+                    run is not None
+                    and run.tenant_id == tenant_id
+                    and settings.subagent_enabled
+                    and run.parent_kind != runs_models.PARENT_KIND_SUBAGENT
+                ):
+                    specs.append(
+                        build_spawn_tool(
+                            factory,
+                            settings=settings,
+                            # 依赖在装配后段才就位,这里按调用时取值
+                            run_graph=getattr(self, "run_graph", None),
+                            store=getattr(self, "artifact_store", None),
+                            workspace=getattr(self, "workspace_client", None),
+                            downloader=getattr(self, "artifact_downloader", None),
+                            context=getattr(self, "context_pipeline", None),
+                        )
+                    )
             return specs
 
         return _load_extras

@@ -18,7 +18,7 @@ from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph import items
 from agent_orchestrator.graph.todos import sanitize_todos
-from agent_orchestrator.models.runs import Run
+from agent_orchestrator.models.runs import PARENT_KIND_RETRY, PARENT_KIND_SUBAGENT, Run
 from agent_orchestrator.repositories import (
     RunRepository,
 )
@@ -83,11 +83,15 @@ logger = get_logger(__name__)
 
 
 def _allowed_tools_from_snapshot(run: Run) -> list[str] | None:
-    """快照读取边界:Run.skill_tools 里的旧工具名归一到 tool-service 正式名。
+    """快照读取边界:技能/子代理白名单里的旧工具名归一到 tool-service 正式名。
 
     None 表示创建时未冻结白名单(=不限制);空表保持空表(=不用工具)。
+    子代理(P1-E)的工具面是自身 ``agent_tools``(spawn 时已按父级白名单收窄并
+    落列),优先于技能快照;``agent_tools`` 为 None 时回落到 skill_tools。
     只读快照时归一,图节点与 RemoteToolkit.restricted() 仍只认正式名。
     """
+    if run.parent_kind == PARENT_KIND_SUBAGENT and run.agent_tools is not None:
+        return normalize_tool_names(run.agent_tools)
     if run.skill_tools is None:
         return None
     return normalize_tool_names(run.skill_tools)
@@ -193,6 +197,13 @@ async def _invoke_plan(
     allowed_tools = _allowed_tools_from_snapshot(run)
     if allowed_tools is not None:
         state["allowed_tools"] = allowed_tools
+    if run.parent_kind == PARENT_KIND_SUBAGENT:
+        # 子代理(P1-E):角色名/角色提示随状态进图,plan/execute/verify/deliver
+        # 的系统提示统一注入(节点纯函数,不查库)。
+        if run.agent_name:
+            state["agent_name"] = run.agent_name
+        if run.agent_prompt:
+            state["agent_prompt"] = run.agent_prompt
     if run.skill_version_id:
         # 上传技能包快照(P3):P3-C 的 skill_run 工具据此取包/执行;
         # 不带 package_id(run 行按契约只冻结 version_id 与执行字段)。
@@ -248,7 +259,7 @@ async def _invoke_plan(
                 _item_stream(
                     session, run, step_projector, thread_id=plan_thread_id
                 ) as item_projector,
-                _usage_boundary(run),
+                _usage_boundary(session, run),
             ):
                 values = await graph.ainvoke(
                     state,
@@ -430,6 +441,7 @@ async def retry_run(
         acceptance_criteria=list(parent.acceptance_criteria or []),
         plan_markdown=parent.plan_markdown,
         parent_run_id=parent.id,
+        parent_kind=PARENT_KIND_RETRY,
         conversation_id=parent.conversation_id,
         workspace_id=parent.workspace_id,
     )
@@ -438,7 +450,11 @@ async def retry_run(
         session,
         child,
         "run.created.v1",
-        {"title": child.title, "parent_run_id": parent.id},
+        {
+            "title": child.title,
+            "parent_run_id": parent.id,
+            "parent_kind": PARENT_KIND_RETRY,
+        },
     )
     await append_event(
         session,

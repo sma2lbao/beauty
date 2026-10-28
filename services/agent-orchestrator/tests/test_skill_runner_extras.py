@@ -87,7 +87,7 @@ def test_extras_exposes_skill_run_for_package_run(skill_client: TestClient) -> N
     specs = _extras(skill_client, ToolContext(tenant_id="t-1", run_id=run["id"]))
     # 顺序由装配段决定:skill_run 在 MCP/上下文工具之前,这里只锁"who 和风险"
     by_name = {spec.name: spec for spec in specs}
-    assert sorted(by_name) == ["skill_run", "todo_write"]
+    assert sorted(by_name) == ["skill_run", "spawn_subagent", "todo_write"]
     assert by_name["skill_run"].risk is ToolRisk.WRITE
     assert by_name["skill_run"].requires_confirmation is False
 
@@ -95,7 +95,10 @@ def test_extras_exposes_skill_run_for_package_run(skill_client: TestClient) -> N
 def test_extras_skips_skill_run_without_package(skill_client: TestClient) -> None:
     run = _create_run(skill_client)
     ctx = ToolContext(tenant_id="t-1", run_id=run["id"])
-    assert [spec.name for spec in _extras(skill_client, ctx)] == ["todo_write"]
+    assert [spec.name for spec in _extras(skill_client, ctx)] == [
+        "todo_write",
+        "spawn_subagent",
+    ]
 
 
 def test_extras_has_no_skill_run_in_chat_path(skill_client: TestClient) -> None:
@@ -108,6 +111,7 @@ def test_extras_has_no_skill_run_in_chat_path(skill_client: TestClient) -> None:
 def test_extras_unknown_run_id_has_no_skill_run(skill_client: TestClient) -> None:
     _upload_package(skill_client)
     ctx = ToolContext(tenant_id="t-1", run_id="no-such-run")
+    # run 不存在 = 不在 run 上下文:连 todo/spawn 都不给
     assert [spec.name for spec in _extras(skill_client, ctx)] == ["todo_write"]
 
 
@@ -129,7 +133,11 @@ def test_extras_mcp_failure_does_not_block_skill(
         _upload_package(client)
         run = _create_run(client, skill_id="team.weekly-report")
         specs = _extras(client, ToolContext(tenant_id="t-1", run_id=run["id"]))
-    assert sorted(spec.name for spec in specs) == ["skill_run", "todo_write"]
+    assert sorted(spec.name for spec in specs) == [
+        "skill_run",
+        "spawn_subagent",
+        "todo_write",
+    ]
 
 
 def test_runner_not_assembled_without_workspace(tmp_path: Path) -> None:

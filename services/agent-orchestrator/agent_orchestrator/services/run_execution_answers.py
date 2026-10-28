@@ -182,7 +182,7 @@ async def answer_run(
             async with (
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
-                _usage_boundary(run),
+                _usage_boundary(session, run),
             ):
                 values = await graph.ainvoke(
                     Command(

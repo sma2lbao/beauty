@@ -766,9 +766,11 @@ def make_execute_node(
                 # approved 作为服务端写操作的风险下限凭据。
                 item_kind = items.classify_tool_kind(call.name)
                 item_span: items.ItemSpan | None = None
-                if item_kind != items.KIND_TODO:
-                    # todo_write 的清单快照由 tools.py 落成 kind=todo item,
-                    # 这里不再重复报一条同名工具项(denied 分支仍如实上报)。
+                if call.name not in items.REPORTED_BY_SERVICE_TOOLS:
+                    # todo_write 的清单快照由 tools.py 落成 kind=todo item、
+                    # spawn_subagent 的子代理项由 services.subagents 落成
+                    # kind=subagent item,这里不再重复报一条同名工具项
+                    # (denied 分支仍如实上报)。
                     item_kind, item_span = _tool_item_begin(
                         runtime, call.name, call.arguments, node="execute"
                     )
@@ -903,9 +905,14 @@ def make_tool_exec_node(
                 records.append(record)
                 _tool_item_denied(runtime, name, arguments, record, node="tool_exec")
             else:
-                item_kind, item_span = _tool_item_begin(
-                    runtime, name, arguments, node="tool_exec"
-                )
+                item_kind = items.classify_tool_kind(name)
+                item_span: items.ItemSpan | None = None
+                if name not in items.REPORTED_BY_SERVICE_TOOLS:
+                    # 与 execute 分支同一口径:过程项由 services 层上报的工具
+                    # 不在这里重复报同名工具项。
+                    item_kind, item_span = _tool_item_begin(
+                        runtime, name, arguments, node="tool_exec"
+                    )
                 try:
                     # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
                     output = await toolkit.execute(

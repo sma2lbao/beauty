@@ -22,6 +22,10 @@ export const queryKeys = {
   runItems: (runId: string) => ['run-items', runId] as const,
   /** 任务清单投影:['run-todos', runId]。 */
   runTodos: (runId: string) => ['run-todos', runId] as const,
+  /** 子代理列表(P1-E):['run-subagents', runId]。 */
+  runSubagents: (runId: string) => ['run-subagents', runId] as const,
+  /** run 用量汇总(P1-E):['run-usage', runId]。 */
+  runUsage: (runId: string) => ['run-usage', runId] as const,
   runArtifacts: (runId: string) => ['run-artifacts', runId] as const,
   runArtifactPreview: (runId: string, previewId: string | null | undefined) =>
     ['run-artifact-preview', runId, previewId] as const,

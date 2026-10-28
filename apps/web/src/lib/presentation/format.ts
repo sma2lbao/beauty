@@ -146,6 +146,21 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
 }
 
+/**
+ * token 数 → 紧凑人类可读文案(999 / 1.2K / 1.2M)。
+ *
+ * 子代理卡片与用量汇总共用;空值/非法值/负数一律显示 '0'(后端无用量给零值,
+ * 不显示空白以免布局跳动)。
+ */
+export function formatTokens(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return '0';
+  }
+  if (value < 1000) return String(Math.round(value));
+  if (value < 1_000_000) return `${(value / 1000).toFixed(1)}K`;
+  return `${(value / 1_000_000).toFixed(1)}M`;
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;

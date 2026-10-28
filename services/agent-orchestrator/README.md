@@ -47,6 +47,34 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   工具项由图节点经 `runtime.items` 上报、`_item_stream` 在图调用边界落库,plan 由
   `_invoke_plan`/`update_plan` 直接落,todo 由 `todo_write` 快照落;契约见
   `docs/design/event-taxonomy.md`;
+- **子代理委派(P1-E,2026-10-28)**:任务执行的注入工具多一个 `spawn_subagent`
+  (`services/subagents.py`,`WRITE` 级、不进确认闸),让主 run 把一段子任务派给
+  **子 run** 独立跑完再取摘要——子 run 是真正的 run(自己的事件流/交付物/用量),
+  父 run 只多一条过程项:
+  - 暴露条件:在 run 上下文里、当前 run **不是子代理**(`parent_kind != "subagent"`)、
+    `SUBAGENT_ENABLED=true`(默认 true);深度/数量上限
+    `SUBAGENT_MAX_DEPTH=1` / `SUBAGENT_MAX_PER_RUN=3`;
+  - 入参 `title`(≤120)/ `task`(≤`SUBAGENT_TASK_MAX_CHARS` 4000)必填,可选
+    `agent_name`(≤40,默认「子代理」)、`instructions`(≤4000,注入子 run 的系统提示)、
+    `tools`(≤`SUBAGENT_MAX_TOOLS` 12,必须是父级有效白名单的子集)、
+    `timeout_seconds`(30..1800,默认 `SUBAGENT_TIMEOUT_SECONDS` 600);
+  - 子 run 落 `runs.parent_kind="subagent"` + `agent_name`/`agent_prompt`/`agent_tools`
+    (`retry` 派生的 run 记 `parent_kind="retry"`);继承租户/workspace/`mcp_server_ids`/
+    审批策略/LLM 路由,**不**继承父会话、技能快照与 pending 指令,`conversation_id`
+    留空;`agent_tools` 为 `null` 时按父级白名单(`agent_tools ?? skill_tools ?? 不限`)
+    归一化后落库,子 run 执行时即按它裁剪工具;
+  - 生命周期:建子 run(落 `run.created.v1`,payload 带 `parent_run_id`/`parent_kind`/
+    `agent_name`)→ 父 run 落 `kind="subagent"` 的 `run.item.v1`(started 带工具面/超时,
+    completed 带 `child_status`/`summary`/`usage`)→ **内联**执行子 run(同级
+    `plan_run`,不排队)→ 每 1s 轮询;完成取子 run 交付物正文(否则
+    `run.completed.v1` 的 results)截断到 `SUBAGENT_SUMMARY_MAX_CHARS`(4000)回喂父模型;
+    `awaiting_*` 立即返回(不阻塞父 run,摘要提示去运行详情继续);失败/取消/超时把
+    原因写进 item 的 `data.reason`(`failed`/`cancelled`/`timeout`);子 run 被取消
+    或父 run 取消时**连带**取消子 run(子 run 落 `run.cancelled.v1`);
+  - 用量:`_usage_boundary` 退出时按采集器落一条 `run.usage.v1`(`record_outbox=False`,
+    payload `{calls, prompt_tokens, completion_tokens, total_tokens, models}`,无采样不落),
+    `GET /runs/{id}/usage` 按模型聚合投影;`GET /runs/{id}/subagents` 列子 run
+    (含最近一次摘要与用量);契约见 `docs/design/subagents.md`;
 - 生命周期 API:`POST /runs/{id}/plan`、`PATCH /runs/{id}/plan`(等待人工审批时编辑计划)、
   `POST /runs/{id}/approve`、`POST /runs/{id}/reject`、`POST /runs/{id}/resume`
   (blocked → 重新进闸,保留已编辑计划,§6.2 goal 语义)、

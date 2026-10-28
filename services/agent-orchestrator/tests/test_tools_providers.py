@@ -50,6 +50,7 @@ def test_document_tool_flows_through_graph(tmp_path: Path) -> None:
             "list_documents",
             "read_document",
             "todo_write",
+            "spawn_subagent",
         }
         tool_messages = [m for m in fake.calls[2] if m["role"] == "tool"]
         assert tool_messages and "上周要点" in tool_messages[0]["content"]

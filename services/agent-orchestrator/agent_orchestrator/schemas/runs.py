@@ -54,6 +54,9 @@ class RunRead(BaseModel):
     acceptance_criteria: list[str]
     status_reason: str | None
     parent_run_id: str | None = None
+    # 子 run 血缘(P1-E):"retry" / "subagent" / 空(顶层);agent_name 仅子代理有
+    parent_kind: str | None = None
+    agent_name: str | None = None
     conversation_id: str | None = None
     workspace_id: str | None = None
     skill_id: str | None = None
@@ -91,8 +94,10 @@ class StepRead(BaseModel):
     duration_ms: int | None = None
 
 
-#: 过程项分类(事件分类学 §4):plan 一等项 + 工具执行细分的五类。
-RunItemKind = Literal["plan", "tool", "file_change", "mcp_call", "search", "todo"]
+#: 过程项分类(事件分类学 §4):plan 一等项 + 工具执行细分的五类 + 子代理委派。
+RunItemKind = Literal[
+    "plan", "tool", "file_change", "mcp_call", "search", "todo", "subagent"
+]
 
 #: 过程项相位(§5):started/delta/completed/failed;delta 当前预留。
 RunItemPhase = Literal["started", "delta", "completed", "failed"]
@@ -249,3 +254,47 @@ class ArtifactMetaRead(BaseModel):
     storage: str
     source: str = "report"
     created_at: datetime
+
+
+class RunUsageTotals(BaseModel):
+    """用量汇总(P1-E):run.usage.v1 事件按模型聚合后的加总部分。
+
+    子代理回喂父 run 的 usage 也复用这一形状,故单独抽出来
+    (RunUsageRead = 汇总 + by_model;SubagentRead.usage 只要汇总)。
+    """
+
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class RunUsageModelRead(RunUsageTotals):
+    """按模型拆分的用量(模型名来自网关回包,未知时为空串)。"""
+
+    model: str = ""
+
+
+class RunUsageRead(RunUsageTotals):
+    """GET /runs/{id}/usage:整个 run 的模型用量投影(无采样时全零)。"""
+
+    run_id: str
+    by_model: list[RunUsageModelRead] = Field(default_factory=list)
+
+
+class SubagentRead(BaseModel):
+    """子代理清单项(P1-E):父 run 视角下的子 run 摘要。
+
+    summary 取父 run 里该子代理 item 最近一次完成摘要(未结束则为 None),
+    与 spawn_subagent 工具回喂父 run 的内容一致。
+    """
+
+    run_id: str
+    title: str
+    agent_name: str | None = None
+    status: RunStatus
+    status_reason: str | None = None
+    parent_run_id: str | None = None
+    created_at: datetime
+    usage: RunUsageTotals = Field(default_factory=RunUsageTotals)
+    summary: str | None = None

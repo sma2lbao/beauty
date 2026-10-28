@@ -26,6 +26,15 @@ vi.mock('@/lib/runs-api', async () => {
         revision: 0,
       })),
       events: vi.fn(),
+      subagents: vi.fn(async () => []),
+      usage: vi.fn(async () => ({
+        run_id: 'run-1',
+        calls: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        by_model: [],
+      })),
       generatePlan: vi.fn(),
       updatePlan: vi.fn(),
       approve: vi.fn(),
@@ -104,6 +113,28 @@ describe('RunsPage', () => {
     renderPage();
 
     expect(await screen.findByText('还没有 run。')).toBeInTheDocument();
+  });
+
+  it('子代理 run 卡片显示「子代理」徽标,普通 run 不显示', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
+      makeRun({
+        id: 'child-1',
+        title: '依赖分析',
+        status: 'running',
+        parent_run_id: 'run-1',
+        parent_kind: 'subagent',
+        agent_name: '依赖分析',
+      }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByTestId('run-subagent-badge')).toHaveTextContent(
+      '子代理',
+    );
+    // 血缘徽标只出现在子 run 卡片上。
+    expect(screen.getAllByTestId('run-subagent-badge')).toHaveLength(1);
+    expect(screen.getByText('整理本周邮件成周报')).toBeInTheDocument();
   });
 
   it('接口返回 401:提示先完成鉴权', async () => {

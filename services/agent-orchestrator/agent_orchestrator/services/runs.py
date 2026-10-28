@@ -10,6 +10,8 @@
 - run_stream:SSE 帧生成、断线续传(Last-Event-ID)与 keep-alive
 - run_steps:步骤视图投影(run.step.v1 → GET /runs/{id}/steps,零迁移,07 S1)
 - run_items:过程项视图投影(run.item.v1 → GET /runs/{id}/items,零迁移,P1-D)
+- subagents:子代理委派(建子 run/轮询收尾/列表投影,P1-E)
+- usage_events:run.usage.v1 落库与用量汇总(GET /runs/{id}/usage,P1-E)
 
 本模块只做 re-export:调用方(api/v1/runs.py、jobs_worker、conversations、
 tests)一律经此取服务函数,拆分不改变任何对外名字与签名。
@@ -45,7 +47,9 @@ from agent_orchestrator.services.run_lifecycle import (
     require_run,
 )
 from agent_orchestrator.services.run_steps import list_steps
+from agent_orchestrator.services.subagents import list_subagents
 from agent_orchestrator.services.todos import list_todos
+from agent_orchestrator.services.usage_events import run_usage
 
 __all__ = [
     "_persist_artifact",
@@ -61,6 +65,7 @@ __all__ = [
     "list_items",
     "list_runs",
     "list_steps",
+    "list_subagents",
     "list_todos",
     "plan_run",
     "queue_instruction",
@@ -68,5 +73,6 @@ __all__ = [
     "require_run",
     "resume_run",
     "retry_run",
+    "run_usage",
     "update_plan",
 ]

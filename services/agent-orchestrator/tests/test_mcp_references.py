@@ -395,7 +395,11 @@ def test_run_execution_uses_snapshotted_mcp_references(tmp_path) -> None:
         assert done["status"] == "completed"
 
         # 第 0 次是 plan,第 1 次是 execute:工具表来自 run 快照里的引用
-        assert _tool_names(fake.tools_seen[1]) == ["mcp__alpha__echo", "todo_write"]
+        assert _tool_names(fake.tools_seen[1]) == [
+            "mcp__alpha__echo",
+            "spawn_subagent",
+            "todo_write",
+        ]
 
 
 def test_run_reference_requires_mcp_enabled(tmp_path) -> None:

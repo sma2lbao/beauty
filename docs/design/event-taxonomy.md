@@ -91,14 +91,15 @@ AG-UI 适配层留到后续(见 §9)。
 
 ## 4. kind 与 data
 
-| kind          | 触发点                                                  | data 字段(关键)                                                                                                    | 说明                                                               |
-| ------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `plan`        | `run_execution._invoke_plan`(生成)/ `update_plan`(编辑) | `version`(第几版)、`supersedes`(被替代的 item_id)、`content`(计划全文)、`chars`                                    | **一等 item**:plan 修订=新版本,不再只有快照见 `runs.plan_markdown` |
-| `tool`        | `graph/nodes.py` execute/tool_exec 的每次工具执行       | `name`、`arguments`、`ok`、`detail`、`risk`、`decision`、`tool_call_id`、`error_code`、`result_chars`、`truncated` | 普通工具(读/列/搜索/执行等)                                        |
-| `file_change` | 同上;工具名 `write`/`edit`                              | 同 `tool` + `paths`、`sha256_before`、`sha256_after`                                                               | 文件变更;前端可跳 diff                                             |
-| `mcp_call`    | 同上;工具名 `mcp__<slug>__<tool>`                       | `server`(slug)、`tool`、`name`、`arguments`、`ok`、`duration_ms`、`error_code`                                     | MCP 远程调用                                                       |
-| `search`      | 同上;工具名 `fetch`/`search_knowledge`                  | `name`、`arguments`、`ok`、`duration_ms`                                                                           | 检索/抓取                                                          |
-| `todo`        | `services/todos.py` 的 `todo_write` 写入快照时          | `todos`、`counts`、`revision`                                                                                      | 任务清单快照升级为一等 item(`run.todo.updated.v1` 仍保留)          |
+| kind          | 触发点                                                  | data 字段(关键)                                                                                                    | 说明                                                                      |
+| ------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `plan`        | `run_execution._invoke_plan`(生成)/ `update_plan`(编辑) | `version`(第几版)、`supersedes`(被替代的 item_id)、`content`(计划全文)、`chars`                                    | **一等 item**:plan 修订=新版本,不再只有快照见 `runs.plan_markdown`        |
+| `tool`        | `graph/nodes.py` execute/tool_exec 的每次工具执行       | `name`、`arguments`、`ok`、`detail`、`risk`、`decision`、`tool_call_id`、`error_code`、`result_chars`、`truncated` | 普通工具(读/列/搜索/执行等)                                               |
+| `file_change` | 同上;工具名 `write`/`edit`                              | 同 `tool` + `paths`、`sha256_before`、`sha256_after`                                                               | 文件变更;前端可跳 diff                                                    |
+| `mcp_call`    | 同上;工具名 `mcp__<slug>__<tool>`                       | `server`(slug)、`tool`、`name`、`arguments`、`ok`、`duration_ms`、`error_code`                                     | MCP 远程调用                                                              |
+| `search`      | 同上;工具名 `fetch`/`search_knowledge`                  | `name`、`arguments`、`ok`、`duration_ms`                                                                           | 检索/抓取                                                                 |
+| `todo`        | `services/todos.py` 的 `todo_write` 写入快照时          | `todos`、`counts`、`revision`                                                                                      | 任务清单快照升级为一等 item(`run.todo.updated.v1` 仍保留)                 |
+| `subagent`    | `services/subagents.py` 的 `spawn_subagent`(P1-E)       | `child_run_id`、`agent_name`、`child_status`、`summary`、`usage`、`reason`(失败时)                                 | 子代理委派(契约见 [subagents.md](./subagents.md));`started` 带工具面/超时 |
 
 分类规则集中在 `graph/items.py::classify_tool_kind(name)`(纯函数,可单测):
 
@@ -153,6 +154,7 @@ AG-UI 适配层留到后续(见 §9)。
 | `services/run_execution.py`                            | `_invoke_plan` 落 plan `started`/`completed`(或 `failed`);`update_plan` 落新版本 `completed`                 |
 | `graph/nodes.py`                                       | execute/tool_exec 每次工具调用落 `started` + `completed`(denied 只落 `completed`);节点经 `runtime.items`     |
 | `services/todos.py`                                    | `todo_write` 落 `run.todo.updated.v1` 后追加 `kind=todo` 的 item                                             |
+| `services/subagents.py`                                | `spawn_subagent` 落 `kind=subagent` 的 `started`/`completed`(或 `failed`)item(P1-E)                          |
 | `graph/runtime.py` / `run_execution_approvals._config` | `GraphRuntime.items` 注入(与 delta/steps 同一机制)                                                           |
 
 ## 8. 前端渲染
@@ -177,8 +179,10 @@ AG-UI 适配层留到后续(见 §9)。
   checkpoint 回退时可按 item 区间呈现。
 - **AG-UI(后续)**:`run.item.v1` 的 kind/phase 可直接映射到 AG-UI 的 activity
   事件族;Interrupts/State/Subagents 事件族不在本期(见 08a 矩阵第 7 条)。
-- **不做**:不改表、不加迁移;不把 `token.delta.v1` 改成 item(正文流保持独立);
-  item 不进 outbox(展示面事件);子 run 的事件树留到 P1-E。
+- **不做**:P1-D 本身不改表(子代理的 `parent_kind`/`agent_*` 列属 P1-E);不把
+  `token.delta.v1` 改成 item(正文流保持独立);item 不进 outbox(展示面事件);
+  子 run 的事件树已随 P1-E 落地(父级 `kind=subagent` + 子 run 事件流同
+  thread/`turn_id=child_run_id`,见 [subagents.md](./subagents.md))。
 
 ## 10. 验收对照
 

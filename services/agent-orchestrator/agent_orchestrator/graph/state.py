@@ -36,6 +36,10 @@ class RunGraphState(TypedDict, total=False):
     todos: list[dict[str, str]]
     skill_id: str  # Skill 绑定(run 创建时快照)
     skill_system_prompt: str  # Skill 的系统提示词
+    # 子代理(P1-E):子 run 的角色名与角色提示词,由 services 层按 runs.agent_*
+    # 注入;顶层 run 缺省(旧 checkpoint 兼容,节点统一用 .get 读)。
+    agent_name: str
+    agent_prompt: str
     # 上传技能包快照(P3):version_id/object_key/sha256/entrypoint/runtime/
     # network/timeout_seconds;内置技能无此项
     skill_package: dict[str, Any]

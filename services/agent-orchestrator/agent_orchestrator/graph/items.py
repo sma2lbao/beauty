@@ -35,6 +35,9 @@ KIND_FILE_CHANGE = "file_change"
 KIND_MCP_CALL = "mcp_call"
 KIND_SEARCH = "search"
 KIND_TODO = "todo"
+#: 子代理委派(P1-E):由 services 层按子 run 生命周期上报,节点不产生(kind 常量
+#: 放这里只是为了让 kind 值域单一真源,投影/前端按 KINDS 渲染)。
+KIND_SUBAGENT = "subagent"
 
 #: kind 值域(§4):顺序与契约表格一致,前端按下标渲染。
 KINDS: tuple[str, ...] = (
@@ -44,6 +47,7 @@ KINDS: tuple[str, ...] = (
     KIND_MCP_CALL,
     KIND_SEARCH,
     KIND_TODO,
+    KIND_SUBAGENT,
 )
 
 #: phase 值域(§5)。
@@ -53,6 +57,11 @@ MCP_TOOL_PREFIX = "mcp__"
 FILE_CHANGE_TOOLS = frozenset({"write", "edit"})
 SEARCH_TOOLS = frozenset({"fetch", "search_knowledge"})
 TODO_TOOL_NAME = "todo_write"
+#: 与 services.subagents.SPAWN_TOOL_NAME 同名:graph 不反向依赖 services 层,
+#: 这里只为「这些工具的过程项由 services 层按各自语义上报」这条判据。
+SUBAGENT_TOOL_NAME = "spawn_subagent"
+#: 过程项由 services 层上报的工具:节点不再重复报一条同名工具项(见 nodes)。
+REPORTED_BY_SERVICE_TOOLS = frozenset({TODO_TOOL_NAME, SUBAGENT_TOOL_NAME})
 
 
 def classify_tool_kind(name: str) -> str:

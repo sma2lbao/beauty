@@ -16,8 +16,10 @@ import {
 import { consoleButtonClass } from '@/components/console/button-class';
 import {
   BOARD_COLUMNS,
+  RUN_PARENT_KIND_LABELS,
   RUN_STATUS_LABELS,
   isRunQuiescent,
+  isSubagentRun,
   relativeTime,
   runStatusTone,
   taskCode,
@@ -378,9 +380,18 @@ function BoardColumn({
               </span>
 
               <span className="mt-2.5 flex items-center justify-between gap-2">
-                <ToneBadge tone={running ? 'info' : runTone}>
-                  {run.conversation_id ? '会话任务' : '控制台任务'}
-                </ToneBadge>
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <ToneBadge tone={running ? 'info' : runTone}>
+                    {run.conversation_id ? '会话任务' : '控制台任务'}
+                  </ToneBadge>
+                  {isSubagentRun(run) ? (
+                    <span data-testid="run-subagent-badge">
+                      <ToneBadge tone="accent" mono={false}>
+                        {RUN_PARENT_KIND_LABELS.subagent}
+                      </ToneBadge>
+                    </span>
+                  ) : null}
+                </span>
                 <span className="shrink-0 font-mono text-[11px] text-ha-faint">
                   {taskCode(run.id)}
                 </span>

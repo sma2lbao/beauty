@@ -19,6 +19,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+#: runs.parent_kind 的取值(P1-E):重试派生的子 run / 子代理派生的子 run。
+#: 放在模型层是为了让 run 本体语义(而不只是子代理服务)能引用,避免
+#: services 之间互相导入形成环。
+PARENT_KIND_RETRY = "retry"
+PARENT_KIND_SUBAGENT = "subagent"
+
 
 class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """一次长任务执行。状态机与 goal 语义见架构 §6.2。"""
@@ -67,6 +73,15 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     # 任务清单快照(M4):模型用 todo_write 覆盖写的全量清单,起图/resume 时装载进
     # 图状态;历史变更在 run.todo.updated.v1 事件里,这一列只保留最新状态。
     todos: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    # 子 run 血缘(P1-E):parent_run_id 之上再区分派生类型——"retry" 是失败重试,
+    # "subagent" 是父 run 调 spawn_subagent 委派出的子任务;顶层 run 两列都为空。
+    parent_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 子代理身份(P1-E):显示名与角色提示,只对 parent_kind="subagent" 生效。
+    agent_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    agent_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 子代理工具面快照(P1-E):为空表示继承父 run 的有效白名单(父也没有则不限)。
+    # 非空时 execute 阶段只装配这些工具(见 _allowed_tools_from_snapshot)。
+    agent_tools: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
 
 class RunEvent(UUIDMixin, TenantMixin, Base):

@@ -8,7 +8,7 @@
  * - 空 items 显示空态,不渲染列表。
  */
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { RunItem } from '@/lib/runs-api';
 
@@ -245,5 +245,128 @@ describe('RunItemTimeline', () => {
     expect(screen.getByText('已完成')).toBeTruthy();
     expect(screen.getByText('失败')).toBeTruthy();
     expect(screen.getByText('已拒绝')).toBeTruthy();
+  });
+
+  /* ── P1-E:子代理过程项 ──────────────────────────────────────────────── */
+
+  function makeSubagentItem(overrides: Partial<RunItem> = {}): RunItem {
+    return makeItem({
+      item_id: 'run-1:1:subagent:1',
+      kind: 'subagent',
+      title: '子代理: 依赖分析',
+      data: {
+        child_run_id: 'child-1',
+        agent_name: '依赖分析',
+        title: '子代理: 依赖分析',
+        tools: ['read_file', 'grep'],
+        timeout_seconds: 120,
+        child_status: 'completed',
+        summary: '依赖梳理完成,共 12 个包。',
+        usage: {
+          calls: 3,
+          prompt_tokens: 120,
+          completion_tokens: 80,
+          total_tokens: 200,
+        },
+      },
+      ...overrides,
+    });
+  }
+
+  it('子代理卡片显示名称、子 run 状态与 token 成本,摘要默认折叠', () => {
+    renderTimeline([makeSubagentItem()]);
+
+    const card = screen.getByTestId('run-item-subagent');
+    expect(card.getAttribute('data-item-id')).toBe('run-1:1:subagent:1');
+    expect(card.getAttribute('data-kind')).toBe('subagent');
+    expect(within(card).getByText('子代理: 依赖分析')).toBeTruthy();
+    expect(within(card).getByText('已完成')).toBeTruthy();
+    expect(within(card).getByText('200 tokens')).toBeTruthy();
+    expect(
+      screen.queryByTestId('run-item-subagent-summary-run-1:1:subagent:1'),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByTestId('run-item-toggle-run-1:1:subagent:1'));
+
+    const detail = screen.getByTestId('run-item-detail-run-1:1:subagent:1');
+    expect(within(detail).getByText('依赖分析')).toBeTruthy();
+    expect(within(detail).getByText('child-1')).toBeTruthy();
+    expect(within(detail).getByText('120s')).toBeTruthy();
+    expect(within(detail).getByText('3 次')).toBeTruthy();
+    expect(within(detail).getByText('read_file、grep')).toBeTruthy();
+    expect(
+      within(detail).getByTestId(
+        'run-item-subagent-summary-run-1:1:subagent:1',
+      ),
+    ).toBeTruthy();
+    expect(within(detail).getByText('依赖梳理完成,共 12 个包。')).toBeTruthy();
+  });
+
+  it('子代理终态可经「打开子 run」回调父级切换详情', () => {
+    const onOpenRun = vi.fn();
+    render(
+      <RunItemTimeline items={[makeSubagentItem()]} onOpenRun={onOpenRun} />,
+    );
+
+    fireEvent.click(screen.getByTestId('run-item-subagent-open'));
+
+    expect(onOpenRun).toHaveBeenCalledWith('child-1');
+  });
+
+  it('子代理运行中不出现打开按钮,未传 onOpenRun 也不渲染', () => {
+    render(
+      <RunItemTimeline
+        items={[
+          makeSubagentItem({
+            phase: 'started',
+            status: null,
+            data: {
+              child_run_id: 'child-1',
+              agent_name: '依赖分析',
+              title: '子代理: 依赖分析',
+            },
+          }),
+        ]}
+        onOpenRun={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('进行中')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '打开子 run' })).toBeNull();
+
+    render(<RunItemTimeline items={[makeSubagentItem()]} />);
+    expect(screen.queryByRole('button', { name: '打开子 run' })).toBeNull();
+  });
+
+  it('子代理失败时显示失败原因与失败状态', () => {
+    renderTimeline([
+      makeSubagentItem({
+        title: '子代理: 超时任务',
+        phase: 'failed',
+        status: 'failed',
+        data: {
+          child_run_id: 'child-2',
+          agent_name: '超时任务',
+          child_status: 'cancelled',
+          summary: null,
+          reason: 'timeout',
+          usage: {
+            calls: 1,
+            prompt_tokens: 5,
+            completion_tokens: 0,
+            total_tokens: 5,
+          },
+        },
+      }),
+    ]);
+
+    const card = screen.getByTestId('run-item-subagent');
+    expect(card.getAttribute('data-status')).toBe('failed');
+    expect(within(card).getByText('已取消')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('run-item-toggle-run-1:1:subagent:1'));
+
+    const detail = screen.getByTestId('run-item-detail-run-1:1:subagent:1');
+    expect(within(detail).getByText('失败原因:timeout')).toBeTruthy();
+    expect(within(detail).getByText('子代理还没有给出结论摘要。')).toBeTruthy();
   });
 });

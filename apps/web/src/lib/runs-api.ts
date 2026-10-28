@@ -22,6 +22,14 @@ export type RunStatus =
   | 'failed'
   | 'cancelled';
 
+/**
+ * run 血缘类型(P1-E §8):retry = 失败重试派生;subagent = 父 run 委派的子代理。
+ *
+ * 只描述血缘的「种类」,具体父 run 在 `parent_run_id`;retry 沿用旧版
+ * 「由 run … 重试而来」文案,subagent 在看板与详情单独标出。
+ */
+export type RunParentKind = 'retry' | 'subagent';
+
 export type Run = {
   id: string;
   title: string;
@@ -31,8 +39,12 @@ export type Run = {
   attempts: number;
   acceptance_criteria: string[];
   status_reason: string | null;
-  /** 重试血缘:本 run 由哪个 failed run 派生(§6.2)。 */
+  /** 血缘:本 run 由哪个 run 派生(retry §6.2 / subagent §8);无血缘为 null。 */
   parent_run_id: string | null;
+  /** 血缘类型;旧数据/旧接口可能缺省,缺省时按重试文案兜底。 */
+  parent_kind?: RunParentKind | null;
+  /** 子代理 run 的代理名(供父 run 详情与看板标注);非子代理为空。 */
+  agent_name?: string | null;
   /** 会话归属:由会话消息触发的 run 带;控制台直建为空。 */
   conversation_id: string | null;
   created_at: string;
@@ -72,8 +84,8 @@ export type StepStatus = 'running' | 'completed' | 'failed' | 'blocked';
 
 /**
  * 过程项分类(P1-D 事件分类学,契约见 docs/design/event-taxonomy.md §4):
- * 计划/工具/文件变更/MCP 调用/检索/任务清单。item 是「过程项」维度,与节点
- * 步骤(step)正交,通过 `step_id` 挂到步骤上。
+ * 计划/工具/文件变更/MCP 调用/检索/任务清单,以及 P1-E 的子代理委派。
+ * item 是「过程项」维度,与节点步骤(step)正交,通过 `step_id` 挂到步骤上。
  */
 export type RunItemKind =
   | 'plan'
@@ -81,7 +93,8 @@ export type RunItemKind =
   | 'file_change'
   | 'mcp_call'
   | 'search'
-  | 'todo';
+  | 'todo'
+  | 'subagent';
 
 /** 过程项生命周期相位(§5):started → delta → completed/failed。 */
 export type RunItemPhase = 'started' | 'delta' | 'completed' | 'failed';
@@ -136,6 +149,45 @@ export type RunTodos = {
   todos: RunTodoItem[];
   counts: { pending: number; in_progress: number; completed: number };
   revision: number;
+};
+
+/** 用量加总(不含 run_id/模型拆分):子代理清单与过程项 `data.usage` 都用这一形状。 */
+export type RunUsageTotals = {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+};
+
+/** 按模型拆分的用量行(模型名来自网关回包)。 */
+export type RunUsageModel = RunUsageTotals & { model: string };
+
+/**
+ * `GET /runs/{id}/usage`:该 run **自身**的用量(子代理用量在各自
+ * `Subagent.usage`);`by_model` 只在这个聚合接口上有。
+ */
+export type RunUsage = RunUsageTotals & {
+  run_id: string;
+  by_model: RunUsageModel[];
+};
+
+/**
+ * 一个子代理(P1-E §8):父 run 委派出来的**独立 run**。
+ *
+ * 子代理有自己的一条 run 记录与事件流,详情沿用 `/runs/{id}` 同一套接口
+ * (打开子 run = 切换到它的 runId);这里只带列表/汇总需要的摘要字段。
+ * `summary` 是子代理收尾时的结论(可空),按纯文本/Markdown 展示。
+ */
+export type Subagent = {
+  run_id: string;
+  title: string;
+  agent_name: string | null;
+  status: RunStatus;
+  status_reason: string | null;
+  parent_run_id: string | null;
+  created_at: string;
+  usage: RunUsageTotals;
+  summary: string | null;
 };
 
 export type Plan = {
@@ -250,6 +302,15 @@ export const runsApi = {
   /** 任务清单投影:空清单是合法结果(旧 run/没调用过 todo 工具),不是错误。 */
   todos: (runId: string) =>
     http.request<RunTodos>(`/api/v1/runs/${runId}/todos`),
+  /**
+   * 子代理列表(P1-E §8):父 run 派生出的子代理 run,按创建时间升序。
+   * 空数组合法(没有子代理);子代理详情沿用 `/runs/{id}` 同一套接口。
+   */
+  subagents: (runId: string) =>
+    http.request<Subagent[]>(`/api/v1/runs/${runId}/subagents`),
+  /** 用量汇总(§9):该 run 自身的调用次数与 token;无用量返回零值。 */
+  usage: (runId: string) =>
+    http.request<RunUsage>(`/api/v1/runs/${runId}/usage`),
   generatePlan: (runId: string) =>
     http.request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>

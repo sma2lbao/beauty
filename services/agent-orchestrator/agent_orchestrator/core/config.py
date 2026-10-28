@@ -118,6 +118,18 @@ class Settings(BaseAppSettings):
     todo_enabled: bool = True
     todo_max_items: int = 20
     todo_max_content_chars: int = 200
+    # 子代理委派(P1-E,见 docs/design/subagents.md):父 run 通过 spawn_subagent
+    # 起一个子 run 并把结论回喂。默认开——不用子代理的 run 行为不变。
+    subagent_enabled: bool = True
+    # 每个父 run 最多派生几个子代理(防止模型无限扩散)
+    subagent_max_per_run: int = 3
+    # 允许嵌套的深度:1 = 子代理不能再派子代理(spawn 工具也不在子 run 暴露)
+    subagent_max_depth: int = 1
+    # 子代理默认超时与参数上限
+    subagent_timeout_seconds: float = 600.0
+    subagent_summary_max_chars: int = 4000
+    subagent_task_max_chars: int = 4000
+    subagent_max_tools: int = 12
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库;
     # 代码类工具由 tool-service 提供,见下方的 tool_service_enabled)
     tools_enabled: bool = False

@@ -173,6 +173,83 @@ describe('runsApi', () => {
     expect(url).toBe('/api/v1/runs/r1/items');
   });
 
+  it('子代理列表走 /subagents 端点并保留 usage/summary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          run_id: 'child-1',
+          title: '整理依赖清单',
+          agent_name: '依赖分析',
+          status: 'completed',
+          status_reason: null,
+          parent_run_id: 'r1',
+          created_at: '2026-01-01T00:00:02Z',
+          usage: {
+            calls: 3,
+            prompt_tokens: 120,
+            completion_tokens: 80,
+            total_tokens: 200,
+            by_model: [
+              {
+                model: 'm1',
+                calls: 3,
+                prompt_tokens: 120,
+                completion_tokens: 80,
+                total_tokens: 200,
+              },
+            ],
+          },
+          summary: '完成依赖梳理',
+        },
+      ],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const subagents = await runsApi.subagents('r1');
+
+    expect(subagents[0]).toMatchObject({
+      run_id: 'child-1',
+      agent_name: '依赖分析',
+      status: 'completed',
+      parent_run_id: 'r1',
+    });
+    expect(subagents[0]?.usage.total_tokens).toBe(200);
+    expect(subagents[0]?.summary).toBe('完成依赖梳理');
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/subagents');
+  });
+
+  it('run 用量走 /usage 端点并保留 by_model', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        run_id: 'r1',
+        calls: 2,
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        total_tokens: 15,
+        by_model: [
+          {
+            model: 'm1',
+            calls: 2,
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const usage = await runsApi.usage('r1');
+
+    expect(usage).toMatchObject({ run_id: 'r1', calls: 2, total_tokens: 15 });
+    expect(usage.by_model[0]?.model).toBe('m1');
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/usage');
+  });
+
   it('下载交付物返回 Blob(走二进制端点,不解析 JSON)', async () => {
     setStoredToken('test-jwt');
     const blob = new Blob(['PNG'], { type: 'image/png' });

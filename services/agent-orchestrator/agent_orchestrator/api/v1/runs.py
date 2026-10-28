@@ -31,7 +31,9 @@ from agent_orchestrator.schemas.runs import (
     RunItemRead,
     RunRead,
     RunStatus,
+    RunUsageRead,
     StepRead,
+    SubagentRead,
     TodoRead,
 )
 from agent_orchestrator.services import jobs as jobs_service
@@ -137,6 +139,26 @@ async def list_run_items(
     thread/turn/item 三级分类学的读端;没有 item 的 run 返回空数组(不是 404)。
     """
     return await runs_service.list_items(session, tenant_id, run_id)
+
+
+@router.get("/{run_id}/subagents", response_model=list[SubagentRead])
+async def list_run_subagents(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> list[SubagentRead]:
+    """子代理面板(P1-E):该 run 派生的子代理(按创建时间,空数组合法)。
+
+    先 ``require_run``:跨租户/不存在一律 404,不泄漏存在性;``summary`` 取父级
+    ``kind=subagent`` item 里最近一次的完成摘要(未结束为 null)。
+    """
+    return await runs_service.list_subagents(session, tenant_id, run_id)
+
+
+@router.get("/{run_id}/usage", response_model=RunUsageRead)
+async def get_run_usage(
+    run_id: str, session: DBSession, tenant_id: TenantId
+) -> RunUsageRead:
+    """run 用量汇总(P1-E):聚合本地 ``run.usage.v1``,无用量返回零值。"""
+    return await runs_service.run_usage(session, tenant_id, run_id)
 
 
 @router.get("/{run_id}/todos", response_model=TodoRead)

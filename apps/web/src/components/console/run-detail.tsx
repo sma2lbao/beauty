@@ -6,7 +6,7 @@
  * 关键可访问名/testid 保留,便于既有行为测试钉住。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -23,11 +23,21 @@ import { RunTodoList } from '@/components/console/run-todo-list';
 import { RunEvents } from '@/components/runs/run-events';
 import { useRunEvents } from '@/components/runs/use-run-events';
 import {
+  RUN_PARENT_KIND_LABELS,
   RUN_STATUS_LABELS,
+  formatTokens,
   isRunQuiescent,
+  isSubagentRun,
   relativeTime,
 } from '@/lib/presentation';
-import type { Run, RunItem, RunStatus, RunStep } from '@/lib/runs-api';
+import type {
+  Run,
+  RunItem,
+  RunStatus,
+  RunStep,
+  RunUsage,
+  Subagent,
+} from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/query-keys';
@@ -109,6 +119,20 @@ export function RunDetail({
     refetchInterval: () =>
       runQuery.data && isRunQuiescent(runQuery.data.status) ? false : 1500,
   });
+  // 子代理列表与 run 用量(P1-E):父 run 执行中 1.5s 轮询,静默终态停。
+  // 子代理是独立 run,这里只取摘要;详情经 onSelectRun 切到子 run。
+  const subagentsQuery = useQuery({
+    queryKey: queryKeys.runSubagents(runId),
+    queryFn: () => runsApi.subagents(runId),
+    refetchInterval: () =>
+      runQuery.data && isRunQuiescent(runQuery.data.status) ? false : 1500,
+  });
+  const usageQuery = useQuery({
+    queryKey: queryKeys.runUsage(runId),
+    queryFn: () => runsApi.usage(runId),
+    refetchInterval: () =>
+      runQuery.data && isRunQuiescent(runQuery.data.status) ? false : 1500,
+  });
   const { events, connected } = useRunEvents(runId);
 
   const refresh = async () => {
@@ -121,6 +145,10 @@ export function RunDetail({
       queryClient.invalidateQueries({ queryKey: queryKeys.runSteps(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runItems(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runTodos(runId) }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.runSubagents(runId),
+      }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.runUsage(runId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.runs }),
     ]);
   };
@@ -154,6 +182,20 @@ export function RunDetail({
 
   const run = runQuery.data;
   const plan = planQuery.data;
+  const subagents = subagentsQuery.data ?? [];
+  // 有子代理 run、或父级已出现 subagent 过程项时才显示面板(§10)。
+  const showSubagents =
+    subagents.length > 0 ||
+    (itemsQuery.data ?? []).some((item) => item.kind === 'subagent');
+  // 子代理合计(§9):父 run 自身用量来自 /usage,子代理合计由各行相加。
+  const subagentCalls = subagents.reduce(
+    (total, subagent) => total + subagent.usage.calls,
+    0,
+  );
+  const subagentTokens = subagents.reduce(
+    (total, subagent) => total + subagent.usage.total_tokens,
+    0,
+  );
   const status = run?.status ?? 'pending';
   const editable = status === 'awaiting_approval';
   const canCancel = run !== undefined && CANCELLABLE.includes(status);
@@ -207,10 +249,33 @@ export function RunDetail({
             </p>
           ) : null}
           {run?.parent_run_id ? (
-            <p className="mt-2 font-mono text-[11px] text-ha-dim">
-              由 run {run.parent_run_id.slice(0, 8)}… 重试而来(来源 run
-              的历史与失败原因原样保留)
-            </p>
+            isSubagentRun(run) ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <p
+                  data-testid="run-parent-subagent"
+                  className="min-w-0 font-mono text-[11px] text-ha-dim"
+                >
+                  由父 run {run.parent_run_id.slice(0, 8)}…
+                  {` 委派的${RUN_PARENT_KIND_LABELS.subagent}`}
+                  {run.agent_name ? `「${run.agent_name}」` : ''}
+                </p>
+                {onSelectRun ? (
+                  <ConsoleButton
+                    variant="secondary"
+                    size="sm"
+                    data-testid="run-parent-open"
+                    onClick={() => onSelectRun(run.parent_run_id ?? '')}
+                  >
+                    返回父 run
+                  </ConsoleButton>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-2 font-mono text-[11px] text-ha-dim">
+                由 run {run.parent_run_id.slice(0, 8)}… 重试而来(来源 run
+                的历史与失败原因原样保留)
+              </p>
+            )
           ) : null}
 
           <div className="mt-3 flex flex-wrap gap-2">
@@ -388,8 +453,47 @@ export function RunDetail({
           <RunItemTimeline
             items={itemsQuery.data ?? []}
             className="mt-2 max-h-96 overflow-y-auto"
+            onOpenRun={onSelectRun}
           />
         </ConsolePanel>
+
+        {showSubagents ? (
+          <ConsolePanel className="p-3" data-testid="run-subagents-panel">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold text-ha-text-2">
+                子代理
+              </span>
+              <span className="font-mono text-[11px] text-ha-faint">
+                {subagents.length} 个
+              </span>
+            </div>
+            <RunUsageLine usage={usageQuery.data} className="mt-1.5" />
+            {subagents.length > 0 ? (
+              <>
+                <p
+                  data-testid="run-subagent-total"
+                  className="mt-0.5 font-mono text-[11px] leading-[17px] text-ha-faint"
+                >
+                  子代理合计:{subagentCalls} 次调用 ·{' '}
+                  {formatTokens(subagentTokens)} tokens
+                </p>
+                <ul aria-label="子代理列表" className="mt-2 space-y-1.5">
+                  {subagents.map((subagent) => (
+                    <SubagentRow
+                      key={subagent.run_id}
+                      subagent={subagent}
+                      onOpenRun={onSelectRun}
+                    />
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="mt-2 rounded-md border border-dashed border-ha-border px-3 py-2 text-[11px] leading-5 text-ha-dim">
+                暂无子代理 run 记录,委派完成后会出现在这里。
+              </p>
+            )}
+          </ConsolePanel>
+        ) : null}
 
         <ConsolePanel className="p-3">
           <div className="flex items-center justify-between gap-2">
@@ -495,5 +599,122 @@ export function RunDetail({
         </ConsolePanel>
       </div>
     </aside>
+  );
+}
+
+/* ── P1-E:用量汇总与子代理行 ───────────────────────────────────────────── */
+
+/**
+ * run 用量汇总(§9):调用次数 + 输入/输出/合计 token + 按模型拆分。
+ * 无用量时后端给零值,这里照实显示;面板只在有子代理时出现。
+ */
+function RunUsageLine({
+  usage,
+  className,
+}: {
+  usage: RunUsage | undefined;
+  className?: string;
+}) {
+  if (!usage) return null;
+  return (
+    <div data-testid="run-usage" className={cn('space-y-1', className)}>
+      <p className="font-mono text-[11px] leading-[17px] text-ha-muted">
+        本 run 用量:{usage.calls} 次调用 · 输入{' '}
+        {formatTokens(usage.prompt_tokens)} · 输出{' '}
+        {formatTokens(usage.completion_tokens)} · 合计{' '}
+        {formatTokens(usage.total_tokens)} tokens
+      </p>
+      {usage.by_model.length > 0 ? (
+        <ul aria-label="按模型用量" className="space-y-0.5">
+          {usage.by_model.map((model) => (
+            <li
+              key={model.model}
+              className="flex items-center justify-between gap-2 font-mono text-[10px] text-ha-faint"
+            >
+              <span className="min-w-0 truncate">{model.model}</span>
+              <span className="shrink-0">
+                {model.calls} 次 · {formatTokens(model.total_tokens)} tokens
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** 一个子代理行:名称/标题/状态/用量/摘要(可展开)/打开子 run。 */
+function SubagentRow({
+  subagent,
+  onOpenRun,
+}: {
+  subagent: Subagent;
+  onOpenRun?: (runId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const summary = subagent.summary;
+  return (
+    <li
+      data-testid={`run-subagent-${subagent.run_id}`}
+      data-status={subagent.status}
+      className="rounded-md border border-ha-border bg-ha-panel px-2.5 py-2"
+    >
+      <div className="flex items-center gap-2">
+        <Bot size={13} className="shrink-0 text-ha-accent" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ha-text-body">
+          {subagent.agent_name ?? '子代理'} · {subagent.title}
+        </span>
+        <RunStatusBadge status={subagent.status} />
+      </div>
+      <p className="mt-1 font-mono text-[10px] text-ha-faint">
+        {subagent.usage.calls} 次调用 ·{' '}
+        {formatTokens(subagent.usage.total_tokens)} tokens
+      </p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        {summary ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? '收起' : '展开'}子代理「${
+              subagent.agent_name ?? '子代理'
+            }」摘要`}
+            data-testid={`run-subagent-summary-toggle-${subagent.run_id}`}
+            onClick={() => setOpen((prev) => !prev)}
+            className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 font-mono text-[11px] text-ha-muted transition-colors hover:bg-ha-panel-2 hover:text-ha-text-2"
+          >
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            摘要
+          </button>
+        ) : (
+          <span className="font-mono text-[10px] text-ha-faint">
+            摘要待生成
+          </span>
+        )}
+        {onOpenRun ? (
+          <ConsoleButton
+            variant="secondary"
+            size="sm"
+            className="ml-auto"
+            data-testid={`run-subagent-open-${subagent.run_id}`}
+            onClick={() => onOpenRun(subagent.run_id)}
+          >
+            打开子 run
+          </ConsoleButton>
+        ) : null}
+      </div>
+      {open && summary ? (
+        <div
+          data-testid={`run-subagent-summary-${subagent.run_id}`}
+          className="mt-1.5 max-h-48 overflow-auto rounded-md border border-ha-border bg-ha-panel-2 px-2.5 py-2"
+        >
+          <Markdown content={summary} />
+        </div>
+      ) : null}
+      {subagent.status_reason ? (
+        <p className="mt-1 text-[11px] leading-5 text-ha-dim">
+          {subagent.status_reason}
+        </p>
+      ) : null}
+    </li>
   );
 }

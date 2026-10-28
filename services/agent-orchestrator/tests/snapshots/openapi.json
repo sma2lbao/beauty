@@ -2130,7 +2130,8 @@
               "file_change",
               "mcp_call",
               "search",
-              "todo"
+              "todo",
+              "subagent"
             ],
             "title": "Kind",
             "type": "string"
@@ -2218,6 +2219,17 @@
             "title": "Acceptance Criteria",
             "type": "array"
           },
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name"
+          },
           "attempts": {
             "title": "Attempts",
             "type": "integer"
@@ -2252,6 +2264,17 @@
             },
             "title": "Mcp Server Ids",
             "type": "array"
+          },
+          "parent_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Kind"
           },
           "parent_run_id": {
             "anyOf": [
@@ -2339,6 +2362,104 @@
         ],
         "title": "RunStatus",
         "type": "string"
+      },
+      "RunUsageModelRead": {
+        "description": "按模型拆分的用量(模型名来自网关回包,未知时为空串)。",
+        "properties": {
+          "calls": {
+            "default": 0,
+            "title": "Calls",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "default": 0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "title": "RunUsageModelRead",
+        "type": "object"
+      },
+      "RunUsageRead": {
+        "description": "GET /runs/{id}/usage:整个 run 的模型用量投影(无采样时全零)。",
+        "properties": {
+          "by_model": {
+            "items": {
+              "$ref": "#/components/schemas/RunUsageModelRead"
+            },
+            "title": "By Model",
+            "type": "array"
+          },
+          "calls": {
+            "default": 0,
+            "title": "Calls",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "total_tokens": {
+            "default": 0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": ["run_id"],
+        "title": "RunUsageRead",
+        "type": "object"
+      },
+      "RunUsageTotals": {
+        "description": "用量汇总(P1-E):run.usage.v1 事件按模型聚合后的加总部分。\n\n子代理回喂父 run 的 usage 也复用这一形状,故单独抽出来\n(RunUsageRead = 汇总 + by_model;SubagentRead.usage 只要汇总)。",
+        "properties": {
+          "calls": {
+            "default": 0,
+            "title": "Calls",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "default": 0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "title": "RunUsageTotals",
+        "type": "object"
       },
       "SkillDeliverable": {
         "properties": {
@@ -2683,6 +2804,77 @@
           "started_at"
         ],
         "title": "StepRead",
+        "type": "object"
+      },
+      "SubagentRead": {
+        "description": "子代理清单项(P1-E):父 run 视角下的子 run 摘要。\n\nsummary 取父 run 里该子代理 item 最近一次完成摘要(未结束则为 None),\n与 spawn_subagent 工具回喂父 run 的内容一致。",
+        "properties": {
+          "agent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Name"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/RunUsageTotals"
+          }
+        },
+        "required": ["run_id", "title", "status", "created_at"],
+        "title": "SubagentRead",
         "type": "object"
       },
       "TodoCounts": {
@@ -7128,6 +7320,83 @@
         "tags": ["runs"]
       }
     },
+    "/api/v1/runs/{run_id}/subagents": {
+      "get": {
+        "description": "子代理面板(P1-E):该 run 派生的子代理(按创建时间,空数组合法)。\n\n先 ``require_run``:跨租户/不存在一律 404,不泄漏存在性;``summary`` 取父级\n``kind=subagent`` item 里最近一次的完成摘要(未结束为 null)。",
+        "operationId": "list_run_subagents_api_v1_runs__run_id__subagents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubagentRead"
+                  },
+                  "title": "Response List Run Subagents Api V1 Runs  Run Id  Subagents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Run Subagents",
+        "tags": ["runs"]
+      }
+    },
     "/api/v1/runs/{run_id}/todos": {
       "get": {
         "description": "任务清单(M4):runs.todos 快照 + 最新 revision(没有清单也不是 404)。",
@@ -7198,6 +7467,79 @@
           }
         },
         "summary": "Get Run Todos",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/usage": {
+      "get": {
+        "description": "run 用量汇总(P1-E):聚合本地 ``run.usage.v1``,无用量返回零值。",
+        "operationId": "get_run_usage_api_v1_runs__run_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunUsageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Usage",
         "tags": ["runs"]
       }
     },

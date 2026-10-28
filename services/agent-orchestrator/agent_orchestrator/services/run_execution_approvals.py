@@ -397,7 +397,7 @@ async def approve_run(
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(session, run, step_projector) as item_projector,
-                _usage_boundary(run),
+                _usage_boundary(session, run),
             ):
                 values = await graph.ainvoke(
                     Command(resume={"action": "approve", "instructions": instructions}),
@@ -467,7 +467,7 @@ async def confirm_run(
                 _delta_stream(session, run) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(session, run, step_projector) as item_projector,
-                _usage_boundary(run),
+                _usage_boundary(session, run),
             ):
                 values = await graph.ainvoke(
                     Command(
