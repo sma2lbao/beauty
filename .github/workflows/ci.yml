@@ -172,8 +172,14 @@ jobs:
 
       - name: Lint / typecheck / build (affected)
         # 与本地等价：npx nx affected -t lint,typecheck,build --base=origin/main
-        # nx 只对存在该 target 的项目执行（无对应 target 的项目自动跳过）
-        run: npx nx affected -t lint,typecheck,build --base=origin/main
+        # nx 只对存在该 target 的项目执行（无对应 target 的项目自动跳过）。
+        # 但 11 个 Python 项目有 lint target（`uv run ruff check`），本 job 不装 uv
+        # → PR 场景（affected 非空）会以 "UV is not installed" 失败；push 场景
+        # base=HEAD 时 affected 为空，所以这个洞长期没暴露（PR #20 才第一次触发）。
+        # Python lint 由 python-lint job 逐个 npx nx lint 覆盖，这里显式排除。
+        run: |
+          npx nx affected -t lint,typecheck,build --base=origin/main \
+            --exclude=common,database,events,agent-orchestrator,llm-gateway,connector-service,knowledge-service,account-service,workspace-service,tool-service,bff
 
       # 覆盖率门禁（R-31b）：阈值唯一数字来源是根 vitest.config.mts 的 `thresholds`，
       # 各项目 vitest 配置 import 后挂到自身 coverage.thresholds；这里必须带 --coverage。
