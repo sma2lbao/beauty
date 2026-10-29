@@ -1,0 +1,398 @@
+"""发消息的两条姿势:一次拿全文,或产出事件流(自 conversations.py 拆出)。
+
+两者共用分流(§6.7)与上下文口径:先落用户消息与分流结论(chat 顺带读多轮
+上下文),chat 再产回复——一次拿全文或逐帧流式;task 路径交给 ``_task_path``
+建 run 或并入追加指令队列(§6.5)。
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
+
+from common.artifacts import ArtifactStore
+from database.session import session_scope
+from langgraph.graph.state import CompiledStateGraph
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from agent_orchestrator.context.pipeline import ContextPipeline
+from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models.conversations import ChatMessage
+from agent_orchestrator.models.runs import Run
+from agent_orchestrator.services import approval as approval_service
+from agent_orchestrator.services import attachments as attachments_service
+from agent_orchestrator.services import chat, triage
+from agent_orchestrator.services import usage as usage_service
+from agent_orchestrator.services.conversation_targets import require_conversation
+from agent_orchestrator.services.conversations_context import (
+    _maybe_extract_memories,
+    _prepare_chat_context,
+    _schedule_chat_extraction,
+    _task_compaction,
+)
+from agent_orchestrator.services.conversations_persist import (
+    _persist_assistant_message,
+    _persist_reply,
+    _persist_user_message,
+    _task_path,
+    _toolkit_for,
+)
+from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.llm import LLMClient, UpstreamError
+from agent_orchestrator.services.llm_binding import (
+    bind_dialogue_llm,
+    model_for_conversation,
+)
+from agent_orchestrator.services.skill_packages import SkillDefinition
+from agent_orchestrator.services.tool_context import (
+    ToolContext,
+    bind_tool_context,
+)
+from agent_orchestrator.services.tools import ToolRegistry
+from agent_orchestrator.services.workspace import Workspace
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from agent_orchestrator.services.tools import ToolSpec
+
+    ToolkitFactory = Callable[[str], ToolRegistry]
+    #: 外部工具(MCP/skill_run)工厂:按租户现取,与 run 执行图共用
+    ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
+
+
+async def post_message(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    llm: LLMClient | None,
+    tenant_id: str,
+    conversation_id: str,
+    content: str,
+    *,
+    mode: str = triage.AUTO,
+    attachment_ids: list[str] | None = None,
+    jobs_enabled: bool = False,
+    skill: SkillDefinition | None = None,
+    mcp_server_ids: list[str] | None = None,
+    mcp_reference_note: str = "",
+    toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ExtrasFactory | None = None,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
+    settings: Settings | None = None,
+    context_pipeline: ContextPipeline | None = None,
+    model: str | None = None,
+) -> tuple[ChatMessage, Run | None, ChatMessage | None, str]:
+    """发消息(一次拿全文):先分流(§6.7),再按 chat / task 路径持久化。
+
+    返回 (用户消息, run|None, assistant 直接回复|None, 处理方式);
+    处理方式 ∈ {"chat", "run_created", "instruction_queued"}。
+
+    chat 路径携带只读工具(toolkit_factory + extras_factory):对话内
+    function-calling(§6.8);外部工具(MCP)里 requires_confirmation 的会被
+    chat.run_tool_loop 拒绝并提示改用「任务」(对话没有审批流,§6.7)。
+
+    context_pipeline 非空时透传给建 run 的路径:起图那一刻按策略快照上下文
+    (AGENTS.md/技能卡片/记忆),chat 路径用不到(它自己拼多轮上下文)。
+
+    model 是本次消息的模型覆盖(P1-G):优先级 message > conversation > 网关默认;
+    chat 分支的模型调用(triage/压缩/直答)与新建 run 的快照都用它。
+    """
+    conversation = await require_conversation(session, tenant_id, conversation_id)
+    message = await _persist_user_message(
+        session, conversation, content, mcp_server_ids=mcp_server_ids
+    )
+    if attachment_ids:
+        await attachments_service.link_attachments(
+            session,
+            tenant_id,
+            conversation_id,
+            message,
+            attachment_ids,
+            max_count=5,
+        )
+    attachment_context = ""
+    if attachment_ids:
+        attachment_context = await attachments_service.context_for_message(
+            session, tenant_id, message.id
+        )
+    resolved_model = model or model_for_conversation(conversation)
+    with bind_dialogue_llm(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        model=resolved_model,
+    ):
+        decided = await triage.decide(content, llm, mode=mode)
+    # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
+    if decided == triage.CHAT and llm is not None:
+        # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用);
+        # mcp_server_ids 让外部工具工厂只装配被引用的 server
+        with (
+            bind_dialogue_llm(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                model=resolved_model,
+            ),
+            bind_tool_context(
+                ToolContext(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    mcp_server_ids=tuple(mcp_server_ids or ()),
+                )
+            ),
+        ):
+            toolkit = await _toolkit_for(
+                toolkit_factory, extras_factory, tenant_id, read_only=True
+            )
+            policies = await approval_service.load_policies(session, tenant_id)
+            context = await _prepare_chat_context(
+                session, llm, message, conversation, settings
+            )
+            answer = await chat.answer(
+                session,
+                llm,
+                message,
+                toolkit,
+                reference_note=mcp_reference_note,
+                policies=policies,
+                context=context,
+                settings=settings,
+            )
+        reply = await _persist_assistant_message(session, message, answer)
+        # 有会话边界时推迟到提交后抽取(响应不等二次模型调用);服务层直调
+        # (无 runtime 绑定)保持同步语义,行为与之前一致
+        if not _schedule_chat_extraction(
+            session,
+            llm,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            workspace_id=conversation.workspace_id,
+            settings=settings,
+        ):
+            await _maybe_extract_memories(
+                session,
+                llm,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                workspace_id=conversation.workspace_id,
+                settings=settings,
+            )
+        return message, None, reply, triage.CHAT
+    compaction_result = await _task_compaction(
+        session, llm, conversation, message, settings
+    )
+    run, outcome = await _task_path(
+        session,
+        graph,
+        conversation,
+        message,
+        content,
+        jobs_enabled=jobs_enabled,
+        skill=skill,
+        attachment_context=attachment_context,
+        mcp_server_ids=mcp_server_ids,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+        compaction=compaction_result,
+        settings=settings,
+        context_pipeline=context_pipeline,
+        model=model,
+    )
+    return message, run, None, outcome
+
+
+async def stream_message(
+    factory: async_sessionmaker[AsyncSession],
+    graph: CompiledStateGraph,
+    llm: LLMClient | None,
+    tenant_id: str,
+    conversation_id: str,
+    content: str,
+    *,
+    mode: str = triage.AUTO,
+    attachment_ids: list[str] | None = None,
+    jobs_enabled: bool = False,
+    skill: SkillDefinition | None = None,
+    mcp_server_ids: list[str] | None = None,
+    mcp_reference_note: str = "",
+    toolkit_factory: ToolkitFactory | None = None,
+    extras_factory: ExtrasFactory | None = None,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
+    settings: Settings | None = None,
+    context_pipeline: ContextPipeline | None = None,
+    model: str | None = None,
+) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    """流式发消息:yield (事件名, 载荷)。
+
+    - meta:分流结论(含用户消息,chat 时 run 为空);
+    - delta:正文增量(仅 chat;工具轮也是真流式,逐段原样转发);
+    - tool:chat 内只读工具调用(对话内 function-calling,§6.8);
+    - done:收尾(chat 带落库后的 assistant 回复);
+    - error:失败(流已按 200 开头,只能用帧报错)。
+
+    工具轮的正文不再"跑完整个工具循环再按字补发":每轮模型输出边产出边进
+    delta 帧,工具事件夹在轮次之间;中间轮次的过渡说明同样实时下发,并随
+    parts 一起落库,最终 assistant 回复 = 各轮正文拼接(与客户端看到的逐帧
+    内容完全一致)。
+
+    客户端中途断开时,已产出的增量仍会落库(不丢半截回复);全部失败则不留
+    assistant 消息,由对话页展示错误。
+    """
+    # 第一段事务:用户消息 + 分流结论(chat 顺带读多轮上下文;task 建 run/排队)
+    run: Run | None = None
+    prompt: list[dict[str, str]] = []
+    conversation_workspace_id: str | None = None
+    async with session_scope(factory) as session:
+        conversation = await require_conversation(session, tenant_id, conversation_id)
+        conversation_workspace_id = conversation.workspace_id
+        message = await _persist_user_message(
+            session, conversation, content, mcp_server_ids=mcp_server_ids
+        )
+        if attachment_ids:
+            await attachments_service.link_attachments(
+                session,
+                tenant_id,
+                conversation_id,
+                message,
+                attachment_ids,
+                max_count=5,
+            )
+        attachment_context = ""
+        if attachment_ids:
+            attachment_context = await attachments_service.context_for_message(
+                session, tenant_id, message.id
+            )
+        resolved_model = model or model_for_conversation(conversation)
+        with bind_dialogue_llm(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            model=resolved_model,
+        ):
+            decided = await triage.decide(content, llm, mode=mode)
+        if decided == triage.CHAT and llm is not None:
+            context = await _prepare_chat_context(
+                session, llm, message, conversation, settings
+            )
+            prompt = await chat.prompt(
+                session,
+                message,
+                reference_note=mcp_reference_note,
+                context=context,
+                settings=settings,
+            )
+            outcome = triage.CHAT
+        else:
+            compaction_result = await _task_compaction(
+                session, llm, conversation, message, settings
+            )
+            run, outcome = await _task_path(
+                session,
+                graph,
+                conversation,
+                message,
+                content,
+                jobs_enabled=jobs_enabled,
+                skill=skill,
+                attachment_context=attachment_context,
+                mcp_server_ids=mcp_server_ids,
+                store=store,
+                workspace=workspace,
+                downloader=downloader,
+                max_download_files=max_download_files,
+                compaction=compaction_result,
+                settings=settings,
+                context_pipeline=context_pipeline,
+                model=model,
+            )
+    yield "meta", {"mode": outcome, "message": message, "run": run}
+    if run is not None or llm is None:
+        # 任务路径的进展由 run 自己的事件流呈现,这里不重复
+        yield "done", {"mode": outcome, "reply": None}
+        return
+
+    # 第二段:流式产出增量(不占事务);顺带采集本轮用量(P0-1,run_id 为空)
+    collector = usage_service.UsageCollector()
+    usage_token = usage_service.bind(collector)
+    parts: list[str] = []
+    failure: UpstreamError | None = None
+    reply: ChatMessage | None = None
+    try:
+        # 对话内工具执行的来源上下文(stdio MCP 沙箱按对话复用);
+        # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
+        with (
+            bind_dialogue_llm(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                model=resolved_model,
+            ),
+            bind_tool_context(
+                ToolContext(
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    mcp_server_ids=tuple(mcp_server_ids or ()),
+                )
+            ),
+        ):
+            toolkit = await _toolkit_for(
+                toolkit_factory, extras_factory, tenant_id, read_only=True
+            )
+            if toolkit is None or len(toolkit) == 0:
+                # 无工具:保持原路径——真正的流式增量(边产出边显示)
+                async for delta in llm.stream(prompt):
+                    parts.append(delta)
+                    yield "delta", {"text": delta}
+            else:
+                # 对话内 function-calling:每轮正文真流式下发、工具事件实时转发;
+                # 中间轮(模型过渡说明)的正文也下发并落库,不再只保留最后一轮。
+                # 第一段事务已在 yield meta 前结束,此处必须开新事务:
+                # 复用已 close 的 session 会隐式 autobegin 再签出连接,无人归还
+                async with session_scope(factory) as policy_session:
+                    policies = await approval_service.load_policies(
+                        policy_session, tenant_id
+                    )
+                async for kind, payload in chat.run_tool_loop(
+                    llm, prompt, toolkit, policies=policies, stream=True
+                ):
+                    if kind == "delta":
+                        delta = str(payload["text"])
+                        parts.append(delta)
+                        yield "delta", {"text": delta}
+                    elif kind == "tool":
+                        yield "tool", payload
+    except UpstreamError as exc:
+        failure = exc
+    finally:
+        # 正常结束、上游失败、客户端断开都走这里:已产出的部分必须落库
+        # (finally 里只允许 await,不能再 yield——断开时 yield 会 RuntimeError)
+        usage_service.unbind(usage_token)
+        text = "".join(parts)
+        if text:
+            reply = await _persist_reply(factory, message, text)
+        await usage_service.report(
+            tenant_id=tenant_id, run_id=None, samples=collector.samples
+        )
+    if failure is not None:
+        yield "error", {"code": failure.code, "message": failure.message}
+        return
+    yield "done", {"mode": outcome, "reply": reply}
+    # 记忆抽取放到 done 之后:客户端先拿到完成帧,抽取慢不会拖住收尾;独立短事务,
+    # 失败只 warning(客户端断开导致生成器关闭时跳过本轮抽取,不影响已落库回复)。
+    if reply is not None:
+        async with session_scope(factory) as extract_session:
+            await _maybe_extract_memories(
+                extract_session,
+                llm,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                workspace_id=conversation_workspace_id,
+                settings=settings,
+            )

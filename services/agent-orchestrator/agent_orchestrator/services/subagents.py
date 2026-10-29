@@ -5,6 +5,13 @@
 执行是内联的(``jobs_enabled=False`` 语义,不进队列),handler 每 1s 轮询
 子 run 终态 / 子 run 被取消 / 父 run 被取消 / 超时,然后把摘要与用量
 回喂父模型。子 run 遇到审批闸时立即返回,由人工在其运行详情继续。
+
+拆分后的实现见同目录兄弟模块:``subagents_spec``(常量与共享枚举)、
+``subagents_policy``(参数校验/工具裁剪/深度与配额闸)、``subagents_runtime``
+(内联执行/轮询/取消收尾)、``subagents_report``(父过程项落库与回喂 JSON)。
+本文件保留 ``spawn_subagent`` 等入口,并原样重导出全部历史名字——调用方与
+测试按 ``subagents.<name>`` 取用(``_wait_child`` 的 monkeypatch 也依赖入口
+在本模块内解析这些名字)。
 """
 
 from __future__ import annotations
@@ -12,14 +19,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from common.errors import NotFoundError
 from database.session import session_scope
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.core.config import Settings
@@ -39,67 +43,116 @@ from agent_orchestrator.services.run_artifacts import get_artifact
 from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.run_execution import _invoke_plan
 from agent_orchestrator.services.run_lifecycle import require_run
+from agent_orchestrator.services.subagents_policy import (
+    _check_limits,
+    _parent_tools,
+    _parse,
+    _parse_timeout,
+    _parse_tools,
+    _Rejected,
+    _Request,
+    _required_text,
+    _resolve_tools,
+    _strip_self,
+    _subagent_depth,
+)
+from agent_orchestrator.services.subagents_report import (
+    _append_finish_item,
+    _child_summary,
+    _finish,
+    _finish_aborted,
+    _item_summaries,
+    _usage_reply,
+)
+from agent_orchestrator.services.subagents_runtime import (
+    _abort_child,
+    _cancel_child,
+    _cancel_text,
+    _execute_child,
+    _poll_cancelled,
+    _wait_child,
+)
+from agent_orchestrator.services.subagents_spec import (
+    _ABORT_CANCELLED,
+    _ABORT_PARENT,
+    _ABORT_TIMEOUT,
+    _AWAITING_STATUSES,
+    _TERMINAL_STATUSES,
+    CANCELLED_REASON,
+    DEFAULT_AGENT_NAME,
+    MAX_AGENT_NAME_CHARS,
+    MAX_INSTRUCTIONS_CHARS,
+    MAX_TIMEOUT_SECONDS,
+    MAX_TITLE_CHARS,
+    MAX_WALK_DEPTH,
+    MIN_TIMEOUT_SECONDS,
+    PARENT_CANCELLED_REASON,
+    POLL_SECONDS,
+    SPAWN_TOOL_NAME,
+    TIMEOUT_REASON,
+)
 from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tool_names import normalize_tool_names
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 
 logger = logging.getLogger(__name__)
 
-#: 工具名/血缘枚举(与契约 §5/§3 一致)。
-SPAWN_TOOL_NAME = "spawn_subagent"
-DEFAULT_AGENT_NAME = "子代理"
-
-MAX_TITLE_CHARS = 120
-MAX_AGENT_NAME_CHARS = 40
-MAX_INSTRUCTIONS_CHARS = 4000
-MIN_TIMEOUT_SECONDS = 30.0
-MAX_TIMEOUT_SECONDS = 1800.0
-#: 轮询间隔(契约 §6:"每 1s 轮询")。
-POLL_SECONDS = 1.0
-#: 血缘上溯深度上限(防环,与 thread 解析同一口径)。
-MAX_WALK_DEPTH = 8
-
-TIMEOUT_REASON = "子代理超时"
-CANCELLED_REASON = "已取消"
-PARENT_CANCELLED_REASON = "父 run 已取消"
-
-_AWAITING_STATUSES = {
-    RunStatus.AWAITING_APPROVAL.value,
-    RunStatus.AWAITING_CONFIRMATION.value,
-    RunStatus.AWAITING_INPUT.value,
-}
-_TERMINAL_STATUSES = {
-    RunStatus.COMPLETED.value,
-    RunStatus.FAILED.value,
-    RunStatus.BLOCKED.value,
-    RunStatus.CANCELLED.value,
-}
-
-# 轮询中止原因(超时/取消的区分只影响 item 的 data.reason 与返回内容)
-_ABORT_TIMEOUT = "timeout"
-_ABORT_CANCELLED = "cancelled"
-_ABORT_PARENT = "parent_cancelled"
-
-
-@dataclass(frozen=True)
-class _Request:
-    """校验后的 spawn 参数(长度/范围都已在解析时收敛)。"""
-
-    title: str
-    task: str
-    agent_name: str
-    instructions: str | None
-    tools: list[str] | None
-    timeout_seconds: float
-
-
-class _Rejected(Exception):
-    """参数/上限校验失败:转成 ``subagent.*`` 工具结果回喂模型。"""
-
-    def __init__(self, code: str, detail: str) -> None:
-        super().__init__(detail)
-        self.code = code
-        self.detail = detail
+#: 对外保留的历史名字(调用方与测试按 ``subagents.<name>`` 取用)。
+__all__ = [
+    "CANCELLED_REASON",
+    "DEFAULT_AGENT_NAME",
+    "MAX_AGENT_NAME_CHARS",
+    "MAX_INSTRUCTIONS_CHARS",
+    "MAX_TIMEOUT_SECONDS",
+    "MAX_TITLE_CHARS",
+    "MAX_WALK_DEPTH",
+    "MIN_TIMEOUT_SECONDS",
+    "NotFoundError",
+    "PARENT_CANCELLED_REASON",
+    "RunEventRepository",
+    "POLL_SECONDS",
+    "RunUsageTotals",
+    "SPAWN_TOOL_NAME",
+    "TIMEOUT_REASON",
+    "_ABORT_CANCELLED",
+    "_ABORT_PARENT",
+    "_ABORT_TIMEOUT",
+    "_AWAITING_STATUSES",
+    "_Request",
+    "_Rejected",
+    "_TERMINAL_STATUSES",
+    "_abort_child",
+    "_append_finish_item",
+    "_cancel_child",
+    "_cancel_text",
+    "_check_limits",
+    "_child_summary",
+    "_error",
+    "_execute_child",
+    "_finish",
+    "_finish_aborted",
+    "_invoke_plan",
+    "_item_summaries",
+    "_parent_tools",
+    "_parse",
+    "_parse_timeout",
+    "_parse_tools",
+    "_poll_cancelled",
+    "_reload",
+    "_required_text",
+    "_resolve_tools",
+    "_strip_self",
+    "_subagent_depth",
+    "_timeout_value",
+    "_usage_reply",
+    "_wait_child",
+    "get_artifact",
+    "list_items",
+    "normalize_tool_names",
+    "build_spawn_tool",
+    "list_subagents",
+    "spawn_subagent",
+]
 
 
 def build_spawn_tool(
@@ -374,513 +427,11 @@ async def list_subagents(
     return result
 
 
-def _parse(params: dict[str, Any], *, settings: Settings) -> _Request:
-    """工具参数校验(长度/枚举/范围越界一律 invalid_arguments,§5)。"""
-
-    title = _required_text(params.get("title"), field="title")
-    if len(title) > MAX_TITLE_CHARS:
-        raise _Rejected(
-            "subagent.invalid_arguments", f"title 不能超过 {MAX_TITLE_CHARS} 字"
-        )
-    task = _required_text(params.get("task"), field="task")
-    if len(task) > settings.subagent_task_max_chars:
-        raise _Rejected(
-            "subagent.invalid_arguments",
-            f"task 不能超过 {settings.subagent_task_max_chars} 字",
-        )
-
-    raw_name = params.get("agent_name")
-    if raw_name is None:
-        agent_name = DEFAULT_AGENT_NAME
-    elif isinstance(raw_name, str):
-        agent_name = raw_name.strip() or DEFAULT_AGENT_NAME
-        if len(agent_name) > MAX_AGENT_NAME_CHARS:
-            raise _Rejected(
-                "subagent.invalid_arguments",
-                f"agent_name 不能超过 {MAX_AGENT_NAME_CHARS} 字",
-            )
-    else:
-        raise _Rejected("subagent.invalid_arguments", "agent_name 必须是字符串")
-
-    raw_instructions = params.get("instructions")
-    instructions: str | None = None
-    if raw_instructions is not None:
-        if not isinstance(raw_instructions, str):
-            raise _Rejected("subagent.invalid_arguments", "instructions 必须是字符串")
-        instructions = raw_instructions.strip() or None
-        if instructions is not None and len(instructions) > MAX_INSTRUCTIONS_CHARS:
-            raise _Rejected(
-                "subagent.invalid_arguments",
-                f"instructions 不能超过 {MAX_INSTRUCTIONS_CHARS} 字",
-            )
-
-    tools = _parse_tools(params.get("tools"), settings=settings)
-    timeout = _parse_timeout(params.get("timeout_seconds"), settings=settings)
-    return _Request(
-        title=title,
-        task=task,
-        agent_name=agent_name,
-        instructions=instructions,
-        tools=tools,
-        timeout_seconds=timeout,
-    )
-
-
-def _parse_tools(raw: Any, *, settings: Settings) -> list[str] | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
-        raise _Rejected("subagent.invalid_arguments", "tools 必须是字符串数组")
-    # 剔除自身防递归(契约 §5):即使父白名单里意外带了也不允许再下放。
-    tools = normalize_tool_names([item.strip() for item in raw if item.strip()])
-    tools = [name for name in tools if name != SPAWN_TOOL_NAME]
-    if len(tools) > settings.subagent_max_tools:
-        raise _Rejected(
-            "subagent.invalid_arguments",
-            f"tools 最多 {settings.subagent_max_tools} 个",
-        )
-    return tools
-
-
-def _parse_timeout(raw: Any, *, settings: Settings) -> float:
-    if raw is None:
-        value = float(settings.subagent_timeout_seconds)
-    else:
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            raise _Rejected("subagent.invalid_arguments", "timeout_seconds 必须是数字")
-        value = float(raw)
-        if not MIN_TIMEOUT_SECONDS <= value <= MAX_TIMEOUT_SECONDS:
-            raise _Rejected(
-                "subagent.invalid_arguments",
-                f"timeout_seconds 必须在 {MIN_TIMEOUT_SECONDS:.0f}.."
-                f"{MAX_TIMEOUT_SECONDS:.0f} 之间",
-            )
-    # 配置值也走 clamp(契约 §6 的 effective 语义),避免环境变量把超时放开。
-    return min(max(value, MIN_TIMEOUT_SECONDS), MAX_TIMEOUT_SECONDS)
-
-
-def _required_text(raw: Any, *, field: str) -> str:
-    if not isinstance(raw, str) or not raw.strip():
-        raise _Rejected("subagent.invalid_arguments", f"{field} 必填且必须是非空字符串")
-    return raw.strip()
-
-
-def _parent_tools(parent: Run) -> list[str] | None:
-    """父级有效白名单:``agent_tools ?? skill_tools ?? null``(§5)。
-
-    继承时同样剔除 ``spawn_subagent`` 自身:白名单里意外带了这个名字时
-    也不该把「继续派生」的能力下放给子代理(深度闸是第二道防线)。
-    """
-
-    if parent.agent_tools is not None:
-        return _strip_self(normalize_tool_names(parent.agent_tools))
-    if parent.skill_tools is not None:
-        return _strip_self(normalize_tool_names(parent.skill_tools))
-    return None
-
-
-def _strip_self(names: list[str]) -> list[str]:
-    return [name for name in names if name != SPAWN_TOOL_NAME]
-
-
-def _resolve_tools(request: _Request, parent: Run) -> list[str] | None:
-    """子代理工具面:只收窄;未传则原样继承父级有效白名单(可为 None)。"""
-
-    parent_tools = _parent_tools(parent)
-    if request.tools is None:
-        return parent_tools
-    if parent_tools is not None:
-        allowed = set(parent_tools)
-        extra = [name for name in request.tools if name not in allowed]
-        if extra:
-            raise _Rejected(
-                "subagent.tools_not_subset",
-                "以下工具不在父级白名单内:" + ", ".join(extra),
-            )
-    return request.tools
-
-
-async def _check_limits(session: AsyncSession, parent: Run, settings: Settings) -> None:
-    depth = await _subagent_depth(session, parent)
-    if depth + 1 > settings.subagent_max_depth:
-        raise _Rejected(
-            "subagent.depth_exceeded",
-            f"子代理最多嵌套 {settings.subagent_max_depth} 层",
-        )
-    used = await RunRepository(session).count(
-        Run.tenant_id == parent.tenant_id,
-        Run.parent_run_id == parent.id,
-        Run.parent_kind == PARENT_KIND_SUBAGENT,
-    )
-    if used >= settings.subagent_max_per_run:
-        raise _Rejected(
-            "subagent.limit_exceeded",
-            f"每个 run 最多 {settings.subagent_max_per_run} 个子代理",
-        )
-
-
-async def _subagent_depth(session: AsyncSession, run: Run) -> int:
-    """当前 run 的子代理层数:顶层=0,子代理再派生=1(用于深度上限判定)。"""
-
-    depth = 0
-    current = run
-    while current.parent_kind == PARENT_KIND_SUBAGENT and current.parent_run_id:
-        if depth >= MAX_WALK_DEPTH:
-            break
-        parent = await session.get(Run, current.parent_run_id)
-        if parent is None:
-            break
-        depth += 1
-        current = parent
-    return depth
-
-
-async def _execute_child(
-    factory: async_sessionmaker[AsyncSession],
-    child_id: str,
-    *,
-    run_graph: Any,
-    store: Any,
-    workspace: Any,
-    downloader: Any,
-    context: Any,
-    settings: Settings,
-) -> None:
-    """在独立会话里跑子 run 的 plan 语义(``jobs_enabled=False``,不进队列)。"""
-
-    async with session_scope(factory) as session:
-        child = await session.get(Run, child_id)
-        if child is None:
-            logger.warning("子 run 不存在,跳过执行(child_id=%s)", child_id)
-            return
-        await _invoke_plan(
-            session,
-            run_graph,
-            child,
-            store=store,
-            workspace=workspace,
-            downloader=downloader,
-            settings=settings,
-            context=context,
-        )
-
-
-async def _wait_child(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    parent_id: str,
-    child_id: str,
-    task: asyncio.Task[None],
-    timeout_seconds: float,
-) -> str | None:
-    """每秒轮询子 run 终态/取消与父 run 取消;超时返回 abort 原因(§6)。
-
-    完成判定用 ``task.done()`` 而不是 DB 状态:子 run 的终态写在子执行会话里,
-    只在会话退出时提交——轮询 DB 看不到"刚结束"的瞬间。
-    """
-
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        done, _ = await asyncio.wait({task}, timeout=POLL_SECONDS)
-        if task in done:
-            return None
-        parent_cancelled, child_cancelled = await _poll_cancelled(
-            factory, parent_id=parent_id, child_id=child_id
-        )
-        if parent_cancelled:
-            return _ABORT_PARENT
-        if child_cancelled:
-            return _ABORT_CANCELLED
-        if time.monotonic() >= deadline:
-            return _ABORT_TIMEOUT
-
-
-async def _poll_cancelled(
-    factory: async_sessionmaker[AsyncSession], *, parent_id: str, child_id: str
-) -> tuple[bool, bool]:
-    """只读 status 列判取消(用独立会话,不碰父 run 执行会话)。"""
-
-    async with session_scope(factory) as session:
-        parent_status = await session.scalar(
-            select(Run.status).where(Run.id == parent_id)
-        )
-        child_status = await session.scalar(
-            select(Run.status).where(Run.id == child_id)
-        )
-    cancelled = RunStatus.CANCELLED.value
-    return parent_status == cancelled, child_status == cancelled
-
-
-async def _abort_child(task: asyncio.Task[None]) -> None:
-    """取消子任务并吞掉取消/异常:子 run 的收尾由调用方按 DB 状态决定。"""
-
-    if not task.done():
-        task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    except Exception:  # noqa: BLE001 - 子 run 自己的异常已由 _fail_run 落库
-        logger.warning("子 run 执行任务异常结束", exc_info=True)
-
-
-async def _cancel_child(
-    factory: async_sessionmaker[AsyncSession], child_id: str, reason: str
-) -> Run | None:
-    """把子 run 落成 cancelled(超时/父取消/外部取消共用,§6)。"""
-
-    async with session_scope(factory) as session:
-        child = await session.get(Run, child_id)
-        if child is None:
-            return None
-        if child.status in _TERMINAL_STATUSES:
-            return child
-        child.status = RunStatus.CANCELLED.value
-        child.status_reason = reason[:500]
-        await append_event(session, child, "run.cancelled.v1", {"reason": reason})
-        return child
-
-
-def _cancel_text(abort: str) -> str:
-    if abort == _ABORT_TIMEOUT:
-        return TIMEOUT_REASON
-    if abort == _ABORT_PARENT:
-        return PARENT_CANCELLED_REASON
-    return CANCELLED_REASON
-
-
 async def _reload(session: AsyncSession, child_id: str) -> Run | None:
     """取子 run 已提交的最新状态(绕过本会话 identity map 里的旧快照)。"""
 
     await session.commit()
     return await session.get(Run, child_id, populate_existing=True)
-
-
-async def _finish_aborted(
-    session: AsyncSession,
-    parent: Run,
-    child: Run | None,
-    *,
-    thread_id: str,
-    item_id: str,
-    request: _Request,
-    base_data: dict[str, Any],
-    started_at: datetime,
-    abort: str,
-) -> dict[str, Any]:
-    """超时/取消收尾:父 item failed,返回 ok=false。"""
-
-    reason = "timeout" if abort == _ABORT_TIMEOUT else "cancelled"
-    data = {
-        **base_data,
-        "child_status": RunStatus.CANCELLED.value,
-        "summary": "",
-        "reason": reason,
-    }
-    await append_item_event(
-        session,
-        parent,
-        thread_id=thread_id,
-        item_id=item_id,
-        kind=items.KIND_SUBAGENT,
-        phase=items.PHASE_FAILED,
-        title=request.title,
-        data=data,
-        node="execute",
-        status=items.STATUS_FAILED,
-        started_at=started_at,
-        finished_at=datetime.now(UTC),
-    )
-    await session.commit()
-    return {
-        "ok": False,
-        "error": f"subagent.{reason}",
-        "status": RunStatus.CANCELLED.value,
-        "detail": _cancel_text(abort),
-        "subagent_run_id": child.id if child is not None else None,
-    }
-
-
-async def _finish(
-    session: AsyncSession,
-    parent: Run,
-    child: Run,
-    *,
-    thread_id: str,
-    item_id: str,
-    title: str,
-    base_data: dict[str, Any],
-    started_at: datetime,
-    store: Any,
-    settings: Settings,
-) -> dict[str, Any]:
-    """按子 run 终态落父 item 并组装回喂父模型的 JSON(§6 状态映射)。"""
-
-    status = child.status
-    usage = await usage_events.usage_totals(session, parent.tenant_id, child.id)
-    usage_data = usage.model_dump()
-
-    if status in _AWAITING_STATUSES:
-        # 待人工:立即返回,不阻塞父 run;人工处理后可续跑子 run。
-        await _append_finish_item(
-            session,
-            parent,
-            thread_id=thread_id,
-            item_id=item_id,
-            title=title,
-            data={
-                **base_data,
-                "child_status": status,
-                "summary": "",
-                "usage": usage_data,
-            },
-            phase=items.PHASE_COMPLETED,
-            status=items.STATUS_COMPLETED,
-            started_at=started_at,
-        )
-        await session.commit()
-        return {
-            "ok": True,
-            "subagent_run_id": child.id,
-            "status": status,
-            "summary": "",
-            "note": "子代理等待人工审批,可在运行详情继续",
-            "usage": _usage_reply(usage),
-        }
-
-    summary = await _child_summary(session, child, store=store, settings=settings)
-
-    if status == RunStatus.COMPLETED.value:
-        await _append_finish_item(
-            session,
-            parent,
-            thread_id=thread_id,
-            item_id=item_id,
-            title=title,
-            data={
-                **base_data,
-                "child_status": status,
-                "summary": summary,
-                "usage": usage_data,
-            },
-            phase=items.PHASE_COMPLETED,
-            status=items.STATUS_COMPLETED,
-            started_at=started_at,
-        )
-        await session.commit()
-        return {
-            "ok": True,
-            "subagent_run_id": child.id,
-            "status": status,
-            "summary": summary,
-            "usage": _usage_reply(usage),
-        }
-
-    # failed / blocked / cancelled:父 item 落失败项,data.reason 用状态值。
-    await _append_finish_item(
-        session,
-        parent,
-        thread_id=thread_id,
-        item_id=item_id,
-        title=title,
-        data={
-            **base_data,
-            "child_status": status,
-            "summary": summary,
-            "usage": usage_data,
-            "reason": status,
-        },
-        phase=items.PHASE_FAILED,
-        status=items.STATUS_FAILED,
-        started_at=started_at,
-    )
-    await session.commit()
-    return {
-        "ok": False,
-        "error": f"subagent.{status}",
-        "status": status,
-        "detail": child.status_reason or summary or f"子代理状态:{status}",
-        "subagent_run_id": child.id,
-        "usage": _usage_reply(usage),
-    }
-
-
-async def _append_finish_item(
-    session: AsyncSession,
-    parent: Run,
-    *,
-    thread_id: str,
-    item_id: str,
-    title: str,
-    data: dict[str, Any],
-    phase: str,
-    status: str,
-    started_at: datetime,
-) -> None:
-    await append_item_event(
-        session,
-        parent,
-        thread_id=thread_id,
-        item_id=item_id,
-        kind=items.KIND_SUBAGENT,
-        phase=phase,
-        title=title,
-        data=data,
-        node="execute",
-        status=status,
-        started_at=started_at,
-        finished_at=datetime.now(UTC),
-    )
-
-
-async def _child_summary(
-    session: AsyncSession,
-    child: Run,
-    *,
-    store: Any,
-    settings: Settings,
-) -> str:
-    """子 run 结论摘要:交付物正文 → run.completed.v1.results → status_reason。"""
-
-    text = ""
-    try:
-        view = await get_artifact(session, child.tenant_id, child.id, store)
-        text = view.content or ""
-    except NotFoundError:
-        text = ""
-    if not text:
-        events = await RunEventRepository(session).list_for_run(
-            child.tenant_id, child.id
-        )
-        for event in reversed(events):
-            if event.type != "run.completed.v1":
-                continue
-            results = (event.payload or {}).get("results") or []
-            text = "\n".join(str(item) for item in results)
-            break
-    if not text:
-        text = child.status_reason or ""
-    return text[: settings.subagent_summary_max_chars]
-
-
-async def _item_summaries(
-    session: AsyncSession, tenant_id: str, parent_id: str
-) -> dict[str, str]:
-    """父 run 里每个子代理 item 最近一次完成摘要(列表页 summary 列)。"""
-
-    summaries: dict[str, str] = {}
-    for item in await list_items(session, tenant_id, parent_id):
-        if item.kind != items.KIND_SUBAGENT:
-            continue
-        child_id = item.data.get("child_run_id")
-        summary = item.data.get("summary")
-        if isinstance(child_id, str) and isinstance(summary, str):
-            summaries[child_id] = summary
-    return summaries
-
-
-def _usage_reply(usage: RunUsageTotals) -> dict[str, int]:
-    return {"total_tokens": usage.total_tokens, "calls": usage.calls}
 
 
 def _timeout_value(seconds: float) -> float | int:
