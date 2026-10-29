@@ -12,11 +12,19 @@
  * 文件行在大小右侧显示 +N/−M,目录行显示其子树汇总。端点降级或没传会话 id 时
  * 保持原来的纯文件树。
  */
-import { File, FileQuestion, Folder, FolderOpen, Link2, RefreshCw } from 'lucide-react';
+import {
+  File,
+  FileQuestion,
+  Folder,
+  FolderOpen,
+  Link2,
+  RefreshCw,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ConsoleButton } from '@/components/console/ui';
+import { formatBytes } from '@/lib/presentation';
 import { queryKeys } from '@/lib/query-keys';
 import {
   fileTreeUnder,
@@ -32,6 +40,8 @@ import {
   type FileLineStat,
 } from '@/lib/tool-calls-api';
 import { cn } from '@/lib/utils';
+
+import { lineChangesUnder } from './sandbox-tree-stats';
 
 /** 首屏拉取的层级:够看到 src/ 下的常见结构,又不至于一次拉满整棵树。 */
 const INITIAL_DEPTH = 3;
@@ -50,27 +60,6 @@ type TreeSharedProps = {
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
 };
-
-/** 汇总某个路径的增删行数:文件取自身,目录取整棵子树(按 'dir/' 前缀)。 */
-function lineChangesUnder(
-  stats: ReadonlyMap<string, FileLineStat>,
-  relative: string,
-  isDir: boolean,
-): FileLineStat | null {
-  if (!isDir) return stats.get(relative) ?? null;
-  const prefix = relative ? relative + '/' : '';
-  let added = 0;
-  let removed = 0;
-  let hit = false;
-  for (const [key, stat] of stats) {
-    if (prefix === '' || key === relative || key.startsWith(prefix)) {
-      added += stat.added;
-      removed += stat.removed;
-      hit = true;
-    }
-  }
-  return hit ? { added, removed } : null;
-}
 
 export function SandboxFileTree({
   sandboxId,
@@ -178,7 +167,11 @@ export function SandboxFileTree({
                 ? tree.error.message
                 : '文件树加载失败'}
             </p>
-            <ConsoleButton size="sm" variant="secondary" onClick={() => tree.refetch()}>
+            <ConsoleButton
+              size="sm"
+              variant="secondary"
+              onClick={() => tree.refetch()}
+            >
               重试
             </ConsoleButton>
           </div>
@@ -235,7 +228,8 @@ function TreeRow({
   const marked = isDir
     ? hasTouchedUnder(shared.touched, node.path)
     : shared.touched.has(relative);
-  const size = !isDir && node.sizeBytes !== null ? formatBytes(node.sizeBytes) : null;
+  const size =
+    !isDir && node.sizeBytes !== null ? formatBytes(node.sizeBytes) : null;
   const changes = shared.stats
     ? lineChangesUnder(shared.stats, relative, isDir)
     : null;
@@ -250,7 +244,9 @@ function TreeRow({
     <li>
       <button
         type="button"
-        onClick={() => (isDir ? shared.onToggle(node.path) : shared.onSelect(node.path))}
+        onClick={() =>
+          isDir ? shared.onToggle(node.path) : shared.onSelect(node.path)
+        }
         title={title}
         aria-expanded={isDir ? open : undefined}
         className={cn(
@@ -288,11 +284,7 @@ function TreeRow({
       </button>
       {isDir && open ? (
         node.children.length > 0 ? (
-          <TreeLevel
-            nodes={node.children}
-            level={depth + 1}
-            shared={shared}
-          />
+          <TreeLevel nodes={node.children} level={depth + 1} shared={shared} />
         ) : (
           <LazyBranch path={node.path} level={depth + 1} shared={shared} />
         )
@@ -323,14 +315,20 @@ function LazyBranch({
 
   if (query.isPending) {
     return (
-      <p style={{ paddingLeft: 24 + level * 14 }} className="py-1 text-[11px] text-ha-faint">
+      <p
+        style={{ paddingLeft: 24 + level * 14 }}
+        className="py-1 text-[11px] text-ha-faint"
+      >
         加载中…
       </p>
     );
   }
   if (query.isError) {
     return (
-      <p style={{ paddingLeft: 24 + level * 14 }} className="py-1 text-[11px] text-ha-danger">
+      <p
+        style={{ paddingLeft: 24 + level * 14 }}
+        className="py-1 text-[11px] text-ha-danger"
+      >
         目录读取失败
         <button
           type="button"
@@ -344,7 +342,10 @@ function LazyBranch({
   }
   if (nodes.length === 0) {
     return (
-      <p style={{ paddingLeft: 24 + level * 14 }} className="py-1 text-[11px] text-ha-faint">
+      <p
+        style={{ paddingLeft: 24 + level * 14 }}
+        className="py-1 text-[11px] text-ha-faint"
+      >
         空目录
       </p>
     );
@@ -352,7 +353,13 @@ function LazyBranch({
   return <TreeLevel nodes={nodes} level={level} shared={shared} />;
 }
 
-function TreeIcon({ kind, open }: { kind: SandboxTreeNode['kind']; open: boolean }) {
+function TreeIcon({
+  kind,
+  open,
+}: {
+  kind: SandboxTreeNode['kind'];
+  open: boolean;
+}) {
   if (kind === 'dir') {
     return open ? (
       <FolderOpen aria-hidden="true" className="h-3.5 w-3.5 text-ha-warning" />
@@ -364,13 +371,9 @@ function TreeIcon({ kind, open }: { kind: SandboxTreeNode['kind']; open: boolean
     return <Link2 aria-hidden="true" className="h-3.5 w-3.5 text-ha-info" />;
   }
   if (kind === 'other') {
-    return <FileQuestion aria-hidden="true" className="h-3.5 w-3.5 text-ha-faint" />;
+    return (
+      <FileQuestion aria-hidden="true" className="h-3.5 w-3.5 text-ha-faint" />
+    );
   }
   return <File aria-hidden="true" className="h-3.5 w-3.5 text-ha-muted" />;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}M`;
 }
