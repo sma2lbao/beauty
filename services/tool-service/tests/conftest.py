@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -231,3 +232,36 @@ client = client_fixture(
         "http_executor": "http_executor",
     },
 )
+
+
+@pytest.fixture()
+def workspace(tmp_path: Path) -> Path:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "a.txt").write_text("hello\nworld\n", encoding="utf-8")
+    (root / "lines.txt").write_text("L1\nL2\nL3\nL4\nL5\n", encoding="utf-8")
+    (root / "empty.txt").write_text("", encoding="utf-8")
+    (root / "bom.txt").write_bytes(b"\xef\xbb\xbfhi\n")
+    (root / "long_line.txt").write_text("y" * 200 + "\n", encoding="utf-8")
+    (root / ".hidden.txt").write_text("hidden\n", encoding="utf-8")
+    (root / "bin.dat").write_bytes(b"a\x00b")
+    (root / "u16.txt").write_bytes("hi".encode("utf-16"))
+    (root / "dir").mkdir()
+    (root / "dir" / "b.py").write_text("import os\nprint('b')\n", encoding="utf-8")
+    (root / "dir" / "sub").mkdir()
+    (root / "dir" / "sub" / "c.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / ".git" / "config").write_text(
+        "[core]\nrepositoryformatversion = 0\n", encoding="utf-8"
+    )
+    (root / "node_modules").mkdir()
+    (root / "node_modules" / "dep.js").write_text(
+        "TOKEN_NEEDLE = 1\n", encoding="utf-8"
+    )
+    (root / "dist").mkdir()
+    (root / "dist" / "bundle.js").write_text("NEEDLE = 1\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    (root / "link_out.txt").symlink_to(outside)
+    (root / "link_in.txt").symlink_to(root / "a.txt")
+    return root
