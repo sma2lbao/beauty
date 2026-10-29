@@ -32,7 +32,10 @@ def upgrade() -> None:
             "patch_truncated",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("0"),
+            # 布尔列必须用 false() 而不是 text("0")：SQLite 宽松接受 DEFAULT 0，
+            # Postgres 直接报 "column patch_truncated is of type boolean but default
+            # expression is of type integer"（ci.yml 的 alembic-check 因此长期红）。
+            server_default=sa.false(),
         ),
     )
 
