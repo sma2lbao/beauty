@@ -24,6 +24,7 @@ from tool_service.services.execution import (
     is_available,
     resolve_exec_cwd,
 )
+from tool_service.services.execution import limits as execution_limits
 
 
 def _context(**overrides: Any) -> ExecutionContext:
@@ -347,7 +348,7 @@ async def test_exec_local_timeout_returns_tool_timeout(
         "_timeout_seconds",
         lambda self, context, descriptor: 0.3,
     )
-    monkeypatch.setattr(execution, "SANDBOX_CALL_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(execution_limits, "SANDBOX_CALL_GRACE_SECONDS", 0.01)
     runner = _runner(tmp_path, _SlowExecProvider())
 
     outcome = await runner.execute(_context(), "exec", {"command": "sleep 10"})
