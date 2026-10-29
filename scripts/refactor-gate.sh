@@ -159,6 +159,10 @@ run_step "docs" bash scripts/check-docs.sh
 # 同 docs 一样属全局检查,失败计入 FAILURES 判 FAIL。
 run_step "workspace" bash scripts/check-workspace.sh
 
+# W5 R-45:Python 体量 ratchet(services/packages 源与测试文件 ≤500 行,例外走白名单)。
+# 同属全局检查,失败计入 FAILURES 判 FAIL;详见 docs/refactoring/rfc/006-w5.md §4。
+run_step "py-size" bash scripts/check-python-size.sh
+
 echo "== 汇总: ${STEPS_TOTAL} 步执行, ${FAILURES} 失败 =="
 if [ "$FAILURES" -gt 0 ]; then
   exit 1

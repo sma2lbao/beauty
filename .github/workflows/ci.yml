@@ -96,6 +96,10 @@ jobs:
         # W4 R-38：与 refactor-gate.sh 的 workspace 段共用同一脚本，避免本地/CI 判据漂移。
         run: bash scripts/check-workspace.sh
 
+      - name: Python size ratchet (≤500 lines, allowlist)
+        # W5 R-45：与 refactor-gate.sh 的 py-size 段共用同一脚本（RFC-006 §4）；纯 bash，无依赖。
+        run: bash scripts/check-python-size.sh
+
   # ------------------------------------------------------------------
   # Job 3/9：security-audit——W4 R-35 安全扫描（生产面阻断 + 全量非阻断 + 清单校验）
   # 生产依赖必须 0 high；dev 工具链漏洞非阻断留报告；允许清单到期即失败。
