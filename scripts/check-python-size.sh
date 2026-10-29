@@ -50,6 +50,9 @@ while IFS= read -r f; do
   case "$f" in
     */migrations/* | */.venv/* | */node_modules/* | */dist/* | */out-tsc/* | */.nx/* | */coverage/* | */reports/*) continue ;;
   esac
+  # 索引里存在、工作区已删除（拆分中删旧文件但尚未提交）时跳过,
+  # 否则 awk 读不到文件会在 set -e 下中断整个检查
+  [ -f "$f" ] || continue
   lines=$(awk 'END { print NR }' "$f")
   SCANNED=$((SCANNED + 1))
   if [ "$lines" -gt "$LIMIT" ]; then
