@@ -17,7 +17,7 @@ import {
 } from '@beauty/design';
 
 import { PageHeader } from '@/components/console/ui';
-import { AuthBar } from '@/components/runs/auth-bar';
+import { AuthBar } from '@/features/auth/auth-bar';
 import type { SearchResult } from '@/lib/knowledge-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { formatDateTime, formatSize } from '@/lib/presentation';

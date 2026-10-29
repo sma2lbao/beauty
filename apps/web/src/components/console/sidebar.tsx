@@ -20,7 +20,7 @@ import { Link } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
 import { consoleButtonClass } from '@/components/console/button-class';
-import { WorkspaceSwitcher } from '@/components/console/workspace-switcher';
+import { WorkspaceSwitcher } from '@/features/workspace/workspace-switcher';
 import { MoreNav, PrimaryNav } from '@/features/sidebar/nav';
 import { SessionList } from '@/features/sidebar/session-list';
 import { SidebarFooter } from '@/features/sidebar/sidebar-footer';

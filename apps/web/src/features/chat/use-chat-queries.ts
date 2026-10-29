@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
-import { useRunEvents } from '@/components/runs/use-run-events';
+import { useRunEvents } from '@/features/runs/use-run-events';
 import type { Attachment, ChatMessage } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
 import { mcpApi } from '@/lib/mcp-api';

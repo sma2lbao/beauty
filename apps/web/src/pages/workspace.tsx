@@ -1,7 +1,7 @@
 import { FolderKanban, Plus } from 'lucide-react';
 
 import { ConsoleButton, EmptyPanel, PageHeader } from '@/components/console/ui';
-import { AuthBar } from '@/components/runs/auth-bar';
+import { AuthBar } from '@/features/auth/auth-bar';
 import { CreateWorkspaceForm } from '@/features/workspace/create-workspace-form';
 import { useWorkspacePageModel } from '@/features/workspace/use-workspace-page';
 import { WorkspaceArtifactsPanel } from '@/features/workspace/workspace-artifacts-panel';

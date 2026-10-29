@@ -20,8 +20,8 @@ import {
 import { Link, Outlet } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
-import { NotificationCenter } from '@/components/console/notification-center';
-import { ToastViewport } from '@/components/console/toast-viewport';
+import { NotificationCenter } from '@/features/notifications/notification-center';
+import { ToastViewport } from '@/features/notifications/toast-viewport';
 import { ConsoleNavLink } from '@/components/console/ui';
 import { ConsoleSidebar } from '@/components/console/sidebar';
 import { useRunStatusNotifications } from '@/lib/run-status-watcher';

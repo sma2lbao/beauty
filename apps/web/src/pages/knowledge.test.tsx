@@ -24,7 +24,7 @@ vi.mock('@/lib/knowledge-api', async () => {
 });
 
 // 鉴权面板在 dev 模式下会调用 auth,这里整体替换掉(与本页测试无关)
-vi.mock('@/components/runs/auth-bar', () => ({
+vi.mock('@/features/auth/auth-bar', () => ({
   AuthBar: () => <div data-testid="auth-bar" />,
 }));
 

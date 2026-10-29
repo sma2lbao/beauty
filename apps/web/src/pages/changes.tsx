@@ -9,7 +9,7 @@ import {
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
-import { ArtifactPreview } from '@/components/console/artifact-preview';
+import { ArtifactPreview } from '@/features/artifacts/artifact-preview';
 import { DiffViewer } from '@/components/console/diff-view';
 import {
   ConsoleButton,

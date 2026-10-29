@@ -1,10 +1,10 @@
 import { Alert } from '@beauty/design';
 
-import { ApiKeysPanel } from '@/components/console/api-keys-panel';
-import { ByokPanel } from '@/components/console/byok-panel';
-import { OAuthAppsPanel } from '@/components/console/oauth-apps-panel';
+import { ApiKeysPanel } from '@/features/settings/api-keys-panel';
+import { ByokPanel } from '@/features/settings/byok-panel';
+import { OAuthAppsPanel } from '@/features/settings/oauth-apps-panel';
 import { PageHeader } from '@/components/console/ui';
-import { AuthBar } from '@/components/runs/auth-bar';
+import { AuthBar } from '@/features/auth/auth-bar';
 import { InviteMemberCard } from '@/features/settings/invite-member-card';
 import { MembersCard } from '@/features/settings/members-card';
 import { OrganizationCard } from '@/features/settings/organization-card';

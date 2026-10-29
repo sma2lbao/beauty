@@ -12,11 +12,11 @@ import { Check, Circle, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { SandboxFileTree } from '@/components/console/sandbox-file-tree';
-import { SandboxTerminal } from '@/components/console/sandbox-terminal';
+import { SandboxFileTree } from '@/features/sandbox/sandbox-file-tree';
+import { SandboxTerminal } from '@/features/sandbox/sandbox-terminal';
 import { ConsoleButton, ConsoleTabs, ToneBadge } from '@/components/console/ui';
-import { RunStepTimeline } from '@/components/console/run-step-timeline';
-import { RunTodoList } from '@/components/console/run-todo-list';
+import { RunStepTimeline } from '@/features/runs/run-step-timeline';
+import { RunTodoList } from '@/features/runs/run-todo-list';
 import {
   RUN_STATUS_LABELS,
   runStatusTone,

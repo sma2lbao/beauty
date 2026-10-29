@@ -28,7 +28,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 
 import { Markdown } from '@/components/console/markdown';
-import { RunTodoList } from '@/components/console/run-todo-list';
+import { RunTodoList } from '@/features/runs/run-todo-list';
 import { ConsoleButton, ToneBadge } from '@/components/console/ui';
 import {
   RUN_STATUS_LABELS,

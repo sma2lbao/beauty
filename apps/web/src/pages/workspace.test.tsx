@@ -38,7 +38,7 @@ vi.mock('@/lib/conversations-api', () => ({
   },
 }));
 
-vi.mock('@/components/runs/auth-bar', () => ({
+vi.mock('@/features/auth/auth-bar', () => ({
   AuthBar: () => <div data-testid="auth-bar" />,
 }));
 

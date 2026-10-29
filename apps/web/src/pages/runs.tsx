@@ -5,7 +5,7 @@ import { Link } from 'react-router';
 
 import { Dialog, Field, Input, Textarea } from '@beauty/design';
 
-import { RunDetail } from '@/components/console/run-detail';
+import { RunDetail } from '@/features/runs/run-detail';
 import {
   ConsoleButton,
   EmptyPanel,
