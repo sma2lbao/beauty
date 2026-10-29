@@ -1,82 +1,44 @@
-"""LocalSandboxProvider:宿主本地 provider 的单元 + 经 HTTP 生命周期端到端。
+"""LocalSandboxProvider:build 装配 + create + exec(宿主本地 provider,零网络)。
 
-只覆盖 local 分支(build 装配 + create/exec/文件/destroy);沙箱根一律落在
-tmp_path 下,零网络。依赖 POSIX shell / 权限位 / 符号链接语义的用例按
-sys.platform 跳过(Windows 上 local provider 仍可用,但语义不同)。
+原 `tests/test_sandbox_provider_local.py` 按主题拆分:文件读写 / 目录列举 /
+截断 / 销毁在 `test_sandbox_provider_local_files.py`,HTTP 生命周期端到端在
+`test_sandbox_provider_local_http.py`;共享夹具在 `tests/support/sandbox_local.py`。
+
+依赖 POSIX shell / 权限位 / 符号链接语义的用例按 sys.platform 跳过
+(Windows 上 local provider 仍可用,但语义不同)。
 """
 
 from __future__ import annotations
 
-import base64
 import os
-import sys
 from pathlib import Path
 
 import pytest
-from common.errors import AppError, NotFoundError, UpstreamError
-from fastapi.testclient import TestClient
+from common.errors import UpstreamError
 
-from tests.conftest import TENANT, _settings, verifier
+from tests.support.sandbox_local import (
+    MAX_OUTPUT_BYTES,
+    NAME,
+    _dir_of,
+    _spec,
+    _workspace_of,
+    local_root,
+    posix_only,
+    provider,
+    sandbox,
+)
 from workspace.core.config import Settings
-from workspace.main import create_app
 from workspace.services.sandbox_provider import (
     LOCAL_HOME_SUBDIR,
     LOCAL_TMP_SUBDIR,
     LOCAL_WORKSPACE_SUBDIR,
     LocalSandboxProvider,
-    SandboxSpec,
     build_sandbox_provider,
 )
 
-posix_only = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="用例依赖 POSIX shell / 权限位 / 符号链接语义",
-)
-
-NAME = "bm-local"
-MAX_OUTPUT_BYTES = 1024
-
-
-def _spec(name: str = NAME) -> SandboxSpec:
-    return SandboxSpec(
-        tenant_id="t-1",
-        name=name,
-        kind="generic",
-        image="python",
-        cpus=1.0,
-        memory_mb=512,
-        network="deny",
-        ttl_seconds=600,
-    )
-
-
-def _dir_of(root: Path, name: str = NAME) -> Path:
-    """沙箱宿主目录;按 provider 的 resolve 语义对齐(macOS /var→/private/var)。"""
-    return (root / name).resolve()
-
-
-def _workspace_of(root: Path, name: str = NAME) -> Path:
-    return _dir_of(root, name) / LOCAL_WORKSPACE_SUBDIR
-
-
-@pytest.fixture()
-def local_root(tmp_path: Path) -> Path:
-    return tmp_path / "sb"
-
-
-@pytest.fixture()
-def provider(local_root: Path) -> LocalSandboxProvider:
-    return LocalSandboxProvider(
-        root=str(local_root),
-        max_output_bytes=MAX_OUTPUT_BYTES,
-        default_exec_timeout_seconds=7,
-    )
-
-
-@pytest.fixture()
-async def sandbox(provider: LocalSandboxProvider) -> str:
-    await provider.create(_spec())
-    return NAME
+# 夹具经 import 引入,由 pytest 在收集用例时解析;列入 `__all__` 以免 ruff
+# 把"只在签名里用到"的夹具导入判成未使用(它们不能删)。
+__all__ = ["local_root", "provider", "sandbox"]
 
 
 # --- build_sandbox_provider -------------------------------------------------
@@ -304,291 +266,3 @@ async def test_exec_empty_argv_is_caller_error(
     # 直接传空列表属于调用方编程错误,asyncio 抛 TypeError,不该伪装成 ExecResult
     with pytest.raises(TypeError):
         await provider.exec(sandbox, [])
-
-
-# --- 文件读写 ---------------------------------------------------------------
-
-
-async def test_write_read_roundtrip_nested_binary(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    payload = b"\x00\x01\x02binary\n"
-
-    await provider.write_file(sandbox, "/workspace/a/b.txt", payload)
-
-    assert await provider.read_file(sandbox, "/workspace/a/b.txt") == payload
-    assert (_workspace_of(local_root) / "a" / "b.txt").read_bytes() == payload
-
-
-async def test_read_missing_file_is_not_found(
-    provider: LocalSandboxProvider, sandbox: str
-) -> None:
-    with pytest.raises(NotFoundError) as excinfo:
-        await provider.read_file(sandbox, "/workspace/nope.txt")
-
-    assert excinfo.value.code == "sandbox.file_not_found"
-    assert excinfo.value.details == {
-        "sandbox_name": sandbox,
-        "path": "/workspace/nope.txt",
-    }
-
-
-@pytest.mark.parametrize(
-    "path",
-    ["/etc/passwd", "/workspace/../etc/passwd", "/workspace/a\x00b", "workspace/a"],
-)
-async def test_invalid_paths_are_rejected(
-    provider: LocalSandboxProvider, sandbox: str, path: str
-) -> None:
-    with pytest.raises(AppError) as write_exc:
-        await provider.write_file(sandbox, path, b"x")
-    assert write_exc.value.code == "sandbox.path_invalid"
-
-    with pytest.raises(AppError) as read_exc:
-        await provider.read_file(sandbox, path)
-    assert read_exc.value.code == "sandbox.path_invalid"
-
-
-@posix_only
-async def test_symlink_escape_is_rejected(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    workspace = _workspace_of(local_root)
-    (workspace / "evil").symlink_to("/etc", target_is_directory=True)
-
-    with pytest.raises(AppError) as excinfo:
-        await provider.read_file(sandbox, "/workspace/evil/passwd")
-
-    assert excinfo.value.code == "sandbox.path_invalid"
-
-
-# --- 目录列举 ---------------------------------------------------------------
-
-
-async def test_list_dir_marks_kinds_and_sorts(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    workspace = _workspace_of(local_root)
-    (workspace / "a.txt").write_bytes(b"123")
-    (workspace / "sub").mkdir()
-    (workspace / "sub" / "b.txt").write_bytes(b"x")
-
-    entries = await provider.list_dir(sandbox, "/workspace")
-
-    assert [entry.path for entry in entries] == [
-        "/workspace/a.txt",
-        "/workspace/sub",
-    ]
-    by_path = {entry.path: entry for entry in entries}
-    assert by_path["/workspace/a.txt"].kind == "file"
-    assert by_path["/workspace/a.txt"].size == 3
-    assert isinstance(by_path["/workspace/a.txt"].modified, float)
-    assert by_path["/workspace/sub"].kind == "dir"
-    assert by_path["/workspace/sub"].size == 0
-
-
-@posix_only
-async def test_list_dir_marks_symlink_without_following(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    workspace = _workspace_of(local_root)
-    (workspace / "sub").mkdir()
-    (workspace / "sub" / "inner.txt").write_bytes(b"x")
-    (workspace / "linkdir").symlink_to(workspace / "sub", target_is_directory=True)
-    (workspace / "link.txt").symlink_to(workspace / "sub" / "inner.txt")
-
-    entries = await provider.list_dir(sandbox, "/workspace", depth=3)
-
-    by_path = {entry.path: entry for entry in entries}
-    assert by_path["/workspace/linkdir"].kind == "symlink"
-    assert by_path["/workspace/link.txt"].kind == "symlink"
-    # 符号链接只标记、不进入:不会有 /workspace/linkdir/... 的条目
-    assert not [path for path in by_path if path.startswith("/workspace/linkdir/")]
-    assert by_path["/workspace/sub/inner.txt"].kind == "file"
-
-
-async def test_list_dir_respects_depth(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    workspace = _workspace_of(local_root)
-    (workspace / "sub").mkdir()
-    (workspace / "sub" / "c.txt").write_bytes(b"c")
-    (workspace / "sub" / "deep").mkdir()
-    (workspace / "sub" / "deep" / "d.txt").write_bytes(b"d")
-
-    one = await provider.list_dir(sandbox, "/workspace", depth=1)
-    assert [entry.path for entry in one] == ["/workspace/sub"]
-
-    two = await provider.list_dir(sandbox, "/workspace", depth=2)
-    assert [entry.path for entry in two] == [
-        "/workspace/sub",
-        "/workspace/sub/c.txt",
-        "/workspace/sub/deep",
-    ]
-
-    three = await provider.list_dir(sandbox, "/workspace", depth=3)
-    assert three[-1].path == "/workspace/sub/deep/d.txt"
-
-
-async def test_list_dir_missing_dir_is_not_found(
-    provider: LocalSandboxProvider, sandbox: str
-) -> None:
-    with pytest.raises(NotFoundError) as excinfo:
-        await provider.list_dir(sandbox, "/workspace/nope")
-
-    assert excinfo.value.code == "sandbox.file_not_found"
-    assert excinfo.value.details == {
-        "sandbox_name": sandbox,
-        "path": "/workspace/nope",
-    }
-
-
-async def test_list_dir_on_missing_sandbox_is_provider_error(
-    provider: LocalSandboxProvider,
-) -> None:
-    with pytest.raises(UpstreamError) as excinfo:
-        await provider.list_dir(NAME, "/workspace")
-
-    assert excinfo.value.code == "sandbox.provider_error"
-    assert excinfo.value.details["sandbox_name"] == NAME
-
-
-@pytest.mark.parametrize("path", ["/etc", "/workspace/../etc", "workspace/a"])
-async def test_list_dir_rejects_invalid_path(
-    provider: LocalSandboxProvider, sandbox: str, path: str
-) -> None:
-    with pytest.raises(AppError) as excinfo:
-        await provider.list_dir(sandbox, path)
-
-    assert excinfo.value.code == "sandbox.path_invalid"
-
-
-# --- 沙箱不存在 / 截断 / 销毁 ----------------------------------------------
-
-
-async def test_operations_on_missing_sandbox_are_provider_errors(
-    provider: LocalSandboxProvider,
-) -> None:
-    with pytest.raises(UpstreamError) as exec_exc:
-        await provider.exec(NAME, ["echo"])
-    assert exec_exc.value.code == "sandbox.provider_error"
-    assert exec_exc.value.details["sandbox_name"] == NAME
-
-    with pytest.raises(UpstreamError) as write_exc:
-        await provider.write_file(NAME, "/workspace/a.txt", b"x")
-    assert write_exc.value.code == "sandbox.provider_error"
-    assert write_exc.value.details["sandbox_name"] == NAME
-
-    with pytest.raises(UpstreamError) as read_exc:
-        await provider.read_file(NAME, "/workspace/a.txt")
-    assert read_exc.value.code == "sandbox.provider_error"
-    assert read_exc.value.details["sandbox_name"] == NAME
-
-
-@posix_only
-async def test_output_is_truncated(local_root: Path) -> None:
-    provider = LocalSandboxProvider(root=str(local_root), max_output_bytes=16)
-    await provider.create(_spec())
-
-    result = await provider.exec(NAME, ["sh", "-c", "printf '0123456789abcdefghij'"])
-
-    assert result.truncated is True
-    assert result.stdout == "0123456789abcdef"
-    assert len(result.stdout.encode("utf-8")) == 16
-
-
-async def test_destroy_removes_dir_and_is_idempotent(
-    provider: LocalSandboxProvider, sandbox: str, local_root: Path
-) -> None:
-    base = _dir_of(local_root)
-    assert base.is_dir()
-
-    await provider.destroy(sandbox)
-    assert not base.exists()
-
-    # 运行时已不存在也静默成功(业务层回收/重启后重试都会走到这里)
-    await provider.destroy(sandbox)
-    await provider.destroy("bm-never-created")
-
-
-# --- HTTP 端到端(不注入 provider,走 lifespan 的 build 分支) ----------------
-
-
-@posix_only
-def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
-    local_root = tmp_path / "sb"
-    settings = _settings(
-        tmp_path,
-        "local.db",
-        sandbox_provider="local",
-        sandbox_local_root=str(local_root),
-    )
-    app = create_app(settings, token_verifier=verifier())
-
-    with TestClient(app) as client:
-        # lifespan 走 build_sandbox_provider,并打 local 隔离告警
-        assert isinstance(app.state.sandbox_provider, LocalSandboxProvider)
-        assert app.state.sandbox_provider.provider == "local"
-
-        created = client.post("/v1/sandboxes", json={}, headers=TENANT)
-        assert created.status_code == 201, created.text
-        body = created.json()
-        assert body["provider"] == "local"
-        name = body["name"]
-        sandbox_dir = _dir_of(local_root, name)
-        assert (sandbox_dir / LOCAL_WORKSPACE_SUBDIR).is_dir()
-
-        executed = client.post(
-            f"/v1/sandboxes/{body['id']}/exec",
-            json={"argv": ["sh", "-c", "printf 'from-local'"]},
-            headers=TENANT,
-        )
-        assert executed.status_code == 200, executed.text
-        assert executed.json()["exit_code"] == 0
-        assert executed.json()["stdout"] == "from-local"
-        assert executed.json()["truncated"] is False
-
-        payload = b"e2e-bytes\n"
-        written = client.put(
-            f"/v1/sandboxes/{body['id']}/files",
-            json={
-                "path": "/workspace/notes/hello.txt",
-                "content_base64": base64.b64encode(payload).decode("ascii"),
-            },
-            headers=TENANT,
-        )
-        assert written.status_code == 204
-        read = client.get(
-            f"/v1/sandboxes/{body['id']}/files",
-            params={"path": "/workspace/notes/hello.txt"},
-            headers=TENANT,
-        )
-        assert read.status_code == 200
-        assert base64.b64decode(read.json()["content_base64"]) == payload
-        assert read.json()["size_bytes"] == len(payload)
-        assert (sandbox_dir / "workspace/notes/hello.txt").read_bytes() == payload
-
-        # 执行现场:根目录只列直接子项,进一层才看到文件
-        root_tree = client.get(
-            f"/v1/sandboxes/{body['id']}/tree", headers=TENANT
-        ).json()
-        assert root_tree["path"] == "/workspace"
-        assert [(item["name"], item["kind"]) for item in root_tree["entries"]] == [
-            ("notes", "dir")
-        ]
-
-        notes_tree = client.get(
-            f"/v1/sandboxes/{body['id']}/tree",
-            params={"path": "/workspace/notes", "depth": 2},
-            headers=TENANT,
-        )
-        assert notes_tree.status_code == 200, notes_tree.text
-        assert notes_tree.json()["truncated"] is False
-        assert [
-            (item["name"], item["kind"], item["size_bytes"])
-            for item in notes_tree.json()["entries"]
-        ] == [("hello.txt", "file", len(payload))]
-
-        deleted = client.delete(f"/v1/sandboxes/{body['id']}", headers=TENANT)
-        assert deleted.status_code == 204
-        assert not sandbox_dir.exists()
