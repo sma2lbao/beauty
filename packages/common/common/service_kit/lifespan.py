@@ -1,8 +1,11 @@
 """统一应用生命周期装配(lifespan 钩子 + 鉴权校验器 + 资源回收)。
 
 启动顺序与原各服务 lifespan 逐行等价:日志 → 观测 → 服务启动钩子 →
-鉴权校验器(测试注入优先) → 请求处理;关闭顺序:校验器 → 服务关闭钩子 →
-engine.dispose()。
+鉴权校验器(测试注入优先) → 请求处理;关闭顺序:verifier 前置钩子 →
+校验器 → 服务关闭钩子 → engine.dispose()。
+
+`shutdown_before_verifier` 用于需要在校验器之前收尾的自管资源
+(account 的 BYOK KMS、workspace 的 reaper 任务/沙箱 shell 会话)。
 """
 
 from __future__ import annotations
@@ -45,11 +48,13 @@ def build_lifespan(
     *,
     startup: StartupHook | None = None,
     shutdown: ShutdownHook | None = None,
+    shutdown_before_verifier: ShutdownHook | None = None,
 ) -> LifespanFactory:
     """生成 FastAPI lifespan;服务通过钩子注入自身启停逻辑。
 
     startup 在日志/观测装配之后、鉴权校验器之前执行(原服务顺序:先建
-    DB/嵌入提供方,再装配校验器);shutdown 在校验器关闭之后、引擎释放之前。
+    DB/嵌入提供方,再装配校验器);shutdown 在校验器关闭之后、引擎释放之前;
+    shutdown_before_verifier 在同一关闭链路里、校验器之前执行。
     """
 
     @asynccontextmanager
@@ -59,13 +64,15 @@ def build_lifespan(
         # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
         install_observability(app, settings)
 
-        # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器
+        # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器。
+        # BFF / llm-gateway 没有鉴权面(配置里无 auth_enabled),按无鉴权处理。
         verifier: JwtVerifier | None = getattr(app.state, "token_verifier", None)
+        auth_enabled = bool(getattr(settings, "auth_enabled", False))
         owns_verifier = False
         try:
             if startup is not None:
                 await startup(app)
-            if verifier is None and settings.auth_enabled:
+            if verifier is None and auth_enabled:
                 verifier = JwtVerifier(
                     issuer=settings.auth_issuer,
                     audience=settings.auth_audience,
@@ -76,6 +83,8 @@ def build_lifespan(
             app.state.token_verifier = verifier
             yield
         finally:
+            if shutdown_before_verifier is not None:
+                await shutdown_before_verifier(app)
             if owns_verifier and verifier is not None:
                 await verifier.aclose()
             if shutdown is not None:
