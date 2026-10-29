@@ -145,6 +145,7 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 - 目标：源/测试文件全部 ≤500（`helpers/fs_helper.py` 登记例外 D1）、8/8 服务接入 service_kit、死配置 0 残留、体量 ratchet 入 gate/CI
 - 切片（7 片并行，写域文件级互斥）：S1 装配收敛（task-1）、S2a workspace（task-2）、S2b tool-service（task-3）、S2c AO 核心（task-4）、S2d AO 服务层 A（task-5）、S2e AO 服务层 B（task-6）、S2f AO 测试（task-7）
 - 收口：13 个提交（c2b1e91..7d35939，158 文件 +16690/−13181）+ 验证报告/复盘；11 项目 pytest 1885 passed / 5 skipped、ruff 11/11、体量 ratchet EXIT 0
+- 合并与 CI：PR #20 以 rebase-merge 合入 main（head `3438126`，2026-10-29）；首跑暴露的 3 个既有红项由 PR #21 修复，run 40899448697 34/34 全绿
 
 | ID   | 重构项                                                | 规模 | 风险 | 实施者                              | 任务       | 状态 | 提交                                            |
 | ---- | ----------------------------------------------------- | ---- | ---- | ----------------------------------- | ---------- | ---- | ----------------------------------------------- |
@@ -162,7 +163,8 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 - [x] 8/8 服务 main.py 走 service_kit；5 个手写装配 main.py 合计 545 ≤ 基线 614（AO 例外 D5）
 - [x] 死配置 6 键全仓 0 命中（实际删 7 处，含 AO 同名 `tool_timeout_seconds`）
 - [x] docs / workspace / versions 三个门禁脚本 EXIT 0（check-docs 52 文件、check-versions 19 字段、compose config EXIT 0）
-- [x] verification/006-w5.md 字段填实；retro/w5.md 复盘落地（CI run 号待合并后回填 §5）
+- [x] verification/006-w5.md 字段填实；retro/w5.md 复盘落地（CI run 号已回填 §5：PR #20 run 40893337363 → main run 40894815075 → 修复后 PR #21 run 40899448697 全绿）
+- [x] CI 首跑暴露的 3 个既有红项（alembic-check tool-service / affected-js / security-audit）已由 PR #21 修复，main 侧 CI 全绿
 - [x] 已知既有失败登记：黄金 run 1/9（D2）、ruff format 漂移 9 文件（D3）——均非本波引入，见 verification §4
 
 | 波次 | 主题                                                   | 状态                  |

@@ -1,6 +1,6 @@
 # beauty-moon 重构标准流程（Refactoring Playbook）
 
-> 版本 v1.6 · 最近更新 2026-10-25 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
+> 版本 v1.7 · 最近更新 2026-10-29 · 生效日期 2026-10-24 · 维护者：重构 Lead（AI）+ 人工审批
 > 适用范围：本仓库所有「结构重构」与「平台化补缺」类变更。产品功能开发不强制走本流程，但仍须遵守第 6 节门禁。
 > 单一真源：本文件。工程约定冲突以根 AGENTS.md 为准；流程冲突以本文件为准。
 > 数值口径：文中「现状基线」类数字是 2026-10-24 立项时的快照，只用于说明改造起点；任何时刻的最新数值以 docs/refactoring/baseline.md 与其波次实测段为准。
@@ -309,17 +309,18 @@ Definition of Done（每片）：
 
 ### 6.1 变更类型 → 必跑门禁
 
-| 变更类型       | 必跑命令                                                                                      | 通过标准                                 | 备注                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------- |
-| TS/React 代码  | npx nx lint <项目>；npx nx typecheck <项目>；npx nx test <项目> -- --run                      | 0 error；测试全绿                        | 缺 typecheck target 的项目跳过该步；**必须加 -- --run**，否则 vitest 进 watch 模式挂住 |
-| 包公共 API     | 上述 + npx nx build <项目>                                                                    | 构建成功、类型声明无变化或已记录         | 消费方需要重新验证                                                                     |
-| Python 代码    | npx nx lint <项目>；npx nx test <项目>；uv run ruff format --check <包名> tests（项目目录内） | ruff 0 error；pytest 全绿；格式化无 diff | npx nx format 会改写文件，门禁场景用 --check                                           |
-| ORM/迁移       | cd services/<svc> && uv run alembic check；npx nx test <svc>                                  | 模型与迁移一致；测试通过                 | 测试走 create_all，看不出缺迁移；AUTO_CREATE_TABLES=false                              |
-| Python 依赖    | npx nx run <项目>:add/remove；npx nx run <项目>:sync                                          | uv.lock 已更新；共享 .venv 同步成功      | 不要直接 pip install；测试依赖必须写进本项目 dev group                                 |
-| JS 依赖        | 改项目 package.json；根目录 npm install                                                       | package-lock.json 更新且无意外版本漂移   | 受限环境用 npm_config_cache=$PWD/.npm-cache                                            |
-| 端口/配置/脚本 | scripts/dev.sh --status；相关项目测试                                                         | 7 个服务 + web 健康检查通过              | 缺 .env 时会自动复制 .env.example                                                      |
-| 跨服务契约     | 契约快照测试 + 三端（BFF/A 服务/B 服务）集成测试                                              | 快照按兼容策略演进                       | 事件 schema 必须至少一次投递语义不变                                                   |
-| 文档           | 链接检查 + 事实核对（命令/路径/版本）                                                         | 无失效链接、无与代码冲突的命令           | W0 引入 markdown lint                                                                  |
+| 变更类型       | 必跑命令                                                                                      | 通过标准                                 | 备注                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TS/React 代码  | npx nx lint <项目>；npx nx typecheck <项目>；npx nx test <项目> -- --run                      | 0 error；测试全绿                        | 缺 typecheck target 的项目跳过该步；**必须加 -- --run**，否则 vitest 进 watch 模式挂住                                                                                                   |
+| 包公共 API     | 上述 + npx nx build <项目>                                                                    | 构建成功、类型声明无变化或已记录         | 消费方需要重新验证                                                                                                                                                                       |
+| Python 代码    | npx nx lint <项目>；npx nx test <项目>；uv run ruff format --check <包名> tests（项目目录内） | ruff 0 error；pytest 全绿；格式化无 diff | npx nx format 会改写文件，门禁场景用 --check                                                                                                                                             |
+| ORM/迁移       | cd services/<svc> && uv run alembic check；npx nx test <svc>                                  | 模型与迁移一致；测试通过                 | 测试走 create_all，看不出缺迁移；AUTO_CREATE_TABLES=false；**布尔列默认值必须 `sa.false()/sa.true()`**（`text("0")` 在 PG 非法），本地再用 `alembic upgrade head --sql` 复核渲染出的 DDL |
+| Python 依赖    | npx nx run <项目>:add/remove；npx nx run <项目>:sync                                          | uv.lock 已更新；共享 .venv 同步成功      | 不要直接 pip install；测试依赖必须写进本项目 dev group                                                                                                                                   |
+| JS 依赖        | 改项目 package.json；根目录 npm install                                                       | package-lock.json 更新且无意外版本漂移   | 受限环境用 npm_config_cache=$PWD/.npm-cache                                                                                                                                              |
+| 端口/配置/脚本 | scripts/dev.sh --status；相关项目测试                                                         | 7 个服务 + web 健康检查通过              | 缺 .env 时会自动复制 .env.example                                                                                                                                                        |
+| 跨服务契约     | 契约快照测试 + 三端（BFF/A 服务/B 服务）集成测试                                              | 快照按兼容策略演进                       | 事件 schema 必须至少一次投递语义不变                                                                                                                                                     |
+| 文档           | 链接检查 + 事实核对（命令/路径/版本）                                                         | 无失效链接、无与代码冲突的命令           | W0 引入 markdown lint                                                                                                                                                                    |
+| CI / 门禁脚本  | bash scripts/check-\*.sh；在 PR 与 push-to-main 两种场景各看一次 CI                           | 两侧 run 都全绿                          | affected 口径不同：push 时 `--base=origin/main` 等于 HEAD ⇒ 空跑通过，缺陷只在 PR 暴露                                                                                                   |
 
 ### 6.2 一键门禁脚本（阶段 1 交付物）
 
