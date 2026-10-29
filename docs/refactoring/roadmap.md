@@ -1,8 +1,8 @@
 # 重构路线图
 
 - 来源：docs/refactoring-playbook.md 第 10 节
-- 当前波次：W5 进行中（2026-10-29 立项）；W0–W4 已收口（2026-10-25）；最近更新：2026-10-29
-- 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md，W3 见 docs/refactoring/retro/w3.md 与 docs/refactoring/verification/004-w3.md，W4 见 docs/refactoring/retro/w4.md 与 docs/refactoring/verification/005-w4.md
+- 当前波次：W5 已收口（2026-10-29）；W0–W4 已收口（2026-10-25）；最近更新：2026-10-29
+- 历史：W0 见 docs/refactoring/retro/w0.md，W1 见 docs/refactoring/retro/w1.md 与 docs/refactoring/verification/002-w1.md，W2 见 docs/refactoring/retro/w2.md 与 docs/refactoring/verification/003-w2.md，W3 见 docs/refactoring/retro/w3.md 与 docs/refactoring/verification/004-w3.md，W4 见 docs/refactoring/retro/w4.md 与 docs/refactoring/verification/005-w4.md，W5 见 docs/refactoring/retro/w5.md 与 docs/refactoring/verification/006-w5.md
 
 ## W0（已收口 · 7 项）
 
@@ -139,37 +139,39 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 - [x] tag v0.1.0 已打（`git tag --list 'v*'` 非空），release commit 回填 verification §5.3
 - [x] verification/005-w4.md 所有字段均已填实（收口 DoD）
 
-## W5（进行中 · 5 项 R-41..R-45）
+## W5（已收口 · 5 项 R-41..R-45）
 
 - 立项：docs/refactoring/rfc/006-w5.md + baseline「W5 基线」；来源：W4 收口后 33 个功能提交把体量预算打回（15 源 + 10 测试文件 >500 行）+ 5/8 服务未接 service_kit + 6 个死配置键
 - 目标：源/测试文件全部 ≤500（`helpers/fs_helper.py` 登记例外 D1）、8/8 服务接入 service_kit、死配置 0 残留、体量 ratchet 入 gate/CI
-- 切片（7 片并行，写域不重叠）：S1 装配收敛（task-1）、S2a workspace（task-2）、S2b tool-service（task-3）、S2c AO 核心（task-4）、S2d AO 服务层 A（task-5）、S2e AO 服务层 B（task-6）、S2f AO 测试（task-7）
+- 切片（7 片并行，写域文件级互斥）：S1 装配收敛（task-1）、S2a workspace（task-2）、S2b tool-service（task-3）、S2c AO 核心（task-4）、S2d AO 服务层 A（task-5）、S2e AO 服务层 B（task-6）、S2f AO 测试（task-7）
+- 收口：13 个提交（c2b1e91..7d35939，158 文件 +16690/−13181）+ 验证报告/复盘；11 项目 pytest 1885 passed / 5 skipped、ruff 11/11、体量 ratchet EXIT 0
 
-| ID   | 重构项                                                | 规模 | 风险 | 实施者                              | 任务       | 状态 | 提交 |
-| ---- | ----------------------------------------------------- | ---- | ---- | ----------------------------------- | ---------- | ---- | ---- |
-| R-41 | 源文件体量 ≤500（14 个，`fs_helper.py` 例外 D1）      | L    | 中   | ws-sandbox/tool-exec/ao-\*/assembly | task-2..6  | 🔄   | —    |
-| R-42 | 测试文件体量 ≤500（10 个）                            | L    | 中   | ws-sandbox/tool-exec/ao-tests       | task-2/3/7 | 🔄   | —    |
-| R-43 | 装配收敛：5 服务接 service_kit（探针/中间件单一真源） | L    | 中   | assembly                            | task-1     | 🔄   | —    |
-| R-44 | 死配置清理（6 键）                                    | S    | 低   | assembly                            | task-1     | 🔄   | —    |
-| R-45 | 体量 ratchet（check-python-size.sh）+ 文档收口        | S    | 低   | lead                                | task-40    | 🔄   | —    |
+| ID   | 重构项                                                | 规模 | 风险 | 实施者                              | 任务       | 状态 | 提交                                            |
+| ---- | ----------------------------------------------------- | ---- | ---- | ----------------------------------- | ---------- | ---- | ----------------------------------------------- |
+| R-41 | 源文件体量 ≤500（14 个，`fs_helper.py` 例外 D1）      | L    | 中   | ws-sandbox/tool-exec/ao-\*/assembly | task-2..6  | ✅   | f51a4d5/a4c27eb/bb25048/0d755a3/443cebd/8d6f96a |
+| R-42 | 测试文件体量 ≤500（10 个）                            | L    | 中   | ws-sandbox/tool-exec/ao-tests       | task-2/3/7 | ✅   | f51a4d5/a4c27eb/8f694b3                         |
+| R-43 | 装配收敛：5 服务接 service_kit（探针/中间件单一真源） | L    | 中   | assembly                            | task-1     | ✅   | b1531a2/94ee767                                 |
+| R-44 | 死配置清理（6 键）                                    | S    | 低   | assembly                            | task-1     | ✅   | 94ee767                                         |
+| R-45 | 体量 ratchet（check-python-size.sh）+ 文档收口        | S    | 低   | lead                                | task-40    | ✅   | 4e154b6/7d35939 + 本波文档提交                  |
 
 ### W5 出口检查（勾选前须有实测输出）
 
-- [ ] `bash scripts/check-python-size.sh` EXIT 0（仅 1 个白名单 WARN）
-- [ ] 11 个 Python 项目 pytest 全绿且 ≥ 1879 passed / 5 skipped
-- [ ] 11/11 Python 项目 ruff All checks passed
-- [ ] 8/8 服务 main.py 走 service_kit；5 个手写装配 main.py 合计行数 ≤ 基线 614
-- [ ] 死配置 6 键全仓 0 命中
-- [ ] docs / workspace / versions 三个门禁脚本 EXIT 0
-- [ ] verification/006-w5.md 字段填实；retro/w5.md 复盘落地
+- [x] `bash scripts/check-python-size.sh` EXIT 0（仅 1 个白名单 WARN：`services/tool-service/helpers/fs_helper.py` 1058，D1）
+- [x] 11 个 Python 项目 pytest 全绿且 ≥ 1879 passed / 5 skipped（实测 1885 / 5 skipped）
+- [x] 11/11 Python 项目 ruff All checks passed（llm-gateway 的 3 个既有告警在 a001359 修掉，D4）
+- [x] 8/8 服务 main.py 走 service_kit；5 个手写装配 main.py 合计 545 ≤ 基线 614（AO 例外 D5）
+- [x] 死配置 6 键全仓 0 命中（实际删 7 处，含 AO 同名 `tool_timeout_seconds`）
+- [x] docs / workspace / versions 三个门禁脚本 EXIT 0（check-docs 52 文件、check-versions 19 字段、compose config EXIT 0）
+- [x] verification/006-w5.md 字段填实；retro/w5.md 复盘落地（CI run 号待合并后回填 §5）
+- [x] 已知既有失败登记：黄金 run 1/9（D2）、ruff format 漂移 9 文件（D3）——均非本波引入，见 verification §4
 
-| 波次 | 主题                                                   | 状态                    |
-| ---- | ------------------------------------------------------ | ----------------------- |
-| W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24）   |
-| W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24）   |
-| W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25）   |
-| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | ✅ 收口（2026-10-25）   |
-| W4   | 发布与运维（R-34..R-40）+ W3 遗留                      | ✅ 收口（2026-10-25）   |
-| W5   | services 装配收敛与体量回补（R-41..R-45）              | 🔄 进行中（2026-10-29） |
+| 波次 | 主题                                                   | 状态                  |
+| ---- | ------------------------------------------------------ | --------------------- |
+| W0   | 门禁与真源（R-01..R-07）                               | ✅ 收口（2026-10-24） |
+| W1   | 前端基座与工具链（R-08..R-16）                         | ✅ 收口（2026-10-24） |
+| W2   | 页面拆分 + 跨端共享 + service-kit 试点（R-17..R-26）   | ✅ 收口（2026-10-25） |
+| W3   | agent-orchestrator 深水区 + 质量 ratchet（R-27..R-33） | ✅ 收口（2026-10-25） |
+| W4   | 发布与运维（R-34..R-40）+ W3 遗留                      | ✅ 收口（2026-10-25） |
+| W5   | services 装配收敛与体量回补（R-41..R-45）              | ✅ 收口（2026-10-29） |
 
-重构主线（W0–W4，38 个 R 项）已全部收口，W5 为功能提交后的体量/装配回补（5 项），收口后回到维护窗口：dependabot 分组 PR 观察、安全允许清单 2026-12-31 到期复核、CI 新增 job 稳定性观察。
+重构主线（W0–W5，43 个 R 项）已全部收口，W5 为功能提交后的体量/装配回补（5 项），收口后回到维护窗口：dependabot 分组 PR 观察、安全允许清单 2026-12-31 到期复核、CI 新增 job 稳定性观察。
