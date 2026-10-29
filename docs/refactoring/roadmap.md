@@ -172,20 +172,20 @@ W4 承接的部分已折进 RFC-005：R-39（体量 ≤500 / 测试文件拆分�
 
 - 立项：见下文本波「文档提交」（RFC-007 + baseline「W6 基线」+ 本节与波次总览）；编号说明见 RFC-007 §1.0（W5 / RFC-006 已被 services 波次占用，本波 rebase 到 3438126 后改编号）
 - 目标：业务域组件归位 features/、非测试源文件 ≤400 行、页面只做组装、formatBytes 单一来源、规则防回流（eslint 探针验证）、文档收口
-- 验证：docs/refactoring/verification/007-w6.md（§2 指标全 ✅、D1–D11 偏差、8 个重构提交 + 2 个文档提交清单）
+- 验证：docs/refactoring/verification/007-w6.md（§2 指标全 ✅、D1–D12 偏差、8 个重构提交 + 2 个文档提交清单）
 - 执行方式：R-46/R-52/R-53/R-54 由 lead 直接实施；R-47..R-51 由 5 个 fresh-context teammate 并行（任务板 task-1..task-5、write scope 互斥），既有测试文件零改动，收敛后 lead 复跑全量
 
-| ID   | 重构项                                                         | 规模 | 风险 | 实施者           | 任务   | 状态    | 提交         |
-| ---- | -------------------------------------------------------------- | ---- | ---- | ---------------- | ------ | ------- | ------------ |
-| R-46 | 业务域组件从 components/console 归位 features/（41→12 文件）   | L    | 中   | lead             | —      | ✅ done | 568ed89      |
-| R-52 | auth 三页（login/callback/oauth-authorize）迁 features/auth    | S    | 低   | lead             | —      | ✅ done | 86d117d      |
-| R-47 | runs 拆分（run-detail 728 / timeline 719 / page 466）          | L    | 中   | runs-refactor    | task-1 | ✅ done | 826e286      |
-| R-48 | sandbox 拆分 + formatBytes 去重（712/494 → 37/139）            | L    | 中   | sandbox-refactor | task-2 | ✅ done | 6ff4811      |
-| R-49 | memory/skills 收口（633/432 → 69/33）                          | M    | 中   | memory-skills    | task-3 | ✅ done | 9861edd      |
-| R-50 | workspace-switcher / message-list 拆分（543/560 → 141/269）    | M    | 中   | workspace-chat   | task-4 | ✅ done | 9ff1c17      |
-| R-51 | knowledge/outbox/changes/usage 四页收口（内联取数清零）        | M    | 中   | pages-model      | task-5 | ✅ done | 832251a      |
-| R-53 | eslint 体量与分层规则收紧（web 局部）+ runs-api 拆分           | M    | 中   | lead             | —      | ✅ done | 733eb92      |
-| R-54 | 文档收口（verification / baseline / roadmap / retro / AGENTS） | S    | 低   | lead             | —      | ✅ done | 本次文档提交 |
+| ID   | 重构项                                                         | 规模 | 风险 | 实施者           | 任务   | 状态    | 提交    |
+| ---- | -------------------------------------------------------------- | ---- | ---- | ---------------- | ------ | ------- | ------- |
+| R-46 | 业务域组件从 components/console 归位 features/（41→12 文件）   | L    | 中   | lead             | —      | ✅ done | a3b4a50 |
+| R-52 | auth 三页（login/callback/oauth-authorize）迁 features/auth    | S    | 低   | lead             | —      | ✅ done | edbc31b |
+| R-47 | runs 拆分（run-detail 728 / timeline 719 / page 466）          | L    | 中   | runs-refactor    | task-1 | ✅ done | 751ae87 |
+| R-48 | sandbox 拆分 + formatBytes 去重（712/494 → 37/139）            | L    | 中   | sandbox-refactor | task-2 | ✅ done | 27595f9 |
+| R-49 | memory/skills 收口（633/432 → 69/33）                          | M    | 中   | memory-skills    | task-3 | ✅ done | 8f6c857 |
+| R-50 | workspace-switcher / message-list 拆分（543/560 → 141/269）    | M    | 中   | workspace-chat   | task-4 | ✅ done | 6c26c4d |
+| R-51 | knowledge/outbox/changes/usage 四页收口（内联取数清零）        | M    | 中   | pages-model      | task-5 | ✅ done | ff16f39 |
+| R-53 | eslint 体量与分层规则收紧（web 局部）+ runs-api 拆分           | M    | 中   | lead             | —      | ✅ done | 77f3c09 |
+| R-54 | 文档收口（verification / baseline / roadmap / retro / AGENTS） | S    | 低   | lead             | —      | ✅ done | 396741e |
 
 ### W6 出口检查（勾选前须有实测输出）
 
