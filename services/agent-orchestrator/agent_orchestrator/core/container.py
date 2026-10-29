@@ -14,6 +14,10 @@
 发布契约:容器把每个装配结果同时写到 app.state(测试与依赖注入都从这里取,
 见 tests 里的 app.state.* 断言);api 层不直接读 app.state,统一经
 api/deps.py 的 get_container 拿到本实例。
+
+本模块保留 AppContainer 类本体(生命周期、发布契约与执行图装配),按装配阶段拆出的
+mixin 见同目录 container_assemblies.py / container_auth.py / container_deps.py /
+container_tools.py / container_context.py / container_outbox.py。
 """
 
 from __future__ import annotations
@@ -21,7 +25,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
-from functools import partial
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
@@ -29,38 +32,29 @@ from common.logging import get_logger, setup_logging
 from common.observability import install_observability
 from database.base import Base
 from database.session import create_session_factory
-from events.bus import EventBus, InMemoryEventBus
+from events.bus import EventBus
 from events.outbox import OutboxDispatcher
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_orchestrator.context.agents import AgentsMdProvider
 from agent_orchestrator.context.offload import ToolOutputOffloader
 from agent_orchestrator.context.pipeline import (
     ContextPipeline,
-    MemorySectionProvider,
-    SectionProvider,
 )
 from agent_orchestrator.context.policy import ContextPolicy, policy_from_settings
-from agent_orchestrator.context.sandbox_files import SandboxWorkspaceFiles
-from agent_orchestrator.context.skills import SkillCardProvider
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.core.container_assemblies import ContainerAssemblyMixin
+from agent_orchestrator.core.container_auth import AuthAssemblyMixin
+from agent_orchestrator.core.container_context import ContextAssemblyMixin
+from agent_orchestrator.core.container_deps import DepsAssemblyMixin
+from agent_orchestrator.core.container_outbox import OutboxAssemblyMixin
+from agent_orchestrator.core.container_tools import ToolsAssemblyMixin
 from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.graph.ports import ToolkitPort
-from agent_orchestrator.services import quota as quota_service
-from agent_orchestrator.services import usage as usage_service
-from agent_orchestrator.services.artifacts import build_store
-from agent_orchestrator.services.documents import DocumentLibrary
-from agent_orchestrator.services.embeddings import (
-    build_embedding_provider,
-    configure_embedding,
-)
-from agent_orchestrator.services.file_capture import FileDownloader, HttpFileDownloader
+from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
-from agent_orchestrator.services.knowledge import KnowledgeClient
-from agent_orchestrator.services.llm import GatewayClient, LLMClient
+from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_server import (
     ApiKeyVerifier,
     OAuthTokenIntrospector,
@@ -69,21 +63,16 @@ from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.memory_sweeper import (
     start_sweeper as start_memory_sweeper,
 )
-from agent_orchestrator.services.outbox import record_run_event, register_consumers
-from agent_orchestrator.services.sandbox import Sandbox, SandboxClient
+from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
-from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tool_client import (
-    RemoteToolkit,
-    ToolCatalog,
     ToolClient,
 )
 from agent_orchestrator.services.tools import (
     ToolExtrasFactory,
-    build_tools,
 )
-from agent_orchestrator.services.workspace import Workspace, WorkspaceClient
+from agent_orchestrator.services.workspace import Workspace
 
 logger = get_logger(__name__)
 
@@ -107,7 +96,14 @@ INJECTED = (
 )
 
 
-class AppContainer(ContainerAssemblyMixin):
+class AppContainer(
+    ContainerAssemblyMixin,
+    AuthAssemblyMixin,
+    DepsAssemblyMixin,
+    ToolsAssemblyMixin,
+    ContextAssemblyMixin,
+    OutboxAssemblyMixin,
+):
     """一次进程生命周期内的全部外部依赖与后台任务。"""
 
     def __init__(
@@ -225,327 +221,6 @@ class AppContainer(ContainerAssemblyMixin):
         self._assemble_context()
         await self._assemble_outbox()
         await self._assemble_graph()
-
-    async def _assemble_auth(self) -> None:
-        settings = self.settings
-        key_verifier = self.api_key_verifier
-        owns_key_verifier = False
-        if key_verifier is None and settings.mcp_server_enabled:
-            key_verifier = ApiKeyVerifier(
-                base_url=settings.account_service_url,
-                internal_secret=settings.internal_auth_secret,
-            )
-            owns_key_verifier = True
-        self._publish("api_key_verifier", key_verifier)
-        if owns_key_verifier and key_verifier is not None:
-            self._closers.append(("api key verifier", key_verifier.aclose))
-
-        introspector = self.oauth_introspector
-        owns_introspector = False
-        if introspector is None and settings.mcp_server_enabled:
-            introspector = OAuthTokenIntrospector(
-                base_url=settings.account_service_url,
-                internal_secret=settings.internal_auth_secret,
-            )
-            owns_introspector = True
-        self._publish("oauth_introspector", introspector)
-        if owns_introspector and introspector is not None:
-            self._closers.append(("oauth introspector", introspector.aclose))
-
-    def _assemble_budget(self) -> None:
-        settings = self.settings
-        # token 预算(P0-3):进程级固定,0 = 不限制
-        usage_service.configure_budget(settings.run_token_budget)
-
-        # 配额快照(P0-2):建 run 前读 account 的租户配额;密钥缺失即关闭
-        if quota_service.client() is None and quota_service.configure_client(
-            base_url=settings.account_service_url,
-            internal_secret=settings.internal_auth_secret,
-        ):
-            self._closers.append(("quota client", quota_service.close_client))
-
-        # 用量上报(P0-1):密钥缺失即关闭(不裸调),测试默认零网络
-        if usage_service.reporter() is None and usage_service.configure_reporter(
-            base_url=settings.account_service_url,
-            internal_secret=settings.internal_auth_secret,
-        ):
-            self._closers.append(("usage reporter", usage_service.close_reporter))
-
-    async def _assemble_llm(self) -> None:
-        settings = self.settings
-        llm = self.llm_client
-        if llm is None and settings.llm_enabled:
-            llm = GatewayClient(
-                base_url=settings.llm_gateway_url,
-                timeout_seconds=settings.llm_timeout_seconds,
-                model=settings.llm_model,
-                retry_attempts=settings.llm_retry_attempts,
-                retry_backoff_seconds=settings.llm_retry_backoff_seconds,
-                # 网关 BYOK 解析:租户头随上下文注入,内部密钥取本服务配置
-                internal_secret=settings.internal_auth_secret,
-            )
-            self._closers.append(("llm", llm.aclose))
-        # 发布解析后的客户端:直接对话(§6.7)与执行图共用同一个;
-        # create_app 里存的是"测试注入值",生产路径为 None,这里补齐
-        self._publish("llm_client", llm)
-
-    def _assemble_memory(self) -> None:
-        """记忆 P2:嵌入提供方全局装配(本地哈希默认;gateway 走 llm-gateway)。
-
-        嵌入是记忆检索/去重/巩固的共同底座,进程内只应有一份配置;provider
-        自建的 HTTP 客户端由容器负责关闭(本地哈希无资源,不用登记 closer)。
-        """
-        provider = build_embedding_provider(self.settings)
-        configure_embedding(provider)
-        self._publish("embedding_provider", provider)
-        aclose = getattr(provider, "aclose", None)
-        if aclose is not None:
-            self._closers.append(("embedding provider", aclose))
-
-    async def _assemble_tools(self) -> KnowledgeClient | None:
-        settings = self.settings
-        # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
-        # 签名 claim,不再有 X-Tenant-Id 裸调路径;密钥未配置时在换发处明确报错
-        broker = TokenBroker(
-            base_url=settings.auth_issuer,  # 签发方即 account-service
-            internal_secret=settings.internal_auth_secret,
-        )
-        self.broker = broker
-        self._closers.append(("token broker", broker.aclose))
-        self._token_provider = broker.token
-
-        # 会话级补丁查询与工具执行共用一个客户端:注入的测试替身优先,否则
-        # 按开关自建(自建的才登记 closer,注入的不由容器关闭)。
-        tool_client = self.tool_client
-        if tool_client is None and settings.tool_service_enabled:
-            tool_client = ToolClient(
-                settings.tool_service_url,
-                timeout_seconds=settings.tool_service_timeout_seconds,
-                token_provider=broker.token,
-            )
-            self._closers.append(("tool client", tool_client.aclose))
-        self._publish("tool_client", tool_client)
-
-        toolkit_factory = self.toolkit_factory
-        knowledge: KnowledgeClient | None = None
-        if toolkit_factory is None and settings.tool_service_enabled:
-            # 内置工具服务(设计 §12.3):目录与执行都在 tool-service(:8008)。
-            # 与旧 tools_enabled 同时开启时以服务为准(迁移期口径,见 §15.5)。
-            assert tool_client is not None  # 开关打开时上面必然已建好
-            catalog = ToolCatalog()
-            toolkit_factory = partial(
-                RemoteToolkit, client=tool_client, catalog=catalog
-            )
-        if toolkit_factory is None and settings.tools_enabled:
-            documents = (
-                DocumentLibrary(settings.documents_root, settings.documents_max_bytes)
-                if settings.documents_enabled
-                else None
-            )
-            knowledge = (
-                KnowledgeClient(
-                    settings.knowledge_service_url,
-                    settings.knowledge_timeout_seconds,
-                    token_provider=broker.token,
-                )
-                if settings.knowledge_enabled
-                else None
-            )
-            toolkit_factory = partial(
-                build_tools,
-                documents=documents,
-                knowledge=knowledge,
-            )
-        self._publish("toolkit_factory", toolkit_factory)
-
-        policy = self.context_policy
-        extras_factory = self.tool_extras_factory
-        if extras_factory is None and (
-            settings.mcp_enabled
-            or settings.skill_execution_enabled
-            # 记忆工具也走 extras 通道(§6.7):MCP/技能全关但记忆开着时,
-            # 记忆读写工具仍要进执行图与对话的工具面,否则开关形同虚设。
-            or settings.memory_enabled
-            # 上下文工程(§7.2):load_skill / read_offloaded 同样经 extras
-            # 通道下发,否则上面三项全关时这两个工具永远不出现。
-            or policy.skill_loading_enabled
-            or policy.offload_enabled
-        ):
-            extras_factory = self._extras_factory()
-        self._publish("tool_extras_factory", extras_factory)
-        return knowledge
-
-    async def _assemble_graph_deps(self) -> None:
-        settings = self.settings
-        verifier = self.token_verifier
-        owns_verifier = False
-        if verifier is None and settings.auth_enabled:
-            verifier = JwtVerifier(
-                issuer=settings.auth_issuer,
-                audience=settings.auth_audience,
-                jwks_url=settings.auth_jwks_url,
-                tenant_claim=settings.auth_tenant_claim,
-            )
-            owns_verifier = True
-        self._publish("token_verifier", verifier)
-        if owns_verifier and verifier is not None:
-            self._closers.append(("token verifier", verifier.aclose))
-
-        # 交付物镜像到工作区(§7):独立于工具箱开关
-        workspace = self.workspace_client
-        if workspace is None and settings.workspace_enabled:
-            workspace = WorkspaceClient(
-                settings.workspace_service_url,
-                settings.workspace_timeout_seconds,
-                token_provider=self._token_provider,
-            )
-        self._publish("workspace_client", workspace)
-
-        # 沙箱客户端(P1):测试注入优先;未开启时不起客户端、不碰网络
-        sandbox = self.sandbox_client
-        if sandbox is None and settings.sandbox_enabled:
-            sandbox = SandboxClient(
-                settings.sandbox_service_url,
-                settings.sandbox_timeout_seconds,
-                token_provider=self._token_provider,
-            )
-            self._closers.append(("sandbox client", sandbox.aclose))
-        self._publish("sandbox_client", sandbox)
-
-        # stdio MCP 沙箱池:沙箱客户端就绪后装配;两个开关都开才建池
-        pool = self.mcp_stdio_pool
-        if pool is None and settings.mcp_stdio_enabled and sandbox is not None:
-            pool = StdioSandboxPool(
-                sandbox,
-                ttl_seconds=settings.mcp_stdio_sandbox_ttl_seconds,
-                network=settings.mcp_stdio_network,
-                python_image=settings.mcp_stdio_python_image,
-                node_image=settings.mcp_stdio_node_image,
-                timeout_seconds=int(settings.sandbox_timeout_seconds),
-            )
-        self._publish("mcp_stdio_pool", pool)
-
-        # 交付物存储(§7 阶段 B):按配置选后端(database 模式为 None)
-        store = self.artifact_store
-        if store is None:
-            store = build_store(settings)
-        self._publish("artifact_store", store)
-
-        # 外链文件抓取(§7 阶段 B):关闭时不建下载器(只落报告件,不碰网络)
-        downloader = self.artifact_downloader
-        if downloader is None and settings.artifact_download_enabled:
-            downloader = HttpFileDownloader(
-                timeout_seconds=settings.artifact_download_timeout_seconds,
-                max_bytes=settings.artifact_download_max_bytes,
-            )
-        self._publish("artifact_downloader", downloader)
-
-        # 上传技能包执行(P3-C):sandbox/workspace 都在才装配(缺任一不暴露)
-        runner = self.skill_runner
-        if (
-            runner is None
-            and settings.skill_execution_enabled
-            and sandbox is not None
-            and workspace is not None
-        ):
-            runner = SkillRunner(
-                self.session_factory,
-                sandbox=sandbox,
-                workspace=workspace,
-                store=store,
-                settings=settings,
-            )
-        self._publish("skill_runner", runner)
-
-    def _assemble_context(self) -> None:
-        """上下文工程(§7.2):只装配端口,不读库、不碰网络。
-
-        policy 是不可变快照,管线/offloader 与沙箱共用同一份 WorkspaceFiles;
-        沙箱未启用时没有文件介质:agents_md 段不注册(管线记 not_registered),
-        offload 发布 None(执行节点退回原样回填),启动不因此失败。
-        """
-        policy = self.context_policy
-        # 发布策略快照:services 侧事件(run.context.assembled.v1)与测试都取它
-        self._publish("context_policy", policy)
-        files = (
-            SandboxWorkspaceFiles(
-                self.sandbox_client,
-                ttl_seconds=self.settings.context_sandbox_ttl_seconds,
-            )
-            if self.sandbox_client is not None
-            else None
-        )
-        pipeline: ContextPipeline | None = None
-        if self.settings.context_pipeline_enabled:
-            providers: list[SectionProvider] = [
-                SkillCardProvider(policy),
-                MemorySectionProvider(),
-            ]
-            if files is not None:
-                # 顺序即渲染顺序:工作区约定在前,技能卡片其次,记忆最后
-                providers.insert(0, AgentsMdProvider(files, policy))
-            pipeline = ContextPipeline(policy, providers=providers)
-        self._publish("context_pipeline", pipeline)
-        offloader = (
-            ToolOutputOffloader(files, policy)
-            if files is not None and policy.offload_enabled
-            else None
-        )
-        self._publish("tool_offloader", offloader)
-
-    async def _assemble_outbox(self) -> None:
-        settings = self.settings
-        bus: EventBus = self.event_bus or InMemoryEventBus()
-        self._publish("event_bus", bus)
-        recorder = None
-        dispatcher: OutboxDispatcher | None = None
-        self._outbox_stop: asyncio.Event | None = None
-        if settings.outbox_enabled:
-            recorder = record_run_event
-            ingest_knowledge: KnowledgeClient | None = None
-            if settings.knowledge_ingest_enabled:
-                ingest_knowledge = KnowledgeClient(
-                    settings.knowledge_service_url,
-                    settings.knowledge_timeout_seconds,
-                    token_provider=self._token_provider,
-                )
-                self._closers.append(("ingest knowledge", ingest_knowledge.aclose))
-            # 消费者按各自开关在 register_consumers 内筛选(知识入库 / 记忆抽取),
-            # 同一份总线、同一套 outbox 去重语义;返回名字只用于启动日志
-            consumers = register_consumers(
-                bus,
-                knowledge=ingest_knowledge,
-                session_factory=self.session_factory,
-                store=self.artifact_store,
-                llm=self.llm_client,
-                settings=settings,
-            )
-            self._publish("outbox_consumers", consumers)
-            dispatcher = OutboxDispatcher(
-                self.session_factory,
-                bus,
-                batch_size=settings.outbox_batch_size,
-                max_attempts=settings.outbox_max_attempts,
-            )
-            self._outbox_stop = asyncio.Event()
-            self._outbox_task = asyncio.create_task(
-                dispatcher.run_forever(
-                    interval_seconds=settings.outbox_dispatch_interval_seconds,
-                    stop=self._outbox_stop,
-                )
-            )
-            self._closers.append(("outbox task", self._stop_outbox))
-        self._publish("outbox_recorder", recorder)
-        self._publish("outbox_dispatcher", dispatcher)
-
-    async def _stop_outbox(self) -> None:
-        if self._outbox_stop is not None:
-            self._outbox_stop.set()
-        task = getattr(self, "_outbox_task", None)
-        if task is not None:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
 
     async def _assemble_graph(self) -> None:
         settings = self.settings
