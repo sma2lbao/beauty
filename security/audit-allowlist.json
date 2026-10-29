@@ -67,6 +67,96 @@
       "reason": "同 CVE-2026-112940:litellm 对 filelock 的上界约束阻断升级",
       "owner": "lead",
       "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112908",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112909",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112910",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112911",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112912",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112915",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112935",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112936",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112939",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
+    },
+    {
+      "id": "CVE-2026-112938",
+      "advisory": "filelock",
+      "ecosystem": "pip",
+      "range": "<4.2.1",
+      "reason": "同 CVE-2026-112940:litellm 1.106.6(当前最新已发布版)仍硬约束 filelock>=3.16.1,<4.0,4.2.1 修复版在现有 resolver 下无法安装;filelock 仅用于模型缓存目录加锁,不在请求路径。解除条件:litellm 放宽上界或升到 1.107+",
+      "owner": "lead",
+      "expires": "2026-12-31"
     }
   ]
 }

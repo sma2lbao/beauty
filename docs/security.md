@@ -27,7 +27,9 @@
 - **修复优先于豁免**：`npm audit fix`（无破坏）随时可跑；`--force`（跨 major）须评估兼容性后单独 PR。
 - **禁止无期限豁免**：每条 expires 最长季度末；`check-audit-allowlist.cjs` 到期即红。
 - **允许清单不是永久白名单**：条目携带 `reason`（为什么安全/为什么修不了）与 `owner`（谁负责跟进）。
-- **Python 侧豁免**：security/audit-allowlist.json 同时登记 `ecosystem: pip` 条目；`scripts/pip-audit-ignore.cjs` 把未过期条目转成 `--ignore-vuln <id>` 传给 CI 的 pip-audit（当前 3 条 filelock CVE，因 litellm 约束 filelock<4.0 无法升级，expires 2026-12-31）；
+- **Python 侧豁免**：security/audit-allowlist.json 同时登记 `ecosystem: pip` 条目；`scripts/pip-audit-ignore.cjs` 把未过期条目转成 `--ignore-vuln <id>` 传给 CI 的 pip-audit（当前 13 条 filelock CVE：3 条原有 + 2026-10-28 新披露的 `CVE-2026-112908/112909/112910/112911/112912/112915/112935/112936/112938/112939`，expires 2026-12-31）。
+  修复版是 filelock 4.2.1，但 4.x 是 major 升级，而 `litellm` 全部已发布版（含最新的 1.106.6）硬约束 `filelock>=3.16.1,<4.0`，resolver 下装不上；
+  filelock 在 litellm 里只用于模型缓存目录加锁，不在请求路径。解除条件：litellm 放宽上界或发布允许 filelock 4.x 的版本，届时立即 `uv lock --upgrade-package filelock` 并删除这些条目；
   若 pip-audit 报出无修复版本的 Python 传递依赖，必须先登记同等字段（ecosystem: pip、range、owner、expires），
   并在 CI 里用 pip-audit --ignore-vuln <id> 逐条放行——禁止用 --ignore-vuln 之外的宽泛跳过参数；
   有修复版本一律升级，不做豁免。
