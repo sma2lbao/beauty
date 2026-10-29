@@ -1,42 +1,20 @@
-import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
-import { FileText, FolderKanban, Plug, Sparkles } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { Link } from 'react-router';
 
-import { Select } from '@beauty/design';
-
 import { RunArtifacts } from '@/features/runs/run-artifacts';
-import { Markdown } from '@/components/console/markdown';
 import { ToolCallCard } from '@/features/chat/tool-call-card';
-import { consoleButtonClass } from '@/components/console/button-class';
-import {
-  ConsoleButton,
-  EmptyPanel,
-  StatusDot,
-  ToneBadge,
-} from '@/components/console/ui';
-import type { Attachment, ChatMessage } from '@/lib/conversations-api';
-import { conversationsApi } from '@/lib/conversations-api';
-import {
-  RUN_PHASE_LABELS,
-  clockTime,
-  formatDuration,
-  isRunTerminal,
-  runMetaLine,
-} from '@/lib/presentation';
-import type { Run } from '@/lib/runs-api';
+import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
+import { RUN_PHASE_LABELS, isRunTerminal } from '@/lib/presentation';
 
 import { DangerConfirmCard, PlanApprovalCard } from './approval-block';
+import { ChatEmptyState } from './chat-empty-state';
+import { ChatPendingBlock } from './chat-pending-block';
+import { AgentBlock, MessageBlock } from './message-bubbles';
 import { QuestionCard } from './question-card';
 import type { ChatActions } from './use-chat-actions';
 import type { ChatQueries } from './use-chat-queries';
 import type { ChatStream } from './use-chat-stream';
-
-const SUGGESTIONS = [
-  '把本周文档整理成一份周报草稿',
-  '帮我理一下这周的待办,给出优先级',
-  '基于知识库整理一份产品背景资料',
-];
+import { useMessageListScroll } from './use-message-list-scroll';
 
 export type ChatMessageListProps = {
   queries: ChatQueries;
@@ -86,103 +64,30 @@ export function ChatMessageList({
     mcpCatalog,
     changeNewSessionWorkspace,
   } = queries;
-  const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [
-    messages.length,
-    eventLines.length,
-    toolCalls.length,
-    liveRun?.text.length,
-    pending?.reply.length,
-    question?.phase,
-    question?.question.question_id,
-  ]);
+  const bottomRef = useMessageListScroll({
+    messagesCount: messages.length,
+    eventLinesCount: eventLines.length,
+    toolCallsCount: toolCalls.length,
+    liveRunTextLength: liveRun?.text.length,
+    pendingReplyLength: pending?.reply.length,
+    questionPhase: question?.phase,
+    questionId: question?.question.question_id,
+  });
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-7 sm:px-8 lg:px-12">
       <div className="mx-auto flex w-full max-w-[820px] flex-col gap-6">
-        {hasNoWorkspaces ? (
-          <div className="flex min-h-[52vh] items-center justify-center">
-            <EmptyPanel
-              className="w-full max-w-xl"
-              icon={<FolderKanban className="h-7 w-7" />}
-              title="还没有工作区"
-              description="会话必须归属于工作区:先创建一个工作区"
-              action={
-                <Link
-                  to="/workspace?new=1"
-                  className={consoleButtonClass({
-                    variant: 'primary',
-                    size: 'sm',
-                  })}
-                >
-                  去创建工作区
-                </Link>
-              }
-            />
-          </div>
-        ) : null}
-
-        {!hasNoWorkspaces && !activeConversationId && !pending ? (
-          <div className="flex flex-col items-center gap-4 py-12 text-center">
-            <span className="grid h-11 w-11 place-items-center rounded-xl border border-ha-border bg-[#1f2333]">
-              <Sparkles className="h-5 w-5 text-ha-accent-soft" />
-            </span>
-            <div>
-              <h2 className="text-[17px] font-semibold text-ha-text">
-                开始一个新会话
-              </h2>
-              <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-ha-muted">
-                描述要完成的事。简单的直接回答;复杂任务会先给计划,
-                等你放行再执行,危险操作会单独确认。
-              </p>
-              {activeWorkspace ? (
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <label
-                    htmlFor="session-workspace"
-                    className="font-mono text-[11px] text-ha-faint"
-                  >
-                    保存到
-                  </label>
-                  <Select
-                    id="session-workspace"
-                    size="sm"
-                    aria-label="选择工作区"
-                    value={activeWorkspace.id}
-                    onChange={(event) =>
-                      changeNewSessionWorkspace(event.target.value)
-                    }
-                  >
-                    {workspaces.map((workspace) => (
-                      <option key={workspace.id} value={workspace.id}>
-                        {workspace.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              ) : null}
-              {activeWorkspace ? (
-                <p className="mx-auto mt-2 max-w-md text-[12px] leading-5 text-ha-dim">
-                  会话将保存在「{activeWorkspace.name}」中。
-                </p>
-              ) : null}
-            </div>
-            <div className="flex max-w-lg flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  onClick={() => void stream.sendStreaming(suggestion)}
-                  className="rounded-md border border-ha-border bg-ha-panel px-3 py-2 text-left text-[12px] text-ha-text-2 transition-colors hover:border-ha-border-strong hover:text-ha-text"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <ChatEmptyState
+          hasNoWorkspaces={hasNoWorkspaces}
+          showHero={!hasNoWorkspaces && !activeConversationId && !pending}
+          workspaces={workspaces}
+          activeWorkspace={activeWorkspace}
+          onChangeWorkspace={(workspaceId) =>
+            changeNewSessionWorkspace(workspaceId)
+          }
+          onSuggestion={(suggestion) => void stream.sendStreaming(suggestion)}
+        />
 
         {messages.map((message) => (
           <MessageBlock
@@ -201,57 +106,7 @@ export function ChatMessageList({
           />
         ))}
 
-        {pending ? (
-          <>
-            <UserBlock
-              text={pending.user}
-              attachments={pending.attachments}
-              mcpServers={pending.mcpServers}
-            />
-            {pending.chatTools.length > 0 ? (
-              <ol className="space-y-1.5 border-l border-ha-border pl-3">
-                {pending.chatTools.map((call, index) => {
-                  const duration = formatDuration(call.durationMs);
-                  let label = call.ok
-                    ? '调用工具 ' + call.name
-                    : '工具 ' + call.name + ' 被拒绝(会话中只允许只读操作)';
-                  if (!call.ok && call.errorCode) {
-                    label =
-                      '工具 ' + call.name + ' 失败(' + call.errorCode + ')';
-                  }
-                  return (
-                    <li
-                      key={call.name + '-' + index}
-                      className="flex items-center gap-2 text-[12px] text-ha-dim"
-                    >
-                      <StatusDot
-                        tone={call.ok ? 'success' : 'danger'}
-                        pulse={
-                          index === pending.chatTools.length - 1 &&
-                          !pending.reply
-                        }
-                      />
-                      <span className="min-w-0 truncate">
-                        {label}
-                        {duration ? ' · ' + duration : ''}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : null}
-            <AgentBlock
-              meta={
-                pending.chatTools.length
-                  ? `查询了 ${pending.chatTools.length} 次`
-                  : '正在回答'
-              }
-              live
-            >
-              {pending.reply || '正在回答…'}
-            </AgentBlock>
-          </>
-        ) : null}
+        {pending ? <ChatPendingBlock pending={pending} /> : null}
 
         {/* 任务执行期的实时正文气泡:phase 变一段、run 终态(inFlight 变 false)
             就整块消失,此时落库的 assistant 消息已通过 invalidate 出现,避免正文重复。 */}
@@ -411,150 +266,4 @@ function ConsoleActionButton({
       {showArtifact ? '收起成品' : '查看成品'}
     </ConsoleButton>
   );
-}
-
-/* ── 消息块 ─────────────────────────────────────────────────────────── */
-
-function UserBlock({
-  text,
-  createdAt,
-  attachments = [],
-  mcpServers = [],
-}: {
-  text: string;
-  createdAt?: string;
-  attachments?: Attachment[];
-  mcpServers?: { id: string; name: string }[];
-}) {
-  return (
-    <article>
-      <header className="flex items-center gap-2">
-        <span className="text-[11px] font-semibold text-ha-dim">你</span>
-        {createdAt ? (
-          <span className="font-mono text-[11px] text-ha-faint">
-            {clockTime(createdAt)}
-          </span>
-        ) : null}
-      </header>
-      <p className="mt-2 whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-body">
-        {text}
-      </p>
-      {mcpServers.length ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {mcpServers.map((server) => (
-            <span
-              key={server.id}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-0.5 font-mono text-[11px] text-ha-text-2"
-            >
-              <Plug className="h-3 w-3 shrink-0 text-ha-muted" />
-              <span className="truncate">MCP · {server.name}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {attachments.length ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {attachments.map((attachment) => (
-            <button
-              key={attachment.id}
-              type="button"
-              onClick={() => void downloadAttachmentFile(attachment)}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel px-2 py-1 font-mono text-[11px] text-ha-text-2 transition-colors hover:border-ha-border-strong hover:text-ha-text"
-            >
-              <FileText className="h-3 w-3 shrink-0 text-ha-muted" />
-              <span className="truncate">{attachment.filename}</span>
-              <span className="shrink-0 text-ha-faint">
-                {formatAttachmentSize(attachment.size_bytes)}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function formatAttachmentSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-async function downloadAttachmentFile(attachment: Attachment): Promise<void> {
-  try {
-    const blob = await conversationsApi.downloadAttachment(attachment.id);
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = attachment.filename;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  } catch {
-    // 下载失败时静默;下次点击可重试
-  }
-}
-
-function AgentBlock({
-  meta,
-  live = false,
-  badge,
-  children,
-}: {
-  meta: string;
-  live?: boolean;
-  /** 头部附加标签(如任务阶段),与 meta 同行展示。 */
-  badge?: ReactNode;
-  children: string;
-}) {
-  return (
-    <article className="flex flex-col gap-3">
-      <header className="flex items-center gap-2">
-        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[#1f2333]">
-          <Sparkles className="h-3 w-3 text-ha-accent-soft" />
-        </span>
-        <span className="text-[13px] font-semibold text-ha-text">
-          beauty moon Agent
-        </span>
-        <span className="font-mono text-[11px] text-ha-dim">{meta}</span>
-        {badge}
-      </header>
-      <Markdown content={children} streaming={live} />
-    </article>
-  );
-}
-
-function MessageBlock({
-  message,
-  run,
-  steps,
-  attachments,
-  mcpCatalog = [],
-}: {
-  message: ChatMessage;
-  run?: Run;
-  steps?: number;
-  attachments?: Attachment[];
-  mcpCatalog?: { id: string; name: string }[];
-}) {
-  if (message.role === 'user') {
-    // 消息只存 id;名字用当前 server 列表映射,列表里没有(已删除)则退回 id
-    const mcpServers = (message.mcp_server_ids ?? []).map((id) => ({
-      id,
-      name: mcpCatalog.find((server) => server.id === id)?.name ?? id,
-    }));
-    return (
-      <UserBlock
-        text={message.content}
-        createdAt={message.created_at}
-        attachments={attachments}
-        mcpServers={mcpServers}
-      />
-    );
-  }
-  const meta =
-    run && steps
-      ? `已执行 ${steps} 步`
-      : run
-        ? runMetaLine(run)
-        : 'beauty moon Agent';
-  return <AgentBlock meta={meta}>{message.content}</AgentBlock>;
 }
