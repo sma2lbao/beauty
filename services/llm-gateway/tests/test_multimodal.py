@@ -27,7 +27,7 @@ from llm_gateway.schemas.completions import (
     text_chars,
 )
 from llm_gateway.services import completions
-from tests.fakes import chunk, response, sse_frames, stream
+from tests.fakes import chunk, response, stream
 
 PNG = "data:image/png;base64,iVBORw0KGgo="
 TEXT = "这张图里有什么?"
