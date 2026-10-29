@@ -33,7 +33,7 @@ vi.mock('@/lib/runs-api', async () =>
 vi.mock('@/lib/models-api', async () =>
   (await import('./chat-test-harness')).modelsModuleMock(),
 );
-vi.mock('@/components/runs/use-run-events', async () =>
+vi.mock('@/features/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
 );
 

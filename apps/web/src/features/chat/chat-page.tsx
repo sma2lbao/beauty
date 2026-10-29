@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
-import { ExecutionPanel } from '@/components/console/execution-panel';
-import { SandboxFileViewer } from '@/components/console/sandbox-file-viewer';
-import type { SandboxViewerTab } from '@/components/console/sandbox-file-viewer';
+import { ExecutionPanel } from '@/features/chat/execution-panel';
+import { SandboxFileViewer } from '@/features/sandbox/sandbox-file-viewer';
+import type { SandboxViewerTab } from '@/features/sandbox/sandbox-file-viewer';
 import { ConsoleStatusBar } from '@/components/console/status-bar';
 import { ConsoleTopbar } from '@/components/console/topbar';
 import type { SendMode } from '@/lib/conversations-api';

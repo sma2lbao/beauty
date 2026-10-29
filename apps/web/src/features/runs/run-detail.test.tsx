@@ -49,7 +49,7 @@ vi.mock('@/lib/runs-api', () => ({
   },
 }));
 
-vi.mock('@/components/runs/use-run-events', () => ({
+vi.mock('@/features/runs/use-run-events', () => ({
   useRunEvents: () => ({ events: [], connected: true }),
 }));
 

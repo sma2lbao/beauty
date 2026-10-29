@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Download, FileText, Eye, Image as ImageIcon } from 'lucide-react';
 import { useState } from 'react';
 
-import { ArtifactPreview } from '@/components/console/artifact-preview';
+import { ArtifactPreview } from '@/features/artifacts/artifact-preview';
 import { ConsolePanel, ToneBadge } from '@/components/console/ui';
 import {
   artifactContentType,

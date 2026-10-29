@@ -3,7 +3,7 @@
  */
 import { Download } from 'lucide-react';
 
-import { ArtifactPreview } from '@/components/console/artifact-preview';
+import { ArtifactPreview } from '@/features/artifacts/artifact-preview';
 import { ConsoleButton, ConsolePanel } from '@/components/console/ui';
 import { artifactFileName } from '@/lib/artifacts';
 import { formatSize } from '@/lib/presentation';

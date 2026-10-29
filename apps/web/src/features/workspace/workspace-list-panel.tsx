@@ -3,7 +3,7 @@
  */
 import { FolderKanban } from 'lucide-react';
 
-import { WorkspaceActions } from '@/components/console/workspace-actions';
+import { WorkspaceActions } from '@/features/workspace/workspace-actions';
 import { ConsolePanel } from '@/components/console/ui';
 import { formatDateTime } from '@/lib/presentation';
 import { cn } from '@/lib/utils';

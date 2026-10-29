@@ -16,7 +16,7 @@ import {
 } from '@beauty/design';
 
 import { PageHeader } from '@/components/console/ui';
-import { AuthBar } from '@/components/runs/auth-bar';
+import { AuthBar } from '@/features/auth/auth-bar';
 import { ApiError, isUnauthorized } from '@/lib/http';
 import type { OutboxStatus } from '@/lib/outbox-api';
 import { outboxApi } from '@/lib/outbox-api';

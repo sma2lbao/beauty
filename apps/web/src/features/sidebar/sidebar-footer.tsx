@@ -3,7 +3,7 @@
  */
 import { Link } from 'react-router';
 
-import { NotificationCenter } from '@/components/console/notification-center';
+import { NotificationCenter } from '@/features/notifications/notification-center';
 
 export function SidebarFooter({
   account,

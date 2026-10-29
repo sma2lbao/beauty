@@ -22,7 +22,7 @@ vi.mock('@/lib/outbox-api', async () => {
   };
 });
 
-vi.mock('@/components/runs/auth-bar', () => ({
+vi.mock('@/features/auth/auth-bar', () => ({
   AuthBar: () => <div data-testid="auth-bar" />,
 }));
 

@@ -16,12 +16,12 @@ import {
   ToneBadge,
 } from '@/components/console/ui';
 import { Markdown } from '@/components/console/markdown';
-import { RunArtifacts } from '@/components/console/run-artifacts';
-import { RunItemTimeline } from '@/components/console/run-item-timeline';
-import { RunStepTimeline } from '@/components/console/run-step-timeline';
-import { RunTodoList } from '@/components/console/run-todo-list';
-import { RunEvents } from '@/components/runs/run-events';
-import { useRunEvents } from '@/components/runs/use-run-events';
+import { RunArtifacts } from '@/features/runs/run-artifacts';
+import { RunItemTimeline } from '@/features/runs/run-item-timeline';
+import { RunStepTimeline } from '@/features/runs/run-step-timeline';
+import { RunTodoList } from '@/features/runs/run-todo-list';
+import { RunEvents } from '@/features/runs/run-events';
+import { useRunEvents } from '@/features/runs/use-run-events';
 import {
   RUN_PARENT_KIND_LABELS,
   RUN_STATUS_LABELS,

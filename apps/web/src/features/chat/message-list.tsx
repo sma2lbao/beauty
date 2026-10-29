@@ -5,9 +5,9 @@ import { Link } from 'react-router';
 
 import { Select } from '@beauty/design';
 
-import { RunArtifacts } from '@/components/console/run-artifacts';
+import { RunArtifacts } from '@/features/runs/run-artifacts';
 import { Markdown } from '@/components/console/markdown';
-import { ToolCallCard } from '@/components/console/tool-call-card';
+import { ToolCallCard } from '@/features/chat/tool-call-card';
 import { consoleButtonClass } from '@/components/console/button-class';
 import {
   ConsoleButton,
