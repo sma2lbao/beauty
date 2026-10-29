@@ -1,7 +1,8 @@
 """MicrosandboxProvider 测试夹具:用假 SDK 验证调用形状与异常映射。
 
 不 import 真实 microsandbox、不启动 microVM:monkeypatch
-`workspace.services.sandbox_provider._import_sdk` 返回内存假模块。
+`workspace.services.sandbox_provider.microsandbox._import_sdk` 返回内存假模块
+(W5 拆包后 SDK 惰性导入点位于 microsandbox 子模块)。
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from workspace.services import sandbox_provider
 from workspace.services.sandbox_provider import SandboxSpec
+from workspace.services.sandbox_provider import microsandbox as provider_impl
 
 
 class FakeSdkError(Exception):
@@ -395,7 +396,7 @@ class FakeSdk:
 
 def _use_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> FakeSdk:
     sdk = FakeSdk()
-    monkeypatch.setattr(sandbox_provider, "_import_sdk", lambda: sdk)
+    monkeypatch.setattr(provider_impl, "_import_sdk", lambda: sdk)
     return sdk
 
 
