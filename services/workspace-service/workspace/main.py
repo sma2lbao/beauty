@@ -1,4 +1,4 @@
-"""服务入口:create_app 工厂 + lifespan。
+"""服务入口:create_app 工厂 + lifespan(装配统一走 common.service_kit)。
 
 启动(项目目录内):uv run uvicorn workspace.main:app --port 8005
 Nx(仓库根):npx nx run workspace-service:serve
@@ -7,18 +7,12 @@ Nx(仓库根):npx nx run workspace-service:serve
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import suppress
 
 import structlog
 from common.artifacts import ArtifactStore, build_artifact_store
 from common.auth import JwtVerifier
-from common.logging import setup_logging
-from common.middleware import RequestContextMiddleware, install_app_error_handler
-from common.observability import install_observability
-from common.tracing import exclude_telemetry
-from database.base import Base
-from database.session import create_session_factory
+from common.service_kit import build_lifespan, create_service_app, install_database
 from fastapi import FastAPI
 
 from workspace.api.health import health_router
@@ -37,6 +31,10 @@ from workspace.services.shell_sessions import (
 )
 
 logger = structlog.get_logger(__name__)
+
+#: 后台回收任务在 app.state 上的属性名(启动建、关闭取消)。
+_REAPER_TASK = "sandbox_reaper_task"
+_SWEEPER_TASK = "shell_sweeper_task"
 
 
 async def _sandbox_reaper_loop(app: FastAPI) -> None:
@@ -71,20 +69,16 @@ async def _sandbox_shell_sweeper_loop(app: FastAPI) -> None:
             logger.exception("shell session sweeper loop error")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings: Settings = app.state.settings
-    setup_logging(settings)
-    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
-    install_observability(app, settings)
-    factory = create_session_factory(settings.database_url)
-    app.state.session_factory = factory
-    if settings.auto_create_tables:
-        # dev/test 直建表;生产一律 alembic 迁移
-        async with factory.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+async def _startup(app: FastAPI) -> None:
+    """启动:建库连接 → 交付物存储 → 沙箱 provider → shell 会话 → 回收任务。
 
-    # 交付物存储(§7):测试注入优先;未知后端在启动时报错
+    测试注入优先(artifact_store/sandbox_provider/shell_sessions);未知后端
+    /provider 在启动时报错。
+    """
+    settings: Settings = app.state.settings
+    await install_database(app)
+
+    # 交付物存储(§7)
     store: ArtifactStore | None = app.state.artifact_store
     if store is None:
         store = build_artifact_store(
@@ -92,20 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     app.state.artifact_store = store
 
-    # 鉴权装配(§10):测试注入优先;否则 auth_enabled 时起 token 校验器
-    verifier: JwtVerifier | None = app.state.token_verifier
-    owns_verifier = False
-    if verifier is None and settings.auth_enabled:
-        verifier = JwtVerifier(
-            issuer=settings.auth_issuer,
-            audience=settings.auth_audience,
-            jwks_url=settings.auth_jwks_url,
-            tenant_claim=settings.auth_tenant_claim,
-        )
-        owns_verifier = True
-    app.state.token_verifier = verifier
-
-    # 沙箱运行时(§7 阶段 B / P1):测试注入优先;未知 provider 启动即报错
+    # 沙箱运行时(§7 阶段 B / P1)
     provider: SandboxProvider | None = app.state.sandbox_provider
     if provider is None:
         provider = build_sandbox_provider(settings)
@@ -117,37 +98,53 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "仅限本地/单租户可信环境,生产请用 microsandbox"
         )
 
-    # 持久 shell 会话(#2):进程内管理器,测试注入优先
+    # 持久 shell 会话(#2):进程内管理器
     shell_sessions: ShellSessionManager | None = app.state.shell_sessions
     if shell_sessions is None:
         shell_sessions = build_shell_session_manager(settings)
     app.state.shell_sessions = shell_sessions
 
     # 过期回收 + shell 会话回收:后台任务,失败不阻塞启动;shutdown 取消
-    reaper_task: asyncio.Task[None] | None = None
     if settings.sandbox_reaper_enabled:
-        reaper_task = asyncio.create_task(
-            _sandbox_reaper_loop(app), name="workspace-sandbox-reaper"
+        setattr(
+            app.state,
+            _REAPER_TASK,
+            asyncio.create_task(
+                _sandbox_reaper_loop(app), name="workspace-sandbox-reaper"
+            ),
         )
-    sweeper_task = asyncio.create_task(
-        _sandbox_shell_sweeper_loop(app), name="workspace-shell-sweeper"
+    setattr(
+        app.state,
+        _SWEEPER_TASK,
+        asyncio.create_task(
+            _sandbox_shell_sweeper_loop(app), name="workspace-shell-sweeper"
+        ),
     )
 
-    try:
-        yield
-    finally:
-        if reaper_task is not None:
-            reaper_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await reaper_task
+
+async def _shutdown_before_verifier(app: FastAPI) -> None:
+    """关闭:先取消回收任务、兜底关 shell 会话,再交给 kit 关校验器/引擎。"""
+    reaper_task: asyncio.Task[None] | None = getattr(app.state, _REAPER_TASK, None)
+    if reaper_task is not None:
+        reaper_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reaper_task
+    sweeper_task: asyncio.Task[None] | None = getattr(app.state, _SWEEPER_TASK, None)
+    if sweeper_task is not None:
         sweeper_task.cancel()
         with suppress(asyncio.CancelledError):
             await sweeper_task
-        # 进程退出兜底:关掉所有还活着的 shell 会话
+    # 进程退出兜底:关掉所有还活着的 shell 会话
+    shell_sessions: ShellSessionManager | None = getattr(
+        app.state, "shell_sessions", None
+    )
+    if shell_sessions is not None:
         await shell_sessions.shutdown()
-        if owns_verifier:
-            await verifier.aclose()
-        await factory.engine.dispose()
+
+
+_lifespan = build_lifespan(
+    startup=_startup, shutdown_before_verifier=_shutdown_before_verifier
+)
 
 
 def create_app(
@@ -158,25 +155,18 @@ def create_app(
     shell_sessions: ShellSessionManager | None = None,
 ) -> FastAPI:
     """测试注入:假存储 / 假 JWKS / provider / shell 会话管理器。"""
-    app = FastAPI(
-        title="workspace-service",
-        version="0.1.0",
-        lifespan=lifespan,
-        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
-        telemetry={"exclude": exclude_telemetry},
+    return create_service_app(
+        name="workspace-service",
+        settings=settings or Settings(),
+        lifespan=_lifespan,
+        routers=[(health_router, ""), (api_router, "/v1")],
+        state={
+            "artifact_store": artifact_store,
+            "token_verifier": token_verifier,
+            "sandbox_provider": sandbox_provider,
+            "shell_sessions": shell_sessions,
+        },
     )
-    app.state.settings = settings or Settings()
-    app.state.artifact_store = artifact_store
-    app.state.token_verifier = token_verifier
-    app.state.sandbox_provider = sandbox_provider
-    app.state.shell_sessions = shell_sessions
-
-    install_app_error_handler(app)
-    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
-
-    app.include_router(health_router)
-    app.include_router(api_router, prefix="/v1")
-    return app
 
 
 app = create_app()

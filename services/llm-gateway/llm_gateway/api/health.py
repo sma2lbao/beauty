@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from common.service_kit import create_health_router
+from fastapi import HTTPException, Request
 
 from llm_gateway.core.config import Settings
 
-health_router = APIRouter()
 
+async def _ready(request: Request) -> dict[str, str]:
+    """就绪检查:默认模型已配置才算就绪(提供商连通性在调用时校验)。
 
-@health_router.get("/healthz")
-async def healthz() -> dict[str, str]:
-    """存活探针:进程活着即 200,不碰任何依赖。"""
-    return {"status": "ok"}
-
-
-@health_router.get("/readyz")
-async def readyz(request: Request) -> dict[str, str]:
-    """就绪探针:默认模型已配置才算就绪(提供商连通性在调用时校验)。"""
+    就绪响应除 status 外还带 default_model,便于网关侧核对路由目标。
+    """
     settings: Settings = request.app.state.settings
     if not settings.default_model:
         raise HTTPException(status_code=503, detail="default_model 未配置")
-    return {"status": "ready", "default_model": settings.default_model}
+    return {"default_model": settings.default_model}
+
+
+health_router = create_health_router(ready_check=_ready)
