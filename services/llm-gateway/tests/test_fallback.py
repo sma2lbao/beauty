@@ -222,12 +222,14 @@ def test_fallback_metric_and_warning_log(monkeypatch) -> None:
         return response(model="provx-b/secondary")
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    with _client(fallback_models=["provx-b/secondary"]) as client:
-        with capture_logs() as logs:
-            resp = client.post(
-                "/v1/completions",
-                json={**BODY, "model": "provx-a/primary"},
-            )
+    with (
+        _client(fallback_models=["provx-b/secondary"]) as client,
+        capture_logs() as logs,
+    ):
+        resp = client.post(
+            "/v1/completions",
+            json={**BODY, "model": "provx-a/primary"},
+        )
 
     assert resp.status_code == 200
     events = [item for item in logs if item["event"] == "llm_fallback"]
@@ -349,10 +351,7 @@ def test_fallback_message_is_clipped(monkeypatch, streaming: bool) -> None:
     with _client(fallback_models=[BACKUP]) as client:
         resp = client.post(route, json=BODY)
 
-    if streaming:
-        done = sse_frames(resp.text)[-1]
-    else:
-        done = resp.json()
+    done = sse_frames(resp.text)[-1] if streaming else resp.json()
     message = done["fallbacks"][0]["message"]
     assert len(message) == 500  # 499 字 + 省略号,严格不超 500
     assert message.endswith("…")
