@@ -10,26 +10,13 @@
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from common.service_kit import create_health_router
+from fastapi import HTTPException, Request
 
 from bff.core.config import Settings
 
-health_router = APIRouter()
-
 # 部署环境必须覆盖的本地兜底默认值(见 core/config.py session_secret)
 _DEV_DEFAULT_SESSION_SECRET = "dev-bff-session-secret-change-me"
-
-
-@health_router.get("/healthz")
-async def healthz() -> dict[str, str]:
-    """存活探针:进程活着即 200。"""
-    return {"status": "ok"}
-
-
-@health_router.get("/api/health")
-async def api_health() -> dict[str, str]:
-    """部署 smoke 用:经 Nginx 同源访问的 BFF 健康检查。"""
-    return {"status": "ok", "service": "bff"}
 
 
 def _missing_config(settings: Settings) -> str | None:
@@ -44,7 +31,7 @@ def _missing_config(settings: Settings) -> str | None:
 
 
 async def _probe_upstream(client: httpx.AsyncClient, name: str, url: str) -> None:
-    """上游 /healthz 探测:不可达/非 200 即抛(统一映射 503)。"""
+    """上游 /healthz 探测:不可达/非 200 即抛(由就绪检查统一映射 503)。"""
     try:
         response = await client.get(f"{url.rstrip('/')}/healthz", timeout=1.0)
     except httpx.HTTPError as exc:
@@ -53,9 +40,8 @@ async def _probe_upstream(client: httpx.AsyncClient, name: str, url: str) -> Non
         raise RuntimeError(f"upstream {name} returned {response.status_code}")
 
 
-@health_router.get("/readyz")
-async def readyz(request: Request) -> dict[str, str]:
-    """就绪探针:关键配置完整;可选上游探测(READY_PROBE_UPSTREAMS)。"""
+async def _ready(request: Request) -> None:
+    """就绪检查:关键配置完整;可选上游探测(READY_PROBE_UPSTREAMS)。"""
     settings: Settings = request.app.state.settings
     reason = _missing_config(settings)
     if reason is not None:
@@ -72,4 +58,12 @@ async def readyz(request: Request) -> dict[str, str]:
                 await _probe_upstream(client, name, url)
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"status": "ready"}
+
+
+health_router = create_health_router(ready_check=_ready)
+
+
+@health_router.get("/api/health")
+async def api_health() -> dict[str, str]:
+    """部署 smoke 用:经 Nginx 同源访问的 BFF 健康检查。"""
+    return {"status": "ok", "service": "bff"}

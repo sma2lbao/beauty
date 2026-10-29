@@ -50,7 +50,6 @@ class Settings(BaseAppSettings):
     byok_vault_key: str = "byok"
     byok_vault_timeout_seconds: float = 5.0
     # MCP OAuth 2.1(M3-04):客户端动态注册 + 授权码 + PKCE
-    oauth21_enabled: bool = True
     oauth21_web_origin: str = "http://localhost:5173"  # 授权页所在的 SPA
     oauth21_code_ttl_seconds: int = 600
     oauth21_access_ttl_seconds: int = 3600

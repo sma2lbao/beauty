@@ -29,7 +29,6 @@ class Settings(ServiceSettings):
     knowledge_timeout_seconds: float = 20.0
     tool_timeout_seconds: float = 30.0
     sandbox_tool_ttl_seconds: int = 1800
-    tool_call_page_size: int = 50
     # P1:写前必须先 read(file_reads 表),失败回 tool.read_required/tool.stale_read。
     read_before_write_enabled: bool = True
     # 单 run 写入配额(write/edit 成功次数与累计字节);超限回 tool.budget_exceeded。

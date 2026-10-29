@@ -1,4 +1,4 @@
-"""服务入口:create_app 工厂 + lifespan。
+"""服务入口:create_app 工厂 + lifespan(装配统一走 common.service_kit)。
 
 启动(项目目录内):uv run uvicorn account.main:app --port 8001
 Nx(仓库根):npx nx run account-service:serve
@@ -6,17 +6,9 @@ Nx(仓库根):npx nx run account-service:serve
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from common.auth import JwtVerifier
-from common.logging import setup_logging
-from common.middleware import RequestContextMiddleware, install_app_error_handler
-from common.observability import install_observability
 from common.security import SlidingWindowLimiter
-from common.tracing import exclude_telemetry
-from database.base import Base
-from database.session import create_session_factory
+from common.service_kit import build_lifespan, create_service_app, install_database
 from fastapi import FastAPI
 
 from account.api.health import health_router
@@ -31,45 +23,26 @@ from account.core.idp import IdPSigner, load_or_create_signer
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings: Settings = app.state.settings
-    setup_logging(settings)
-    # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op。
-    install_observability(app, settings)
-    factory = create_session_factory(settings.database_url)
-    app.state.session_factory = factory
-    if settings.auto_create_tables:
-        # dev/test 直建表;生产一律 alembic 迁移
-        async with factory.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+async def _startup(app: FastAPI) -> None:
+    """启动:建 session 工厂(dev/test 可直建表)+ 装配 BYOK KMS。
 
-    # BYOK KMS:测试可经 create_app(byok_kms=…) 注入,否则按配置装配
+    BYOK KMS 测试可经 create_app(byok_kms=…) 注入,否则按配置装配。
+    """
+    await install_database(app)
     if app.state.byok_kms is None:
-        app.state.byok_kms = build_byok_kms(settings)
+        app.state.byok_kms = build_byok_kms(app.state.settings)
 
-    # 鉴权装配(§10):认证交给 IdP,这里只解析当前租户
-    verifier: JwtVerifier | None = app.state.token_verifier
-    owns_verifier = False
-    if verifier is None and settings.auth_enabled:
-        verifier = JwtVerifier(
-            issuer=settings.auth_issuer,
-            audience=settings.auth_audience,
-            jwks_url=settings.auth_jwks_url,
-            tenant_claim=settings.auth_tenant_claim,
-        )
-        owns_verifier = True
-    app.state.token_verifier = verifier
 
-    try:
-        yield
-    finally:
-        kms: BYOKKms | None = app.state.byok_kms
-        if kms is not None:
-            await kms.aclose()
-        if owns_verifier:
-            await verifier.aclose()
-        await factory.engine.dispose()
+async def _shutdown_before_verifier(app: FastAPI) -> None:
+    """关闭:先回收 KMS,再交给 kit 关 token 校验器(顺序与原 lifespan 一致)。"""
+    kms: BYOKKms | None = app.state.byok_kms
+    if kms is not None:
+        await kms.aclose()
+
+
+_lifespan = build_lifespan(
+    startup=_startup, shutdown_before_verifier=_shutdown_before_verifier
+)
 
 
 def create_app(
@@ -80,27 +53,28 @@ def create_app(
 ) -> FastAPI:
     """测试注入:token_verifier(假 JWKS)、oauth_transport(假 OAuth HTTP)、
     byok_kms(假 KMS);未注入时 lifespan 按 Settings 装配。"""
-    app = FastAPI(
-        title="account-service",
-        version="0.1.0",
-        lifespan=lifespan,
-        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
-        telemetry={"exclude": exclude_telemetry},
-    )
     settings = settings or Settings()
-    app.state.settings = settings
-    app.state.token_verifier = token_verifier
-    app.state.oauth_transport = oauth_transport
-    app.state.byok_kms = byok_kms
-    app.state.oauth_register_limiter = SlidingWindowLimiter(
-        settings.oauth21_register_limit_per_hour, window_seconds=3600.0
+    app = create_service_app(
+        name="account-service",
+        settings=settings,
+        lifespan=_lifespan,
+        routers=[
+            (health_router, ""),
+            (api_router, "/v1"),
+            (auth_api.router, "/v1"),
+            (oauth_api.router, "/v1"),
+            (oidc_api.router, ""),
+            (oauth_metadata_router, ""),
+        ],
+        state={
+            "token_verifier": token_verifier,
+            "oauth_transport": oauth_transport,
+            "byok_kms": byok_kms,
+            "oauth_register_limiter": SlidingWindowLimiter(
+                settings.oauth21_register_limit_per_hour, window_seconds=3600.0
+            ),
+        },
     )
-
-    install_app_error_handler(app)
-    app.add_middleware(RequestContextMiddleware, settings=app.state.settings)
-
-    app.include_router(health_router)
-    app.include_router(api_router, prefix="/v1")
     # 自建认证(由 dev 桩转正):注册/登录/刷新/登出/内部签发 + OIDC 发现/JWKS
     # 始终挂载——本服务就是签发方,兄弟服务的 JwtVerifier 靠这些端点验签
     if settings.signing_key_path:
@@ -116,10 +90,6 @@ def create_app(
             audience=settings.token_audience,
             ttl_seconds=settings.token_ttl_seconds,
         )
-    app.include_router(auth_api.router, prefix="/v1")
-    app.include_router(oauth_api.router, prefix="/v1")
-    app.include_router(oidc_api.router)
-    app.include_router(oauth_metadata_router)
     return app
 
 

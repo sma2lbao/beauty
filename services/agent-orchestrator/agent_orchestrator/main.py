@@ -5,6 +5,7 @@ Nx(仓库根):npx nx run agent-orchestrator:serve
 
 本模块只做三件事:声明可注入依赖、组装 FastAPI(中间件/路由)、把生命周期
 交给 AppContainer;所有外部客户端的装配与逆序关闭都在容器里。
+应用骨架(错误处理/中间件顺序/路由挂载)统一走 common.service_kit。
 """
 
 from __future__ import annotations
@@ -14,8 +15,7 @@ from contextlib import asynccontextmanager
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
-from common.middleware import RequestContextMiddleware, install_app_error_handler
-from common.tracing import exclude_telemetry
+from common.service_kit import MiddlewareBinding, create_service_app
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 from events.bus import EventBus
 from fastapi import FastAPI
@@ -50,7 +50,11 @@ from agent_orchestrator.services.workspace import Workspace
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """启动装配 / 关闭回收都委托给 AppContainer。"""
+    """启动装配 / 关闭回收都委托给 AppContainer。
+
+    不复用 build_lifespan:容器自身已完成日志/可观测性初始化与 verifier 装配,
+    再叠一层会重复装配、并在容器 close 之后再处置同批资源。
+    """
     container: AppContainer = app.state.container
     await container.start()
     try:
@@ -76,17 +80,37 @@ def create_app(
     oauth_introspector: OAuthTokenIntrospector | None = None,
 ) -> FastAPI:
     """测试注入:llm_client、toolkit_factory、tool_extras_factory 等。"""
-    app = FastAPI(
-        title="agent-orchestrator",
-        version="0.1.0",
+    resolved = settings or Settings()
+    # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配。
+    # 注意 CORS 不带 credentials(AO 走 Bearer token,不用 Cookie)。
+    middlewares: list[MiddlewareBinding] = []
+    if resolved.cors_allow_origins:
+        middlewares.append(
+            (
+                CORSMiddleware,
+                {
+                    "allow_origins": resolved.cors_allow_origins,
+                    "allow_methods": ["*"],
+                    "allow_headers": ["*"],
+                },
+            )
+        )
+    app = create_service_app(
+        name="agent-orchestrator",
+        settings=resolved,
         lifespan=lifespan,
-        # 服务端 span 用 FastAPI 原生 telemetry;探针与指标端点不采样。
-        telemetry={"exclude": exclude_telemetry},
+        routers=[
+            (health_router, ""),
+            (internal_router, ""),
+            (mcp_server_router, ""),
+            (api_router, "/api/v1"),
+        ],
+        middlewares=middlewares,
     )
     # 容器同时把 settings 与注入项发布到 app.state(既有测试按名读取)
     container = AppContainer(
         app,
-        settings or Settings(),
+        resolved,
         llm_client=llm_client,
         toolkit_factory=toolkit_factory,
         tool_client=tool_client,
@@ -109,23 +133,6 @@ def create_app(
         flush_chars=container.settings.run_delta_flush_chars,
         flush_seconds=container.settings.run_delta_flush_seconds,
     )
-
-    if container.settings.cors_allow_origins:
-        # 浏览器直连(不经 Vite 代理)时需要;白名单来自配置,不用通配
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=container.settings.cors_allow_origins,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-
-    install_app_error_handler(app)
-    app.add_middleware(RequestContextMiddleware, settings=container.settings)
-
-    app.include_router(health_router)
-    app.include_router(internal_router)
-    app.include_router(mcp_server_router)
-    app.include_router(api_router, prefix="/api/v1")
     return app
 
 

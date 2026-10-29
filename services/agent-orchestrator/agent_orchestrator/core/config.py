@@ -47,9 +47,8 @@ class Settings(BaseAppSettings):
     artifact_download_max_bytes: int = 10 * 1024 * 1024
     artifact_download_timeout_seconds: float = 20.0
     artifact_download_max_files: int = 10
-    # 附件本地最小版(M0-12):内容进 DB;单文件上限与单条消息附件数上限
+    # 附件本地最小版(M0-12):内容进 DB;单文件上限
     max_attachment_bytes: int = 10 * 1024 * 1024
-    max_attachments_per_message: int = 5
     # 本地 worker(M0-04):run 的 plan/approve/resume/retry 入队执行。
     # 测试夹具显式关闭以保留同步语义。
     jobs_enabled: bool = True
@@ -58,7 +57,6 @@ class Settings(BaseAppSettings):
     plan_auto_approve: bool = True
     jobs_poll_interval_seconds: float = 0.5
     jobs_lease_seconds: int = 60
-    jobs_max_attempts: int = 3
     # 中断超时(P0-2):awaiting_approval / awaiting_confirmation 停留超过阈值后
     # 自动按"拒绝"处理——审批超时 → blocked(可 resume);确认超时 → 跳过危险写
     # 继续验收。0 = 关闭该类超时;sweeper 仅在 jobs_enabled 且至少一类 > 0 时启动。
@@ -74,7 +72,6 @@ class Settings(BaseAppSettings):
     # MCP Client(M1 本地版):允许租户配置第三方 MCP server
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
-    mcp_timeout_seconds: float = 10.0
     # stdio 型 MCP(P2):在沙箱内拉起 MCP 进程,经 stdio JSON-RPC 调工具。
     # 需要 sandbox_enabled 同时为真(没有沙箱客户端时 test 端点明确报错、
     # tool_specs 跳过 stdio server);network=public 是 P2 的临时口径,
@@ -142,7 +139,6 @@ class Settings(BaseAppSettings):
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库;
     # 代码类工具由 tool-service 提供,见下方的 tool_service_enabled)
     tools_enabled: bool = False
-    tool_timeout_seconds: float = 30.0
     # 内置工具服务(docs/design/tool-service.md):开启后内置工具的目录与执行
     # 全部委托给 tool-service(:8008);关闭时退回进程内注册表(仅文档/知识库;
     # 代码类工具只由 tool-service 提供)。
@@ -171,7 +167,6 @@ class Settings(BaseAppSettings):
     memory_max_entries_per_tenant: int = 2000
     # 0 = 不过期(只按容量与手动删除治理);>0 时写入时算 expires_at
     memory_default_ttl_days: int = 0
-    memory_embedding_dimensions: int = 256
     # 记忆二期(P2):自动抽取/近重复巩固/周期清理。抽取需要 LLM 且会把对话
     # 内容写进长期记忆(默认 tenant 级、跨工作区可见),属隐私敏感行为,**默认关**;
     # 显式开启后受 memory_extraction_min_messages 节流(每累计 N 条会话消息抽一次,
