@@ -113,7 +113,10 @@ async def create_run(
         workspace_id=workspace_id,
         skill_id=manifest.id if manifest else data.skill_id,
         skill_system_prompt=manifest.system_prompt if manifest else None,
-        skill_tools=list(manifest.tools) if manifest else None,
+        # None=技能未声明工具白名单(不限制);[] 是显式"不用工具",原样冻结。
+        skill_tools=(
+            list(manifest.tools) if manifest and manifest.tools is not None else None
+        ),
         skill_version_id=skill.version_id if skill else None,
         skill_object_key=skill.object_key if skill else None,
         skill_sha256=skill.sha256 if skill else None,

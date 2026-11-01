@@ -21,7 +21,8 @@ export type SkillManifest = {
   title: string;
   description: string;
   workspace_type: string;
-  tools: string[];
+  /** 工具白名单:null=技能未声明(不限制);[]=显式声明不用工具 */
+  tools: string[] | null;
   permissions: Record<string, string>;
   system_prompt: string;
   input_schema: Record<string, unknown>;

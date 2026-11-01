@@ -363,6 +363,64 @@ def test_run_freezes_uploaded_skill_snapshot(
     assert row[7] == 120
 
 
+def test_undeclared_tools_is_unrestricted(
+    tmp_path: Path, workspace: FakeWorkspace
+) -> None:
+    """未声明 tools 不被物化成空表:API 返回 null、run 快照 skill_tools 为 NULL;
+
+    显式 ``tools: []`` 仍是"不用工具",接口与快照都保留空表(两者必须可区分)。
+    """
+    app = create_app(
+        _settings(tmp_path, "unrestricted.db"),
+        workspace_client=workspace,
+        token_verifier=verifier(),
+    )
+    undeclared = {key: value for key, value in BASE_MANIFEST.items() if key != "tools"}
+    explicit_none = {
+        key: value
+        for key, value in BASE_MANIFEST.items()
+        if key not in {"tools", "entrypoint"}
+    }
+    explicit_none.update(
+        {"id": "team.no-tools", "title": "不用工具的技能", "tools": []}
+    )
+    with TestClient(app) as client:
+        assert upload(client, plain_zip(undeclared)).status_code == 201
+        no_tools = upload(client, plain_zip(explicit_none), filename="no-tools.zip")
+        assert no_tools.status_code == 201, no_tools.text
+
+        skills = {
+            item["id"]: item
+            for item in client.get("/api/v1/skills", headers=TENANT).json()
+        }
+        assert skills["team.weekly-report"]["tools"] is None
+        assert skills["team.no-tools"]["tools"] == []
+
+        run_ids = {}
+        for skill_id in ("team.weekly-report", "team.no-tools"):
+            response = client.post(
+                "/api/v1/runs",
+                json={"title": skill_id, "goal": "g", "skill_id": skill_id},
+                headers=TENANT,
+            )
+            assert response.status_code == 201, response.text
+            run_ids[skill_id] = response.json()["id"]
+
+    conn = sqlite3.connect(tmp_path / "unrestricted.db")
+    try:
+        frozen = dict(
+            conn.execute(
+                "SELECT id, skill_tools FROM runs WHERE id IN (?, ?)",
+                (run_ids["team.weekly-report"], run_ids["team.no-tools"]),
+            ).fetchall()
+        )
+    finally:
+        conn.close()
+    # JSON 列:未声明落 JSON null(ORM 读回 None),显式空表落 []。
+    assert json.loads(frozen[run_ids["team.weekly-report"]]) is None
+    assert json.loads(frozen[run_ids["team.no-tools"]]) == []
+
+
 def test_run_with_unknown_skill_not_found(pkg_client: TestClient) -> None:
     response = pkg_client.post(
         "/api/v1/runs",

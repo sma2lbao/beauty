@@ -2822,11 +2822,18 @@
             "type": "string"
           },
           "tools": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Tools",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
           },
           "triggers": {
             "items": {

@@ -33,7 +33,11 @@ export function SkillCard({ skill }: { skill: SkillManifest }) {
         {skill.description || '暂无描述'}
       </p>
       <div className="mt-3 flex flex-wrap gap-1.5">
-        {skill.tools.length ? (
+        {skill.tools === null ? (
+          <span className="font-mono text-[10px] text-ha-dim">
+            工具不限（未声明）
+          </span>
+        ) : skill.tools.length ? (
           skill.tools.map((tool) => (
             <span
               key={tool}

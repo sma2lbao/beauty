@@ -129,6 +129,33 @@ describe('SkillsPage', () => {
     expect(screen.getByText('内置')).toBeInTheDocument();
     expect(screen.getByText('上传')).toBeInTheDocument();
     expect(screen.getByText('含脚本')).toBeInTheDocument();
+    // 显式 [] 才是"不用工具";与未声明(null)必须显示成不同文案
+    expect(screen.getByText('无工具 / 只读')).toBeInTheDocument();
+  });
+
+  it('未声明工具白名单时显示不限制,而不是"没有工具"', async () => {
+    vi.mocked(skillsApi.list).mockResolvedValue([
+      {
+        id: 'demo.prompt-only',
+        version: '1.0.0',
+        title: '纯提示词技能',
+        description: '只注入提示词,不裁剪工具',
+        workspace_type: 'local',
+        tools: null,
+        permissions: {},
+        system_prompt: 'x',
+        input_schema: {},
+        deliverables: [{ kind: 'markdown' }],
+        triggers: ['manual'],
+        source: 'builtin',
+        has_scripts: false,
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText('纯提示词技能')).toBeInTheDocument();
+    expect(screen.getByText('工具不限（未声明）')).toBeInTheDocument();
+    expect(screen.queryByText('无工具 / 只读')).not.toBeInTheDocument();
   });
 
   it('上传失败时展示后端 message', async () => {

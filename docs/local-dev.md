@@ -77,10 +77,10 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 ## 3.1 Skills（场景模板）
 
-- 内置 manifest 在仓库根 `skills/*.json`（id/version/title/workspace_type/tools/system_prompt 等）。
+- 内置 manifest 在仓库根 `skills/*.json`（id/version/title/workspace_type/tools/system_prompt 等；`tools` 可缺省）。
 - orchestrator 启动时加载，暴露 `GET /v1/skills`、`GET /v1/skills/{id}`。
 - `POST /v1/runs` 或发消息时可带 `skill_id`：创建 run 时冻结 skill 快照（系统提示词 + 工具白名单），后续改 manifest 不影响已建 run。
-- 执行时只暴露白名单内工具；例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
+- 工具白名单语义：**未声明 `tools`（接口返回 `null`）= 不限制**，装配全部工具；显式 `"tools": []` 才是"不用工具"。执行时按声明的白名单裁剪，例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
 ## 3.2 连接器（空框架）

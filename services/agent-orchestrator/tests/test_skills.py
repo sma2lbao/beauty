@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.services.skills import load_skills
@@ -17,6 +19,16 @@ def test_load_builtin_skills() -> None:
     assert skill is not None
     assert skill.tools == ["glob", "read", "grep"]
     assert skill.system_prompt
+
+
+def test_skill_without_tools_is_unrestricted(tmp_path: Path) -> None:
+    """未声明 tools 的 manifest 保留 None(=不限制),不能被物化成"没有工具"。"""
+    (tmp_path / "prompt-only.json").write_text(
+        '{"id": "demo.prompt-only", "title": "纯提示词技能"}', encoding="utf-8"
+    )
+    manifest = load_skills(str(tmp_path)).get("demo.prompt-only")
+    assert manifest is not None
+    assert manifest.tools is None
 
 
 def test_skills_api(client: TestClient) -> None:

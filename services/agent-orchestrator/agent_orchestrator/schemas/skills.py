@@ -26,7 +26,10 @@ class SkillManifest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
     workspace_type: str = Field(default="generic", max_length=32)
-    tools: list[str] = Field(default_factory=list)
+    #: 工具白名单:None=未声明(不限制,装配全部工具);[]=显式声明"不用工具"。
+    #: 二者必须可区分——run 会把该值冻结进 ``skill_tools``,执行/计划节点按
+    #: ``is not None`` 判断是否裁剪工具。
+    tools: list[str] | None = None
     permissions: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20000)
     input_schema: dict[str, Any] = Field(default_factory=dict)

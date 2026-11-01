@@ -270,14 +270,22 @@ def _parse_manifest(
             f"timeout_seconds 必须在 {MIN_TIMEOUT_SECONDS}..{MAX_TIMEOUT_SECONDS}"
         )
 
-    raw_tools = payload.get("tools", [])
-    if not isinstance(raw_tools, list) or not all(
+    # 未声明 tools = 不限制(装配全部工具);只有显式给列表才裁剪。
+    raw_tools = payload.get("tools")
+    tools: list[str] | None
+    if raw_tools is None:
+        tools = None
+    elif not isinstance(raw_tools, list) or not all(
         isinstance(tool, str) and tool for tool in raw_tools
     ):
         raise _manifest_invalid("tools 必须是字符串数组")
-    tools = _dedupe(
-        [*[str(tool) for tool in raw_tools], *([SKILL_RUN_TOOL] if entrypoint else [])]
-    )
+    else:
+        tools = _dedupe(
+            [
+                *[str(tool) for tool in raw_tools],
+                *([SKILL_RUN_TOOL] if entrypoint else []),
+            ]
+        )
 
     manifest: dict[str, Any] = {
         "id": slug,

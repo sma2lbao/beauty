@@ -49,7 +49,8 @@ class ParsedPackage:
     runtime: str
     network: str
     timeout_seconds: int
-    tools: list[str]
+    #: None=manifest 未声明 tools(不限制);[]=显式声明不用工具。
+    tools: list[str] | None
     skill_md: str
     file_count: int
     manifest: dict[str, Any]
@@ -102,9 +103,16 @@ def _package_read(
 
 def _manifest_for(package: SkillPackage, version: SkillVersion) -> SkillManifest:
     snapshot = version.manifest or {}
-    tools = list(snapshot.get("tools") or [])
-    if version.entrypoint and SKILL_RUN_TOOL not in tools:
-        tools.append(SKILL_RUN_TOOL)
+    # None=manifest 未声明 tools(不限制);[] / 列表=显式白名单。
+    # 历史快照(修复前写入)只有列表形态,``[]`` 无法与"未声明"区分,保持原样。
+    raw_tools = snapshot.get("tools")
+    tools: list[str] | None
+    if raw_tools is None:
+        tools = None
+    else:
+        tools = list(raw_tools)
+        if version.entrypoint and SKILL_RUN_TOOL not in tools:
+            tools.append(SKILL_RUN_TOOL)
     return SkillManifest(
         id=package.slug,
         version=version.version,
