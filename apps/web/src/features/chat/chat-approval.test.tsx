@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatPage } from '@/pages/chat';
 
 import { conversationsApi } from '@/lib/conversations-api';
+import { queryKeys } from '@/lib/query-keys';
 import { runsApi } from '@/lib/runs-api';
 
 import {
@@ -104,6 +105,69 @@ describe('ChatPage 消息、审批与交付物', () => {
     await waitFor(() =>
       expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
     );
+  });
+
+  it('待审批:计划正文为空时给出占位说明,而不是空白卡片', async () => {
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '',
+    });
+    renderPage('/?conversation=c1');
+
+    expect(await screen.findByText('待放行的计划')).toBeTruthy();
+    expect(screen.getByText(/计划正文暂未生成/)).toBeTruthy();
+  });
+
+  it('规划进入待审批时重新拉取计划:卡片带出正文而不是空壳', async () => {
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'planning' }));
+    const { queryClient } = renderPage('/?conversation=c1');
+    // 规划期接口返回空计划(此时还没有计划卡)
+    expect(await screen.findByText('实时输出')).toBeTruthy();
+
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 重取回来的计划',
+    });
+    await act(async () => {
+      queryClient.setQueryData(
+        queryKeys.run('run-1'),
+        makeRun({ status: 'awaiting_approval' }),
+      );
+    });
+
+    expect(await screen.findByText('重取回来的计划')).toBeTruthy();
+    expect(screen.queryByText(/计划正文暂未生成/)).toBeNull();
+  });
+
+  it('待确认危险操作:列出待确认的操作明细', async () => {
+    setRunEvents([
+      event(1, 'run.confirmation.required.v1', {
+        pending_writes: [
+          {
+            id: 'call-1',
+            name: 'publish_post',
+            arguments: '{"target":"官方账号"}',
+          },
+          {
+            id: 'call-2',
+            name: 'delete_file',
+            arguments: '{"path":"report.md"}',
+          },
+        ],
+      }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_confirmation' }),
+    );
+    renderPage('/?conversation=c1');
+
+    expect(await screen.findByText('有 2 个危险操作待确认')).toBeTruthy();
+    expect(screen.getByText('publish_post')).toBeTruthy();
+    expect(screen.getByText('target=官方账号')).toBeTruthy();
+    expect(screen.getByText('delete_file')).toBeTruthy();
+    expect(screen.getByText('path=report.md')).toBeTruthy();
   });
 
   it('把 run 事件翻成工具卡与状态播报', async () => {

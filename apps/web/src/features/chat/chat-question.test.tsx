@@ -129,5 +129,24 @@ describe('ChatPage 挂起提问卡片', () => {
 
     expect(await screen.findByText('提问已失效')).toBeTruthy();
     expect(screen.getByText('提问已超时,任务会按跳过继续。')).toBeTruthy();
+    // 锁定态也要能看到当时问的是什么,不能只剩一行状态提示
+    expect(screen.getByText('要整理哪些内容?')).toBeTruthy();
+  });
+
+  it('跳过提问后仍保留问题清单', async () => {
+    setRunEvents([
+      event(1, 'run.question.required.v1', requiredPayload),
+      event(2, 'run.question.answered.v1', {
+        question_id: 'q1',
+        action: 'decline',
+        answers: [],
+      }),
+    ]);
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'running' }));
+    renderPage('/?conversation=c1');
+
+    expect(await screen.findByText('已跳过提问')).toBeTruthy();
+    expect(screen.getByText('要整理哪些内容?')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '提交回答' })).toBeNull();
   });
 });

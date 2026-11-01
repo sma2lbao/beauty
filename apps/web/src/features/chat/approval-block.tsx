@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 
 import { Markdown } from '@/components/console/markdown';
 import { ConsoleButton, ToneBadge } from '@/components/console/ui';
+import { summarizeArguments, type PendingWrite } from '@/lib/presentation';
 import type { Plan, Run, RunStatus } from '@/lib/runs-api';
 
 /**
@@ -32,7 +33,15 @@ export function PlanApprovalCard({
         <ToneBadge tone="warning">等待审批</ToneBadge>
       </div>
       <div className="max-h-64 overflow-auto px-3 py-2">
-        <Markdown content={plan.plan_markdown} />
+        {plan.plan_markdown.trim() ? (
+          <Markdown content={plan.plan_markdown} />
+        ) : (
+          // 计划正文是异步落库的:planning 阶段取到的空串会被 react-query 先缓存,
+          // 这里给明确占位并提示会自动刷新,避免卡片只剩外壳。
+          <p className="text-[12px] leading-5 text-ha-dim">
+            计划正文暂未生成,稍后会自动刷新;也可以直接放行或拒绝。
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-ha-warning-border/60 px-3 py-2.5">
         <ConsoleButton
@@ -64,38 +73,79 @@ export function PlanApprovalCard({
 
 /**
  * 危险操作确认卡片(awaiting_confirmation):确认后才会执行。
+ *
+ * 待确认的操作清单来自 `run.confirmation.required.v1` 事件载荷的
+ * `pending_writes`(run 上不落这份明细),没有明细时给兜底说明,
+ * 不再只渲染一句通用提示让用户猜「到底要确认什么」。
  */
 export function DangerConfirmCard({
+  writes,
   onConfirm,
   onReject,
   busy,
 }: {
+  writes: PendingWrite[];
   onConfirm: () => void;
   onReject: () => void;
   busy: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-ha-warning-border bg-ha-warning-bg px-3 py-3">
-      <AlertTriangle className="h-4 w-4 text-ha-warning" />
-      <span className="mr-auto text-[12px] text-ha-text-2">
-        有危险操作需要你确认(例如对外发布),确认后才会执行。
-      </span>
-      <ConsoleButton
-        variant="primary"
-        size="sm"
-        onClick={onConfirm}
-        disabled={busy}
-      >
-        确认并执行
-      </ConsoleButton>
-      <ConsoleButton
-        variant="danger"
-        size="sm"
-        onClick={onReject}
-        disabled={busy}
-      >
-        拒绝危险操作
-      </ConsoleButton>
+    <div className="rounded-lg border border-ha-warning-border bg-ha-warning-bg/40">
+      <div className="flex items-center justify-between gap-3 border-b border-ha-warning-border/60 px-3 py-2.5">
+        <span className="flex items-center gap-2 text-[12px] font-semibold text-ha-warning">
+          <AlertTriangle className="h-4 w-4" />
+          {writes.length > 0
+            ? `有 ${writes.length} 个危险操作待确认`
+            : '有危险操作待确认'}
+        </span>
+        <ToneBadge tone="warning">等待确认</ToneBadge>
+      </div>
+      <div className="space-y-2 px-3 py-2.5">
+        <p className="text-[12px] leading-5 text-ha-text-2">
+          有危险操作需要你确认(例如对外发布),确认后才会执行。
+        </p>
+        {writes.length > 0 ? (
+          <ol className="space-y-1.5">
+            {writes.map((write) => (
+              <li
+                key={write.id}
+                className="rounded-md border border-ha-border bg-ha-panel px-2.5 py-1.5"
+              >
+                <p className="break-all font-mono text-[12px] text-ha-text-body">
+                  {write.name}
+                </p>
+                <p className="break-words font-mono text-[11px] leading-4 text-ha-dim">
+                  {summarizeArguments(write.arguments) || '无参数'}
+                </p>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-[12px] leading-5 text-ha-dim">
+            {
+              '待确认的操作明细尚未同步(旧版本 run 可能没有这份明细),请结合上文执行计划判断后再确认。'
+            }
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-ha-warning-border/60 px-3 py-2.5">
+        <ConsoleButton
+          variant="primary"
+          size="sm"
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          确认并执行
+        </ConsoleButton>
+        <ConsoleButton
+          variant="danger"
+          size="sm"
+          onClick={onReject}
+          disabled={busy}
+        >
+          拒绝危险操作
+        </ConsoleButton>
+      </div>
     </div>
   );
 }

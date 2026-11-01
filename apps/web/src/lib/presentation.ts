@@ -7,6 +7,7 @@
 export * from './presentation/format';
 export * from './presentation/run';
 export * from './presentation/events';
+export * from './presentation/pending-writes';
 export * from './presentation/tools';
 export * from './presentation/diff';
 export * from './presentation/question';

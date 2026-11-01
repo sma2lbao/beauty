@@ -60,6 +60,7 @@ export function ChatMessageList({
     liveRun,
     runPaused,
     question,
+    pendingWrites,
     eventLines,
     mcpCatalog,
     changeNewSessionWorkspace,
@@ -164,9 +165,15 @@ export function ChatMessageList({
           </div>
         ) : null}
 
-        {run && status === 'awaiting_approval' && plan ? (
+        {run && status === 'awaiting_approval' ? (
           <PlanApprovalCard
-            plan={plan}
+            plan={
+              plan ?? {
+                run_id: run.id,
+                status: run.status,
+                plan_markdown: '',
+              }
+            }
             rejectReason={actions.rejectReason}
             onRejectReasonChange={actions.setRejectReason}
             onApprove={() => actions.approve(run.id)}
@@ -177,6 +184,7 @@ export function ChatMessageList({
 
         {run && status === 'awaiting_confirmation' ? (
           <DangerConfirmCard
+            writes={pendingWrites}
             onConfirm={() => actions.confirmDanger(run.id, 'approve')}
             onReject={() => actions.confirmDanger(run.id, 'reject')}
             busy={actions.busy}

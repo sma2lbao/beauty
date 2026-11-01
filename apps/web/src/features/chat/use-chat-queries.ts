@@ -16,6 +16,7 @@ import {
   eventLine,
   isRunTerminal,
   liveRunText,
+  pendingWritesFrom,
   questionStateFrom,
   runStatusTone,
   toolCallsFrom,
@@ -133,6 +134,13 @@ export function useChatQueries(activeConversationId: string | null) {
     queryFn: () => runsApi.getPlan(activeRunId as string),
     enabled: Boolean(activeRunId),
     retry: false,
+    // 计划正文是在 planning 结束、进入 awaiting_approval 时才落库的:
+    // 首帧在 planning 阶段取到的是空串,若只取一次,审批卡片就只剩外壳。
+    // 随 run 轮询(终态即停),状态一翻就能拿到真正的计划。
+    refetchInterval: () =>
+      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
+        ? false
+        : 1500,
   });
   // 步骤投影不进事件流,单独按 run 拉;终态后不再变,停轮询。
   const stepsQuery = useQuery({
@@ -183,6 +191,8 @@ export function useChatQueries(activeConversationId: string | null) {
     status === 'blocked';
   // ask_question 的挂起提问(§10.4):从 run 事件流推导,不新增后端读面。
   const question = questionStateFrom(events, run?.status);
+  // 危险确认的待办操作明细同样只存在于事件流(run 上不落这份数据)。
+  const pendingWrites = pendingWritesFrom(events);
 
   // 底部状态栏条目(页面外壳直接消费的视图派生)
   const statusTone = runStatusTone(status);
@@ -235,6 +245,19 @@ export function useChatQueries(activeConversationId: string | null) {
     }
     selectWorkspace(conversationWorkspaceId, { keepConversation: true });
   }, [conversationWorkspaceId, activeWorkspaceId, selectWorkspace, workspaces]);
+
+  // run 状态一变(尤其 planning→awaiting_approval)就重取计划:
+  // 计划正文与「等待审批」是同一事务写入的,状态翻了而缓存里还是规划期的空串,
+  // 审批卡片就会只剩外壳(轮询兜底之外再补一次即时失效)。
+  const prevPlanStatusRef = useRef<RunStatus | null>(null);
+  useEffect(() => {
+    const previous = prevPlanStatusRef.current;
+    prevPlanStatusRef.current = status;
+    if (!activeRunId || previous === null || previous === status) return;
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.plan(activeRunId),
+    });
+  }, [status, activeRunId, queryClient]);
 
   // run 进终态时补一次失效:落库的 assistant 消息/会话标题要刷新出来
   const prevStatusRef = useRef<RunStatus | null>(null);
@@ -306,6 +329,7 @@ export function useChatQueries(activeConversationId: string | null) {
     liveRun,
     runPaused,
     question,
+    pendingWrites,
     eventLines,
     title,
     statusItems,

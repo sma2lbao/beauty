@@ -146,11 +146,22 @@ export function QuestionCard({
 
       {locked ? (
         <div className="space-y-1.5 px-3 py-2.5 text-[12px] leading-5 text-ha-text-2">
-          {answered ? (
-            question.questions.map((_, index) => {
+          <p className="break-words text-ha-dim">
+            {state.phase === 'expired'
+              ? state.timedOut
+                ? '提问已超时,任务会按跳过继续。'
+                : '提问已失效(任务已继续)。'
+              : declined
+                ? '已跳过提问,任务继续执行。'
+                : '已提交答案,任务继续执行。'}
+          </p>
+          {/* 锁定态仍保留问题清单:只有一句状态提示会变成「有壳无内容」,
+              历史回放时也看不出当时问的是什么。 */}
+          <ol className="space-y-1.5">
+            {question.questions.map((item, index) => {
               const answer = answersByIndex.get(index);
               const local = answersFromDraft().find(
-                (item) => item.index === index,
+                (entry) => entry.index === index,
               );
               const labels = answer?.labels ?? local?.labels ?? [];
               const custom = answer?.custom ?? local?.custom ?? null;
@@ -159,23 +170,22 @@ export function QuestionCard({
                 ...(custom ? [`自定义:${custom}`] : []),
               ];
               return (
-                <p key={index} className="break-words">
-                  <span className="mr-1.5 font-mono text-[11px] text-ha-dim">
-                    {index + 1}.
-                  </span>
-                  {parts.join('、') || '未回答'}
-                </p>
+                <li key={index} className="space-y-0.5">
+                  <p className="break-words text-ha-text-body">
+                    <span className="mr-1.5 font-mono text-[11px] text-ha-dim">
+                      {index + 1}.
+                    </span>
+                    {item.question}
+                  </p>
+                  {answered ? (
+                    <p className="break-words text-ha-dim">
+                      {parts.join('、') || '未回答'}
+                    </p>
+                  ) : null}
+                </li>
               );
-            })
-          ) : (
-            <p className="break-words">
-              {state.phase === 'expired'
-                ? state.timedOut
-                  ? '提问已超时,任务会按跳过继续。'
-                  : '提问已失效(任务已继续)。'
-                : '已跳过提问,任务继续执行。'}
-            </p>
-          )}
+            })}
+          </ol>
           {submittedAction ? (
             <p className="text-[11px] text-ha-dim">已提交,等待任务继续…</p>
           ) : null}
