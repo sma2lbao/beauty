@@ -104,3 +104,19 @@ account-service 换该租户配置的提供商密钥(共享内部密钥保护),�
 LiteLLM proxy 配置化(guardrails)。
 
 命令(仓库根):`npx nx run llm-gateway:serve`(:8003)/ `npx nx test llm-gateway`
+
+## Vercel 部署（导出约定）
+
+Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本服务的 `app` 在
+`llm_gateway/main.py`，因此由 `pyproject.toml` 的 `[tool.vercel] entrypoint` 显式声明：
+
+- 入口：`llm_gateway.main:app`（与 `vercel.json` 的 `functions` key `llm_gateway/main.py` 对应）
+- Python 版本：`.python-version` 固定 3.12
+- 函数配置：`vercel.json` 设 `maxDuration`，并排除 `tests/`、本地 `*.db`、`__pycache__`
+  等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
+
+已知阻塞：服务依赖同仓库 uv workspace 内的 `common` / `database` / `events`，而
+Vercel 以 `services/llm-gateway` 为部署根、不包含仓库其他目录；真实部署前需先把这三个包
+发布到私有索引或构建期 vendor。本次只覆盖无状态短请求服务，`agent-orchestrator` /
+`workspace-service` 含常驻后台循环，按设计文档外置。详见
+[serverless 部署方案](../../docs/design/serverless-deployment.md)。

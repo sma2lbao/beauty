@@ -732,6 +732,27 @@ D1 的改造要点（相对 Cloud Run 主线）：
 6. CI 增加 `vercel deploy --prebuilt`（或 Git 集成），迁移与外部 worker 仍由 Actions/Cloud Run 管理；web/BFF 与 worker 的版本要一起发，协议兼容按 §5.4 expand/contract。
 7. 成本：Vercel Pro 20 美元/座/月起 + 函数用量；Vercel Sandbox Active CPU 0.128 美元/vCPU·小时、内存 0.0212 美元/GB·小时；外部 worker 仍有 Cloud Run/Fly 固定成本。
 
+#### 已落地：6 个无状态服务的 Vercel 导出配置（2026-11）
+
+按 [Vercel FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi#exporting-the-fastapi-application) 的「导出应用」约定，本轮只做配置层改造（不改服务代码、不影响本地与 Docker 部署），覆盖 `bff` / `account-service` / `llm-gateway` / `connector-service` / `knowledge-service` / `tool-service`：
+
+| 服务              | `[tool.vercel] entrypoint` | `vercel.json` 的 `functions` key | `maxDuration`（秒） | 取值的依据                                        |
+| ----------------- | -------------------------- | -------------------------------- | ------------------- | ------------------------------------------------- |
+| bff               | `bff.main:app`             | `bff/main.py`                    | 800                 | SSE 代理长连接；800 为 Pro GA 上限（Hobby 300）   |
+| account-service   | `account.main:app`         | `account/main.py`                | 60                  | 认证/会话/JWKS 均为短请求                         |
+| llm-gateway       | `llm_gateway.main:app`     | `llm_gateway/main.py`            | 300                 | 上游 `request_timeout_seconds=60` + 重试/回退余量 |
+| connector-service | `connector.main:app`       | `connector/main.py`              | 60                  | 连接 CRUD 与凭证操作                              |
+| knowledge-service | `knowledge.main:app`       | `knowledge/main.py`              | 300                 | 本地嵌入冷启动 + 入库                             |
+| tool-service      | `tool_service.main:app`    | `tool_service/main.py`           | 300                 | 工具执行编排 + 沙箱调用                           |
+
+每个服务目录同时新增 `.python-version`（固定 3.12，与根 `.python-version` 一致，避免 Vercel 按 `requires-python` 解析到 3.13/3.14）与 `vercel.json`（`excludeFiles` 排除 `tests/`、本地 `*.db`、`__pycache__`、`reports/`、`coverage/`，控制 500MB 包体上限）。入口与函数 key 的一致性由 `scripts/check-vercel-config.py` 在 CI 的 `check-workspace.sh` 中校验，防止漂移。
+
+**仍未解决（真实部署前必须处理）**：
+
+- **workspace 依赖摊平**：服务通过 uv workspace 的 `workspace = true` 依赖 `common` / `database` / `events`，而 Vercel 以 `services/<svc>` 为部署根、仓库其他目录不会上传，构建会因找不到这三个本地包而失败。需要把共享包发布到私有包索引（uv 可复用），或在 CI 构建期把它们 vendor 进部署根。本轮按「只加配置」处理，未引入打包脚本。
+- **未覆盖的服务**：`agent-orchestrator` / `workspace-service` 含常驻后台循环（outbox dispatcher、jobs worker、interrupts sweeper、sandbox reaper）与沙箱生命周期，按 D1 外置，不放进 Functions。
+- **平台侧配置**：区域、内存、Cron/Queues、迁移 Job 与 `apps/web` 的 `rewrites` 落点仍需在 Vercel 项目与 CI 中配置（`apps/web/vercel.json` 目前把 `/api/*` 指向 `https://api.beautymoon.cn/*`）。
+
 #### D2：全 Vercel（25-35 人日，不推荐本期）
 
 如果坚持「后端全部在 Vercel」，还要再做四件事：

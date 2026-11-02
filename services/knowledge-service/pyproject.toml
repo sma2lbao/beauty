@@ -63,3 +63,9 @@ select = ["E", "F", "UP", "B", "SIM", "I"]
 ignore = []
 fixable = ["ALL"]
 unfixable = []
+
+[tool.vercel]
+# Vercel Python runtime 只自动识别根级 app.py/main.py 等入口；本服务的 app 在
+# knowledge/main.py，必须用 tool.vercel.entrypoint 显式声明。vercel.json 的 functions
+# key 与该入口文件对应；依赖/部署约束见 docs/design/serverless-deployment.md §7.6。
+entrypoint = "knowledge.main:app"

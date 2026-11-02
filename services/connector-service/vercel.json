@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "connector/main.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{tests/**,**/test_*.py,**/__pycache__/**,**/*.db,**/.pytest_cache/**,**/*.egg-info/**,reports/**,coverage/**}"
+    }
+  }
+}
