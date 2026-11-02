@@ -76,7 +76,7 @@ Browser
 │            ├── 代理 runtime（短请求 + 短流）
 │            ├── 产物/附件下载（DB/本地存储 → 流式响应）
 │            └── 限流/错误契约/审计头
-├── www.beautymoon.com      Vercel Project: apps/site（Next.js 静态导出）
+├── site.beautymoon.cn      Vercel Project: apps/site（Next.js 静态导出）
 └── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
 
 容器平台（Fly.io / Cloud Run / 自有云主机）

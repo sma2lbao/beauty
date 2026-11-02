@@ -47,5 +47,5 @@ export const isProd: boolean = import.meta.env.PROD;
  */
 export const siteUrl = (
   import.meta.env.VITE_SITE_URL ??
-  (isProd ? 'https://www.beautymoon.com' : 'http://localhost:3000')
+  (isProd ? 'https://site.beautymoon.cn' : 'http://localhost:3000')
 ).replace(/\/+$/, '');

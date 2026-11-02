@@ -2,7 +2,7 @@ import type { MetadataRoute } from 'next';
 
 export const dynamic = 'force-static';
 
-const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.beautymoon.com';
+const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://site.beautymoon.cn';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const paths = ['', '/about', '/pricing', '/docs', '/changelog'];
