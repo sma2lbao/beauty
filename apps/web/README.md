@@ -28,6 +28,63 @@ npx nx typecheck @beauty/web  # 仅类型检查
 npx nx test @beauty/web       # vitest + Testing Library 单测
 ```
 
+## 部署（Vercel 静态托管 + 公网 BFF）
+
+`app.beautymoon.cn` 现在是「Vercel 托管 `apps/web` 的 Vite 产物」这一形态，要同时解决两件事：
+**页面回退**（深链不 404）与 **`/api/*` 同源门面**（SPA 只访问 `/api/*`，session 模式由 BFF 注入 Bearer 再转发）。
+两者都在本目录的 `vercel.json` 里，缺回退时的线上表现是：`/` 返回 200，而 `/login` 等深链由 Vercel
+边缘直接 `404 NOT_FOUND`（响应头 `x-vercel-error: NOT_FOUND`）。
+
+### 1. Vercel 项目设置
+
+| 设置             | 值                                                                   |
+| ---------------- | -------------------------------------------------------------------- |
+| Root Directory   | `apps/web`                                                           |
+| Framework Preset | Vite                                                                 |
+| Build Command    | `npm run build`（= `tsc --noEmit && vite build`；依赖由仓库根安装）  |
+| Output Directory | `dist`                                                               |
+| 环境变量         | `VITE_AUTH_MODE=session`、`VITE_SITE_URL=https://site.beautymoon.cn` |
+
+Vercel 上必须用 `session` 模式（见 `.env.example`）：`token` 模式直连 `/account-api`、`/workspace-api`、
+`/knowledge-api` 三个服务，而 `runs`/`conversations` 仍走 `/api/*`，等于把三个后端都摊到公网，不推荐。
+
+### 2. `vercel.json`
+
+```json
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://bff.beautymoon.cn/api/:path*"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
+```
+
+- **顺序有意义**：`/api/*` 先整体代理到 BFF，其余路径才走 SPA 回退；静态文件（`/assets/*`、
+  `/favicon.svg`）先命中文件系统，回退不会遮蔽它们。
+- `bff.beautymoon.cn` 是**占位域名**：换成 BFF 实际公网域名（需加 DNS 记录），它是文件里唯一要改的字符串。
+- 还没部署 BFF 时只保留第二条 catch-all，否则 `/api/*` 会因目标不可达返回 5xx。
+- BFF 的公网入口必须保留 `/api` 前缀并透传流式响应（见下）。
+
+### 3. BFF 侧要求
+
+- 公网 HTTPS，反代到 BFF(:8007)，`/api` 前缀原样保留，**不能缓冲**响应（SSE 依赖 chunked 透传）。
+- 环境变量：`BFF__APP_ORIGIN=https://app.beautymoon.cn`（OAuth 回跳等绝对地址都拼它）、
+  `BFF__COOKIE_SECURE=true`、`BFF__SESSION_SECRET=<随机长密钥>`、
+  `BFF__INTERNAL_SECRET=<与 account-service 一致>`，以及各上游 `BFF__*_BASE_URL`。
+- 浏览器侧无跨站问题：Vercel 的 rewrite 是服务端转发，Cookie（无 Domain 属性）落在 `app.beautymoon.cn`，
+  CSRF double-submit 照常工作。
+
+### 4. 已知边界
+
+- **SSE 必须实测**：`/api/v1/conversations/{id}/messages/stream` 要连续穿过 Vercel 边缘代理，上线前确认
+  首个 token 延迟与长连接是否被截断/缓冲；一旦被截断，把 `app.*` 换回 `deploy/web` 的 nginx
+  （`try_files` 回退 + `/api` 同源反代，`proxy_buffering off`）。
+- 大附件下载（`/api/files/*`、`/api/v1/attachments/*`）经边缘代理可能受限，必要时改直链对象存储。
+- Vercel Hobby 计划禁止商业用途，正式环境用 Pro 或改回自托管 nginx。
+
 ## 目录结构
 
 ```

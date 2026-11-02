@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.beautymoon.cn/:path*"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
