@@ -34,6 +34,13 @@ describe('landing CTA', () => {
     expect(screen.queryByRole('link', { name: '定价' })).toBeNull();
   });
 
+  it('页脚不再暴露「公司」区块', () => {
+    render(<LandingPage />);
+    // 「公司」栏已下线,相关占位链接一并移除
+    expect(screen.queryByText('公司')).toBeNull();
+    expect(screen.queryByRole('link', { name: '关于我们' })).toBeNull();
+  });
+
   it('APP_URL 拼接:前导斜杠不产生双斜杠', () => {
     const base = APP_URL.replace(/\/$/, '');
     expect(appUrl('/login')).toBe(base + '/login');

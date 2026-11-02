@@ -90,14 +90,6 @@ const FOOTER_COLUMNS = [
       { label: '安全白皮书', to: '/about' },
     ],
   },
-  {
-    title: '公司',
-    links: [
-      { label: '关于我们', to: '/about' },
-      { label: '加入我们', to: '/about' },
-      { label: '联系销售', to: '/about' },
-    ],
-  },
 ];
 
 /**
@@ -318,7 +310,7 @@ export function LandingPage() {
                 工作台。编排、执行、观测、评审,一站完成。
               </p>
             </div>
-            <div className="grid flex-1 grid-cols-2 gap-8 sm:grid-cols-3">
+            <div className="grid flex-1 grid-cols-2 gap-8">
               {FOOTER_COLUMNS.map((column) => (
                 <div key={column.title} className="flex flex-col gap-3">
                   <span className="text-[13px] font-semibold text-ha-text">
