@@ -4,7 +4,7 @@ import type { AnchorHTMLAttributes, ReactNode } from 'react';
  * 官网里的通用链接:
  * - `/landing` 映射到官网首页 `/`;
  * - 控制台路径(/login、/runs、/changes…)映射到 app 域名;
- * - 其余(/about、/pricing…)留在官网内部;
+ * - 其余(/about、/docs…)留在官网内部;
  * - #锚点原样保留。
  */
 export const APP_URL =

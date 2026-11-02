@@ -27,10 +27,11 @@ describe('landing CTA', () => {
     expect(anchor.getAttribute('href')).toBe('#workflow');
   });
 
-  it('CTA 区域存在(#cta)且导航含「定价」入口', () => {
+  it('CTA 区域存在(#cta),导航不再暴露「定价」入口', () => {
     render(<LandingPage />);
     expect(document.getElementById('cta')).not.toBeNull();
-    expect(screen.getByRole('link', { name: '定价' }).getAttribute('href')).toBe('#cta');
+    // 定价页已下线,首页导航不应再有「定价」项
+    expect(screen.queryByRole('link', { name: '定价' })).toBeNull();
   });
 
   it('APP_URL 拼接:前导斜杠不产生双斜杠', () => {

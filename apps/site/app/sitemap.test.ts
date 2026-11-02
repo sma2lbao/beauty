@@ -6,13 +6,14 @@
 import { describe, expect, it } from 'vitest';
 
 describe('sitemap', () => {
-  it('覆盖 5 个静态路径,首页优先级最高', async () => {
+  it('覆盖 4 个静态路径,首页优先级最高', async () => {
     const sitemap = (await import('./sitemap')).default;
     const entries = sitemap();
     const urls = entries.map((entry) => entry.url);
-    expect(urls).toHaveLength(5);
+    expect(urls).toHaveLength(4);
     expect(urls.some((url) => url.endsWith('/about'))).toBe(true);
-    expect(urls.some((url) => url.endsWith('/pricing'))).toBe(true);
+    // 定价页已下线,入口与站点地图都不再暴露
+    expect(urls.some((url) => url.endsWith('/pricing'))).toBe(false);
     expect(urls.some((url) => url.endsWith('/docs'))).toBe(true);
     expect(urls.some((url) => url.endsWith('/changelog'))).toBe(true);
     const home = entries.find((entry) => entry.url.endsWith('/')) ?? entries[0];

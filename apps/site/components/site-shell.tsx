@@ -6,7 +6,6 @@ import { appUrl } from '@/components/link';
 const NAV = [
   { href: '/', label: '首页' },
   { href: '/about', label: '关于' },
-  { href: '/pricing', label: '定价' },
   { href: '/docs', label: '文档' },
   { href: '/changelog', label: '更新日志' },
 ];

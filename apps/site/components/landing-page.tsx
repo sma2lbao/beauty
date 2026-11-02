@@ -23,7 +23,6 @@ const NAV_ITEMS = [
   { href: '#capabilities', label: '产品' },
   { href: '#workflow', label: '工作流' },
   { href: '#capabilities', label: '文档' },
-  { href: '#cta', label: '定价' },
 ];
 
 const WORKFLOW_STEPS = [
