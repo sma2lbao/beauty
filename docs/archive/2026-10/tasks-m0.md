@@ -16,7 +16,7 @@
 
 **M0 Definition of Done（全局）**
 
-1. `app.staging.beautymoon.com` 与 `www.staging.beautymoon.com` 两个 Vercel 域名可用；
+1. `app.staging.beautymoon.cn` 与 `www.staging.beautymoon.cn` 两个 Vercel 域名可用；
 2. 六个服务部署到 staging 容器平台，健康检查全绿，数据库迁移可一键执行；
 3. 真实登录（邮箱密码 + Google/GitHub）→ 新建会话 → SSE 流式 → 上传附件 → 会话重命名/搜索 → 查看产物/下载 → 退出，全链路可跑；
 4. 生产使用云 PG + 云 Redis；开发默认 SQLite + 本地 Redis（可选）+ 本地目录，零外部依赖；

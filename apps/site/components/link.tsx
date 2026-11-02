@@ -10,7 +10,7 @@ import type { AnchorHTMLAttributes, ReactNode } from 'react';
 export const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ??
   (process.env.NODE_ENV === 'production'
-    ? 'https://app.beautymoon.com'
+    ? 'https://app.beautymoon.cn'
     : 'http://localhost:5173');
 
 const APP_PATH_PREFIXES = [

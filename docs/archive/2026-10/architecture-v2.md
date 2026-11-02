@@ -70,14 +70,14 @@
 
 ```text
 Browser
-├── app.beautymoon.com      Nginx: apps/web 静态产物
+├── app.beautymoon.cn       Nginx: apps/web 静态产物
 │      └── /api/*           FastAPI BFF（同域反代）
 │            ├── 登录/登出/会话 Cookie（account-service 为 IdP）
 │            ├── 代理 runtime（短请求 + 短流）
 │            ├── 产物/附件下载（DB/本地存储 → 流式响应）
 │            └── 限流/错误契约/审计头
 ├── site.beautymoon.cn      Vercel Project: apps/site（Next.js 静态导出）
-└── 长流直连                runtime.beautymoon.com（SSE，BFF 发短时 stream token）
+└── 长流直连                runtime.beautymoon.cn（SSE，BFF 发短时 stream token）
 
 容器平台（Fly.io / Cloud Run / 自有云主机）
 ├── agent-runtime           编排 + Tool Registry + Skill + MCP + run worker
@@ -103,7 +103,7 @@ Browser
 
 - 普通 CRUD / 短请求：浏览器 → Nginx → FastAPI BFF → 容器服务；
 - 长任务事件流：BFF 发短时 token，浏览器直连 runtime SSE（避免 BFF/代理超时）；
-- 公开 API / MCP：第三方 → api.beautymoon.com（API Key/OAuth，限流）；
+- 公开 API / MCP：第三方 → api.beautymoon.cn（API Key/OAuth，限流）；
 - 服务间：内部 HTTP + 租户 JWT；禁止跨服务直连数据库。
 
 ---
