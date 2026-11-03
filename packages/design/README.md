@@ -86,6 +86,39 @@ import '@beauty/design/styles.css';
 npm run docs:dev -w @beauty/design
 ```
 
+## 部署到 Vercel（纯静态文档站）
+
+文档站是独立 Vercel 项目：output 为纯静态文件，没有 Serverless Function、没有 rewrite；构建命令覆盖 Vercel 对 Nx 的自动探测。
+
+| 设置             | 值                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| Root Directory   | `packages/design`（只能在 Dashboard / CLI 的项目设置里设，`vercel.json` 无此字段）     |
+| Framework Preset | `Other`                                                                                |
+| Build Command    | `npm run docs:build`（覆盖 Nx 探测出的 `npx nx build @beauty/design`）                 |
+| Output Directory | `doc_build`                                                                            |
+| Install Command  | 默认（Vercel 在仓库根安装 npm workspace 依赖，与 `apps/web` 一致；不要改成只装本目录） |
+| 环境变量         | 无                                                                                     |
+
+本目录的 `vercel.json`：
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "npm run docs:build",
+  "outputDirectory": "doc_build",
+  "cleanUrls": true
+}
+```
+
+- `"framework": null` 就是 Dashboard 的 Framework Preset「Other」：官方文档注明 _To select "Other" as the Framework Preset, use `null`_；`vercel.json` 里的 `buildCommand` / `outputDirectory` 会覆盖 Dashboard 与自动探测（`.md` 文档：_This value overrides … in Project Settings_）。
+- `buildCommand` 必须显式声明：仓库根有 `nx.json` 与 `@nx/*`，不覆盖时 Vercel 会把 Nx 探测出的 `npx nx build @beauty/design`（组件库 `dist` 构建）当成站点构建命令，产物不是文档站。
+- `cleanUrls` 是静态托管能力，不是 SPA 回退：Rspress 输出扁平的 `guide/introduction.html`，不开时 Vercel 只认带 `.html` 的地址，`/guide/introduction` 这类深链直接 404（响应头 `x-vercel-error: NOT_FOUND`）；开启后深链返回 200，带 `.html` 的地址 308 到无扩展名地址。站点没有 catch-all rewrite，`/` 与静态资源仍走文件系统。
+- 站点没有环境变量与 Function，`doc_build/` 已被根 `.gitignore` 忽略，仓库里不提交产物。
+- 若 Vercel 项目里残留 Nx 自动配置的 **Ignored Build Step**（通常依赖 `nx-ignore`），清空它：本站点不需要按受影响项目跳过构建。
+
+本地复现线上构建：`npm run docs:build -w @beauty/design`，然后 `npm run docs:preview -w @beauty/design` 预览 `doc_build`。
+
 ## 构建(发布产物)
 
 ```bash
