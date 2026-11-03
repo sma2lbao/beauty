@@ -160,12 +160,19 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# 首次启动前同步共享 venv(根 .venv 缺失或 uv.lock 较新时);
-# 失败不阻断(已同步过的环境 sync 很快,失败会在服务启动时再暴露)。
-if [ ! -d "$ROOT/.venv" ] || [ "$ROOT/uv.lock" -nt "$ROOT/.venv" ]; then
-  echo "▶ 同步共享 venv(首次启动或 uv.lock 有更新)…"
-  if ! (cd "$ROOT" && npx nx run agent-orchestrator:sync); then
-    echo "⚠️  uv sync 失败,继续尝试启动(若服务报缺依赖,重跑前先手动 npx nx run <服务>:sync)" >&2
+# 启动前把共享 venv 同步到「全 workspace dev 依赖」:
+# - nx 的 sync target 底层是根目录 `uv sync`,只装根项目 dev group,会剪掉各服务的 dev 依赖;
+# - `uv run`(如 npx nx test/lint <服务>)也会按单项目 dev group 精确同步并剪掉兄弟项目依赖;
+# - 本地库是 sqlite+aiosqlite,而 aiosqlite 只声明在各服务的 dev group;它被剪掉后
+#   迁移脚本(alembic 异步引擎)会直接 ModuleNotFoundError,启动在迁移阶段中止。
+# 所以这里显式带 --all-packages --all-groups;检测到 aiosqlite 被剪掉时也会重新同步。
+if [ ! -d "$ROOT/.venv" ] \
+  || [ "$ROOT/uv.lock" -nt "$ROOT/.venv" ] \
+  || ! "$ROOT/.venv/bin/python" -c "import aiosqlite" >/dev/null 2>&1; then
+  echo "▶ 同步共享 venv(全 workspace dev 依赖)…"
+  if ! (cd "$ROOT" && npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"); then
+    echo "⚠️  uv sync 失败,继续尝试启动(若服务报缺依赖,先手动执行:" >&2
+    echo "   npx nx run agent-orchestrator:sync --args=\"--all-packages --all-groups\")" >&2
   fi
 fi
 

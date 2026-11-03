@@ -290,6 +290,7 @@ npm run dev:reset -- --yes # 不确认
 | 会话接口 404/旧结构    | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                          |
 | 官网打不开             | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                         |
 | SQLite 表结构不对      | 启动时已自动迁移;仍报 no such column/迁移提示结构漂移时先 npm run dev:migrate 看原因,确实无法对齐再 npm run dev:reset                                                                                                 |
+| 启动报缺 `aiosqlite`   | 共享 venv 的服务 dev 依赖被根 `uv sync` 或单项目 `uv run` 剪掉了;`npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"` 补齐(`npm run dev` 启动前会自动检测并同步)                                 |
 | 想用真实模型           | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                                                                                                                           |
 | BYOK 不生效/烧平台 key | 三处 internal_secret 必须同一值（account/gateway/knowledge）；容器内 `ACCOUNT_BASE_URL` 要指向 `http://account-service:8001`；看 `llm_byok_lookups_total{status}` 与 `byok_lookup_failed` 日志                        |
 | 附件上传失败           | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                                                                                                                         |

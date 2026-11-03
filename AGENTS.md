@@ -141,7 +141,7 @@ npx nx run common:sync                              # 变更后同步 .venv
 ## 关键机制(改代码前必读)
 
 - **`@beauty/source` 源码直连条件**:包 `exports` 中的 `@beauty/source` 条件指向 `src/`,由 `tsconfig.base.json` 的 `customConditions` 与 `apps/web/vite.config.ts` 的 `resolve.conditions` 启用——workspace 内包间引用直接消费源码,改组件即时生效、无需先构建;仓库外/发布走 `dist/`。两条路径共用同一份源码。
-- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。**注意**:`uv run` 按当前项目的 dev group 精确同步共享 venv,其他项目 dev group 的包会被剪掉——测试需要的依赖(`pytest-asyncio`、`aiosqlite` 等)必须写进**本项目**的 `[dependency-groups].dev`,不能指望兄弟项目替你装。
+- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。**注意**:`uv run` 按当前项目的 dev group 精确同步共享 venv,其他项目 dev group 的包会被剪掉——测试需要的依赖(`pytest-asyncio`、`aiosqlite` 等)必须写进**本项目**的 `[dependency-groups].dev`,不能指望兄弟项目替你装。需要一次装齐全仓 dev 依赖时用 `npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"`(`scripts/dev.sh` 启动前会自动这么做,保证本地 SQLite 迁移能 import `aiosqlite`)。
 - **uv workspace members 是显式清单**:根 `pyproject.toml` 的 `members` 不能用 glob(`apps/`、`packages/` 下混有 npm 项目,glob 会命中无 `pyproject.toml` 的目录导致 uv 报错);新 Python 项目需登记 members + dependencies + `[tool.uv.sources]` 后 `npx nx run <项目>:sync`。
 - **数据访问走仓储**:业务查询经 `database.repository`(`TenantRepository` 自动带 tenant_id、
   跨租户一律 404 不泄漏存在性、404 的 details 键名由 `id_detail_key` 声明以保持各服务既有契约);

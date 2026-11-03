@@ -29,4 +29,11 @@ if [ ! -x "$ROOT/.venv/bin/python" ]; then
   exit 1
 fi
 
+# 本地库是 sqlite+aiosqlite,而 aiosqlite 只声明在各服务的 dev group:
+# 根目录 uv sync 或单项目 uv run 都可能把它剪掉,alembic 异步引擎随后 import 失败。
+if ! "$ROOT/.venv/bin/python" -c "import aiosqlite" >/dev/null 2>&1; then
+  echo "⚠️  共享 venv 缺少 aiosqlite,SQLite 迁移会失败;先补齐全 workspace dev 依赖:" >&2
+  echo "   npx nx run agent-orchestrator:sync --args=\"--all-packages --all-groups\"" >&2
+fi
+
 exec "$ROOT/.venv/bin/python" "$ROOT/scripts/migrate-local.py"
