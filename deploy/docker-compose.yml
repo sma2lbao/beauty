@@ -182,6 +182,15 @@ services:
       CONNECTOR__AUTO_CREATE_TABLES: 'false'
       CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
+      # 连接器平台:飞书只读 + 内部端点(tool-service 调目录/执行)。
+      CONNECTOR__PROVIDERS_ENABLED: ${CONNECTOR_PROVIDERS_ENABLED:-feishu}
+      CONNECTOR__INTERNAL_SECRET: ${CONNECTOR_INTERNAL_SECRET:-compose-demo-connector-internal-secret}
+      # 浏览器回跳经同源网关 → connector-service;须与飞书后台登记的重定向 URL 一致。
+      CONNECTOR__OAUTH_REDIRECT_BASE: ${CONNECTOR_OAUTH_REDIRECT_BASE:-http://localhost:8080/api/connector}
+      CONNECTOR__OAUTH_SUCCESS_REDIRECT: ${CONNECTOR_OAUTH_SUCCESS_REDIRECT:-http://localhost:8080/connectors}
+      # 飞书企业自建应用凭据;留空时目录里 configured=false(可建连接但授权会失败)。
+      CONNECTOR__FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      CONNECTOR__FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
     depends_on: *db-depends
     restart: unless-stopped
 
@@ -236,6 +245,9 @@ services:
       TOOL__AUTH_ISSUER: http://account-service:8001
       # 沙箱统一经 workspace-service 的 :ensure 接口(见 docs/design/tool-service.md)
       TOOL__WORKSPACE_SERVICE_URL: http://workspace-service:8005
+      # 连接器工具:代理到 connector-service 内部端点(须与其 INTERNAL_SECRET 同值)
+      TOOL__CONNECTOR_BASE_URL: http://connector-service:8004
+      TOOL__CONNECTOR_INTERNAL_SECRET: ${CONNECTOR_INTERNAL_SECRET:-compose-demo-connector-internal-secret}
     depends_on:
       <<: *db-depends
       account-service:

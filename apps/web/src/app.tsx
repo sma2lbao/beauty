@@ -56,6 +56,11 @@ const WorkspacePage = lazy(() =>
 const OutboxPage = lazy(() =>
   import('@/pages/outbox').then((module) => ({ default: module.OutboxPage })),
 );
+const ConnectorsPage = lazy(() =>
+  import('@/pages/connectors').then((module) => ({
+    default: module.ConnectorsPage,
+  })),
+);
 
 export function App() {
   return (
@@ -90,6 +95,7 @@ export function App() {
             <Route path="runs" element={<RunsPage />} />
             <Route path="changes" element={<ChangesPage />} />
             <Route path="mcp" element={<McpPage />} />
+            <Route path="connectors" element={<ConnectorsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="memory" element={<MemoryPage />} />
             <Route path="settings" element={<SettingsPage />} />

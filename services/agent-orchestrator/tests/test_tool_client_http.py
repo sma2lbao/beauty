@@ -127,11 +127,26 @@ async def test_list_tools_parses_catalog() -> None:
         return httpx.Response(200, json=_catalog(_descriptor(), version="7"))
 
     client = _client(handler)
-    tools, version = await client.list_tools()
+    tools, version = await client.list_tools("t-1")
     assert [tool.name for tool in tools] == ["read"]
     assert version == "7"
     assert seen[0].url.path == "/v1/tools"
     assert "authorization" not in seen[0].headers
+    await client.aclose()
+
+
+async def test_list_tools_sends_tenant_bearer() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_catalog(_descriptor()))
+
+    client = _client(handler, token_provider=_token)
+    tools, _ = await client.list_tools("t-1")
+
+    assert [tool.name for tool in tools] == ["read"]
+    assert seen[0].headers["authorization"] == "Bearer tok-t-1"
     await client.aclose()
 
 
@@ -141,7 +156,7 @@ async def test_list_tools_transport_error() -> None:
 
     client = _client(handler)
     with pytest.raises(UpstreamError) as exc_info:
-        await client.list_tools()
+        await client.list_tools("t-1")
     assert exc_info.value.code == UNREACHABLE_CODE
     await client.aclose()
 
@@ -152,7 +167,7 @@ async def test_list_tools_non_json_response() -> None:
 
     client = _client(handler)
     with pytest.raises(UpstreamError) as exc_info:
-        await client.list_tools()
+        await client.list_tools("t-1")
     assert exc_info.value.code == UPSTREAM_ERROR_CODE
     await client.aclose()
 
@@ -163,7 +178,7 @@ async def test_list_tools_missing_tools_field() -> None:
 
     client = _client(handler)
     with pytest.raises(UpstreamError) as exc_info:
-        await client.list_tools()
+        await client.list_tools("t-1")
     assert exc_info.value.code == UPSTREAM_ERROR_CODE
     assert "tools" in exc_info.value.message
     await client.aclose()
@@ -175,7 +190,7 @@ async def test_list_tools_invalid_descriptor() -> None:
 
     client = _client(handler)
     with pytest.raises(UpstreamError) as exc_info:
-        await client.list_tools()
+        await client.list_tools("t-1")
     assert exc_info.value.code == UPSTREAM_ERROR_CODE
     assert "目录响应非法" in exc_info.value.message
     await client.aclose()
@@ -189,7 +204,7 @@ async def test_list_tools_http_error_uses_service_code() -> None:
 
     client = _client(handler)
     with pytest.raises(UpstreamError) as exc_info:
-        await client.list_tools()
+        await client.list_tools("t-1")
     assert exc_info.value.code == "tool_service.down"
     await client.aclose()
 
@@ -378,11 +393,30 @@ async def test_catalog_ensure_loads_once_concurrently() -> None:
 
     client = _client(handler)
     catalog = ToolCatalog()
-    await asyncio.gather(catalog.ensure(client), catalog.ensure(client))
+    await asyncio.gather(catalog.ensure(client, "t-1"), catalog.ensure(client, "t-1"))
     assert calls["n"] == 1
-    assert catalog.loaded is True
-    assert catalog.version == "1"
-    assert [tool.name for tool in catalog.descriptors] == ["read"]
+    assert catalog.loaded("t-1") is True
+    assert catalog.version("t-1") == "1"
+    assert [tool.name for tool in catalog.descriptors("t-1")] == ["read"]
+    await client.aclose()
+
+
+async def test_catalog_is_tenant_scoped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["authorization"]
+        name = "read" if token.endswith("t-1") else "grep"
+        return httpx.Response(200, json=_catalog(_descriptor(name)))
+
+    client = _client(handler, token_provider=_token)
+    catalog = ToolCatalog()
+    await catalog.ensure(client, "t-1")
+    await catalog.ensure(client, "t-2")
+
+    assert [tool.name for tool in catalog.descriptors("t-1")] == ["read"]
+    assert [tool.name for tool in catalog.descriptors("t-2")] == ["grep"]
+    assert catalog.loaded("t-3") is False
+    assert catalog.descriptors("t-3") == ()
+    assert catalog.version("t-3") == ""
     await client.aclose()
 
 
@@ -398,11 +432,11 @@ async def test_catalog_failure_not_cached() -> None:
     client = _client(handler)
     catalog = ToolCatalog()
     with pytest.raises(UpstreamError):
-        await catalog.ensure(client)
-    assert catalog.loaded is False
+        await catalog.ensure(client, "t-1")
+    assert catalog.loaded("t-1") is False
     state["fail"] = False
-    await catalog.ensure(client)
-    assert catalog.loaded is True
+    await catalog.ensure(client, "t-1")
+    assert catalog.loaded("t-1") is True
     assert state["n"] == 2
     await client.aclose()
 
@@ -418,9 +452,9 @@ async def test_catalog_refresh_reloads() -> None:
 
     client = _client(handler)
     catalog = ToolCatalog()
-    await catalog.ensure(client)
-    assert catalog.version == "1"
-    await catalog.refresh(client)
-    assert catalog.version == "2"
+    await catalog.ensure(client, "t-1")
+    assert catalog.version("t-1") == "1"
+    await catalog.refresh(client, "t-1")
+    assert catalog.version("t-1") == "2"
     assert calls["n"] == 2
     await client.aclose()

@@ -1,7 +1,7 @@
 """tool-service 的 HTTP 客户端(自 tool_client.py 拆出)。
 
-GET /v1/tools 不鉴权(目录是公开部署信息);执行与审计端点带租户 JWT,经装配方
-注入的 token_provider 现取,不在进程内长期保存明文 token。
+目录、执行与审计端点都带租户 JWT(经装配方注入的 token_provider 现取,不在
+进程内长期保存明文 token):连接器工具属于租户私有能力,目录必须按租户取。
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from agent_orchestrator.services.tool_client_support import (
 class ToolClient:
     """tool-service 的 HTTP 客户端(仅服务间内部调用)。
 
-    GET /v1/tools 不鉴权(目录是公开部署信息);执行端点带租户 JWT,
-    经装配方注入的 token_provider 现取,不在进程内长期保存明文 token。
+    GET /v1/tools 带租户 JWT(目录含该租户的连接器工具);执行端点同样
+    带租户 JWT,经装配方注入的 token_provider 现取,不长期保存明文 token。
     """
 
     def __init__(
@@ -55,11 +55,15 @@ class ToolClient:
 
         await self._client.aclose()
 
-    async def list_tools(self) -> tuple[tuple[ToolDescriptor, ...], str]:
-        """拉取工具目录;响应非法一律按上游契约错误处理。"""
+    async def list_tools(
+        self, tenant_id: str
+    ) -> tuple[tuple[ToolDescriptor, ...], str]:
+        """拉取该租户的工具目录;响应非法一律按上游契约错误处理。"""
 
         try:
-            response = await self._client.get("/v1/tools")
+            response = await self._client.get(
+                "/v1/tools", headers=await self._auth_headers(tenant_id)
+            )
         except httpx.HTTPError as exc:
             raise UpstreamError(
                 UNREACHABLE_CODE, f"tool-service 不可达: {type(exc).__name__}"

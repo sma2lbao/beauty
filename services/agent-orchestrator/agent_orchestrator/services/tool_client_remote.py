@@ -70,7 +70,7 @@ class RemoteToolkit:
     async def ensure_ready(self) -> None:
         """惰性加载目录;图节点/对话循环在拿到 toolkit 后显式等待一次。"""
 
-        await self._catalog.ensure(self._client)
+        await self._catalog.ensure(self._client, self._tenant_id)
 
     def __len__(self) -> int:
         return len(self._model_tools())
@@ -263,7 +263,7 @@ class RemoteToolkit:
         )
 
     def _visible_tools(self) -> tuple[ToolDescriptor, ...]:
-        tools = self._catalog.descriptors
+        tools = self._catalog.descriptors(self._tenant_id)
         if self._allowed is None:
             return tools
         return tuple(tool for tool in tools if tool.name in self._allowed)

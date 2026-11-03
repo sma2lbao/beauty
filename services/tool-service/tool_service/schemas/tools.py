@@ -49,6 +49,8 @@ class ToolDescriptorRead(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     enabled: bool
     version: str
+    # 仅 executor=connector 的工具出现(如 {"provider": "feishu"});内置工具为 null。
+    connector: dict[str, Any] | None = None
 
     @classmethod
     def from_descriptor(cls, descriptor: ToolDescriptor) -> ToolDescriptorRead:
@@ -65,6 +67,7 @@ class ToolDescriptorRead(BaseModel):
             aliases=list(descriptor.aliases),
             enabled=descriptor.enabled,
             version=descriptor.version,
+            connector=descriptor.connector,
         )
 
 

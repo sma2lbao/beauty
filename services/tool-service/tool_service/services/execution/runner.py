@@ -23,7 +23,9 @@ from common.tools import (
 from tool_service.constants import DEFAULT_TOOL_TIMEOUT_SECONDS
 from tool_service.core.config import Settings
 from tool_service.services import catalog
+from tool_service.services.connectors import ConnectorGateway
 from tool_service.services.execution.arguments import is_available
+from tool_service.services.execution.connector_path import ConnectorExecutionMixin
 from tool_service.services.execution.exec_path import ExecExecutionMixin
 from tool_service.services.execution.http_path import HttpExecutionMixin
 from tool_service.services.execution.models import (
@@ -40,12 +42,18 @@ from tool_service.services.executors.http import HttpToolExecutor
 from tool_service.services.sandbox import SandboxProvider
 
 
-class ToolRunner(ExecExecutionMixin, SandboxExecutionMixin, HttpExecutionMixin):
+class ToolRunner(
+    ExecExecutionMixin,
+    SandboxExecutionMixin,
+    HttpExecutionMixin,
+    ConnectorExecutionMixin,
+):
     """按目录分派工具执行;一个实例可被并发请求复用(无状态)。"""
 
     _settings: Settings
     _sandbox: SandboxProvider
     _http: HttpToolExecutor | None
+    _connector: ConnectorGateway | None
 
     def __init__(
         self,
@@ -53,10 +61,12 @@ class ToolRunner(ExecExecutionMixin, SandboxExecutionMixin, HttpExecutionMixin):
         settings: Settings,
         sandbox: SandboxProvider,
         http: HttpToolExecutor | None = None,
+        connector: ConnectorGateway | None = None,
     ) -> None:
         self._settings = settings
         self._sandbox = sandbox
         self._http = http
+        self._connector = connector
 
     async def execute(
         self,
@@ -74,6 +84,10 @@ class ToolRunner(ExecExecutionMixin, SandboxExecutionMixin, HttpExecutionMixin):
 
         started = time.monotonic()
         descriptor = catalog.find_descriptor(name)
+        if descriptor is None and self._connector is not None:
+            # 连接器工具不在静态目录里,按租户从 connector-service 目录现查
+            # (TTL 缓存);未启用连接器时这里直接跳过。
+            descriptor = await self._connector.find(context.tenant_id, name)
         if descriptor is None or not descriptor.enabled:
             raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
         if not is_available(descriptor.name, self._settings):
@@ -119,6 +133,8 @@ class ToolRunner(ExecExecutionMixin, SandboxExecutionMixin, HttpExecutionMixin):
             )
         if descriptor.executor is ExecutorKind.HTTP:
             return await self._run_http(context, descriptor, arguments, started)
+        if descriptor.executor is ExecutorKind.CONNECTOR:
+            return await self._run_connector(context, descriptor, arguments, started)
         return self._failure(
             context,
             descriptor,

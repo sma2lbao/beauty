@@ -4,56 +4,76 @@
 
 ## 职责边界
 
-| 关注点 | 归属 |
-| --- | --- |
-| 工具目录(catalog)、参数 schema、限额 | tool-service(代码即真源,`tool_service/services/catalog.py`) |
-| 工具执行(沙箱内 helper 脚本) | tool-service → workspace-service 沙箱 |
-| 命令执行(`exec`,默认关) | tool-service → workspace-service 沙箱 `POST /exec`(`/bin/sh -lc`,不经 helper) |
-| 知识库只读检索(`search_knowledge`) | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱) |
-| 公网文本抓取(`fetch`,默认关) | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令) |
-| 审批决策(allow/ask/deny) | orchestrator 保留;tool-service 只做风险下限防御 |
-| run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events |
-| 调用审计与幂等(`tool_calls` 表) | tool-service |
-| `ask_question` 的挂起/恢复 | orchestrator 图(`interrupt`)+ run 事件 |
+| 关注点                                 | 归属                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------- |
+| 工具目录(catalog)、参数 schema、限额   | tool-service(代码即真源,`tool_service/services/catalog.py`)                   |
+| 工具执行(沙箱内 helper 脚本)           | tool-service → workspace-service 沙箱                                         |
+| 命令执行(`exec`,默认关)                | tool-service → workspace-service 沙箱 `POST /exec`(`/bin/sh -lc`,不经 helper) |
+| 知识库只读检索(`search_knowledge`)     | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱)               |
+| 公网文本抓取(`fetch`,默认关)           | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令) |
+| 审批决策(allow/ask/deny)               | orchestrator 保留;tool-service 只做风险下限防御                               |
+| run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events                                   |
+| 调用审计与幂等(`tool_calls` 表)        | tool-service                                                                  |
+| `ask_question` 的挂起/恢复             | orchestrator 图(`interrupt`)+ run 事件                                        |
+
+| 连接器工具(`Feishu__*` 等) | 目录与执行都代理到 connector-service;本服务只做路由、限额与审计 |
 
 ## HTTP API
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/v1/tools` | 工具清单(默认只返回已启用;kind/executor 过滤) |
-| GET | `/v1/tools/{name}` | 单个工具描述;未知或未启用 → 404 `tool.not_found` |
-| POST | `/v1/tools/{name}:execute` | 执行;业务错误一律 HTTP 200 + 失败信封 |
-| GET | `/v1/tool-calls` | 调用审计分页(run_id/tool_name/ok 过滤) |
-| GET | `/v1/tool-calls/{tool_call_id}` | 单条审计(跨租户 404) |
-| GET | `/healthz` `/readyz` | 存活/就绪(就绪探针查 DB) |
+| 方法 | 路径                            | 说明                                                                              |
+| ---- | ------------------------------- | --------------------------------------------------------------------------------- |
+| GET  | `/v1/tools`                     | 工具清单(默认只返回已启用;kind/executor 过滤;带租户 JWT 时并入该租户的连接器工具) |
+| GET  | `/v1/tools/{name}`              | 单个工具描述;未知或未启用 → 404 `tool.not_found`                                  |
+| POST | `/v1/tools/{name}:execute`      | 执行;业务错误一律 HTTP 200 + 失败信封                                             |
+| GET  | `/v1/tool-calls`                | 调用审计分页(run_id/tool_name/ok 过滤)                                            |
+| GET  | `/v1/tool-calls/{tool_call_id}` | 单条审计(跨租户 404)                                                              |
+| GET  | `/healthz` `/readyz`            | 存活/就绪(就绪探针查 DB)                                                          |
 
 幂等:`tool_call_id` 在租户内唯一;同 id 同参数重复调用返回 `idempotent_replay=true` 的重放结果,参数不同 → 409 `tool.idempotency_conflict`。
 
 ## 配置(`TOOL__` 前缀)
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `TOOL__DATABASE_URL` | `sqlite+aiosqlite:///./tool.db` | 审计库(生产 postgresql+asyncpg) |
-| `TOOL__AUTO_CREATE_TABLES` | `false` | 生产 false,迁移走 alembic |
-| `TOOL__AUTH_ENABLED` | `true` | 校验租户 JWT(内部签发走 account-service) |
-| `TOOL__AUTH_ISSUER` | `http://127.0.0.1:8001` | 签发方/JWKS 来源 |
-| `TOOL__INTERNAL_SECRET` | 空 | 服务间换取租户 token 的 internal secret |
-| `TOOL__WORKSPACE_SERVICE_URL` | `http://127.0.0.1:8005` | 沙箱来源 |
-| `TOOL__WORKSPACE_TIMEOUT_SECONDS` | `60` | 沙箱 HTTP 超时 |
-| `TOOL__KNOWLEDGE_SERVICE_URL` | `http://127.0.0.1:8006` | 知识库检索来源(`search_knowledge` 代理目标) |
-| `TOOL__KNOWLEDGE_TIMEOUT_SECONDS` | `20` | 知识库 HTTP 超时(单次仍受 descriptor 的 20s 上限约束) |
-| `TOOL__TOOL_TIMEOUT_SECONDS` | `30` | 单次工具执行默认上限 |
-| `TOOL__SANDBOX_TOOL_TTL_SECONDS` | `1800` | 沙箱滑动 TTL |
-| `TOOL__READ_BEFORE_WRITE_ENABLED` | `true` | 写前读校验:同 run 内没 read 过同路径 → `tool.read_required` |
-| `TOOL__MAX_WRITES_PER_RUN` | `50` | 单 run 写操作次数上限(P1) |
-| `TOOL__MAX_WRITE_BYTES_PER_RUN` | `5242880` | 单 run 写入字节上限(P1) |
-| `TOOL__MAX_TOOL_CALLS_PER_RUN` | `60` | 单 run 工具调用总次数上限(P1) |
-| `TOOL__FETCH_ENABLED` | `false` | 开启 `fetch`(只读抓公网文本);关闭时目录不暴露该工具(P3) |
-| `TOOL__FETCH_TIMEOUT_SECONDS` | `15` | fetch HTTP 超时(descriptor 另设 20s 上限) |
-| `TOOL__FETCH_MAX_BYTES` | `1048576` | 单次响应体字节上限(超出截断) |
-| `TOOL__FETCH_MAX_REDIRECTS` | `3` | 最多跟随的重定向跳数 |
-| `TOOL__FETCH_ALLOWED_HOSTS` | 空 | 出口收紧:逗号分隔主机允许列表(空=任意公网,`example.com` 含子域) |
-| `TOOL__EXEC_ENABLED` | `false` | 开启沙箱内命令执行 `exec`(risk=destructive);关闭时目录不暴露、执行 404(P1-L) |
+| 变量                                  | 默认                            | 说明                                                                                        |
+| ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `TOOL__DATABASE_URL`                  | `sqlite+aiosqlite:///./tool.db` | 审计库(生产 postgresql+asyncpg)                                                             |
+| `TOOL__AUTO_CREATE_TABLES`            | `false`                         | 生产 false,迁移走 alembic                                                                   |
+| `TOOL__AUTH_ENABLED`                  | `true`                          | 校验租户 JWT(内部签发走 account-service)                                                    |
+| `TOOL__AUTH_ISSUER`                   | `http://127.0.0.1:8001`         | 签发方/JWKS 来源                                                                            |
+| `TOOL__INTERNAL_SECRET`               | 空                              | 服务间换取租户 token 的 internal secret                                                     |
+| `TOOL__WORKSPACE_SERVICE_URL`         | `http://127.0.0.1:8005`         | 沙箱来源                                                                                    |
+| `TOOL__WORKSPACE_TIMEOUT_SECONDS`     | `60`                            | 沙箱 HTTP 超时                                                                              |
+| `TOOL__KNOWLEDGE_SERVICE_URL`         | `http://127.0.0.1:8006`         | 知识库检索来源(`search_knowledge` 代理目标)                                                 |
+| `TOOL__KNOWLEDGE_TIMEOUT_SECONDS`     | `20`                            | 知识库 HTTP 超时(单次仍受 descriptor 的 20s 上限约束)                                       |
+| `TOOL__TOOL_TIMEOUT_SECONDS`          | `30`                            | 单次工具执行默认上限                                                                        |
+| `TOOL__SANDBOX_TOOL_TTL_SECONDS`      | `1800`                          | 沙箱滑动 TTL                                                                                |
+| `TOOL__READ_BEFORE_WRITE_ENABLED`     | `true`                          | 写前读校验:同 run 内没 read 过同路径 → `tool.read_required`                                 |
+| `TOOL__MAX_WRITES_PER_RUN`            | `50`                            | 单 run 写操作次数上限(P1)                                                                   |
+| `TOOL__MAX_WRITE_BYTES_PER_RUN`       | `5242880`                       | 单 run 写入字节上限(P1)                                                                     |
+| `TOOL__MAX_TOOL_CALLS_PER_RUN`        | `60`                            | 单 run 工具调用总次数上限(P1)                                                               |
+| `TOOL__FETCH_ENABLED`                 | `false`                         | 开启 `fetch`(只读抓公网文本);关闭时目录不暴露该工具(P3)                                     |
+| `TOOL__FETCH_TIMEOUT_SECONDS`         | `15`                            | fetch HTTP 超时(descriptor 另设 20s 上限)                                                   |
+| `TOOL__FETCH_MAX_BYTES`               | `1048576`                       | 单次响应体字节上限(超出截断)                                                                |
+| `TOOL__FETCH_MAX_REDIRECTS`           | `3`                             | 最多跟随的重定向跳数                                                                        |
+| `TOOL__FETCH_ALLOWED_HOSTS`           | 空                              | 出口收紧:逗号分隔主机允许列表(空=任意公网,`example.com` 含子域)                             |
+| `TOOL__EXEC_ENABLED`                  | `false`                         | 开启沙箱内命令执行 `exec`(risk=destructive);关闭时目录不暴露、执行 404(P1-L)                |
+| `TOOL__CONNECTOR_INTERNAL_SECRET`     | 空                              | 调用 connector-service 内部端点;空 = 关闭连接器工具(须与 `CONNECTOR__INTERNAL_SECRET` 一致) |
+| `TOOL__CONNECTOR_BASE_URL`            | `http://127.0.0.1:8004`         | connector-service 基地址                                                                    |
+| `TOOL__CONNECTOR_CATALOG_TTL_SECONDS` | `30`                            | 连接器目录按租户缓存 TTL(新建/撤销连接最长延迟一个 TTL 生效)                                |
+
+## 连接器工具(C2.4)
+
+连接器工具不实现在本服务:目录来自 connector-service 的 `GET /v1/internal/connectors/tools`
+(带 `X-Internal-Secret` + `X-Tenant-Id`,按租户 TTL 30s 缓存),执行 POST 到
+`/v1/connectors/{provider}/execute`。descriptor 用 `executor=connector` 与
+`connector={"provider": "<name>"}` 声明路由;工具名形如 `Feishu__read_document`。
+
+- 目录拉取失败**降级为无连接器工具**(不缓存,下次重试),不影响内置工具;
+- 工具级失败(如 `connector.auth_expired`)按 HTTP 200 信封原样透传给 orchestrator
+  (前端据此显示「重新连接」);HTTP/网络故障映射 `tool.connector_unavailable` /
+  `tool.connector_timeout`;
+- 执行仍走本服务的限额、幂等与审计(`tool_calls`),审批沿用 orchestrator 的
+  `risk=read` → 自动放行规则;
+- 未配置 `TOOL__CONNECTOR_INTERNAL_SECRET` 时整体关闭,`/v1/tools` 只返回内置工具。
 
 ## 知识库检索代理(P2)
 

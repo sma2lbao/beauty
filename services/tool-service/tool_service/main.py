@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from tool_service.api.health import health_router
 from tool_service.api.v1.router import api_router
 from tool_service.core.config import Settings
+from tool_service.services.connectors import ConnectorGateway
 from tool_service.services.execution import ToolRunner
 from tool_service.services.executors.fetch import FetchClient
 from tool_service.services.executors.http import HttpToolExecutor, KnowledgeRuntime
@@ -38,6 +39,7 @@ def create_app(
     sandbox_provider: SandboxProvider | None = None,
     http_executor: HttpToolExecutor | None = None,
     fetch_client: FetchClient | None = None,
+    connector_gateway: ConnectorGateway | None = None,
 ) -> FastAPI:
     """构造应用;测试可注入 token_verifier、假沙箱提供方与假 HTTP 执行器。"""
 
@@ -61,13 +63,26 @@ def create_app(
             executor = HttpToolExecutor(
                 knowledge=knowledge_runtime.client, fetcher=fetcher
             )
+        # 连接器网关只在配置了内部密钥时启用;未配置时目录只含内置工具。
+        # 启动期不拉目录(首次 GET /v1/tools 才按租户请求,避免启动依赖)。
+        gateway = connector_gateway
+        if gateway is None and resolved.connector_internal_secret:
+            gateway = ConnectorGateway(
+                base_url=resolved.connector_base_url,
+                internal_secret=resolved.connector_internal_secret,
+                ttl_seconds=resolved.connector_catalog_ttl_seconds,
+            )
         app.state.sandbox_runtime = runtime
         app.state.sandbox_provider = provider
         app.state.knowledge_runtime = knowledge_runtime
         app.state.fetch_client = fetcher
         app.state.http_executor = executor
+        app.state.connector_gateway = gateway
         app.state.tool_runner = ToolRunner(
-            settings=resolved, sandbox=provider, http=executor
+            settings=resolved,
+            sandbox=provider,
+            http=executor,
+            connector=gateway,
         )
 
     async def shutdown(app: FastAPI) -> None:
@@ -82,6 +97,9 @@ def create_app(
         fetch_client: FetchClient | None = getattr(app.state, "fetch_client", None)
         if fetch_client is not None:
             await fetch_client.aclose()
+        gateway: ConnectorGateway | None = getattr(app.state, "connector_gateway", None)
+        if gateway is not None:
+            await gateway.aclose()
 
     lifespan = build_lifespan(startup=startup, shutdown=shutdown)
     return create_service_app(

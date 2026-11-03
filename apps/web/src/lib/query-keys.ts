@@ -108,6 +108,12 @@ export const queryKeys = {
   memorySearch: (query: string, kind?: string, workspaceId?: string) =>
     ['memories', 'search', query, kind ?? '', workspaceId ?? ''] as const,
 
+  /** 连接器域:provider 目录 / 连接列表 / 单连接详情。 */
+  connectorProviders: ['connector-providers'] as const,
+  connectorConnections: ['connector-connections'] as const,
+  connectorConnection: (id: string | null | undefined) =>
+    ['connector-connection', id] as const,
+
   /** MCP / Skills 域。 */
   mcpServers: ['mcp-servers'] as const,
   skills: ['skills'] as const,

@@ -17,6 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tool_service.api.deps import (
+    get_connector_gateway,
+    get_optional_tenant_id,
     get_session,
     get_settings,
     get_tenant_id,
@@ -35,6 +37,7 @@ from tool_service.services.catalog import (
     descriptors,
     find_descriptor,
 )
+from tool_service.services.connectors import ConnectorGateway
 from tool_service.services.execution import (
     ExecutionContext,
     ExecutionOutcome,
@@ -51,22 +54,35 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 TenantDep = Annotated[str, Depends(get_tenant_id)]
+OptionalTenantDep = Annotated[str | None, Depends(get_optional_tenant_id)]
 RunnerDep = Annotated[ToolRunner, Depends(get_tool_runner)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+ConnectorDep = Annotated[ConnectorGateway | None, Depends(get_connector_gateway)]
 
 
 @router.get("", response_model=ToolListRead)
 async def list_tools(
     settings: SettingsDep,
+    connector: ConnectorDep,
+    tenant_id: OptionalTenantDep,
     kind: Annotated[str | None, Query()] = None,
     scope: Annotated[str | None, Query()] = None,
 ) -> ToolListRead:
-    """列出启用的工具;kind=function|interaction、scope 可过滤。"""
+    """列出启用的工具;kind=function|interaction、scope 可过滤。
 
+    带租户凭据(Bearer,或鉴权关闭时的 X-Tenant-Id)时并入该租户的连接器
+    工具;不带凭据只返回内置目录(orchestrator 按租户带 Bearer 拉取,运维
+    与健康检查仍可匿名读内置目录)。
+    """
+
+    tools = list(descriptors())
+    if connector is not None and tenant_id is not None:
+        tools.extend(await connector.tools(tenant_id))
     items = [
         tool
-        for tool in descriptors()
-        if is_available(tool.name, settings)
+        for tool in tools
+        if tool.enabled
+        and is_available(tool.name, settings)
         and (kind is None or str(tool.kind) == kind)
         and (scope is None or scope in tool.scopes)
     ]
@@ -77,10 +93,17 @@ async def list_tools(
 
 
 @router.get("/{name}", response_model=ToolDescriptorRead)
-async def get_tool(name: str, settings: SettingsDep) -> ToolDescriptorRead:
-    """按正式名或别名取单个工具描述。"""
+async def get_tool(
+    name: str,
+    settings: SettingsDep,
+    connector: ConnectorDep,
+    tenant_id: OptionalTenantDep,
+) -> ToolDescriptorRead:
+    """按正式名或别名取单个工具描述(带租户凭据时可查连接器工具)。"""
 
     descriptor = find_descriptor(name)
+    if descriptor is None and connector is not None and tenant_id is not None:
+        descriptor = await connector.find(tenant_id, name)
     if (
         descriptor is None
         or not descriptor.enabled
@@ -99,6 +122,7 @@ async def execute_tool(
     tenant_id: TenantDep,
     runner: RunnerDep,
     settings: SettingsDep,
+    connector: ConnectorDep,
 ) -> JSONResponse:
     """执行工具;tool_call_id 是幂等键(同参重放、异参 409)。
 
@@ -107,9 +131,12 @@ async def execute_tool(
     """
 
     descriptor = find_descriptor(name)
+    if descriptor is None and connector is not None:
+        # 连接器工具不在静态目录里,按租户现查(TTL 缓存)。
+        descriptor = await connector.find(tenant_id, name)
     if descriptor is None or not descriptor.enabled:
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
-    # 能力开关与目录一致:关闭的工具(exec/fetch)连执行入口都不存在。
+    # 能力开关与目录一致:关闭的工具(exec/fetch/连接器)连执行入口都不存在。
     if not is_available(descriptor.name, settings):
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     repository = ToolCallRepository(session)
