@@ -1,6 +1,6 @@
-"""account-service 客户端与 BFF 会话状态。
+"""account-service 客户端与 API 网关会话状态。
 
-BFF 只把 access/refresh token 放进加密 Cookie;登录响应、session 响应都
+API 网关只把 access/refresh token 放进加密 Cookie;登录响应、session 响应都
 不包含 token 本体。上游错误沿用统一 {code,message,details} 契约。
 """
 
@@ -18,8 +18,8 @@ from common.errors import (
 )
 from common.security import SECRET_HEADER
 
-from bff.core.config import Settings
-from bff.schemas.auth import SessionUser
+from api_gateway.core.config import Settings
+from api_gateway.schemas.auth import SessionUser
 
 
 def _base(url: str) -> str:
@@ -31,7 +31,7 @@ def raise_upstream_error(response: httpx.Response) -> None:
         body = response.json()
     except ValueError:
         body = {}
-    code = body.get("code") or f"bff.upstream_{response.status_code}"
+    code = body.get("code") or f"api_gateway.upstream_{response.status_code}"
     message = body.get("message") or f"上游服务失败({response.status_code})"
     if response.status_code == 401:
         raise UnauthorizedError(code, message)
@@ -58,7 +58,9 @@ async def _account_json(
             method, url, json=json, headers=headers, params=params
         )
     except httpx.HTTPError as exc:
-        raise UpstreamError("bff.account_unreachable", "账号服务不可达") from exc
+        raise UpstreamError(
+            "api_gateway.account_unreachable", "账号服务不可达"
+        ) from exc
     if response.is_error:
         raise_upstream_error(response)
     if response.status_code == 204 or not response.content:
@@ -67,7 +69,7 @@ async def _account_json(
 
 
 def session_from_tokens(payload: dict[str, Any]) -> dict[str, Any]:
-    """把 account TokenResponse 规范成 BFF Cookie 内容。"""
+    """把 account TokenResponse 规范成 API 网关 Cookie 内容。"""
     expires_in = int(payload.get("expires_in") or 3600)
     return {
         "access_token": payload["access_token"],
@@ -198,8 +200,8 @@ async def issue_stream_token(
 ) -> dict[str, Any]:
     if not settings.internal_secret:
         raise AppError(
-            "bff.stream_token_disabled",
-            "未配置 BFF__INTERNAL_SECRET,stream token 未开放",
+            "api_gateway.stream_token_disabled",
+            "未配置 API_GATEWAY__INTERNAL_SECRET,stream token 未开放",
         )
     payload = await _account_json(
         client,

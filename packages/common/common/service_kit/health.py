@@ -57,7 +57,7 @@ def create_health_router(
         try:
             extra = await check(request)
         except HTTPException:
-            # 检查方自己声明了 503 明细(如 BFF 的配置缺失/上游不可达)。
+            # 检查方自己声明了 503 明细(如 API 网关的配置缺失/上游不可达)。
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail=failure_detail) from exc

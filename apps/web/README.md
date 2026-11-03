@@ -28,10 +28,10 @@ npx nx typecheck @beauty/web  # 仅类型检查
 npx nx test @beauty/web       # vitest + Testing Library 单测
 ```
 
-## 部署（Vercel 静态托管 + 公网 BFF）
+## 部署（Vercel 静态托管 + 公网 API 网关）
 
 `app.beautymoon.cn` 现在是「Vercel 托管 `apps/web` 的 Vite 产物」这一形态，要同时解决两件事：
-**页面回退**（深链不 404）与 **`/api/*` 同源门面**（SPA 只访问 `/api/*`，session 模式由 BFF 注入 Bearer 再转发）。
+**页面回退**（深链不 404）与 **`/api/*` 同源门面**（SPA 只访问 `/api/*`，session 模式由 API 网关注入 Bearer 再转发）。
 两者都在本目录的 `vercel.json` 里，缺回退时的线上表现是：`/` 返回 200，而 `/login` 等深链由 Vercel
 边缘直接 `404 NOT_FOUND`（响应头 `x-vercel-error: NOT_FOUND`）。
 
@@ -55,25 +55,25 @@ Vercel 上必须用 `session` 模式（见 `.env.example`）：`token` 模式直
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://bff.beautymoon.cn/api/:path*"
+      "destination": "https://api-gateway.beautymoon.cn/api/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
 ```
 
-- **顺序有意义**：`/api/*` 先整体代理到 BFF，其余路径才走 SPA 回退；静态文件（`/assets/*`、
+- **顺序有意义**：`/api/*` 先整体代理到 API 网关，其余路径才走 SPA 回退；静态文件（`/assets/*`、
   `/favicon.svg`）先命中文件系统，回退不会遮蔽它们。
-- `bff.beautymoon.cn` 是**占位域名**：换成 BFF 实际公网域名（需加 DNS 记录），它是文件里唯一要改的字符串。
-- 还没部署 BFF 时只保留第二条 catch-all，否则 `/api/*` 会因目标不可达返回 5xx。
-- BFF 的公网入口必须保留 `/api` 前缀并透传流式响应（见下）。
+- `api-gateway.beautymoon.cn` 是**占位域名**：换成 API 网关实际公网域名（需加 DNS 记录），它是文件里唯一要改的字符串。
+- 还没部署 API 网关时只保留第二条 catch-all，否则 `/api/*` 会因目标不可达返回 5xx。
+- API 网关的公网入口必须保留 `/api` 前缀并透传流式响应（见下）。
 
-### 3. BFF 侧要求
+### 3. API 网关侧要求
 
-- 公网 HTTPS，反代到 BFF(:8007)，`/api` 前缀原样保留，**不能缓冲**响应（SSE 依赖 chunked 透传）。
-- 环境变量：`BFF__APP_ORIGIN=https://app.beautymoon.cn`（OAuth 回跳等绝对地址都拼它）、
-  `BFF__COOKIE_SECURE=true`、`BFF__SESSION_SECRET=<随机长密钥>`、
-  `BFF__INTERNAL_SECRET=<与 account-service 一致>`，以及各上游 `BFF__*_BASE_URL`。
+- 公网 HTTPS，反代到 API 网关(:8007)，`/api` 前缀原样保留，**不能缓冲**响应（SSE 依赖 chunked 透传）。
+- 环境变量：`API_GATEWAY__APP_ORIGIN=https://app.beautymoon.cn`（OAuth 回跳等绝对地址都拼它）、
+  `API_GATEWAY__COOKIE_SECURE=true`、`API_GATEWAY__SESSION_SECRET=<随机长密钥>`、
+  `API_GATEWAY__INTERNAL_SECRET=<与 account-service 一致>`，以及各上游 `API_GATEWAY__*_BASE_URL`。
 - 浏览器侧无跨站问题：Vercel 的 rewrite 是服务端转发，Cookie（无 Domain 属性）落在 `app.beautymoon.cn`，
   CSRF double-submit 照常工作。
 

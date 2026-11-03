@@ -74,7 +74,7 @@ class MCPServerAuth(UUIDMixin, TenantMixin, TimestampMixin, Base):
     #: DCR(RFC 7591)注册结果:client_id 明文,secret 密文
     client_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
     encrypted_client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: 注册时声明的回调(经 BFF 同源),换 token 时必须原样回传
+    #: 注册时声明的回调(经 API 网关同源),换 token 时必须原样回传
     redirect_uri: Mapped[str | None] = mapped_column(String(500), nullable=True)
     encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)

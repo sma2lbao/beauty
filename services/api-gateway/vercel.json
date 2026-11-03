@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "bff/main.py": {
+    "api_gateway/main.py": {
       "maxDuration": 800,
       "excludeFiles": "{tests/**,**/test_*.py,**/__pycache__/**,**/*.db,**/.pytest_cache/**,**/*.egg-info/**,reports/**,coverage/**}"
     }

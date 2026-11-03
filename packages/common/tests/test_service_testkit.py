@@ -36,7 +36,7 @@ class _Settings(BaseSettings):
 
 
 class _NoDbSettings(BaseSettings):
-    """没有 DB 字段的服务配置替身(如 llm-gateway / bff)。"""
+    """没有 DB 字段的服务配置替身(如 llm-gateway / api-gateway)。"""
 
     model_config = SettingsConfigDict(env_prefix="TESTKIT_NODB__", extra="ignore")
 

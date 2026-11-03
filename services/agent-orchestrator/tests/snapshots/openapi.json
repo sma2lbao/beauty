@@ -941,7 +941,7 @@
         "type": "object"
       },
       "MCPOAuthCallbackRequest": {
-        "description": "BFF → orchestrator 内部回调契约(经 X-Internal-Secret 鉴权)。",
+        "description": "API 网关 → orchestrator 内部回调契约(经 X-Internal-Secret 鉴权)。",
         "properties": {
           "code": {
             "maxLength": 8192,
@@ -8454,7 +8454,7 @@
     },
     "/internal/mcp/oauth/callback": {
       "post": {
-        "description": "BFF 转发浏览器回调:换 token 落库,返回前端应跳回的相对路径。\n\n业务失败也回 200(带 ok=false + redirect_path),让 BFF 统一 302 回前端提示,\n而不是把 4xx 甩给浏览器。",
+        "description": "API 网关转发浏览器回调:换 token 落库,返回前端应跳回的相对路径。\n\n业务失败也回 200(带 ok=false + redirect_path),让 API 网关统一 302 回前端提示,\n而不是把 4xx 甩给浏览器。",
         "operationId": "mcp_oauth_callback_internal_mcp_oauth_callback_post",
         "parameters": [
           {

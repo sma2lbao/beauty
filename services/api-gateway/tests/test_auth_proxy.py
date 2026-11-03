@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 from fastapi.testclient import TestClient
 
-from bff.main import create_app
+from api_gateway.main import create_app
 from tests.conftest import handler as upstream_handler
 from tests.conftest import login, settings
 

@@ -1,8 +1,8 @@
-"""BFF 服务入口:create_app 工厂 + lifespan(装配统一走 common.service_kit)。
+"""API 网关服务入口:create_app 工厂 + lifespan(装配统一走 common.service_kit)。
 
 M0-05/06:同源 /api 门面——Cookie 会话、认证代理、内部服务代理、限流、
 文件下载、stream token。启动(项目目录内):
-uv run uvicorn bff.main:app --port 8007
+uv run uvicorn api_gateway.main:app --port 8007
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from bff.api.auth import router as auth_router
-from bff.api.health import health_router
-from bff.api.mcp_oauth import router as mcp_oauth_router
-from bff.api.proxy import router as proxy_router
-from bff.core.config import Settings
-from bff.core.security import SessionCodec
+from api_gateway.api.auth import router as auth_router
+from api_gateway.api.health import health_router
+from api_gateway.api.mcp_oauth import router as mcp_oauth_router
+from api_gateway.api.proxy import router as proxy_router
+from api_gateway.core.config import Settings
+from api_gateway.core.security import SessionCodec
 
 
 async def _startup(app: FastAPI) -> None:
@@ -61,7 +61,7 @@ async def _rate_limit(request: Request, call_next: RequestResponseEndpoint) -> R
             status_code=429,
             headers={"Retry-After": "60"},
             content={
-                "code": "bff.rate_limited",
+                "code": "api_gateway.rate_limited",
                 "message": "请求过于频繁,请稍后再试",
                 "details": {},
             },
@@ -74,7 +74,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     return create_service_app(
-        name="bff",
+        name="api-gateway",
         settings=settings,
         lifespan=_lifespan,
         routers=[

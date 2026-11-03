@@ -346,7 +346,7 @@ export async function closeSandboxSession(
 /**
  * 会话输出流的完整地址(交给 fetch 读 SSE)。
  *
- * BFF 对以 `/stream` 结尾的路径做流式转发,所以这里必须带上 base 前缀;
+ * API 网关对以 `/stream` 结尾的路径做流式转发,所以这里必须带上 base 前缀;
  * 帧格式为 `id: <seq>` / `event: output|exit|error` / `data: <json>`,
  * 断线可用 Last-Event-ID 从上次 seq 之后续传。
  */

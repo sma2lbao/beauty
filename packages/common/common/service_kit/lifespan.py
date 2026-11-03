@@ -65,7 +65,7 @@ def build_lifespan(
         install_observability(app, settings)
 
         # 鉴权装配(架构 §10):测试注入优先;否则 auth_enabled 时起 token 校验器。
-        # BFF / llm-gateway 没有鉴权面(配置里无 auth_enabled),按无鉴权处理。
+        # API 网关 / llm-gateway 没有鉴权面(配置里无 auth_enabled),按无鉴权处理。
         verifier: JwtVerifier | None = getattr(app.state, "token_verifier", None)
         auth_enabled = bool(getattr(settings, "auth_enabled", False))
         owns_verifier = False

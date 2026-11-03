@@ -61,7 +61,7 @@
       "!account-service",
       "!workspace-service",
       "!tool-service",
-      "!bff"
+      "!api-gateway"
     ],
     "conventionalCommits": true,
     "git": {

@@ -1,5 +1,5 @@
 /**
- * OAuth 2.1 授权页数据层:经 BFF 调 account-service。
+ * OAuth 2.1 授权页数据层:经 API 网关调 account-service。
  */
 import { requestJson } from '@/lib/http';
 

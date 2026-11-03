@@ -122,7 +122,7 @@ def test_metrics_endpoint_exposes_prometheus_text() -> None:
 
 
 def test_metrics_endpoint_requires_token_when_configured() -> None:
-    """公网入口(BFF)可配令牌:不带/带错按 404,带对才给内容。"""
+    """公网入口(API 网关)可配令牌:不带/带错按 404,带对才给内容。"""
     client = TestClient(_app(_settings(metrics_token="s3cret-token")))
     assert client.get(METRICS_PATH).status_code == 404
     assert (

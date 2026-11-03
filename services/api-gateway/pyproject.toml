@@ -1,7 +1,7 @@
 [project]
-name = "bff"
+name = "api-gateway"
 version = "0.1.0"
-description = "BFF:同源 API 门面(健康检查;后续认证/代理/限流/下载/stream token)"
+description = "API 网关:同源 API 门面(健康检查;后续认证/代理/限流/下载/stream token)"
 readme = "README.md"
 requires-python = ">=3.11,<4"
 dependencies = [
@@ -27,11 +27,11 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["bff"]
+packages = ["api_gateway"]
 
 [tool.coverage.run]
 branch = true
-source = ["bff"]
+source = ["api_gateway"]
 
 [tool.coverage.report]
 exclude_lines = ["if TYPE_CHECKING:"]
@@ -40,10 +40,10 @@ show_missing = true
 [tool.pytest.ini_options]
 addopts = """
  --cov
- --cov-report html:'../../coverage/services/bff/html'
- --cov-report xml:'../../coverage/services/bff/coverage.xml'
- --html='../../reports/services/bff/unittests/html/index.html'
- --junitxml='../../reports/services/bff/unittests/junit.xml'
+ --cov-report html:'../../coverage/services/api-gateway/html'
+ --cov-report xml:'../../coverage/services/api-gateway/coverage.xml'
+ --html='../../reports/services/api-gateway/unittests/html/index.html'
+ --junitxml='../../reports/services/api-gateway/unittests/junit.xml'
  --cov-fail-under=81
  --disable-socket --allow-unix-socket
 """
@@ -62,6 +62,6 @@ unfixable = []
 
 [tool.vercel]
 # Vercel Python runtime 只自动识别根级 app.py/main.py 等入口；本服务的 app 在
-# bff/main.py，必须用 tool.vercel.entrypoint 显式声明。vercel.json 的 functions
+# api_gateway/main.py，必须用 tool.vercel.entrypoint 显式声明。vercel.json 的 functions
 # key 与该入口文件对应；依赖/部署约束见 docs/design/serverless-deployment.md §7.6。
-entrypoint = "bff.main:app"
+entrypoint = "api_gateway.main:app"

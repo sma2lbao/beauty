@@ -231,7 +231,7 @@ describe('登录来路记忆', () => {
   });
 });
 
-describe('session 模式(BFF Cookie)', () => {
+describe('session 模式(API 网关 Cookie)', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -255,7 +255,7 @@ describe('session 模式(BFF Cookie)', () => {
     );
   });
 
-  it('sessionLogin 提交到 BFF 且不保存本地令牌', async () => {
+  it('sessionLogin 提交到 API 网关且不保存本地令牌', async () => {
     const auth = await loadAuth('session');
     const fetchSpy = vi.fn(
       async () =>

@@ -21,7 +21,7 @@ import {
 
 export function useMcpPageModel() {
   const queryClient = useQueryClient();
-  // 浏览器 OAuth 回调:BFF 把授权结果重定向回 /mcp?oauth=success&server=…|?oauth=error&error=…
+  // 浏览器 OAuth 回调:API 网关把授权结果重定向回 /mcp?oauth=success&server=…|?oauth=error&error=…
   const [searchParams] = useSearchParams();
   const oauthStatus = searchParams.get('oauth');
   const oauthServerName = searchParams.get('server');
@@ -125,7 +125,7 @@ export function useMcpPageModel() {
     mutationFn: (id: string) => mcpApi.startOAuth(id),
     onSuccess: (result) => {
       setActionError(null);
-      // 整页跳到授权服务器;授权完成后由授权服务器 → BFF → 本页 ?oauth=success|error
+      // 整页跳到授权服务器;授权完成后由授权服务器 → API 网关 → 本页 ?oauth=success|error
       window.location.href = result.authorize_url;
     },
     onError: (failure) => setActionError((failure as Error).message),

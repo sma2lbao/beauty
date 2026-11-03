@@ -1,4 +1,4 @@
-"""BFF 测试装配:MockTransport 模拟 account/runtime/workspace,零网络。"""
+"""API 网关测试装配:MockTransport 模拟 account/runtime/workspace,零网络。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import pytest
 from common.service_testkit import build_settings
 from fastapi.testclient import TestClient
 
-from bff.core.config import Settings
-from bff.main import create_app
+from api_gateway.core.config import Settings
+from api_gateway.main import create_app
 
 ACCESS = "access-1"
 REFRESH = "refresh-1"

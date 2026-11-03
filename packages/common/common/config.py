@@ -39,7 +39,7 @@ class BaseAppSettings(BaseSettings):
     # 只在 /internal/metrics 暴露,不进 /api/v1 公共契约。
     metrics_enabled: bool = True
     # 指标端点可选访问令牌:配了就先比 `X-Metrics-Token`(或 Bearer),不符返回 404;
-    # 未配时仅靠网络边界(内网抓取)——公网入口(BFF)建议配一个。
+    # 未配时仅靠网络边界(内网抓取)——公网入口(API 网关)建议配一个。
     metrics_token: str | None = None
     # 追踪(P2,docs/observability.md §9):OTel 分布式追踪。没配 OTLP_ENDPOINT
     # 时不挂导出器(零网络出口),span 只用于日志 trace_id 串联与本地排查;

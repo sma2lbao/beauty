@@ -38,7 +38,7 @@ export function authMode(): AuthMode {
   return MODE;
 }
 
-/** session 模式:token 只在 httpOnly Cookie,BFF 同源 /api/auth/*。 */
+/** session 模式:token 只在 httpOnly Cookie,API 网关同源 /api/auth/*。 */
 function isSession(): boolean {
   return MODE === 'session';
 }

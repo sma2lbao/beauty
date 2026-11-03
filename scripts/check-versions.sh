@@ -45,7 +45,7 @@ PY_FILES=(
   services/account-service/pyproject.toml
   services/workspace-service/pyproject.toml
   services/tool-service/pyproject.toml
-  services/bff/pyproject.toml
+  services/api-gateway/pyproject.toml
 )
 for f in "${PY_FILES[@]}"; do
   actual=$(grep -m1 '^version' "$f" | sed 's/version *= *"\([^"]*\)".*/\1/')

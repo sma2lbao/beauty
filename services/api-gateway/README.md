@@ -1,18 +1,18 @@
-# bff
+# api-gateway
 
-同源 API 门面:浏览器只访问 `/api`,由 Nginx 反代到本服务(BFF),再由 BFF 访问内部 Python 服务。
+同源 API 门面:浏览器只访问 `/api`,由 Nginx 反代到本服务(API 网关),再由 API 网关访问内部 Python 服务。
 
 M0-01 只提供健康检查骨架;M0-05 起补 httpOnly Cookie/OAuth 会话,M0-06 起补代理、错误契约、限流、下载与 stream token。
 
 ## 本地启动
 
 ```sh
-npx nx run bff:serve
+npx nx run api-gateway:serve
 curl http://127.0.0.1:8007/healthz
 curl http://127.0.0.1:8007/api/health
 ```
 
-环境变量前缀 `BFF__`,见 `.env.example`。
+环境变量前缀 `API_GATEWAY__`,见 `.env.example`。
 
 ## 会话与同源 API(M0-05/06)
 
@@ -27,15 +27,15 @@ curl http://127.0.0.1:8007/api/health
 ## Vercel 部署（导出约定）
 
 Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本服务的 `app` 在
-`bff/main.py`，因此由 `pyproject.toml` 的 `[tool.vercel] entrypoint` 显式声明：
+`api_gateway/main.py`，因此由 `pyproject.toml` 的 `[tool.vercel] entrypoint` 显式声明：
 
-- 入口：`bff.main:app`（与 `vercel.json` 的 `functions` key `bff/main.py` 对应）
+- 入口：`api_gateway.main:app`（与 `vercel.json` 的 `functions` key `api_gateway/main.py` 对应）
 - Python 版本：`.python-version` 固定 3.12
 - 函数配置：`vercel.json` 设 `maxDuration`，并排除 `tests/`、本地 `*.db`、`__pycache__`
   等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
 
 已知阻塞：服务依赖同仓库 uv workspace 内的 `common` / `database` / `events`，而
-Vercel 以 `services/bff` 为部署根、不包含仓库其他目录；真实部署前需先把这三个包
+Vercel 以 `services/api-gateway` 为部署根、不包含仓库其他目录；真实部署前需先把这三个包
 发布到私有索引或构建期 vendor。本次只覆盖无状态短请求服务，`agent-orchestrator` /
 `workspace-service` 含常驻后台循环，按设计文档外置。详见
 [serverless 部署方案](../../docs/design/serverless-deployment.md)。

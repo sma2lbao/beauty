@@ -179,7 +179,7 @@ jobs:
         # Python lint 由 python-lint job 逐个 npx nx lint 覆盖，这里显式排除。
         run: |
           npx nx affected -t lint,typecheck,build --base=origin/main \
-            --exclude=common,database,events,agent-orchestrator,llm-gateway,connector-service,knowledge-service,account-service,workspace-service,tool-service,bff
+            --exclude=common,database,events,agent-orchestrator,llm-gateway,connector-service,knowledge-service,account-service,workspace-service,tool-service,api-gateway
 
       # 覆盖率门禁（R-31b）：阈值唯一数字来源是根 vitest.config.mts 的 `thresholds`，
       # 各项目 vitest 配置 import 后挂到自身 coverage.thresholds；这里必须带 --coverage。
@@ -228,7 +228,7 @@ jobs:
             account-service,
             workspace-service,
             tool-service,
-            bff,
+            api-gateway,
           ]
     steps:
       - uses: actions/checkout@v4
@@ -284,7 +284,7 @@ jobs:
             account-service,
             workspace-service,
             tool-service,
-            bff,
+            api-gateway,
           ]
     steps:
       - uses: actions/checkout@v4
@@ -473,15 +473,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build python-service image (SERVICE=bff)
+      - name: Build python-service image (SERVICE=api-gateway)
         # 单镜像 ARG SERVICE 覆盖 8 服务，这里只验一条代表路径 + 构建缓存。
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/python-service.Dockerfile
-          build-args: SERVICE=bff
+          build-args: SERVICE=api-gateway
           push: false
-          tags: beauty-moon/bff:ci
+          tags: beauty-moon/api-gateway:ci
           cache-from: type=gha,scope=py
           cache-to: type=gha,mode=max,scope=py
 

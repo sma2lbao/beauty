@@ -1,8 +1,8 @@
 {
-  "name": "bff",
+  "name": "api-gateway",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "sourceRoot": "services/bff/bff",
+  "sourceRoot": "services/api-gateway/api_gateway",
   "targets": {
     "lock": {
       "executor": "@nxlv/python:lock",
@@ -30,7 +30,7 @@
       "executor": "@nxlv/python:ruff-check",
       "outputs": [],
       "options": {
-        "lintFilePatterns": ["bff", "tests"]
+        "lintFilePatterns": ["api_gateway", "tests"]
       },
       "cache": true
     },
@@ -38,7 +38,7 @@
       "executor": "@nxlv/python:ruff-format",
       "outputs": [],
       "options": {
-        "filePatterns": ["bff", "tests"]
+        "filePatterns": ["api_gateway", "tests"]
       },
       "cache": true
     },
@@ -61,7 +61,7 @@
     "serve": {
       "executor": "@nxlv/python:run-commands",
       "options": {
-        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run uvicorn bff.main:app --port 8007 --no-access-log",
+        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run uvicorn api_gateway.main:app --port 8007 --no-access-log",
         "env": {
           "_UV_ROOT": "{projectRoot}/../.."
         },

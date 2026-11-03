@@ -1,10 +1,10 @@
-# 部署与容器化（Web + BFF + 八个 Python 服务）
+# 部署与容器化（Web + API 网关 + 八个 Python 服务）
 
 本目录是**容器部署入口**。三条默认路径：
 
 | 场景                        | 入口                                         | 说明                                            |
 | --------------------------- | -------------------------------------------- | ----------------------------------------------- |
-| 本地开发（裸机，热更新）    | [docs/local-dev.md](../../docs/local-dev.md) | `npm run dev`，八服务 + BFF + Vite 都跑在宿主机 |
+| 本地开发（裸机，热更新）    | [docs/local-dev.md](../../docs/local-dev.md) | `npm run dev`，八服务 + API 网关 + Vite 都跑在宿主机 |
 | 容器演示 / 自托管（本文件） | `deploy/docker-compose.yml`                  | 一条 `up` 起全栈，访问 <http://localhost:8080>  |
 | 生产                        | 本文件 + 你自己的编排                        | 必须开鉴权、换密钥、终止 TLS、备份数据库        |
 
@@ -14,9 +14,9 @@
 浏览器 :8080
   └─ web 容器(nginx:alpine，deploy/web/nginx.conf)
        ├─ /            → /usr/share/nginx/html(静态 SPA，深链回退 index.html)
-       ├─ /api/        → bff:8007(SSE 不缓冲、长超时)
-       └─ /healthz /readyz → bff:8007(探针，不落 SPA 回退)
-            └─ bff:8007 → account-service:8001 / agent-orchestrator:8002
+       ├─ /api/        → api-gateway:8007(SSE 不缓冲、长超时)
+       └─ /healthz /readyz → api-gateway:8007(探针，不落 SPA 回退)
+            └─ api-gateway:8007 → account-service:8001 / agent-orchestrator:8002
                          / llm-gateway:8003 / connector-service:8004
                          / workspace-service:8005 / knowledge-service:8006
                          / tool-service:8008(内置工具服务)
@@ -25,7 +25,7 @@ postgres:5432(6 个库，见 §4) · redis:6379(预留) · migrate(一次性作�
 
 - Python 侧用**同一个镜像**跑 8 个服务：构建参数 `SERVICE` 决定入口模块与端口（构建方式见 [deploy/docker/python-service.Dockerfile](../docker/python-service.Dockerfile)）。理由：单 uv workspace、单 `uv.lock`、根 `pyproject.toml` 依赖全部服务，一次 `uv sync --frozen --no-dev` 即可装齐运行依赖。
 - Web 镜像：Node 构建 `apps/web` 静态产物 → nginx:alpine，配置文件来自本目录 `nginx.conf`（见 [deploy/docker/web.Dockerfile](../docker/web.Dockerfile)）。
-- 配置全部走环境变量（各服务 pydantic-settings 前缀：`ACCOUNT__`、`AGENT_ORCHESTRATOR__`、`BFF__` …），**没有把密钥写进镜像**。
+- 配置全部走环境变量（各服务 pydantic-settings 前缀：`ACCOUNT__`、`AGENT_ORCHESTRATOR__`、`API_GATEWAY__` …），**没有把密钥写进镜像**。
 
 ## 2. 快速开始
 
@@ -39,7 +39,7 @@ docker compose -f deploy/docker-compose.yml logs -f migrate   # 6 个库的迁�
 
 # 打开 http://localhost:8080
 # 自定义演示密钥(可选，不传则用 compose 里的演示默认值)
-printf 'INTERNAL_SECRET=%s\nBFF_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > deploy/.env
+printf 'INTERNAL_SECRET=%s\nAPI_GATEWAY_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > deploy/.env
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 
 # 停止 / 连数据一起清空
@@ -51,11 +51,11 @@ docker compose -f deploy/docker-compose.yml down -v   # 删除 pgdata 与两个�
 
 - compose 的构建上下文是**仓库根**（`context: ..`），所以必须在仓库根或任意目录用 `-f deploy/docker-compose.yml` 调用均可，但不要 `cd deploy` 后省略 `-f` 去构建上下文。
 - `down -v` 会删掉 `pgdata`（6 个库）、`account-keys`（账号服务签名密钥）、`workspace-artifacts`（交付物）。下一步 `up` 会重新执行 `deploy/postgres/initdb/01-create-databases.sql`。
-- 宿主机不暴露 BFF/各服务端口，浏览器只访问 `:8080`；服务间走 compose 默认网络。
+- 宿主机不暴露 API 网关/各服务端口，浏览器只访问 `:8080`；服务间走 compose 默认网络。
 - 只需要一个镜像时：
 
 ```sh
-docker build -f deploy/docker/python-service.Dockerfile --build-arg SERVICE=bff -t beauty-moon/bff:local .
+docker build -f deploy/docker/python-service.Dockerfile --build-arg SERVICE=api-gateway -t beauty-moon/api-gateway:local .
 docker build -f deploy/docker/web.Dockerfile -t beauty-moon/web:local .
 ```
 
@@ -93,8 +93,8 @@ compose 里所有可覆盖项都写成 `${VAR:-演示默认值}`，可用环境�
 
 | 变量                                                                         | 用途                                                                            | 生产要求                                                                                 |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `INTERNAL_SECRET`                                                            | BFF/account/AO/gateway/knowledge 内部调用共享密钥（**同时是 BYOK 解析总开关**） | 随机长串，六处必须一致（compose 已共享同一变量）；留空则 BYOK 静默停用                   |
-| `BFF_SESSION_SECRET`                                                         | BFF Cookie 会话签名                                                             | 随机长串；**不能等于**默认值 `dev-bff-session-secret-change-me`，否则 `/readyz` 返回 503 |
+| `INTERNAL_SECRET`                                                            | API 网关/account/AO/gateway/knowledge 内部调用共享密钥（**同时是 BYOK 解析总开关**） | 随机长串，六处必须一致（compose 已共享同一变量）；留空则 BYOK 静默停用                   |
+| `API_GATEWAY_SESSION_SECRET`                                                         | API 网关 Cookie 会话签名                                                             | 随机长串；**不能等于**默认值 `dev-api-gateway-session-secret-change-me`，否则 `/readyz` 返回 503 |
 | `MCP_SECRET`                                                                 | MCP 相关签名                                                                    | 随机长串                                                                                 |
 | `CONNECTOR_CREDENTIAL_SECRET`                                                | 连接器凭证加密                                                                  | 随机长串；换值后旧凭证无法解密                                                           |
 | `LLM_GATEWAY_API_KEY` / `LLM_GATEWAY_API_BASE` / `LLM_GATEWAY_DEFAULT_MODEL` | 模型网关                                                                        | 真实 key；`LLM_ENABLED=true` 才真正调用模型                                              |
@@ -102,8 +102,8 @@ compose 里所有可覆盖项都写成 `${VAR:-演示默认值}`，可用环境�
 | `ACCOUNT__BYOK_KMS`                                                          | BYOK 密钥托管方式                                                               | `local`（默认）或 `vault`；生产建议 `vault` + `ACCOUNT__BYOK_VAULT_URL/TOKEN`            |
 | `ACCOUNT__BYOK_SECRET`                                                       | local 模式 KEK 密钥材料                                                         | 随机长串；**不能等于** `dev-byok-secret-change-me`；换值前先按 BYOK 设计的轮换步骤做     |
 | `LLM_GATEWAY__BYOK_ENABLED`                                                  | 网关是否启用租户 key 解析                                                       | `true`（默认）；出问题置 `false` 即可一键回退平台 key                                    |
-| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                                                              | 默认 `session`（同源 BFF Cookie）；见 §4.2                                               |
-| `READY_PROBE_UPSTREAMS`                                                      | BFF `/readyz` 是否探上游                                                        | 编排层想用就绪探针时设 `true`                                                            |
+| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                                                              | 默认 `session`（同源 API 网关 Cookie）；见 §4.2                                               |
+| `READY_PROBE_UPSTREAMS`                                                      | API 网关 `/readyz` 是否探上游                                                        | 编排层想用就绪探针时设 `true`                                                            |
 
 **BYOK（租户自带模型密钥）部署要点**：契约见 [docs/design/byok.md](../../docs/design/byok.md)，服务侧操作见 [account-service README](../../services/account-service/README.md) 与 [llm-gateway README](../../services/llm-gateway/README.md)。容器里有两处**必须显式配**：
 
@@ -118,8 +118,8 @@ compose 里所有可覆盖项都写成 `${VAR:-演示默认值}`，可用环境�
 
 compose 默认给所有服务 `AUTH_ENABLED=false`，这是**演示模式**：
 
-- 业务服务不校验 JWT（不向 account-service:8001 做 JWKS 发现），请求同源走 BFF；
-- 但 BFF 的 `/api/auth/*` 仍然工作（注册/登录/refresh），account-service 的签名密钥在容器内生成并持久化到 `account-keys` 卷（`ACCOUNT__SIGNING_KEY_PATH=/data/keys/account-signing-key.pem`，目录见 [python-service.Dockerfile](../docker/python-service.Dockerfile) 的 `/data/keys` 预建）；
+- 业务服务不校验 JWT（不向 account-service:8001 做 JWKS 发现），请求同源走 API 网关；
+- 但 API 网关的 `/api/auth/*` 仍然工作（注册/登录/refresh），account-service 的签名密钥在容器内生成并持久化到 `account-keys` 卷（`ACCOUNT__SIGNING_KEY_PATH=/data/keys/account-signing-key.pem`，目录见 [python-service.Dockerfile](../docker/python-service.Dockerfile) 的 `/data/keys` 预建）；
 - web 默认 `VITE_AUTH_MODE=session`：登录请求走同源 `/api/auth/*`，双令牌只放 httpOnly Cookie。不能默认 `token` 模式——token 模式前端要直连 account-service:8001，而本 Nginx 只反代 `/api`，浏览器没有路由且会撞 CORS。
 
 生产切法：
@@ -136,18 +136,18 @@ services:
       AGENT_ORCHESTRATOR__AUTH_ENABLED: 'true'
       AGENT_ORCHESTRATOR__AUTH_ISSUER: 'https://api.example.com'
       AGENT_ORCHESTRATOR__AUTH_JWKS_URL: 'https://api.example.com/.well-known/jwks.json'
-  bff:
+  api-gateway:
     environment:
-      BFF__COOKIE_SECURE: 'true'
-      BFF__APP_ORIGIN: 'https://app.example.com'
-      BFF__RUNTIME_PUBLIC_URL: 'https://app.example.com'
+      API_GATEWAY__COOKIE_SECURE: 'true'
+      API_GATEWAY__APP_ORIGIN: 'https://app.example.com'
+      API_GATEWAY__RUNTIME_PUBLIC_URL: 'https://app.example.com'
 ```
 
 注意：
 
-- 开了鉴权后各服务的 issuer/JWKS 必须指向同一个 account-service 公网地址；BFF 的 Cookie `Secure` 必须配 TLS（§6）。
+- 开了鉴权后各服务的 issuer/JWKS 必须指向同一个 account-service 公网地址；API 网关的 Cookie `Secure` 必须配 TLS（§6）。
 - `ACCOUNT__SIGNING_KEY_PATH` 必须落在持久卷（compose 已用 `account-keys`）。若该文件丢失，重启后签名密钥变化，所有已签发 token / Cookie 立即失效（表现为全站重登）。
-- 演示默认的 `BFF__COOKIE_SECURE=false` 只适用于 HTTP 本地演示。
+- 演示默认的 `API_GATEWAY__COOKIE_SECURE=false` 只适用于 HTTP 本地演示。
 
 ## 5. 裸机 vs 容器
 
@@ -156,16 +156,16 @@ services:
 | 启动           | `npm run dev`（`scripts/dev.sh`）                    | `docker compose ... up -d --build`              |
 | 数据库         | 各服务目录下 SQLite（`*.db`）                        | postgres:16，6 个库                             |
 | 迁移           | 服务启动内置表或手动 alembic                         | `migrate` 一次性作业                            |
-| Nginx upstream | `127.0.0.1:8007`                                     | `bff:8007`（[nginx.conf](./nginx.conf) 默认值） |
+| Nginx upstream | `127.0.0.1:8007`                                     | `api-gateway:8007`（[nginx.conf](./nginx.conf) 默认值） |
 | 端口           | 8001–8008 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）             |
 | 数据重置       | `npm run dev:reset`                                  | `down -v`                                       |
 | 热更新         | 有（Vite/Nx）                                        | 无，重建镜像                                    |
 
-若在容器里只跑 BFF 而 web 用裸机 Nginx，把 [nginx.conf](./nginx.conf) 的 `upstream bff_upstream` 改成宿主机地址（容器网络之外）。
+若在容器里只跑 API 网关而 web 用裸机 Nginx，把 [nginx.conf](./nginx.conf) 的 `upstream api_gateway_upstream` 改成宿主机地址（容器网络之外）。
 
 ## 6. TLS 两条路
 
-1. **上层负载均衡 / 网关终止 TLS**（推荐）：LB 监听 443 → 转发到本栈 `:8080`（HTTP）。此时只暴露 web 端口，BFF 不对外；记得给 LB 传 `X-Forwarded-Proto` 并设 `BFF__COOKIE_SECURE=true`。
+1. **上层负载均衡 / 网关终止 TLS**（推荐）：LB 监听 443 → 转发到本栈 `:8080`（HTTP）。此时只暴露 web 端口，API 网关不对外；记得给 LB 传 `X-Forwarded-Proto` 并设 `API_GATEWAY__COOKIE_SECURE=true`。
 2. **Nginx 容器内终止 TLS**：启用 [nginx.conf](./nginx.conf) 末尾注释的 443 server 块（约 :96-111），把 80 改成跳转，挂载证书到 `/etc/nginx/certs/fullchain.pem`、`/etc/nginx/certs/privkey.pem`。compose 需补挂载与 443 端口：
 
 ```yaml
@@ -176,12 +176,12 @@ services:
       - ./certs:/etc/nginx/certs:ro
 ```
 
-两条路都必须把 `BFF__COOKIE_SECURE` 设为 `true`（否则 Cookie 在 HTTPS 页面不会被发送），并同步改 `BFF__APP_ORIGIN`、`BFF__RUNTIME_PUBLIC_URL` 为公网 https 地址。
+两条路都必须把 `API_GATEWAY__COOKIE_SECURE` 设为 `true`（否则 Cookie 在 HTTPS 页面不会被发送），并同步改 `API_GATEWAY__APP_ORIGIN`、`API_GATEWAY__RUNTIME_PUBLIC_URL` 为公网 https 地址。
 
 ## 7. 健康检查与就绪
 
 - 每个容器 `HEALTHCHECK` 打自己的 `/healthz`（**进程存活**，不依赖 DB/下游），Python 镜像用标准库 `urllib`（runtime 没有 curl），web 用 `wget` 打静态首页。
-- `/readyz` 是**就绪**语义：BFF 检查关键配置（session/internal 密钥齐全且非默认值），可选 `READY_PROBE_UPSTREAMS=true` 时再探下游；各业务服务返回自身依赖状态。nginx 已把这两个路径反代到 BFF，不会被 SPA 回退吃掉。
+- `/readyz` 是**就绪**语义：API 网关检查关键配置（session/internal 密钥齐全且非默认值），可选 `READY_PROBE_UPSTREAMS=true` 时再探下游；各业务服务返回自身依赖状态。nginx 已把这两个路径反代到 API 网关，不会被 SPA 回退吃掉。
 - compose 内部只把 `service_healthy` 当作启动顺序依据（用 `/healthz`）。如果编排层（K8s/ECS）要做流量摘除，用 `/readyz` 而不是 `/healthz`。
 - 探针约定与日志降噪见 [docs/observability.md](../../docs/observability.md)。
 
@@ -192,10 +192,10 @@ services:
 docker compose -f deploy/docker-compose.yml up -d --build
 
 # 只重建某个服务
-docker compose -f deploy/docker-compose.yml up -d --build bff
+docker compose -f deploy/docker-compose.yml up -d --build api-gateway
 
 # 回滚镜像：生产建议给镜像打不可变 tag(如 commit sha)而不是依赖 :local
-docker tag beauty-moon/bff:local beauty-moon/bff:prev
+docker tag beauty-moon/api-gateway:local beauty-moon/api-gateway:prev
 # 回滚迁移(在服务目录内，先确认目标 revision)
 docker compose -f deploy/docker-compose.yml run --rm --entrypoint sh migrate \
   -c "cd /app/services/account-service && alembic downgrade -1"
@@ -214,8 +214,8 @@ cat backup.sql | docker compose -f deploy/docker-compose.yml exec -T postgres ps
 | `up` 卡在 migrate             | `docker compose -f deploy/docker-compose.yml logs migrate`；常见是数据库连接串/库不存在（要 `down -v` 重新 initdb）                                                                     |
 | 服务 unhealthy                | `docker compose ... logs <service>`；`/healthz` 只证明进程活着，业务错看日志/500                                                                                                        |
 | web 打开白屏                  | 镜像是否重建（`VITE_*` 是构建期的）；`logs web` 看 nginx                                                                                                                                |
-| `/api` 502                    | BFF 未健康；先 `logs bff`，再看它依赖的七服务                                                                                                                                           |
-| `/readyz` 503                 | 多半是 `BFF_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d bff`                                                                                        |
+| `/api` 502                    | API 网关未健康；先 `logs api-gateway`，再看它依赖的七服务                                                                                                                                           |
+| `/readyz` 503                 | 多半是 `API_GATEWAY_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d api-gateway`                                                                                        |
 | BYOK 保存了但一直用平台 key   | 看网关日志有无 `byok_resolved`；确认 `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`、内部密钥与 account 一致；指标 `llm_byok_lookups_total{status="error"}` 抬头即解析失败 |
 | 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 六个各自指向 `beauty_<服务>`                                                                                                                 |
 | 构建很慢/上下文巨大           | 仓库根缺 `.dockerignore`（见下节建议）                                                                                                                                                  |

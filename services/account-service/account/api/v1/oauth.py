@@ -1,6 +1,6 @@
-"""社交 OAuth 端点(BFF 调用):授权 URL 与 code 交换。
+"""社交 OAuth 端点(API 网关调用):授权 URL 与 code 交换。
 
-浏览器不直接访问本端点;BFF 取 authorization_url 后 302,回调用
+浏览器不直接访问本端点;API 网关取 authorization_url 后 302,回调用
 POST /v1/auth/oauth/{provider}/exchange 换 TokenResponse(仍不落 Cookie)。
 """
 

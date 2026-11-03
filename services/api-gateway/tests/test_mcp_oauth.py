@@ -8,7 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from bff.main import create_app
+from api_gateway.main import create_app
 from tests.conftest import settings
 
 CALLBACK = "/api/mcp/oauth/callback"

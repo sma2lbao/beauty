@@ -20,8 +20,8 @@ resolution-markers = [
 members = [
     "account-service",
     "agent-orchestrator",
+    "api-gateway",
     "beauty-moon",
-    "bff",
     "common",
     "connector-service",
     "database",
@@ -369,6 +369,41 @@ wheels = [
 ]
 
 [[package]]
+name = "api-gateway"
+version = "0.1.0"
+source = { editable = "services/api-gateway" }
+dependencies = [
+    { name = "common" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-socket" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "common", editable = "packages/common" },
+    { name = "cryptography", specifier = ">=50.0.2" },
+    { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "uvicorn", specifier = ">=0.53.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "pytest-socket", specifier = ">=0.8.1" },
+]
+
+[[package]]
 name = "argon2-cffi"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -526,7 +561,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "account-service" },
     { name = "agent-orchestrator" },
-    { name = "bff" },
+    { name = "api-gateway" },
     { name = "common" },
     { name = "connector-service" },
     { name = "database" },
@@ -551,7 +586,7 @@ dev = [
 requires-dist = [
     { name = "account-service", editable = "services/account-service" },
     { name = "agent-orchestrator", editable = "services/agent-orchestrator" },
-    { name = "bff", editable = "services/bff" },
+    { name = "api-gateway", editable = "services/api-gateway" },
     { name = "common", editable = "packages/common" },
     { name = "connector-service", editable = "services/connector-service" },
     { name = "database", editable = "packages/database" },
@@ -570,41 +605,6 @@ dev = [
     { name = "pytest-html", specifier = ">=4.1.1" },
     { name = "pytest-sugar", specifier = ">=1.0.0" },
     { name = "ruff", specifier = ">=0.8" },
-]
-
-[[package]]
-name = "bff"
-version = "0.1.0"
-source = { editable = "services/bff" }
-dependencies = [
-    { name = "common" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-socket" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "common", editable = "packages/common" },
-    { name = "cryptography", specifier = ">=50.0.2" },
-    { name = "fastapi", specifier = ">=0.143.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "uvicorn", specifier = ">=0.53.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "pytest-socket", specifier = ">=0.8.1" },
 ]
 
 [[package]]

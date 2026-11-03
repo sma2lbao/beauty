@@ -1,9 +1,9 @@
 """同源代理与文件下载(M0-06)。
 
-- SPA 只访问 /api/*;BFF 注入 Bearer 后转发到内部服务;
+- SPA 只访问 /api/*;API 网关注入 Bearer 后转发到内部服务;
 - 下游 401 时用 Cookie 里的 refresh token 自动续期并重试一次;
 - SSE 走流式转发(不缓冲),仍支持 Last-Event-ID;
-- 所有业务路由都要求 BFF 会话;写请求要求 CSRF double-submit。
+- 所有业务路由都要求 API 网关会话;写请求要求 CSRF double-submit。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from bff.api.deps import (
+from api_gateway.api.deps import (
     get_client,
     get_codec,
     get_proxy_auth,
@@ -34,10 +34,10 @@ from bff.api.deps import (
     get_settings,
     require_csrf,
 )
-from bff.core.config import Settings
-from bff.core.security import SessionCodec
-from bff.schemas.auth import StreamTokenRequest, StreamTokenResponse
-from bff.services import account as account_service
+from api_gateway.core.config import Settings
+from api_gateway.core.security import SessionCodec
+from api_gateway.schemas.auth import StreamTokenRequest, StreamTokenResponse
+from api_gateway.services import account as account_service
 
 router = APIRouter()
 
@@ -175,7 +175,11 @@ async def download_file(
             status_code=upstream.status_code,
             content=upstream.json()
             if upstream.headers.get("content-type", "").startswith("application/json")
-            else {"code": "bff.download_failed", "message": "下载失败", "details": {}},
+            else {
+                "code": "api_gateway.download_failed",
+                "message": "下载失败",
+                "details": {},
+            },
         )
     artifact = upstream.json()
     title = str(artifact.get("title") or "artifact")
@@ -225,7 +229,7 @@ async def proxy(
         require_csrf(request)
     target = _resolve_upstream(settings, path)
     if target is None:
-        raise NotFoundError("bff.route_not_found", "BFF 未配置该路由")
+        raise NotFoundError("api_gateway.route_not_found", "API 网关未配置该路由")
     # SSE 端点一律流式转发:客户端的 Accept 可能只是 application/json
     # (手写 fetch 的 SSE 客户端),只按 Accept 判断会把长连接缓冲到读超时。
     stream = "text/event-stream" in request.headers.get("accept", "") or path.endswith(
@@ -284,7 +288,9 @@ async def _proxy_stream(
     try:
         upstream = await client.send(upstream_request, stream=True)
     except httpx.HTTPError as exc:
-        raise UpstreamError("bff.stream_unreachable", "事件流上游不可达") from exc
+        raise UpstreamError(
+            "api_gateway.stream_unreachable", "事件流上游不可达"
+        ) from exc
     if upstream.status_code == 401:
         await upstream.aclose()
         state = await _refresh(client, settings, codec, state, response)

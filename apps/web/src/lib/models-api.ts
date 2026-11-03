@@ -3,7 +3,7 @@
  *
  * `GET /api/v1/models` 由 agent-orchestrator 提供,数据来自 llm-gateway 的模型清单
  * (网关不可达时回退服务端配置,再不可用就是空列表——所以空数组是合法结果,不是错误)。
- * 与 legacy `insightsApi.models`(BFF 同源 `/api/models`,返回 `{object,default_model,data}`)
+ * 与 legacy `insightsApi.models`(API 网关同源 `/api/models`,返回 `{object,default_model,data}`)
  * 是两条线:这里的响应没有 W3C `object` 字段,前端只用 `id` / `owned_by`。
  *
  * 前端只负责「展示可选模型 + 把用户选的 id 带进请求」;白名单校验在网关,

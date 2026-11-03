@@ -129,7 +129,7 @@ export type ConnectSseOptions = {
 /**
  * 发起一个 SSE 请求并把响应交给 `readSseStream`。
  *
- * 统一负责:带鉴权/CSRF 头、`Accept: text/event-stream`(BFF 据此流式转发,
+ * 统一负责:带鉴权/CSRF 头、`Accept: text/event-stream`(API 网关据此流式转发,
  * 否则会缓冲到读超时)、`credentials: 'include'`、`Last-Event-ID`、
  * 以及连接失败时的错误映射。断流回调(onInterrupted)由调用方决定语义。
  */

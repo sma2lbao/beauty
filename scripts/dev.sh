@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 本地开发一键启动(无需 docker/云依赖):
-#   - 七个业务服务 + FastAPI BFF + Vite SPA
+#   - 七个业务服务 + API 网关 + Vite SPA
 #   - 缺 .env 时自动从 .env.example 复制
 #   - 启动前把本地 SQLite 库迁移到 alembic head(create_all 不给已有表加列)
 #   - 统一日志与 Ctrl+C 清理
 #
 # 用法:
-#   scripts/dev.sh              # 启动后端 + BFF + web
+#   scripts/dev.sh              # 启动后端 + API 网关 + web
 #   scripts/dev.sh --site       # 额外启动 Next.js 官网(:3000)
 #   scripts/dev.sh --no-web     # 只启动 Python 服务
 #   scripts/dev.sh --status     # 只检查健康状态
@@ -26,7 +26,7 @@ SERVICES=(
   "workspace-service|8005|/healthz"
   "knowledge-service|8006|/healthz"
   "tool-service|8008|/healthz"
-  "bff|8007|/api/health"
+  "api-gateway|8007|/api/health"
 )
 
 MODE="start"
@@ -266,7 +266,7 @@ echo ""
 echo "本地开发已就绪:"
 if [ "$WITH_WEB" = "1" ]; then echo "  Web      http://localhost:5173"; fi
 if [ "$WITH_SITE" = "1" ]; then echo "  官网     http://localhost:3000"; fi
-echo "  BFF      http://127.0.0.1:8007/api/health"
+echo "  API 网关  http://127.0.0.1:8007/api/health"
 echo "  日志     $LOG_DIR"
 echo "  Ctrl+C 停止本脚本启动的进程"
 echo ""

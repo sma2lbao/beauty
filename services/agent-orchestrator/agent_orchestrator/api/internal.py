@@ -1,6 +1,6 @@
-"""内部端点:只给 BFF 等兄弟服务调用,用 X-Internal-Secret 鉴权。
+"""内部端点:只给 API 网关等兄弟服务调用,用 X-Internal-Secret 鉴权。
 
-为什么单独一个 router:浏览器重定向到 BFF 的回调地址后,BFF 用服务间凭证
+为什么单独一个 router:浏览器重定向到 API 网关的回调地址后,API 网关用服务间凭证
 换 token(浏览器本身不持有 X-Internal-Secret);这也让回调不暴露在公网契约
 /api/v1 里。
 """
@@ -42,9 +42,9 @@ async def mcp_oauth_callback(
     settings: SettingsDep,
     _internal: Annotated[None, Depends(_require_internal_secret)],
 ) -> MCPOAuthCallbackRead:
-    """BFF 转发浏览器回调:换 token 落库,返回前端应跳回的相对路径。
+    """API 网关转发浏览器回调:换 token 落库,返回前端应跳回的相对路径。
 
-    业务失败也回 200(带 ok=false + redirect_path),让 BFF 统一 302 回前端提示,
+    业务失败也回 200(带 ok=false + redirect_path),让 API 网关统一 302 回前端提示,
     而不是把 4xx 甩给浏览器。
     """
     try:

@@ -20,7 +20,7 @@ npm install
 ## 2. 一键启动
 
 ```sh
-npm run dev            # 七个业务服务 + BFF + Vite SPA
+npm run dev            # 七个业务服务 + API 网关 + Vite SPA
 npm run dev:site       # 额外启动 Next.js 官网(:3000)
 npm run dev:status     # 只检查健康状态
 npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动前会自动执行)
@@ -45,7 +45,7 @@ npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动�
 | connector-service  | 8004 | /healthz    |
 | workspace-service  | 8005 | /healthz    |
 | knowledge-service  | 8006 | /healthz    |
-| bff                | 8007 | /api/health |
+| api-gateway        | 8007 | /api/health |
 | tool-service       | 8008 | /healthz    |
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
@@ -54,15 +54,15 @@ connector-service(:8004)是连接器框架,当前无内置连接器(邮件与日
 
 打开 http://localhost:5173。
 
-**BFF(:8007)是必需的**:Vite 的 /api 已统一代理到 BFF,BFF 再转发
-orchestrator/account/workspace/knowledge。忘记启动 BFF 时前端会表现为 401/502。
+**API 网关(:8007)是必需的**:Vite 的 /api 已统一代理到 API 网关,API 网关再转发
+orchestrator/account/workspace/knowledge。忘记启动 API 网关时前端会表现为 401/502。
 
 ## 4. 鉴权模式
 
 本地默认 VITE_AUTH_MODE=token:
 
 - 登录走 account-service 邮箱+密码;
-- 业务请求走 /api → BFF(Bearer 直通兜底);
+- 业务请求走 /api → API 网关(Bearer 直通兜底);
 - 不依赖 Google/GitHub 凭据。
 
 需要验证 Cookie 会话时,把 apps/web/.env.local 设为:
@@ -71,7 +71,7 @@ orchestrator/account/workspace/knowledge。忘记启动 BFF 时前端会表现�
 VITE_AUTH_MODE=session
 ```
 
-然后重启 Vite。session 模式下 BFF 会写加密 httpOnly Cookie,SPA 不接触 token。
+然后重启 Vite。session 模式下 API 网关会写加密 httpOnly Cookie,SPA 不接触 token。
 OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
 邮箱+密码登录。
 
@@ -101,7 +101,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 对话里的显式引用：Web 对话页输入区在「技能」旁有「MCP」选择器（`?mcp=<server_id>` 可深链），选中后这条消息**只**装配被引用 server 的 MCP 工具；不选 = 全部 server（向后兼容）。引用随消息/run 落库（`mcp_server_ids`，最多 10 个）并进系统提示词，历史消息显示 `MCP · <server>` 徽标；run 建好后引用固化为快照，后续再改选择不影响已建 run。接口侧 `POST /v1/conversations/{id}/messages`（含 `/messages/stream`）与 `POST /v1/runs` 都接受 `mcp_server_ids`，校验在落库前完成：未知 404 `mcp.server_not_found`、停用 409 `mcp.server_disabled`、能力未启用 409 `mcp.disabled`。
 - 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
 - http 传输收到 401 时按「需要授权」处理：测试端点落 `last_status=auth_required`、`/mcp` 页标「需要授权」；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`），响应头 `WWW-Authenticate` 保留下来作发现线索。
-- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **BFF 同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
+- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **API 网关同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
 - http 传输按 Streamable HTTP 规范回带会话头：`initialize` 响应里的 `Mcp-Session-Id` 会带到后续每个请求（含 notification），之后请求带协商出的 `MCP-Protocol-Version`；会话失效（服务端回 404）自动重新 initialize 并重试一次，关闭时尽力 `DELETE` 终止会话。
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
 - MCP Server 对外暴露（M3）尚未实现。
@@ -114,7 +114,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 ## 3.5 公开 MCP Server（本地版）
 
-- 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 BFF 会话)。
+- 端点:`POST http://127.0.0.1:8002/mcp`(Streamable HTTP;直接对 orchestrator,不经过 API 网关会话)。
 - 鉴权:`Authorization: Bearer bm_live_...`(API Key)或 OAuth 2.1 access token;也支持 `X-API-Key`。
 - 支持 `initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`。
 - 公开面只暴露只读工具:`beauty.whoami`、`beauty.list_runs`、`beauty.get_artifact`,以及文档/知识库中的只读工具;受控写(技能执行、工作区文件)与危险操作(对外不可逆写)都不暴露。
@@ -277,8 +277,8 @@ npm run dev:reset -- --yes # 不确认
 | 现象                   | 处理                                                                                                                                                                                                                  |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 端口被占用             | scripts/dev.sh 会跳过;确认是否已有旧进程,必要时手动 kill                                                                                                                                                              |
-| 前端 401/502           | 检查 BFF :8007 是否启动;npm run dev:status                                                                                                                                                                            |
-| 登录后页面空           | 检查 account-service :8001 与 BFF 日志                                                                                                                                                                                |
+| 前端 401/502           | 检查 API 网关 :8007 是否启动;npm run dev:status                                                                                                                                                                       |
+| 登录后页面空           | 检查 account-service :8001 与 API 网关日志                                                                                                                                                                            |
 | 会话接口 404/旧结构    | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                          |
 | 官网打不开             | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                         |
 | SQLite 表结构不对      | 启动时已自动迁移;仍报 no such column/迁移提示结构漂移时先 npm run dev:migrate 看原因,确实无法对齐再 npm run dev:reset                                                                                                 |
@@ -287,7 +287,7 @@ npm run dev:reset -- --yes # 不确认
 | 附件上传失败           | 检查大小 ≤10MB、类型(文本/Markdown/CSV/JSON/PDF/图片)与 orchestrator 是否最新                                                                                                                                         |
 | 要串一条请求链路       | 浏览器 Network 看响应头 `X-Request-ID`,再在服务日志里筛 `request_id="..."`;规则见 `docs/observability.md` §5                                                                                                          |
 | 想强开 JSON 日志       | `<SERVICE>__LOG_JSON=true`(dev 默认人读格式);关访问日志用 `<SERVICE>__ACCESS_LOG_ENABLED=false`,慢请求阈值 `<SERVICE>__SLOW_REQUEST_MS`                                                                               |
-| 想看指标               | 抓 `GET /internal/metrics`(Prometheus 文本,只在服务进程内,不经 BFF);关掉用 `<SERVICE>__METRICS_ENABLED=false`,要令牌用 `<SERVICE>__METRICS_TOKEN`                                                                     |
+| 想看指标               | 抓 `GET /internal/metrics`(Prometheus 文本,只在服务进程内,不经 API 网关);关掉用 `<SERVICE>__METRICS_ENABLED=false`,要令牌用 `<SERVICE>__METRICS_TOKEN`                                                                |
 | 想接 Sentry            | 配 `<SERVICE>__SENTRY_DSN`(+可选 `SERVICE__SENTRY_RELEASE`);不配则完全不初始化,内网形态零副作用                                                                                                                       |
 | 想看链路追踪           | 配 `<SERVICE>__OTLP_ENDPOINT`(完整 `…/v1/traces`,OTLP/HTTP)才会导出;不配则 span 只在进程内,日志里用 `trace_id`/`span_id` 串联。采样 `<SERVICE>__TRACE_SAMPLE_RATIO`(默认 0.1),关掉 `<SERVICE>__TRACING_ENABLED=false` |
 | 想看模型请求/正文      | 网关日志里 `llm_request`/`llm_response` 带 provider、model、token 用量与耗时；要看 prompt/响应正文置 `LLM_GATEWAY__LOG_CONTENT=true`（各截断 2KB，含用户数据，仅本地开）                                              |
@@ -307,7 +307,7 @@ npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm r
 
 ```sh
 npx nx test @beauty/web -- --run
-npx nx test bff
+npx nx test api-gateway
 npx nx test account-service
 npx nx test agent-orchestrator
 npx nx typecheck @beauty/web

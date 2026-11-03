@@ -110,7 +110,7 @@ export async function requestJson<T>(
 /**
  * 发一个二进制下载请求:返回 `Blob`(响应体原样,不解析 JSON)。
  *
- * 下载端点可能是同源 BFF 代理或直连服务;鉴权头/CSRF/401 续期与
+ * 下载端点可能是同源 API 网关代理或直连服务;鉴权头/CSRF/401 续期与
  * `requestJson` 完全一致,失败时同样映射成 `ApiError`。
  */
 export async function requestBlob(

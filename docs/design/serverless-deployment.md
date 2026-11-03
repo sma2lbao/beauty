@@ -25,7 +25,7 @@
 | 交付物   | **GCS**（新增 ArtifactStore 实现）；过渡期继续用 DB 列                                                              | 见 §5.5                                              |
 | 密钥     | **Secret Manager**（签名 PEM、INTERNAL_SECRET、session secret、供应商 key）                                         | 见 §5.8                                              |
 | 沙箱     | **E2B**（Firecracker microVM，首选）或 **Modal Sandboxes**；microsandbox 在 Cloud Run 不可用（无 /dev/kvm）         | 只换 SandboxProvider 实现，接口不变；见 §5.6         |
-| 前端     | `apps/web` 静态产物 → **GCS + Cloud CDN**；同一 Global LB 把 `/api/*` 路由到 BFF                                    | 或退化为 Cloud Run + nginx（多一个服务，见 §5.9）    |
+| 前端     | `apps/web` 静态产物 → **GCS + Cloud CDN**；同一 Global LB 把 `/api/*` 路由到 API 网关                               | 或退化为 Cloud Run + nginx（多一个服务，见 §5.9）    |
 | 入口     | **Global External HTTPS LB + Cloud Armor**（限流、WAF、TLS）                                                        | 同源 Cookie、SSE 穿透；见 §4.3                       |
 | CI/CD    | GitHub Actions + Workload Identity Federation → Artifact Registry → `gcloud run deploy`；**Terraform** 管理基础设施 | 见 §6                                                |
 | 可观测性 | Cloud Logging（结构化 stdout）+ Cloud Trace（OTel）+ Cloud Monitoring 指标 + Sentry                                 | 见 §5.10                                             |
@@ -33,7 +33,7 @@
 次选与适用条件（详见 §3.3）：
 
 - **Fly.io**：改造最小（同一镜像、长连接无请求时长上限、scale-to-zero 用 auto_stop/suspend），代价是它更像「托管 VM」而非函数平台，且背景任务/数据库仍要自己拼。
-- **Modal**：Python 原生 + 内置 Sandboxes，可把 orchestrator/tool-service/沙箱放一个平台；代价是与现有 8 服务 + BFF 的容器编排模型不同，需重写部署描述（不是代码）。
+- **Modal**：Python 原生 + 内置 Sandboxes，可把 orchestrator/tool-service/沙箱放一个平台；代价是与现有 8 服务（含 API 网关）的容器编排模型不同，需重写部署描述（不是代码）。
 - **AWS（Lambda Web Adapter + ECS Fargate）**：只在组织已经重仓 AWS 且能接受「SSE 15 分钟断流 + 常驻进程另开 Fargate」时选。
 - **不推荐**：Cloudflare Workers（Python 运行时不是 CPython 全量、CPU 5 分钟上限、128MB）；Vercel Functions（官方支持 FastAPI，但函数时长 Hobby 300s / Pro 800s（1800s Beta）、无长期后台进程，整仓后端只能走混合方案，见 §7.6）；Render/Railway 常驻型（没有真正的 scale-to-zero）。
 
@@ -47,13 +47,13 @@
 
 ### 1.3 分期与估算
 
-| 阶段 | 内容                                                          | 产出                                | 人日（1 人） |
-| ---- | ------------------------------------------------------------- | ----------------------------------- | ------------ |
-| P0   | 基础设施即代码骨架 + 镜像可部署（PORT/探针/角色开关）         | staging Cloud Run 能跑起 `/healthz` | 2–3          |
-| P1   | 无状态服务上云（account/bff/llm-gateway/connector/knowledge） | staging 全链路 HTTP 可用            | 2–3          |
-| P2   | orchestrator（API + worker pool + Jobs 迁移）+ SSE 验证       | run 全流程可用，SSE 断线可续        | 3–4          |
-| P3   | workspace + tool-service + 外部沙箱 + GCS 交付物              | 文件工具 E2E、交付物下载            | 4–6          |
-| P4   | 前端静态托管 + LB 切流 + 可观测性/告警 + 回滚演练             | prod 切换完成                       | 2–3          |
+| 阶段 | 内容                                                                  | 产出                                | 人日（1 人） |
+| ---- | --------------------------------------------------------------------- | ----------------------------------- | ------------ |
+| P0   | 基础设施即代码骨架 + 镜像可部署（PORT/探针/角色开关）                 | staging Cloud Run 能跑起 `/healthz` | 2–3          |
+| P1   | 无状态服务上云（account/api-gateway/llm-gateway/connector/knowledge） | staging 全链路 HTTP 可用            | 2–3          |
+| P2   | orchestrator（API + worker pool + Jobs 迁移）+ SSE 验证               | run 全流程可用，SSE 断线可续        | 3–4          |
+| P3   | workspace + tool-service + 外部沙箱 + GCS 交付物                      | 文件工具 E2E、交付物下载            | 4–6          |
+| P4   | 前端静态托管 + LB 切流 + 可观测性/告警 + 回滚演练                     | prod 切换完成                       | 2–3          |
 
 合计约 **13–19 人日**（不含沙箱供应商的商务流程）。若选 Fly.io 可压缩到 **6–10 人日**；若选 AWS Lambda 方案则 **25+ 人日**。
 
@@ -61,43 +61,43 @@
 
 ### 2.1 部署单元
 
-| 单元                 | 入口                                                       | 端口 | 状态性                                                 |
-| -------------------- | ---------------------------------------------------------- | ---- | ------------------------------------------------------ |
-| `apps/web`           | 静态 SPA（Vite 构建）                                      | 80   | 无状态（构建期注入 `VITE_*`）                          |
-| `apps/site`          | Next.js 静态导出                                           | 80   | 无状态（可继续 Vercel）                                |
-| `services/bff`       | FastAPI + httpx 代理                                       | 8007 | 无状态（Cookie 用共享 secret 签名）；限流在进程内      |
-| `agent-orchestrator` | FastAPI + LangGraph + job worker                           | 8002 | **有状态任务**（jobs 表 + PG checkpointer + 后台循环） |
-| `account-service`    | FastAPI + 自建 IdP                                         | 8001 | 半状态（RSA 签名密钥需持久）                           |
-| `llm-gateway`        | FastAPI + litellm                                          | 8003 | 无状态                                                 |
-| `connector-service`  | FastAPI                                                    | 8004 | 无状态（凭证密钥来自配置）                             |
-| `knowledge-service`  | FastAPI + 嵌入提供方                                       | 8006 | 无状态（数据在 DB）                                    |
-| `workspace-service`  | FastAPI + 沙箱 provider + 交付物文件                       | 8005 | **有状态**（沙箱 microVM、本地交付物目录、回收循环）   |
-| `tool-service`       | FastAPI + 沙箱执行器 + 知识库代理                          | 8008 | 无状态（审计在 DB，执行在沙箱）                        |
-| PostgreSQL 16        | 6 个库（account/agent/connector/knowledge/workspace/tool） | 5432 | 有状态                                                 |
-| Redis 7              | compose 已起                                               | 6379 | **业务未使用**（可直接去掉）                           |
-| migrate 一次性作业   | 顺序对 6 个库 `alembic upgrade head`                       | —    | 一次性                                                 |
-| web（nginx）         | SPA + 反代 `/api`                                          | 8080 | 无状态                                                 |
+| 单元                   | 入口                                                       | 端口 | 状态性                                                 |
+| ---------------------- | ---------------------------------------------------------- | ---- | ------------------------------------------------------ |
+| `apps/web`             | 静态 SPA（Vite 构建）                                      | 80   | 无状态（构建期注入 `VITE_*`）                          |
+| `apps/site`            | Next.js 静态导出                                           | 80   | 无状态（可继续 Vercel）                                |
+| `services/api-gateway` | FastAPI + httpx 代理                                       | 8007 | 无状态（Cookie 用共享 secret 签名）；限流在进程内      |
+| `agent-orchestrator`   | FastAPI + LangGraph + job worker                           | 8002 | **有状态任务**（jobs 表 + PG checkpointer + 后台循环） |
+| `account-service`      | FastAPI + 自建 IdP                                         | 8001 | 半状态（RSA 签名密钥需持久）                           |
+| `llm-gateway`          | FastAPI + litellm                                          | 8003 | 无状态                                                 |
+| `connector-service`    | FastAPI                                                    | 8004 | 无状态（凭证密钥来自配置）                             |
+| `knowledge-service`    | FastAPI + 嵌入提供方                                       | 8006 | 无状态（数据在 DB）                                    |
+| `workspace-service`    | FastAPI + 沙箱 provider + 交付物文件                       | 8005 | **有状态**（沙箱 microVM、本地交付物目录、回收循环）   |
+| `tool-service`         | FastAPI + 沙箱执行器 + 知识库代理                          | 8008 | 无状态（审计在 DB，执行在沙箱）                        |
+| PostgreSQL 16          | 6 个库（account/agent/connector/knowledge/workspace/tool） | 5432 | 有状态                                                 |
+| Redis 7                | compose 已起                                               | 6379 | **业务未使用**（可直接去掉）                           |
+| migrate 一次性作业     | 顺序对 6 个库 `alembic upgrade head`                       | —    | 一次性                                                 |
+| web（nginx）           | SPA + 反代 `/api`                                          | 8080 | 无状态                                                 |
 
 ### 2.2 运行时耦合点（serverless 迁移必须逐条处理）
 
-| #   | 耦合点             | 现状（file:line）                                                                                                                                                                                                          | 为什么在 serverless 上会坏                                              | 处理        |
-| --- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ----------- |
-| 1   | 固定端口           | `deploy/docker/python-service.Dockerfile:77` CMD 硬编码每服务端口；无 `PORT` 读取                                                                                                                                          | Cloud Run 通过 `PORT` 注入端口，忽略会 502                              | §5.1        |
-| 2   | Docker HEALTHCHECK | `python-service.Dockerfile:71-72`                                                                                                                                                                                          | Cloud Run 不执行 Dockerfile HEALTHCHECK，需 startup probe 打 `/healthz` | §5.1        |
-| 3   | 单镜像多服务       | `python-service.Dockerfile:49-77` `ARG SERVICE` + case 分发                                                                                                                                                                | 可用（每服务一个 tag/一次 build），但冷启动共享大镜像                   | §5.1        |
-| 4   | 后台常驻循环       | orchestrator：`core/container.py:429` outbox、`:486` jobs worker、`:493` interrupts sweeper；workspace：`workspace/main.py:95-97` sandbox reaper                                                                           | Cloud Run service 会缩到 0，进程被杀→任务不执行、超时不触发             | §5.3        |
-| 5   | PG 连接方式        | 各服务 `database_url` 默认 `sqlite+aiosqlite:///./*.db`；compose 用 `postgresql+asyncpg://postgres:5432`                                                                                                                   | serverless 需要 Cloud SQL/Neon 连接方式与连接池上限                     | §5.4        |
-| 6   | 数据库迁移         | compose `migrate` 作业（`deploy/docker-compose.yml:72-96`）                                                                                                                                                                | 无 compose；需 Cloud Run Job / CI 步骤                                  | §5.4        |
-| 7   | 交付物存储         | orchestrator `artifact_store=database`（`core/config.py:41`）；workspace `artifact_store=filesystem`（`workspace/core/config.py:19-20`）+ 本地卷                                                                           | 本地卷在 serverless 不持久、不共享；GCS 实现缺失                        | §5.5        |
-| 8   | 沙箱               | `workspace/core/config.py:30-45` `sandbox_provider=microsandbox`，需要 `/dev/kvm`；MCP stdio 也走沙箱                                                                                                                      | Cloud Run/Fargate/Workers 无 KVM，microsandbox 起不来                   | §5.6        |
-| 9   | 签名密钥           | account-service `signing_key_path` 空则进程内生成（`account/core/idp.py:99-118`，注释已写明生产必须持久）                                                                                                                  | 多实例/重启→已发 token 全失效                                           | §5.8        |
-| 10  | 内部密钥           | `INTERNAL_SECRET` 经 compose 环境注入（`docker-compose.yml:228` 等）                                                                                                                                                       | 需 Secret Manager 注入，且不能进镜像                                    | §5.8        |
-| 11  | 进程内限流         | `bff/main.py:67-89` `SlidingWindowLimiter`                                                                                                                                                                                 | 多实例各算各的，限流失效                                                | §5.8 / §4.3 |
-| 12  | Cookie 会话        | `bff/core/config.py:17,28-29`：`app_origin=http://localhost:5173`、`cookie_secure=False`                                                                                                                                   | 生产必须 https + 正确 origin，否则 Cookie 不下发/CSRF 失败              | §5.8        |
-| 13  | SSE 长连接         | orchestrator `api/v1/runs.py:169` 支持 `Last-Event-ID`；BFF `proxy.py:226-245` 流式转发；BFF 上游客户端 `main.py:42-43` 超时 30s（httpx 的 30s 是**每块读超时**，orchestrator keepalive 15s 一帧，当前恰好安全但依赖巧合） | 平台单请求时长上限会切断流；BFF 应把流式 client 的读超时显式设长/关闭   | §5.7        |
-| 14  | 服务间地址         | 默认 `http://127.0.0.1:80xx`（`bff/core/config.py:19-24`、orchestrator `core/config.py`）                                                                                                                                  | serverless 无 localhost 拓扑，需服务 URL/内部 ingress 或 VPC            | §5.2        |
-| 15  | 静态托管           | web 镜像内 nginx（`deploy/web/nginx.conf`）+ 同源反代                                                                                                                                                                      | 需改成 bucket/CDN + LB 路由，或保留 nginx 容器                          | §5.9        |
-| 16  | 日志/追踪          | 结构化 stdout + OTel/Sentry（`common/observability.py`）                                                                                                                                                                   | 只需配置出口，不改代码                                                  | §5.10       |
+| #   | 耦合点             | 现状（file:line）                                                                                                                                                                                                                   | 为什么在 serverless 上会坏                                                | 处理        |
+| --- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------- |
+| 1   | 固定端口           | `deploy/docker/python-service.Dockerfile:77` CMD 硬编码每服务端口；无 `PORT` 读取                                                                                                                                                   | Cloud Run 通过 `PORT` 注入端口，忽略会 502                                | §5.1        |
+| 2   | Docker HEALTHCHECK | `python-service.Dockerfile:71-72`                                                                                                                                                                                                   | Cloud Run 不执行 Dockerfile HEALTHCHECK，需 startup probe 打 `/healthz`   | §5.1        |
+| 3   | 单镜像多服务       | `python-service.Dockerfile:49-77` `ARG SERVICE` + case 分发                                                                                                                                                                         | 可用（每服务一个 tag/一次 build），但冷启动共享大镜像                     | §5.1        |
+| 4   | 后台常驻循环       | orchestrator：`core/container.py:429` outbox、`:486` jobs worker、`:493` interrupts sweeper；workspace：`workspace/main.py:95-97` sandbox reaper                                                                                    | Cloud Run service 会缩到 0，进程被杀→任务不执行、超时不触发               | §5.3        |
+| 5   | PG 连接方式        | 各服务 `database_url` 默认 `sqlite+aiosqlite:///./*.db`；compose 用 `postgresql+asyncpg://postgres:5432`                                                                                                                            | serverless 需要 Cloud SQL/Neon 连接方式与连接池上限                       | §5.4        |
+| 6   | 数据库迁移         | compose `migrate` 作业（`deploy/docker-compose.yml:72-96`）                                                                                                                                                                         | 无 compose；需 Cloud Run Job / CI 步骤                                    | §5.4        |
+| 7   | 交付物存储         | orchestrator `artifact_store=database`（`core/config.py:41`）；workspace `artifact_store=filesystem`（`workspace/core/config.py:19-20`）+ 本地卷                                                                                    | 本地卷在 serverless 不持久、不共享；GCS 实现缺失                          | §5.5        |
+| 8   | 沙箱               | `workspace/core/config.py:30-45` `sandbox_provider=microsandbox`，需要 `/dev/kvm`；MCP stdio 也走沙箱                                                                                                                               | Cloud Run/Fargate/Workers 无 KVM，microsandbox 起不来                     | §5.6        |
+| 9   | 签名密钥           | account-service `signing_key_path` 空则进程内生成（`account/core/idp.py:99-118`，注释已写明生产必须持久）                                                                                                                           | 多实例/重启→已发 token 全失效                                             | §5.8        |
+| 10  | 内部密钥           | `INTERNAL_SECRET` 经 compose 环境注入（`docker-compose.yml:228` 等）                                                                                                                                                                | 需 Secret Manager 注入，且不能进镜像                                      | §5.8        |
+| 11  | 进程内限流         | `api_gateway/main.py:67-89` `SlidingWindowLimiter`                                                                                                                                                                                  | 多实例各算各的，限流失效                                                  | §5.8 / §4.3 |
+| 12  | Cookie 会话        | `api_gateway/core/config.py:17,28-29`：`app_origin=http://localhost:5173`、`cookie_secure=False`                                                                                                                                    | 生产必须 https + 正确 origin，否则 Cookie 不下发/CSRF 失败                | §5.8        |
+| 13  | SSE 长连接         | orchestrator `api/v1/runs.py:169` 支持 `Last-Event-ID`；API 网关 `proxy.py:226-245` 流式转发；API 网关上游客户端 `main.py:42-43` 超时 30s（httpx 的 30s 是**每块读超时**，orchestrator keepalive 15s 一帧，当前恰好安全但依赖巧合） | 平台单请求时长上限会切断流；API 网关应把流式 client 的读超时显式设长/关闭 | §5.7        |
+| 14  | 服务间地址         | 默认 `http://127.0.0.1:80xx`（`api_gateway/core/config.py:19-24`、orchestrator `core/config.py`）                                                                                                                                   | serverless 无 localhost 拓扑，需服务 URL/内部 ingress 或 VPC              | §5.2        |
+| 15  | 静态托管           | web 镜像内 nginx（`deploy/web/nginx.conf`）+ 同源反代                                                                                                                                                                               | 需改成 bucket/CDN + LB 路由，或保留 nginx 容器                            | §5.9        |
+| 16  | 日志/追踪          | 结构化 stdout + OTel/Sentry（`common/observability.py`）                                                                                                                                                                            | 只需配置出口，不改代码                                                    | §5.10       |
 
 ### 2.3 已具备的 serverless 友好性（不用改的部分）
 
@@ -115,7 +115,7 @@
 2. **人工暂停期间不能烧 CPU**：审批/确认/提问是「挂起」而非「忙等」，持久化检查点必须跨实例可恢复；不能用「保持一个进程/连接一直活着」来实现。
 3. **文件工具必须在隔离环境**：read/write/grep 由 tool-service 委托 workspace 沙箱执行（[tool-service.md](./tool-service.md) §8.1）；serverless 平台若无 KVM，必须换成外部 microVM provider，**不能退化为在服务进程里直读宿主文件系统**。
 4. **一服务一库不能合并**：6 个库各自 alembic 迁移历史独立（`deploy/postgres/initdb/01-create-databases.sql` 注释写明 `alembic_version` 冲突），合并会破坏迁移。
-5. **同源 Cookie 会话**：BFF 的 httpOnly Cookie + CSRF 依赖前端与 `/api` 同源；拆成两个域名要重新设计（不推荐）。
+5. **同源 Cookie 会话**：API 网关的 httpOnly Cookie + CSRF 依赖前端与 `/api` 同源；拆成两个域名要重新设计（不推荐）。
 6. **本地开发保持不变**：compose 仍是本地一键启动方式；serverless 只影响 staging/prod。
 
 ## 3. 选型：平台对比与结论
@@ -126,7 +126,7 @@
 
 | 维度             | 关注点                                                     | 权重 | 为什么重要（仓库证据）                                                                                                               |
 | ---------------- | ---------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| SSE / 流式响应   | 平台是否原样透传 `text/event-stream`，是否有缓冲或压缩干预 | 5    | run 事件流是产品核心（token 增量/工具调用/审批/提问），BFF `proxy.py:226-245` 逐块转发，nginx `proxy_buffering off`                  |
+| SSE / 流式响应   | 平台是否原样透传 `text/event-stream`，是否有缓冲或压缩干预 | 5    | run 事件流是产品核心（token 增量/工具调用/审批/提问），API 网关 `proxy.py:226-245` 逐块转发，nginx `proxy_buffering off`             |
 | 单请求时长上限   | 单条 HTTP 连接最长能活多久，超时后行为                     | 5    | 一次 run 可能持续数十分钟；审批/提问可挂起到用户回来（默认提问超时 900s，可关闭）                                                    |
 | 后台常驻任务     | 是否支持进程内常驻循环（非请求驱动）                       | 5    | outbox dispatcher `container.py:429`、jobs worker `:486`、interrupts sweeper `:493`、workspace 沙箱 reaper `workspace/main.py:95-97` |
 | 缩容到 0         | 空闲时是否停止计费                                         | 3    | 内网/早期用户量低，常驻 8 服务成本不划算；但 worker 缩到 0 会停后台循环，需区分角色                                                  |
@@ -135,7 +135,7 @@
 | 托管 Postgres    | 是否有托管 PG 16、连接池、备份                             | 4    | 6 个库、5 个 alembic 迁移链；LangGraph checkpointer 依赖 PG                                                                          |
 | 对象存储         | 是否有 S3/GCS 兼容 API + 预签名 URL                        | 4    | 交付物存储抽象只有 database/filesystem 两种实现（`common/artifacts.py`），serverless 必须补对象存储                                  |
 | 密钥管理         | 密钥/证书能否注入且不落盘                                  | 4    | `INTERNAL_SECRET`、`SESSION_SECRET`、account 签名密钥（`idp.py:99-118`）、connector `credential_secret`                              |
-| 静态托管与同源   | SPA + `/api` 同源（Cookie 会话）                           | 3    | BFF httpOnly Cookie + CSRF 依赖同源（§2.4 约束 5）                                                                                   |
+| 静态托管与同源   | SPA + `/api` 同源（Cookie 会话）                           | 3    | API 网关 httpOnly Cookie + CSRF 依赖同源（§2.4 约束 5）                                                                              |
 | 可观测性         | 日志/指标/追踪接入                                         | 2    | 已接 OTel/Sentry（`common/observability.py`），只需出口                                                                              |
 | 锁定与运维复杂度 | 是否引入新 DSL/专有框架                                    | 3    | 团队规模小，长期可维护性优先                                                                                                         |
 
@@ -143,18 +143,18 @@
 
 矩阵只列「能承载 8 个 FastAPI 服务」的候选；函数平台里 Vercel 官方支持 FastAPI/ASGI，但函数时长与后台进程有硬约束，单独列一行并在 §3.3 与 §7.6 说明可行边界；Cloudflare Workers 因 Python 运行时不是 CPython 全量而排除。数值来自各平台官方文档（2026-10 抓取；本环境访问受限的条目已标注以官方为准）。
 
-| 平台                                                          | 形态                           | SSE / 流式                                 | 单请求上限                                                                       | 后台循环                                                                                         | 缩容到 0                      | 镜像复用                                | 隔离沙箱                                                                       | 结论                                        |
-| ------------------------------------------------------------- | ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------- |
-| **Cloud Run**（services）                                     | 托管容器                       | 原生支持，逐块透传                         | 请求超时最长 60 分钟（服务级配置，官方文档为准）                                 | 需 worker pools（request 驱动不可靠）                                                            | 是（min-instances 0）         | 是                                      | 平台无 KVM；2026 新增 code execution 能力待验证                                | **首选**                                    |
-| **Cloud Run**（worker pools + Jobs）                          | 托管容器池 / 批处理            | worker pools 无外部 HTTP 入口；Jobs 无 SSE | Jobs 任务超时上限 24 小时                                                        | **是**（worker pools 承载常驻循环）                                                              | worker pools 可 0（会停循环） | 是                                      | 同上                                                                           | **首选方案的后台平面**                      |
-| **AWS Lambda + Web Adapter**                                  | 函数                           | LWA 支持 response streaming                | 15 分钟（异步/事件源 90 分钟的 Managed Instances 不适用于 HTTP 同步）            | 否                                                                                               | 是                            | 需打包 LWA                              | 无（Lambda MicroVMs 是另一产品）                                               | 仅备选                                      |
-| **AWS ECS Fargate / App Runner**                              | 托管容器                       | 原生                                       | 无硬上限（ALB 空闲超时可调）                                                     | 是                                                                                               | 否（Fargate 常驻计费）        | 是                                      | 无 KVM                                                                         | 仅备选                                      |
-| **AWS Lambda MicroVMs**                                       | 有状态 microVM（2026-10 新）   | 需自建网关                                 | 以官方为准                                                                       | 否                                                                                               | 是                            | 需镜像适配                              | 有（microVM）                                                                  | 沙箱候选                                    |
-| **Azure Container Apps**                                      | 托管容器                       | 原生                                       | ingress 默认 240s，可配到 2400s（40 分钟）                                       | Jobs 支持定时/事件触发；无 ingress 的常驻循环需 minReplicas≥1                                    | 是（min 0）                   | 是                                      | 无 KVM                                                                         | 备选（Azure 亲和时）                        |
-| **Vercel**（Functions + Queues + Cron + Sandbox + Workflows） | 函数 + 托管队列 + microVM 沙箱 | 支持 `StreamingResponse`；单个请求内可流式 | Hobby 300s；Pro/Ent 默认 300s、最大 800s（GA），1800s 为 Beta；Edge runtime 300s | 无长期进程：Queues worker / Cron（Pro 最小 1 分钟，Hobby 每天一次）/ Workflows（持久步骤，Beta） | 是                            | 否（Vercel 自建 Python 包，不复用镜像） | **Vercel Sandbox**（Firecracker microVM，Python SDK；argv 支持、stdin 不支持） | 前端 + BFF + 短服务可行，整仓需混合（§7.6） |
-| **Fly.io Machines**                                           | serverless VM（Firecracker）   | 无请求时长上限（长连接友好）               | 无                                                                               | 是（进程常驻，自动停/启）                                                                        | 是（auto_stop=suspend）       | 是                                      | **Machines 本身是 microVM**，可作为沙箱池                                      | **次选（改造最小）**                        |
-| **Modal**                                                     | Python 原生 serverless         | Web Functions / Streaming endpoints        | 以官方为准（函数有超时上限，长流需设计）                                         | 是（定时/队列/常驻容器）                                                                         | 是                            | 部分（Python 代码，ASGI 可挂）          | **Sandboxes 一等公民**（argv/文件/快照）                                       | **沙箱与批处理补充**                        |
-| **E2B**                                                       | 沙箱 PaaS                      | 不适用（只做沙箱）                         | 不适用                                                                           | 不适用                                                                                           | 不适用                        | 不适用                                  | **有**（Firecracker，SDK exec）                                                | 沙箱 provider 候选                          |
+| 平台                                                          | 形态                           | SSE / 流式                                 | 单请求上限                                                                       | 后台循环                                                                                         | 缩容到 0                      | 镜像复用                                | 隔离沙箱                                                                       | 结论                                             |
+| ------------------------------------------------------------- | ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------ |
+| **Cloud Run**（services）                                     | 托管容器                       | 原生支持，逐块透传                         | 请求超时最长 60 分钟（服务级配置，官方文档为准）                                 | 需 worker pools（request 驱动不可靠）                                                            | 是（min-instances 0）         | 是                                      | 平台无 KVM；2026 新增 code execution 能力待验证                                | **首选**                                         |
+| **Cloud Run**（worker pools + Jobs）                          | 托管容器池 / 批处理            | worker pools 无外部 HTTP 入口；Jobs 无 SSE | Jobs 任务超时上限 24 小时                                                        | **是**（worker pools 承载常驻循环）                                                              | worker pools 可 0（会停循环） | 是                                      | 同上                                                                           | **首选方案的后台平面**                           |
+| **AWS Lambda + Web Adapter**                                  | 函数                           | LWA 支持 response streaming                | 15 分钟（异步/事件源 90 分钟的 Managed Instances 不适用于 HTTP 同步）            | 否                                                                                               | 是                            | 需打包 LWA                              | 无（Lambda MicroVMs 是另一产品）                                               | 仅备选                                           |
+| **AWS ECS Fargate / App Runner**                              | 托管容器                       | 原生                                       | 无硬上限（ALB 空闲超时可调）                                                     | 是                                                                                               | 否（Fargate 常驻计费）        | 是                                      | 无 KVM                                                                         | 仅备选                                           |
+| **AWS Lambda MicroVMs**                                       | 有状态 microVM（2026-10 新）   | 需自建网关                                 | 以官方为准                                                                       | 否                                                                                               | 是                            | 需镜像适配                              | 有（microVM）                                                                  | 沙箱候选                                         |
+| **Azure Container Apps**                                      | 托管容器                       | 原生                                       | ingress 默认 240s，可配到 2400s（40 分钟）                                       | Jobs 支持定时/事件触发；无 ingress 的常驻循环需 minReplicas≥1                                    | 是（min 0）                   | 是                                      | 无 KVM                                                                         | 备选（Azure 亲和时）                             |
+| **Vercel**（Functions + Queues + Cron + Sandbox + Workflows） | 函数 + 托管队列 + microVM 沙箱 | 支持 `StreamingResponse`；单个请求内可流式 | Hobby 300s；Pro/Ent 默认 300s、最大 800s（GA），1800s 为 Beta；Edge runtime 300s | 无长期进程：Queues worker / Cron（Pro 最小 1 分钟，Hobby 每天一次）/ Workflows（持久步骤，Beta） | 是                            | 否（Vercel 自建 Python 包，不复用镜像） | **Vercel Sandbox**（Firecracker microVM，Python SDK；argv 支持、stdin 不支持） | 前端 + API 网关 + 短服务可行，整仓需混合（§7.6） |
+| **Fly.io Machines**                                           | serverless VM（Firecracker）   | 无请求时长上限（长连接友好）               | 无                                                                               | 是（进程常驻，自动停/启）                                                                        | 是（auto_stop=suspend）       | 是                                      | **Machines 本身是 microVM**，可作为沙箱池                                      | **次选（改造最小）**                             |
+| **Modal**                                                     | Python 原生 serverless         | Web Functions / Streaming endpoints        | 以官方为准（函数有超时上限，长流需设计）                                         | 是（定时/队列/常驻容器）                                                                         | 是                            | 部分（Python 代码，ASGI 可挂）          | **Sandboxes 一等公民**（argv/文件/快照）                                       | **沙箱与批处理补充**                             |
+| **E2B**                                                       | 沙箱 PaaS                      | 不适用（只做沙箱）                         | 不适用                                                                           | 不适用                                                                                           | 不适用                        | 不适用                                  | **有**（Firecracker，SDK exec）                                                | 沙箱 provider 候选                               |
 
 > 说明：Cloud Run 的「请求超时 60 分钟 / Jobs 24 小时 / 默认并发 80」本环境无法访问官方正文（`cloud.google.com` 抓取失败），文档按官方文档既有口径记录并在验收阶段复核；Azure ACA 的 2400s 上限来自官方 `requestTimeoutSeconds` 文档与 Microsoft Q&A。
 
@@ -162,11 +162,11 @@
 
 **Cloud Run（首选）**。8 个服务全部是 FastAPI + uvicorn，镜像可直接推 Artifact Registry 部署；SSE 通过 HTTP/2 逐块透传，配合 `Last-Event-ID` 可在请求超时后无缝续流；后端平面拆成三类部署单元：
 
-- `services`：bff、account、llm-gateway、connector、knowledge、workspace、tool-service（请求驱动，可缩到 0）；
+- `services`：api-gateway、account、llm-gateway、connector、knowledge、workspace、tool-service（请求驱动，可缩到 0）；
 - `worker pools`：orchestrator 的 outbox dispatcher / jobs worker / interrupts sweeper、workspace 的 sandbox reaper（常驻循环，不接 HTTP 或不依赖 HTTP）；
 - `Jobs`：6 库 alembic 迁移、本地到云的数据迁移、过期 tool_calls 清理（一次执行或定时触发）。
 
-缺口与对策：① 沙箱不可用（无 KVM）→ 接 E2B 或 Modal Sandboxes 作为 `SandboxProvider` 实现（§5.6）；② 请求超时上限 → SSE 客户端续流 + run 状态机幂等（§5.7）；③ 进程内限流（`bff/main.py:67-89`）多实例失效 → 用 Cloud Armor + 实例级限流或 Redis（§5.8）；④ 服务间 URL 从 `127.0.0.1` 改为 Cloud Run 服务 URL，内网走 Serverless VPC Connector / Direct VPC egress（§5.2）。
+缺口与对策：① 沙箱不可用（无 KVM）→ 接 E2B 或 Modal Sandboxes 作为 `SandboxProvider` 实现（§5.6）；② 请求超时上限 → SSE 客户端续流 + run 状态机幂等（§5.7）；③ 进程内限流（`api_gateway/main.py:67-89`）多实例失效 → 用 Cloud Armor + 实例级限流或 Redis（§5.8）；④ 服务间 URL 从 `127.0.0.1` 改为 Cloud Run 服务 URL，内网走 Serverless VPC Connector / Direct VPC egress（§5.2）。
 
 **Fly.io（次选，改造最小）**。同一个镜像 `fly deploy` 即可跑；Machines 是 Firecracker microVM，天然支持长连接（无请求时长上限），`auto_stop_machines = suspend` + `min_machines_running` 兼顾成本与后台循环；对象存储用 Tigris（S3 兼容）；Postgres 用 Managed Postgres 或 Neon。最大优势是**可以把 workspace-service 的 SandboxProvider 直接实现成 Fly Machines provider**（自建沙箱池，替代 microsandbox），不需要引入 E2B/Modal。代价：多区域/高可用与合规能力弱于 GCP/AWS；Machines 的磁盘是临时盘，交付物仍要对象存储。
 
@@ -184,7 +184,7 @@
 
 ③ **没有 KVM**：microsandbox 用不了，需换 Vercel Sandbox（Firecracker microVM，Python SDK，单 session 上限 Hobby 45 分钟 / Pro·Enterprise 24 小时）。
 
-结论：Vercel 适合承载 `apps/web` + BFF + 无状态短请求服务（account/llm-gateway/connector/knowledge/tool 只读），orchestrator 与 workspace 的常驻部分要外置；完整路线与改造清单见 §7.6。
+结论：Vercel 适合承载 `apps/web` + API 网关 + 无状态短请求服务（account/llm-gateway/connector/knowledge/tool 只读），orchestrator 与 workspace 的常驻部分要外置；完整路线与改造清单见 §7.6。
 
 **Cloudflare Workers/Containers**：CPU 时间 Paid 上限 5 分钟、内存 128MB、Python Workers 不支持 FastAPI/ASGI（不是 CPython 全量运行时），与现有服务不兼容；Containers 可跑镜像但等于托管容器且受 CPU/内存/网络约束更严；R2 可作对象存储。结论：不用它承载后端，如需要边缘缓存可在 CDN 层叠加。
 
@@ -194,15 +194,15 @@
 
 ### 3.4 分场景推荐
 
-| 场景                                                        | 推荐                                                                                                            | 理由                                                                                           |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| 最小改造、单人/小团队维护、要尽快上线                       | **Fly.io Machines 全量**                                                                                        | 镜像不变、SSE 无请求上限、Machines 兼作沙箱、`auto_stop=suspend` 控成本；约 6-10 人日          |
-| 标准云、需要托管 PG/对象存储/密钥/审计、团队 3 人以上       | **Cloud Run（services + worker pools + Jobs）+ Cloud SQL/Neon + GCS + E2B/Modal 沙箱**                          | 生态完整、按请求计费、与 GitHub Actions/WIF 集成好；约 13-19 人日                              |
-| 已深度使用 AWS（IAM/VPC/账单）                              | **ECS Fargate 常驻 + Lambda Web Adapter 接 HTTP/SSE + Aurora Serverless v2 + S3**                               | 避免跨云；代价是双层部署与 LWA 适配，25 人日以上                                               |
-| 主要在 Azure                                                | **Azure Container Apps + Azure Database for PostgreSQL + Blob Storage**                                         | ACA 与现有镜像兼容；注意 40 分钟 ingress 上限与常驻 worker 成本                                |
-| 想保留 Python 原生开发体验、重沙箱/批处理（评测、批量生成） | **Modal 托管 orchestrator/tool-service + Sandboxes；前端与 BFF 仍在 Cloud Run/Fly**                             | Modal 的 Sandbox/Queue/定时能力最贴合 agent 场景                                               |
-| 团队偏好 Vercel 生态、希望前端与 API 同平台                 | **Vercel（web + BFF + 短请求服务）+ 外部常驻 orchestrator/workspace（Cloud Run 或 Fly）+ Vercel Sandbox/Modal** | FastAPI 官方支持、同源部署最省事；但函数 ≤800s 且无长期进程，长 run 与后台循环必须外置（§7.6） |
-| 只托管官网与静态前端                                        | **Vercel / Cloudflare Pages + 独立 API 域名**                                                                   | 与后端解耦；注意 Cookie 同源约束需 LB 路由 `/api`                                              |
+| 场景                                                        | 推荐                                                                                                                 | 理由                                                                                           |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 最小改造、单人/小团队维护、要尽快上线                       | **Fly.io Machines 全量**                                                                                             | 镜像不变、SSE 无请求上限、Machines 兼作沙箱、`auto_stop=suspend` 控成本；约 6-10 人日          |
+| 标准云、需要托管 PG/对象存储/密钥/审计、团队 3 人以上       | **Cloud Run（services + worker pools + Jobs）+ Cloud SQL/Neon + GCS + E2B/Modal 沙箱**                               | 生态完整、按请求计费、与 GitHub Actions/WIF 集成好；约 13-19 人日                              |
+| 已深度使用 AWS（IAM/VPC/账单）                              | **ECS Fargate 常驻 + Lambda Web Adapter 接 HTTP/SSE + Aurora Serverless v2 + S3**                                    | 避免跨云；代价是双层部署与 LWA 适配，25 人日以上                                               |
+| 主要在 Azure                                                | **Azure Container Apps + Azure Database for PostgreSQL + Blob Storage**                                              | ACA 与现有镜像兼容；注意 40 分钟 ingress 上限与常驻 worker 成本                                |
+| 想保留 Python 原生开发体验、重沙箱/批处理（评测、批量生成） | **Modal 托管 orchestrator/tool-service + Sandboxes；前端与 API 网关仍在 Cloud Run/Fly**                              | Modal 的 Sandbox/Queue/定时能力最贴合 agent 场景                                               |
+| 团队偏好 Vercel 生态、希望前端与 API 同平台                 | **Vercel（web + API 网关 + 短请求服务）+ 外部常驻 orchestrator/workspace（Cloud Run 或 Fly）+ Vercel Sandbox/Modal** | FastAPI 官方支持、同源部署最省事；但函数 ≤800s 且无长期进程，长 run 与后台循环必须外置（§7.6） |
+| 只托管官网与静态前端                                        | **Vercel / Cloudflare Pages + 独立 API 域名**                                                                        | 与后端解耦；注意 Cookie 同源约束需 LB 路由 `/api`                                              |
 
 ## 4. 目标架构（以 Cloud Run 主线为例）
 
@@ -215,7 +215,7 @@
                     |                         |
         /api/*, /healthz                /* 静态资源
                     |                         |
-            BFF (Cloud Run service :8007)   GCS bucket + Cloud CDN
+            API 网关 (Cloud Run service :8007)   GCS bucket + Cloud CDN
                     |                         (apps/web dist)
       +-------------+-------------+------------------+
       |             |             |                  |
@@ -244,31 +244,31 @@
 
 ### 4.2 部署单元映射
 
-| 部署单元                | 现状（compose）      | 目标形态                                    | 角色                                                 | 入口                                | 伸缩                                     | 备注                                             |
-| ----------------------- | -------------------- | ------------------------------------------- | ---------------------------------------------------- | ----------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| `apps/web` 静态产物     | nginx 容器 :8080     | **GCS + Cloud CDN + LB 路由**               | SPA                                                  | 公网 `/`                            | CDN                                      | 构建产物 `dist/` 上传 bucket；`/index.html` 回退 |
-| `apps/site`             | Vercel               | Vercel（不变）                              | 官网                                                 | 公网                                | 平台托管                                 | 静态导出（`output: export`）                     |
-| bff                     | 容器 :8007           | Cloud Run **service**                       | 同源 API 门面、Cookie 会话、SSE 代理                 | 公网（仅经 LB `/api`）              | 0..N                                     | 限流需外置（§5.8）                               |
-| agent-orchestrator HTTP | 容器 :8002           | Cloud Run **service**（内部 ingress）       | run 编排 API、SSE、审批/回答                         | 仅 BFF 与浏览器直连（stream token） | 0..N                                     | LangGraph checkpointer = PG                      |
-| agent-orchestrator 循环 | 同进程               | Cloud Run **worker pool**                   | outbox dispatcher / jobs worker / interrupts sweeper | 无                                  | **max-instances=1**（先单实例，见 §4.6） | 需要能读 PG、调 llm-gateway                      |
-| account-service         | 容器 :8001           | Cloud Run service（内部）                   | 用户/组织/配额/JWT 签发                              | 仅 BFF 与服务间                     | 0..N                                     | 签名密钥必须持久（GCS KMS/Secret Manager 挂载）  |
-| llm-gateway             | 容器 :8003           | Cloud Run service（内部）                   | 唯一模型出口                                         | 仅内部                              | 0..N                                     | 上游超时 60s，注意 Cloud Run 超时配置            |
-| connector-service       | 容器 :8004           | Cloud Run service（内部）                   | 连接器框架                                           | 仅内部                              | 0..N                                     | 当前无内置连接器                                 |
-| knowledge-service       | 容器 :8006           | Cloud Run service（内部）                   | 文档知识库                                           | 仅内部                              | 0..N                                     | 本地 embedding 模型随镜像                        |
-| workspace-service HTTP  | 容器 :8005           | Cloud Run service（内部）                   | 工作区/交付物/沙箱生命周期                           | 仅内部                              | 0..N                                     | 沙箱 provider 换外部（§5.6）                     |
-| workspace 沙箱回收      | 同进程               | worker pool                                 | reaper 定时回收过期沙箱                              | 无                                  | 1                                        | 也可改 Cloud Scheduler + Job                     |
-| tool-service            | 容器 :8008           | Cloud Run service（内部）                   | 内置工具目录与执行面                                 | 仅 orchestrator                     | 0..N                                     | 纯 HTTP，无后台循环                              |
-| PostgreSQL 16（6 库）   | postgres 容器        | **Cloud SQL for PostgreSQL 16** 或 **Neon** | 业务库                                               | 私有 IP / connector                 | 托管                                     | 一服务一库保留                                   |
-| Redis 7                 | compose 起但业务未用 | 不部署                                      | -                                                    | -                                   | -                                        | 若后续做限流/缓存再上 Memorystore                |
-| migrate 作业            | compose `migrate`    | Cloud Run **Job**                           | 6 库 alembic upgrade head                            | 无                                  | 一次                                     | 部署流水线中先于服务发布执行                     |
+| 部署单元                | 现状（compose）      | 目标形态                                    | 角色                                                 | 入口                                    | 伸缩                                     | 备注                                             |
+| ----------------------- | -------------------- | ------------------------------------------- | ---------------------------------------------------- | --------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| `apps/web` 静态产物     | nginx 容器 :8080     | **GCS + Cloud CDN + LB 路由**               | SPA                                                  | 公网 `/`                                | CDN                                      | 构建产物 `dist/` 上传 bucket；`/index.html` 回退 |
+| `apps/site`             | Vercel               | Vercel（不变）                              | 官网                                                 | 公网                                    | 平台托管                                 | 静态导出（`output: export`）                     |
+| api-gateway             | 容器 :8007           | Cloud Run **service**                       | 同源 API 门面、Cookie 会话、SSE 代理                 | 公网（仅经 LB `/api`）                  | 0..N                                     | 限流需外置（§5.8）                               |
+| agent-orchestrator HTTP | 容器 :8002           | Cloud Run **service**（内部 ingress）       | run 编排 API、SSE、审批/回答                         | 仅 API 网关与浏览器直连（stream token） | 0..N                                     | LangGraph checkpointer = PG                      |
+| agent-orchestrator 循环 | 同进程               | Cloud Run **worker pool**                   | outbox dispatcher / jobs worker / interrupts sweeper | 无                                      | **max-instances=1**（先单实例，见 §4.6） | 需要能读 PG、调 llm-gateway                      |
+| account-service         | 容器 :8001           | Cloud Run service（内部）                   | 用户/组织/配额/JWT 签发                              | 仅 API 网关与服务间                     | 0..N                                     | 签名密钥必须持久（GCS KMS/Secret Manager 挂载）  |
+| llm-gateway             | 容器 :8003           | Cloud Run service（内部）                   | 唯一模型出口                                         | 仅内部                                  | 0..N                                     | 上游超时 60s，注意 Cloud Run 超时配置            |
+| connector-service       | 容器 :8004           | Cloud Run service（内部）                   | 连接器框架                                           | 仅内部                                  | 0..N                                     | 当前无内置连接器                                 |
+| knowledge-service       | 容器 :8006           | Cloud Run service（内部）                   | 文档知识库                                           | 仅内部                                  | 0..N                                     | 本地 embedding 模型随镜像                        |
+| workspace-service HTTP  | 容器 :8005           | Cloud Run service（内部）                   | 工作区/交付物/沙箱生命周期                           | 仅内部                                  | 0..N                                     | 沙箱 provider 换外部（§5.6）                     |
+| workspace 沙箱回收      | 同进程               | worker pool                                 | reaper 定时回收过期沙箱                              | 无                                      | 1                                        | 也可改 Cloud Scheduler + Job                     |
+| tool-service            | 容器 :8008           | Cloud Run service（内部）                   | 内置工具目录与执行面                                 | 仅 orchestrator                         | 0..N                                     | 纯 HTTP，无后台循环                              |
+| PostgreSQL 16（6 库）   | postgres 容器        | **Cloud SQL for PostgreSQL 16** 或 **Neon** | 业务库                                               | 私有 IP / connector                     | 托管                                     | 一服务一库保留                                   |
+| Redis 7                 | compose 起但业务未用 | 不部署                                      | -                                                    | -                                       | -                                        | 若后续做限流/缓存再上 Memorystore                |
+| migrate 作业            | compose `migrate`    | Cloud Run **Job**                           | 6 库 alembic upgrade head                            | 无                                      | 一次                                     | 部署流水线中先于服务发布执行                     |
 
 ### 4.3 请求路径与 SSE 续流
 
-普通请求：浏览器 → LB（`/api/*`）→ BFF（Cookie/CSRF 校验、租户解析）→ 目标服务（内部 JWT）→ 返回。
+普通请求：浏览器 → LB（`/api/*`）→ API 网关（Cookie/CSRF 校验、租户解析）→ 目标服务（内部 JWT）→ 返回。
 
 长任务与事件流：
 
-1. 浏览器 `POST /api/v1/conversations/{id}/messages/stream` 命中 BFF，BFF 判 `text/event-stream` 后走流式代理（`services/bff/bff/api/proxy.py:226-245`），不缓冲、不压缩。
+1. 浏览器 `POST /api/v1/conversations/{id}/messages/stream` 命中 API 网关，API 网关判 `text/event-stream` 后走流式代理（`services/api-gateway/api_gateway/api/proxy.py:226-245`），不缓冲、不压缩。
 2. LB 会把 SSE 连接保持到平台上限；Cloud Run 请求超时到点后连接被切，前端 `EventSource` 自动重连并带 `Last-Event-ID`。
 3. orchestrator 的 `GET /v1/runs/{id}/events/stream` 从 PG 按 `seq > Last-Event-ID` 回放（`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:169-175`），run 状态完全由 PG 推导，**不依赖粘性会话**。
 4. 人工审批/提问挂起期间没有活动连接：状态落在 `Run.status=awaiting_approval/awaiting_confirmation/awaiting_input` + LangGraph checkpointer；用户回来时 `POST /runs/{id}/approve|confirm|answer` 命中任意实例都能 resume。
@@ -280,7 +280,7 @@
 - **Postgres**：Cloud SQL for PostgreSQL 16（私有 IP + Cloud SQL Auth Proxy / Python Connector），或 Neon（连接串 + `sslmode=require`）。保留 6 个独立库（`beauty_account`/`beauty_agent`/`beauty_connector`/`beauty_knowledge`/`beauty_workspace`/`beauty_tool`），`alembic_version` 各自独立。
 - **连接数**：Cloud Run 多实例 + PG 连接数上限 → 必须用连接池（Cloud SQL 内置 connector + `pool_size` 限制，或 PgBouncer/Neon pooler）；orchestrator 的 PG checkpointer 另有 1 个连接池，需单独限额。
 - **迁移**：`alembic upgrade head` 在 Cloud Run Job 中按顺序执行 6 个库；部署流水线里 Job 成功后才发布服务（对应 compose 的 `migrate` 作业）。
-- **交付物**：orchestrator 与 workspace 的 `artifact_store` 从 `database|filesystem` 改为 `gcs`（新增 `GcsArtifactStore`，`common/artifacts.py` 已有 Protocol），下载走预签名 URL，避免大文件穿 BFF。
+- **交付物**：orchestrator 与 workspace 的 `artifact_store` 从 `database|filesystem` 改为 `gcs`（新增 `GcsArtifactStore`，`common/artifacts.py` 已有 Protocol），下载走预签名 URL，避免大文件穿 API 网关。
 - **备份/保留**：Cloud SQL 自动备份 + PITR；`tool_calls` 与 `run_events` 保留期策略由 Job 执行（设计文档 [tool-service.md](./tool-service.md) §17.1 的 30 天保留期）。
 
 ### 4.5 沙箱平面
@@ -351,22 +351,22 @@ CMD ["sh", "-c", "exec uvicorn ${SERVICE_MODULE}.main:app --host 0.0.0.0 --port 
 
 ### 5.2 配置分层与服务间寻址
 
-**现状**：所有服务默认 `127.0.0.1:80xx`（`services/bff/bff/core/config.py:19-24`、orchestrator/others 的 `*_SERVICE_URL`），compose 用容器名覆盖；BFF 还有 `app_origin`、`ready_probe_upstreams` 等本地默认。
+**现状**：所有服务默认 `127.0.0.1:80xx`（`services/api-gateway/api_gateway/core/config.py:19-24`、orchestrator/others 的 `*_SERVICE_URL`），compose 用容器名覆盖；API 网关还有 `app_origin`、`ready_probe_upstreams` 等本地默认。
 
 **改法**：
 
 1. 新增 `deploy/serverless/` 目录（与 `deploy/docker/` 并列），每个环境一份 `.env.yaml` 或 Terraform 变量：
-   - 服务间地址：`BFF__RUNTIME_BASE_URL=https://orchestrator-xxx.a.run.app`（内部 ingress 时同 URL，靠 IAM 限制调用方）；
+   - 服务间地址：`API_GATEWAY__RUNTIME_BASE_URL=https://orchestrator-xxx.a.run.app`（内部 ingress 时同 URL，靠 IAM 限制调用方）；
    - 账户签发：`*__AUTH_ISSUER=https://account-xxx.a.run.app`；
    - 内部密钥：`*__INTERNAL_SECRET` 从 Secret Manager 注入；
    - `*__DATABASE_URL` 用 Cloud SQL 实例连接名或 Neon 连接串；
    - `*__AUTO_CREATE_TABLES=false`（生产契约不变）。
 
-2. 内部服务用 **Cloud Run internal ingress + IAM**（或 `--no-allow-unauthenticated`），只有 BFF 的 service account 被授予 `roles/run.invoker`；或统一走 Serverless VPC Connector 走私网。
+2. 内部服务用 **Cloud Run internal ingress + IAM**（或 `--no-allow-unauthenticated`），只有 API 网关的 service account 被授予 `roles/run.invoker`；或统一走 Serverless VPC Connector 走私网。
 
 3. 不要引入服务发现组件：服务 URL 是稳定的，直接配环境变量（compose 的容器名 === Cloud Run 服务名，配置形态一致）。
 
-**验收**：在 Cloud Run 上 `curl` 内部服务 URL（无 IAM 令牌）返回 403；带 BFF SA 令牌返回 200；服务间日志里不再出现 `127.0.0.1`。
+**验收**：在 Cloud Run 上 `curl` 内部服务 URL（无 IAM 令牌）返回 403；带 API 网关 SA 令牌返回 200；服务间日志里不再出现 `127.0.0.1`。
 
 ### 5.3 API 与 worker 角色拆分（orchestrator 关键改造）
 
@@ -424,7 +424,7 @@ class ArtifactStore(Protocol):
 ```
 
 - 用 `boto3` 同步客户端 + `anyio.to_thread`（不引 aiobotocore，少一个依赖）；`backend=s3` + `bucket`/`region`/`endpoint_url`/`prefix`/`presign_ttl_seconds` 配置，key 继续用 `build_artifact_key`，S3 层只加 prefix；
-- 新增 **预签名下载 URL**（`presigned_url(key, expires)`，TTL ≤300s）；两种接法：BFF 透传 307（省带宽、暴露 bucket 域）或 BFF 跟随 307 拉流转发（行为不变、多一跳）——v1 选后者，前者作带宽优化；
+- 新增 **预签名下载 URL**（`presigned_url(key, expires)`，TTL ≤300s）；两种接法：API 网关透传 307（省带宽、暴露 bucket 域）或 API 网关跟随 307 拉流转发（行为不变、多一跳）——v1 选后者，前者作带宽优化；
 - 凭据不用静态 key：走 workload identity（Cloud Run service account / ECS task role / ACA managed identity），boto3 默认 credential chain；bucket 全 public access block、禁 ACL、默认 SSE；
 - `build_artifact_store` 增加 `s3` 分支；orchestrator/workspace 的 `ARTIFACT_STORE=s3`；
 - 本地 compose 仍默认 `database|filesystem`（保持零云依赖的本地开发）。
@@ -460,13 +460,13 @@ destroy(name)        -> sandbox.kill()
 
 **需要改的是三处超时配置**：
 
-1. **Cloud Run 请求超时**：服务级 `--timeout`（默认 300s，可配到 3600s）。orchestrator 与 BFF 设 3600s；其他内部服务 60s 足够。
+1. **Cloud Run 请求超时**：服务级 `--timeout`（默认 300s，可配到 3600s）。orchestrator 与 API 网关设 3600s；其他内部服务 60s 足够。
 2. **负载均衡后端超时**：Global LB 的 backend service `timeoutSec` 默认 30s，必须调到与 Cloud Run 一致（3600），否则 LB 先断。
-3. **BFF 上游客户端**：`services/bff/bff/main.py:42-47` 是 `httpx.Timeout(30.0, connect=5.0)`（httpx 的 30s 同时是连接/读/写/池超时，读超时是**每次 read 的间隔上限**，不是整条流的总时长）。orchestrator 的 SSE keepalive 每 `sse_keepalive_polls(30) × sse_poll_interval(0.5s) = 15s` 发一帧（`core/config.py:29-30`、`services/run_stream.py:81-83`），15s < 30s，因此**当前长流不会因 BFF 超时断**——但这是两个默认值的巧合。改法：新增 `BFF__STREAM_READ_TIMEOUT_SECONDS`（默认 0=不限制），流式代理单独建 `httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0))`；`proxy.py:226-245` 的 `_proxy_stream` 已用 `stream=True` + `BackgroundTask aclose`，只换 client 即可。
+3. **API 网关上游客户端**：`services/api-gateway/api_gateway/main.py:42-47` 是 `httpx.Timeout(30.0, connect=5.0)`（httpx 的 30s 同时是连接/读/写/池超时，读超时是**每次 read 的间隔上限**，不是整条流的总时长）。orchestrator 的 SSE keepalive 每 `sse_keepalive_polls(30) × sse_poll_interval(0.5s) = 15s` 发一帧（`core/config.py:29-30`、`services/run_stream.py:81-83`），15s < 30s，因此**当前长流不会因 API 网关超时断**——但这是两个默认值的巧合。改法：新增 `API_GATEWAY__STREAM_READ_TIMEOUT_SECONDS`（默认 0=不限制），流式代理单独建 `httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0))`；`proxy.py:226-245` 的 `_proxy_stream` 已用 `stream=True` + `BackgroundTask aclose`，只换 client 即可。
 
 另：`POST /conversations/{id}/messages/stream`（chat 模式直答）没有事件 `seq`，断线不能精确续传。现状可接受：assistant 消息由服务端落库，前端重连失败后重新拉会话消息即可恢复最终正文；若要逐字恢复，后续给 chat 流加单调 `seq` 并复用同一套游标（列为 P2 增强，不阻塞上云）。
 
-**验收**：把 Cloud Run 超时临时调成 60s、制造超过 60s 的 run，确认前端自动重连、事件不重复不丢失（按 seq 去重）；BFF 日志无 `ReadTimeout`。
+**验收**：把 Cloud Run 超时临时调成 60s、制造超过 60s 的 run，确认前端自动重连、事件不重复不丢失（按 seq 去重）；API 网关日志无 `ReadTimeout`。
 
 ### 5.8 认证、密钥、Cookie 与限流
 
@@ -476,28 +476,28 @@ destroy(name)        -> sandbox.kill()
 | ---------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | account 签名密钥 | `core/idp.py:99-118` 空则进程内生成（`account/main.py:95-107` 注释已写明多实例/重启必须持久） | 生成一次写入 Secret Manager：优先支持新增 `ACCOUNT__SIGNING_KEY_PEM`（直接注入 PEM 字符串，代码优先级 PEM > path），或 `SIGNING_KEY_PATH` 指向只读挂载；JWT 才能跨实例一致               |
 | 内部签发密钥     | `INTERNAL_SECRET`（compose 明文 env，`docker-compose.yml:228` 等）                            | Secret Manager + `--set-secrets` 注入；轮换用双密钥过渡（`internal_secret` 支持列表后需要改造，先单密钥 + 变更窗口）                                                                     |
-| BFF 会话         | `session_secret` 默认 dev、`cookie_secure=False`、`app_origin=http://localhost:5173`          | 生产 `COOKIE_SECURE=true`、`APP_ORIGIN=https://app.example.com`（与 LB 同源）、`SESSION_SECRET` 走 Secret Manager                                                                        |
+| API 网关会话     | `session_secret` 默认 dev、`cookie_secure=False`、`app_origin=http://localhost:5173`          | 生产 `COOKIE_SECURE=true`、`APP_ORIGIN=https://app.example.com`（与 LB 同源）、`SESSION_SECRET` 走 Secret Manager                                                                        |
 | CSRF             | 双提交 Cookie + header（现状已实现）                                                          | 不变；同源约束由 LB 路由 `/api/*` 保证                                                                                                                                                   |
-| 限流             | `bff/main.py:67-89` 进程内滑动窗口                                                            | ① Cloud Armor 按 IP/路径限流（边缘）；② 需要按租户限流时用 Memorystore Redis 或 account-service 的配额（已有 usage ledger）；进程内限流保留为兜底（多实例时放大 N 倍，不可作为唯一手段） |
+| 限流             | `api_gateway/main.py:67-89` 进程内滑动窗口                                                    | ① Cloud Armor 按 IP/路径限流（边缘）；② 需要按租户限流时用 Memorystore Redis 或 account-service 的配额（已有 usage ledger）；进程内限流保留为兜底（多实例时放大 N 倍，不可作为唯一手段） |
 | CORS             | 当前同源，无 CORS 配置                                                                        | 保持同源；若前端与 API 分域，必须补 CORS + `SameSite=None; Secure`，不推荐                                                                                                               |
 
 **验收**：两个实例重启后旧 access token 仍可校验（密钥持久）；`Set-Cookie` 带 `Secure; HttpOnly; SameSite=Lax`；连续请求超过限流阈值返回 429（边缘或服务端一致）。
 
 ### 5.9 前端静态托管与同源路由
 
-**现状**：`apps/web` 构建产物由 nginx 容器托管（`deploy/web/nginx.conf`），`/api` 反代 BFF；本地 dev 用 Vite 代理（`vite.config.ts:11-16`）。
+**现状**：`apps/web` 构建产物由 nginx 容器托管（`deploy/web/nginx.conf`），`/api` 反代 API 网关；本地 dev 用 Vite 代理（`vite.config.ts:11-16`）。
 
 **改法（Cloud Run 路线）**：
 
 1. `npx nx build @beauty/web` 产物上传 GCS bucket，开启 Cloud CDN；
-2. Global LB 配置两条 path matcher：`/api/*`、`/healthz`、`/readyz` → BFF 的 serverless NEG；`/*` → GCS backend bucket；
+2. Global LB 配置两条 path matcher：`/api/*`、`/healthz`、`/readyz` → API 网关的 serverless NEG；`/*` → GCS backend bucket；
 3. SPA 回退：GCS 无法像 nginx `try_files` 那样回退 `index.html`；用 LB 的 custom error response（404 → `/index.html`，200）或 Cloud CDN 的 SPA 模式；
 4. 缓存：`assets/*`（带 hash）`Cache-Control: public, max-age=31536000, immutable`；`index.html` `no-cache`；
 5. 前端环境：`VITE_AUTH_MODE=session`、`VITE_RUNS_API_URL` 留空（同源），构建时注入；不要在前端打包任何密钥。
 
-Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成公网/internal 服务地址；Modal/其他平台同理，静态层可继续用 Vercel/Cloudflare Pages + 自定义域把 `/api` 反代到 BFF（Vercel rewrites 可反代 SSE，但代理链同样受函数/请求时长约束，长流仍要 `Last-Event-ID` 续流）。
+Fly.io 路线可保留 nginx 容器（镜像不变），只把 `api-gateway:8007` 改成公网/internal 服务地址；Modal/其他平台同理，静态层可继续用 Vercel/Cloudflare Pages + 自定义域把 `/api` 反代到 API 网关（Vercel rewrites 可反代 SSE，但代理链同样受函数/请求时长约束，长流仍要 `Last-Event-ID` 续流）。
 
-**验收**：直接访问 `https://app.example.com/runs` 返回 SPA（不是 404）；`https://app.example.com/api/health` 返回 BFF 健康；Cookie 在 https 下正常下发。
+**验收**：直接访问 `https://app.example.com/runs` 返回 SPA（不是 404）；`https://app.example.com/api/health` 返回 API 网关健康；Cookie 在 https 下正常下发。
 
 ### 5.10 可观测性
 
@@ -506,12 +506,12 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 **改法**：
 
 1. 日志：Cloud Run 自动采集 stdout/stderr 到 Cloud Logging，无需 agent；确认 `LOG_LEVEL` 与 JSON 结构化输出（现有 structlog 配置）。
-2. 追踪：设 `OTEL_EXPORTER_OTLP_ENDPOINT`（Cloud Trace 或自建 Collector）；Cloud Run 提供 `traceparent` 头，BFF 透传即可串起全链路。
+2. 追踪：设 `OTEL_EXPORTER_OTLP_ENDPOINT`（Cloud Trace 或自建 Collector）；Cloud Run 提供 `traceparent` 头，API 网关透传即可串起全链路。
 3. 指标：保留进程内 `/metrics`（若有）；serverless 实例频繁重建，指标以 Cloud Monitoring 为主，业务指标（tool_calls_total 等）通过 OTel metrics exporter 上报。
 4. Sentry：`SENTRY_DSN` 走 Secret Manager；release 用镜像 tag。
 5. 告警：Cloud Monitoring 告警策略（5xx 比例、p95 延迟、Cloud SQL 连接数、Job 失败）替代 compose 的人工观察。
 
-**验收**：一次请求在 Cloud Trace 里能看到 BFF → orchestrator → llm-gateway 的 span；错误日志能在 Cloud Logging 按 trace id 检索；Sentry 有 release 标记。
+**验收**：一次请求在 Cloud Trace 里能看到 API 网关 → orchestrator → llm-gateway 的 span；错误日志能在 Cloud Logging 按 trace id 检索；Sentry 有 release 标记。
 
 ### 5.11 CI/CD 与 IaC
 
@@ -519,7 +519,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 
 **改法**：
 
-1. 新增 `.github/workflows/deploy.yml`（手动触发或 main 分支），五个 job：`build-push`（复用 Dockerfile，按 SERVICE 矩阵 buildx 构建并推 Artifact Registry/ECR，输出 digest）→ `migrate`（平台 Job 等成功）→ `deploy`（按 digest 更新 8 个服务 + BFF + 静态前端）→ `smoke`（`/healthz` 全服务、`/readyz`、关键 API、前端首页）→ `rollback`（smoke 失败自动重部署上一 digest，DB 不 downgrade）。
+1. 新增 `.github/workflows/deploy.yml`（手动触发或 main 分支），五个 job：`build-push`（复用 Dockerfile，按 SERVICE 矩阵 buildx 构建并推 Artifact Registry/ECR，输出 digest）→ `migrate`（平台 Job 等成功）→ `deploy`（按 digest 更新 8 个服务（含 API 网关）+ 静态前端）→ `smoke`（`/healthz` 全服务、`/readyz`、关键 API、前端首页）→ `rollback`（smoke 失败自动重部署上一 digest，DB 不 downgrade）。
 2. 认证：GitHub OIDC + Workload Identity Federation（不落长期密钥）；Secret Manager 存运行时密钥；prod 用 GitHub Environment 审批 + 全局 `concurrency: deploy-<env>`。
 3. IaC：`deploy/serverless/terraform/`（modules + envs/staging|prod）管理 Cloud Run 服务/worker pool/Jobs/LB/Cloud SQL/GCS/Secret/IAM；镜像按 digest 部署（不可变），tag 另打 `sha-<git sha>` 与 `v<semver>`。
 4. 现有 9 个质量 job 不动；新增 `deploy.yml` 与 CI 门禁解耦（合并到 main 只跑质量门禁，部署由 tag/手动触发）。
@@ -537,14 +537,14 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 
 ### 5.13 顺带修复的既有缺口（与 serverless 无关，但上云前必须修）
 
-| 缺口                   | 现状证据                                                                                                                                                                                | 影响                                                        | 修法                                                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| 镜像未打包 `skills/`   | `deploy/docker/python-service.Dockerfile:31-33` 只 COPY `packages`/`services`；`skills.py:16` 用 `parents[4]/skills` 定位，镜像内不存在 → 启动告警并返回空技能清单（`skills.py:30-34`） | 技能包功能在容器部署下一直是空的（本地 compose 同样受影响） | Dockerfile 增加 `COPY skills ./skills`（或 `AGENT_ORCHESTRATOR__SKILLS_DIR` 指向只读挂载）；加一条启动后 `GET /v1/skills` 非空的冒烟测试 |
-| outbox claim 无锁      | `packages/events/events/outbox.py:119-133` 普通 SELECT；`drain_once` 注释承认第 2、3 步之间崩溃会重投（`:267-311`）                                                                     | 多实例 dispatcher 会放大重复投递                            | 单实例 worker 兜底；后续给 claim 加 `FOR UPDATE SKIP LOCKED` + `dispatching` 状态                                                        |
-| jobs 租约无续期        | `repositories.py:337-356` 只在 claim 时写 `lease_until`；`jobs_worker.py:148,161` 只清空，无心跳                                                                                        | run 执行超过 60s 会被另一实例重领重跑                       | worker 单实例兜底；后续在 `_dispatch` 期间周期续租 + `JOBS_LEASE_SECONDS` 调到覆盖最长 run（如 900）                                     |
-| 启动自动建表           | `service_kit/lifespan.py:26-41` 仅在 `auto_create_tables=true` 时 `create_all`                                                                                                          | 误配会让多实例并发建表                                      | 生产保持 false；新增 `MIGRATE_ON_STARTUP=false` 并启动校验                                                                               |
-| 交付物本地目录         | workspace `artifact_store=filesystem` + `./.artifacts`（`workspace/core/config.py:19-20`）；orchestrator `./.documents`（`:126`）                                                       | serverless 本地盘不共享/不持久                              | 短期 workspace 改 `database`（零代码），中期对象存储（§5.5）                                                                             |
-| BFF readiness 依赖上游 | `bff/core/config.py:38` `ready_probe_upstreams=False`（默认不探测）                                                                                                                     | 若打开，冷启动时会因上游未起而一直 not ready                | 保持 false；平台 readiness 只看 BFF 自身 DB/进程健康                                                                                     |
+| 缺口                 | 现状证据                                                                                                                                                                                | 影响                                                        | 修法                                                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 镜像未打包 `skills/` | `deploy/docker/python-service.Dockerfile:31-33` 只 COPY `packages`/`services`；`skills.py:16` 用 `parents[4]/skills` 定位，镜像内不存在 → 启动告警并返回空技能清单（`skills.py:30-34`） | 技能包功能在容器部署下一直是空的（本地 compose 同样受影响） | Dockerfile 增加 `COPY skills ./skills`（或 `AGENT_ORCHESTRATOR__SKILLS_DIR` 指向只读挂载）；加一条启动后 `GET /v1/skills` 非空的冒烟测试 |
+| outbox claim 无锁    | `packages/events/events/outbox.py:119-133` 普通 SELECT；`drain_once` 注释承认第 2、3 步之间崩溃会重投（`:267-311`）                                                                     | 多实例 dispatcher 会放大重复投递                            | 单实例 worker 兜底；后续给 claim 加 `FOR UPDATE SKIP LOCKED` + `dispatching` 状态                                                        |
+| jobs 租约无续期      | `repositories.py:337-356` 只在 claim 时写 `lease_until`；`jobs_worker.py:148,161` 只清空，无心跳                                                                                        | run 执行超过 60s 会被另一实例重领重跑                       | worker 单实例兜底；后续在 `_dispatch` 期间周期续租 + `JOBS_LEASE_SECONDS` 调到覆盖最长 run（如 900）                                     |
+| 启动自动建表         | `service_kit/lifespan.py:26-41` 仅在 `auto_create_tables=true` 时 `create_all`                                                                                                          | 误配会让多实例并发建表                                      | 生产保持 false；新增 `MIGRATE_ON_STARTUP=false` 并启动校验                                                                               |
+| 交付物本地目录       | workspace `artifact_store=filesystem` + `./.artifacts`（`workspace/core/config.py:19-20`）；orchestrator `./.documents`（`:126`）                                                       | serverless 本地盘不共享/不持久                              | 短期 workspace 改 `database`（零代码），中期对象存储（§5.5）                                                                             |
+| API 网关就绪依赖上游 | `api_gateway/core/config.py:38` `ready_probe_upstreams=False`（默认不探测）                                                                                                             | 若打开，冷启动时会因上游未起而一直 not ready                | 保持 false；平台 readiness 只看 API 网关自身 DB/进程健康                                                                                 |
 
 ## 6. 分阶段实施步骤
 
@@ -555,7 +555,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 | 任务           | 内容                                                                                                                                                 | 验收                                                                                                      |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | 0.1 沙箱 spike | 用 E2B、Modal Sandboxes、Fly Machines 各写一个最小 PoC：`create → exec(argv+stdin) → write_file/read_file → destroy`；测 10 并发、p95 延迟、单次计费 | 三选一（或二选一）结论写回本文 §4.5；tool-service 的 helper 协议（stdin JSON → stdout JSON）在 PoC 上跑通 |
-| 0.2 长流验证   | Cloud Run 30 分钟以上 SSE + LB backend timeout + 断线重连（`Last-Event-ID`）；同时验证 BFF 流式代理不缓冲                                            | 事件不丢不重；断线 5s 内自动续流；BFF 无 `ReadTimeout`                                                    |
+| 0.2 长流验证   | Cloud Run 30 分钟以上 SSE + LB backend timeout + 断线重连（`Last-Event-ID`）；同时验证 API 网关流式代理不缓冲                                        | 事件不丢不重；断线 5s 内自动续流；API 网关无 `ReadTimeout`                                                |
 | 0.3 PG 与迁移  | 建 Cloud SQL/Neon 实例，跑 `deploy/serverless/migrate.sh`（6 库），再起一个服务连上去                                                                | 6 库 `alembic_version` 正确；服务 `/readyz` 通过                                                          |
 | 0.4 镜像改造   | `PORT` 入口、`COPY skills/`、探针、`MIGRATE_ON_STARTUP` 校验；本地 compose 回归                                                                      | `docker run -e PORT=xxxx` 正常；`scripts/golden-run/golden-run.sh` 9/9；技能清单非空                      |
 
@@ -563,19 +563,19 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 
 ### 阶段 1：无状态服务上云（2-3 人日）
 
-1. 部署 account-service / llm-gateway / connector-service / knowledge-service / bff 到 staging（容器镜像、内部 ingress、Secret Manager、平台 URL 注入）。
-2. 固定 staging 域名：`staging-api.example.com`（LB → BFF），account/其他服务用内部 URL。
-3. BFF 配置：`APP_ORIGIN`、`COOKIE_SECURE`、`SESSION_SECRET`、6 个上游 URL、`INTERNAL_SECRET`。
-4. 冒烟：登录/刷新 token/知识库检索/outbox 运维接口（若启用）全链路走 BFF。
+1. 部署 account-service / llm-gateway / connector-service / knowledge-service / api-gateway 到 staging（容器镜像、内部 ingress、Secret Manager、平台 URL 注入）。
+2. 固定 staging 域名：`staging-api.example.com`（LB → API 网关），account/其他服务用内部 URL。
+3. API 网关配置：`APP_ORIGIN`、`COOKIE_SECURE`、`SESSION_SECRET`、6 个上游 URL、`INTERNAL_SECRET`。
+4. 冒烟：登录/刷新 token/知识库检索/outbox 运维接口（若启用）全链路走 API 网关。
 
-**验收**：`curl https://staging-api.example.com/api/health` 200；登录后 Cookie 正确；两个 BFF 实例间会话可通（无粘性）。
+**验收**：`curl https://staging-api.example.com/api/health` 200；登录后 Cookie 正确；两个 API 网关实例间会话可通（无粘性）。
 
 ### 阶段 2：orchestrator 上云（3-4 人日）
 
 1. 加 `ROLE=api|worker|all`（§5.3），orchestrator 与 workspace 各拆出一个 worker 部署单元；worker pool 先 `max-instances=1`。
 2. PG checkpointer 强制启用（`postgres` URL 即走 `AsyncPostgresSaver`），并把 saver 建表放进迁移 Job（避免并发 `setup()`）。
 3. 迁移 Job 进流水线；`MIGRATE_ON_STARTUP=false`。
-4. SSE：Cloud Run timeout 3600s、LB backend timeout 3600s、BFF 流式 client 独立超时；验证 ask_question/审批挂起 10 分钟后 resume 落到另一个实例。
+4. SSE：Cloud Run timeout 3600s、LB backend timeout 3600s、API 网关流式 client 独立超时；验证 ask_question/审批挂起 10 分钟后 resume 落到另一个实例。
 5. 黄金 run（进程内零网络）在 CI 继续跑；新增 staging 上的真实 run 冒烟（建 run → 审批 → 完成）。
 
 **验收**：staging 建 run 并完成；两个实例轮换（手动 kill 一个）不影响恢复；SSE 断线续传无重复事件。
@@ -592,7 +592,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 
 ### 阶段 4：前端静态与流量切换（2-3 人日）
 
-1. `apps/web` 产物上 GCS + CDN；LB path routing（`/api/*` → BFF，`/*` → bucket），SPA 回退。
+1. `apps/web` 产物上 GCS + CDN；LB path routing（`/api/*` → API 网关，`/*` → bucket），SPA 回退。
 2. 域名与证书：`app.example.com`；Cookie 域名/secure/samesite 校验；CSP/安全头在 LB 或 CDN 层补。
 3. 灰度：先内部用户 → 5% → 50% → 100%；回滚用 LB 权重切回旧环境（Fly/容器）。
 4. 观测：Cloud Monitoring 看板 + 告警（5xx、SSE 断连率、run 滞留数、沙箱失败率、PG 连接数）。
@@ -616,7 +616,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `bff:8007` 改成
 ```toml
 # fly.toml（示意，仅示意，不落仓库）
 [processes]
-  app = "uvicorn bff.main:app --host 0.0.0.0 --port 8080"
+  app = "uvicorn api_gateway.main:app --host 0.0.0.0 --port 8080"
   worker = "python -m agent_orchestrator.worker"
 
 [http_service]
@@ -663,7 +663,7 @@ def sweep():
 - 沙箱：Modal Sandboxes 直接作为 provider（exec argv + stdin + filesystem + idle_timeout + block_network），**这条路线沙箱契约匹配度最高**。
 - 对象存储：Modal Volumes 不适合多实例共享大文件，用外部 S3/GCS。
 - 数据库：Modal 不托管 PG，用 Neon/Supabase/自建。
-- SSE：Streaming endpoint 可用，但需实测长连接与平台超时；更合适的形态是「BFF/orchestrator 在 Cloud Run/Fly，代码执行与沙箱在 Modal」的混合部署。
+- SSE：Streaming endpoint 可用，但需实测长连接与平台超时；更合适的形态是「API 网关/orchestrator 在 Cloud Run/Fly，代码执行与沙箱在 Modal」的混合部署。
 - 风险：平台绑定较强（编程模型、镜像构建、定时语义），团队需接受 Modal 的部署心智。
 
 ### 7.3 AWS（LWA + Fargate + Aurora）
@@ -695,21 +695,21 @@ def sweep():
 | Azure ACA         | 中（12-16 人日）            | 40 分钟 + 续流                     | minReplicas≥1                  | 外部 provider              | 中       | 常驻 worker 无法缩容                  |
 | Vercel（D1 混合） | 中-大（15-22 人日）         | 800s（Pro GA）/1800s（Beta）+ 续流 | 无（改 Queues/Cron）+ 外部常驻 | 原生 Vercel Sandbox        | 低-中    | 函数时长硬顶、两套部署、平台绑定最深  |
 
-### 7.6 Vercel 路线（前端 + BFF + Functions + 外部常驻 worker）
+### 7.6 Vercel 路线（前端 + API 网关 + Functions + 外部常驻 worker）
 
 先纠正一个表述：Vercel 的 Python runtime 官方支持 ASGI/WSGI，**FastAPI 可以零配置作为 Functions 运行**（[Vercel 官方 FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi)），`StreamingResponse`、lifespan events、build commands 都支持。所以正确的结论不是「Vercel 不能部署」，而是「本仓库 8 个 FastAPI 服务不能整体原样搬到 Vercel」。根因只有两条，与 FastAPI 支持无关：
 
 - **单次函数时长封顶**：Hobby 300s；Pro/Enterprise 默认 300s，`maxDuration` 最大 800s（GA），1800s（30 分钟）为 Beta 且需函数级配置与特定 Python 版本；超时 504 `FUNCTION_INVOCATION_TIMEOUT`。
 - **没有长期进程**：outbox dispatcher（1s 轮询）、jobs worker（60s 租约）、interrupts sweeper（15s）、sandbox reaper 都是常驻循环，Vercel 只能给 Cron（Pro 最小 1 分钟、Hobby 每天一次）、Queues worker functions（push 消费）或 Workflows（持久步骤 + sleep/hooks，Python SDK 可用但较新）。
 
-据此给出两条路线：**D1 混合（推荐）**＝Vercel 只承接「前端 + BFF + 无状态短请求」，orchestrator / workspace 与沙箱外置；**D2 全 Vercel**＝后台循环与 run 编排全部改成 Queues/Cron/Workflows，平台绑定最深、改造最大。
+据此给出两条路线：**D1 混合（推荐）**＝Vercel 只承接「前端 + API 网关 + 无状态短请求」，orchestrator / workspace 与沙箱外置；**D2 全 Vercel**＝后台循环与 run 编排全部改成 Queues/Cron/Workflows，平台绑定最深、改造最大。
 
-#### D1：Vercel 托管 web + BFF + 短请求服务（15-22 人日）
+#### D1：Vercel 托管 web + API 网关 + 短请求服务（15-22 人日）
 
 | 部署单元                                                             | 承载                                                      | 说明                                                                                                                                                                                                                                                                                                      |
 | -------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`                                                           | Vercel Static（CDN）                                      | SPA 产物直接部署，`rewrites` 把 `/api/*` 指向 BFF function，保持同源 Cookie/CSRF                                                                                                                                                                                                                          |
-| `bff`                                                                | Vercel Function（FastAPI ASGI）                           | 短请求 + SSE 代理；`maxDuration` 设 800（Pro GA），超过由前端 `Last-Event-ID` 续流兜底（run 事件流已实现，chat 流断线靠消息重拉）                                                                                                                                                                         |
+| `apps/web`                                                           | Vercel Static（CDN）                                      | SPA 产物直接部署，`rewrites` 把 `/api/*` 指向 API 网关 function，保持同源 Cookie/CSRF                                                                                                                                                                                                                     |
+| `api-gateway`                                                        | Vercel Function（FastAPI ASGI）                           | 短请求 + SSE 代理；`maxDuration` 设 800（Pro GA），超过由前端 `Last-Event-ID` 续流兜底（run 事件流已实现，chat 流断线靠消息重拉）                                                                                                                                                                         |
 | `account` / `llm-gateway` / `connector` / `knowledge` / `tool`（读） | 每服务一个 Vercel project（或一个 project 多入口）        | 都是短请求；knowledge 本地嵌入冷启动慢，给足 `maxDuration` 与内存（Pro 最大 4GB/2vCPU）；llm-gateway 的 `request_timeout_seconds=60` 在函数时长内                                                                                                                                                         |
 | `tool-service`（写路径）                                             | Vercel Function                                           | 写操作本身短；沙箱/文件由外部 sandbox provider 承担，函数只做编排                                                                                                                                                                                                                                         |
 | `agent-orchestrator`（API 面）                                       | Vercel Function（可选拆分）                               | 建 run / 查 run / 审批 / 回答等短请求可放函数；**图执行与 SSE 长连接不放函数**                                                                                                                                                                                                                            |
@@ -725,20 +725,20 @@ def sweep():
 D1 的改造要点（相对 Cloud Run 主线）：
 
 1. 8 个服务改成 8 个 Vercel project（或 monorepo 多 project），每个入口 `api/index.py` 暴露 ASGI app；`vercel.json` 按入口文件设 `maxDuration`、内存、区域。
-2. `apps/web` 与 BFF 同域：自定义域 + `rewrites`，`VITE_AUTH_MODE=session` 不变；若分域，Cookie 需 `SameSite=None; Secure`（与 §5.8 同）。
-3. 外部 orchestrator/workspace 要暴露公网入口（或 Vercel Secure Compute 私网，企业版），服务间调用从内网 URL 改成公网 + 内部 JWT；BFF 的 `*_BASE_URL` 指向外部域名。
+2. `apps/web` 与 API 网关同域：自定义域 + `rewrites`，`VITE_AUTH_MODE=session` 不变；若分域，Cookie 需 `SameSite=None; Secure`（与 §5.8 同）。
+3. 外部 orchestrator/workspace 要暴露公网入口（或 Vercel Secure Compute 私网，企业版），服务间调用从内网 URL 改成公网 + 内部 JWT；API 网关的 `*_BASE_URL` 指向外部域名。
 4. 函数侧数据库连接改成「短连接 + pooler」，不用长生命周期连接池；LangGraph checkpointer 仍指向 PG（外部地址）。
 5. tool-service 的沙箱 helper 协议要适配 **stdin 缺失**：把 `{tool, arguments, policy}` 写进 `/workspace/.bm/req-<id>.json`，argv 只传该路径（小参数可走 argv）。该 fallback 同时适用于 Modal/E2B 中不支持 stdin 的实现（§5.6 已列）。
-6. CI 增加 `vercel deploy --prebuilt`（或 Git 集成），迁移与外部 worker 仍由 Actions/Cloud Run 管理；web/BFF 与 worker 的版本要一起发，协议兼容按 §5.4 expand/contract。
+6. CI 增加 `vercel deploy --prebuilt`（或 Git 集成），迁移与外部 worker 仍由 Actions/Cloud Run 管理；web/API 网关与 worker 的版本要一起发，协议兼容按 §5.4 expand/contract。
 7. 成本：Vercel Pro 20 美元/座/月起 + 函数用量；Vercel Sandbox Active CPU 0.128 美元/vCPU·小时、内存 0.0212 美元/GB·小时；外部 worker 仍有 Cloud Run/Fly 固定成本。
 
 #### 已落地：6 个无状态服务的 Vercel 导出配置（2026-11）
 
-按 [Vercel FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi#exporting-the-fastapi-application) 的「导出应用」约定，本轮只做配置层改造（不改服务代码、不影响本地与 Docker 部署），覆盖 `bff` / `account-service` / `llm-gateway` / `connector-service` / `knowledge-service` / `tool-service`：
+按 [Vercel FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi#exporting-the-fastapi-application) 的「导出应用」约定，本轮只做配置层改造（不改服务代码、不影响本地与 Docker 部署），覆盖 `api-gateway` / `account-service` / `llm-gateway` / `connector-service` / `knowledge-service` / `tool-service`：
 
 | 服务              | `[tool.vercel] entrypoint` | `vercel.json` 的 `functions` key | `maxDuration`（秒） | 取值的依据                                        |
 | ----------------- | -------------------------- | -------------------------------- | ------------------- | ------------------------------------------------- |
-| bff               | `bff.main:app`             | `bff/main.py`                    | 800                 | SSE 代理长连接；800 为 Pro GA 上限（Hobby 300）   |
+| api-gateway       | `api_gateway.main:app`     | `api_gateway/main.py`            | 800                 | SSE 代理长连接；800 为 Pro GA 上限（Hobby 300）   |
 | account-service   | `account.main:app`         | `account/main.py`                | 60                  | 认证/会话/JWKS 均为短请求                         |
 | llm-gateway       | `llm_gateway.main:app`     | `llm_gateway/main.py`            | 300                 | 上游 `request_timeout_seconds=60` + 重试/回退余量 |
 | connector-service | `connector.main:app`       | `connector/main.py`              | 60                  | 连接 CRUD 与凭证操作                              |
@@ -762,7 +762,7 @@ D1 的改造要点（相对 Cloud Run 主线）：
 3. **沙箱**：只能用 Vercel Sandbox（无 KVM），tool-service 的 provider 换成它，并解决 stdin 缺失与 session 时长（Hobby 45 分钟）问题；本地仍用 microsandbox，语义分裂风险同 §8.1 R12。
 4. **数据面**：Neon + R2/Blob + 环境变量密钥；迁移用外部 CI job。
 
-代价：失去「一份 compose 本地全栈」与云端部署形态的一致性（本地仍是容器 + microsandbox），平台绑定最深；收益是前端与 API 同平台、复用 Vercel 的 Git 工作流与预览环境。**结论：Vercel 作为「web + BFF + 短请求面」是一等选择，作为本仓库唯一后端平台不建议；若组织已重仓 Vercel，选 D1 而不是 D2。**
+代价：失去「一份 compose 本地全栈」与云端部署形态的一致性（本地仍是容器 + microsandbox），平台绑定最深；收益是前端与 API 同平台、复用 Vercel 的 Git 工作流与预览环境。**结论：Vercel 作为「web + API 网关 + 短请求面」是一等选择，作为本仓库唯一后端平台不建议；若组织已重仓 Vercel，选 D1 而不是 D2。**
 
 ## 8. 风险与开放问题
 
@@ -785,13 +785,13 @@ D1 的改造要点（相对 Cloud Run 主线）：
 
 ### 8.2 已拍板问题
 
-| 编号 | 问题                                                                     | 结论                                                                                                                | 依据                                                                                         |
-| ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| A    | 是否选定 GCP？是否要求云中立（Terraform 抽象、双栈）                     | 选 GCP Cloud Run 为主线；Terraform 只抽接口，不做双栈                                                               | 双栈成本翻倍且拖慢落地；Terraform 已隔离大部分差异                                           |
-| B    | 沙箱三选一：自建嵌套虚拟化 K8s / Modal·E2B / Cloud Run Sandboxes Preview | Modal Sandboxes 为 v1，E2B 备选，Fly Machines 若选 Fly 平台                                                         | 契约匹配度、出网 deny、Python SDK、按秒计费；自建 K8s 排除                                   |
-| C    | 长 run 语义：HTTP 请求内跑完 vs 异步 run + 重连                          | 保持 HTTP 内跑完 + Last-Event-ID 续流；异步任务化列 P3+                                                             | Cloud Run 3600s 硬顶可接受；改异步要动状态机与前端                                           |
-| D    | BFF/orchestrator 常驻 min-instances 成本是否可接受                       | 接受：worker 1 实例，BFF/orchestrator 关键路径 min=1                                                                | 首请求体验与 SSE 稳定性优先                                                                  |
-| E    | Vercel 是否可作为主线/唯一平台                                           | 不作为主线；若团队偏好 Vercel，采用 §7.6 路线 D1 混合（web/BFF/短服务在 Vercel，orchestrator/workspace 与沙箱外置） | FastAPI 官方支持但函数 ≤800s、无长期进程；全 Vercel（D2）需重写编排与后台循环，约 25-35 人日 |
+| 编号 | 问题                                                                     | 结论                                                                                                                     | 依据                                                                                         |
+| ---- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| A    | 是否选定 GCP？是否要求云中立（Terraform 抽象、双栈）                     | 选 GCP Cloud Run 为主线；Terraform 只抽接口，不做双栈                                                                    | 双栈成本翻倍且拖慢落地；Terraform 已隔离大部分差异                                           |
+| B    | 沙箱三选一：自建嵌套虚拟化 K8s / Modal·E2B / Cloud Run Sandboxes Preview | Modal Sandboxes 为 v1，E2B 备选，Fly Machines 若选 Fly 平台                                                              | 契约匹配度、出网 deny、Python SDK、按秒计费；自建 K8s 排除                                   |
+| C    | 长 run 语义：HTTP 请求内跑完 vs 异步 run + 重连                          | 保持 HTTP 内跑完 + Last-Event-ID 续流；异步任务化列 P3+                                                                  | Cloud Run 3600s 硬顶可接受；改异步要动状态机与前端                                           |
+| D    | API 网关/orchestrator 常驻 min-instances 成本是否可接受                  | 接受：worker 1 实例，API 网关/orchestrator 关键路径 min=1                                                                | 首请求体验与 SSE 稳定性优先                                                                  |
+| E    | Vercel 是否可作为主线/唯一平台                                           | 不作为主线；若团队偏好 Vercel，采用 §7.6 路线 D1 混合（web/API 网关/短服务在 Vercel，orchestrator/workspace 与沙箱外置） | FastAPI 官方支持但函数 ≤800s、无长期进程；全 Vercel（D2）需重写编排与后台循环，约 25-35 人日 |
 
 ### 8.3 仍开放的问题
 
@@ -815,15 +815,15 @@ D1 的改造要点（相对 Cloud Run 主线）：
 | `<PREFIX>__DATABASE_URL`                                                       | account/orchestrator/connector/knowledge/workspace/tool | `sqlite+aiosqlite:///./*.db`    | 托管 PG URL（asyncpg + ssl）                |
 | `<PREFIX>__AUTO_CREATE_TABLES`                                                 | 同上                                                    | false（service-kit 默认）       | 保持 false                                  |
 | 启动期迁移开关                                                                 | 同上                                                    | 不存在                          | 新增 MIGRATE_ON_STARTUP=false；迁移只走 Job |
-| `INTERNAL_SECRET`                                                              | account/orchestrator/tool/bff                           | 空或 dev 值                     | Secret Manager，四服务同值                  |
+| `INTERNAL_SECRET`                                                              | account/orchestrator/tool/api-gateway                   | 空或 dev 值                     | Secret Manager，四服务同值                  |
 | `<PREFIX>__AUTH_ISSUER`                                                        | account/orchestrator/tool/workspace                     | `http://127.0.0.1:8001`         | account 内网/公网 URL                       |
 | `<PREFIX>__AUTH_ENABLED`                                                       | 同上                                                    | true                            | 生产 true（compose 演示 false）             |
 | `ACCOUNT__SIGNING_KEY_PATH`                                                    | account                                                 | 空（进程内生成）                | 持久 PEM（secret 卷挂载）                   |
-| `BFF__SESSION_SECRET`                                                          | bff                                                     | dev 默认                        | 平台 secret；dev 默认在生产启动即失败       |
-| `BFF__APP_ORIGIN`、`BFF__COOKIE_SECURE`                                        | bff                                                     | `http://localhost:5173` / false | `https://app.example.com` / true            |
-| `BFF__*_BASE_URL`（6 上游）                                                    | bff                                                     | 全部 `127.0.0.1`                | 平台内部域名                                |
-| `BFF__RUNTIME_PUBLIC_URL`                                                      | bff                                                     | `127.0.0.1:8002`                | 公网 runtime 域（SSE 直连）                 |
-| `BFF__STREAM_READ_TIMEOUT_SECONDS`                                             | bff                                                     | 不存在（30s 总超时）            | 0（不限制，推荐）                           |
+| `API_GATEWAY__SESSION_SECRET`                                                  | api-gateway                                             | dev 默认                        | 平台 secret；dev 默认在生产启动即失败       |
+| `API_GATEWAY__APP_ORIGIN`、`API_GATEWAY__COOKIE_SECURE`                        | api-gateway                                             | `http://localhost:5173` / false | `https://app.example.com` / true            |
+| `API_GATEWAY__*_BASE_URL`（6 上游）                                            | api-gateway                                             | 全部 `127.0.0.1`                | 平台内部域名                                |
+| `API_GATEWAY__RUNTIME_PUBLIC_URL`                                              | api-gateway                                             | `127.0.0.1:8002`                | 公网 runtime 域（SSE 直连）                 |
+| `API_GATEWAY__STREAM_READ_TIMEOUT_SECONDS`                                     | api-gateway                                             | 不存在（30s 总超时）            | 0（不限制，推荐）                           |
 | `AGENT_ORCHESTRATOR__*_SERVICE_URL`                                            | orchestrator                                            | 全部 `127.0.0.1`                | 平台内部域名                                |
 | `AGENT_ORCHESTRATOR__ROLE`                                                     | orchestrator                                            | 不存在（all）                   | `api` / `worker`                            |
 | `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED`                                     | orchestrator                                            | false                           | true（tool-service 是唯一文件工具路径）     |
@@ -838,15 +838,15 @@ D1 的改造要点（相对 Cloud Run 主线）：
 
 ### 9.2 敏感信息清单
 
-- 必须进 Secret Manager：`INTERNAL_SECRET`、`BFF__SESSION_SECRET`、account 签名 PEM、`CONNECTOR__CREDENTIAL_SECRET`、`AGENT_ORCHESTRATOR__MCP_SECRET`、`LLM_GATEWAY__API_KEY`、沙箱 provider token、DB 密码（或改用 IAM 数据库认证）。
+- 必须进 Secret Manager：`INTERNAL_SECRET`、`API_GATEWAY__SESSION_SECRET`、account 签名 PEM、`CONNECTOR__CREDENTIAL_SECRET`、`AGENT_ORCHESTRATOR__MCP_SECRET`、`LLM_GATEWAY__API_KEY`、沙箱 provider token、DB 密码（或改用 IAM 数据库认证）。
 - 禁止：写进镜像、Terraform state 明文、GitHub Actions 明文、前端 bundle；CI 用 OIDC 身份，运行时从平台 secret 注入。
-- 轮换语义（现状）：`SIGNING_KEY_PATH` 轮换 = 全站重登；`BFF__SESSION_SECRET` 轮换 = 全员会话失效；`INTERNAL_SECRET` 轮换要求 8 服务同时切换（需双值支持）；`CONNECTOR__CREDENTIAL_SECRET`、`MCP_SECRET` 轮换会让旧密文不可解（需重加密脚本或重新授权）。
+- 轮换语义（现状）：`SIGNING_KEY_PATH` 轮换 = 全站重登；`API_GATEWAY__SESSION_SECRET` 轮换 = 全员会话失效；`INTERNAL_SECRET` 轮换要求 8 服务同时切换（需双值支持）；`CONNECTOR__CREDENTIAL_SECRET`、`MCP_SECRET` 轮换会让旧密文不可解（需重加密脚本或重新授权）。
 - 生产启动 fail-fast：签名密钥缺失时 account 会在进程内新生成密钥（多副本不一致），必须在启动时断言 PEM 存在且可解析。
 
 ### 9.3 对象存储要点（S3 兼容）
 
 - 新增 `S3ArtifactStore` 实现现有 `ArtifactStore` Protocol（put/get/delete），boto3 同步客户端 + `anyio.to_thread`，不引 aiobotocore；key 继续用现有 `build_artifact_key`，S3 只加 prefix。
-- 预签名下载两案：BFF 透传 307（省带宽，暴露 bucket 域）或 BFF 跟随 307 拉流转发（行为不变、多一跳）。v1 选后者，前者作带宽优化项。
+- 预签名下载两案：API 网关透传 307（省带宽，暴露 bucket 域）或 API 网关跟随 307 拉流转发（行为不变、多一跳）。v1 选后者，前者作带宽优化项。
 - 切换前注意：现有 `load_bytes` 不按 row 的 storage 分派（`packages/common/common/artifacts.py:162-180`），直接改 env 会让历史 `database` 对象读不到；需先按原 key 回填对象，或补读取分派（v1.5，支持零停机回退）。
 - 测试：`moto`（dev 依赖）+ botocore Stubber，零网络；真实 S3 集成测试放 nightly 可选 job。
 

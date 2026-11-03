@@ -28,17 +28,17 @@
 
 > 以下是 2026-10-18 的盘点快照，用于说明「为什么做」与字段规范；当前实现状态以顶部状态行与 §11 为准。
 
-| 能力                    | 现状                                                                        | 位置                                                                                                                                                                                                   | 差距                                                                                   |
-| ----------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| 结构化日志装配          | ✅ structlog；dev 彩色、staging/prod JSON；`service`/`env` 绑进 contextvars | `packages/common/common/logging.py:16`、`:46`                                                                                                                                                          | 没有请求级上下文，日志之间无法关联                                                     |
-| 日志级别配置            | ✅ `log_level`                                                              | `packages/common/common/config.py:26`                                                                                                                                                                  | —                                                                                      |
-| 请求上下文 / request_id | ❌                                                                          | —                                                                                                                                                                                                      | 无 `X-Request-ID` 生成与回写，跨服务不可串                                             |
-| 访问日志                | ❌                                                                          | —                                                                                                                                                                                                      | 只有 uvicorn 默认 access log（格式不结构化、无租户、无法采集）                         |
-| 异常日志                | ⚠️ 仅 `AppError` → JSON 响应，不打日志                                      | 各服务 `main.py` 的 `app.exception_handler(AppError)`（如 `services/agent-orchestrator/agent_orchestrator/main.py:469`）                                                                               | 5xx 无日志、未捕获异常只有 uvicorn 崩溃栈                                              |
-| 健康/就绪探针           | ✅ 7 服务（含 bff）均实现 `/healthz`、`/readyz`                             | 如 `services/account-service/account/api/health.py:12`、`services/llm-gateway/llm_gateway/api/health.py:12`、`services/bff/bff/api/health.py`（工厂见 `packages/common/common/service_kit/health.py`） | 访问日志需要给探针降噪；bff 就绪=配置完整（session/internal 密钥），可选上游探测默认关 |
-| 业务日志                | ⚠️ 零散、无统一字段                                                         | 如 `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`                                                                 | 无事件名约定、无耗时/用量字段                                                          |
-| 错误聚合（Sentry）      | ❌                                                                          | —                                                                                                                                                                                                      | 见 §8                                                                                  |
-| 指标 / 追踪             | ❌                                                                          | —                                                                                                                                                                                                      | 见 §9 与 §11 的 P2                                                                     |
+| 能力                    | 现状                                                                        | 位置                                                                                                                                                                                                                   | 差距                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 结构化日志装配          | ✅ structlog；dev 彩色、staging/prod JSON；`service`/`env` 绑进 contextvars | `packages/common/common/logging.py:16`、`:46`                                                                                                                                                                          | 没有请求级上下文，日志之间无法关联                                                             |
+| 日志级别配置            | ✅ `log_level`                                                              | `packages/common/common/config.py:26`                                                                                                                                                                                  | —                                                                                              |
+| 请求上下文 / request_id | ❌                                                                          | —                                                                                                                                                                                                                      | 无 `X-Request-ID` 生成与回写，跨服务不可串                                                     |
+| 访问日志                | ❌                                                                          | —                                                                                                                                                                                                                      | 只有 uvicorn 默认 access log（格式不结构化、无租户、无法采集）                                 |
+| 异常日志                | ⚠️ 仅 `AppError` → JSON 响应，不打日志                                      | 各服务 `main.py` 的 `app.exception_handler(AppError)`（如 `services/agent-orchestrator/agent_orchestrator/main.py:469`）                                                                                               | 5xx 无日志、未捕获异常只有 uvicorn 崩溃栈                                                      |
+| 健康/就绪探针           | ✅ 7 服务（含 api-gateway）均实现 `/healthz`、`/readyz`                     | 如 `services/account-service/account/api/health.py:12`、`services/llm-gateway/llm_gateway/api/health.py:12`、`services/api-gateway/api_gateway/api/health.py`（工厂见 `packages/common/common/service_kit/health.py`） | 访问日志需要给探针降噪；api-gateway 就绪=配置完整（session/internal 密钥），可选上游探测默认关 |
+| 业务日志                | ⚠️ 零散、无统一字段                                                         | 如 `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`                                                                                 | 无事件名约定、无耗时/用量字段                                                                  |
+| 错误聚合（Sentry）      | ❌                                                                          | —                                                                                                                                                                                                                      | 见 §8                                                                                          |
+| 指标 / 追踪             | ❌                                                                          | —                                                                                                                                                                                                                      | 见 §9 与 §11 的 P2                                                                             |
 
 > 注（2026-10-25）：上表与 `docs/gap-2026-10/01-repo-inventory.md:169-175` 均为 2026-10-18 快照；P0/P1/P2 已于 2026-10-22 落地（见顶部状态行与 §11），旧结论不再代表现状。
 
@@ -84,7 +84,7 @@
 | `method` / `route` / `path` | string | 访问日志用；`route` 是模板（`/api/v1/runs/{run_id}`），`path` 是原始路径（仅 `route` 为空时兜底，防基数爆炸） |
 | `status`                    | int    | HTTP 状态码                                                                                                   |
 | `duration_ms`               | number | 请求/调用耗时，保留 1 位小数                                                                                  |
-| `client_ip`                 | string | 仅 BFF 记录（用户侧）；服务间调用记 `client` 服务名更值钱                                                     |
+| `client_ip`                 | string | 仅 API 网关记录（用户侧）；服务间调用记 `client` 服务名更值钱                                                 |
 | `error_code`                | string | `AppError.code`（对外契约，如 `workspace.default_protected`）                                                 |
 | `exception`                 | string | 异常栈（`format_exc_info` 输出）                                                                              |
 | `msg`                       | string | 人类可读补充说明，**不承载结构化信息**                                                                        |
@@ -126,9 +126,9 @@
 
 ### 5.1 `request_id` 规则
 
-- 入口（BFF、服务直连）读请求头 `X-Request-ID`：合法（`^[A-Za-z0-9._-]{8,64}$`）则沿用，否则生成 UUID4 的 hex（或 UUIDv7 若后续引入）。
+- 入口（API 网关、服务直连）读请求头 `X-Request-ID`：合法（`^[A-Za-z0-9._-]{8,64}$`）则沿用，否则生成 UUID4 的 hex（或 UUIDv7 若后续引入）。
 - 响应回写 `X-Request-ID`（浏览器 Network 面板能直接拿到，报 bug 时贴这一条即可定位）。
-- 所有出站 HTTP 调用带上该头（BFF 代理、orchestrator 的 `TokenBroker`/workspace/knowledge/llm-gateway 客户端、jobs worker 的下游调用）。
+- 所有出站 HTTP 调用带上该头（API 网关代理、orchestrator 的 `TokenBroker`/workspace/knowledge/llm-gateway 客户端、jobs worker 的下游调用）。
 - 后台任务（jobs worker）没有入站请求：以 `job_id` 为种子生成 `request_id`，并记 `job_kind`、`run_id`，让 worker 日志与触发它的 API 日志能对上（API 侧 `job_enqueued` 记同一个 `job_id`）。
 
 ### 5.2 `traceparent` 与 span
@@ -146,13 +146,13 @@
 
 ### 5.4 透传清单
 
-| 调用链                                                   | 需要带的头                    | 备注                                             |
-| -------------------------------------------------------- | ----------------------------- | ------------------------------------------------ |
-| Web → BFF                                                | 前端 `fetch` 无需显式带       | BFF 生成/透传后回写                              |
-| BFF → orchestrator/account/workspace/knowledge           | `X-Request-ID`、`traceparent` | `services/bff/bff/api/proxy.py` 代理时透传       |
-| orchestrator → workspace/knowledge/llm-gateway/connector | 同上                          | httpx 客户端统一注入                             |
-| orchestrator → account-service `/v1/auth/issue`          | 同上                          | `TokenBroker` 内部调用                           |
-| jobs worker → 下游                                       | 同上（用 job 种子）           | 队列里存触发时的 `request_id` 更佳（后续可加列） |
+| 调用链                                                   | 需要带的头                    | 备注                                                       |
+| -------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------- |
+| Web → API 网关                                           | 前端 `fetch` 无需显式带       | API 网关生成/透传后回写                                    |
+| API 网关 → orchestrator/account/workspace/knowledge      | `X-Request-ID`、`traceparent` | `services/api-gateway/api_gateway/api/proxy.py` 代理时透传 |
+| orchestrator → workspace/knowledge/llm-gateway/connector | 同上                          | httpx 客户端统一注入                                       |
+| orchestrator → account-service `/v1/auth/issue`          | 同上                          | `TokenBroker` 内部调用                                     |
+| jobs worker → 下游                                       | 同上（用 job 种子）           | 队列里存触发时的 `request_id` 更佳（后续可加列）           |
 
 ---
 
@@ -163,14 +163,14 @@
 ```
 timestamp, level, event, service, env, logger,
 request_id, trace_id?, tenant_id?, user_id?,
-method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
+method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ```
 
 - `route` 用 **路由模板**：`request.scope["route"].path`（如 `/api/v1/conversations/{conversation_id}/messages/stream`）；未命中路由（404）用 `method` + 固定占位 `unmatched`，不落原始 path 里可能带 id 的片段——这是控制日志基数的关键。
 - 分级：`status >= 500` → `error`；`status in (401,403,409,429)` → `warning`；其余 2xx/3xx → `info`；探针路径 → `debug`。
 - 慢请求：`duration_ms > <SERVICE>__SLOW_REQUEST_MS`（默认 1500，SSE 除外）额外打 `event=http_request_slow`（`warning`），带 route 与耗时，便于直接 grep 慢接口。
-- SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/bff/bff/api/proxy.py:123`。
-- 限流命中（BFF `services/bff/bff/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`tenant_id`、`group`），访问日志本身仍是 429。
+- SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/api-gateway/api_gateway/api/proxy.py:123`。
+- 限流命中（API 网关 `services/api-gateway/api_gateway/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`tenant_id`、`group`），访问日志本身仍是 429。
 
 ---
 
@@ -200,7 +200,7 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 - 忽略：`/healthz`、`/readyz`（探针不产生异常事件；无需额外过滤）。
 - 测试：`packages/common/tests/test_sentry.py`——无 DSN 时 no-op、4xx 丢弃、5xx 保留且脱敏、自定义 transport 实收事件验证 tag 与脱敏。
 - 环境变量（`BaseAppSettings` 字段，按服务前缀生效，如 `WORKSPACE__SENTRY_DSN`）：`SENTRY_DSN`、`SENTRY_RELEASE`、`SENTRY_TRACES_SAMPLE_RATE`。
-- **Web 侧（未做）**：`@sentry/react` 接入 `apps/web/src/main.tsx`，`beforeSend` 脱敏 + 上传 sourcemap + 与 BFF 共用 `release`；需要时按同一条规则落地。
+- **Web 侧（未做）**：`@sentry/react` 接入 `apps/web/src/main.tsx`，`beforeSend` 脱敏 + 上传 sourcemap + 与 API 网关共用 `release`；需要时按同一条规则落地。
 
 ---
 
@@ -210,8 +210,8 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 **状态：已实施（进程内 Prometheus）**——`packages/common/common/metrics.py`；请求级 RED 指标由中间件自动记录，业务指标在各自边界上报。
 
-- 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，BFF 不代理它。
-- 公网入口（BFF）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
+- 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，API 网关不代理它。
+- 公网入口（API 网关）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
 - 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `tenant_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
 - 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total` 记失败，provider 取模型前缀；`llm_tokens_total`/`llm_request_duration_seconds` 记用量与耗时）。
 - 业务代码调用 `metrics.observe_*` 时不必传 service：默认从日志上下文（启动时绑定的 `service`）取。
@@ -236,9 +236,9 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 
 - 装配：7 个服务在 `lifespan` 里 `install_observability(app, settings)` 即完成（`init_tracing` 建进程级 `TracerProvider`，`Resource` 带 `service.name`/`deployment.environment`/可选 `service.version`）。
 - 服务端 span：`create_app` 里 `FastAPI(..., telemetry={"exclude": exclude_telemetry})` —— `/healthz`、`/readyz`、`/internal/metrics` 不产生 span；路由 span 带 `http.route`/`url.path`/`http.request.method`，依赖/序列化子 span 由 FastAPI 原生能力给出。
-- 出站 span：`HTTPXClientInstrumentor` 全局插桩，自动注入 `traceparent` 并建 client span；BFF 代理与 orchestrator 内部客户端因此天然连成一条链（既有的 `inject_request_headers` 继续补 `X-Request-ID`）。
+- 出站 span：`HTTPXClientInstrumentor` 全局插桩，自动注入 `traceparent` 并建 client span；API 网关代理与 orchestrator 内部客户端因此天然连成一条链（既有的 `inject_request_headers` 继续补 `X-Request-ID`）。
 - 导出：`<SERVICE>__OTLP_ENDPOINT`（完整 `.../v1/traces` 地址，OTLP/HTTP + protobuf）配了才导出（`BatchSpanProcessor`）；不配则 span 只留在进程内用于日志 `trace_id` 串联，**零网络请求**。
-- 采样：`<SERVICE>__TRACE_SAMPLE_RATIO`（默认 0.1）走 `ParentBased(TraceIdRatioBased)`——入口（BFF）决定是否采样，下游跟随，避免半截链路。
+- 采样：`<SERVICE>__TRACE_SAMPLE_RATIO`（默认 0.1）走 `ParentBased(TraceIdRatioBased)`——入口（API 网关）决定是否采样，下游跟随，避免半截链路。
 - 开关：`<SERVICE>__TRACING_ENABLED=false` 完全关闭（不建 provider、不插桩）。
 - 注意：FastAPI 原生 telemetry 自带 `metrics`/`logs` 能力；本仓库指标仍以 `/internal/metrics` 为准（Prometheus），OTel 侧未接 meter/logger provider，保持单一口径。
 
@@ -251,7 +251,7 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 | 全部               | `http_request`、`http_request_slow`、`sse_opened`/`sse_closed`、`app_error`、`unhandled_exception`                                                                                                                                                                                                                       | 新中间件（P0）                                                                                                                                                                                                                                       |
 | agent-orchestrator | `run_created`、`run_planned`、`run_approved`、`run_completed`、`run_failed`、`run_blocked`、`job_enqueued`、`job_finished`、`tool_invoked`（tool、duration、status）、`llm_call`（model、phase、latency_ms、tokens_in/out）、`sse_opened`（channel=run_events/notifications）、`outbox_dispatch`（event_type、attempts） | `services/agent-orchestrator/agent_orchestrator/services/runs.py`、`graph/nodes.py`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`、`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`、`events` 消费处 |
 | llm-gateway        | `llm_request`（provider、model、stream、message_count、roles、prompt_chars、tool_count、temperature）、`llm_response`（model、finish_reason、prompt/completion/total_tokens、tool_calls、chars、duration_ms）、`llm_content`（`LOG_CONTENT=true` 才出：direction、payload 截断 2KB）、`llm_upstream_error`（code）       | `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/llm-gateway/llm_gateway/services/embeddings.py:29`                                                                                                                          |
-| bff                | `proxy_call`（target、status、latency_ms、stream）、`rate_limited`、`session_refresh_failed`                                                                                                                                                                                                                             | `services/bff/bff/main.py:60`、`services/bff/bff/api/proxy.py:215`、`services/bff/bff/api/mcp_oauth.py:21`                                                                                                                                           |
+| api-gateway        | `proxy_call`（target、status、latency_ms、stream）、`rate_limited`、`session_refresh_failed`                                                                                                                                                                                                                             | `services/api-gateway/api_gateway/main.py:60`、`services/api-gateway/api_gateway/api/proxy.py:215`、`services/api-gateway/api_gateway/api/mcp_oauth.py:21`                                                                                           |
 | account-service    | `auth_login`（result）、`token_refresh`（result、reuse_detected）、`device_registered`                                                                                                                                                                                                                                   | `services/account-service/account/`（登录/刷新路由）                                                                                                                                                                                                 |
 | workspace-service  | `sandbox_lifecycle`（state、duration）、`artifact_put`/`artifact_get`（bytes）、`workspace_created`/`renamed`/`deleted`                                                                                                                                                                                                  | `services/workspace-service/workspace/services/sandbox.py:38`、`services/workspace-service/workspace/services/workspaces.py:17`                                                                                                                      |
 | knowledge-service  | `ingest_finished`（chunks、duration）、`search_finished`（k、latency_ms、hits）                                                                                                                                                                                                                                          | 入库/检索服务层                                                                                                                                                                                                                                      |
@@ -268,8 +268,8 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 **状态：已完成**（`packages/common/common/middleware.py`、`packages/common/tests/test_middleware.py`）。实际落点：
 
 - `RequestContextMiddleware`（纯 ASGI，不吃 SSE 流）+ 三个导出：`install_app_error_handler(app)`（替掉 7 份同构 handler）、`inject_request_headers`（httpx 出站钩子）、`current_traceparent()`。
-- 7 个服务 `create_app` 注册中间件（BFF 放最后注册当最外层，限流 429 也有访问日志）；`project.json` serve 命令加 `--no-access-log`。
-- 5 个服务 `get_tenant_id` 绑定 `tenant_id`/`user_id`；BFF `proxy._headers` 与 orchestrator/knowledge 的 7 个内部 httpx 客户端透传 `X-Request-ID`/`traceparent`。
+- 7 个服务 `create_app` 注册中间件（API 网关放最后注册当最外层，限流 429 也有访问日志）；`project.json` serve 命令加 `--no-access-log`。
+- 5 个服务 `get_tenant_id` 绑定 `tenant_id`/`user_id`；API 网关 `proxy._headers` 与 orchestrator/knowledge 的 7 个内部 httpx 客户端透传 `X-Request-ID`/`traceparent`。
 - 测试 14 例覆盖：id 透传/生成/畸形替换、trace_id、route 模板与 unmatched、探针降级、慢请求、500 补访问行 + 带栈异常、AppError 分级、SSE open/close 帧数、上下文清理、出站头注入、`redact`。
 
 改动面（原始计划）：
@@ -278,11 +278,11 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 2. 新 `packages/common/common/middleware.py`：`RequestContextMiddleware`（request_id/traceparent 解析与回写、contextvars 绑定/清理、访问日志、慢请求、未捕获异常日志）+ `AccessLogSettings` 字段（`access_log_enabled`、`slow_request_ms`）。
 3. `packages/common/common/config.py`：`BaseAppSettings` 增 `access_log_enabled: bool = True`、`slow_request_ms: int = 1500`、`log_json: bool | None = None`。
 4. 7 个服务 `create_app` 各接一行中间件（`services/*/*/main.py`），并给 `project.json` 的 serve 命令加 `--no-access-log`。
-5. 各服务 `get_tenant_id` 里 `bind_contextvars(tenant_id=...)`；BFF/httpx 客户端透传 `X-Request-ID`。
+5. 各服务 `get_tenant_id` 里 `bind_contextvars(tenant_id=...)`；API 网关/httpx 客户端透传 `X-Request-ID`。
 6. 测试：`packages/common/tests/test_middleware.py`（生成/透传/回写 id、上下文清理、访问日志字段与级别、异常日志、探针降噪——用 `structlog.testing.capture_logs`）；各服务补一条 `/healthz` 降噪断言。
 7. 文档：本节完成情况回填，`docs/local-dev.md` 补一句“排障时按 request_id 串日志”。
 
-验收：同一请求跨 BFF → orchestrator → workspace 的日志共享一个 `request_id`；`grep request_id` 能还原整条时间线；未捕获异常有一条带栈的 `error`；探针不刷屏。
+验收：同一请求跨 API 网关 → orchestrator → workspace 的日志共享一个 `request_id`；`grep request_id` 能还原整条时间线；未捕获异常有一条带栈的 `error`；探针不刷屏。
 
 ### P1 错误聚合 Sentry（可选依赖）
 
@@ -316,8 +316,8 @@ method, route, status, duration_ms, client_ip?(仅 BFF), error_code?
 ## 13. 验收清单
 
 - [x] 所有 HTTP 请求有且只有一行 `http_request`（含 `request_id`、`route`、`status`、`duration_ms`）
-- [x] 响应头回写 `X-Request-ID`；BFF 与 orchestrator 出站请求透传
-- [x] 跨服务用同一个 `request_id` 可串联（至少 BFF → orchestrator → workspace 一条链路验证）
+- [x] 响应头回写 `X-Request-ID`；API 网关与 orchestrator 出站请求透传
+- [x] 跨服务用同一个 `request_id` 可串联（至少 API 网关 → orchestrator → workspace 一条链路验证）
 - [x] 未捕获异常 / `UpstreamError` / job 终态失败都有一条带 `exception` 的 `error` 日志
 - [x] `/healthz`、`/readyz` 在 prod 级别下不产生 info 日志
 - [x] 日志里没有 token/cookie/密码/请求体全文（抽样审计 100 行）

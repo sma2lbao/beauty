@@ -9,9 +9,9 @@ import httpx
 from common.errors import PermissionDeniedError, UnauthorizedError
 from fastapi import Depends, Header, Request
 
-from bff.core.config import Settings
-from bff.core.security import SessionCodec
-from bff.schemas.auth import SessionUser
+from api_gateway.core.config import Settings
+from api_gateway.core.security import SessionCodec
+from api_gateway.schemas.auth import SessionUser
 
 
 def get_settings(request: Request) -> Settings:

@@ -70,17 +70,17 @@ v2 之前的**裸 Fernet token** 保持可解(依次尝试当前/历史密钥),�
 (Vault 无法解裸 token)。解密失败统一 `500 byok.unreadable`,KMS 不可用统一
 `502 byok.kms_unavailable`——都不泄漏密文/密钥内容。
 
-| 变量                         | 默认    | 说明                                          |
-| ---------------------------- | ------- | --------------------------------------------- |
-| `BYOK_KMS`                   | local   | `local` 或 `vault`(未知取值启动即失败)        |
-| `BYOK_KEK_ID`                | local-1 | 当前 KEK 标识,写进信封 `kid`                   |
-| `BYOK_SECRET`                | dev 占位 | `local` 当前 kid 的密钥材料                  |
-| `BYOK_PREVIOUS_SECRETS`      | {}      | 历史 kid → 旧密钥材料的 JSON 映射(轮换期用)   |
-| `BYOK_VAULT_URL`             | 空      | Vault 地址(如 `http://vault:8200`)            |
-| `BYOK_VAULT_TOKEN`           | 空      | Vault token(`vault` 模式必填)                 |
-| `BYOK_VAULT_MOUNT`           | transit | Transit secrets engine 挂载点                 |
-| `BYOK_VAULT_KEY`             | byok    | Transit key 名                                |
-| `BYOK_VAULT_TIMEOUT_SECONDS` | 5       | Vault HTTP 超时                               |
+| 变量                         | 默认     | 说明                                        |
+| ---------------------------- | -------- | ------------------------------------------- |
+| `BYOK_KMS`                   | local    | `local` 或 `vault`(未知取值启动即失败)      |
+| `BYOK_KEK_ID`                | local-1  | 当前 KEK 标识,写进信封 `kid`                |
+| `BYOK_SECRET`                | dev 占位 | `local` 当前 kid 的密钥材料                 |
+| `BYOK_PREVIOUS_SECRETS`      | {}       | 历史 kid → 旧密钥材料的 JSON 映射(轮换期用) |
+| `BYOK_VAULT_URL`             | 空       | Vault 地址(如 `http://vault:8200`)          |
+| `BYOK_VAULT_TOKEN`           | 空       | Vault token(`vault` 模式必填)               |
+| `BYOK_VAULT_MOUNT`           | transit  | Transit secrets engine 挂载点               |
+| `BYOK_VAULT_KEY`             | byok     | Transit key 名                              |
+| `BYOK_VAULT_TIMEOUT_SECONDS` | 5        | Vault HTTP 超时                             |
 
 ## 迁移
 
@@ -95,7 +95,7 @@ refresh_tokens 表(哈希 + 过期/吊销时间,租户隔离)。
 
 ## 社交 OAuth(M0-05)
 
-BFF 调用本服务的两个端点,浏览器不直接拿 token:
+API 网关调用本服务的两个端点,浏览器不直接拿 token:
 
 - `GET /v1/auth/oauth/{provider}/authorize?redirect_uri=...` → `{authorization_url,state}`
 - `POST /v1/auth/oauth/{provider}/exchange` `{code,state}` → 与登录相同的双令牌响应

@@ -24,7 +24,7 @@ RouterBinding = tuple[APIRouter, str]
 MiddlewareBinding = tuple[Any, Mapping[str, Any]]
 """中间件类与构造参数:按传入顺序注册(先注册者更靠内层)。
 
-用于服务特有中间件(如 BFF 限流、不带 credentials 的 CORS):它在统一错误
+用于服务特有中间件(如 API 网关限流、不带 credentials 的 CORS):它在统一错误
 处理之后、默认 CORS 与请求上下文中间件之前注册,与各服务原装配顺序一致。
 """
 

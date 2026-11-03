@@ -1,5 +1,5 @@
 /**
- * MCP Client 数据层:同源 /api/v1/mcp/servers(BFF → orchestrator)。
+ * MCP Client 数据层:同源 /api/v1/mcp/servers(API 网关 → orchestrator)。
  *
  * 两种传输方式共用同一组接口:
  * - http:远程 Streamable HTTP server(url[/token]);
@@ -94,7 +94,7 @@ export type MCPServerUpdateInput = {
   url?: string | null;
 };
 
-/** 浏览器授权启动结果:前端整页跳到 authorize_url,回调由 BFF 转回 /mcp?oauth=… */
+/** 浏览器授权启动结果:前端整页跳到 authorize_url,回调由 API 网关转回 /mcp?oauth=… */
 export type MCPOAuthStartRead = {
   authorize_url: string;
   /** authorize_url 的有效期(秒) */

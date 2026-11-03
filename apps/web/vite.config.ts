@@ -11,8 +11,8 @@ export default defineConfig({
     // 开发期把 /api 代理到 agent-orchestrator(:8002):前端同源、免 CORS
     // (服务端也配了白名单,直连同样可用;见 services/agent-orchestrator 的 CORS 配置)
     proxy: {
-      // M0-05/06:SPA 的所有 /api 都走 BFF(session Cookie / Bearer 兜底);
-      // BFF 再按路由转发到 orchestrator/account/workspace/knowledge。
+      // M0-05/06:SPA 的所有 /api 都走 API 网关(session Cookie / Bearer 兜底);
+      // API 网关再按路由转发到 orchestrator/account/workspace/knowledge。
       '/api': {
         target: 'http://127.0.0.1:8007',
         changeOrigin: true,

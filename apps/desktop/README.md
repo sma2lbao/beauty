@@ -20,10 +20,10 @@
 
 ## 两种模式
 
-| 模式     | 数据与执行位置                       | 入口                     |
-| -------- | ------------------------------------ | ------------------------ |
-| 本地电脑 | 本机:会话 JSON、工作区目录、本机命令 | 本应用(默认模式)         |
-| 云端     | 服务端编排(BFF / orchestrator)       | 「打开云端控制台」按钮   |
+| 模式     | 数据与执行位置                       | 入口                   |
+| -------- | ------------------------------------ | ---------------------- |
+| 本地电脑 | 本机:会话 JSON、工作区目录、本机命令 | 本应用(默认模式)       |
+| 云端     | 服务端编排(API 网关 / orchestrator)  | 「打开云端控制台」按钮 |
 
 模式切换只影响界面走哪套数据源;本地工作区与云端工作区互不干扰。
 
@@ -56,15 +56,15 @@ BEAUTY_SMOKE=1 npx electron .
 
 ## 目录
 
-| 路径                  | 作用                                                     |
-| --------------------- | -------------------------------------------------------- |
-| `src/shared/`         | 主进程 ↔ 渲染进程契约(`contract.ts`)与 IPC 通道名(`ipc.ts`),三方只读同一份 |
-| `src/main/main.ts`    | Electron 入口:窗口、生命周期、导航安全策略              |
-| `src/main/ipc.ts`     | IPC handler 注册与事件推送                               |
-| `src/main/local/`     | 可测试的本地运行时(不 import electron,依赖注入)      |
-| `src/preload/index.ts`| `window.beautyDesktop` 桥接(CJS 输出,contextBridge)    |
-| `src/renderer/`       | 界面:工作台 / 文件 / 设置 / 云端模式                    |
-| `scripts/dev.mjs`     | 开发编排:Vite dev server + 构建主进程 + 起 Electron      |
+| 路径                   | 作用                                                                        |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `src/shared/`          | 主进程 ↔ 渲染进程契约(`contract.ts`)与 IPC 通道名(`ipc.ts`),三方只读同一份 |
+| `src/main/main.ts`     | Electron 入口:窗口、生命周期、导航安全策略                                  |
+| `src/main/ipc.ts`      | IPC handler 注册与事件推送                                                  |
+| `src/main/local/`      | 可测试的本地运行时(不 import electron,依赖注入)                             |
+| `src/preload/index.ts` | `window.beautyDesktop` 桥接(CJS 输出,contextBridge)                         |
+| `src/renderer/`        | 界面:工作台 / 文件 / 设置 / 云端模式                                        |
+| `scripts/dev.mjs`      | 开发编排:Vite dev server + 构建主进程 + 起 Electron                         |
 
 ## 模型配置
 

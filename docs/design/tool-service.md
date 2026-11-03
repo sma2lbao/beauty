@@ -25,7 +25,7 @@
 | D9  | `ask_question` 是 **interaction 类工具**：tool-service 只声明目录与参数校验，**中断与答案回填在 orchestrator 图内**（`ask_gate` + `awaiting_input` + `POST /runs/{id}/answer`） | 同上，跨服务 interrupt 不可行；复用现有 interrupts sweeper / jobs / 事件机制                                                                     |
 | D10 | **chat 模式只装配只读工具**；写工具只在 task 模式（有审批闸）                                                                                                                   | 对话内 CONFIRM 被明确拒绝（`services/chat.py:112-116`），装配写工具只会产生必然失败的调用                                                        |
 | D11 | **MCP 发现/执行与 `skill_run` 本期不下沉**，仍留 orchestrator                                                                                                                   | 依赖租户 DB、stdio 沙箱池、run 快照（`skill_tools`/`skill_package`）、OAuth 回调，拆分收益小风险大                                               |
-| D12 | 本期 **不经 BFF** 暴露 `/api/v1/tools*`（仅服务间内部调用）；orchestrator 侧 `TOOL_SERVICE_ENABLED` 双路径可一键回滚                                                            | 控制台暂无工具管理需求；先保证生产路径可回退（对齐现有 feature flag 风格）                                                                       |
+| D12 | 本期 **不经 API 网关** 暴露 `/api/v1/tools*`（仅服务间内部调用）；orchestrator 侧 `TOOL_SERVICE_ENABLED` 双路径可一键回滚                                                       | 控制台暂无工具管理需求；先保证生产路径可回退（对齐现有 feature flag 风格）                                                                       |
 | D13 | 新增只读 **`fetch`** 工具（HTTP GET 抓公网文本：SSRF 防护 + 主机允许列表 + 字节/重定向上限），默认关闭（`TOOL__FETCH_ENABLED=false`）                                           | 产品需要读 GitHub 等公网资料；**不**引入任意命令执行、**不**开沙箱联网（攻击面小、出口边界可自控）；risk=READ 使 chat 与任务两种模式都可用       |
 
 ### 1.2 分期
@@ -98,21 +98,21 @@
 
 ### 3.1 对比对象与维护状态
 
-| 项目                      | 形态                                 | 维护状态（2026-10）                                                                   | 对标价值                                     |
-| ------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Claude Code               | 官方闭源 CLI/agent                   | 活跃（文档 v2.1.x）                                                                   | 工具集、权限规则、`AskUserQuestion` 最完整   |
-| OpenAI Codex CLI          | 开源 Apache-2.0 Rust CLI             | 活跃，源码可读                                                                        | OS 沙箱、审批、工具 schema 工程化最强        |
-| Gemini CLI                | 开源 Apache-2.0 TS CLI               | 仓库仍活跃；本仓库文档记为 2026-06-18 起被闭源 Antigravity CLI 取代（待官方公告核实） | policy engine（规则/tier/priority）最完整    |
-| Cline                     | OSS IDE 扩展 + SDK                   | 活跃                                                                                  | Plan/Act 模式、`apply_patch`/`editor` 路由   |
-| Continue                  | OSS IDE 扩展 + CLI                   | 活跃                                                                                  | 三档权限、headless 语义、plan mode           |
-| goose（Block）            | OSS Rust CLI                         | 活跃                                                                                  | 唯一「内置 extension = 内部 MCP server」样本 |
-| OpenHands（原 OpenDevin） | Python SDK + Agent Canvas 控制面     | SDK 活跃；产品转型多 ACP agent 控制面                                                 | Action/Observation/Executor 分层最清晰       |
-| Aider                     | OSS Python CLI（非 tool-calling）    | 停更（v0.86.0，2025-08-09），仅零星维护                                               | 编辑格式与 repo map 对照，不宜当工具系统基线 |
-| LangChain / LangGraph     | 框架库                               | 活跃                                                                                  | `@tool` 抽象、human-in-the-loop 中断恢复     |
-| MCP                       | 协议规范                             | 最新 revision 2026-07-28                                                              | 协议层 schema / elicitation / tasks          |
-| SWE-agent                 | 研究型 agent                         | maintenance-only（已被 mini-swe-agent 取代）                                          | ACI「工具即接口」设计原则                    |
-| DSH（本环境）             | 内部 harness                         | 当前会话运行时                                                                        | code-mode + `ask_user_question` 的现成参照   |
-| **beauty-moon（现状）**   | 六服务 + BFF，工具在 orchestrator 内 | 仓库代码实读                                                                          | 被对比对象                                   |
+| 项目                      | 形态                                      | 维护状态（2026-10）                                                                   | 对标价值                                     |
+| ------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Claude Code               | 官方闭源 CLI/agent                        | 活跃（文档 v2.1.x）                                                                   | 工具集、权限规则、`AskUserQuestion` 最完整   |
+| OpenAI Codex CLI          | 开源 Apache-2.0 Rust CLI                  | 活跃，源码可读                                                                        | OS 沙箱、审批、工具 schema 工程化最强        |
+| Gemini CLI                | 开源 Apache-2.0 TS CLI                    | 仓库仍活跃；本仓库文档记为 2026-06-18 起被闭源 Antigravity CLI 取代（待官方公告核实） | policy engine（规则/tier/priority）最完整    |
+| Cline                     | OSS IDE 扩展 + SDK                        | 活跃                                                                                  | Plan/Act 模式、`apply_patch`/`editor` 路由   |
+| Continue                  | OSS IDE 扩展 + CLI                        | 活跃                                                                                  | 三档权限、headless 语义、plan mode           |
+| goose（Block）            | OSS Rust CLI                              | 活跃                                                                                  | 唯一「内置 extension = 内部 MCP server」样本 |
+| OpenHands（原 OpenDevin） | Python SDK + Agent Canvas 控制面          | SDK 活跃；产品转型多 ACP agent 控制面                                                 | Action/Observation/Executor 分层最清晰       |
+| Aider                     | OSS Python CLI（非 tool-calling）         | 停更（v0.86.0，2025-08-09），仅零星维护                                               | 编辑格式与 repo map 对照，不宜当工具系统基线 |
+| LangChain / LangGraph     | 框架库                                    | 活跃                                                                                  | `@tool` 抽象、human-in-the-loop 中断恢复     |
+| MCP                       | 协议规范                                  | 最新 revision 2026-07-28                                                              | 协议层 schema / elicitation / tasks          |
+| SWE-agent                 | 研究型 agent                              | maintenance-only（已被 mini-swe-agent 取代）                                          | ACI「工具即接口」设计原则                    |
+| DSH（本环境）             | 内部 harness                              | 当前会话运行时                                                                        | code-mode + `ask_user_question` 的现成参照   |
+| **beauty-moon（现状）**   | 六服务 + API 网关，工具在 orchestrator 内 | 仓库代码实读                                                                          | 被对比对象                                   |
 
 > 说明：OpenCode（原 sst/opencode）未单独调研；其工具面（`read`/`write`/`edit`/`glob`/`grep`/`list`）在命名决策中被引用为「裸名先例」，证据等级低于上表。
 
@@ -315,7 +315,7 @@
 ### 5.2 组件图
 
 ```text
-apps/web ──SSE/HTTP──▶ bff(:8007) ──▶ agent-orchestrator(:8002)
+apps/web ──SSE/HTTP──▶ api-gateway(:8007) ──▶ agent-orchestrator(:8002)
                                           │  ToolClient（HTTP, 租户 JWT）
                                           ▼
                                    tool-service(:8008)
@@ -1282,7 +1282,7 @@ services/tool-service/
 
 - [project].dependencies（pyproject.toml:5-16）加一行 tool-service；
 - [tool.uv.workspace].members（pyproject.toml:21-32，注释在 :19-20 强调「新 Python 项目必须在此登记」）加 services/tool-service；
-- [tool.uv.sources.tool-service] 段（紧随已有 [tool.uv.sources.bff]，pyproject.toml:34-62）加 workspace = true。
+- [tool.uv.sources.tool-service] 段（紧随已有 [tool.uv.sources.api-gateway]，pyproject.toml:34-62）加 workspace = true。
 
 验证：npx nx show projects | grep tool-service 有输出；uv lock --check 不报「workspace member 未登记」。
 

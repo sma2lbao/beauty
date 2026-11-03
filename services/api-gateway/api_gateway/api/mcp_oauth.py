@@ -1,7 +1,7 @@
-"""MCP 浏览器 OAuth 回调(BFF 同源)。
+"""MCP 浏览器 OAuth 回调(API 网关同源)。
 
 第三方授权服务器只能把浏览器重定向回一个公开回调地址,而浏览器手里没有
-服务间凭证:所以 BFF 收下 `?code&state`,用 X-Internal-Secret 转给
+服务间凭证:所以 API 网关收下 `?code&state`,用 X-Internal-Secret 转给
 orchestrator 兑换 token(落库、加密),再把浏览器 302 回前端 /mcp 页。
 
 必须注册在通用 `/api/{path}` 代理之前,否则请求会被代理吃掉。
@@ -17,7 +17,7 @@ from common.security import SECRET_HEADER
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
-from bff.core.config import Settings
+from api_gateway.core.config import Settings
 
 logger = get_logger(__name__)
 
@@ -47,7 +47,7 @@ async def mcp_oauth_callback(
     if not state or not code:
         return _error_redirect(settings, "授权回调缺少 code 或 state")
     if not settings.internal_secret:
-        return _error_redirect(settings, "BFF 未配置内部调用凭证,无法完成授权")
+        return _error_redirect(settings, "API 网关未配置内部调用凭证,无法完成授权")
 
     client: httpx.AsyncClient = request.app.state.upstream_client
     try:

@@ -50,7 +50,7 @@
 ## 2. 架构与信任边界
 
 ```text
-浏览器 ──（JWT/Cookie）──> BFF :8007 ──> account-service :8001
+浏览器 ──（JWT/Cookie）──> API 网关 :8007 ──> account-service :8001
                                    PUT/GET/DELETE /v1/byok（只回掩码）
                                          │
                                    byok_keys（密文，信封 v2）
@@ -89,7 +89,7 @@ knowledge-service :8006 ──┤──> llm-gateway :8003 ──> provider（De
 ### 3.1 写入 / 列表 / 删除
 
 ```text
-用户 → BFF → account PUT /v1/byok/{provider} {api_key}
+用户 → API 网关 → account PUT /v1/byok/{provider} {api_key}
         provider 归一（strip + lower，空或 >32 字符 → 400 byok.invalid_provider）
         kms.encrypt(api_key) → 信封 v2 → 存 byok_keys（key_hint = 末 4 位）
         ← 200 {provider, masked_key:"••••"+hint, key_hint, updated_at}
@@ -275,9 +275,9 @@ SSE 流式路径在**返回流之前**完成解析——回退决策一次性生
 | ------------------------- | ------------------------------------------ | -------------------------------------------------------------------------- |
 | agent-orchestrator        | `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET` | 由 `_identity_headers_hook` 注入 `X-Internal-Secret`；租户头取自请求上下文 |
 | knowledge-service         | `KNOWLEDGE__INTERNAL_SECRET`               | 嵌入走网关时的内部密钥；留空则网关拒绝解析（回退平台 key）                 |
-| deploy/docker-compose.yml | `INTERNAL_SECRET`                          | account / AO / gateway / knowledge / tool / bff 同源注入                   |
+| deploy/docker-compose.yml | `INTERNAL_SECRET`                          | account / AO / gateway / knowledge / tool / api-gateway 同源注入           |
 
-**一致性要求**：account、gateway、orchestrator、knowledge、tool-service、BFF 的 `internal_secret` 必须是同一个值。本地 dev 不配也能跑（account 端点关闭、gateway 不鉴权、BYOK 停用），但这意味着 BYOK 完全不生效——这是最容易踩的坑。
+**一致性要求**：account、gateway、orchestrator、knowledge、tool-service、API 网关的 `internal_secret` 必须是同一个值。本地 dev 不配也能跑（account 端点关闭、gateway 不鉴权、BYOK 停用），但这意味着 BYOK 完全不生效——这是最容易踩的坑。
 
 **编排要求**：`deploy/docker-compose.yml` 已给 llm-gateway 注入 `LLM_GATEWAY__INTERNAL_SECRET` 与 `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`（2026-10-26 补齐）。自建编排必须显式覆盖后者，否则容器内默认 `127.0.0.1:8001` 指向网关自身 → 解析一律 `error` → 静默回退平台 key（见 [deploy/web/README.md](../../deploy/web/README.md) §4.1）。
 

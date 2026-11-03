@@ -1,4 +1,4 @@
-"""MCP 工具调用 401 刷新重试与 BFF 内部回调端点。"""
+"""MCP 工具调用 401 刷新重试与 API 网关内部回调端点。"""
 
 import asyncio
 import json
@@ -79,7 +79,7 @@ def test_handler_does_not_retry_when_refresh_returns_same_token(monkeypatch) -> 
     assert calls == [("echo", "stale-token")]
 
 
-# ------------------------------------------------------- BFF 内部回调端点
+# ------------------------------------------------------- API 网关内部回调端点
 
 
 def test_internal_callback_requires_internal_secret(tmp_path: Path) -> None:

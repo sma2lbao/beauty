@@ -1,4 +1,4 @@
-"""BFF 会话契约:登录只返回用户信息,双令牌永远不下发给 SPA。"""
+"""API 网关会话契约:登录只返回用户信息,双令牌永远不下发给 SPA。"""
 
 from __future__ import annotations
 

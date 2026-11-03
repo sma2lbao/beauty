@@ -13,7 +13,7 @@ dependencies = [
     "account-service",
     "workspace-service",
     "tool-service",
-    "bff",
+    "api-gateway",
 ]
 
 [tool.uv.workspace]
@@ -30,7 +30,7 @@ members = [
     "services/account-service",
     "services/workspace-service",
     "services/tool-service",
-    "services/bff",
+    "services/api-gateway",
 ]
 
 [tool.uv.sources.common]
@@ -63,7 +63,7 @@ workspace = true
 [tool.uv.sources.tool-service]
 workspace = true
 
-[tool.uv.sources.bff]
+[tool.uv.sources.api-gateway]
 workspace = true
 
 [dependency-groups]

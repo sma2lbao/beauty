@@ -1,5 +1,5 @@
 /**
- * 开放平台 API Key(M3-01):同源 /api/account/v1/api-keys(BFF 代理)。
+ * 开放平台 API Key(M3-01):同源 /api/account/v1/api-keys(API 网关代理)。
  */
 import { createHttpClient } from '@/lib/http';
 

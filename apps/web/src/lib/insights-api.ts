@@ -1,8 +1,8 @@
 /**
  * 用量/模型/BYOK 数据层(M0-11 本地版)。
  *
- * 全部走 BFF 同源: /api/models、/api/usage/summary、/api/byok
- * (BFF 再转发 llm-gateway / account-service;token 模式 Bearer 兜底)。
+ * 全部走 API 网关同源: /api/models、/api/usage/summary、/api/byok
+ * (API 网关再转发 llm-gateway / account-service;token 模式 Bearer 兜底)。
  */
 import { createHttpClient } from '@/lib/http';
 

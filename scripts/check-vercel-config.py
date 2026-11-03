@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # 服务目录名 → Python 包名（入口文件的父目录）。
 SERVICES: dict[str, str] = {
-    "bff": "bff",
+    "api-gateway": "api_gateway",
     "account-service": "account",
     "llm-gateway": "llm_gateway",
     "connector-service": "connector",

@@ -9,7 +9,7 @@
  * - 删除 `DELETE /api/v1/memories/{id}`(204,跨租户 404 memory.not_found);
  * - 清理过期 `POST /api/v1/memories/purge-expired`(返回 purged 条数)。
  *
- * 基址与 runs/outbox 相同(`VITE_RUNS_API_URL`,留空走同源 BFF 代理),
+ * 基址与 runs/outbox 相同(`VITE_RUNS_API_URL`,留空走同源 API 网关代理),
  * 鉴权头/401 续期/错误映射全部复用 `@/lib/http`。
  */
 

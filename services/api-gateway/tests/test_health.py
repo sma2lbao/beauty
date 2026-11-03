@@ -11,7 +11,7 @@ def test_healthz(client: TestClient) -> None:
 def test_api_health(client: TestClient) -> None:
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
-    assert body["service"] == "bff"
+    assert body["service"] == "api-gateway"
 
 
 def test_unknown_route_is_normalized(client: TestClient) -> None:
@@ -29,7 +29,7 @@ def test_readyz_ready_when_config_complete(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     "client",
-    [{"session_secret": "dev-bff-session-secret-change-me"}],
+    [{"session_secret": "dev-api-gateway-session-secret-change-me"}],
     indirect=True,
 )
 def test_readyz_503_when_session_secret_left_at_dev_default(

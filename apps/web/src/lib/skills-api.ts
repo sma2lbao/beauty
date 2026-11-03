@@ -1,5 +1,5 @@
 /**
- * Skills 数据层:内置 manifest + 上传的技能包(同源 /api/v1/skills,BFF 透传)。
+ * Skills 数据层:内置 manifest + 上传的技能包(同源 /api/v1/skills,API 网关透传)。
  *
  * - 内置技能由 orchestrator 启动时从 skills/ 目录加载;
  * - 上传技能包(SKILL.md zip)在服务端落成"包 + 版本",列表接口把包的最新版本

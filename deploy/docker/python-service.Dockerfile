@@ -7,9 +7,9 @@
 # 这正是 RFC-005 §R-36 的约定(docs/refactoring/rfc/005-w4.md)。
 #
 # 构建(在仓库根执行;context 必须是仓库根,uv.lock 与源码都在那里):
-#   docker build -f deploy/docker/python-service.Dockerfile --build-arg SERVICE=bff -t beauty-moon/bff .
+#   docker build -f deploy/docker/python-service.Dockerfile --build-arg SERVICE=api-gateway -t beauty-moon/api-gateway .
 # 直接运行(不经 compose;所有配置走 <服务前缀>__* 环境变量):
-#   docker run --rm -p 8007:8007 --env-file services/bff/.env beauty-moon/bff
+#   docker run --rm -p 8007:8007 --env-file services/api-gateway/.env beauty-moon/api-gateway
 #
 # 不进镜像的:node_modules、JS 侧源码、.venv、.git、文档——本文件只 COPY Python workspace。
 # TODO(W4 后续):仓库根还没有 .dockerignore,本地构建时上下文仍会带上 node_modules/.git;
@@ -47,7 +47,7 @@ RUN uv sync --frozen --no-dev
 FROM python:3.12-slim-bookworm AS runtime
 
 # SERVICE 决定默认入口模块、端口与 HEALTHCHECK 目标;由 compose build args 注入。
-ARG SERVICE=bff
+ARG SERVICE=api-gateway
 ENV SERVICE=${SERVICE} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -69,9 +69,9 @@ USER 10001:10001
 # 存活探针:只打本进程 /healthz(不依赖 DB/下游,见 docs/observability.md 探针约定);
 # runtime 镜像没有 curl,用标准库 urllib。端口按 SERVICE 映射,与 CMD 同一张表。
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \
-  CMD ["python", "-c", "import os, urllib.request; ports = {'account-service': 8001, 'agent-orchestrator': 8002, 'llm-gateway': 8003, 'connector-service': 8004, 'workspace-service': 8005, 'knowledge-service': 8006, 'bff': 8007, 'tool-service': 8008}; urllib.request.urlopen('http://127.0.0.1:%d/healthz' % ports[os.environ['SERVICE']], timeout=2)"]
+  CMD ["python", "-c", "import os, urllib.request; ports = {'account-service': 8001, 'agent-orchestrator': 8002, 'llm-gateway': 8003, 'connector-service': 8004, 'workspace-service': 8005, 'knowledge-service': 8006, 'api-gateway': 8007, 'tool-service': 8008}; urllib.request.urlopen('http://127.0.0.1:%d/healthz' % ports[os.environ['SERVICE']], timeout=2)"]
 
 # SERVICE -> (uvicorn 模块, 端口)。端口和 docs/local-dev.md、各服务 project.json 的
 # serve target 保持一致;--no-access-log 与本地 serve 一致(访问日志由 common 的
 # 结构化 http_request 中间件负责,避免重复)。
-CMD ["sh", "-c", "case \"$SERVICE\" in account-service) exec uvicorn account.main:app --host 0.0.0.0 --port 8001 --no-access-log ;; agent-orchestrator) exec uvicorn agent_orchestrator.main:app --host 0.0.0.0 --port 8002 --no-access-log ;; llm-gateway) exec uvicorn llm_gateway.main:app --host 0.0.0.0 --port 8003 --no-access-log ;; connector-service) exec uvicorn connector.main:app --host 0.0.0.0 --port 8004 --no-access-log ;; workspace-service) exec uvicorn workspace.main:app --host 0.0.0.0 --port 8005 --no-access-log ;; knowledge-service) exec uvicorn knowledge.main:app --host 0.0.0.0 --port 8006 --no-access-log ;; tool-service) exec uvicorn tool_service.main:app --host 0.0.0.0 --port 8008 --no-access-log ;; bff) exec uvicorn bff.main:app --host 0.0.0.0 --port 8007 --no-access-log ;; *) echo \"unknown SERVICE: $SERVICE\" >&2; exit 64 ;; esac"]
+CMD ["sh", "-c", "case \"$SERVICE\" in account-service) exec uvicorn account.main:app --host 0.0.0.0 --port 8001 --no-access-log ;; agent-orchestrator) exec uvicorn agent_orchestrator.main:app --host 0.0.0.0 --port 8002 --no-access-log ;; llm-gateway) exec uvicorn llm_gateway.main:app --host 0.0.0.0 --port 8003 --no-access-log ;; connector-service) exec uvicorn connector.main:app --host 0.0.0.0 --port 8004 --no-access-log ;; workspace-service) exec uvicorn workspace.main:app --host 0.0.0.0 --port 8005 --no-access-log ;; knowledge-service) exec uvicorn knowledge.main:app --host 0.0.0.0 --port 8006 --no-access-log ;; tool-service) exec uvicorn tool_service.main:app --host 0.0.0.0 --port 8008 --no-access-log ;; api-gateway) exec uvicorn api_gateway.main:app --host 0.0.0.0 --port 8007 --no-access-log ;; *) echo \"unknown SERVICE: $SERVICE\" >&2; exit 64 ;; esac"]

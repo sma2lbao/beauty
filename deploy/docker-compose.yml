@@ -13,7 +13,7 @@
 # - 8 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
 # - 6 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
 #   原因见 deploy/postgres/initdb/01-create-databases.sql(alembic_version 表名冲突);
-# - web 容器(nginx)同源托管 SPA 并反代 /api → bff:8007;浏览器只访问 :8080 一个入口;
+# - web 容器(nginx)同源托管 SPA 并反代 /api → api-gateway:8007;浏览器只访问 :8080 一个入口;
 # - 健康探针一律打 /healthz(进程存活,不依赖数据库);/readyz 是给编排层的就绪建议;
 #   8 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
 #   端口按 SERVICE 映射),compose 仅在 pg/redis 上显式声明 healthcheck;
@@ -73,7 +73,7 @@ services:
     build:
       <<: *python-build
       args:
-        SERVICE: bff
+        SERVICE: api-gateway
     image: beauty-moon/python-migrate:local
     command:
       - sh
@@ -109,7 +109,7 @@ services:
     environment:
       ACCOUNT__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_account
       ACCOUNT__AUTO_CREATE_TABLES: 'false'
-      # 演示统一关鉴权(BFF 仍按 session 流程代理;生产改 true 并配 issuer/JWKS)
+      # 演示统一关鉴权(API 网关仍按 session 流程代理;生产改 true 并配 issuer/JWKS)
       ACCOUNT__AUTH_ENABLED: 'false'
       # 签名密钥落 /data/keys 具名卷,重启不轮换 kid(生产必须持久化,见 README)
       ACCOUNT__SIGNING_KEY_PATH: /data/keys/account-signing-key.pem
@@ -244,27 +244,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  bff:
+  api-gateway:
     build:
       <<: *python-build
       args:
-        SERVICE: bff
-    image: beauty-moon/bff:local
+        SERVICE: api-gateway
+    image: beauty-moon/api-gateway:local
     environment:
-      BFF__APP_ORIGIN: http://localhost:8080
-      BFF__RUNTIME_BASE_URL: http://agent-orchestrator:8002
-      BFF__ACCOUNT_BASE_URL: http://account-service:8001
-      BFF__WORKSPACE_BASE_URL: http://workspace-service:8005
-      BFF__KNOWLEDGE_BASE_URL: http://knowledge-service:8006
-      BFF__CONNECTOR_BASE_URL: http://connector-service:8004
-      BFF__LLM_GATEWAY_BASE_URL: http://llm-gateway:8003
-      BFF__RUNTIME_PUBLIC_URL: http://localhost:8080
-      # 不能用 BFF 内置的 dev 默认值:否则 /readyz 会 503(见 services/bff/bff/api/health.py)。
-      BFF__SESSION_SECRET: ${BFF_SESSION_SECRET:-compose-demo-session-secret-change-me}
+      API_GATEWAY__APP_ORIGIN: http://localhost:8080
+      API_GATEWAY__RUNTIME_BASE_URL: http://agent-orchestrator:8002
+      API_GATEWAY__ACCOUNT_BASE_URL: http://account-service:8001
+      API_GATEWAY__WORKSPACE_BASE_URL: http://workspace-service:8005
+      API_GATEWAY__KNOWLEDGE_BASE_URL: http://knowledge-service:8006
+      API_GATEWAY__CONNECTOR_BASE_URL: http://connector-service:8004
+      API_GATEWAY__LLM_GATEWAY_BASE_URL: http://llm-gateway:8003
+      API_GATEWAY__RUNTIME_PUBLIC_URL: http://localhost:8080
+      # 不能用 API 网关内置的 dev 默认值:否则 /readyz 会 503(见 services/api-gateway/api_gateway/api/health.py)。
+      API_GATEWAY__SESSION_SECRET: ${API_GATEWAY_SESSION_SECRET:-compose-demo-session-secret-change-me}
       # 与 account / orchestrator 的内部签发密钥保持同值,内部调用才能互认。
-      BFF__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
-      BFF__COOKIE_SECURE: 'false'
-      BFF__READY_PROBE_UPSTREAMS: ${READY_PROBE_UPSTREAMS:-false}
+      API_GATEWAY__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
+      API_GATEWAY__COOKIE_SECURE: 'false'
+      API_GATEWAY__READY_PROBE_UPSTREAMS: ${READY_PROBE_UPSTREAMS:-false}
     depends_on:
       <<: *db-depends
       account-service:
@@ -281,20 +281,20 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── Web:静态 SPA + Nginx(同源 /api → bff:8007) ─────────────────────────
+  # ── Web:静态 SPA + Nginx(同源 /api → api-gateway:8007) ─────────────────────────
   web:
     build:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
       args:
-        # 同源 BFF Cookie 登录;token 模式需直连 account-service:8001,本编排未暴露(见 README)。
+        # 同源 API 网关 Cookie 登录;token 模式需直连 account-service:8001,本编排未暴露(见 README)。
         VITE_AUTH_MODE: ${VITE_AUTH_MODE:-session}
         VITE_SITE_URL: ${VITE_SITE_URL:-http://localhost:3000}
     image: beauty-moon/web:local
     ports:
       - '8080:80'
     depends_on:
-      bff:
+      api-gateway:
         condition: service_healthy
     restart: unless-stopped
 

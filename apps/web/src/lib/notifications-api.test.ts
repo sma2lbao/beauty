@@ -19,7 +19,7 @@ describe('streamNotifications', () => {
     vi.unstubAllGlobals();
   });
 
-  it('订阅时声明 Accept: text/event-stream(BFF 据此流式转发,否则缓冲到读超时)', async () => {
+  it('订阅时声明 Accept: text/event-stream(API 网关据此流式转发,否则缓冲到读超时)', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue({ ok: false, status: 500, body: null });

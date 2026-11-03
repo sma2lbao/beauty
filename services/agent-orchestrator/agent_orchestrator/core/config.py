@@ -87,8 +87,8 @@ class Settings(BaseAppSettings):
     account_service_url: str = "http://127.0.0.1:8001"
     mcp_resource_url: str = "http://127.0.0.1:8002/mcp"
     # 远程 MCP 的浏览器 OAuth 授权(P1):云端 agent 不能自己开浏览器——用户在
-    # 浏览器里完成授权码 + PKCE,服务端只在 BFF 同源回调里换 token(加密落库)。
-    # redirect_uri 必须与 BFF 实际回调地址一致(DCR 注册时原样声明)。
+    # 浏览器里完成授权码 + PKCE,服务端只在 API 网关同源回调里换 token(加密落库)。
+    # redirect_uri 必须与 API 网关实际回调地址一致(DCR 注册时原样声明)。
     mcp_oauth_enabled: bool = True
     mcp_oauth_redirect_uri: str = "http://127.0.0.1:8007/api/mcp/oauth/callback"
     # state 签名密钥:留空回退 mcp_secret;独立配置便于轮换/多环境隔离

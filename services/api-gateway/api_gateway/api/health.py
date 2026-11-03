@@ -1,10 +1,10 @@
 """健康检查:根探针 + 同源 `/api/health`(M0-01 验收点)+ 就绪探针。
 
-就绪语义(BFF 无 DB,与 service_kit 契约一致,见 RFC-005 §R-37):
+就绪语义(API 网关无 DB,与 service_kit 契约一致,见 RFC-005 §R-37):
 - 判据是**关键配置完整**:session_secret 已从默认值覆盖(Cookie 会话可加密)、
   internal_secret 非空(内部签发/stream token 可用)——缺任一即 503;
 - 可选上游探测 READY_PROBE_UPSTREAMS(默认 false):开启时逐个 GET 上游 /healthz,
-  任一不可达即 503;默认关闭,避免级联判定(上游抖动不该把 BFF 打成不就绪)。
+  任一不可达即 503;默认关闭,避免级联判定(上游抖动不该把 API 网关打成不就绪)。
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ import httpx
 from common.service_kit import create_health_router
 from fastapi import HTTPException, Request
 
-from bff.core.config import Settings
+from api_gateway.core.config import Settings
 
 # 部署环境必须覆盖的本地兜底默认值(见 core/config.py session_secret)
-_DEV_DEFAULT_SESSION_SECRET = "dev-bff-session-secret-change-me"
+_DEV_DEFAULT_SESSION_SECRET = "dev-api-gateway-session-secret-change-me"
 
 
 def _missing_config(settings: Settings) -> str | None:
@@ -65,5 +65,5 @@ health_router = create_health_router(ready_check=_ready)
 
 @health_router.get("/api/health")
 async def api_health() -> dict[str, str]:
-    """部署 smoke 用:经 Nginx 同源访问的 BFF 健康检查。"""
-    return {"status": "ok", "service": "bff"}
+    """部署 smoke 用:经 Nginx 同源访问的 API 网关健康检查。"""
+    return {"status": "ok", "service": "api-gateway"}

@@ -183,7 +183,7 @@ class MCPOAuthStartRead(BaseModel):
 
 
 class MCPOAuthCallbackRequest(BaseModel):
-    """BFF → orchestrator 内部回调契约(经 X-Internal-Secret 鉴权)。"""
+    """API 网关 → orchestrator 内部回调契约(经 X-Internal-Secret 鉴权)。"""
 
     state: str = Field(min_length=1, max_length=8192)
     code: str = Field(min_length=1, max_length=8192)
@@ -192,6 +192,6 @@ class MCPOAuthCallbackRequest(BaseModel):
 class MCPOAuthCallbackRead(BaseModel):
     #: 换 token 是否成功;失败时 redirect_path 仍指向 /mcp?oauth=error
     ok: bool
-    #: 前端要跳转的站内相对路径(由 orchestrator 统一拼,避免 BFF 了解错误文案)
+    #: 前端要跳转的站内相对路径(由 orchestrator 统一拼,避免 API 网关了解错误文案)
     redirect_path: str
     error: str | None = None

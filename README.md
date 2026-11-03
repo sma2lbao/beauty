@@ -17,14 +17,14 @@
 
 ```sh
 npm install
-npm run dev          # 七个业务服务 + BFF + Vite SPA
+npm run dev          # 七个业务服务 + API 网关 + Vite SPA
 npm run dev:status   # 健康检查
 npm run dev:seed     # 演示账号/会话/产物/run
 npm run dev:reset    # 清空本地 SQLite 与产物
 ```
 
-详见 [docs/local-dev.md](docs/local-dev.md)。BFF(:8007) 现在是必需的,Web 的
-`/api` 统一代理到 BFF。
+详见 [docs/local-dev.md](docs/local-dev.md)。API 网关(:8007) 现在是必需的,Web 的
+`/api` 统一代理到 API 网关。
 
 ## 路线图与差距分析
 

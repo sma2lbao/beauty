@@ -17,7 +17,7 @@ from tests.conftest import _settings as base_settings
 
 RESOURCE_URL = "http://resource.local/mcp"
 ISSUER = "http://as.local"
-REDIRECT_URI = "http://bff.local/api/mcp/oauth/callback"
+REDIRECT_URI = "http://api-gateway.local/api/mcp/oauth/callback"
 AUTHORIZE_ENDPOINT = f"{ISSUER}/authorize"
 TOKEN_ENDPOINT = f"{ISSUER}/token"
 REGISTRATION_ENDPOINT = f"{ISSUER}/register"

@@ -1,4 +1,4 @@
-"""BFF 认证端点:邮箱密码 / 会话 / 刷新 / 登出。
+"""API 网关认证端点:邮箱密码 / 会话 / 刷新 / 登出。
 
 双令牌只进 httpOnly 加密 Cookie;响应体只给 SPA 用户信息。
 """
@@ -13,22 +13,22 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import RedirectResponse
 
-from bff.api.deps import (
+from api_gateway.api.deps import (
     get_client,
     get_codec,
     get_session_state,
     get_settings,
     require_csrf,
 )
-from bff.core.config import Settings
-from bff.core.security import SessionCodec, new_csrf_token
-from bff.schemas.auth import (
+from api_gateway.core.config import Settings
+from api_gateway.core.security import SessionCodec, new_csrf_token
+from api_gateway.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     SessionRead,
     SessionUser,
 )
-from bff.services import account as account_service
+from api_gateway.services import account as account_service
 
 
 def _login_error(settings: Settings, code: str) -> RedirectResponse:
