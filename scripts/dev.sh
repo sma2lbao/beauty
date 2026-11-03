@@ -58,6 +58,22 @@ if [ -d "$ROOT/.uv-python" ] && [ -z "${UV_PYTHON_INSTALL_DIR:-}" ]; then
   export UV_PYTHON_INSTALL_DIR="$ROOT/.uv-python"
 fi
 
+# 让回环地址绕过系统代理:服务间调用全走 127.0.0.1,而 Python httpx 的 trust_env
+# 会继承系统代理。macOS 上 urllib.getproxies() 只返回系统代理、不返回「绕过代理」
+# 列表,于是本机开着 Clash 等代理时,服务之间的请求会被代理转发并返回 502
+# (日志表现为 auth.jwks_unavailable / API 网关 502)。只加回环而不覆盖用户已配置
+# 的 NO_PROXY;若外部域名也需要代理,自行 export HTTP_PROXY/HTTPS_PROXY
+# (httpx 同时读环境变量代理,回环仍由本变量绕过)。
+if [ -z "${NO_PROXY:-}" ]; then
+  export NO_PROXY="127.0.0.1,localhost,::1"
+else
+  case ",$NO_PROXY," in
+    *",127.0.0.1,"*) ;;
+    *) export NO_PROXY="127.0.0.1,localhost,::1,$NO_PROXY" ;;
+  esac
+fi
+export no_proxy="$NO_PROXY"
+
 # 端口探测:lsof 缺失或不可用时回退 curl(探测者只判断"是否被占",不区分占用者);
 # 输出 pid 供日志,无 lsof 时输出空串。macOS/Linux 通用。
 port_pid() {
