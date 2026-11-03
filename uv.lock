@@ -966,13 +966,13 @@ dependencies = [
     { name = "common" },
     { name = "database" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite" },
-    { name = "httpx" },
     { name = "pytest-asyncio" },
     { name = "pytest-socket" },
 ]
@@ -984,13 +984,13 @@ requires-dist = [
     { name = "common", editable = "packages/common" },
     { name = "database", editable = "packages/database" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-socket", specifier = ">=0.8.1" },
 ]

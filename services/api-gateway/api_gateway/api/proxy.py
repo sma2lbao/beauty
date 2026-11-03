@@ -68,11 +68,13 @@ def _resolve_upstream(settings: Settings, path: str) -> str | None:
     if path.startswith(("usage/", "byok")):
         return _base(settings.account_base_url) + "/v1/" + path
     if path.startswith("connector/"):
-        return (
-            _base(settings.connector_base_url)
-            + "/v1/"
-            + path.removeprefix("connector/")
-        )
+        rest = path.removeprefix("connector/")
+        # 前端只写服务内路径(/api/connector/connections);OAuth 回跳 URL 由
+        # connector-service 拼成 .../api/connector/v1/oauth/... 再回本网关,
+        # 带 v1/ 时按原样转发(与 account/workspace/knowledge 同口径)。
+        if rest.startswith("v1/"):
+            return _base(settings.connector_base_url) + "/" + rest
+        return _base(settings.connector_base_url) + "/v1/" + rest
     if path.startswith(("account/", "workspace/", "knowledge/")):
         prefix, _, rest = path.partition("/")
         base = {

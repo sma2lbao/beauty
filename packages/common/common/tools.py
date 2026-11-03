@@ -52,10 +52,11 @@ class ToolKind(StrEnum):
 
 
 class ExecutorKind(StrEnum):
-    """执行后端：沙箱内执行、代理到下游服务、服务内完成。"""
+    """执行后端：沙箱内执行、代理到下游服务、连接器转发、服务内完成。"""
 
     SANDBOX = "sandbox"
     HTTP = "http"
+    CONNECTOR = "connector"
     NONE = "none"
 
 
@@ -98,10 +99,13 @@ class ToolDescriptor:
     aliases: tuple[str, ...] = ()
     enabled: bool = True
     version: str = "1"
+    # 连接器工具的来源信息（如 {"provider": "feishu"}）；仅
+    # executor=CONNECTOR 时出现，其他工具保持 None 且不写进 wire 载荷（设计 §5.6）。
+    connector: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """序列化为 wire dict。"""
-        return {
+        payload: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "input_schema": self.input_schema,
@@ -115,6 +119,9 @@ class ToolDescriptor:
             "enabled": self.enabled,
             "version": self.version,
         }
+        if self.connector is not None:
+            payload["connector"] = dict(self.connector)
+        return payload
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ToolDescriptor:
@@ -127,6 +134,9 @@ class ToolDescriptor:
         output_schema = payload.get("output_schema")
         if output_schema is not None and not isinstance(output_schema, dict):
             raise ValueError("ToolDescriptor.output_schema 必须是对象或 None")
+        connector = payload.get("connector")
+        if connector is not None and not isinstance(connector, dict):
+            raise ValueError("ToolDescriptor.connector 必须是对象或 None")
         return cls(
             name=_require_str(payload, "name"),
             description=_require_str(payload, "description"),
@@ -140,6 +150,7 @@ class ToolDescriptor:
             aliases=_tuple_of_str(payload.get("aliases", ()), "aliases"),
             enabled=bool(payload.get("enabled", True)),
             version=str(payload.get("version", "1")),
+            connector=dict(connector) if connector is not None else None,
         )
 
 

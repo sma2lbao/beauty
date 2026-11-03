@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 class ConnectionStatus(StrEnum):
     ACTIVE = "active"
     REVOKED = "revoked"
-    EXPIRED = "expired"  # 凭证失效(保留枚举值:历史数据可能仍是该状态)
+    EXPIRED = "expired"  # 凭证失效,需要重新授权
 
 
 class ConnectionRead(BaseModel):
@@ -22,5 +22,16 @@ class ConnectionRead(BaseModel):
     account: str
     display_name: str | None
     status: ConnectionStatus
-    last_checked_at: datetime | None
+    enabled: bool
+    auth_kind: str | None = None
+    provider_account_id: str | None = None
+    external_workspace: str | None = None
+    scopes: list[str] | None = None
+    expires_at: datetime | None = None
+    refresh_expires_at: datetime | None = None
+    last_refreshed_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    last_error_code: str | None = None
+    revoked_at: datetime | None = None
     created_at: datetime
+    updated_at: datetime

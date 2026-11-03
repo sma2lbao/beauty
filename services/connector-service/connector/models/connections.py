@@ -2,6 +2,7 @@
 
 凭证经 connector.core.crypto 信封加密后存 JSON 列(读端永不返回,
 由 schema 层保证);密钥见配置 credential_secret(架构 §10 密钥库)。
+provider 特有的附加字段统一收进 metadata 列(飞书存 tenant_key/user_name 等)。
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from sqlalchemy import JSON, DateTime, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, String, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -20,17 +21,56 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
         {"comment": "同租户同提供商同账号只允许一条连接"},
     )
 
-    provider: Mapped[str] = mapped_column(
-        String(32), comment="历史数据;无内置 provider"
+    provider: Mapped[str] = mapped_column(String(32), comment="provider 名(如 feishu)")
+    account: Mapped[str] = mapped_column(
+        String(320), comment="稳定账号标识(飞书 open_id)"
     )
-    account: Mapped[str] = mapped_column(String(320), comment="账号标识(邮箱地址)")
     display_name: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(
         String(16), index=True, comment="active/revoked/expired"
     )
     credentials: Mapped[dict] = mapped_column(
-        JSON, comment="提供商凭证;读端永不返回;密文存储为阶段 B"
+        JSON, comment="提供商凭证;读端永不返回;Fernet 信封加密存储"
+    )
+
+    # ── 连接平台扩展(设计见 docs/design/connector.md §5.2)────────────────
+    owner_subject: Mapped[str | None] = mapped_column(
+        String(64), comment="授权用户的 subject;组织共享连接为空"
+    )
+    auth_kind: Mapped[str | None] = mapped_column(
+        String(16), comment="user/tenant;飞书 v1 固定 user"
+    )
+    provider_account_id: Mapped[str | None] = mapped_column(
+        String(128), comment="飞书 open_id / Notion bot_id"
+    )
+    external_workspace: Mapped[str | None] = mapped_column(
+        String(128), comment="飞书 tenant_key / Notion workspace_id"
+    )
+    scopes: Mapped[list | None] = mapped_column(JSON, comment="实际授予的 scope 列表")
+    provider_metadata: Mapped[dict | None] = mapped_column(
+        "metadata", JSON, comment="provider 附加信息(workspace/user/app 等)"
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        comment="关闭启用 != 解绑;默认 true",
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="access token 过期时间"
+    )
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="refresh token 过期时间(飞书 365 天)"
+    )
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="最近一次成功刷新时间"
+    )
+    last_error_code: Mapped[str | None] = mapped_column(
+        String(64), comment="最近一次失败码(前端展示/判定重连)"
     )
     last_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), comment="最近一次连通性测试时间"
     )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(String(64))

@@ -85,6 +85,8 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+# coverage concurrency=greenlet/thread 的进程内数据文件
+.cov.*
 
 # Playwright MCP 运行时产物（控制台日志、页面快照），非源码
 .playwright-mcp/

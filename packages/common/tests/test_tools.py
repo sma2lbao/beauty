@@ -96,6 +96,33 @@ class TestToolDescriptor:
         with pytest.raises(ValueError):
             ToolDescriptor.from_payload(payload)
 
+    def test_connector_payload_roundtrip(self) -> None:
+        descriptor = _descriptor(
+            name="Feishu__read_document",
+            executor=ExecutorKind.CONNECTOR,
+            connector={"provider": "feishu"},
+        )
+        payload = descriptor.to_payload()
+        assert payload["executor"] == "connector"
+        assert payload["connector"] == {"provider": "feishu"}
+        assert ToolDescriptor.from_payload(payload) == descriptor
+
+    def test_connector_absent_for_builtin_tools(self) -> None:
+        payload = _descriptor().to_payload()
+        assert "connector" not in payload
+        restored = ToolDescriptor.from_payload(payload)
+        assert restored.connector is None
+
+        # 兼容旧目录载荷：显式写 null 也按缺省处理。
+        payload["connector"] = None
+        assert ToolDescriptor.from_payload(payload).connector is None
+
+    def test_from_payload_rejects_malformed_connector(self) -> None:
+        payload = _descriptor(executor=ExecutorKind.CONNECTOR).to_payload()
+        payload["connector"] = "feishu"
+        with pytest.raises(ValueError):
+            ToolDescriptor.from_payload(payload)
+
 
 class TestToolExecuteRequest:
     def test_roundtrip_omits_none(self) -> None:

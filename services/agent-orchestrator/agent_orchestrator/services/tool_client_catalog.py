@@ -1,12 +1,15 @@
-"""工具目录的进程级缓存(自 tool_client.py 拆出)。
+"""工具目录的按租户进程级缓存(自 tool_client.py 拆出)。
 
-首次 ``ensure`` 拉一次目录、失败下次重试;``refresh`` 供显式刷新。多请求共享
-同一实例,靠 ``asyncio.Lock`` 保证并发只发一次请求。
+目录按租户拉取:内置工具对所有租户相同,但连接器工具取决于该租户是否有
+active+enabled 的连接,因此缓存键必须是 tenant_id。首次 ``ensure`` 拉一次
+目录、失败下次重试;``refresh`` 供显式刷新。多请求共享同一实例,靠
+``asyncio.Lock`` 保证并发只发一次请求(跨租户仍串行化,目录请求很轻)。
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from common.tools import ToolDescriptor
@@ -15,45 +18,48 @@ if TYPE_CHECKING:
     from agent_orchestrator.services.tool_client_http import ToolClient
 
 
+@dataclass(frozen=True, slots=True)
+class _CatalogEntry:
+    """单个租户已加载的目录快照。"""
+
+    descriptors: tuple[ToolDescriptor, ...]
+    version: str
+
+
 class ToolCatalog:
-    """进程级工具目录缓存(多请求共享;失败不缓存)。"""
+    """按租户的工具目录缓存(多请求共享;失败不缓存)。"""
 
     def __init__(self) -> None:
-        self._descriptors: tuple[ToolDescriptor, ...] = ()
-        self._version = ""
-        self._loaded = False
+        self._entries: dict[str, _CatalogEntry] = {}
         self._lock = asyncio.Lock()
 
-    @property
-    def descriptors(self) -> tuple[ToolDescriptor, ...]:
-        return self._descriptors
+    def descriptors(self, tenant_id: str) -> tuple[ToolDescriptor, ...]:
+        """该租户可见的工具;未加载时为空(调用方应先 ensure)。"""
 
-    @property
-    def version(self) -> str:
-        return self._version
+        entry = self._entries.get(tenant_id)
+        return entry.descriptors if entry is not None else ()
 
-    @property
-    def loaded(self) -> bool:
-        return self._loaded
+    def version(self, tenant_id: str) -> str:
+        entry = self._entries.get(tenant_id)
+        return entry.version if entry is not None else ""
 
-    async def ensure(self, client: ToolClient) -> None:
-        """确保目录已加载:并发调用只发一次请求,失败后下次重试。"""
+    def loaded(self, tenant_id: str) -> bool:
+        return tenant_id in self._entries
 
-        if self._loaded:
+    async def ensure(self, client: ToolClient, tenant_id: str) -> None:
+        """确保该租户目录已加载:并发调用只发一次请求,失败后下次重试。"""
+
+        if tenant_id in self._entries:
             return
         async with self._lock:
-            if self._loaded:
+            if tenant_id in self._entries:
                 return
-            tools, version = await client.list_tools()
-            self._descriptors = tools
-            self._version = version
-            self._loaded = True
+            tools, version = await client.list_tools(tenant_id)
+            self._entries[tenant_id] = _CatalogEntry(tools, version)
 
-    async def refresh(self, client: ToolClient) -> None:
-        """强制刷新目录(控制台/运维显式触发;P0 不自动轮询)。"""
+    async def refresh(self, client: ToolClient, tenant_id: str) -> None:
+        """强制刷新该租户目录(控制台/运维显式触发;P0 不自动轮询)。"""
 
         async with self._lock:
-            tools, version = await client.list_tools()
-            self._descriptors = tools
-            self._version = version
-            self._loaded = True
+            tools, version = await client.list_tools(tenant_id)
+            self._entries[tenant_id] = _CatalogEntry(tools, version)

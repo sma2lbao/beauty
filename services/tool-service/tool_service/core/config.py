@@ -43,6 +43,13 @@ class Settings(ServiceSettings):
     fetch_max_redirects: int = 3
     #: 允许抓取的主机(逗号分隔;空 = 任意公网主机)。example.com 含其子域。
     fetch_allowed_hosts: str = ""
+    # 连接器(C2.4):tool-service 是连接器工具的唯一执行面。catalog 从
+    # connector-service 的内部端点拉取(按租户 TTL 缓存),执行则 POST 到
+    # /v1/connectors/{provider}/execute。internal_secret 为空表示未启用连接器,
+    # /v1/tools 只返回内置工具(与 fetch/exec 的开关口径一致)。
+    connector_base_url: str = "http://127.0.0.1:8004"
+    connector_internal_secret: str = ""
+    connector_catalog_ttl_seconds: float = 30.0
     # P1-L:exec 在工作区沙箱内执行 shell 命令(destructive,需人工确认)。
     # 一旦出现在启用目录里,orchestrator 的 plan 闸会对所有 run 触发确认,
     # 因此默认关闭;开启前请确认沙箱用 microsandbox + network=deny。

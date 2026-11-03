@@ -11,6 +11,7 @@ dependencies = [
     "common",
     "database",
     "fastapi>=0.143.0",
+    "httpx>=0.28.1",
     "uvicorn>=0.53.0",
 ]
 
@@ -25,7 +26,6 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
-    "httpx>=0.28.1",
     "pytest-asyncio>=1.4.0",
     "pytest-socket>=0.8.1",
 ]
@@ -35,6 +35,9 @@ packages = ["connector"]
 
 [tool.coverage.run]
 branch = true
+# SQLAlchemy async 经 greenlet 桥接同步 DB 调用;不声明 greenlet 时,
+# await 之后的帧会丢追踪,导致服务层行被误报为未覆盖。
+concurrency = ["greenlet", "thread"]
 source = ["connector"]
 
 [tool.coverage.report]

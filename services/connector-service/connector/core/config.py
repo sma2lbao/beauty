@@ -1,8 +1,11 @@
 """服务配置(env 前缀 CONNECTOR__,公共字段见 common.service_kit)。
 
-连接器框架:当前没有内置连接器(邮件、日历能力均已下线),因此没有
-任何 provider 凭据配置;新连接器按需自行增加配置项。
+连接器平台:provider 由代码 manifest 注册(见 connector.providers),配置只负责
+「启用哪些 provider」与各自的应用凭证。v1 内置飞书(企业自建应用 + 用户身份 +
+只读能力);未配置 app_id/app_secret 时 provider 仍会出现在目录里但标记未配置。
 """
+
+from __future__ import annotations
 
 from common.service_kit import ServiceSettings
 from pydantic_settings import SettingsConfigDict
@@ -20,3 +23,35 @@ class Settings(ServiceSettings):
     database_url: str = "sqlite+aiosqlite:///./connector.db"
     # 连接凭证应用层加密密钥(生产必须换随机长密钥/KMS)
     credential_secret: str = "dev-connector-secret-change-me"
+
+    # ── 连接器平台 ────────────────────────────────────────────────────────
+    # 启用的 provider(逗号分隔);代码里没有对应 manifest 的名字会被忽略。
+    providers_enabled: str = "feishu"
+    # 服务间内部调用鉴权(X-Internal-Secret);留空 = 内部端点整体关闭(401)。
+    internal_secret: str = ""
+    # OAuth 回调基址:redirect_uri = {base}/v1/oauth/{provider}/callback,
+    # 必须与 provider 后台登记的地址逐字一致。
+    oauth_redirect_base: str = "http://127.0.0.1:8004"
+    # 授权结束 302 回前端的地址(附 provider/status/code 查询参数)。
+    oauth_success_redirect: str = "http://127.0.0.1:5173/connectors"
+    # 一次性授权会话 TTL(秒):超时后 nonce 作废,必须重新发起授权。
+    oauth_session_ttl_seconds: int = 600
+    # 提前刷新余量(秒):access token 剩余寿命小于该值时惰性刷新。
+    refresh_margin_seconds: int = 300
+    request_timeout_seconds: float = 10.0
+
+    # ── 飞书(企业自建应用)──────────────────────────────────────────────
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    # 空格分隔;必须含 offline_access 才会拿到 refresh_token。
+    feishu_scopes: str = (
+        "offline_access drive:drive:readonly docx:document:readonly wiki:wiki:readonly"
+    )
+    feishu_open_api_base: str = "https://open.feishu.cn"
+    feishu_accounts_base: str = "https://accounts.feishu.cn"
+
+    @property
+    def provider_names(self) -> tuple[str, ...]:
+        """启用的 provider 名(去空、去重、保序)。"""
+        parts = (part.strip().lower() for part in self.providers_enabled.split(","))
+        return tuple(dict.fromkeys(part for part in parts if part))

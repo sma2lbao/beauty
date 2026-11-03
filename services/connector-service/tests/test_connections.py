@@ -12,7 +12,9 @@ TEST_DB = "test.db"
 
 
 def test_list_and_detail(client: TestClient, tmp_path: Path) -> None:
-    active = insert_connection(tmp_path / TEST_DB, provider="gmail")
+    active = insert_connection(
+        tmp_path / TEST_DB, provider="gmail", account="me@gmail.com"
+    )
     legacy = insert_connection(
         tmp_path / TEST_DB, provider="imap", account="legacy@example.com"
     )

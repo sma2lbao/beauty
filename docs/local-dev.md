@@ -50,7 +50,7 @@ npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动�
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
-connector-service(:8004)是连接器框架,当前无内置连接器(邮件与日历能力均已下线),端口保留。
+connector-service(:8004)是连接器平台:v1 内置飞书只读连接(OAuth 用户身份),Web 端有 `/connectors` 页面;邮件与日历能力已下线。
 
 打开 http://localhost:5173。
 
@@ -83,12 +83,20 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 工具白名单语义：**未声明 `tools`（接口返回 `null`）= 不限制**，装配全部工具；显式 `"tools": []` 才是"不用工具"。执行时按声明的白名单裁剪，例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
-## 3.2 连接器（空框架）
+## 3.2 连接器（飞书只读）
 
-- connector-service(:8004)只保留连接器框架：邮件与日历能力均已下线，当前无内置连接器；Web 端也不再有连接器页面。
-- 保留接口：`GET /v1/connections`（列表）、`GET /v1/connections/{id}`（详情）、`DELETE /v1/connections/{id}`（撤销：留痕不物理删，重复撤销 409）、`GET /healthz`。
-- 已删除：IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD。
-- 不再需要 Google / Microsoft client id/secret 与 OAuth 回调配置；存量连接已由迁移统一撤销。
+- **定位**：connector-service(:8004) 是连接器平台，v1 只有飞书（企业自建应用 + 用户 OAuth + 只读工具）；邮件/日历能力已于 2026-10 下线。设计见 [design/connector.md](./design/connector.md)。
+- **页面**：Web `/connectors` 列出 provider 与连接状态，支持授权、启用/停用、检查、刷新、解除连接。
+- **接口**：`GET /v1/connectors`（目录）、`POST /v1/connectors/{provider}/authorize`、`GET /v1/oauth/{provider}/callback`、`GET/PATCH/DELETE /v1/connections[/{id}]`、`POST /v1/connections/{id}/refresh|check`；内部面 `GET /v1/internal/connectors/tools`、`POST /v1/connectors/{provider}/execute`（`X-Internal-Secret` + `X-Tenant-Id`）。
+- **本地启用**：
+  1. `cp services/connector-service/.env.example services/connector-service/.env`，填 `CONNECTOR__FEISHU_APP_ID/SECRET`；
+  2. 生成一个内部密钥同时写进 connector-service 的 `CONNECTOR__INTERNAL_SECRET` 与 tool-service 的 `TOOL__CONNECTOR_INTERNAL_SECRET`（留空则连接器工具不暴露，授权页面仍可用）；
+  3. 飞书后台「安全设置 → 重定向 URL」登记 `http://localhost:5173/api/connector/v1/oauth/feishu/callback`
+     （直连 :8004 时是 `http://127.0.0.1:8004/v1/oauth/feishu/callback`），并令 `CONNECTOR__OAUTH_REDIRECT_BASE`
+     与之对应（`http://localhost:5173/api/connector` 或 `http://127.0.0.1:8004`）；
+  4. 重启 connector-service 与 tool-service。
+- **执行链**：orchestrator → tool-service（`TOOL__CONNECTOR_*`，目录按租户缓存 30s）→ connector-service；工具名 `Feishu__<tool>`，审批沿用 `risk=read` 自动放行，审计落 tool-service 的 `tool_calls`。
+- **已删除**：IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD；存量连接由迁移统一撤销。
 
 ## 3.3 MCP Client（第三方工具）
 

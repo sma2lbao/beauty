@@ -76,7 +76,7 @@ Browser
 ├── agent-runtime（agent-orchestrator）  编排 + Skill + MCP + run worker                  :8002
 ├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
-├── connector-service       连接器框架（当前无内置连接器）+ 凭证管理                    :8004
+├── connector-service       连接器平台：飞书只读连接/OAuth/凭证加密（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
 ├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
 └── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
@@ -113,7 +113,7 @@ Browser
 | agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker                                                               | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                              |
 | tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）        | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md) |
 | llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                               | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）            |
-| connector-service    | 容器 :8004            | 连接器框架（当前无内置连接器）                                                          | 2026-10 邮箱/日历能力下线；保留健康探针/连接撤销/凭证加密                                              |
+| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、飞书只读工具                          | 2026-10 邮箱/日历能力下线；2026-11 起飞书连接器；设计见 [connector.md](./design/connector.md)          |
 | knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                  | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)   |
 | workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                  | 暂用 DB/本地文件；对象存储后置                                                                         |
 | account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                   | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                        |

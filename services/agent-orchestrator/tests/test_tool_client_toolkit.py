@@ -282,7 +282,7 @@ async def test_toolkit_restricted_filters() -> None:
     assert only_read.risk("read") == "read"
     nothing = toolkit.restricted(["missing"])
     assert len(nothing) == 0
-    assert catalog.loaded is True
+    assert catalog.loaded("t-1") is True
     await client.aclose()
 
 
