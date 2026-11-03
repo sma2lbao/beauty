@@ -6,7 +6,9 @@ Vercel Python runtime 只自动识别根级 ``app.py`` / ``main.py`` 等入口�
 
 1. ``pyproject.toml`` 的 ``[tool.vercel] entrypoint = "<pkg>.main:app"``；
 2. ``vercel.json`` 的 ``functions`` 以入口文件 ``<pkg>/main.py`` 为 key（含
-   ``maxDuration`` 与 ``excludeFiles``，控制函数时长与 500MB 包体）；
+   ``maxDuration`` 与 ``excludeFiles``，控制函数时长与 500MB 包体）；``maxDuration``
+   还必须不超过部署计划上限（``MAX_FUNCTION_DURATION``，Hobby 300s；800s 需 Pro），
+   否则部署阶段会被 Vercel 直接拒绝（详见 <docs/design/serverless-deployment.md> §7.6）；
 3. ``vercel.json`` 显式覆盖 ``framework`` / ``installCommand`` / ``buildCommand``：
    仓库根有 ``nx.json``，Vercel 会命中 Nx monorepo 自动配置，把构建命令改成
    ``npm install --prefix=../..`` + ``npx nx build <项目>``；而本仓库 Python 服务
@@ -48,6 +50,11 @@ SERVICES: dict[str, str] = {
 PYTHON_VERSION = "3.12"
 # Vercel 检测到仓库根 nx.json 后会注入 Nx 的 install/build 命令，Python 服务必须显式覆盖。
 EXPECTED_FRAMEWORK = "fastapi"
+# 函数时长的部署计划硬上限：Vercel 在部署时校验，超限直接拒绝部署
+# （``The value for maxDuration must be between 1 second and 300 seconds``）。
+# Hobby 默认与最大都是 300s；800s 只有 Pro/Enterprise 可用。
+# 部署目标升级到 Pro 后，与 services/api-gateway/vercel.json 的 maxDuration 一起调高。
+MAX_FUNCTION_DURATION = 300
 APP_LINE = re.compile(r"^app\s*=\s*create_app\(\)\s*$", re.MULTILINE)
 
 
@@ -117,6 +124,13 @@ def check_service(service: str, package: str) -> list[str]:
                     problems.append(
                         f"{vercel_path.relative_to(ROOT)}: {key} 的 maxDuration 非法"
                         f"（{duration!r}）"
+                    )
+                elif duration > MAX_FUNCTION_DURATION:
+                    problems.append(
+                        f"{vercel_path.relative_to(ROOT)}: {key} 的 maxDuration "
+                        f"{duration}s 超过计划上限 {MAX_FUNCTION_DURATION}s"
+                        f"（Vercel: between 1 and {MAX_FUNCTION_DURATION} seconds，"
+                        f"升级 Pro 才可到 800s）"
                     )
                 if not entry.get("excludeFiles"):
                     problems.append(

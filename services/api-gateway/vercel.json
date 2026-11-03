@@ -5,7 +5,7 @@
   "buildCommand": "true",
   "functions": {
     "api_gateway/main.py": {
-      "maxDuration": 800,
+      "maxDuration": 300,
       "excludeFiles": "{tests/**,**/test_*.py,**/__pycache__/**,**/*.db,**/.pytest_cache/**,**/*.egg-info/**,reports/**,coverage/**}"
     }
   }

@@ -31,7 +31,8 @@ Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本�
 
 - 入口：`api_gateway.main:app`（与 `vercel.json` 的 `functions` key `api_gateway/main.py` 对应）
 - Python 版本：`.python-version` 固定 3.12
-- 函数配置：`vercel.json` 设 `maxDuration`，并排除 `tests/`、本地 `*.db`、`__pycache__`
+- 函数配置：`vercel.json` 设 `maxDuration: 300`（300s 是 Hobby/非 Pro 计划上限，
+  800s 需 Pro；详见设计文档），并排除 `tests/`、本地 `*.db`、`__pycache__`
   等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
 
 已知阻塞：服务依赖同仓库 uv workspace 内的 `common` / `database` / `events`，而
