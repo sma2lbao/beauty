@@ -55,7 +55,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache local uv dirs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .uv-cache
@@ -249,7 +249,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache local uv dirs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .uv-cache
@@ -305,7 +305,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache local uv dirs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .uv-cache
@@ -344,7 +344,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache local uv dirs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .uv-cache
@@ -422,7 +422,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache local uv dirs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .uv-cache
