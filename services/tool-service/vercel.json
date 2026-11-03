@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "fastapi",
-  "installCommand": "",
+  "installCommand": "uv sync --active --no-dev --no-editable --package tool-service --frozen",
   "buildCommand": "true",
   "functions": {
     "tool_service/main.py": {

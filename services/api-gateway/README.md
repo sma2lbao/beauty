@@ -31,12 +31,17 @@ Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本�
 
 - 入口：`api_gateway.main:app`（与 `vercel.json` 的 `functions` key `api_gateway/main.py` 对应）
 - Python 版本：`.python-version` 固定 3.12
+- 依赖安装：`vercel.json` 的 `installCommand` 显式跑
+  `uv sync --active --no-dev --no-editable --package api-gateway --frozen`，
+  把 workspace 依赖（`common` 等）以普通包装进 builder 的 venv；**不要留空**——
+  空字符串等于跳过 Install Command，函数运行时会 `ModuleNotFoundError: No module named 'httpx'`
 - 函数配置：`vercel.json` 设 `maxDuration: 300`（300s 是 Hobby/非 Pro 计划上限，
   800s 需 Pro；详见设计文档），并排除 `tests/`、本地 `*.db`、`__pycache__`
   等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
 
-已知阻塞：服务依赖同仓库 uv workspace 内的 `common` / `database` / `events`，而
-Vercel 以 `services/api-gateway` 为部署根、不包含仓库其他目录；真实部署前需先把这三个包
-发布到私有索引或构建期 vendor。本次只覆盖无状态短请求服务，`agent-orchestrator` /
+自定义 Install Command 会让 Vercel 放弃函数包体优化、把整份 site-packages 打进 `_vendor`
+（实测约 40MB，远低于 500MB 上限），换来的 `--no-editable` 安装让 `common` / `database` /
+`events` 不再依赖指向 `../../packages/*` 的 editable `.pth`，因此无需私有索引或额外
+vendor 步骤即可在函数里导入。本次只覆盖无状态短请求服务，`agent-orchestrator` /
 `workspace-service` 含常驻后台循环，按设计文档外置。详见
 [serverless 部署方案](../../docs/design/serverless-deployment.md)。

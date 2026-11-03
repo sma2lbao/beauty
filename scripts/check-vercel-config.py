@@ -10,12 +10,15 @@ Vercel Python runtime 只自动识别根级 ``app.py`` / ``main.py`` 等入口�
    还必须不超过部署计划上限（``MAX_FUNCTION_DURATION``，Hobby 300s；800s 需 Pro），
    否则部署阶段会被 Vercel 直接拒绝（详见 <docs/design/serverless-deployment.md> §7.6）；
 3. ``vercel.json`` 显式覆盖 ``framework`` / ``installCommand`` / ``buildCommand``：
-   仓库根有 ``nx.json``，Vercel 会命中 Nx monorepo 自动配置，把构建命令改成
+   仓库根有 ``nx.json``，Vercel 会命中 Nx monorepo 自动配置，把安装/构建命令改成
    ``npm install --prefix=../..`` + ``npx nx build <项目>``；而本仓库 Python 服务
    刻意没有 build target，不覆盖就必然以 ``Cannot find configuration for task`` 失败。
-   ``framework = "fastapi"`` 钉住框架预设，``installCommand = ""`` 跳过用不到的
-   npm 安装（Python 依赖由 runtime 按 pyproject/uv.lock 装），``buildCommand`` 用
-   no-op（``true``）代替被劫持的 nx 构建；
+   ``framework = "fastapi"`` 钉住框架预设；``installCommand`` 显式跑 uv workspace
+   安装（``uv sync --active --no-dev --no-editable --package <服务> --frozen``）——
+   **不能留空字符串**：留空等于跳过 Install Command，实测函数 bundle 里没有任何
+   第三方依赖，运行时报 ``ModuleNotFoundError: No module named 'httpx'``（详见
+   <docs/design/serverless-deployment.md> §7.6）；``buildCommand`` 用 no-op
+   （``true``）代替被劫持的 nx 构建；
 4. ``.python-version`` 固定 3.12（与根 ``.python-version`` 一致，避免 Vercel 按
    ``requires-python`` 解析到 3.13/3.14）。
 
@@ -55,6 +58,16 @@ EXPECTED_FRAMEWORK = "fastapi"
 # Hobby 默认与最大都是 300s；800s 只有 Pro/Enterprise 可用。
 # 部署目标升级到 Pro 后，与 services/api-gateway/vercel.json 的 maxDuration 一起调高。
 MAX_FUNCTION_DURATION = 300
+# 依赖安装命令：builder 会先按 .python-version 建好 venv，再带 VIRTUAL_ENV 执行本命令，
+# 所以必须用 --active 装进那个 venv（否则装到另一份 .venv，bundle 里依旧是空的）。
+# --no-dev    不装 [dependency-groups].dev 里的测试依赖；
+# --no-editable 把 common 等 workspace 成员装成普通包，随 _vendor 一起进 bundle
+#             （editable 的 .pth 指向 ../../packages/*，运行时不存在）；
+# --package   只装该服务依赖，否则整 workspace 11 个项目全装；
+# --frozen    用仓库根已提交的 uv.lock，构建期不改锁文件。
+INSTALL_COMMAND_TEMPLATE = (
+    "uv sync --active --no-dev --no-editable --package {service} --frozen"
+)
 APP_LINE = re.compile(r"^app\s*=\s*create_app\(\)\s*$", re.MULTILINE)
 
 
@@ -98,11 +111,14 @@ def check_service(service: str, package: str) -> list[str]:
                     f"{vercel_path.relative_to(ROOT)}: framework 应为 "
                     f"{EXPECTED_FRAMEWORK!r}，实际 {config.get('framework')!r}"
                 )
-            if config.get("installCommand") != "":
+            expected_install = INSTALL_COMMAND_TEMPLATE.format(service=service)
+            install_command = config.get("installCommand")
+            if install_command != expected_install:
                 problems.append(
-                    f"{vercel_path.relative_to(ROOT)}: installCommand 应为空字符串"
-                    f"（跳过 Nx 注入的 npm install），实际 "
-                    f"{config.get('installCommand')!r}"
+                    f"{vercel_path.relative_to(ROOT)}: installCommand 应为 "
+                    f"{expected_install!r}（覆盖 Nx 注入的 npm install，并按 uv "
+                    f"workspace 把依赖装进 builder 的 venv），实际 "
+                    f"{install_command!r}"
                 )
             build_command = config.get("buildCommand")
             if not isinstance(build_command, str) or not build_command.strip():
