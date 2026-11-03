@@ -2,12 +2,19 @@
 """check-vercel-config.py —— 校验无状态服务的 Vercel 导出配置一致性。
 
 Vercel Python runtime 只自动识别根级 ``app.py`` / ``main.py`` 等入口；本仓库 6 个
-无状态服务的 ``app`` 在 ``<pkg>/main.py``，因此导出依赖三处配置共同成立：
+无状态服务的 ``app`` 在 ``<pkg>/main.py``，因此导出依赖四处配置共同成立：
 
 1. ``pyproject.toml`` 的 ``[tool.vercel] entrypoint = "<pkg>.main:app"``；
 2. ``vercel.json`` 的 ``functions`` 以入口文件 ``<pkg>/main.py`` 为 key（含
    ``maxDuration`` 与 ``excludeFiles``，控制函数时长与 500MB 包体）；
-3. ``.python-version`` 固定 3.12（与根 ``.python-version`` 一致，避免 Vercel 按
+3. ``vercel.json`` 显式覆盖 ``framework`` / ``installCommand`` / ``buildCommand``：
+   仓库根有 ``nx.json``，Vercel 会命中 Nx monorepo 自动配置，把构建命令改成
+   ``npm install --prefix=../..`` + ``npx nx build <项目>``；而本仓库 Python 服务
+   刻意没有 build target，不覆盖就必然以 ``Cannot find configuration for task`` 失败。
+   ``framework = "fastapi"`` 钉住框架预设，``installCommand = ""`` 跳过用不到的
+   npm 安装（Python 依赖由 runtime 按 pyproject/uv.lock 装），``buildCommand`` 用
+   no-op（``true``）代替被劫持的 nx 构建；
+4. ``.python-version`` 固定 3.12（与根 ``.python-version`` 一致，避免 Vercel 按
    ``requires-python`` 解析到 3.13/3.14）。
 
 任一处漂移都会让部署静默失效（Vercel 找不到入口 → 404/构建失败），所以放在 CI
@@ -39,6 +46,8 @@ SERVICES: dict[str, str] = {
 }
 
 PYTHON_VERSION = "3.12"
+# Vercel 检测到仓库根 nx.json 后会注入 Nx 的 install/build 命令，Python 服务必须显式覆盖。
+EXPECTED_FRAMEWORK = "fastapi"
 APP_LINE = re.compile(r"^app\s*=\s*create_app\(\)\s*$", re.MULTILINE)
 
 
@@ -77,6 +86,23 @@ def check_service(service: str, package: str) -> list[str]:
         except json.JSONDecodeError as exc:
             problems.append(f"{vercel_path.relative_to(ROOT)}: JSON 非法（{exc}）")
         else:
+            if config.get("framework") != EXPECTED_FRAMEWORK:
+                problems.append(
+                    f"{vercel_path.relative_to(ROOT)}: framework 应为 "
+                    f"{EXPECTED_FRAMEWORK!r}，实际 {config.get('framework')!r}"
+                )
+            if config.get("installCommand") != "":
+                problems.append(
+                    f"{vercel_path.relative_to(ROOT)}: installCommand 应为空字符串"
+                    f"（跳过 Nx 注入的 npm install），实际 "
+                    f"{config.get('installCommand')!r}"
+                )
+            build_command = config.get("buildCommand")
+            if not isinstance(build_command, str) or not build_command.strip():
+                problems.append(
+                    f"{vercel_path.relative_to(ROOT)}: buildCommand 必须是非空字符串"
+                    f"（覆盖 Nx 注入的 nx build），实际 {build_command!r}"
+                )
             functions = config.get("functions") or {}
             key = f"{package}/main.py"
             entry = functions.get(key)

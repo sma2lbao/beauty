@@ -106,6 +106,8 @@ npx nx run api-gateway:serve         # uvicorn :8007(FastAPI 网关,同源 /api)
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
+**Vercel 部署注意**:仓库根有 `nx.json`,Vercel 会把仓库识别为 Nx monorepo 并把 Build Command 改成 `npx nx build <项目>`;Python 服务无 build target,因此必须靠 `services/<svc>/vercel.json` 显式覆盖 `framework` / `installCommand` / `buildCommand`(一致性由 `scripts/check-vercel-config.py` 卡住,细节见 `docs/design/serverless-deployment.md` §7.6)。
+
 ### 依赖管理
 
 **Python 一律走 nx target(底层是 uv),不要直接 `pip install`:**

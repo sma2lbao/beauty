@@ -747,9 +747,17 @@ D1 的改造要点（相对 Cloud Run 主线）：
 
 每个服务目录同时新增 `.python-version`（固定 3.12，与根 `.python-version` 一致，避免 Vercel 按 `requires-python` 解析到 3.13/3.14）与 `vercel.json`（`excludeFiles` 排除 `tests/`、本地 `*.db`、`__pycache__`、`reports/`、`coverage/`，控制 500MB 包体上限）。入口与函数 key 的一致性由 `scripts/check-vercel-config.py` 在 CI 的 `check-workspace.sh` 中校验，防止漂移。
 
+**必须显式覆盖 Nx 自动配置（2026-11 实测）**：仓库根有 `nx.json`，Vercel 会把该仓库识别为 Nx monorepo 并自动"调整默认设置"——install 命令被改成 `npm install --prefix=../..`、Build Command 被改成 `cd ../.. && npx nx build <项目>`。本仓库 Python 服务刻意没有 build target，于是部署直接失败：`NX   Cannot find configuration for task account-service:build`（`[BUILD_UTILS_SPAWN_1]`，exit 1）。因此每个服务的 `vercel.json` 必须显式写三项，并由 `scripts/check-vercel-config.py` 一并卡住：
+
+| 字段             | 取值        | 作用                                                                                                                                                     |
+| ---------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `framework`      | `"fastapi"` | 钉住框架预设，避免 Nx 自动配置改写后的框架判定漂移                                                                                                       |
+| `installCommand` | `""`        | 跳过 Nx 注入的 npm 安装（本仓库 Python 服务不需要 Node 依赖；Python 依赖由 runtime 按 `pyproject.toml`/`uv.lock` 安装），省掉一次约 2 分钟的 npm install |
+| `buildCommand`   | `"true"`    | no-op 占位，替换被劫持的 `npx nx build`（FastAPI 应用由 runtime 打包，不需要用户构建步骤）                                                               |
+
 **仍未解决（真实部署前必须处理）**：
 
-- **workspace 依赖摊平**：服务通过 uv workspace 的 `workspace = true` 依赖 `common` / `database` / `events`，而 Vercel 以 `services/<svc>` 为部署根、仓库其他目录不会上传，构建会因找不到这三个本地包而失败。需要把共享包发布到私有包索引（uv 可复用），或在 CI 构建期把它们 vendor 进部署根。本轮按「只加配置」处理，未引入打包脚本。
+- **workspace 依赖摊平**：服务通过 uv workspace 的 `workspace = true` 依赖 `common` / `database` / `events`，而 Vercel 以 `services/<svc>` 为部署根，函数产物只包含部署根内的文件；uv 默认以 editable 方式安装 workspace 成员（`.pth` 指向 `../../packages/*`），即使构建期能读到这些目录，运行时也可能因产物缺文件而导入失败。需要把共享包发布到私有包索引（uv 可复用），或在 CI 构建期把它们 vendor 进部署根/改成非 editable 安装。**该项尚未在真实部署中验证，Nx 覆盖修好后需看下一条构建日志再定方案。**
 - **未覆盖的服务**：`agent-orchestrator` / `workspace-service` 含常驻后台循环（outbox dispatcher、jobs worker、interrupts sweeper、sandbox reaper）与沙箱生命周期，按 D1 外置，不放进 Functions。
 - **平台侧配置**：区域、内存、Cron/Queues、迁移 Job 与 `apps/web` 的 `rewrites` 落点仍需在 Vercel 项目与 CI 中配置（`apps/web/vercel.json` 目前把 `/api/*` 指向 `https://api.beautymoon.cn/*`）。
 
