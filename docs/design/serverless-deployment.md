@@ -765,6 +765,17 @@ D1 的改造要点（相对 Cloud Run 主线）：
 
 代价：自定义 Install Command 会让 Vercel 认为依赖由用户自行管理（`hasCustomCommand`），不再做函数包体优化，整份 site-packages 直接进 `_vendor`——本仓库 6 个服务的依赖实测约 40MB，远低于 225MB 的优化阈值与 500MB 包体上限。该命令依赖构建容器能读到仓库根（前面的 Nx 报错已证明整仓可见）；若将来 Root Directory 隔离导致读不到，构建会显式失败，而不是再发出一个没有依赖的函数。
 
+**服务依赖必须在服务自己的 `pyproject.toml` 里自足（2026-11 实测）**：函数运行环境只装该服务的依赖（`uv sync --package <服务>`），而本地开发用的是仓库根共享 `.venv`，兄弟服务的依赖或 extra 会把它掩盖住。`api-gateway` 就踩了这个坑：`api_gateway/schemas/auth.py` 用了 `EmailStr`，但依赖里只有 `fastapi` / `common`，本地因为 `account-service` 声明了 `pydantic[email]` 而能跑；函数里直接报 `ImportError: email-validator is not installed`。修复是把 `pydantic[email]>=2.13.5` 写进 `services/api-gateway/pyproject.toml` 的 dependencies（与 `account-service` 一致）。部署前可本地复刻函数环境验证入口能导入：
+
+```sh
+uv venv --python 3.12 /tmp/fn-venv
+cd services/api-gateway
+VIRTUAL_ENV=/tmp/fn-venv uv sync --active --no-dev --no-editable --package api-gateway --frozen
+/tmp/fn-venv/bin/python -c "import api_gateway.main"
+```
+
+2026-11 用同样的方式逐个审计了 6 个无状态服务（各自干净 venv + 只装本服务依赖），入口均可导入。
+
 **仍未解决（真实部署前必须处理）**：
 
 - ~~**workspace 依赖摊平**~~（已解决，2026-11）：`installCommand` 改为

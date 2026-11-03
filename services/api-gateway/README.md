@@ -35,6 +35,10 @@ Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本�
   `uv sync --active --no-dev --no-editable --package api-gateway --frozen`，
   把 workspace 依赖（`common` 等）以普通包装进 builder 的 venv；**不要留空**——
   空字符串等于跳过 Install Command，函数运行时会 `ModuleNotFoundError: No module named 'httpx'`
+- 依赖自足：函数只装本服务 `pyproject.toml` 里声明的依赖，本地共享 `.venv` 会被
+  兄弟服务的 extra 掩盖。本服务的 `schemas/auth.py` 用 `EmailStr`，所以
+  `pydantic[email]` 必须留在 dependencies 里，否则函数里报
+  `email-validator is not installed`
 - 函数配置：`vercel.json` 设 `maxDuration: 300`（300s 是 Hobby/非 Pro 计划上限，
   800s 需 Pro；详见设计文档），并排除 `tests/`、本地 `*.db`、`__pycache__`
   等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
