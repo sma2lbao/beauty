@@ -34,12 +34,12 @@ def test_list_filters(client: TestClient, tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     active = insert_connection(db)
     insert_connection(
-        db, provider="notion", account="ws-1", status="revoked", enabled=False
+        db, provider="acme", account="ws-1", status="revoked", enabled=False
     )
     by_provider = client.get(
-        "/v1/connections", params={"provider": "notion"}, headers=TENANT
+        "/v1/connections", params={"provider": "acme"}, headers=TENANT
     ).json()
-    assert [row["provider"] for row in by_provider] == ["notion"]
+    assert [row["provider"] for row in by_provider] == ["acme"]
     by_status = client.get(
         "/v1/connections", params={"status": "active"}, headers=TENANT
     ).json()
@@ -47,7 +47,7 @@ def test_list_filters(client: TestClient, tmp_path: Path) -> None:
     disabled = client.get(
         "/v1/connections", params={"enabled": "false"}, headers=TENANT
     ).json()
-    assert [row["provider"] for row in disabled] == ["notion"]
+    assert [row["provider"] for row in disabled] == ["acme"]
 
 
 def test_refresh_connection(client: TestClient, demo: DemoMock, tmp_path: Path) -> None:

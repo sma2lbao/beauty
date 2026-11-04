@@ -3,7 +3,7 @@
 启动(项目目录内):uv run uvicorn connector.main:app --port 8004
 Nx(仓库根):npx nx run connector-service:serve
 
-连接器平台不内置 provider;provider 由代码 manifest 注册(connector.providers)。
+仓库内置 Notion 只读连接器;provider 由代码 manifest 注册(connector.providers)。
 
 lifespan 顺序:建 DB -> 按开关启动 outbox 派发器/巡检任务 -> 鉴权装配 -> 服务;
 关闭时先停后台任务,再关注入的 http transport,最后 service-kit 释放鉴权/DB。

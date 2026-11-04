@@ -9,9 +9,10 @@ from common.errors import NotFoundError
 
 from connector.core.config import Settings
 from connector.providers.base import BaseProvider
+from connector.providers.notion import NotionProvider
 
-# 内置 provider 登记表:当前仓库没有内置连接器,新增 provider 时在此加一行。
-_REGISTRY: dict[str, type[BaseProvider]] = {}
+# 内置 provider 登记表:仓库内置 Notion 只读连接器,新增 provider 时在此加一行。
+_REGISTRY: dict[str, type[BaseProvider]] = {NotionProvider.name: NotionProvider}
 
 
 def enabled_provider_names(settings: Settings) -> tuple[str, ...]:

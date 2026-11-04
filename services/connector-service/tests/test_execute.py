@@ -45,7 +45,7 @@ def test_execute_unknown_tool_and_provider(client: TestClient) -> None:
     assert unknown.status_code == 400
     assert unknown.json()["code"] == "connector.tool_not_found"
 
-    provider = _execute(client, "Demo__get_me", provider="notion")
+    provider = _execute(client, "Demo__get_me", provider="acme")
     assert provider.status_code == 404
     assert provider.json()["code"] == "connector.provider_not_found"
 

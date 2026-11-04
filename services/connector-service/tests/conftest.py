@@ -3,8 +3,9 @@
 库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
 连接行仍直接落库,但授权回调会用真实端点建连接。
 
-仓库没有内置 provider:平台链路的 provider 一律是 tests.demo_provider 里的
-测试专用实现(provider key "demo"),在 import 本模块时注册进 _REGISTRY。
+仓库内置 Notion provider(生产注册表里有它),但平台链路的测试一律用
+tests.demo_provider 里的测试专用实现(provider key "demo"),在 import 本模块时注册进
+_REGISTRY;Notion 自己的用例带独立 MockTransport(见 tests/test_notion_provider.py)。
 """
 
 from __future__ import annotations

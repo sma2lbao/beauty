@@ -182,8 +182,11 @@ services:
       CONNECTOR__AUTO_CREATE_TABLES: 'false'
       CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
-      # 连接器平台:内部端点(tool-service 调目录/执行)。当前无内置 provider;
-      # 新增 provider 后按需设 CONNECTOR__PROVIDERS_ENABLED(逗号分隔,默认空 = 目录无 provider)。
+      # 内置 Notion 只读连接器:OAuth public integration 凭证;留空则目录里 Notion 未配置
+      # (前端提示管理员配置),不影响其他内部端点。
+      CONNECTOR__PROVIDERS_ENABLED: notion
+      CONNECTOR__NOTION_CLIENT_ID: ${CONNECTOR_NOTION_CLIENT_ID:-}
+      CONNECTOR__NOTION_CLIENT_SECRET: ${CONNECTOR_NOTION_CLIENT_SECRET:-}
       CONNECTOR__INTERNAL_SECRET: ${CONNECTOR_INTERNAL_SECRET:-compose-demo-connector-internal-secret}
       # 浏览器回跳经同源网关 → connector-service;须与 provider 后台登记的重定向 URL 一致。
       CONNECTOR__OAUTH_REDIRECT_BASE: ${CONNECTOR_OAUTH_REDIRECT_BASE:-http://localhost:8080/api/connector}

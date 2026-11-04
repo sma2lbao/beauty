@@ -3,10 +3,11 @@
 连接器服务(架构 §8,设计见 [docs/design/connector.md](../../docs/design/connector.md)):
 把外部 SaaS 账号连到租户,凭证只进不出,并把 provider 能力暴露成 agent 可调用的工具。
 
-**当前仓库没有内置 provider**:平台层(授权、刷新、失效检测、目录、执行、连接管理)
-已打通,具体 provider 按同一套 `BaseProvider` 接口实现并注册后即可用;新 provider
-的接入步骤见下文「接入新 provider」。邮件/日历能力已下线,存量连接在迁移
-`b2e4c7a91d33` 中置为 `revoked`;2026-11-04 按新规划移除了内置的飞书 provider。
+**内置 Notion 只读连接器**:public integration OAuth(bot token)+ 搜索/读页面/读块/
+查 data source 四个只读工具;平台层(授权、刷新、失效检测、目录、执行、连接管理)
+对任何 provider 通用,新 provider 按同一套 `BaseProvider` 接口实现并注册即可(步骤
+见下文「接入新 provider」)。邮件/日历能力已下线,存量连接在迁移 `b2e4c7a91d33`
+中置为 `revoked`;2026-11-04 按新规划移除了内置的飞书 provider,改以内置 Notion。
 
 除惰性/手动刷新外,还有 **24h 刷新巡检**兜底;连接生命周期事件
 (`connector.connection.created/expired/revoked.v1`)经 **outbox** 与状态变更同事务发出。
@@ -47,7 +48,9 @@
 
 - **state 只放随机 nonce**:租户/用户/provider/redirect/PKCE verifier 都存在
   `oauth_sessions` 行里,回调按 nonce 一次性消费,10 分钟过期。
-- **PKCE S256**:授权 URL 带 `code_challenge`,换 token 时带 verifier。
+- **PKCE S256**:平台为每次授权生成 `code_challenge`/`code_verifier`;支持 PKCE 的
+  provider 带上它们,Notion 不支持 PKCE,其 `authorize_url` 忽略 challenge、换 token
+  忽略 verifier,改用 HTTP Basic Auth(见下文「内置 Notion provider」)。
 - **刷新单飞**:`SELECT … FOR UPDATE` 锁连接行 → 锁内二次检查 `expires_at`(并发请求
   只有一个真正换 token)→ 同事务写回;上游 refresh_token 一次性时,这一步是硬要求。
 - **错误分层**:只有 `connector.auth_expired` / `connector.oauth_failed` /
@@ -59,21 +62,59 @@
 
 见 [.env.example](.env.example)。核心项:
 
-| 变量                                | 说明                                                                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `CONNECTOR__PROVIDERS_ENABLED`      | 启用哪些 provider(逗号分隔,须已注册);默认空                                                                                     |
-| `CONNECTOR__INTERNAL_SECRET`        | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                              |
-| `CONNECTOR__OAUTH_REDIRECT_BASE`    | `{base}/v1/oauth/{provider}/callback`,须与 provider 后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
-| `CONNECTOR__OAUTH_SUCCESS_REDIRECT` | 授权结束 302 回前端的地址                                                                                                       |
-| `CONNECTOR__CREDENTIAL_SECRET`      | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                          |
+| 变量                                                                                  | 说明                                                                                                                            |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `CONNECTOR__PROVIDERS_ENABLED`                                                        | 启用哪些 provider(逗号分隔,须已注册);默认 `notion`                                                                              |
+| `CONNECTOR__INTERNAL_SECRET`                                                          | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                              |
+| `CONNECTOR__OAUTH_REDIRECT_BASE`                                                      | `{base}/v1/oauth/{provider}/callback`,须与 provider 后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
+| `CONNECTOR__OAUTH_SUCCESS_REDIRECT`                                                   | 授权结束 302 回前端的地址                                                                                                       |
+| `CONNECTOR__CREDENTIAL_SECRET`                                                        | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                          |
+| `CONNECTOR__NOTION_CLIENT_ID` / `..._CLIENT_SECRET`                                   | Notion public integration 的 OAuth 凭证;未配置时目录里 `configured=false` 且授权接口 409                                        |
+| `CONNECTOR__NOTION_VERSION`                                                           | 每个 Notion API 请求带的 `Notion-Version` 头(默认 `2026-03-11`)                                                                 |
+| `CONNECTOR__NOTION_API_BASE`                                                          | Notion API/授权基址(默认 `https://api.notion.com`)                                                                              |
+| `CONNECTOR__OUTBOX_ENABLED`                                                           | 是否把连接生命周期事件写 outbox 并后台投递;默认 `false`(降级为结构化日志)                                                       |
+| `CONNECTOR__OUTBOX_DISPATCH_INTERVAL_SECONDS` / `..._BATCH_SIZE` / `..._MAX_ATTEMPTS` | outbox 派发轮询间隔(1s)/每批条数(50)/最大尝试次数(5)                                                                            |
+| `CONNECTOR__REFRESH_PATROL_ENABLED`                                                   | 是否启动 24h 刷新巡检;生产默认 `true`,测试关闭                                                                                  |
+| `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS`                                          | 巡检轮询间隔(默认 3600s)                                                                                                        |
+| `CONNECTOR__REFRESH_STALE_SECONDS`                                                    | 超过多久没刷新算「过期」候选(默认 86400s = 24h)                                                                                 |
 
 provider 自己的应用凭证字段由该 provider 的 manifest 定义,加在 `Settings`(env 前缀
 `CONNECTOR__`)里;未配置时目录里该 provider 的 `configured=false`。
-| `CONNECTOR__OUTBOX_ENABLED` | 是否把连接生命周期事件写 outbox 并后台投递;默认 `false`(降级为结构化日志) |
-| `CONNECTOR__OUTBOX_DISPATCH_INTERVAL_SECONDS` / `..._BATCH_SIZE` / `..._MAX_ATTEMPTS` | outbox 派发轮询间隔(1s)/每批条数(50)/最大尝试次数(5) |
-| `CONNECTOR__REFRESH_PATROL_ENABLED` | 是否启动 24h 刷新巡检;生产默认 `true`,测试关闭 |
-| `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS` | 巡检轮询间隔(默认 3600s) |
-| `CONNECTOR__REFRESH_STALE_SECONDS` | 超过多久没刷新算「过期」候选(默认 86400s = 24h) |
+
+## 内置 Notion provider(`notion`)
+
+实现:[`connector/providers/notion.py`](connector/providers/notion.py);Notion 的授权与
+API 细节与一般 OAuth provider 不同:
+
+- **授权**:`GET https://api.notion.com/v1/oauth/authorize`,参数含
+  `client_id`、`response_type=code`、`owner=user`(固定值)、`redirect_uri`、`state`;
+  **不支持 PKCE**,平台生成的 `code_challenge` 被忽略。
+- **换 token**:`POST /v1/oauth/token`,**HTTP Basic Auth**(base64 `client_id:client_secret`),
+  body 为 `grant_type=authorization_code` + `code` + `redirect_uri`;刷新用
+  `grant_type=refresh_token`。token 响应**不含 `expires_in`**,所以 `expires_at` 留空:
+  不做按时间惰性刷新,只有 401 才置 `expired` 并要求重连。
+- **身份**:`GET /v1/users/me`(bot 身份)+ 换 token 响应里的 workspace 信息,合成
+  `account = "{workspace_id}:{owner_subject}"`(owner 为 user 时取 user id,否则
+  `workspace`),展示名取用户/工作区名称;`external_workspace` 记工作区名。
+- **请求头**:所有 API 请求带 `Authorization: Bearer <token>` 与
+  `Notion-Version: {CONNECTOR__NOTION_VERSION}`。
+- **工具(只读 4 个)**:`Notion__search`(`POST /v1/search`)、`Notion__read_page`
+  (`GET /v1/pages/{id}`)、`Notion__read_blocks`(`GET /v1/blocks/{id}/children`)、
+  `Notion__query_data_source`(`POST /v1/data_sources/{id}/query`)。Notion 的
+  `search` 结果会被压成 id/标题/链接摘要;读块与查库保留原始对象。
+- **错误映射**:401 → `auth_expired`(需重连);403 → `scope_missing`(页面没共享给集成);
+  400 → `invalid_arguments`;429 读 `Retry-After` → `upstream_rate_limited`;
+  ≥500 → `upstream_unavailable`(瞬时,不逼重连)。
+- **写能力(create_page / append_blocks)未实现**:对话侧还没有审批流,写工具会被
+  tool-service 以 `tool.confirmation_required` 拦下,留待 P3(设计 §7)。
+- **租户凭证**:`tenant_apps` 的 `app_id`/`app_secret` 即 Notion 的
+  `client_id`/`client_secret`;未配置的租户沿用全局 `Settings`。
+
+Notion 侧准备:在 <https://www.notion.so/my-integrations> 建 public integration,把
+`http://<host>:8004/v1/oauth/notion/callback`(或经网关的
+`/api/connector/v1/oauth/notion/callback`)填进 Redirect URIs,把 client id/secret 填进
+`CONNECTOR__NOTION_CLIENT_ID`/`CONNECTOR__NOTION_CLIENT_SECRET`;用户授权后还要在
+Notion 里把目标页面/数据库 **share 给该集成**,否则只能搜到空结果或 403。
 
 ## 接入新 provider
 
@@ -81,8 +122,9 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 
 1. 在 `connector/providers/<name>.py` 继承 `BaseProvider`:声明
    `name`/`prefix`/`display_name`/`auth_kind`/`docs_url`/`tools`(每个工具一个
-   `ToolSpec`,含 `input_schema` 与 `risk`),实现 `authorize_url`、
-   `exchange_code`、`refresh`、`fetch_identity`、`call`。
+   `ToolSpec`,含 `input_schema`),实现 `authorize_url`、`exchange_code`、
+   `refresh`、`fetch_identity`、`call`;工具 `risk` 当前由目录层统一暴露为 `read`
+   (写工具要等对话审批链路,见「内置 Notion provider」)。
 2. 在 `connector/providers/__init__.py` 的注册表登记构造函数;config 里按需加
    该 provider 的应用凭证字段。
 3. 错误统一抛 `ProviderError(code, message, hint, retryable)`;需要重连的错误码
@@ -90,8 +132,10 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 4. 无需新增路由/表:授权、刷新、目录、执行、连接管理都由平台层复用
    `oauth_sessions` / `connections`(唯一约束 `(tenant_id, provider, account)`,
    account 写稳定标识,如 provider 的账号 id)。
-5. 补测试:上游用 `httpx.MockTransport` 打桩(见 `tests/conftest.py` 的 DemoMock
-   与 `tests/demo_provider.py`),零网络、零外呼;新 provider 也要覆盖授权/刷新/执行/错误映射分支。
+5. 补测试:上游用 `httpx.MockTransport` 打桩(平台链路见 `tests/conftest.py` 的
+   DemoMock 与 `tests/demo_provider.py`;内置 Notion 的桩与用例见
+   `tests/notion_mock.py`、`tests/test_notion_provider.py`),零网络、零外呼;
+   新 provider 也要覆盖授权/刷新/执行/错误映射分支。
 
 ## 租户级应用凭证(tenant_apps)
 

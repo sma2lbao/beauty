@@ -107,7 +107,7 @@ def test_callback_invalid_state_and_unknown_provider(client: TestClient) -> None
     assert params["code"] == "connector.invalid_state"
 
     response = client.get(
-        "/v1/oauth/notion/callback", params={"state": "x"}, follow_redirects=False
+        "/v1/oauth/acme/callback", params={"state": "x"}, follow_redirects=False
     )
     assert _redirect_params(response)["code"] == "connector.provider_not_found"
 
@@ -159,7 +159,7 @@ def test_callback_missing_open_id(client: TestClient, demo: DemoMock) -> None:
 
 
 def test_authorize_unknown_provider(client: TestClient) -> None:
-    resp = client.post("/v1/connectors/notion/authorize", headers=TENANT)
+    resp = client.post("/v1/connectors/acme/authorize", headers=TENANT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "connector.provider_not_found"
 
