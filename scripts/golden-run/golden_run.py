@@ -46,7 +46,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agent_orchestrator.core.config import Settings  # noqa: E402
 from agent_orchestrator.main import create_app  # noqa: E402
-from agent_orchestrator.services.llm import LLMReply, ToolCall  # noqa: E402
+from agent_orchestrator.services.llm import LLMReply, LLMStreamEvent, ToolCall  # noqa: E402
 from agent_orchestrator.services.tools import (  # noqa: E402
     ToolRisk,
     ToolSpec,
@@ -162,6 +162,7 @@ class FakeLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
     ) -> LLMReply:
         self.calls.append(messages)
         index = len(self.calls) - 1
@@ -179,10 +180,35 @@ class FakeLLM:
         *,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
     ) -> AsyncIterator[str]:
-        reply = await self.complete(messages, model=model, tools=tools)
+        async for event in self.stream_events(
+            messages, model=model, tools=tools, **kwargs
+        ):
+            if event.text:
+                yield event.text
+
+    async def stream_events(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """结构化流:正文按字符吐出,工具调用放在收尾事件(对齐网关契约)。"""
+        reply = await self.complete(
+            messages,
+            model=model,
+            tools=tools,
+            response_format=response_format,
+            **kwargs,
+        )
         for char in reply.content:
-            yield char
+            yield LLMStreamEvent(text=char)
+        if reply.tool_calls:
+            yield LLMStreamEvent(tool_calls=reply.tool_calls)
 
 
 class FakeKnowledge:
@@ -577,7 +603,9 @@ def main(argv: list[str] | None = None) -> int:
             f"/api/v1/runs/{ctx.run_id}/events", headers=TENANT
         ).json()
         ctx.events = events
-        types = [event["type"] for event in events]
+        # P1-D 起同一事件流里还写 run.item.v1(过程项),它不参与关键生命周期
+        # 序列断言;只校验「创建→计划→审批→工具→交付→完成」这条主链。
+        types = [event["type"] for event in events if event["type"] != "run.item.v1"]
         check(
             types == ctx.expected_events,
             f"事件序列不符\n  期望 {ctx.expected_events}\n  实际 {types}",
@@ -625,8 +653,11 @@ def main(argv: list[str] | None = None) -> int:
             raw = b"".join(response.iter_raw()).decode()
         frames = parse_sse(raw)
         names = [name for _, name, _ in frames]
+        # 与 phase_events 一致:run.item.v1 是过程项,不参与主链序列断言
+        # (但下面的 SSE id/seq 对齐仍用完整帧,保证重放不丢事件)。
+        replayed = [name for name in names if name != "run.item.v1"]
         check(
-            names == [*ctx.expected_events, "stream.end"],
+            replayed == [*ctx.expected_events, "stream.end"],
             f"SSE 重放事件序列不符:{names}",
         )
         ids = [sid for sid, _, _ in frames[:-1]]
@@ -697,8 +728,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             # run.step.v1 是步骤视图(S1)的底层记录,不进用户事件回放(见
-            # services/run_events.py 的 list_events),对齐时先剔除再比。
-            event_types = [row[0] for row in rows if row[0] != "run.step.v1"]
+            # services/run_events.py 的 list_events);run.item.v1 是 P1-D 过程项。
+            # 两者都先剔除,再与主链序列对齐。
+            event_types = [
+                row[0]
+                for row in rows
+                if row[0] not in ("run.step.v1", "run.item.v1")
+            ]
             check(event_types == ctx.expected_events, f"DB 事件序列不符:{event_types}")
             step_count = sum(1 for row in rows if row[0] == "run.step.v1")
             check(step_count >= 1, "run.step.v1 步骤事件未落库")
