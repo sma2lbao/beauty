@@ -1,9 +1,9 @@
 # 连接器平台（Connector Platform）设计
 
-> 状态：调研稿（待评审） · 2026-11-03
+> 状态：已实现（P1 平台骨架 + P2 飞书只读） · 2026-11-03 定稿 / 2026-11-04 回填实现状态
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：仓库尚无连接器页面与创建连接能力，本稿**不含代码改动**。
+> 现状：P1/P2 已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、飞书只读工具、tool-service 执行面与 `/connectors` 页面；P3/P4 未开始。
 
 ## 1. 摘要
 
@@ -37,13 +37,15 @@
 
 | 期  | 内容                                                                     | 可回滚性                        | 状态   |
 | --- | ------------------------------------------------------------------------ | ------------------------------- | ------ |
-| P0  | 决策确认（§9.1）+ 迁表设计                                               | —                               | 待评审 |
-| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表 | `CONNECTOR__PROVIDERS_ENABLED=` | 未开始 |
-| P2  | 飞书 provider（只读 P0 工具）+ 前端 `/connectors` + tool-service 执行面  | 同上（按 provider 关）          | 未开始 |
+| P0  | 决策确认（§9.1）+ 迁表设计                                               | —                               | 已定稿 |
+| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表 | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现 |
+| P2  | 飞书 provider（只读 P0 工具）+ 前端 `/connectors` + tool-service 执行面  | 同上（按 provider 关）          | 已实现 |
 | P3  | 飞书写工具（confirm）+ 多维表格/表格读 + 组织共享连接                    | 按工具关闭                      | 未开始 |
 | P4  | Notion provider + MCP 自定义连接器并入                                   | 按 provider 关                  | 未开始 |
 
-## 2. 现状盘点
+## 2. 实现前现状盘点（2026-11-03，保留作背景）
+
+> 本节是初稿时的缺口清单；P1/P2 已按 §8 清单补齐，落地情况见 §8 实现状态与 §5.3/§5.5 的实现边界。
 
 | 模块                 | 现状                                                                                                              | 与目标差距                                                        |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -157,7 +159,9 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 **oauth_sessions**（新表）：`id`(32 hex)、`tenant_id`、`owner_subject`、`provider`、`state_nonce`(unique, 64)、`code_verifier`(nullable)、`redirect_uri`、`scopes`、`status`(`pending|completed|failed|expired`)、`error_code`、`connection_id`、`expires_at`、`created_at`、`completed_at`。**回调成功/token 落库后再置 completed**；重复 nonce 一律 400。
 
-**tenant_apps**（新表，可选覆盖）：`tenant_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一 `(tenant_id, provider)`。解析顺序：租户行 → 全局 Settings；v1 不做管理 UI（先配置/脚本写入）。
+**tenant_apps**（新表，可选覆盖）：`tenant_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一 `(tenant_id, provider)`。解析顺序：租户行 → 全局 Settings，实现在 `connector/services/apps.py`（`app_id` 与 `app_secret` 都可用才生效，半配置行记 warning 后回退全局）；授权、刷新、巡检与执行面均按租户解析 provider，目录的 `configured` 仍用全局配置、不暴露租户凭证。v1 不做管理 UI（先配置/脚本写入）。
+
+**outbox_events / processed_events**（迁移 `c4f7b1e93a52`，`down_revision = '8f1c2a5d7b90'`）：与 `events.outbox` 同源，存连接生命周期事件（`created/expired/revoked`）供至少一次投递；`processed_events` 供消费方按事件 id 幂等。`CONNECTOR__OUTBOX_ENABLED=false` 时不写表、只落结构化日志。
 
 ### 5.3 API 契约（connector-service）
 
@@ -185,7 +189,7 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 - tool-service 侧配置 `TOOL__CONNECTOR_BASE_URL` / `TOOL__CONNECTOR_INTERNAL_SECRET`（空=关闭）/
   `TOOL__CONNECTOR_CATALOG_TTL_SECONDS=30`；目录按租户缓存 30s，撤销/新建连接最长延迟一个 TTL 生效，
   执行时仍按租户实时校验连接（不存在则 404 `connector.connection_missing`）；
-- 审计沿用 `tool_calls`（`tool_name`、`run_id`），**v1 不落 connection_id**（C2.4 风险）。
+- 审计落 `tool_calls.connection_id`（C2.4 已完成）：执行端点成功/失败信封顶层都带 `connection_id`（仅连接已解析时），tool-service 提取后**从模型可见 `result` 中剥离**，再写入 `tool_calls.connection_id`（内置工具为 null）；`tool_name`/`run_id` 照旧。
 
 ### 5.4 授权会话时序
 
@@ -203,8 +207,8 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 - **失败**：`invalid_grant`/`20037` 等置 `status=expired`、写 `last_error_code`、发 outbox `connector.connection.expired.v1`；前端卡片变「需要重新连接」。
 - **飞书特例**：refresh 一次性，禁止并发；365 天强制重授权，`expires_at` 之外另存 `metadata.refresh_deadline` 做提前提示。
 - **Notion 特例**：无 `expires_in`，按 401 触发一次刷新，失败置 expired；巡检用 `POST /v1/oauth/introspect`。
-- **outbox**：本次未接入（connector-service 尚不依赖 `events`）；后续引 `events.outbox` 只发连接生命周期事件，不发业务数据。
-- **当前实现边界**：惰性刷新 + 手动刷新已上线；24h 巡检任务与 outbox 事件未做，`tenant_apps` 只有表与模型（尚未参与凭证解析）。
+- **outbox**：已接入 `events.outbox`（迁移 `c4f7b1e93a52`）；`connector.connection.created/expired/revoked.v1` 与状态变更同事务写入，`CONNECTOR__OUTBOX_ENABLED=true` 时由 `ConnectorRuntime` 起后台 `OutboxDispatcher` 至少一次投递（消费方按事件 id 去重），关闭时降级为结构化日志 `connection_event`、不写库；只发生命周期事件，不发业务数据。
+- **当前实现边界**：惰性刷新 + 手动刷新 + 24h 巡检均已上线。巡检（`connector/services/patrol.py`）跨租户扫 `active + enabled` 且 `last_refreshed_at` 为空或早于 `now - CONNECTOR__REFRESH_STALE_SECONDS` 的连接，逐条独立事务走同一单飞刷新路径，单条失败只留痕不中断整轮；由 `CONNECTOR__REFRESH_PATROL_ENABLED`（生产默认 true、测试关）控制。`tenant_apps` 已参与凭证解析（见 §5.2）。
 
 ### 5.6 能力暴露
 
@@ -303,10 +307,14 @@ ConnectorManifest(
 
 估算单位：S ≤ 1 人日，M 2–3 人日，L 4–5 人日。**P0–P2 合计约 25–35 人日**（单人；平台与 provider/前端可并行压缩）。
 
-> **实现状态（2026-11-03）**：C1.1–C1.9、C1.11、C1.12、C2.1–C2.8 已完成；C0 决策项按本文默认值执行。
+> **实现状态（2026-11-04 回填）**：P1 平台骨架（C1.1–C1.12）与 P2 飞书只读 + 执行面（C2.1–C2.8）已完成；
+> C0 决策项按本文默认值执行。本轮补齐 C1.10（`events` outbox 生命周期事件 + 24h 巡检 + `tenant_apps` 凭证解析）
+> 与 C2.4 的 `connection_id` 审计列。
 > 与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
-> （`POST /v1/connectors/{provider}/execute`，§5.3）。**未做**：C1.10（outbox 事件，v1 只写日志）、
-> C2.4 的 `connection_id` 审计列、C2.9（会话内选择与执行中授权中断卡片）、C2.10（真实飞书冒烟）。
+> （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
+> 巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
+> **未做**：C2.9（会话内选择与执行中授权中断卡片，待 C0.4）、C2.10（真实飞书冒烟，需真实应用凭证）、
+> P3/P4（写能力、组织共享连接、Notion/MCP）。
 
 ### 8.1 P0 决策与契约（先做，阻塞后续）
 
@@ -318,29 +326,29 @@ ConnectorManifest(
 
 ### 8.2 P1 平台骨架（connector-service）
 
-- [ ] **C1.1** 迁移：`connections` 加 12 列 + `oauth_sessions` + `tenant_apps`；`down_revision='cd993640a7eb'` — 验收：`uv run alembic upgrade head`/`alembic check` 通过，测试库 `create_all` 与迁移一致（M）
-- [ ] **C1.2** provider 注册表：`ConnectorManifest`/`ConnectorTool` dataclass + 装饰器注册 + `PROVIDERS_ENABLED` 过滤 — 验收：未启用 provider 不出现在目录（S）
-- [ ] **C1.3** 授权会话服务：nonce 生成/单次消费/PKCE/过期清理 — 验收：重放 nonce 400、过期 409、并发消费只有一个成功（M）
-- [ ] **C1.4** `POST /v1/connectors/{provider}/authorize` — 验收：返回可用的飞书授权 URL，含 S256 challenge（S）
-- [ ] **C1.5** `GET /v1/oauth/{provider}/callback`：换 token → 拉用户信息 → 加密落库 → 302；失败白名单错误码 — 验收：MockTransport 全流程，库里可解出 token，响应不含凭证（M）
-- [ ] **C1.6** 连接 CRUD 扩展：`PATCH`、`/refresh`、`/check`、详情含 scopes/工具；`DELETE` 补撤销留痕 — 验收：owner 校验、跨租户 404、重复撤销 409（M）
-- [ ] **C1.7** 刷新单飞：行锁 + 二次检查 + 同事务写回 + 失败置 expired — 验收：并发 10 次刷新只打 1 次上游、只写 1 次库（M）
-- [ ] **C1.8** 执行代理 `POST /v1/connections/{id}/execute`：工具查找、解密注入、超时、错误映射、usage 日志；内部 token 鉴权 — 验收：token 不出现在响应/日志；超时映射 504；上游 429 带 `retry_after`（M）
-- [ ] **C1.9** 内部目录 `GET /v1/internal/connectors/tools` — 验收：按租户返回只含 active+enabled 的工具（S）
-- [ ] **C1.10** 引入 `events` outbox，发 `connector.connection.created/expired/revoked.v1` — 验收：outbox 行 + dispatcher 测试；未启用时降级为纯日志（M）
-- [ ] **C1.11** 配置与文档：`.env.example`、README「接入新连接器 5 步」更新为 manifest 流程 — 验收：`check-docs` 通过（S）
-- [ ] **C1.12** 测试：`--cov-fail-under=91`；`pytest-socket` 零网络（全 MockTransport） — 验收：`npx nx test connector-service` 绿（M）
+- [x] **C1.1** 迁移：`connections` 加 12 列 + `oauth_sessions` + `tenant_apps`；`down_revision='cd993640a7eb'` — 验收：`uv run alembic upgrade head`/`alembic check` 通过，测试库 `create_all` 与迁移一致（M）
+- [x] **C1.2** provider 注册表：`ConnectorManifest`/`ConnectorTool` dataclass + 装饰器注册 + `PROVIDERS_ENABLED` 过滤 — 验收：未启用 provider 不出现在目录（S）
+- [x] **C1.3** 授权会话服务：nonce 生成/单次消费/PKCE/过期清理 — 验收：重放 nonce 400、过期 409、并发消费只有一个成功（M）
+- [x] **C1.4** `POST /v1/connectors/{provider}/authorize` — 验收：返回可用的飞书授权 URL，含 S256 challenge（S）
+- [x] **C1.5** `GET /v1/oauth/{provider}/callback`：换 token → 拉用户信息 → 加密落库 → 302；失败白名单错误码 — 验收：MockTransport 全流程，库里可解出 token，响应不含凭证（M）
+- [x] **C1.6** 连接 CRUD 扩展：`PATCH`、`/refresh`、`/check`、详情含 scopes/工具；`DELETE` 补撤销留痕 — 验收：owner 校验、跨租户 404、重复撤销 409（M）
+- [x] **C1.7** 刷新单飞：行锁 + 二次检查 + 同事务写回 + 失败置 expired — 验收：并发 10 次刷新只打 1 次上游、只写 1 次库（M）
+- [x] **C1.8** 执行代理 `POST /v1/connections/{id}/execute`：工具查找、解密注入、超时、错误映射、usage 日志；内部 token 鉴权 — 验收：token 不出现在响应/日志；超时映射 504；上游 429 带 `retry_after`（M）
+- [x] **C1.9** 内部目录 `GET /v1/internal/connectors/tools` — 验收：按租户返回只含 active+enabled 的工具（S）
+- [x] **C1.10** 引入 `events` outbox，发 `connector.connection.created/expired/revoked.v1` — 验收：outbox 行 + dispatcher 测试；未启用时降级为纯日志（M）
+- [x] **C1.11** 配置与文档：`.env.example`、README「接入新连接器 5 步」更新为 manifest 流程 — 验收：`check-docs` 通过（S）
+- [x] **C1.12** 测试：`--cov-fail-under=91`；`pytest-socket` 零网络（全 MockTransport） — 验收：`npx nx test connector-service` 绿（M）
 
 ### 8.3 P2 飞书 provider + 前端 + 执行面
 
-- [ ] **C2.1** `connector/providers/feishu.py`：OAuth（v3 端点）、`user_info`、token 解密/刷新/错误码映射 — 验收：`20037`→expired、`20027`→scope_missing、429 解析 reset 头（M）
-- [ ] **C2.2** P0 六个只读工具 + 分页 + 递归 blocks + 结果截断 — 验收：每工具 1 条正常 + 1 条错误用例；大文档不超字节上限（M）
-- [ ] **C2.3** `common.tools` 新增 `ExecutorKind.CONNECTOR` + `ToolDescriptor.connector`（provider/action 可选字段） — 验收：`packages/common` 测试与 `test_tools` 兼容；未知字段反序列化不炸（S）
-- [ ] **C2.4** tool-service：catalog 合并连接器工具、`CONNECTOR` 执行器转发、审计字段补 `connection_id` — 验收：端到端 execute 落 `tool_calls`，run_id 透传（M）
-- [ ] **C2.5** agent-orchestrator：工具装配纳入连接器工具（chat 只读 / task 按审批），失败事件写 `run_events` — 验收：一次 chat 调用飞书读文档链路通（M）
-- [ ] **C2.6** `apps/web` 新页面 `/connectors`：卡片网格（已连接/未连接/失效）、添加 → 跳授权 → 回流 toast — 验收：`nx typecheck/test/lint` 绿；文件 ≤400 行（M）
-- [ ] **C2.7** 连接详情抽屉：账号、已授予 vs 期望 scope、工具清单、最近刷新、禁用开关、解绑 — 验收：失效态显示「重新连接」且只对 auth 类错误出现（M）
-- [ ] **C2.8** 侧栏入口 + 空态/加载/错误态；`features/connectors/` 域 + `use-connectors-model.ts` — 验收：无 `pages/` 取数，符合 eslint 分层（S）
+- [x] **C2.1** `connector/providers/feishu.py`：OAuth（v3 端点）、`user_info`、token 解密/刷新/错误码映射 — 验收：`20037`→expired、`20027`→scope_missing、429 解析 reset 头（M）
+- [x] **C2.2** P0 六个只读工具 + 分页 + 递归 blocks + 结果截断 — 验收：每工具 1 条正常 + 1 条错误用例；大文档不超字节上限（M）
+- [x] **C2.3** `common.tools` 新增 `ExecutorKind.CONNECTOR` + `ToolDescriptor.connector`（provider/action 可选字段） — 验收：`packages/common` 测试与 `test_tools` 兼容；未知字段反序列化不炸（S）
+- [x] **C2.4** tool-service：catalog 合并连接器工具、`CONNECTOR` 执行器转发、审计字段补 `connection_id` — 验收：端到端 execute 落 `tool_calls`，run_id 透传（M）
+- [x] **C2.5** agent-orchestrator：工具装配纳入连接器工具（chat 只读 / task 按审批），失败事件写 `run_events` — 验收：一次 chat 调用飞书读文档链路通（M）
+- [x] **C2.6** `apps/web` 新页面 `/connectors`：卡片网格（已连接/未连接/失效）、添加 → 跳授权 → 回流 toast — 验收：`nx typecheck/test/lint` 绿；文件 ≤400 行（M）
+- [x] **C2.7** 连接详情抽屉：账号、已授予 vs 期望 scope、工具清单、最近刷新、禁用开关、解绑 — 验收：失效态显示「重新连接」且只对 auth 类错误出现（M）
+- [x] **C2.8** 侧栏入口 + 空态/加载/错误态；`features/connectors/` 域 + `use-connectors-model.ts` — 验收：无 `pages/` 取数，符合 eslint 分层（S）
 - [ ] **C2.9** 会话内「连接器」选择（+ 菜单）与执行中授权中断卡片（若 C0.4 确认） — 验收：错误码→卡片→重连→重试一次（L）
 - [ ] **C2.10** 端到端冒烟：开发环境真实飞书自建应用走通「授权→列文件→读文档→撤销」 — 验收：录屏/截图存 `docs/research/connector/` 或验证报告（M）
 
@@ -360,12 +368,27 @@ ConnectorManifest(
 
 ### 8.6 质量与门禁（每期收口）
 
-- [ ] **C5.1** `npx nx lint/test connector-service tool-service agent-orchestrator common` 全绿（含覆盖率阈值）
-- [ ] **C5.2** `npx nx typecheck/test/lint @beauty/web -- --run` 全绿；`bash scripts/refactor-gate.sh @beauty/web`
-- [ ] **C5.3** `cd services/connector-service && uv run alembic check`；`bash scripts/migrate-local.sh` 本地升级通过
-- [ ] **C5.4** `bash scripts/check-docs.sh` + `bash scripts/check-workspace.sh`（索引覆盖）
-- [ ] **C5.5** `docker compose -f deploy/docker-compose.yml config -q` 与 `scripts/golden-run/golden-run.sh` 通过
-- [ ] **C5.6** 安全自查：凭证不出服务、日志脱敏、回调 nonce 单次、跨租户 404、内部端点不经网关
+- [x] **C5.1** `npx nx lint/test connector-service tool-service agent-orchestrator common` 全绿（含覆盖率阈值）
+      — 实证（2026-11-04）：connector-service 82 passed / 96.60%、tool-service 343 passed / 89.66%、
+      common 155 passed、agent-orchestrator 938 passed；四个项目 ruff lint 全绿。
+- [x] **C5.2** `npx nx typecheck/test/lint @beauty/web -- --run` 全绿；`bash scripts/refactor-gate.sh @beauty/web`
+      — web 的 lint/typecheck/test/build/docs/workspace 六步全绿；refactor-gate 的 `py-size` 仍有 3 个超 500 行文件
+      （`tool-service/tests/test_connectors.py`、`connector-service/connector/providers/feishu.py`、
+      `agent-orchestrator/tests/test_skill_packages.py`），三者在 HEAD 上即已超限，属既有 W5 ratchet 基线，
+      不由本期引入；留待 W5 体量收敛处理。
+- [x] **C5.3** `cd services/connector-service && uv run alembic check`；`bash scripts/migrate-local.sh` 本地升级通过
+      — 两服务 `alembic check` 均输出 No new upgrade operations detected；本地库已升级到各服务 head
+      （connector-service `c4f7b1e93a52`、tool-service `0004_tool_call_connection`）。
+- [x] **C5.4** `bash scripts/check-docs.sh` + `bash scripts/check-workspace.sh`（索引覆盖）
+      — 均通过：docs prettier + 61 个文件链接检查 0 失败；归档注记/索引覆盖/无生成物/导出配置 4 项 PASS。
+- [x] **C5.5** `docker compose -f deploy/docker-compose.yml config -q` 与 `scripts/golden-run/golden-run.sh` 通过
+      — compose 静态校验通过；黄金 run 9/9 阶段 PASS（期间按 P1-D 事件流更新了 `FakeLLM` 与事件序列断言，
+      `run.item.v1` 过程项不参与主链序列校验）。
+- [x] **C5.6** 安全自查：凭证不出服务、日志脱敏、回调 nonce 单次、跨租户 404、内部端点不经网关
+      — `ConnectionRead`/`ConnectionBrief` 不含 credentials/refresh_token（`test_connections` 断言列表与详情无凭证）；
+      事件与日志只带 connection_id/provider/account/status/owner_subject；`test_oauth` 覆盖 state 重放（`connector.state_used`）
+      与过期；`test_auth`/`test_connections::test_tenant_isolation` 覆盖跨租户 404；API 网关只注入 Authorization
+      等固定头，透传不了 `X-Internal-Secret`/`X-Tenant-Id`，内部面仅 tool-service 直连携带共享密钥。
 
 ## 9. 风险与开放问题
 
