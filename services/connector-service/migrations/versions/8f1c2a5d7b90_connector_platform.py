@@ -66,7 +66,7 @@ def upgrade() -> None:
         op.alter_column(
             "connections",
             "provider",
-            comment="provider 名(如 feishu)",
+            comment="provider 名",
         )
         op.alter_column(
             "connections",
@@ -76,7 +76,7 @@ def upgrade() -> None:
         op.alter_column(
             "connections",
             "account",
-            comment="稳定账号标识(飞书 open_id)",
+            comment="稳定账号标识",
         )
 
     op.create_table(

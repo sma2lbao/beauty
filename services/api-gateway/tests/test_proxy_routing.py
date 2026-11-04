@@ -19,8 +19,8 @@ def test_connector_rest_with_explicit_v1_passes_through() -> None:
 
     base = settings(connector_base_url="http://connector")
     assert (
-        _resolve_upstream(base, "connector/v1/oauth/feishu/callback")
-        == "http://connector/v1/oauth/feishu/callback"
+        _resolve_upstream(base, "connector/v1/oauth/demo/callback")
+        == "http://connector/v1/oauth/demo/callback"
     )
 
 

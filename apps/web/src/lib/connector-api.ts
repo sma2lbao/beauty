@@ -90,9 +90,9 @@ export type ConnectorConnection = {
   display_name?: string | null;
   enabled?: boolean;
   auth_kind?: string | null;
-  /** provider 侧稳定账号 ID(飞书 open_id / Notion bot_id) */
+  /** provider 侧稳定账号 ID(各 provider 自己的用户/机器人标识) */
   provider_account_id?: string | null;
-  /** provider 侧工作区 ID(飞书 tenant_key / Notion workspace_id) */
+  /** provider 侧工作区/租户 ID(各 provider 自己的组织标识) */
   external_workspace?: string | null;
   /** 已授予的 scope */
   scopes?: string[] | null;

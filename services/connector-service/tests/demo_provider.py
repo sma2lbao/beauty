@@ -1,8 +1,8 @@
-"""飞书 provider:企业自建应用 + 用户身份(user_access_token)+ 只读工具。
+"""测试专用 demo provider:验证平台链路的假上游,不进入生产代码。
 
-授权:accounts.feishu.cn 的 OAuth v3(PKCE S256,必须 offline_access 才发
-refresh_token);工具:drive/docx/wiki 只读 6 个。凭证只在本进程内存里出现,
-落库前由 service 层信封加密。
+用户身份 = 固定 OAuth 客户端 + 一次性 refresh token 语义(与真实 SaaS 同构);
+上游端点都在 api.example.test / auth.example.test,由 conftest 的 DemoMock 打桩,
+零网络。这里不是任何真实产品的实现:平台本身不内置 provider。
 """
 
 from __future__ import annotations
@@ -23,36 +23,42 @@ from connector.providers.base import (
 )
 from connector.providers.errors import ProviderError
 
-# 需要重新授权(刷新失败/ token 失效)——连接置 expired,前端展示「重新连接」。
-_AUTH_ERROR_CODES = frozenset(
-    {20005, 20037, 20064, 99991661, 99991663, 99991668, 99991677}
-)
-# 应用没申请/没授予 scope——同样需要重新授权,但文案指向开放平台权限配置。
+# 需要重新授权(token 失效/被撤销)——连接置 expired,前端展示「重新连接」。
+_AUTH_ERROR_CODES = frozenset({20005, 20037, 20064})
+# 应用没申请/没授予 scope——同样需要重新授权。
 _SCOPE_ERROR_CODES = frozenset({20010, 20027, 20068})
-# 飞书网关限流(HTTP 可能是 400 + 业务码 99991400,也可能直接 429)。
+# 上游网关限流(HTTP 可能是 400 + 业务码,也可能直接 429)。
 _RATE_LIMIT_CODES = frozenset({99991400})
 
 _PAGE_SIZE_DEFAULT = 20
 _PAGE_SIZE_MAX = 50
 
 
-class FeishuProvider(BaseProvider):
-    name: ClassVar[str] = "feishu"
-    prefix: ClassVar[str] = "Feishu"
-    display_name: ClassVar[str] = "飞书"
-    description: ClassVar[str] = "以你的飞书身份只读访问云文档、知识库与云空间文件"
-    docs_url: ClassVar[str] = "https://open.feishu.cn/document"
+class DemoProvider(BaseProvider):
+    name: ClassVar[str] = "demo"
+    prefix: ClassVar[str] = "Demo"
+    display_name: ClassVar[str] = "示例连接器"
+    description: ClassVar[str] = "测试与本地联调用的示例只读连接器"
+    docs_url: ClassVar[str] = "https://example.test/docs"
+    auth_kind: ClassVar[str] = "user"
+    # 应用凭证默认值;测试可通过改成空串模拟「未配置」。
+    DEFAULT_APP_ID: ClassVar[str] = "demo-client"
+    DEFAULT_APP_SECRET: ClassVar[str] = "demo-secret"
+    SCOPES: ClassVar[tuple[str, ...]] = ("offline_access", "docs:readonly")
+    AUTH_BASE: ClassVar[str] = "https://auth.example.test"
+    API_BASE: ClassVar[str] = "https://api.example.test"
+
     tools: ClassVar[tuple[ToolSpec, ...]] = (
         ToolSpec(
             name="get_me",
-            title="我的飞书身份",
-            description="返回当前授权用户的 open_id、姓名与租户标识。",
+            title="我的账号身份",
+            description="返回当前授权用户的账号 id、姓名与工作区标识。",
             input_schema={"type": "object", "properties": {}},
         ),
         ToolSpec(
             name="list_files",
-            title="列出云空间文件",
-            description="列出飞书云空间(我的空间或指定文件夹)下的文件与文件夹。",
+            title="列出文件",
+            description="列出云空间(我的空间或指定文件夹)下的文件与文件夹。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -73,13 +79,13 @@ class FeishuProvider(BaseProvider):
         ToolSpec(
             name="read_document",
             title="读取文档正文",
-            description="按文档 token 读取飞书文档的纯文本正文(raw_content)。",
+            description="按文档 token 读取文档的纯文本正文(raw_content)。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "document_id": {
                         "type": "string",
-                        "description": "文档 token(docx 的 document_id)",
+                        "description": "文档 token(document_id)",
                     }
                 },
                 "required": ["document_id"],
@@ -102,7 +108,7 @@ class FeishuProvider(BaseProvider):
         ToolSpec(
             name="list_wiki_spaces",
             title="列出知识库",
-            description="列出当前用户可见的飞书知识库(wiki spaces)。",
+            description="列出当前用户可见的知识库(spaces)。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -128,8 +134,6 @@ class FeishuProvider(BaseProvider):
         ),
     )
 
-    # ---- 应用凭证 ----
-
     def __init__(
         self,
         settings: Settings,
@@ -137,31 +141,22 @@ class FeishuProvider(BaseProvider):
         app_id: str | None = None,
         app_secret: str | None = None,
     ) -> None:
-        """应用凭证默认取全局 Settings;租户自带应用经 with_tenant_app 覆盖。"""
         super().__init__(settings)
-        self._app_id = app_id or settings.feishu_app_id
-        self._app_secret = app_secret or settings.feishu_app_secret
+        cls = type(self)
+        self._app_id = app_id if app_id is not None else cls.DEFAULT_APP_ID
+        self._app_secret = (
+            app_secret if app_secret is not None else cls.DEFAULT_APP_SECRET
+        )
 
-    def with_tenant_app(self, app_id: str, app_secret: str) -> FeishuProvider:
-        """用 tenant_apps 行的应用凭证构造副本;secret 只在内存,不落日志。"""
-        return FeishuProvider(self.settings, app_id=app_id, app_secret=app_secret)
-
-    # ---- 配置 ----
+    def with_tenant_app(self, app_id: str, app_secret: str) -> DemoProvider:
+        return DemoProvider(self.settings, app_id=app_id, app_secret=app_secret)
 
     @property
     def configured(self) -> bool:
         return bool(self._app_id and self._app_secret)
 
     def scopes(self) -> tuple[str, ...]:
-        return tuple(scope for scope in self.settings.feishu_scopes.split() if scope)
-
-    @property
-    def _open_api(self) -> str:
-        return self.settings.feishu_open_api_base.rstrip("/")
-
-    @property
-    def _accounts(self) -> str:
-        return self.settings.feishu_accounts_base.rstrip("/")
+        return self.SCOPES
 
     # ---- 授权 ----
 
@@ -179,7 +174,7 @@ class FeishuProvider(BaseProvider):
                 "code_challenge_method": "S256",
             }
         )
-        return f"{self._accounts}/open-apis/authen/v1/authorize?{query}"
+        return f"{self.AUTH_BASE}/authorize?{query}"
 
     async def exchange_code(
         self,
@@ -208,8 +203,8 @@ class FeishuProvider(BaseProvider):
         if not credentials.refresh_token:
             raise ProviderError(
                 "connector.auth_expired",
-                "飞书连接没有 refresh token,需要重新授权",
-                hint="请重新连接飞书",
+                "连接没有 refresh token,需要重新授权",
+                hint="请重新连接",
             )
         payload = await self._token_request(
             client,
@@ -225,20 +220,20 @@ class FeishuProvider(BaseProvider):
     async def _token_request(
         self, client: httpx.AsyncClient, body: dict[str, Any]
     ) -> dict[str, Any]:
-        url = f"{self._accounts}/oauth/v3/token"
+        url = f"{self.AUTH_BASE}/oauth/token"
         try:
             response = await client.post(url, json=body)
         except httpx.TimeoutException as exc:
             raise ProviderError(
                 "connector.upstream_timeout",
-                "飞书授权服务超时",
+                "授权服务超时",
                 hint="稍后重试",
                 retryable=True,
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(
                 "connector.upstream_unavailable",
-                "飞书授权服务不可达",
+                "授权服务不可达",
                 hint="稍后重试",
                 retryable=True,
             ) from exc
@@ -250,7 +245,7 @@ class FeishuProvider(BaseProvider):
     def _credentials_from_token(self, payload: dict[str, Any]) -> Credentials:
         access_token = payload.get("access_token")
         if not access_token:
-            raise ProviderError("connector.oauth_failed", "飞书未返回 access_token")
+            raise ProviderError("connector.oauth_failed", "授权服务未返回 access_token")
         return Credentials(
             access_token=str(access_token),
             refresh_token=payload.get("refresh_token"),
@@ -263,43 +258,39 @@ class FeishuProvider(BaseProvider):
     def _token_error(
         self, response: httpx.Response, payload: dict[str, Any] | None
     ) -> ProviderError:
-        """授权端点的错误分层:限流/上游故障不得被当成"需要重新授权"。
-
-        token 端点的 429 与 5xx 都是瞬时的:若映射成 auth_expired,连接会被
-        置 expired(REAUTH_ERROR_CODES),一次网络抖动就要用户重新扫码。
-        """
+        """授权端点的错误分层:限流/上游故障不得被当成"需要重新授权"。"""
         code = _int_code(payload)
         label = code if code is not None else response.status_code
         status = response.status_code
         if status == 429 or code in _RATE_LIMIT_CODES:
             retry_after = _retry_after(response)
             hint = (
-                f"飞书授权服务限流,建议 {retry_after} 秒后重试"
+                f"授权服务限流,建议 {retry_after} 秒后重试"
                 if retry_after
-                else "飞书授权服务限流,请稍后重试"
+                else "授权服务限流,请稍后重试"
             )
             return ProviderError(
                 "connector.upstream_rate_limited",
-                f"飞书授权服务限流(代码 {label})",
+                f"授权服务限流(代码 {label})",
                 hint=hint,
                 retryable=True,
             )
         if status >= 500:
             return ProviderError(
                 "connector.upstream_unavailable",
-                f"飞书授权服务暂不可用(HTTP {status})",
+                f"授权服务暂不可用(HTTP {status})",
                 hint="稍后重试",
                 retryable=True,
             )
         if code in _AUTH_ERROR_CODES or status in (400, 401, 403):
             return ProviderError(
                 "connector.auth_expired",
-                f"飞书授权已失效(代码 {label})",
-                hint="请重新连接飞书",
+                f"授权已失效(代码 {label})",
+                hint="请重新连接",
             )
         return ProviderError(
             "connector.oauth_failed",
-            f"飞书授权失败(代码 {label})",
+            f"授权失败(代码 {label})",
             hint="请重新发起授权",
         )
 
@@ -308,21 +299,17 @@ class FeishuProvider(BaseProvider):
     async def fetch_identity(
         self, credentials: Credentials, client: httpx.AsyncClient
     ) -> Identity:
-        data = await self._get(
-            client,
-            f"{self._open_api}/open-apis/authen/v1/user_info",
-            credentials,
-        )
-        open_id = data.get("open_id")
-        if not open_id:
-            raise ProviderError("connector.upstream_error", "飞书未返回用户 open_id")
+        data = await self._get(client, f"{self.API_BASE}/userinfo", credentials)
+        account_id = data.get("account_id")
+        if not account_id:
+            raise ProviderError("connector.upstream_error", "上游未返回账号 id")
         return Identity(
-            account=str(open_id),
-            display_name=data.get("name") or data.get("en_name"),
-            provider_account_id=str(open_id),
-            external_workspace=data.get("tenant_key"),
+            account=str(account_id),
+            display_name=data.get("name"),
+            provider_account_id=str(account_id),
+            external_workspace=data.get("workspace_id"),
             metadata={
-                "open_id": open_id,
+                "account_id": account_id,
                 "union_id": data.get("union_id"),
                 "name": data.get("name"),
                 "avatar_url": data.get("avatar_url"),
@@ -348,9 +335,9 @@ class FeishuProvider(BaseProvider):
     ) -> dict[str, Any]:
         identity = await self.fetch_identity(creds, client)
         return {
-            "open_id": identity.provider_account_id,
+            "account_id": identity.provider_account_id,
             "name": identity.display_name,
-            "tenant_key": identity.external_workspace,
+            "workspace_id": identity.external_workspace,
             "union_id": identity.metadata.get("union_id"),
             "avatar_url": identity.metadata.get("avatar_url"),
         }
@@ -365,9 +352,7 @@ class FeishuProvider(BaseProvider):
         order_by = _opt_str(arguments.get("order_by"))
         if order_by:
             params["order_by"] = order_by
-        data = await self._get(
-            client, f"{self._open_api}/open-apis/drive/v1/files", creds, params=params
-        )
+        data = await self._get(client, f"{self.API_BASE}/files", creds, params=params)
         return {
             "files": [
                 {
@@ -390,7 +375,7 @@ class FeishuProvider(BaseProvider):
         document_id = _require_str(arguments, "document_id")
         data = await self._get(
             client,
-            f"{self._open_api}/open-apis/docx/v1/documents/{document_id}/raw_content",
+            f"{self.API_BASE}/documents/{document_id}/raw_content",
             creds,
         )
         return {"document_id": document_id, "content": data.get("content", "")}
@@ -401,7 +386,7 @@ class FeishuProvider(BaseProvider):
         document_id = _require_str(arguments, "document_id")
         data = await self._get(
             client,
-            f"{self._open_api}/open-apis/docx/v1/documents/{document_id}/blocks",
+            f"{self.API_BASE}/documents/{document_id}/blocks",
             creds,
             params=_paging(arguments),
         )
@@ -416,7 +401,7 @@ class FeishuProvider(BaseProvider):
     ) -> dict[str, Any]:
         data = await self._get(
             client,
-            f"{self._open_api}/open-apis/wiki/v2/spaces",
+            f"{self.API_BASE}/spaces",
             creds,
             params=_paging(arguments),
         )
@@ -446,7 +431,7 @@ class FeishuProvider(BaseProvider):
             params["parent_node_token"] = parent
         data = await self._get(
             client,
-            f"{self._open_api}/open-apis/wiki/v2/spaces/{space_id}/nodes",
+            f"{self.API_BASE}/spaces/{space_id}/nodes",
             creds,
             params=params,
         )
@@ -486,14 +471,14 @@ class FeishuProvider(BaseProvider):
         except httpx.TimeoutException as exc:
             raise ProviderError(
                 "connector.upstream_timeout",
-                "飞书接口超时",
+                "上游接口超时",
                 hint="稍后重试",
                 retryable=True,
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(
                 "connector.upstream_unavailable",
-                "飞书接口不可达",
+                "上游接口不可达",
                 hint="稍后重试",
                 retryable=True,
             ) from exc
@@ -574,38 +559,38 @@ def _error_from_response(
     if status == 429 or code in _RATE_LIMIT_CODES:
         retry_after = _retry_after(response)
         hint = (
-            f"飞书限流,建议 {retry_after} 秒后重试"
+            f"上游限流,建议 {retry_after} 秒后重试"
             if retry_after
-            else "飞书限流,请稍后重试"
+            else "上游限流,请稍后重试"
         )
         return ProviderError(
             "connector.upstream_rate_limited",
-            f"飞书接口限流(代码 {label})",
+            f"上游接口限流(代码 {label})",
             hint=hint,
             retryable=True,
         )
     if status == 403 or code in _SCOPE_ERROR_CODES:
         return ProviderError(
             "connector.scope_missing",
-            f"飞书应用缺少所需权限(代码 {label})",
-            hint="请在飞书开放平台补充 scope 并重新授权",
+            f"应用缺少所需权限(代码 {label})",
+            hint="请补充 scope 并重新授权",
         )
     if status == 401 or code in _AUTH_ERROR_CODES:
         return ProviderError(
             "connector.auth_expired",
-            f"飞书授权已失效(代码 {label})",
-            hint="请重新连接飞书",
+            f"授权已失效(代码 {label})",
+            hint="请重新连接",
         )
     if status >= 500:
         return ProviderError(
             "connector.upstream_unavailable",
-            f"飞书接口暂不可用(HTTP {status})",
+            f"上游接口暂不可用(HTTP {status})",
             hint="稍后重试",
             retryable=True,
         )
     return ProviderError(
         "connector.upstream_error",
-        f"飞书接口返回错误(代码 {label})",
+        f"上游接口返回错误(代码 {label})",
         hint="检查参数或稍后重试",
     )
 
@@ -619,7 +604,3 @@ def _retry_after(response: httpx.Response) -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
-
-
-def build_feishu_provider(settings: Settings) -> FeishuProvider:
-    return FeishuProvider(settings)

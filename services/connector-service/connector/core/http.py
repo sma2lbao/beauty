@@ -1,6 +1,6 @@
 """出站 HTTP:每次调用临时客户端,测试可注入 MockTransport 保持零网络。
 
-真实调用(飞书 OpenAPI)与测试共用同一条代码路径;测试通过 create_app(
+真实调用(provider 上游 API)与测试共用同一条代码路径;测试通过 create_app(
 http_transport=...) 传入 httpx.MockTransport,永远不出网。
 """
 

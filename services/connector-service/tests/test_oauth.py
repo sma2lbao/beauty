@@ -8,34 +8,36 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from connector.main import create_app
 from tests.conftest import (
     _IDP,
     TENANT,
-    FeishuMock,
+    DemoMock,
     _settings,
     insert_oauth_session,
 )
+from tests.demo_provider import DemoProvider
 
 
 def _start(client: TestClient) -> tuple[str, str]:
-    resp = client.post("/v1/connectors/feishu/authorize", headers=TENANT)
+    resp = client.post("/v1/connectors/demo/authorize", headers=TENANT)
     assert resp.status_code == 200, resp.text
     payload = resp.json()
     query = parse_qs(urlparse(payload["authorize_url"]).query)
     assert query["code_challenge_method"] == ["S256"]
     assert query["response_type"] == ["code"]
-    assert query["client_id"] == ["cli_test"]
+    assert query["client_id"] == ["demo-client"]
     assert "offline_access" in query["scope"][0]
-    assert query["redirect_uri"] == ["http://testserver/v1/oauth/feishu/callback"]
+    assert query["redirect_uri"] == ["http://testserver/v1/oauth/demo/callback"]
     return payload["authorize_url"], query["state"][0]
 
 
 def _callback(client: TestClient, state: str, **params: str) -> httpx.Response:
     query = {"code": "code-1", **params, "state": state}
-    return client.get("/v1/oauth/feishu/callback", params=query, follow_redirects=False)
+    return client.get("/v1/oauth/demo/callback", params=query, follow_redirects=False)
 
 
 def _redirect_params(response: httpx.Response) -> dict[str, str]:
@@ -47,13 +49,13 @@ def _redirect_params(response: httpx.Response) -> dict[str, str]:
 
 
 def test_authorize_and_callback_creates_connection(
-    client: TestClient, feishu: FeishuMock, tmp_path: Path
+    client: TestClient, demo: DemoMock, tmp_path: Path
 ) -> None:
     url, state = _start(client)
-    assert url.startswith("https://accounts.feishu.cn/open-apis/authen/v1/authorize?")
+    assert url.startswith("https://auth.example.test/authorize?")
     response = _callback(client, state)
     params = _redirect_params(response)
-    assert params["provider"] == "feishu"
+    assert params["provider"] == "demo"
     assert params["status"] == "connected"
     assert params["connection_id"]
 
@@ -62,20 +64,20 @@ def test_authorize_and_callback_creates_connection(
     conn = connections[0]
     assert conn["status"] == "active"
     assert conn["enabled"] is True
-    assert conn["account"] == "ou_1"
+    assert conn["account"] == "u-1"
     assert conn["display_name"] == "张三"
-    assert conn["provider_account_id"] == "ou_1"
-    assert conn["external_workspace"] == "tk_1"
+    assert conn["provider_account_id"] == "u-1"
+    assert conn["external_workspace"] == "ws-1"
     assert conn["expires_at"] is not None
     assert conn["refresh_expires_at"] is not None
     assert "credentials" not in conn
 
     # 换 token 用的是授权码 + PKCE verifier
-    body = feishu.token_calls[0]
+    body = demo.token_calls[0]
     assert body["grant_type"] == "authorization_code"
     assert body["code"] == "code-1"
     assert body["code_verifier"]
-    assert body["redirect_uri"] == "http://testserver/v1/oauth/feishu/callback"
+    assert body["redirect_uri"] == "http://testserver/v1/oauth/demo/callback"
 
     # 明文 token 不落库
     with sqlite3.connect(tmp_path / "test.db") as raw:
@@ -124,7 +126,7 @@ def test_callback_denied_by_user(client: TestClient) -> None:
     _, state = _start(client)
     params = _redirect_params(
         client.get(
-            "/v1/oauth/feishu/callback",
+            "/v1/oauth/demo/callback",
             params={"error": "access_denied", "state": state},
             follow_redirects=False,
         )
@@ -133,9 +135,9 @@ def test_callback_denied_by_user(client: TestClient) -> None:
 
 
 def test_callback_token_failure(
-    client: TestClient, feishu: FeishuMock, tmp_path: Path
+    client: TestClient, demo: DemoMock, tmp_path: Path
 ) -> None:
-    feishu.fail["/oauth/v3/token"] = httpx.Response(400, json={"code": 20005})
+    demo.fail["/oauth/token"] = httpx.Response(400, json={"code": 20005})
     _, state = _start(client)
     params = _redirect_params(_callback(client, state))
     assert params["status"] == "error"
@@ -149,10 +151,8 @@ def test_callback_token_failure(
     assert error_code == "connector.auth_expired"
 
 
-def test_callback_missing_open_id(client: TestClient, feishu: FeishuMock) -> None:
-    feishu.fail["/authen/v1/user_info"] = httpx.Response(
-        200, json={"code": 0, "data": {}}
-    )
+def test_callback_missing_open_id(client: TestClient, demo: DemoMock) -> None:
+    demo.fail["/userinfo"] = httpx.Response(200, json={"code": 0, "data": {}})
     _, state = _start(client)
     params = _redirect_params(_callback(client, state))
     assert params["code"] == "connector.upstream_error"
@@ -164,12 +164,17 @@ def test_authorize_unknown_provider(client: TestClient) -> None:
     assert resp.json()["code"] == "connector.provider_not_found"
 
 
-def test_authorize_unconfigured_provider(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, feishu_app_id="", feishu_app_secret="")
+def test_authorize_unconfigured_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 未配置应用凭证:demo provider 的默认 app_id/secret 置空
+    monkeypatch.setattr(DemoProvider, "DEFAULT_APP_ID", "")
+    monkeypatch.setattr(DemoProvider, "DEFAULT_APP_SECRET", "")
+    settings = _settings(tmp_path)
     app = create_app(settings, token_verifier=_IDP.verifier())
     with TestClient(app) as scoped:
         catalog = scoped.get("/v1/connectors", headers=TENANT).json()["providers"][0]
         assert catalog["configured"] is False
-        resp = scoped.post("/v1/connectors/feishu/authorize", headers=TENANT)
+        resp = scoped.post("/v1/connectors/demo/authorize", headers=TENANT)
         assert resp.status_code == 409
         assert resp.json()["code"] == "connector.provider_not_configured"

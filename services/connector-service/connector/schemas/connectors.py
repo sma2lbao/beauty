@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 class ToolInfo(BaseModel):
     """一个 provider 能力在目录里的展示形态。"""
 
-    name: str = Field(description="完整工具名,如 Feishu__read_document")
+    name: str = Field(description="完整工具名,如 Acme__read_document")
     title: str
     description: str
     risk: str = "read"
@@ -61,7 +61,7 @@ class AuthorizeResponse(BaseModel):
 class ExecuteRequest(BaseModel):
     """tool-service -> connector-service 的执行请求(参数已过 JSON Schema 校验)。"""
 
-    tool: str = Field(description="完整工具名,如 Feishu__read_document")
+    tool: str = Field(description="完整工具名,如 Acme__read_document")
     arguments: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = None
 

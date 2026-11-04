@@ -1,6 +1,6 @@
 """provider 抽象:授权、换 token、刷新、身份与工具调用(设计 §4)。
 
-provider 只碰网络与飞书语义;凭证加密/落库/租户隔离全部留在 service 层,
+provider 只碰网络与 provider 语义;凭证加密/落库/租户隔离全部留在 service 层,
 所以这里的方法都接收/返回明文凭证 payload,但绝不写库、不读库。
 """
 
@@ -30,7 +30,7 @@ class ToolSpec:
 
 @dataclass(frozen=True, slots=True)
 class Identity:
-    """授权用户身份:account 写稳定标识(飞书 open_id)。"""
+    """授权用户身份:account 写稳定标识(如 provider 侧用户 id)。"""
 
     account: str
     display_name: str | None = None
@@ -96,7 +96,7 @@ class BaseProvider(ABC):
 
     #: 配置/库里的标识(小写)
     name: ClassVar[str]
-    #: 工具名前缀(如 Feishu -> Feishu__read_document)
+    #: 工具名前缀(如 Acme -> Acme__read_document)
     prefix: ClassVar[str]
     #: 界面展示名(中文)
     display_name: ClassVar[str]
@@ -157,7 +157,7 @@ class BaseProvider(ABC):
     async def refresh(
         self, credentials: Credentials, client: httpx.AsyncClient
     ) -> Credentials:
-        """refresh token 换新 token(飞书 refresh 是一次性的)。"""
+        """refresh token 换新 token(部分 provider 的 refresh 是一次性的)。"""
 
     @abstractmethod
     async def fetch_identity(

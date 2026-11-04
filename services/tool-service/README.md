@@ -16,7 +16,7 @@
 | 调用审计与幂等(`tool_calls` 表)        | tool-service                                                                  |
 | `ask_question` 的挂起/恢复             | orchestrator 图(`interrupt`)+ run 事件                                        |
 
-| 连接器工具(`Feishu__*` 等) | 目录与执行都代理到 connector-service;本服务只做路由、限额与审计 |
+| 连接器工具(`Demo__*` 等) | 目录与执行都代理到 connector-service;本服务只做路由、限额与审计 |
 
 ## HTTP API
 
@@ -65,7 +65,7 @@
 连接器工具不实现在本服务:目录来自 connector-service 的 `GET /v1/internal/connectors/tools`
 (带 `X-Internal-Secret` + `X-Tenant-Id`,按租户 TTL 30s 缓存),执行 POST 到
 `/v1/connectors/{provider}/execute`。descriptor 用 `executor=connector` 与
-`connector={"provider": "<name>"}` 声明路由;工具名形如 `Feishu__read_document`。
+`connector={"provider": "<name>"}` 声明路由;工具名形如 `Demo__read_document`。
 
 - 目录拉取失败**降级为无连接器工具**(不缓存,下次重试),不影响内置工具;
 - 工具级失败(如 `connector.auth_expired`)按 HTTP 200 信封原样透传给 orchestrator

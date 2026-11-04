@@ -1,7 +1,10 @@
-"""测试装配:每用例独立 sqlite 库;飞书上游全部 MockTransport 打桩(零网络)。
+"""测试装配:每用例独立 sqlite 库;示例上游全部 MockTransport 打桩(零网络)。
 
 库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
 连接行仍直接落库,但授权回调会用真实端点建连接。
+
+仓库没有内置 provider:平台链路的 provider 一律是 tests.demo_provider 里的
+测试专用实现(provider key "demo"),在 import 本模块时注册进 _REGISTRY。
 """
 
 from __future__ import annotations
@@ -21,6 +24,11 @@ from common.testing import TestIdP
 from connector.core.config import Settings
 from connector.core.crypto import encrypt_credentials
 from connector.main import create_app
+from connector.providers import _REGISTRY
+from tests.demo_provider import DemoProvider
+
+# 测试进程内注册唯一的 provider(生产代码不内置任何 provider)
+_REGISTRY[DemoProvider.name] = DemoProvider
 
 _IDP = TestIdP()
 TENANT = _IDP.bearer("t-1")
@@ -39,7 +47,7 @@ LEGACY_CREDENTIALS = {
 }
 
 
-def feishu_credentials(
+def demo_credentials(
     *,
     access_token: str = "at-1",
     refresh_token: str | None = "rt-1",
@@ -50,14 +58,14 @@ def feishu_credentials(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "Bearer",
-        "scope": "offline_access drive:drive:readonly",
+        "scope": "offline_access docs:readonly",
         "expires_at": (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat(),
         "refresh_expires_at": (datetime.now(UTC) + timedelta(days=365)).isoformat(),
     }
 
 
-class FeishuMock:
-    """飞书上游桩:按路径返回固定 JSON,可注入失败响应。"""
+class DemoMock:
+    """示例上游桩:按路径返回固定 JSON,可注入失败响应。"""
 
     def __init__(self) -> None:
         self.token_calls: list[dict[str, Any]] = []
@@ -72,25 +80,25 @@ class FeishuMock:
         for marker, response in self.fail.items():
             if marker in path:
                 return response
-        if path.endswith("/oauth/v3/token"):
+        if path.endswith("/oauth/token"):
             return self._token(request)
         self.api_calls.append(
             (request.method, str(request.url), request.headers.get("authorization"))
         )
-        if path.endswith("/authen/v1/user_info"):
+        if path.endswith("/userinfo"):
             return _json(
                 {
                     "code": 0,
                     "data": {
-                        "open_id": "ou_1",
-                        "union_id": "on_1",
+                        "account_id": "u-1",
+                        "union_id": "un-1",
                         "name": "张三",
-                        "tenant_key": "tk_1",
+                        "workspace_id": "ws-1",
                         "avatar_url": "https://x/a.png",
                     },
                 }
             )
-        if path.endswith("/drive/v1/files"):
+        if path.endswith("/files"):
             return _json(
                 {
                     "code": 0,
@@ -122,7 +130,7 @@ class FeishuMock:
                     },
                 }
             )
-        if path.endswith("/wiki/v2/spaces"):
+        if path.endswith("/spaces"):
             return _json(
                 {
                     "code": 0,
@@ -141,7 +149,7 @@ class FeishuMock:
                     },
                 }
             )
-        if "/wiki/v2/spaces/" in path and path.endswith("/nodes"):
+        if "/spaces/" in path and path.endswith("/nodes"):
             return _json(
                 {
                     "code": 0,
@@ -177,7 +185,7 @@ class FeishuMock:
                     "token_type": "Bearer",
                     "expires_in": 7200,
                     "refresh_token_expires_in": 31536000,
-                    "scope": "offline_access drive:drive:readonly",
+                    "scope": "offline_access docs:readonly",
                 }
             )
         return _json(
@@ -188,7 +196,7 @@ class FeishuMock:
                 "token_type": "Bearer",
                 "expires_in": 7200,
                 "refresh_token_expires_in": 31536000,
-                "scope": "offline_access drive:drive:readonly",
+                "scope": "offline_access docs:readonly",
             }
         )
 
@@ -197,21 +205,21 @@ def _json(payload: dict[str, Any], status: int = 200) -> httpx.Response:
     return httpx.Response(status, json=payload)
 
 
-@pytest.fixture(name="feishu")
-def feishu_fixture() -> FeishuMock:
-    return FeishuMock()
+@pytest.fixture(name="demo")
+def demo_fixture() -> DemoMock:
+    return DemoMock()
 
 
-@pytest.fixture(name="feishu_transport")
-def feishu_transport_fixture(feishu: FeishuMock) -> httpx.AsyncBaseTransport:
-    return httpx.MockTransport(feishu.handler)
+@pytest.fixture(name="demo_transport")
+def demo_transport_fixture(demo: DemoMock) -> httpx.AsyncBaseTransport:
+    return httpx.MockTransport(demo.handler)
 
 
 _settings = settings_factory(
     Settings,
     defaults={
-        "feishu_app_id": "cli_test",
-        "feishu_app_secret": "secret_test",
+        # 目录只暴露启用列表里的 provider;测试启用测试专用 demo
+        "providers_enabled": "demo",
         "internal_secret": INTERNAL_SECRET,
         "oauth_redirect_base": "http://testserver",
         "oauth_success_redirect": "http://web.test/connectors",
@@ -224,7 +232,7 @@ client = client_fixture(
     create_app,
     _settings,
     app_kwargs=lambda: {"token_verifier": _IDP.verifier()},
-    fixture_kwargs={"http_transport": "feishu_transport"},
+    fixture_kwargs={"http_transport": "demo_transport"},
 )
 
 
@@ -238,8 +246,8 @@ def insert_connection(
     db_path: Path,
     *,
     tenant_id: str = "t-1",
-    provider: str = "feishu",
-    account: str = "ou_1",
+    provider: str = "demo",
+    account: str = "u-1",
     status: str = "active",
     enabled: bool = True,
     credentials: dict | None = None,
@@ -251,7 +259,7 @@ def insert_connection(
     connection_id = uuid.uuid4().hex
     payload = encrypt_credentials(
         CREDENTIAL_SECRET,
-        feishu_credentials() if credentials is None else credentials,
+        demo_credentials() if credentials is None else credentials,
     )
     with sqlite3.connect(db_path) as raw:
         raw.execute(
@@ -273,8 +281,8 @@ def insert_connection(
                 owner_subject,
                 "user",
                 _sqlite_dt(expires_at),
-                json.dumps(["offline_access", "drive:drive:readonly"]),
-                json.dumps({"open_id": account}),
+                json.dumps(["offline_access", "docs:readonly"]),
+                json.dumps({"account_id": account}),
                 _sqlite_dt(last_refreshed_at),
             ),
         )
@@ -291,8 +299,8 @@ def insert_tenant_app(
     db_path: Path,
     *,
     tenant_id: str = "t-1",
-    provider: str = "feishu",
-    app_id: str = "cli_tenant",
+    provider: str = "demo",
+    app_id: str = "demo-tenant",
     app_secret: str = "tenant-secret",
     encrypted: bool = True,
 ) -> str:
@@ -325,7 +333,7 @@ def insert_oauth_session(
     *,
     state: str = "state-1",
     tenant_id: str = "t-1",
-    provider: str = "feishu",
+    provider: str = "demo",
     status: str = "pending",
     expires_at: datetime | None = None,
 ) -> str:
@@ -344,7 +352,7 @@ def insert_oauth_session(
                 provider,
                 state,
                 "verifier-1",
-                "http://testserver/v1/oauth/feishu/callback",
+                "http://testserver/v1/oauth/demo/callback",
                 json.dumps(["offline_access"]),
                 status,
                 _sqlite_dt(expires_at or datetime.now(UTC) + timedelta(minutes=5)),

@@ -44,19 +44,19 @@ describe('connectorApi', () => {
     mockFetch(200, {
       providers: [
         {
-          name: 'feishu',
-          display_name: '飞书',
-          description: '即时消息',
+          name: 'demo',
+          display_name: '示例连接器',
+          description: '示例连接器',
           auth_kind: 'oauth_user',
-          scopes: ['im:message'],
+          scopes: ['demo:read'],
           configured: true,
-          docs_url: 'https://open.feishu.cn',
+          docs_url: 'https://example.com/docs',
           connected: true,
           tools: [
             {
-              name: 'Feishu__get_me',
+              name: 'Demo__get_me',
               title: '取当前用户',
-              description: '返回 user_info',
+              description: '返回当前用户信息',
               risk: 'read',
             },
           ],
@@ -67,12 +67,12 @@ describe('connectorApi', () => {
     const providers = await connectorApi.listProviders();
     expect(providers).toHaveLength(1);
     expect(providers[0]).toMatchObject({
-      provider: 'feishu',
-      display_name: '飞书',
+      provider: 'demo',
+      display_name: '示例连接器',
       auth_kind: 'oauth_user',
-      scopes: ['im:message'],
+      scopes: ['demo:read'],
       configured: true,
-      docs_url: 'https://open.feishu.cn',
+      docs_url: 'https://example.com/docs',
       connected: true,
     });
     expect(providers[0]?.tools[0]?.title).toBe('取当前用户');
@@ -108,11 +108,11 @@ describe('connectorApi', () => {
 
   it('authorize 发送 provider 路径与 redirect_uri', async () => {
     const fetchMock = mockFetch(200, {
-      provider: 'feishu',
+      provider: 'demo',
       authorize_url: 'https://auth.example.com/oauth',
       expires_at: '2026-11-03T10:05:00+00:00',
     });
-    const result = await connectorApi.authorize('feishu', {
+    const result = await connectorApi.authorize('demo', {
       redirect_uri: 'http://localhost/connectors',
     });
 
@@ -120,7 +120,7 @@ describe('connectorApi', () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe('/api/connector/connectors/feishu/authorize');
+    expect(url).toBe('/api/connector/connectors/demo/authorize');
     expect(init.method).toBe('POST');
     expect(bodyOf(fetchMock)).toEqual({
       redirect_uri: 'http://localhost/connectors',
@@ -136,13 +136,13 @@ describe('connectorApi', () => {
 
     const patchMock = mockFetch(200, { id: 'c1' });
     await connectorApi.updateConnection('c1', {
-      display_name: '工作飞书',
+      display_name: '工作账号',
       enabled: false,
     });
     expect(patchMock.mock.calls[0]?.[0]).toBe('/api/connector/connections/c1');
     expect((patchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('PATCH');
     expect(bodyOf(patchMock)).toEqual({
-      display_name: '工作飞书',
+      display_name: '工作账号',
       enabled: false,
     });
 
@@ -208,7 +208,7 @@ describe('checkOutcome', () => {
     expect(
       checkOutcome({
         id: 'c1',
-        provider: 'feishu',
+        provider: 'demo',
         status: 'expired',
         last_error_code: 'connector.auth_expired',
       }),
@@ -221,7 +221,7 @@ describe('checkOutcome', () => {
     expect(
       checkOutcome({
         id: 'c1',
-        provider: 'feishu',
+        provider: 'demo',
         status: 'active',
         last_error_code: null,
       }),

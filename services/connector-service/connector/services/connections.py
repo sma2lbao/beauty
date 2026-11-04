@@ -1,8 +1,8 @@
 """连接业务逻辑:凭证只进不出;状态守卫与租户隔离同 orchestrator 约定。
 
 刷新是单飞:先按连接行加锁(with_for_update),锁内二次检查「是否仍需刷新」再
-换 token 写回。飞书 refresh_token 一次性,并发各自刷新的后到者必然失败,所以
-锁必须覆盖整个「检查 -> 换 token -> 写回」。
+换 token 写回。部分 provider 的 refresh_token 是一次性的,并发各自刷新的后到者
+必然失败,所以锁必须覆盖整个「检查 -> 换 token -> 写回」。
 """
 
 from __future__ import annotations

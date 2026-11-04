@@ -1,8 +1,8 @@
 """服务配置(env 前缀 CONNECTOR__,公共字段见 common.service_kit)。
 
 连接器平台:provider 由代码 manifest 注册(见 connector.providers),配置只负责
-「启用哪些 provider」与各自的应用凭证。v1 内置飞书(企业自建应用 + 用户身份 +
-只读能力);未配置 app_id/app_secret 时 provider 仍会出现在目录里但标记未配置。
+「启用哪些 provider」与各自的应用凭证。当前仓库没有内置 provider;新增 provider
+后由它自己声明配置字段。未配置应用凭证时 provider 仍出现在目录里但标记未配置。
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ class Settings(ServiceSettings):
 
     # ── 连接器平台 ────────────────────────────────────────────────────────
     # 启用的 provider(逗号分隔);代码里没有对应 manifest 的名字会被忽略。
-    providers_enabled: str = "feishu"
+    # 当前仓库无内置 provider(按新规划,飞书 provider 已移除)。
+    providers_enabled: str = ""
     # 服务间内部调用鉴权(X-Internal-Secret);留空 = 内部端点整体关闭(401)。
     internal_secret: str = ""
     # OAuth 回调基址:redirect_uri = {base}/v1/oauth/{provider}/callback,
@@ -54,16 +55,6 @@ class Settings(ServiceSettings):
     refresh_patrol_enabled: bool = True
     refresh_patrol_interval_seconds: int = 3600
     refresh_stale_seconds: int = 86400
-
-    # ── 飞书(企业自建应用)──────────────────────────────────────────────
-    feishu_app_id: str = ""
-    feishu_app_secret: str = ""
-    # 空格分隔;必须含 offline_access 才会拿到 refresh_token。
-    feishu_scopes: str = (
-        "offline_access drive:drive:readonly docx:document:readonly wiki:wiki:readonly"
-    )
-    feishu_open_api_base: str = "https://open.feishu.cn"
-    feishu_accounts_base: str = "https://accounts.feishu.cn"
 
     @property
     def provider_names(self) -> tuple[str, ...]:

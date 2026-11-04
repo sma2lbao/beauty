@@ -98,13 +98,13 @@ class TestToolDescriptor:
 
     def test_connector_payload_roundtrip(self) -> None:
         descriptor = _descriptor(
-            name="Feishu__read_document",
+            name="Demo__read_document",
             executor=ExecutorKind.CONNECTOR,
-            connector={"provider": "feishu"},
+            connector={"provider": "demo"},
         )
         payload = descriptor.to_payload()
         assert payload["executor"] == "connector"
-        assert payload["connector"] == {"provider": "feishu"}
+        assert payload["connector"] == {"provider": "demo"}
         assert ToolDescriptor.from_payload(payload) == descriptor
 
     def test_connector_absent_for_builtin_tools(self) -> None:
@@ -119,7 +119,7 @@ class TestToolDescriptor:
 
     def test_from_payload_rejects_malformed_connector(self) -> None:
         payload = _descriptor(executor=ExecutorKind.CONNECTOR).to_payload()
-        payload["connector"] = "feishu"
+        payload["connector"] = "demo"
         with pytest.raises(ValueError):
             ToolDescriptor.from_payload(payload)
 

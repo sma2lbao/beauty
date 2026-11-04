@@ -15,7 +15,7 @@ from connector.services import apps
 from tests.conftest import (
     TENANT,
     _settings,
-    feishu_credentials,
+    demo_credentials,
     insert_connection,
     insert_tenant_app,
 )
@@ -28,9 +28,7 @@ def _db(tmp_path: Path) -> Path:
 def _provider(client: TestClient, settings, *, tenant_id: str = "t-1"):
     async def _run():
         async with client.app.state.session_factory() as session:
-            return await apps.provider_for_tenant(
-                session, settings, tenant_id, "feishu"
-            )
+            return await apps.provider_for_tenant(session, settings, tenant_id, "demo")
 
     return client.portal.call(_run)
 
@@ -42,7 +40,7 @@ def _stored_secret(db_path: Path) -> str:
 
 def _execute(client: TestClient, tool: str) -> dict[str, Any]:
     response = client.post(
-        "/v1/connectors/feishu/execute",
+        "/v1/connectors/demo/execute",
         json={"tool": tool, "arguments": {}, "run_id": "run-1"},
         headers={"X-Internal-Secret": "internal-test-secret", "X-Tenant-Id": "t-1"},
     )
@@ -53,12 +51,12 @@ def _execute(client: TestClient, tool: str) -> dict[str, Any]:
 def test_tenant_app_overrides_global_settings(
     client: TestClient, tmp_path: Path
 ) -> None:
-    insert_tenant_app(_db(tmp_path), app_id="cli_tenant", app_secret="tenant-secret")
+    insert_tenant_app(_db(tmp_path), app_id="demo-tenant", app_secret="tenant-secret")
 
     provider = _provider(client, _settings(tmp_path))
 
     assert provider.configured is True
-    assert provider._app_id == "cli_tenant"
+    assert provider._app_id == "demo-tenant"
     assert provider._app_secret == "tenant-secret"
 
 
@@ -67,8 +65,8 @@ def test_missing_tenant_app_falls_back_to_global(
 ) -> None:
     provider = _provider(client, _settings(tmp_path))
 
-    assert provider._app_id == "cli_test"
-    assert provider._app_secret == "secret_test"
+    assert provider._app_id == "demo-client"
+    assert provider._app_secret == "demo-secret"
 
 
 def test_incomplete_tenant_app_falls_back_to_global(
@@ -79,20 +77,18 @@ def test_incomplete_tenant_app_falls_back_to_global(
     settings = _settings(tmp_path)
 
     provider = _provider(client, settings)
-    assert provider._app_id == "cli_test"
-    assert provider._app_secret == "secret_test"
+    assert provider._app_id == "demo-client"
+    assert provider._app_secret == "demo-secret"
 
     # 另一个租户:只有 app_id、secret 缺失(加密空串)
-    insert_tenant_app(
-        db, tenant_id="t-2", app_id="cli_only_id", app_secret=""
-    )
+    insert_tenant_app(db, tenant_id="t-2", app_id="cli_only_id", app_secret="")
     provider_t2 = _provider(client, settings, tenant_id="t-2")
-    assert provider_t2._app_id == "cli_test"
+    assert provider_t2._app_id == "demo-client"
 
 
 def test_app_secret_is_encrypted_at_rest(client: TestClient, tmp_path: Path) -> None:
     db = _db(tmp_path)
-    insert_tenant_app(db, app_id="cli_tenant", app_secret="tenant-secret")
+    insert_tenant_app(db, app_id="demo-tenant", app_secret="tenant-secret")
     settings = _settings(tmp_path)
 
     stored = _stored_secret(db)
@@ -109,41 +105,41 @@ def test_app_secret_is_encrypted_at_rest(client: TestClient, tmp_path: Path) -> 
 
 
 def test_authorize_uses_tenant_app_credentials(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
-    insert_tenant_app(_db(tmp_path), app_id="cli_tenant", app_secret="tenant-secret")
+    insert_tenant_app(_db(tmp_path), app_id="demo-tenant", app_secret="tenant-secret")
 
-    resp = client.post("/v1/connectors/feishu/authorize", headers=TENANT)
+    resp = client.post("/v1/connectors/demo/authorize", headers=TENANT)
     assert resp.status_code == 200, resp.text
     query = parse_qs(urlparse(resp.json()["authorize_url"]).query)
-    assert query["client_id"] == ["cli_tenant"]
+    assert query["client_id"] == ["demo-tenant"]
 
     callback = client.get(
-        "/v1/oauth/feishu/callback",
+        "/v1/oauth/demo/callback",
         params={"code": "code-1", "state": query["state"][0]},
         follow_redirects=False,
     )
     assert callback.status_code == 302
-    token_body = feishu.token_calls[-1]
-    assert token_body["client_id"] == "cli_tenant"
+    token_body = demo.token_calls[-1]
+    assert token_body["client_id"] == "demo-tenant"
     assert token_body["client_secret"] == "tenant-secret"
 
 
 def test_execute_refresh_uses_tenant_app_credentials(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     db = _db(tmp_path)
-    insert_tenant_app(db, app_id="cli_tenant", app_secret="tenant-secret")
+    insert_tenant_app(db, app_id="demo-tenant", app_secret="tenant-secret")
     insert_connection(
         db,
         expires_at=datetime.now(UTC) + timedelta(seconds=60),  # 进入刷新窗口
-        credentials=feishu_credentials(access_token="at-old", refresh_token="rt-old"),
+        credentials=demo_credentials(access_token="at-old", refresh_token="rt-old"),
     )
 
-    payload = _execute(client, "Feishu__get_me")
+    payload = _execute(client, "Demo__get_me")
 
     assert payload["ok"] is True
-    token_body = feishu.token_calls[-1]
+    token_body = demo.token_calls[-1]
     assert token_body["grant_type"] == "refresh_token"
-    assert token_body["client_id"] == "cli_tenant"
+    assert token_body["client_id"] == "demo-tenant"
     assert token_body["client_secret"] == "tenant-secret"

@@ -1,7 +1,8 @@
 """24h 刷新巡检:兜住「没人调用执行面」的长期空闲连接(设计 §5.5)。
 
 与惰性刷新/手动刷新共用 connections.refresh_connection 的单飞路径(行锁 + 锁内
-二次检查),所以巡检和执行面并发时不会重复换 token(飞书 refresh_token 一次性)。
+二次检查),所以巡检和执行面并发时不会重复换 token(某些 provider 的 refresh_token
+只能使用一次)。
 
 巡检是跨租户的系统任务:先一次性取出候选(只快照 tenant_id/id),再逐条在**独立
 session_scope** 里刷新——单条失败只留痕(错误码/状态)并记日志,不影响整轮。

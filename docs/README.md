@@ -27,7 +27,7 @@
 | [docs/design/event-taxonomy.md](./design/event-taxonomy.md)               | 事件分类学契约（thread/turn/item + plan 一等 item）                         | Lead       | 事件 kind/相位变化时       |
 | [docs/design/subagents.md](./design/subagents.md)                         | 子代理委派(P1-E):run 树/spawn_subagent/过程项 kind=subagent/用量投影        | Lead       | 子代理契约变化时           |
 | [docs/design/model-routing.md](./design/model-routing.md)                 | 模型路由契约(P1-G):选择/fallback/结构化输出/多模态                          | Lead       | 模型路由契约变化时         |
-| [docs/design/connector.md](./design/connector.md)                         | 连接器平台设计（平台架构/OAuth 与凭证托管/飞书 v1/Notion 预留/实施清单）    | Lead       | 连接器契约或实施进度变化时 |
+| [docs/design/connector.md](./design/connector.md)                         | 连接器平台设计（平台架构/OAuth 与凭证托管/实施清单;飞书 v1 已按新规划移除） | Lead       | 连接器契约或实施进度变化时 |
 | [docs/research/connector/](./research/connector/)                         | 连接器调研（WorkBuddy 对标/主流方案/飞书与 Notion 接入）                    | Lead       | 调研结论变化时             |
 | [docs/gap-2026-10/](./gap-2026-10/)                                       | 能力缺口需求池（未落地的能力缺口）                                          | Lead       | 缺口状态变化时             |
 | [apps/\*/README.md](../apps/)                                             | 应用运行说明                                                                | 应用 owner | 应用行为变化时             |

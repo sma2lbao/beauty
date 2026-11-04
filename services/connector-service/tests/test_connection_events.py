@@ -20,7 +20,7 @@ from connector.providers.base import Credentials, Identity
 from connector.providers.errors import ProviderError
 from connector.services import connections as connections_service
 from connector.services import events as events_service
-from tests.conftest import _settings, feishu_credentials, insert_connection
+from tests.conftest import _settings, demo_credentials, insert_connection
 
 _EVENT_TYPE = {
     "connection.created": events_service.CONNECTION_CREATED,
@@ -50,13 +50,13 @@ def _connection_row(db_path: Path, connection_id: str) -> dict[str, Any]:
     return dict(row)
 
 
-def _authorize(session, settings, *, account: str = "ou_new"):
+def _authorize(session, settings, *, account: str = "u-new"):
     """走真实的授权落库路径(新建行 -> 发 created)。"""
     return connections_service.upsert_authorized_connection(
         session,
         settings=settings,
         tenant_id="t-1",
-        provider_name="feishu",
+        provider_name="demo",
         owner_subject="u2",
         credentials=Credentials(
             access_token="at-9",
@@ -91,8 +91,8 @@ def test_created_event_written_with_connection_in_same_transaction(
     assert row["attempts"] == 0
     assert json.loads(row["payload"]) == {
         "connection_id": connection_id,
-        "provider": "feishu",
-        "account": "ou_new",
+        "provider": "demo",
+        "account": "u-new",
         "status": "active",
         "owner_subject": "u2",
     }
@@ -139,7 +139,7 @@ def test_expired_event_written_on_reauth_failure(
 ) -> None:
     """refresh 因 invalid_grant 类错误失败:置 expired 的同时一条 expired 事件。"""
     conn = insert_connection(
-        _db(tmp_path), credentials=feishu_credentials(refresh_token=None)
+        _db(tmp_path), credentials=demo_credentials(refresh_token=None)
     )
     settings = _settings(tmp_path, outbox_enabled=True)
 
@@ -194,9 +194,7 @@ def test_disabled_outbox_only_logs(
     assert logged[0]["tenant_id"] == "t-1"
 
 
-def test_dispatcher_delivers_recorded_event(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_dispatcher_delivers_recorded_event(client: TestClient, tmp_path: Path) -> None:
     """dispatcher 把 outbox 行投给总线处理器,并把行标记为 dispatched。"""
     settings = _settings(tmp_path, outbox_enabled=True)
 

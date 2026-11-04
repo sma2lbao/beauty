@@ -3,13 +3,15 @@
 连接器服务(架构 §8,设计见 [docs/design/connector.md](../../docs/design/connector.md)):
 把外部 SaaS 账号连到租户,凭证只进不出,并把 provider 能力暴露成 agent 可调用的工具。
 
-v1 内置**飞书**(企业自建应用 + 用户身份 + 只读能力):授权、刷新、失效检测、目录、
-执行与连接管理都已打通;Notion 按同一 provider 接口预留。邮件/日历能力已下线,
-存量连接在迁移 `b2e4c7a91d33` 中置为 `revoked`。
+**当前仓库没有内置 provider**:平台层(授权、刷新、失效检测、目录、执行、连接管理)
+已打通,具体 provider 按同一套 `BaseProvider` 接口实现并注册后即可用;新 provider
+的接入步骤见下文「接入新 provider」。邮件/日历能力已下线,存量连接在迁移
+`b2e4c7a91d33` 中置为 `revoked`;2026-11-04 按新规划移除了内置的飞书 provider。
 
 除惰性/手动刷新外,还有 **24h 刷新巡检**兜底;连接生命周期事件
 (`connector.connection.created/expired/revoked.v1`)经 **outbox** 与状态变更同事务发出。
 多租户可各自配置企业应用凭证(`tenant_apps`),未配置的租户沿用全局应用。详见下文。
+测试用 `tests/demo_provider.py`(provider key `demo`,仅测试进程内注册)驱动全链路。
 
 ## 端点
 
@@ -47,7 +49,7 @@ v1 内置**飞书**(企业自建应用 + 用户身份 + 只读能力):授权、�
   `oauth_sessions` 行里,回调按 nonce 一次性消费,10 分钟过期。
 - **PKCE S256**:授权 URL 带 `code_challenge`,换 token 时带 verifier。
 - **刷新单飞**:`SELECT … FOR UPDATE` 锁连接行 → 锁内二次检查 `expires_at`(并发请求
-  只有一个真正换 token)→ 同事务写回;飞书 refresh_token 一次性,这一步是硬要求。
+  只有一个真正换 token)→ 同事务写回;上游 refresh_token 一次性时,这一步是硬要求。
 - **错误分层**:只有 `connector.auth_expired` / `connector.oauth_failed` /
   `connector.scope_missing` 会把连接置 `expired`;限流/超时/5xx 是瞬时故障,
   保持 `active` 并写 `last_error_code`,不逼用户重连。
@@ -57,22 +59,23 @@ v1 内置**飞书**(企业自建应用 + 用户身份 + 只读能力):授权、�
 
 见 [.env.example](.env.example)。核心项:
 
-| 变量                                                                                  | 说明                                                                                                                      |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `CONNECTOR__PROVIDERS_ENABLED`                                                        | 启用哪些 provider(逗号分隔),默认 `feishu`                                                                                 |
-| `CONNECTOR__INTERNAL_SECRET`                                                          | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                        |
-| `CONNECTOR__OAUTH_REDIRECT_BASE`                                                      | `{base}/v1/oauth/{provider}/callback`,须与飞书后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
-| `CONNECTOR__OAUTH_SUCCESS_REDIRECT`                                                   | 授权结束 302 回前端的地址                                                                                                 |
-| `CONNECTOR__FEISHU_APP_ID/SECRET`                                                     | 飞书企业自建应用凭证;未配置时目录里 `configured=false`                                                                    |
-| `CONNECTOR__FEISHU_SCOPES`                                                            | 空格分隔,必须含 `offline_access` 才能拿到 refresh_token                                                                   |
-| `CONNECTOR__CREDENTIAL_SECRET`                                                        | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                    |
-| `CONNECTOR__OUTBOX_ENABLED`                                                           | 是否把连接生命周期事件写 outbox 并后台投递;默认 `false`(降级为结构化日志)                                                 |
-| `CONNECTOR__OUTBOX_DISPATCH_INTERVAL_SECONDS` / `..._BATCH_SIZE` / `..._MAX_ATTEMPTS` | outbox 派发轮询间隔(1s)/每批条数(50)/最大尝试次数(5)                                                                      |
-| `CONNECTOR__REFRESH_PATROL_ENABLED`                                                   | 是否启动 24h 刷新巡检;生产默认 `true`,测试关闭                                                                            |
-| `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS`                                          | 巡检轮询间隔(默认 3600s)                                                                                                  |
-| `CONNECTOR__REFRESH_STALE_SECONDS`                                                    | 超过多久没刷新算「过期」候选(默认 86400s = 24h)                                                                           |
+| 变量                                | 说明                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `CONNECTOR__PROVIDERS_ENABLED`      | 启用哪些 provider(逗号分隔,须已注册);默认空                                                                                     |
+| `CONNECTOR__INTERNAL_SECRET`        | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                              |
+| `CONNECTOR__OAUTH_REDIRECT_BASE`    | `{base}/v1/oauth/{provider}/callback`,须与 provider 后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
+| `CONNECTOR__OAUTH_SUCCESS_REDIRECT` | 授权结束 302 回前端的地址                                                                                                       |
+| `CONNECTOR__CREDENTIAL_SECRET`      | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                          |
 
-## 接入新 provider(如 Notion)
+provider 自己的应用凭证字段由该 provider 的 manifest 定义,加在 `Settings`(env 前缀
+`CONNECTOR__`)里;未配置时目录里该 provider 的 `configured=false`。
+| `CONNECTOR__OUTBOX_ENABLED` | 是否把连接生命周期事件写 outbox 并后台投递;默认 `false`(降级为结构化日志) |
+| `CONNECTOR__OUTBOX_DISPATCH_INTERVAL_SECONDS` / `..._BATCH_SIZE` / `..._MAX_ATTEMPTS` | outbox 派发轮询间隔(1s)/每批条数(50)/最大尝试次数(5) |
+| `CONNECTOR__REFRESH_PATROL_ENABLED` | 是否启动 24h 刷新巡检;生产默认 `true`,测试关闭 |
+| `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS` | 巡检轮询间隔(默认 3600s) |
+| `CONNECTOR__REFRESH_STALE_SECONDS` | 超过多久没刷新算「过期」候选(默认 86400s = 24h) |
+
+## 接入新 provider
 
 provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 
@@ -83,17 +86,17 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 2. 在 `connector/providers/__init__.py` 的注册表登记构造函数;config 里按需加
    该 provider 的应用凭证字段。
 3. 错误统一抛 `ProviderError(code, message, hint, retryable)`;需要重连的错误码
-   放 `REAUTH_ERROR_CODES`,上游错误映射参考 `providers/feishu.py`。
+   放 `REAUTH_ERROR_CODES`,上游错误映射参考 `tests/demo_provider.py`。
 4. 无需新增路由/表:授权、刷新、目录、执行、连接管理都由平台层复用
    `oauth_sessions` / `connections`(唯一约束 `(tenant_id, provider, account)`,
-   account 写稳定标识,如飞书 `open_id`)。
-5. 补测试:上游用 `httpx.MockTransport` 打桩(见 `tests/conftest.py` 的 FeishuMock),
-   零网络、零外呼;新 provider 也要覆盖授权/刷新/执行/错误映射分支。
+   account 写稳定标识,如 provider 的账号 id)。
+5. 补测试:上游用 `httpx.MockTransport` 打桩(见 `tests/conftest.py` 的 DemoMock
+   与 `tests/demo_provider.py`),零网络、零外呼;新 provider 也要覆盖授权/刷新/执行/错误映射分支。
 
 ## 租户级应用凭证(tenant_apps)
 
 `tenant_apps` 每租户每 provider 一行,让不同租户用**自己的**企业应用
-(`app_id`/`app_secret`);没配的租户继续用全局 `CONNECTOR__FEISHU_APP_*`。
+(`app_id`/`app_secret`);没配的租户继续用全局 `Settings` 里该 provider 的应用凭证。
 
 - 解析顺序:租户行 → 全局 `Settings`(见 `connector/services/apps.py`);
   行里 `app_id` 与 `app_secret` **都可用**才生效,半配置行记 warning 后回退全局。
@@ -143,7 +146,7 @@ cd services/connector-service && uv run alembic upgrade head
 - `npx nx test connector-service`
 - `npx nx lint connector-service` / `npx nx format connector-service`
 
-测试用 `httpx.MockTransport` 打桩飞书上游(`--disable-socket`),零网络;覆盖率门禁 91%。
+测试用 `httpx.MockTransport` 打桩示例上游(`--disable-socket`),零网络;覆盖率门禁 91%。
 `pyproject.toml` 的 `[tool.coverage.run]` 声明 `concurrency = ["greenlet", "thread"]`:
 SQLAlchemy async 经 greenlet 桥接同步 DB 调用,不声明会丢掉 await 之后的帧、把已执行
 的服务层代码误报为未覆盖。

@@ -99,7 +99,7 @@ class ToolDescriptor:
     aliases: tuple[str, ...] = ()
     enabled: bool = True
     version: str = "1"
-    # 连接器工具的来源信息（如 {"provider": "feishu"}）；仅
+    # 连接器工具的来源信息（如 {"provider": "demo"}）；仅
     # executor=CONNECTOR 时出现，其他工具保持 None 且不写进 wire 载荷（设计 §5.6）。
     connector: dict[str, Any] | None = None
 

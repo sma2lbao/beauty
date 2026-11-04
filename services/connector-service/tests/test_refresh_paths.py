@@ -23,7 +23,7 @@ from connector.services.connections import (
     refresh_if_expiring,
     upsert_authorized_connection,
 )
-from tests.conftest import TENANT, _settings, feishu_credentials, insert_connection
+from tests.conftest import TENANT, _settings, demo_credentials, insert_connection
 
 
 def _db(tmp_path: Path) -> Path:
@@ -31,10 +31,10 @@ def _db(tmp_path: Path) -> Path:
 
 
 def test_refresh_skips_when_not_expiring(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     conn = insert_connection(
-        _db(tmp_path), credentials=feishu_credentials(expires_in=7200)
+        _db(tmp_path), credentials=demo_credentials(expires_in=7200)
     )
     settings = _settings(tmp_path)
 
@@ -48,11 +48,11 @@ def test_refresh_skips_when_not_expiring(
             return refreshed.id
 
     assert client.portal.call(_run) == conn["id"]
-    assert feishu.refresh_tokens == 0
+    assert demo.refresh_tokens == 0
 
 
 def test_refresh_rechecks_under_lock(
-    client: TestClient, feishu, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, demo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """等锁期间别的请求已刷新:锁内二次检查放行,不再换 token。"""
     conn = insert_connection(
@@ -74,11 +74,11 @@ def test_refresh_rechecks_under_lock(
             return refreshed.id
 
     assert client.portal.call(_run) == conn["id"]
-    assert feishu.refresh_tokens == 0
+    assert demo.refresh_tokens == 0
 
 
 def test_refresh_returns_inactive_connection_under_lock(
-    client: TestClient, feishu, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, demo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     conn = insert_connection(
         _db(tmp_path),
@@ -98,16 +98,16 @@ def test_refresh_returns_inactive_connection_under_lock(
             return refreshed.id, refreshed.status
 
     assert client.portal.call(_run) == (conn["id"], "expired")
-    assert feishu.refresh_tokens == 0
+    assert demo.refresh_tokens == 0
 
 
 def test_transient_refresh_failure_keeps_connection_active(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     conn = insert_connection(
         _db(tmp_path), expires_at=datetime.now(UTC) - timedelta(seconds=1)
     )
-    feishu.fail["/oauth/v3/token"] = httpx.Response(
+    demo.fail["/oauth/token"] = httpx.Response(
         429,
         headers={"x-ogw-ratelimit-reset": "7"},
         json={"code": 99991400, "msg": "rate limited"},
@@ -122,13 +122,13 @@ def test_transient_refresh_failure_keeps_connection_active(
 
 
 def test_upstream_outage_refresh_failure_keeps_connection_active(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     """token 端点 5xx 是瞬时故障:不许置 expired 逼用户重连。"""
     conn = insert_connection(
         _db(tmp_path), expires_at=datetime.now(UTC) - timedelta(seconds=1)
     )
-    feishu.fail["/oauth/v3/token"] = httpx.Response(503, text="upstream down")
+    demo.fail["/oauth/token"] = httpx.Response(503, text="upstream down")
     response = client.post(f"/v1/connections/{conn['id']}/refresh", headers=TENANT)
     assert response.status_code == 502
     assert response.json()["code"] == "connector.upstream_unavailable"
@@ -139,9 +139,7 @@ def test_upstream_outage_refresh_failure_keeps_connection_active(
 
 
 def test_apply_credentials_keeps_scopes_when_scope_empty() -> None:
-    conn = Connection(
-        tenant_id="t-1", provider="feishu", account="ou_1", scopes=["old"]
-    )
+    conn = Connection(tenant_id="t-1", provider="demo", account="u-1", scopes=["old"])
     credentials = Credentials(
         access_token="at-x",
         expires_at=datetime.now(UTC) + timedelta(seconds=60),
@@ -156,7 +154,7 @@ def test_apply_credentials_keeps_scopes_when_scope_empty() -> None:
 
 
 def test_upsert_reuses_existing_connection(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     conn = insert_connection(_db(tmp_path))
     settings = _settings(tmp_path)
@@ -168,14 +166,14 @@ def test_upsert_reuses_existing_connection(
                 session,
                 settings=settings,
                 tenant_id="t-1",
-                provider_name="feishu",
+                provider_name="demo",
                 owner_subject="u2",
                 credentials=Credentials(
                     access_token="at-9",
                     refresh_token="rt-9",
                     scope="offline_access",
                 ),
-                identity=Identity(account="ou_1", display_name="李四"),
+                identity=Identity(account="u-1", display_name="李四"),
                 scopes=["offline_access"],
             )
             await session.commit()
@@ -192,8 +190,8 @@ def test_execute_wraps_http_error(
     settings = _settings(tmp_path)
 
     class _Boom:
-        name = "feishu"
-        display_name = "飞书"
+        name = "demo"
+        display_name = "示例连接器"
 
         def tool_spec(self, name: str) -> object:
             return object()
@@ -205,9 +203,7 @@ def test_execute_wraps_http_error(
     async def _provider_for_tenant(*args, **kwargs):
         return _Boom()
 
-    monkeypatch.setattr(
-        execute_service, "provider_for_tenant", _provider_for_tenant
-    )
+    monkeypatch.setattr(execute_service, "provider_for_tenant", _provider_for_tenant)
 
     async def _run() -> dict:
         factory = client.app.state.session_factory
@@ -216,8 +212,8 @@ def test_execute_wraps_http_error(
                 session,
                 settings,
                 tenant_id="t-1",
-                provider_name="feishu",
-                tool_name="Feishu__get_me",
+                provider_name="demo",
+                tool_name="Demo__get_me",
                 arguments={},
                 transport=None,
             )
@@ -231,10 +227,10 @@ def test_execute_wraps_http_error(
 
 
 def test_check_transient_failure_keeps_active(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     conn = insert_connection(_db(tmp_path))
-    feishu.fail["/authen/v1/user_info"] = httpx.Response(
+    demo.fail["/userinfo"] = httpx.Response(
         429,
         headers={"x-ogw-ratelimit-reset": "3"},
         json={"code": 99991400, "msg": "rate limited"},
@@ -247,13 +243,11 @@ def test_check_transient_failure_keeps_active(
 
 
 def test_check_unknown_identity_shape_is_not_auth_failure(
-    client: TestClient, feishu, tmp_path: Path
+    client: TestClient, demo, tmp_path: Path
 ) -> None:
     """上游返回结构调整不该判成"需要重新授权",只留错误码。"""
     conn = insert_connection(_db(tmp_path))
-    feishu.fail["/authen/v1/user_info"] = httpx.Response(
-        200, json={"code": 0, "data": {}}
-    )
+    demo.fail["/userinfo"] = httpx.Response(200, json={"code": 0, "data": {}})
     response = client.post(f"/v1/connections/{conn['id']}/check", headers=TENANT)
     assert response.status_code == 200
     body = response.json()

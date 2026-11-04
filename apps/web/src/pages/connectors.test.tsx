@@ -38,16 +38,16 @@ vi.mock('@/lib/connector-api', async () => {
   };
 });
 
-const feishuProvider: ConnectorProvider = {
-  provider: 'feishu',
-  display_name: '飞书',
-  description: '即时消息、文档与日历。',
+const demoProvider: ConnectorProvider = {
+  provider: 'demo',
+  display_name: '示例连接器',
+  description: '消息与文档能力演示。',
   auth_kind: 'oauth_user',
-  scopes: ['im:message', 'doc:read'],
+  scopes: ['demo:read', 'demo:write'],
   configured: true,
   tools: [
-    { name: 'Feishu__send_message', description: '发送消息', risk: 'write' },
-    { name: 'Feishu__search_docs', description: '搜索文档', risk: 'read' },
+    { name: 'Demo__send_message', description: '发送消息', risk: 'write' },
+    { name: 'Demo__search_docs', description: '搜索文档', risk: 'read' },
   ],
 };
 
@@ -65,14 +65,14 @@ const notionProvider: ConnectorProvider = {
 
 const activeConnection: ConnectorConnection = {
   id: 'c1',
-  provider: 'feishu',
+  provider: 'demo',
   status: 'active',
   account: 'me@example.com',
   auth_kind: 'oauth_user',
-  provider_account_id: 'ou_1',
-  external_workspace: 'tenant-1',
+  provider_account_id: 'user-1',
+  external_workspace: 'workspace-1',
   enabled: true,
-  scopes: ['im:message'],
+  scopes: ['demo:read'],
   expires_at: '2026-12-01T08:00:00+00:00',
   refresh_expires_at: '2027-02-01T08:00:00+00:00',
   last_refreshed_at: '2026-11-01T08:00:00+00:00',
@@ -121,7 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useNotificationsStore.getState().reset();
   vi.mocked(connectorApi.listProviders).mockResolvedValue([
-    feishuProvider,
+    demoProvider,
     notionProvider,
   ]);
   vi.mocked(connectorApi.listConnections).mockResolvedValue([activeConnection]);
@@ -164,14 +164,16 @@ describe('ConnectorsPage', () => {
     expect(screen.getByText('正在加载连接器…')).toBeTruthy();
 
     await act(async () => {
-      resolveProviders([feishuProvider, notionProvider]);
+      resolveProviders([demoProvider, notionProvider]);
     });
 
-    expect(await screen.findByText('飞书')).toBeTruthy();
+    expect(await screen.findByText('示例连接器')).toBeTruthy();
     expect(screen.getByText('Notion')).toBeTruthy();
     expect(screen.getByText('me@example.com')).toBeTruthy();
     expect(screen.getByText('已连接')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '管理 飞书' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: '管理 示例连接器' }),
+    ).toBeTruthy();
     expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
   });
 
@@ -186,14 +188,14 @@ describe('ConnectorsPage', () => {
   it('目录加载失败展示错误与重试', async () => {
     vi.mocked(connectorApi.listProviders)
       .mockRejectedValueOnce(new Error('连接器服务不可用'))
-      .mockResolvedValueOnce([feishuProvider]);
+      .mockResolvedValueOnce([demoProvider]);
     renderPage();
 
     expect(await screen.findByText('连接器目录加载失败')).toBeTruthy();
     expect(screen.getByText('连接器服务不可用')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
-    expect(await screen.findByText('飞书')).toBeTruthy();
+    expect(await screen.findByText('示例连接器')).toBeTruthy();
   });
 
   it('失效连接显示「需要重新连接」,点击重新发起授权', async () => {
@@ -230,9 +232,9 @@ describe('ConnectorsPage', () => {
   });
 
   it('回调成功 toast 并清掉 query', async () => {
-    renderPage('/connectors?provider=feishu&status=connected&connection_id=c1');
+    renderPage('/connectors?provider=demo&status=connected&connection_id=c1');
 
-    await screen.findByText('飞书');
+    await screen.findByText('示例连接器');
     await waitFor(() => {
       expect(toasts().some((toast) => toast.title === '连接器已连接')).toBe(
         true,
@@ -259,7 +261,7 @@ describe('ConnectorsPage', () => {
   it('兼容旧回调形状:?connected=<id>', async () => {
     renderPage('/connectors?connected=c1');
 
-    await screen.findByText('飞书');
+    await screen.findByText('示例连接器');
     await waitFor(() => {
       const toast = toasts().find((item) => item.title === '连接器已连接');
       expect(toast?.description).toContain('me@example.com');
@@ -272,7 +274,7 @@ describe('ConnectorsPage', () => {
   it('兼容旧回调失败形状:?error=<code>', async () => {
     renderPage('/connectors?error=connector.scope_missing');
 
-    await screen.findByText('飞书');
+    await screen.findByText('示例连接器');
     await waitFor(() => {
       const toast = toasts().find((item) => item.title === '连接器连接失败');
       expect(toast?.description).toBe(
@@ -288,20 +290,20 @@ describe('ConnectorsPage', () => {
       last_error_code: 'connector.auth_expired',
     });
     renderPage();
-    await screen.findByText('飞书');
+    await screen.findByText('示例连接器');
 
-    fireEvent.click(screen.getByRole('button', { name: '管理 飞书' }));
+    fireEvent.click(screen.getByRole('button', { name: '管理 示例连接器' }));
 
     const dialog = await screen.findByRole('dialog', { name: /连接详情/ });
     // 账号既是抽屉标题(无自定义名时)也是「账号」行,允许重复
     expect(
       within(dialog).getAllByText('me@example.com').length,
     ).toBeGreaterThan(0);
-    expect(within(dialog).getByText('im:message')).toBeTruthy();
-    expect(within(dialog).getByText(/doc:read/)).toBeTruthy();
-    expect(within(dialog).getByText('Feishu__send_message')).toBeTruthy();
+    expect(within(dialog).getByText('demo:read')).toBeTruthy();
+    expect(within(dialog).getByText(/demo:write/)).toBeTruthy();
+    expect(within(dialog).getByText('Demo__send_message')).toBeTruthy();
     expect(within(dialog).getByText('搜索文档')).toBeTruthy();
-    expect(within(dialog).getByText('tenant-1')).toBeTruthy();
+    expect(within(dialog).getByText('workspace-1')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('button', { name: '检查连通性' }));
 
@@ -313,8 +315,8 @@ describe('ConnectorsPage', () => {
 
   it('检查连通性成功时提示正常', async () => {
     renderPage();
-    await screen.findByText('飞书');
-    fireEvent.click(screen.getByRole('button', { name: '管理 飞书' }));
+    await screen.findByText('示例连接器');
+    fireEvent.click(screen.getByRole('button', { name: '管理 示例连接器' }));
 
     const dialog = await screen.findByRole('dialog', { name: /连接详情/ });
     fireEvent.click(within(dialog).getByRole('button', { name: '检查连通性' }));
@@ -324,8 +326,8 @@ describe('ConnectorsPage', () => {
 
   it('详情里可停用连接,走 PATCH enabled=false', async () => {
     renderPage();
-    await screen.findByText('飞书');
-    fireEvent.click(screen.getByRole('button', { name: '管理 飞书' }));
+    await screen.findByText('示例连接器');
+    fireEvent.click(screen.getByRole('button', { name: '管理 示例连接器' }));
 
     const dialog = await screen.findByRole('dialog', { name: /连接详情/ });
     fireEvent.click(within(dialog).getByRole('switch', { name: '启用连接' }));
@@ -339,8 +341,8 @@ describe('ConnectorsPage', () => {
 
   it('刷新凭证走 refresh 接口', async () => {
     renderPage();
-    await screen.findByText('飞书');
-    fireEvent.click(screen.getByRole('button', { name: '管理 飞书' }));
+    await screen.findByText('示例连接器');
+    fireEvent.click(screen.getByRole('button', { name: '管理 示例连接器' }));
 
     const dialog = await screen.findByRole('dialog', { name: /连接详情/ });
     fireEvent.click(within(dialog).getByRole('button', { name: '刷新凭证' }));
@@ -352,8 +354,8 @@ describe('ConnectorsPage', () => {
 
   it('解除连接需确认,确认后调用删除接口', async () => {
     renderPage();
-    await screen.findByText('飞书');
-    fireEvent.click(screen.getByRole('button', { name: '管理 飞书' }));
+    await screen.findByText('示例连接器');
+    fireEvent.click(screen.getByRole('button', { name: '管理 示例连接器' }));
 
     const drawer = await screen.findByRole('dialog', { name: /连接详情/ });
     fireEvent.click(within(drawer).getByRole('button', { name: '解除连接' }));

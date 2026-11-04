@@ -1,9 +1,10 @@
 # 连接器平台（Connector Platform）设计
 
-> 状态：已实现（P1 平台骨架 + P2 飞书只读） · 2026-11-03 定稿 / 2026-11-04 回填实现状态
+> 状态：P1 平台骨架已实现（P2 飞书 provider 已于 2026-11-04 按新规划移除） · 2026-11-03 定稿 / 2026-11-04 回填实现状态
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1/P2 已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、飞书只读工具、tool-service 执行面与 `/connectors` 页面；P3/P4 未开始。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 飞书 provider 已按 2026-11-04 规划移除；P3/P4 未开始。
+> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试）；平台骨架/页面/执行面/审计保留；后续 provider 待新规划。
 
 ## 1. 摘要
 
@@ -190,6 +191,8 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
   `TOOL__CONNECTOR_CATALOG_TTL_SECONDS=30`；目录按租户缓存 30s，撤销/新建连接最长延迟一个 TTL 生效，
   执行时仍按租户实时校验连接（不存在则 404 `connector.connection_missing`）；
 - 审计落 `tool_calls.connection_id`（C2.4 已完成）：执行端点成功/失败信封顶层都带 `connection_id`（仅连接已解析时），tool-service 提取后**从模型可见 `result` 中剥离**，再写入 `tool_calls.connection_id`（内置工具为 null）；`tool_name`/`run_id` 照旧。
+- 工具级失败的错误码经 orchestrator 工具事件透传到前端工具卡（C2.9 最小版）：`connection_missing` /
+  `auth_expired` / `scope_missing` 三类渲染连接器恢复卡，其余错误码仍只展示错误文本。
 
 ### 5.4 授权会话时序
 
@@ -313,8 +316,12 @@ ConnectorManifest(
 > 与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
 > （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
 > 巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
-> **未做**：C2.9（会话内选择与执行中授权中断卡片，待 C0.4）、C2.10（真实飞书冒烟，需真实应用凭证）、
-> P3/P4（写能力、组织共享连接、Notion/MCP）。
+> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试）；平台骨架/页面/执行面/审计保留；后续 provider 待新规划。
+> **未做/待办（2026-11-04 复核）**：C2.9 只落地最小版——会话内工具失败恢复卡
+> （`apps/web/src/features/chat/connector-recovery-card.tsx`，三类授权错误码 → 「去连接器」，
+> 用户重连后手动重发；「+ 菜单」选择与 run 暂停续跑待 C0.4）；C2.10（真实飞书冒烟）随飞书
+> provider 移除不再适用（清单文件已删除）；
+> P3/P4（写能力、组织共享连接、Notion/MCP）未开始。
 
 ### 8.1 P0 决策与契约（先做，阻塞后续）
 
@@ -341,6 +348,8 @@ ConnectorManifest(
 
 ### 8.3 P2 飞书 provider + 前端 + 执行面
 
+> 2026-11-04：C2.1/C2.2 的飞书 provider 已移除（平台骨架、前端、执行面与审计保留，C2.3–C2.8 仍有效）。
+
 - [x] **C2.1** `connector/providers/feishu.py`：OAuth（v3 端点）、`user_info`、token 解密/刷新/错误码映射 — 验收：`20037`→expired、`20027`→scope_missing、429 解析 reset 头（M）
 - [x] **C2.2** P0 六个只读工具 + 分页 + 递归 blocks + 结果截断 — 验收：每工具 1 条正常 + 1 条错误用例；大文档不超字节上限（M）
 - [x] **C2.3** `common.tools` 新增 `ExecutorKind.CONNECTOR` + `ToolDescriptor.connector`（provider/action 可选字段） — 验收：`packages/common` 测试与 `test_tools` 兼容；未知字段反序列化不炸（S）
@@ -350,7 +359,12 @@ ConnectorManifest(
 - [x] **C2.7** 连接详情抽屉：账号、已授予 vs 期望 scope、工具清单、最近刷新、禁用开关、解绑 — 验收：失效态显示「重新连接」且只对 auth 类错误出现（M）
 - [x] **C2.8** 侧栏入口 + 空态/加载/错误态；`features/connectors/` 域 + `use-connectors-model.ts` — 验收：无 `pages/` 取数，符合 eslint 分层（S）
 - [ ] **C2.9** 会话内「连接器」选择（+ 菜单）与执行中授权中断卡片（若 C0.4 确认） — 验收：错误码→卡片→重连→重试一次（L）
+  - **2026-11-04 部分完成（最小版 A）**：工具失败卡内渲染连接器恢复卡
+    （`connector-recovery-card.tsx`），按 `connector.connection_missing` / `auth_expired` /
+    `scope_missing` 给出「去连接器」（`/connectors?provider=…`）+「回会话重发」提示，折叠态也可见；
+    「+ 菜单」选择与 run 暂停→授权→续跑未做，待 C0.4 决策后进 P3。
 - [ ] **C2.10** 端到端冒烟：开发环境真实飞书自建应用走通「授权→列文件→读文档→撤销」 — 验收：录屏/截图存 `docs/research/connector/` 或验证报告（M）
+  - **2026-11-04**：清单文件已删除；随飞书 provider 移除，本项不再适用。
 
 ### 8.4 P3 飞书写能力（按需）
 

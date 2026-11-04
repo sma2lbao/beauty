@@ -2,7 +2,7 @@
 
 凭证经 connector.core.crypto 信封加密后存 JSON 列(读端永不返回,
 由 schema 层保证);密钥见配置 credential_secret(架构 §10 密钥库)。
-provider 特有的附加字段统一收进 metadata 列(飞书存 tenant_key/user_name 等)。
+provider 特有的附加字段统一收进 metadata 列(如工作区/租户标识等)。
 """
 
 from __future__ import annotations
@@ -21,10 +21,8 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
         {"comment": "同租户同提供商同账号只允许一条连接"},
     )
 
-    provider: Mapped[str] = mapped_column(String(32), comment="provider 名(如 feishu)")
-    account: Mapped[str] = mapped_column(
-        String(320), comment="稳定账号标识(飞书 open_id)"
-    )
+    provider: Mapped[str] = mapped_column(String(32), comment="provider 名")
+    account: Mapped[str] = mapped_column(String(320), comment="稳定账号标识")
     display_name: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(
         String(16), index=True, comment="active/revoked/expired"
@@ -38,13 +36,13 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
         String(64), comment="授权用户的 subject;组织共享连接为空"
     )
     auth_kind: Mapped[str | None] = mapped_column(
-        String(16), comment="user/tenant;飞书 v1 固定 user"
+        String(16), comment="授权主体: user/tenant"
     )
     provider_account_id: Mapped[str | None] = mapped_column(
-        String(128), comment="飞书 open_id / Notion bot_id"
+        String(128), comment="provider 账号 id"
     )
     external_workspace: Mapped[str | None] = mapped_column(
-        String(128), comment="飞书 tenant_key / Notion workspace_id"
+        String(128), comment="provider 工作区/租户标识"
     )
     scopes: Mapped[list | None] = mapped_column(JSON, comment="实际授予的 scope 列表")
     provider_metadata: Mapped[dict | None] = mapped_column(
@@ -61,7 +59,7 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
         DateTime(timezone=True), comment="access token 过期时间"
     )
     refresh_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), comment="refresh token 过期时间(飞书 365 天)"
+        DateTime(timezone=True), comment="refresh token 过期时间(由 provider 决定)"
     )
     last_refreshed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), comment="最近一次成功刷新时间"

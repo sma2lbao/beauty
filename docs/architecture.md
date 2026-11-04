@@ -76,7 +76,7 @@ Browser
 ├── agent-runtime（agent-orchestrator）  编排 + Skill + MCP + run worker                  :8002
 ├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
-├── connector-service       连接器平台：飞书只读连接/OAuth/凭证加密（design/connector.md） :8004
+├── connector-service       连接器平台：OAuth/凭证加密/连接生命周期（design/connector.md）  :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
 ├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
 └── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
@@ -104,23 +104,23 @@ Browser
 
 ## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端三应用）
 
-| 服务 / 应用          | 部署 / 端口           | 职责                                                                                                     | 备注                                                                                                   |
-| -------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                  | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                        |
-| apps/site            | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                                      | 静态导出（`output: 'export'`）                                                                         |
-| apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                       | 与 web 云端模式并存可切换                                                                              |
-| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                         | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                      |
-| agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker                                                                                | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                              |
-| tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                         | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md) |
-| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）            |
-| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、刷新单飞 + 24h 巡检、outbox 生命周期事件、飞书只读工具 | 2026-10 邮箱/日历能力下线；2026-11 起飞书连接器；设计见 [connector.md](./design/connector.md)          |
-| knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                   | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)   |
-| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                   | 暂用 DB/本地文件；对象存储后置                                                                         |
-| account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                                    | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                        |
-| packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                         | Python 共享库                                                                                          |
-| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                  | 仓储层租户隔离 + 统一 404                                                                              |
-| packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                                          | 事务性 outbox + 消费幂等                                                                               |
-| packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                                   | web/site/desktop 共用                                                                                  |
+| 服务 / 应用          | 部署 / 端口           | 职责                                                                                       | 备注                                                                                                                    |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）    | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                                         |
+| apps/site            | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                        | 静态导出（`output: 'export'`）                                                                                          |
+| apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                         | 与 web 云端模式并存可切换                                                                                               |
+| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                           | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                       |
+| agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker                                                                  | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                               |
+| tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）           | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                  |
+| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                  | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                             |
+| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、刷新单飞 + 24h 巡检、outbox 生命周期事件 | 2026-10 邮箱/日历能力下线；2026-11 平台完成，内置 provider 层按新规划移除；设计见 [connector.md](./design/connector.md) |
+| knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                     | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                    |
+| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                     | 暂用 DB/本地文件；对象存储后置                                                                                          |
+| account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                      | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                         |
+| packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                           | Python 共享库                                                                                                           |
+| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                    | 仓储层租户隔离 + 统一 404                                                                                               |
+| packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                            | 事务性 outbox + 消费幂等                                                                                                |
+| packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                     | web/site/desktop 共用                                                                                                   |
 
 > 拆分节奏：M0 保持七业务服务 + FastAPI 网关（tool-service 已按 [tool-service.md](./design/tool-service.md) 拆出，承接 orchestrator 的 tool registry；沙箱生命周期仍归 workspace-service）；M3 再拆 platform-api（先复用 runtime 路由）。
 

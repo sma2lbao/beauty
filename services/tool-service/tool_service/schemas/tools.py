@@ -49,7 +49,7 @@ class ToolDescriptorRead(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     enabled: bool
     version: str
-    # 仅 executor=connector 的工具出现(如 {"provider": "feishu"});内置工具为 null。
+    # 仅 executor=connector 的工具出现(如 {"provider": "demo"});内置工具为 null。
     connector: dict[str, Any] | None = None
 
     @classmethod

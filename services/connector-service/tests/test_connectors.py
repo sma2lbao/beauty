@@ -9,28 +9,28 @@ from fastapi.testclient import TestClient
 from tests.conftest import INTERNAL_HEADERS, OTHER, TENANT, insert_connection
 
 
-def test_catalog_lists_feishu(client: TestClient) -> None:
+def test_catalog_lists_demo(client: TestClient) -> None:
     resp = client.get("/v1/connectors", headers=TENANT)
     assert resp.status_code == 200
     providers = resp.json()["providers"]
-    assert [p["name"] for p in providers] == ["feishu"]
-    feishu = providers[0]
-    assert feishu["display_name"] == "飞书"
-    assert feishu["configured"] is True
-    assert feishu["connected"] is False
-    assert feishu["connection"] is None
-    assert "offline_access" in feishu["scopes"]
-    assert feishu["docs_url"].startswith("https://")
-    names = [tool["name"] for tool in feishu["tools"]]
+    assert [p["name"] for p in providers] == ["demo"]
+    demo = providers[0]
+    assert demo["display_name"] == "示例连接器"
+    assert demo["configured"] is True
+    assert demo["connected"] is False
+    assert demo["connection"] is None
+    assert "offline_access" in demo["scopes"]
+    assert demo["docs_url"].startswith("https://")
+    names = [tool["name"] for tool in demo["tools"]]
     assert names == [
-        "Feishu__get_me",
-        "Feishu__list_files",
-        "Feishu__read_document",
-        "Feishu__list_document_blocks",
-        "Feishu__list_wiki_spaces",
-        "Feishu__list_wiki_nodes",
+        "Demo__get_me",
+        "Demo__list_files",
+        "Demo__read_document",
+        "Demo__list_document_blocks",
+        "Demo__list_wiki_spaces",
+        "Demo__list_wiki_nodes",
     ]
-    assert all(tool["risk"] == "read" for tool in feishu["tools"])
+    assert all(tool["risk"] == "read" for tool in demo["tools"])
 
 
 def test_catalog_reflects_connection_and_tenant_scope(
@@ -69,17 +69,17 @@ def test_internal_tools_only_for_connected_tenant(
     tools = client.get("/v1/internal/connectors/tools", headers=INTERNAL_HEADERS).json()
     names = [tool["name"] for tool in tools["tools"]]
     assert names == [
-        "Feishu__get_me",
-        "Feishu__list_files",
-        "Feishu__read_document",
-        "Feishu__list_document_blocks",
-        "Feishu__list_wiki_spaces",
-        "Feishu__list_wiki_nodes",
+        "Demo__get_me",
+        "Demo__list_files",
+        "Demo__read_document",
+        "Demo__list_document_blocks",
+        "Demo__list_wiki_spaces",
+        "Demo__list_wiki_nodes",
     ]
     descriptor = tools["tools"][2]
     assert descriptor["executor"] == "connector"
     # tool-service 靠这个字段把执行路由回本 provider(见 ConnectorGateway)
-    assert descriptor["connector"] == {"provider": "feishu"}
+    assert descriptor["connector"] == {"provider": "demo"}
     assert descriptor["risk"] == "read"
     assert descriptor["input_schema"]["required"] == ["document_id"]
     # 其他租户看不到

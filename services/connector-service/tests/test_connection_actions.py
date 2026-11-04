@@ -8,26 +8,26 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FeishuMock, insert_connection
+from tests.conftest import TENANT, DemoMock, insert_connection
 
 
 def test_patch_connection(client: TestClient, tmp_path: Path) -> None:
     conn = insert_connection(tmp_path / "test.db")
     resp = client.patch(
         f"/v1/connections/{conn['id']}",
-        json={"display_name": "我的飞书", "enabled": False},
+        json={"display_name": "我的示例连接器", "enabled": False},
         headers=TENANT,
     )
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["display_name"] == "我的飞书"
+    assert payload["display_name"] == "我的示例连接器"
     assert payload["enabled"] is False
     # 关闭启用 != 解绑
     assert payload["status"] == "active"
 
     empty = client.patch(f"/v1/connections/{conn['id']}", json={}, headers=TENANT)
     assert empty.status_code == 200
-    assert empty.json()["display_name"] == "我的飞书"
+    assert empty.json()["display_name"] == "我的示例连接器"
 
 
 def test_list_filters(client: TestClient, tmp_path: Path) -> None:
@@ -50,9 +50,7 @@ def test_list_filters(client: TestClient, tmp_path: Path) -> None:
     assert [row["provider"] for row in disabled] == ["notion"]
 
 
-def test_refresh_connection(
-    client: TestClient, feishu: FeishuMock, tmp_path: Path
-) -> None:
+def test_refresh_connection(client: TestClient, demo: DemoMock, tmp_path: Path) -> None:
     conn = insert_connection(
         tmp_path / "test.db",
         expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -62,8 +60,8 @@ def test_refresh_connection(
     payload = resp.json()
     assert payload["status"] == "active"
     assert payload["last_refreshed_at"] is not None
-    assert feishu.refresh_tokens == 1
-    assert feishu.token_calls[0]["refresh_token"] == "rt-1"
+    assert demo.refresh_tokens == 1
+    assert demo.token_calls[0]["refresh_token"] == "rt-1"
 
 
 def test_refresh_revoked_connection_conflicts(
@@ -76,10 +74,10 @@ def test_refresh_revoked_connection_conflicts(
 
 
 def test_refresh_failure_sets_error_code(
-    client: TestClient, feishu: FeishuMock, tmp_path: Path
+    client: TestClient, demo: DemoMock, tmp_path: Path
 ) -> None:
     conn = insert_connection(tmp_path / "test.db")
-    feishu.fail["/oauth/v3/token"] = httpx.Response(400, json={"code": 20005})
+    demo.fail["/oauth/token"] = httpx.Response(400, json={"code": 20005})
     resp = client.post(f"/v1/connections/{conn['id']}/refresh", headers=TENANT)
     assert resp.status_code == 409
     assert resp.json()["code"] == "connector.auth_expired"
@@ -89,7 +87,7 @@ def test_refresh_failure_sets_error_code(
 
 
 def test_check_connection_success_and_failure(
-    client: TestClient, feishu: FeishuMock, tmp_path: Path
+    client: TestClient, demo: DemoMock, tmp_path: Path
 ) -> None:
     conn = insert_connection(tmp_path / "test.db")
     ok = client.post(f"/v1/connections/{conn['id']}/check", headers=TENANT)
@@ -97,8 +95,8 @@ def test_check_connection_success_and_failure(
     assert ok.json()["last_checked_at"] is not None
     assert ok.json()["last_error_code"] is None
 
-    fresh = insert_connection(tmp_path / "test.db", account="ou_2")
-    feishu.fail["/authen/v1/user_info"] = httpx.Response(401, json={"code": 99991663})
+    fresh = insert_connection(tmp_path / "test.db", account="u-2")
+    demo.fail["/userinfo"] = httpx.Response(401, json={"code": 99991663})
     failed = client.post(f"/v1/connections/{fresh['id']}/check", headers=TENANT)
     assert failed.status_code == 200
     assert failed.json()["status"] == "expired"
