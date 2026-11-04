@@ -76,7 +76,7 @@ Browser
 ├── agent-runtime（agent-orchestrator）  编排 + Skill + MCP + run worker                  :8002
 ├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
-├── connector-service       连接器平台：OAuth/静态令牌两种连接方式、凭证加密/连接生命周期 + 内置 Notion 4 只读 + 2 写(写需确认)（design/connector.md） :8004
+├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(当前无内置 provider)（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
 ├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
 └── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
@@ -104,23 +104,23 @@ Browser
 
 ## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端三应用）
 
-| 服务 / 应用          | 部署 / 端口           | 职责                                                                                                                                                                                         | 备注                                                                                                                                                |
-| -------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                                                                                                      | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                                                                     |
-| apps/site            | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                                                                                                                          | 静态导出（`output: 'export'`）                                                                                                                      |
-| apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                                                                                                           | 与 web 云端模式并存可切换                                                                                                                           |
-| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                                             | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                                                   |
-| agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel)                                                                                                                                   | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                           |
-| tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                                             | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                              |
-| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                                                    | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                         |
-| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；内置 Notion 连接器（4 只读 + 2 写工具，写操作经对话确认） | 2026-10 邮箱/日历能力下线；2026-11 平台完成、内置 Notion 读写上线（写操作经对话确认；内置飞书已移除）；设计见 [connector.md](./design/connector.md) |
-| knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                                                                                                       | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                |
-| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                                       | 暂用 DB/本地文件；对象存储后置                                                                                                                      |
-| account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                                                                                                                        | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                     |
-| packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                                             | Python 共享库                                                                                                                                       |
-| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                                      | 仓储层租户隔离 + 统一 404                                                                                                                           |
-| packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                                                                                                                              | 事务性 outbox + 消费幂等                                                                                                                            |
-| packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                                                                                                                       | web/site/desktop 共用                                                                                                                               |
+| 服务 / 应用          | 部署 / 端口           | 职责                                                                                                                                                                   | 备注                                                                                                                                                                             |
+| -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                                                                                | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                                                                                                  |
+| apps/site            | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                                                                                                    | 静态导出（`output: 'export'`）                                                                                                                                                   |
+| apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                                                                                     | 与 web 云端模式并存可切换                                                                                                                                                        |
+| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                       | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                                                                                |
+| agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel);MCP 预设(Notion 一键授权)与工具 annotations 风险分级                                                        | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                                                        |
+| tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                       | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                                                           |
+| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                              | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                      |
+| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**当前无内置 provider**（目录为空） | 2026-10 邮箱/日历能力下线；2026-11 平台完成、内置 Notion provider 上线后于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
+| knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                                                                                 | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                             |
+| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                 | 暂用 DB/本地文件；对象存储后置                                                                                                                                                   |
+| account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                                                                                                  | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                                                  |
+| packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                       | Python 共享库                                                                                                                                                                    |
+| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                | 仓储层租户隔离 + 统一 404                                                                                                                                                        |
+| packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                                                                                                        | 事务性 outbox + 消费幂等                                                                                                                                                         |
+| packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                                                                                                 | web/site/desktop 共用                                                                                                                                                            |
 
 > 拆分节奏：M0 保持七业务服务 + FastAPI 网关（tool-service 已按 [tool-service.md](./design/tool-service.md) 拆出，承接 orchestrator 的 tool registry；沙箱生命周期仍归 workspace-service）；M3 再拆 platform-api（先复用 runtime 路由）。
 
@@ -268,17 +268,22 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 - **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略已实现；**审计与提示注入过滤未实现**（见 06 §2.3 #9）；
 - **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
+  - **内置预设 + 一键授权**（2026-11-04）：`GET /v1/mcp/presets` 暴露静态预设（当前 `notion` → `https://mcp.notion.com/mcp`），`POST /v1/mcp/presets/{key}` 幂等 ensure server，`POST /v1/mcp/servers/{id}/oauth/start` 接受 `next`（`/mcp` / `/connectors`）决定回调落点；`/connectors` 页即「预设连接器」入口，旧 provider 目录区只在存在 provider 时渲染；
   - **HTTP 型**（M1 已落地）：orchestrator 进程内 httpx（Streamable HTTP），后续补 SSRF/出网代理加固；
   - **stdio 型**（P2 已落地）：命令在 workspace-service 沙箱内拉起，经 stdin/stdout JSON-RPC
     执行（`stdin MCP` 不能进 orchestrator 进程）；沙箱按**对话级**复用
     （`ToolContext.conversation_id`，无对话退化为 run），命令白名单 + 参数不经 shell；
     `env/token` 只存密文，读端只回 `has_env/env_keys`；P2 出网 `public`（允许 npx/uvx 安装），
     P4 切 allowlist/凭据注入；
+  - **风险分级**（2026-11-04，工具粒度）：`annotations.destructiveHint=true` → DANGER；
+    `annotations.readOnlyHint=true`，或 server.url 命中内置预设且工具名命中预设只读前缀 → READ；
+    server.auto_approve → WRITE；其余 → DANGER。对话路径按 `kind=function && risk!=danger` 裁剪工具面，
+    WRITE 落 `chat_tool_confirmations` 出就地确认卡（§6.x）；
   - **审批策略**（已落地）：每个 server 一个 `auto_approve` 信任开关（Web `/mcp` 页
-    「免确认执行」，默认关）。关：run 里逐次进确认闸、对话里只回喂「请改用任务」；
-    开：run 不再确认、对话里可直接调用（对话本身没有审批流）——对齐
+    「免确认执行」，默认关）。关：未判为只读的工具在对话里不暴露、run 里按 DANGER 走确认闸；
+    开：这些工具降为 WRITE——run 不再逐次确认、对话里出确认卡后执行——对齐
     操作策略「是配置，不是硬编码」；
-- **安全**：MCP 返回内容视为不可信数据；提示注入过滤**待补**；危险工具默认 confirm；凭证只存在服务端；
+- **安全**：MCP 返回内容视为不可信数据；提示注入过滤**待补**；危险工具默认 confirm；`annotations` 由 server 自述、不可全信（预设只读前缀只对内置预设生效，其余 server 仍需显式信任 + 确认）；凭证只存在服务端；
   stdio 进程只允许在沙箱内运行，沙箱内 env 明文对用户代码可见（最小 scope + P4 凭据代理）；
 - **市场**：后续 MCP server 目录 + 一键安装（M4）。
 
@@ -431,7 +436,7 @@ ToolDescriptor {   # v2 契约，真源 packages/common/common/tools.py
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
 - `ask_question` 是唯一的 `kind=interaction` 工具：目录与参数校验在 tool-service，中断/答案回填在 orchestrator 图内（`ask_gate` + `awaiting_input`）；chat 模式与公开 MCP Server 均不暴露；
-- 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm）；策略是配置，不是硬编码；
+- 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm；MCP 工具的档位由工具 annotations + 预设只读前缀计算，见 §8.2）；策略是配置，不是硬编码；
 - 所有工具调用写 `run_events`（可回放/审计/计量）。
 
 ### 11.3 Skill（场景模板）
@@ -471,88 +476,3 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 - `run_events` 表：append-only、`seq` 单调编号、`type` + payload（JSONB），落 Postgres；Redis Streams 只做实时分发；**SSE 断线回放从 Postgres 读**（`Last-Event-ID`）；
 - **节点步骤（S1，2026-10-25）**：`plan/execute/tool_exec/verify/deliver` 每个节点执行完落一条 `run.step.v1`（payload `{step_id, node, phase, attempt, round, status, started_at, finished_at, duration_ms}`，`record_outbox=False`），`step_id = {run_id}:{attempt}:{node}:{round}` 是可寻址身份；该事件**不进** `GET /runs/{id}/events` 与 SSE（避免淹没用户事件流，可见事件 seq 因此有空洞，只能当单调游标），专用只读端点 `GET /api/v1/runs/{id}/steps` 按 seq 升序返回投影，前端「执行步骤」时间线读它；采集发生在一个 `ainvoke` 边界（`graph/steps.py` 的 `StepProjector` + `instrument_node`，由 services 层 `_step_stream` flush），所以执行中的节点要等该次图调用返回后才出现（未接 `astream`），工具明细仍走 `run.tool.called.v1`；S2（usage 的 step 维度）与 S3（step ↔ checkpoint / rewind）未做，见 `07-run-step-model.md`；
 - `token.delta.v1` 是正文增量（payload `{text, phase}`，phase ∈ plan/execute/verify/deliver）：执行图四个正文节点把模型流式输出攒批落成事件，前端订阅 run 事件流就能在 run 还没终态时看到正文；增量事件不进 outbox，开关 `RUN_DELTA_STREAMING`（默认 true）；
-- **过程项（P1-D，2026-10-28）**：`run.item.v1` 把 run 内的原子过程项统一成 `kind`（plan/tool/file_change/mcp_call/search/todo）× `phase`（started/delta/completed/failed）事件，`item_id = {run_id}:{attempt}:{kind}:{n}`、plan 版本化用 `{run_id}:plan:{n}`（编辑计划落新版本并 `supersedes` 上一版）；payload 带 `thread_id`（有会话用会话 id，否则沿 `parent_run_id` 上溯到根 `run:<root>`）、`turn_id = run.id`、`step_id`（挂到当前 `run.step.v1` 步骤）；`record_outbox=False` 但**可见**（进 `GET /runs/{id}/events` 与 SSE 回放），专用只读端点 `GET /api/v1/runs/{id}/items` 按 `item_id` 合并相位投影，前端「运行项」时间线按 kind 展开/折叠；工具项由图节点经 `runtime.items` 采集、`services/run_events.py::_item_stream` 在图边界落库，plan 由 `_invoke_plan`/`update_plan` 直接落，todo 由 `todo_write` 快照落（`run.todo.updated.v1` 保留）；契约见 `design/event-taxonomy.md`；
-- **子代理委派（P1-E，2026-10-28）**：`runs.parent_run_id` 语义从「重试血缘」扩展为**run 树**，新增 `parent_kind`（`retry`/`subagent`）/`agent_name`/`agent_prompt`/`agent_tools` 四列（迁移追加、无回填）；工具 `spawn_subagent` 在 run 内把子任务交给**独立 context 的子 run**（`conversation_id=None`、不继承技能快照与 pending 指令，继承 tenant/工作区/MCP/租户级审批策略/LLM 路由），工具面只能收窄（父级有效白名单的子集 + 剔除自身防递归），上限深度 1、每父 run 累计 3 个、超时默认 600s 可覆盖；**内联执行**（工具调用期间阻塞父 run，子 run 终态/取消/超时按 1s 轮询发现，停在审批/确认/提问时立即返回）；父级只新增一条 `run.item.v1` `kind=subagent` 过程项（`item_id=<parent_run_id>:<attempt>:subagent:<n>`）与截断摘要，子 run 事件流落在同一 thread、`turn_id=child_run_id`；新增本地投影事件 `run.usage.v1`（`record_outbox=False`，与 account `usage_events` 同源）与只读端点 `GET /api/v1/runs/{id}/subagents`、`GET /api/v1/runs/{id}/usage`（`RunRead` 增 `parent_kind`/`agent_name`），前端 `/runs` 徽标 + run 详情「子代理」面板 + item 卡片可见父子树与各自成本；per-run 模型选择已随 P1-G 落地（2026-10-28，见下条），异步/并发编排留后续；契约见 [design/subagents.md](./design/subagents.md)；
-- **模型路由（P1-G，2026-10-28）**：`runs`/`conversations` 各增可空 `model`（`String(120)`，迁移追加、无回填；`runs.model` 为创建时快照），解析顺序 `message.model` > `conversation.model` > 网关默认，由 orchestrator 进程内 contextvar（`services/llm.py::bind_model`/`current_model`）在 `_invoke_plan`/`approve_run`/`confirm_run`/`answer_run`/对话路径绑定，`GatewayClient` 取 `调用参数 > 构造参数 > contextvar`；llm-gateway 作为唯一出口负责白名单（`AVAILABLE_MODELS`，不在其中回 400 `llm.model_not_allowed`）、主备 fallback chain（`LLM_GATEWAY__FALLBACK_MODELS`，仅 429/408/5xx/超时/连接类错误可切换，`FallbackHop{from_model,to_model,code,message}` 随响应与流式 done 帧回传）与 `response_format`（`json_object`/`json_schema` 透传 litellm）校验；编排侧把非空 `fallbacks` 落普通 run 事件 `run.llm.fallback.v1`（`record_outbox=False`，进 `/events` 与 SSE，payload `{requested_model,resolved_model,hops}`，**不是**过程项 item），对话路径无 run 只记日志；分流 `services/triage.py::decide` 用 `json_schema` 取 chat/task；本地工具执行前用 `common/tools.py::validate_arguments` 按 schema 校验参数；**多模态仅对话路径**——消息图片附件转 `image_url` data URL 进模型（张数 4 / 单张 5MB / 总 10MB，历史图片也带），任务 run 执行图不注入图片（留后续）；新增 `GET /api/v1/models`（网关投影、60s 缓存、不可达回退配置），`RunCreate`/`ConversationCreate|Update`/`MessageCreate` 与对应 Read 增 `model`；前端对话输入区模型选择器 + 会话/run 详情展示模型；契约见 [design/model-routing.md](./design/model-routing.md)；
-- 跨服务事件走 `events.outbox`：状态改了事件一定发、事务回滚一定不发；投递至少一次，消费方用 `mark_processed` 幂等；失败按 `backoff_seconds` 退避，超 `max_attempts` 落 failed 留痕；
-- **对话先分流**：消息先判 chat（简单对话）还是 task（复杂任务）——显式指定（自动/对话/任务）优先，其次模型判别，失败退回 task；chat 由模型直接答一条（不建 run、不需审批、正文边产出边渲染），task 进 §11.1 流程；
-- 发消息走 SSE（`meta` 分流结论 → `delta` 正文增量 → `done`），失败以 `error` 帧收尾；中途断连时已产出片段仍落库；
-- **对话必须归属工作区**：`conversations.workspace_id` 为归属字段（跨服务弱引用）；不传则落租户默认工作区；删除工作区级联清交付物、会话保留落「未分组」；
-- **指令追加队列**：run 执行中用户可继续发指令，入 `pending_instructions`，当前 run 完成后依次触发；
-- blocked 视为对话停点（需人工 resume）：新消息另开一跑，不挂旧图。
-
----
-
-## 12. 暂缓项与影响（必须显式管理）
-
-### 12.1 Temporal/Inngest 暂缓
-
-- 用 Postgres job 表 + worker 替代；适合 MVP，但缺少可视化工作流/复杂重试编排；
-- 任务量/复杂度上来后再评估 Temporal Cloud / Inngest，接口按队列抽象隔离。
-
-### 12.2 对象存储暂缓
-
-- 产物/附件先存 DB 列或本地文件；建议单文件上限（如 10MB）并在 UI 提示；
-- **多实例部署时 filesystem 不可用**：生产必须 `artifact_store=database` 或共享盘；
-- PDF/Office/图片的大文件预览推迟到对象存储接入后。
-
-### 12.3 Logto 不用
-
-- 自建 account-service 需补社交 OAuth（Google/GitHub；Microsoft 后置）；
-- 邮箱验证、找回密码、风控需要自行实现（或后置）；
-- 前端 `VITE_AUTH_MODE=logto` 保留为可选模式（切换 IdP 时各服务只改 `AUTH_ISSUER`）。
-
-### 12.4 Stripe 暂缓
-
-- 付费订阅/发票/税/催缴不能上线；先 Free 配额 + 手动开通；
-- usage ledger、配额校验、BYOK 与支付解耦，先做；Stripe 接入时只加支付与套餐同步。
-
-### 12.5 Resend 暂缓
-
-- 事务邮件（验证/重置/通知）先走本地 SMTP 或控制台日志；
-- 站内通知优先；营销邮件后置。
-
-### 12.6 Langfuse 暂缓
-
-- 没有 prompt/response trace 与数据集回放；当前用 Sentry + 结构化日志 + OTel span（GenAI semconv 未做）；
-- 评估/数据集能力后置到 M4。
-
-### 12.7 静态托管与 API 网关边界
-
-- Vercel 只部署 `apps/site`（Next.js 静态导出），不承载 SPA/API 网关；
-- SPA 静态产物由 Nginx 托管，`/api` 反代到 FastAPI 网关；长流仍直连 runtime，长任务走 worker；
-- API 网关不受 Vercel 函数时长限制，但代理 SSE 时必须关闭缓冲并设置足够 read timeout。
-
----
-
-## 13. 风险与待定
-
-| 风险                                     | 缓解                                                                                                                                                                             |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| coding agent 无执行环境（沙箱执行后置）  | microsandbox P1-P3 已落地，受控执行；终端/预览不承诺                                                                                                                             |
-| 多实例 + filesystem 产物                 | 生产强制 database 模式；对象存储接入后替换                                                                                                                                       |
-| 云 PG 与 SQLite 行为差异（时区/JSON/锁） | CI 对云 PG 跑迁移+集成；SQLite 仅开发                                                                                                                                            |
-| Redis 成为单点                           | 只用于限流/锁/缓存；关键状态落 PG；Redis 不可用时降级；**业务未接（R-P1-8）**                                                                                                    |
-| PG job 队列吞吐                          | 小团队/MVP 足够；量级上来换专业队列                                                                                                                                              |
-| 自建认证的安全负担                       | 沿用现有旋转刷新令牌/JWKS；补社交 OAuth 时做安全评审                                                                                                                             |
-| 自建邮件送达率                           | 暂不做事务邮件；上线前选择 SMTP/SES 并做 SPF/DKIM/DMARC                                                                                                                          |
-| API 网关/代理 SSE 超时                   | 长流直连 runtime；API 网关仅短流，Nginx 关闭缓冲并放宽 read timeout                                                                                                              |
-| BYOK 密钥安全                            | 信封 v2 加密 + 可切换 KMS（local / Vault Transit）+ 懒/批量轮换 + 脱敏日志 + 内部端点 `no-store`；无独立审计表（见 [design/byok.md](./design/byok.md) §12）；默认 dev 密钥必须换 |
-| 云 PG/Redis 未接入（M0-03）              | roadmap R-36 跟踪；M0-03 云接入依赖它                                                                                                                                            |
-
-**待定**
-
-1. coding 执行扩展（终端/文件写/预览，依赖沙箱 P4）；
-2. 产物多实例存储（database 先行 or 尽快接对象存储）；
-3. 社交 OAuth 范围（Google/GitHub 先，Microsoft 后）；
-4. Free 配额与 BYOK 的具体额度；
-5. 是否在 M2 前引入对象存储（影响附件/Office 预览）。
-
----
-
-## 14. 参考
-
-- [microsandbox](https://github.com/microsandbox/microsandbox) · [LangGraph](https://github.com/langchain-ai/langgraph) · [Temporal](https://github.com/temporalio/temporal)
-- [LiteLLM](https://github.com/BerriAI/litellm) · [MCP](https://modelcontextprotocol.io) · [Sentry](https://sentry.io) · [ragas](https://github.com/explodinggradients/ragas)
-- [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)
-- 豆包工作（计划模式/任务队列）与 DSH（事件溯源/approval policy/goal 语义）的对照结论已沉淀进 §11。

@@ -1,53 +1,54 @@
 # 连接器平台（Connector Platform）设计
 
-> 状态：已实现（P1 平台骨架 + P2 内置 Notion 读写 + 对话内写操作确认） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、内置 Notion 切换与写能力
+> 状态：已实现（P1 平台骨架；2026-11-04 二次调整后**无内置 provider**，Notion 改走官方 MCP） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、移除内置 Notion provider
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 内置 **Notion**（provider key `notion`、4 个只读 + 2 个写工具）已实现，连接支持 **OAuth 授权**与**粘贴静态令牌**两种方式（§5.3 / §6）；写工具 `risk=WRITE`，对话里先落待确认（`chat_tool_confirmations`）、用户点击后以 `approved=True` 重放，任务路径走审批闸（§7）；P3 剩余组织共享/授权展示与 P4（其他 provider / MCP）未开始。
-> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），改为内置 **Notion** provider（先落地 4 个只读工具，随后补 2 个写工具与对话内写操作确认）；平台骨架/页面/执行面/审计保留。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；**内置 provider 目录为空**：内置飞书 provider（2026-11-04 上旬移除）与内置 **Notion** provider（provider key `notion`、4 只读 + 2 写工具）均已按 2026-11-04 二次规划移除，平台 API、`tenant_apps` 与静态令牌连接能力保留给后续 provider。**Notion 现通过官方 MCP 接入**（`https://mcp.notion.com/mcp`，见 §6）：`/connectors` 改为 MCP 预设连接器页，一键授权后由 agent-orchestrator 的 MCP client 托管凭证与工具，风险按 MCP 工具 `annotations` + 预设只读前缀分档（§7）；对话内写操作确认链路（`chat_tool_confirmations`）保留，对 `risk=write` 的 MCP 工具同样生效。P3 剩余组织共享/授权展示与 P4（其他 provider）未开始。
+> **2026-11-04 规划变更（二次）**：删除内置 Notion provider（`connector/providers/notion.py`、`CONNECTOR__NOTION_*` 配置项与 Notion provider 专项测试），connector-service 收敛为**通用连接器平台（当前无内置 provider）**；Notion 改为官方 MCP `https://mcp.notion.com/mcp`，`/connectors` 页面改为 **MCP 预设连接器（一键授权）**；agent-orchestrator 按 MCP 工具 `annotations` + 预设 read 前缀做风险分级（读直接执行、写在对话内出确认卡、破坏性工具不进对话，见 §7）。平台骨架/页面/执行面/审计保留。
 
 ## 1. 摘要
 
-一句话：把 `connector-service`（:8004，现为「有表无入口」的空框架）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明，内置 provider 是 **Notion**（Notion public integration；4 个只读 + 2 个写工具，写工具默认 `risk=WRITE`，对话内确认后才执行）。
+一句话：把 `connector-service`（:8004）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明。2026-11-04 二次调整后**平台保留、内置 provider 目录为空**；Notion 不再内置，改由 agent-orchestrator 的 MCP client 接官方 MCP（`https://mcp.notion.com/mcp`），`/connectors` 变为 MCP 预设连接器（一键授权）。
 
 三条主线（也是本稿与「直接接 MCP」的分野）：
 
-1. **连的是 SaaS，不是协议**。飞书/Notion 都需要「用户以自己身份授权、平台代其读写」，这是 OAuth 连接生命周期问题，MCP 只是可选的暴露层；先有连接平台，MCP 才能成为它的一个 provider 来源。
+1. **连接语义 = 授权生命周期，不绑定实现形态**。飞书/Notion 都需要「用户以自己身份授权、平台代其读写」；有官方 MCP 的 SaaS 直接走 MCP（Notion），没有的再进 connector-service 的 provider 层——两条路径共用「凭证零出口 + 能力即工具 + 审批审计」的语义。
 2. **凭证零出口**。第三方 token 只存在 connector-service 的加密列里；agent、tool-service、前端都拿不到 token，只能发「工具名 + 参数」。这条对齐 WorkBuddy 的 `server-side` 档与 Composio/Arcade 的做法。
 3. **能力即工具**。每个 provider 能力编译成现有 `ToolDescriptor`，复用 `auto|confirm|deny` 审批与 `run_events` 审计；不为连接器另造一套权限与追踪。
 
 ### 1.1 关键决策（D1–D13）
 
-| #   | 决策                                                                                                                                                                               | 理由 / 依据                                                                                                                                     |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/notion.py`），能力用**代码 manifest** 声明，不引入 YAML / builder                                       | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据        |
-| D2  | 连接**归属到授权用户**（`owner_subject`），组织内按权限可见；组织共享连接（无 owner）留到 P2                                                                                       | 撤销与审计必须能回答「谁授权的」；现状 `connections` 无归属字段是明确缺口                                                                       |
-| D3  | 授权走**服务端一次性授权会话**：`oauth_sessions` 存 state nonce / PKCE verifier / tenant / user / redirect / 过期，回调用 nonce 换回身份                                           | state 只放随机数、身份靠服务端行查回；RFC 9700 强制 PKCE(S256)、精确 redirect、禁隐式流                                                         |
-| D4  | **凭证零出口**：agent 侧新增 `/v1/connections/{id}/execute`，由 connector-service 解密并注入 token；token 不下发给 tool-service 或前端                                             | WorkBuddy `server-side`、Composio Proxy Execute、Arcade token vault 同构；解密点收敛到一处，泄漏面可控                                          |
-| D5  | **刷新单飞**：按连接行加数据库行锁 + 二次检查 + 同事务写回；到期前 5 分钟懒刷新 + 每 24h 巡检保活；失败置 `expired` 并发 outbox 事件                                               | 飞书 `refresh_token` 一次性、旧的立即失效，多副本用进程锁会互相覆盖；Nango 24h 保活可防 provider 回收闲置 token                                 |
-| D6  | 能力编译为 `ToolDescriptor`，命名 **`<Provider>__<tool>`**（如 `Notion__search`；provider 前缀与 `mcp__` 风格区分）；执行面走 tool-service                                         | 复用 catalog/审批/审计，不新建权限体系；`mcp__` 是外部协议命名，连接器是自有能力，用可读前缀更利于模型选择                                      |
-| D7  | **错误语义分层**：`connector.auth_expired` 与 `connector.upstream_*` 分开；只有 auth/scope 类错误触发前端「重新连接」                                                              | WorkBuddy 明确只有授权失效才提示重连，超时/无权限不提示；否则所有 4xx/5xx 都会误导用户                                                          |
-| D8  | **只做 on-demand 拉取**：v1 不做同步引擎、不做事件订阅、不做后台定时抓取                                                                                                           | WorkBuddy 官方「不主动定时抓取」；省掉同步状态机/游标/去重一整块；与架构现状一致                                                                |
-| D9  | **飞书 v1 写死企业自建应用 + 用户身份（`user_access_token`）+ 只读能力**；应用凭证全局配置 + `tenant_apps` 表按租户覆盖                                                            | 长连接仅自建应用支持、商店应用需 ISV 资质与上架审核；用户身份才符合「谁授权以谁身份读文档」；写 scope 要重新发版 + 管理员审批，边际收益低       |
-| D10 | **Notion 放 P2**，同平台加 provider；`Notion-Version` 做成配置项，token TTL 按未知处理（401 触发刷新 + introspect 巡检）                                                           | Notion 一个 token 绑「一个 workspace + 一个用户」，唯一键要含 workspace；官方未给 `expires_in`                                                  |
-| D11 | **MCP 自定义连接器留到 P2**：把已有 MCP server 也挂进「连接器」UI，复用同一审批/审计，凭证仍由 orchestrator 的 `mcp_oauth` 管                                                      | v1 不混两种凭证模型（自有加密列 vs `mcp_server_auth`）；先让原生 provider 跑通，避免一次改两套生命周期                                          |
-| D12 | 所有连接器调用**必须经 tool-service**（审计唯一落 `tool_calls`）；connector-service 不建第二张调用审计表                                                                           | 对齐 tool-service 设计 D8「审计单源」；connector-service 只记结构化日志与 usage 指标                                                            |
-| D13 | 写类工具（创建文档/追加块）**默认 risk=WRITE，执行前必须人工确认**：任务路径走审批闸（confirm），对话路径走就地确认（pending 落库 + confirm/cancel 端点）；DANGER 工具不在对话暴露 | 写错文档不可逆、用户信任成本高；对话没有任务图审批流，用「先生成待确认、用户点击后以 approved=True 重放」补齐，同时不放宽 tool-service 的写闸门 |
+| #   | 决策                                                                                                                                                                                                                                                     | 理由 / 依据                                                                                                                                                                     |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/<key>.py`），能力用**代码 manifest** 声明，不引入 YAML / builder（当前目录为空：内置 Notion provider 已移除，见 §6）                                                          | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据                                        |
+| D2  | 连接**归属到授权用户**（`owner_subject`），组织内按权限可见；组织共享连接（无 owner）留到 P2                                                                                                                                                             | 撤销与审计必须能回答「谁授权的」；现状 `connections` 无归属字段是明确缺口                                                                                                       |
+| D3  | 授权走**服务端一次性授权会话**：`oauth_sessions` 存 state nonce / PKCE verifier / tenant / user / redirect / 过期，回调用 nonce 换回身份                                                                                                                 | state 只放随机数、身份靠服务端行查回；RFC 9700 强制 PKCE(S256)、精确 redirect、禁隐式流                                                                                         |
+| D4  | **凭证零出口**：agent 侧新增 `/v1/connections/{id}/execute`，由 connector-service 解密并注入 token；token 不下发给 tool-service 或前端                                                                                                                   | WorkBuddy `server-side`、Composio Proxy Execute、Arcade token vault 同构；解密点收敛到一处，泄漏面可控                                                                          |
+| D5  | **刷新单飞**：按连接行加数据库行锁 + 二次检查 + 同事务写回；到期前 5 分钟懒刷新 + 每 24h 巡检保活；失败置 `expired` 并发 outbox 事件                                                                                                                     | 飞书 `refresh_token` 一次性、旧的立即失效，多副本用进程锁会互相覆盖；Nango 24h 保活可防 provider 回收闲置 token                                                                 |
+| D6  | 能力编译为 `ToolDescriptor`，命名 **`<Provider>__<tool>`**（provider 段 PascalCase、工具段 snake_case）；MCP 工具用 `mcp__<server>__<tool>` 区分；执行面走 tool-service                                                                                  | 复用 catalog/审批/审计，不新建权限体系；`mcp__` 是外部协议命名，连接器是自有能力，用可读前缀更利于模型选择                                                                      |
+| D7  | **错误语义分层**：`connector.auth_expired` 与 `connector.upstream_*` 分开；只有 auth/scope 类错误触发前端「重新连接」                                                                                                                                    | WorkBuddy 明确只有授权失效才提示重连，超时/无权限不提示；否则所有 4xx/5xx 都会误导用户                                                                                          |
+| D8  | **只做 on-demand 拉取**：v1 不做同步引擎、不做事件订阅、不做后台定时抓取                                                                                                                                                                                 | WorkBuddy 官方「不主动定时抓取」；省掉同步状态机/游标/去重一整块；与架构现状一致                                                                                                |
+| D9  | **飞书 v1 写死企业自建应用 + 用户身份（`user_access_token`）+ 只读能力**；应用凭证全局配置 + `tenant_apps` 表按租户覆盖                                                                                                                                  | 长连接仅自建应用支持、商店应用需 ISV 资质与上架审核；用户身份才符合「谁授权以谁身份读文档」；写 scope 要重新发版 + 管理员审批，边际收益低                                       |
+| D10 | **Notion 曾放 P2（2026-11-04 撤销）**：原计划内置 provider（public integration + 4 只读 + 2 写），现改为官方 MCP（§6），内置 provider 已删除                                                                                                             | Notion 一个 token 绑「一个 workspace + 一个用户」；官方 MCP 已具备 DCR/PKCE/refresh 全链路，凭证与工具由 orchestrator 的 `mcp_oauth` / `mcp_server_auth` 托管，租户隔离沿用该表 |
+| D11 | **MCP 从「P2 扩展来源」升格为 Notion 的主路径**：内置预设 + 一键授权（§6/§7）；把任意 MCP server 并入「连接器」UI 与原生 provider 同列仍留 P4，两者不混凭证模型（自有加密列 vs `mcp_server_auth`）                                                       | 2026-11-04 实测官方 MCP 具备完整 OAuth 链路（DCR/PKCE/refresh），平台无需为 Notion 再写 provider 代码与分页/限流适配                                                            |
+| D12 | 所有连接器调用**必须经 tool-service**（审计唯一落 `tool_calls`）；connector-service 不建第二张调用审计表                                                                                                                                                 | 对齐 tool-service 设计 D8「审计单源」；connector-service 只记结构化日志与 usage 指标                                                                                            |
+| D13 | 写类工具（创建/更新/删除类，含 MCP 写工具）**默认 risk=WRITE，执行前必须人工确认**：任务路径走审批闸（confirm），对话路径走就地确认（pending 落库 + confirm/cancel 端点）；DANGER 工具（`annotations.destructiveHint` 或未信任的非只读工具）不在对话暴露 | 写错文档不可逆、用户信任成本高；对话没有任务图审批流，用「先生成待确认、用户点击后以 approved=True 重放」补齐，同时不放宽 tool-service 的写闸门                                 |
 
 ### 1.2 分期
 
-| 期  | 内容                                                                                | 可回滚性                        | 状态     |
-| --- | ----------------------------------------------------------------------------------- | ------------------------------- | -------- |
-| P0  | 决策确认（§9.1）+ 迁表设计                                                          | —                               | 已定稿   |
-| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表            | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现   |
-| P2  | 内置 Notion provider（4 只读 + 2 写工具）+ 前端 `/connectors` + tool-service 执行面 | 同上（按 provider 关）          | 已实现   |
-| P3  | 组织共享连接 + 连接详情授权展示（Notion 写工具已完成，见 §7/§8.4）                  | 按工具关闭                      | 部分完成 |
-| P4  | 其他 provider（代码 manifest）+ MCP 自定义连接器并入                                | 按 provider 关                  | 未开始   |
+| 期  | 内容                                                                                | 可回滚性                        | 状态                          |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------- | ----------------------------- |
+| P0  | 决策确认（§9.1）+ 迁表设计                                                          | —                               | 已定稿                        |
+| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表            | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现（当前无内置 provider） |
+| P2  | 内置 Notion provider（4 只读 + 2 写工具）+ 前端 `/connectors` + tool-service 执行面 | 同上（按 provider 关）          | 已实现后撤销（2026-11-04）    |
+| P3  | 组织共享连接 + 连接详情授权展示（内置写工具部分随 provider 移除，见 §8.4）          | 按工具关闭                      | 部分完成                      |
+| P4  | 其他 provider（代码 manifest）+ 任意 MCP server 并入连接器 UI                       | 按 provider 关                  | 未开始                        |
+| P5  | MCP 预设连接器（Notion 一键授权）+ annotations 风险分级（2026-11-04 二次变更）      | 按 server 停用                  | 已实现                        |
 
 ## 2. 实现前现状盘点（2026-11-03，保留作背景）
 
 > 本节是初稿时的缺口清单；P1/P2 已按 §8 清单补齐，落地情况见 §8 实现状态与 §5.3/§5.5 的实现边界。
-> 2026-11-04：内置 provider 由飞书改为 Notion（只读 + 写工具；飞书 provider 已移除），本节其余内容仍作背景。
+> 2026-11-04 二次变更：内置 provider 从飞书改为 Notion 后，又整体移除（Notion 改走官方 MCP）；本节其余内容仍作背景。
 
 | 模块                 | 现状                                                                                                              | 与目标差距                                                        |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -92,6 +93,8 @@
 
 详见 [03-feishu-notion.md](../research/connector/03-feishu-notion.md)。
 
+> 下表是 2026-11-03 做内置 provider 选型时的调研对比；2026-11-04 二次变更后 Notion 走官方 MCP，本表仅作历史依据。
+
 | 维度      | 飞书                                                                | Notion                                                                  | 对实现的影响                                           |
 | --------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
 | 应用模型  | 自建应用（每客户一套凭证）/ ISV 商店应用                            | 一个 public integration 服务所有 workspace                              | 飞书应用凭证可 per-tenant 覆盖，Notion 全局配置        |
@@ -104,40 +107,59 @@
 
 ## 4. 方案比选
 
-| 方案                    | 做法                                                                                          | 优点                                             | 缺点                                                                                                 |
-| ----------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| A. MCP-first            | 把飞书/Notion 的 MCP server 装进现有 orchestrator MCP client，零新代码                        | 最快出 demo；复用 DCR/PKCE/stdio                 | 飞书/Notion 无官方 MCP；凭证在 MCP 进程里，租户隔离/审批/审计归不到连接对象；消费者授权没有 DCR 场景 |
-| B. 纯原生适配器         | 在 connector-service 内为每个 provider 写 OAuth + 工具 + 执行                                 | 完全可控；凭证零出口；审计统一                   | 每个 provider 重复写 OAuth/刷新/分页/限流                                                            |
-| C. 平台 + 原生 provider | connector-service 做连接平台；飞书/Notion 用代码 manifest 声明 provider；MCP 作为 P2 扩展来源 | 新 provider 只写 provider 模块；平台能力只做一次 | 首版要建平台骨架（授权会话/刷新/执行代理），约多 5 人日                                              |
+| 方案                    | 做法                                                                                          | 优点                                             | 缺点                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. MCP-first            | 把 SaaS 的官方 MCP server 装进现有 orchestrator MCP client，零新代码                          | 最快出 demo；复用 DCR/PKCE/stdio                 | 2026-11-03 判断「飞书/Notion 无官方 MCP」——2026-11-04 复核 **Notion 已有官方 MCP**（见下方结论调整）；凭证在 MCP 进程里，租户隔离/审批/审计归不到连接对象；消费者授权没有 DCR 场景 |
+| B. 纯原生适配器         | 在 connector-service 内为每个 provider 写 OAuth + 工具 + 执行                                 | 完全可控；凭证零出口；审计统一                   | 每个 provider 重复写 OAuth/刷新/分页/限流                                                                                                                                          |
+| C. 平台 + 原生 provider | connector-service 做连接平台；飞书/Notion 用代码 manifest 声明 provider；MCP 作为 P2 扩展来源 | 新 provider 只写 provider 模块；平台能力只做一次 | 首版要建平台骨架（授权会话/刷新/执行代理），约多 5 人日                                                                                                                            |
 
 **推荐 C**。理由：飞书/Notion 的差异集中在 provider 层（token 形态、分页、限流、权限模型），平台层（连接生命周期、凭证加密、执行代理、错误分层）完全可以共用；若走 A，将来做「组织共享连接 / 撤销审计 / 按工具审批」时仍要补回 B 的全部工作，等于做两遍。
 
 **边界**：C 不是「什么都自建」——不抄 Unified API 归一化、不做同步引擎、不外包 SaaS 凭证托管、不引入 MCP 的 DCR/PRM 全套给内部 agent。
+
+> **2026-11-04 二次变更（结论调整）**：Notion 已有官方 MCP（DCR/PKCE/refresh 全链路可用），因此 Notion 改走 **A（MCP-first，零新 provider 代码）**；connector-service 的平台能力（P1）保留，供没有官方 MCP 的 SaaS 按 C 接入。原 A 行缺点中的「无官方 MCP」对 Notion 已不成立。
 
 ## 5. 目标架构
 
 ### 5.1 组件与数据流
 
 ```text
+【MCP 预设连接器（Notion 现行路径，§6）】
 浏览器 /connectors
-   │  POST /api/connector/v1/connectors/notion/authorize
+   │  POST /api/v1/mcp/presets/notion          （幂等 ensure：本租户已有同 url server 则直接返回）
+   │  POST /api/v1/mcp/servers/{id}/oauth/start {"next":"/connectors"}
    ▼
-api-gateway ──▶ connector-service ── 建 oauth_sessions(state nonce, 10min；Notion 不支持 PKCE)
-   │                                   │
-   │◀────── { authorize_url } ─────────┘
-   │ 302 Notion 授权页 ── 用户同意 ──▶ Notion 回调
-   │                              /api/connector/v1/oauth/notion/callback?code&state
-   │                                   │ 校验 nonce 单次消费 → code 换 token
-   │                                   │ 加密落库 connections → 302 回
-   │                                   │ /connectors?provider=notion&status=connected&connection_id=…
+agent-orchestrator ── mcp_oauth：RFC 9728 PRM → AS 元数据 → DCR(RFC 7591) → PKCE S256
+   │◀────── { authorize_url } ────────────────┘
+   │ 浏览器跳 AS 授权页 ── 用户同意 ──▶ 授权服务器回调
+   │        GET /api/mcp/oauth/callback?code&state（API 网关同源转发，带 X-Internal-Secret）
+   │                                   │ state 校验 → code+PKCE 换 token → 加密落 mcp_server_auth
+   │                                   │ 尽力刷新一次 tools_cache → 302
+   ▼                                   ▼
+/connectors?oauth=success&server=Notion   （next=/mcp 时回 /mcp?oauth=success）
+   │
+agent-orchestrator ── MCP tools/list（工具面以 server 为准，当前约 70 个）
+                     ── 工具风险：annotations + 预设 read 前缀（§7）
+                     ── 会话里选中该 server（?mcp=<id>）后由模型调用 https://mcp.notion.com/mcp
+```
+
+```text
+【连接器平台（connector-service，当前无内置 provider；保留给后续 provider）】
+浏览器 /connectors ── POST /api/connector/v1/connectors/{provider}/authorize
+   ▼
+api-gateway ──▶ connector-service ── 建 oauth_sessions（state nonce；provider 声明支持时可带 PKCE）
+   │◀────── { authorize_url } ────────────────┘
+   │ 302 provider 授权页 ── 用户同意 ──▶ provider 回调 /api/connector/v1/oauth/{provider}/callback
+   │                                   │ 校验 nonce 单次消费 → code 换 token → 加密落 connections → 302 回
+   │                                   │ /connectors?provider={p}&status=connected&connection_id=…
    ▼
 agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/execute {tool, args, run_id}
                                           │ 解密注入 token + 限流 + 错误映射
                                           ▼
-                                     Notion API
+                                     provider API
 ```
 
-要点：浏览器只经手 `authorize_url` 与回调重定向；agent 只经手工具名与参数；token 只在 connector-service 内存中出现。
+要点：浏览器只经手 `authorize_url` 与回调重定向；agent 只经手工具名与参数；token 只在加密列里出现（MCP 路径在 `mcp_server_auth`，连接器路径在 `connections.credentials`）。两条路径共用同一套「能力即工具 + 审批 + `tool_calls` 审计」语义。
 
 ### 5.2 数据模型
 
@@ -161,11 +183,13 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 **oauth_sessions**（新表）：`id`(32 hex)、`tenant_id`、`owner_subject`、`provider`、`state_nonce`(unique, 64)、`code_verifier`(nullable)、`redirect_uri`、`scopes`、`status`(`pending|completed|failed|expired`)、`error_code`、`connection_id`、`expires_at`、`created_at`、`completed_at`。**回调成功/token 落库后再置 completed**；重复 nonce 一律 400。
 
-**tenant_apps**（新表，可选覆盖）：`tenant_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一 `(tenant_id, provider)`。解析顺序：租户行 → 全局 Settings，实现在 `connector/services/apps.py`（`app_id` 与 `app_secret` 都可用才生效，半配置行记 warning 后回退全局）；授权、刷新、巡检与执行面均按租户解析 provider，目录的 `configured` 仍用全局配置、不暴露租户凭证。v1 不做管理 UI（先配置/脚本写入）。内置 Notion 复用同一套字段：`app_id` 存 client_id、`app_secret` 存 client_secret（public integration 是「一套应用服务所有 workspace」，默认走全局配置，租户行仅用于私有 integration / 多环境覆盖）。
+**tenant_apps**（新表，可选覆盖）：`tenant_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一 `(tenant_id, provider)`。解析顺序：租户行 → 全局 Settings，实现在 `connector/services/apps.py`（`app_id` 与 `app_secret` 都可用才生效，半配置行记 warning 后回退全局）；授权、刷新、巡检与执行面均按租户解析 provider，目录的 `configured` 仍用全局配置、不暴露租户凭证。v1 不做管理 UI（先配置/脚本写入）。2026-11-04 二次变更后无内置 provider：`tenant_apps` 与静态令牌连接能力保留给后续 provider；Notion 的 OAuth 客户端与 token 由 agent-orchestrator 的 `mcp_server_auth` 托管，不再使用本表。
 
 **outbox_events / processed_events**（迁移 `c4f7b1e93a52`，`down_revision = '8f1c2a5d7b90'`）：与 `events.outbox` 同源，存连接生命周期事件（`created/expired/revoked`）供至少一次投递；`processed_events` 供消费方按事件 id 幂等。`CONNECTOR__OUTBOX_ENABLED=false` 时不写表、只落结构化日志。
 
 ### 5.3 API 契约（connector-service）
+
+> 2026-11-04 二次变更：平台 API 保留，**当前无内置 provider**（目录为空）。直接后果：`GET /v1/connectors` 返回空列表，`POST /v1/connectors/{provider}/authorize` / `execute` 对任何 provider 都回 404 `connector.provider_not_found`；静态令牌连接（`POST /v1/connections`）仍可用，但同样需要已注册的 provider。Notion 的授权与工具已改走 MCP（§6），不再经过本节端点。
 
 | 方法/路径                                  | 说明                                                                                                                                                                                                                                         | 鉴权                                  |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
@@ -196,55 +220,52 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 - 工具级失败的错误码经 orchestrator 工具事件透传到前端工具卡（C2.9 最小版）：`connection_missing` /
   `auth_expired` / `scope_missing` 三类渲染连接器恢复卡，其余错误码仍只展示错误文本。
 
-### 5.4 授权会话时序
+### 5.4 授权会话时序（平台机制）
 
-1. 前端调 `authorize`；connector-service 生成 `state_nonce`(随机 32B) 落 `oauth_sessions`，TTL 10 分钟。**Notion 不支持 PKCE**：`code_verifier` 留空，不发送 `code_challenge`/`code_challenge_method`（即使带了也会被 Notion 忽略）。
-2. 返回 `authorize_url`（`https://api.notion.com/v1/oauth/authorize`，参数 `client_id` / `redirect_uri` / `response_type=code` / `owner=user` / `state`；client_id 取 `tenant_apps` 覆盖后的值）。
-3. 用户在 Notion 选择并授权页面 → 回调带 `code`+`state`；服务端按 nonce 取会话、校验未过期且未消费，**同一事务**标记消费。
-4. 用 `code` 换 token：`POST https://api.notion.com/v1/oauth/token`，**HTTP Basic Auth**（`client_id:client_secret`）+ JSON `{grant_type:"authorization_code", code, redirect_uri}`；secret 只在请求头出现，不落日志、不回显。
-5. 拉 `GET /v1/users/me` 拿 bot user 与 `workspace_id`/`workspace_name`；`account = f"{workspace_id}:{owner_subject}"`（同一 workspace 的不同用户各自一条连接）；凭证 `encrypt_credentials` 落库；写 `connections`；置会话 `completed`。
+> 2026-11-04 二次变更后平台无内置 provider，本节只保留通用机制；具体 provider 的端点、参数与身份差异由 manifest 实现。Notion 的授权已改走 MCP（§6），不再经过本节。
+
+1. 前端调 `POST /v1/connectors/{provider}/authorize`；connector-service 生成 `state_nonce`（随机 32B）落 `oauth_sessions`，TTL 10 分钟；provider 声明支持 PKCE 时同时生成 `code_verifier`。
+2. 返回 `authorize_url`（provider 授权端点 + `client_id` / `redirect_uri` / `response_type=code` / `state` / scope，scope 按 manifest）。
+3. 用户授权后回调带 `code` + `state`；服务端按 nonce 取会话、校验未过期且未消费，**同一事务**标记消费。
+4. 用 `code` 换 token（provider manifest 的 `exchange_code`；client secret 只在请求头/请求体出现，不落日志、不回显）。
+5. 拉身份（`fetch_identity`）取 provider 账号/工作区标识；`account` 写稳定可读标识；凭证 `encrypt_credentials` 落库；写 `connections`；置会话 `completed`。
 6. 302 回 `/connectors?provider=<p>&status=connected&connection_id=<id>`；失败回 `...&status=error&code=<code>`，错误码只暴露白名单（不泄漏上游原文）。
 
-**令牌连接（`auth_kind=token`）不经过本节**：不建 `oauth_sessions`、无 `state`/PKCE/回调，直接 `POST /v1/connections` 校验令牌身份后落库（§5.3、§6）。
+**令牌连接（`auth_kind=token`）不经过本节**：不建 `oauth_sessions`、无 `state`/PKCE/回调，直接 `POST /v1/connections` 校验令牌身份后落库（§5.3）；平台语义保留，当前无 provider 可提供该路径（Notion 的静态令牌连接已随内置 provider 移除）。
 
 ### 5.5 刷新与失效
 
 - **触发**：懒刷新（`expires_at - 5min` 内首次使用时）+ 手动 `/refresh` + 每 24h 巡检任务（`last_refreshed_at` 超 24h）。
 - **单飞**：`SELECT … FOR UPDATE` 锁连接行 → 复盘 `expires_at` 是否已被他人刷新 → 调 provider → 同事务写回 `access/refresh/expires_at`。
 - **失败**：`invalid_grant`/`20037` 等置 `status=expired`、写 `last_error_code`、发 outbox `connector.connection.expired.v1`；前端卡片变「需要重新连接」。
-- **Notion 特例**：响应无 `expires_in`，`expires_at` 留空表示「未知」；正常调用遇 401 置 `connector.auth_expired` 并**尝试一次 refresh**，失败则置 `status=expired` 并提示重新连接；手动 `/refresh` 走 `grant_type=refresh_token`（响应**可能轮换** refresh_token，必须同事务写回，旧值立即作废）；24h 巡检仍按 `last_refreshed_at` 判定，不依赖 `expires_at`。
-- **令牌连接特例**：`auth_kind=token`（Notion 内部集成令牌）无 `expires_at`、无 refresh token——手动 `/refresh` 与懒刷新都会因缺 refresh token 失败（`connector.auth_expired`），属预期；正常调用遇 401 置 `status=expired` + `last_error_code`，前端提示「重新粘贴令牌」而不是走 OAuth 重连；24h 巡检按 `last_refreshed_at` 同样会扫到令牌连接，刷新失败只留痕、不销毁连接。
+- **provider 特例（历史，随内置 Notion provider 移除）**：原内置 Notion provider 的 token 响应无 `expires_in`，`expires_at` 留空表示未知；401 触发一次 refresh、24h 巡检按 `last_refreshed_at` 判定。平台侧的懒刷新/单飞/巡检机制不变，供后续 provider 复用。
+- **令牌连接特例**：`auth_kind=token` 的连接无 `expires_at`、无 refresh token——手动 / 懒刷新会因缺 refresh token 失败（`connector.auth_expired`），属预期；正常调用遇 401 置 `status=expired` + `last_error_code`，前端提示重新粘贴令牌；24h 巡检按 `last_refreshed_at` 同样会扫到令牌连接，刷新失败只留痕、不销毁连接。
 - **飞书特例（历史，provider 已移除）**：refresh 一次性、禁止并发；365 天强制重授权，`expires_at` 之外另存 `metadata.refresh_deadline` 做提前提示。
 - **outbox**：已接入 `events.outbox`（迁移 `c4f7b1e93a52`）；`connector.connection.created/expired/revoked.v1` 与状态变更同事务写入，`CONNECTOR__OUTBOX_ENABLED=true` 时由 `ConnectorRuntime` 起后台 `OutboxDispatcher` 至少一次投递（消费方按事件 id 去重），关闭时降级为结构化日志 `connection_event`、不写库；只发生命周期事件，不发业务数据。
 - **当前实现边界**：惰性刷新 + 手动刷新 + 24h 巡检均已上线。巡检（`connector/services/patrol.py`）跨租户扫 `active + enabled` 且 `last_refreshed_at` 为空或早于 `now - CONNECTOR__REFRESH_STALE_SECONDS` 的连接，逐条独立事务走同一单飞刷新路径，单条失败只留痕不中断整轮；由 `CONNECTOR__REFRESH_PATROL_ENABLED`（生产默认 true、测试关）控制。`tenant_apps` 已参与凭证解析（见 §5.2）。
 
 ### 5.6 能力暴露
 
-provider 模块声明 manifest（dataclass，代码即真源）：
+connector-service 的 provider 用代码 manifest 声明能力（`BaseProvider` 子类，代码即真源）：
 
 ```python
-class NotionProvider(BaseProvider):
-    name = "notion"
-    prefix = "Notion"
-    display_name = "Notion"
-    auth_kind = "user"
-    tools = (
-        ToolSpec(name="search", title="检索页面与数据源", description="...", input_schema={...}, risk=ToolRisk.READ),
-        ToolSpec(name="read_page", title="读取页面属性", description="...", input_schema={...}, risk=ToolRisk.READ),
-        ToolSpec(name="read_blocks", title="读取页面子块", description="...", input_schema={...}, risk=ToolRisk.READ),
-        ToolSpec(name="query_data_source", title="查询数据库", description="...", input_schema={...}, risk=ToolRisk.READ),
-        ToolSpec(name="create_page", title="新建页面", description="...", input_schema={...}, risk=ToolRisk.WRITE),
-        ToolSpec(name="append_blocks", title="追加内容块", description="...", input_schema={...}, risk=ToolRisk.WRITE),
-    )
+class BaseProvider:
+    name: str          # 目录 key，如 "notion"
+    prefix: str        # 工具名前缀，如 "Notion"
+    display_name: str
+    auth_kind: str     # "user"（OAuth）/ "token"（静态令牌）
+    tools: tuple[ToolSpec, ...]  # ToolSpec(name, title, description, input_schema, risk)
 ```
 
-编译规则：`ToolDescriptor(name="Notion__search", executor=ExecutorKind.CONNECTOR, kind=FUNCTION, risk=READ, scopes=[], connector={"provider": "notion"})`；**`risk` 由 `ToolSpec.risk` 声明并原样透传**——目录 API 的 `tools[].risk`（`read`/`write`）与内部目录的 `ToolDescriptor.risk` 同源，不在 catalog 里另立规则；写工具同样编译成 `Notion__create_page` / `Notion__append_blocks`。
-实现上 manifest 就是 `BaseProvider` 的子类属性（`name/prefix/display_name/tools: list[ToolSpec]`），不需要单独的 connector manifest 文件。
+**2026-11-04 二次变更后 `connector/providers/` 目录为空**：内置 Notion provider（4 只读 + 2 写）已随规划移除，`/v1/connectors` 返回空目录；平台仍保留 manifest 注册/编译/执行链路，供后续没有官方 MCP 的 provider 接入。Notion 的工具面改由官方 MCP 提供（§6/§7）。
+
+编译规则（对任何 provider 生效）：`ToolDescriptor(name="<Provider>__<tool>", executor=ExecutorKind.CONNECTOR, kind=FUNCTION, risk=<ToolSpec.risk>, scopes=[], connector={"provider": "<name>"})`；**`risk` 由 `ToolSpec.risk` 声明并原样透传**（`read`/`write`），不在 catalog 里另立规则。
 
 - **tool-service**：catalog 合并 `GET /v1/internal/connectors/tools` 的结果（按租户），执行时走 `ExecutorKind.CONNECTOR` 转发到 `/execute`，审计落 `tool_calls`（D12）。
-- **agent-orchestrator**：无需感知连接器，只看到普通工具；审批复用 `approval_policies`；调用事件继续写 `run_events`。
-- **命名**：`<Provider>__<tool>`，如 `Notion__search` / `Notion__read_page`；provider 段用 PascalCase，工具段 snake_case；不允许出现 `__` 在工具名内。
-- **装配**：只把 `status=active && enabled=true` 的连接的**全部工具（含写工具）**暴露给 chat/task，`risk` 随描述符一并透出；chat 路径 `risk=write` 不直接执行（先落 pending 确认，§7），task 路径走 `approval_policies` 的 `confirm` 闸；`danger` 工具不进对话。
+- **agent-orchestrator**：不感知连接器内部，只看到普通工具；审批复用 `approval_policies`；调用事件继续写 `run_events`。
+- **命名**：`<Provider>__<tool>`，provider 段 PascalCase、工具段 snake_case；MCP 工具走 `mcp__<server>__<tool>`，两者命名空间不混。
+- **装配**：只把 `status=active && enabled=true` 的连接的**全部工具（含写工具）**暴露给 chat/task，`risk` 随描述符透出；chat 路径 `risk=write` 不直接执行（先落 pending 确认，§7），task 路径走 `approval_policies` 的 `confirm` 闸；`danger` 工具不进对话。
+- **MCP 工具不走这条编译链**：由 orchestrator 的 MCP client 直接生成 `mcp__<server>__<tool>`，风险按 §7 的 annotations/预设规则分级。
 
 ### 5.7 错误码分层
 
@@ -272,88 +293,98 @@ class NotionProvider(BaseProvider):
   `{"ok":false,"error":{...}}`；HTTP 4xx 只用于「无连接 / 未知工具 / 内部鉴权」这类协议错误。
 - 回调失败不返回 JSON：302 回 `/connectors?...&status=error&code=<白名单错误码>`。
 - 上游原始错误只进日志与 `last_error_code`，不回显 body。
+- **当前无内置 provider**：目录为空时 `connector.provider_not_found` 是常见结果；Notion 的授权/工具错误改由 MCP 错误码表达（如 `mcp.auth_required`、`mcp.server_disabled`），不在本表。
 
 ### 5.8 安全与租户边界
 
 - 凭证列读写都不出服务；列表/详情 DTO 明确排除 `credentials`；日志脱敏（token 前缀也不打）。
 - 租户隔离继续走 `TenantRepository`；跨租户一律 404。
 - 回调只能由 `state` nonce 驱动；nonce 单次消费 + 10 分钟过期 + 绑定 tenant/user/provider/redirect。
-- Notion `client_secret`（全局 Settings 或 `tenant_apps` 加密列）只存服务端，不进日志、不进响应；`tenant_apps` 复用与连接凭证同一套加密函数。
+- 凭证边界：连接器路径的 provider 凭证（`connections.credentials` 与 `tenant_apps` 应用凭证）只存服务端、不进日志/响应；**Notion 的 OAuth 客户端与 token 现由 agent-orchestrator 的 `mcp_server_auth` 托管**（`AGENT_ORCHESTRATOR__MCP_SECRET` 加密），connector-service 不再持有 Notion 凭证。
 - 生产密钥换 KMS/长随机（现状默认值仅供 dev）；P1 补 `CONNECTOR__CREDENTIAL_SECRET` 启动强校验（生产非默认值）。
 - 飞书 IP 白名单（历史，provider 已移除）：Serverless 出口 IP 不固定时不可用，v1 未启用；现改为应用级限流 + 错误告警。
 
-## 6. Notion 连接器 v1 规格（内置）
+## 6. Notion 接入：官方 MCP（2026-11-04 二次变更）
 
-**应用形态**：Notion **public integration**（一套应用服务所有 workspace）。全局 `CONNECTOR__NOTION_CLIENT_ID/SECRET`，可按租户用 `tenant_apps` 覆盖（`app_id` 存 client_id、`app_secret` 存 client_secret）。Notion integration 后台登记 OAuth Redirect URI：`{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `https://<host>/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）。integration 的 **Capabilities** 至少勾 `Read content`（4 个只读工具）；启用写工具还要勾 `Insert content` / `Update content`，并在 Notion 侧重新授权使新能力生效。
+**结论**：Notion 不再由 `connector-service` 内置 provider 承接，改为 **Notion 官方 MCP server**（`https://mcp.notion.com/mcp`），由 **agent-orchestrator** 的 MCP client 统一接入；`/connectors` 页改为「MCP 预设连接器」，内置 `notion` 预设提供一键授权。内置 provider 的代码（`connector/providers/notion.py`）、`CONNECTOR__NOTION_*` 配置、`tenant_apps` 的 Notion 用法与相关测试均已删除。
 
-**授权**：authorize 走 `GET https://api.notion.com/v1/oauth/authorize`（`client_id` / `redirect_uri` / `response_type=code` / `owner=user` / `state`；**不支持 PKCE**，`code_challenge` 被忽略）；换 token 走 `POST /v1/oauth/token`，**HTTP Basic Auth**（`client_id:client_secret`）+ JSON（`grant_type=authorization_code` / `code` / `redirect_uri`）；refresh 同端点 `grant_type=refresh_token`（响应**可能轮换** refresh_token，必须同事务写回）。
+**为什么改**：官方 MCP 已具备完整授权链路——`/.well-known/oauth-protected-resource` 发现（RFC 9728）、AS 元数据、**DCR**（RFC 7591）、**PKCE S256**、`refresh_token`——orchestrator 的 `mcp_oauth` 可直接复用；工具面由 Notion 维护（当前 `tools/list` 约 70 个），平台不需要再为每个能力写 provider 代码与分页/限流/版本适配。`connector-service` 的平台能力保留给**没有官方 MCP**、或需要平台托管凭证/执行面的 SaaS。
 
-**身份**：token 是 **bot token**，绑定「一个 workspace + 一个用户」；`GET /v1/users/me` 取 `workspace_id`/`workspace_name`，`account = f"{workspace_id}:{owner_subject}"`、`external_workspace = workspace_name`。**页面级授权**：用户必须在 Notion 里把页面/数据库 share 给该 integration，未 share 的资源返回 403/404（按「未授权」提示，不提示重连）。
+**端点与协议能力**：
 
-**内部集成令牌连接（不想注册 public integration 时的接入路径）**：在 Notion「Settings → Connections → Develop or manage integrations」创建 **internal integration**，复制 Internal Integration Secret（`ntn_…`），并在目标页面/数据库的「Connections / Share」里把该 integration 加进去（未 share 的资源仍返回 403/404）。平台侧 `POST /v1/connections {provider:"notion", token}`：服务端用该令牌调 `GET /v1/users/me` 校验（无效/已撤销/缺权限 → 400 `connector.invalid_credentials`），`account = "integration:<bot_id>"`、`display_name` 取集成/工作区名、`external_workspace = workspace_name`，凭证以 `auth_kind="token"` 走同一套信封加密落库（`credentials.access_token`）。该路径**不需要** client id/secret、无授权页、无回调、无 PKCE，`tenant_apps` 与应用凭证对它不适用；integration 的 Capabilities 仍决定能读写哪些内容。token 无 `expires_in`、无 refresh token，401 即置 `expired`，用户重新粘贴新令牌即可（不需要重建连接配置）。
+- 端点：`https://mcp.notion.com/mcp`（Streamable HTTP）；发现与注册走 `mcp_oauth` 现有的 RFC 9728 → 8414 → 7591 流程，无需新代码。
+- 无预注册客户端 → **动态客户端注册（DCR）**；授权码 + **PKCE S256**；access token 过期用 `refresh_token` 单飞刷新，刷新失败清空令牌并要求重新授权（加密存 `mcp_server_auth`）。
+- 回调：`GET /api/mcp/oauth/callback`（API 网关同源转发，带 `X-Internal-Secret`；`AGENT_ORCHESTRATOR__MCP_OAUTH_REDIRECT_URI` 须与 AS 注册值完全一致）；orchestrator 用 `state`（`MCP_SECRET` 签名，默认 10 分钟）校验后换 token，成功 302 回前端。
 
-**v1 工具（4 只读 + 2 写）**：
+**一键授权（`/connectors`）**
 
-| 工具                        | 上游端点                                       | 说明                                         |
-| --------------------------- | ---------------------------------------------- | -------------------------------------------- |
-| `Notion__search`            | `POST /v1/search`                              | 按标题检索页面与数据源，`start_cursor` 分页  |
-| `Notion__read_page`         | `GET /v1/pages/{page_id}`                      | 页面属性（标题、URL、父级、最后编辑）        |
-| `Notion__read_blocks`       | `GET /v1/blocks/{block_id}/children`           | 子块列表，`page_size`/`start_cursor` 分页    |
-| `Notion__query_data_source` | `POST /v1/data_sources/{data_source_id}/query` | 数据库查询（filter/sorts/分页）              |
-| `Notion__create_page`       | `POST /v1/pages`                               | 新建页面并写首段正文（`risk=WRITE`，需确认） |
-| `Notion__append_blocks`     | `PATCH /v1/blocks/{block_id}/children`         | 在块末尾追加段落（`risk=WRITE`，需确认）     |
+1. 页面加载 `GET /v1/mcp/presets` → `{presets:[{key,name,url,description,docs_url}]}`（当前仅 `notion`；`url=https://mcp.notion.com/mcp`，`docs_url=https://developers.notion.com/docs/mcp`）。
+2. 卡片「连接 Notion」→ `POST /v1/mcp/presets/notion`：按 `preset.url` 在**本租户**找已有 server，有则原样返回；没有则创建 `transport="http"`、`auto_approve=false`、`tools_allowlist=[]` 的 server（同名回退 `Notion-2`）。幂等，可重复点。
+3. `POST /v1/mcp/servers/{id}/oauth/start`，body 可带 `{"next":"/connectors"}`（或 `/mcp`，默认 `/mcp`）；`next` 写进 `state` payload，授权成功后 302 到对应页面（`/connectors?oauth=success&server=Notion` 或 `/mcp?oauth=success`）。
+4. 授权成功后**尽力**刷新一次该 server 的 `tools_cache`（失败只记日志，不影响 302）；回到页面后 `GET /v1/mcp/servers` 即可看到 `oauth_authorized=true` 与工具数。
+5. 会话侧：输入区「MCP」选择器选中该 server（或深链 `/?mcp=<server_id>`），只用被引用 server 的工具；不选 = 全部已启用 server。
 
-写工具参数：`create_page` 支持 `parent_type=page|data_source` / `parent_id` / `title` / `title_property` / `paragraphs`（每项一段纯文本）；`append_blocks` 支持 `block_id` / `paragraphs` / 可选 `after`。两者固定 `risk=WRITE`，对话里先生成确认卡（§7），用户确认后以 `approved=True` 执行；审计仍落 tool-service 的 `tool_calls`（D12）。
+**工具面**
 
-**实现要点**：
+- 以 server 的 `tools/list` 为准（当前约 70 个）；平台命名 `mcp__notion__<tool>`（`<server>` 由 server 名 slug 化），参数 schema 与描述原样来自 server，平台不维护工具白名单（`/mcp` 详情可用 `tools_allowlist` 收窄，默认空 = 全量）。
+- `kind=function`，风险档位按 §7 的 annotations/预设规则计算——**读直接执行，写在对话内出确认卡，DANGER 不进对话**。
 
-- 所有请求必带 `Notion-Version` 头（值取 `CONNECTOR__NOTION_VERSION`，默认 `2026-03-11`），版本升级只改配置。
-- 响应无 `expires_in`：`expires_at` 留空表示未知；正常调用遇 401 置 `connector.auth_expired` 并尝试一次 refresh，失败置 `status=expired`、提示重新授权。
-- 429 读 `Retry-After` 头退避并映射 `connector.upstream_rate_limited`（秒数进 hint）；限流是 connection 级 + workspace 共享预算，不做通用令牌桶基类。
-- `cursor` / `url` / `href` 是 Notion 明确声明的**非稳定标识**，不解析、不做本地缓冲。
-- 错误码映射：401 → `connector.auth_expired`（连接置 expired）；403 → `connector.scope_missing`（页面未 share）；404 → `connector.upstream_error`；429 → `connector.upstream_rate_limited`；超时 → `connector.upstream_timeout`；其余 5xx → `connector.upstream_unavailable`。
+**配置**
 
-**配置**：`CONNECTOR__PROVIDERS_ENABLED`（默认 `notion`）、`CONNECTOR__NOTION_CLIENT_ID`、`CONNECTOR__NOTION_CLIENT_SECRET`、`CONNECTOR__NOTION_VERSION`（默认 `2026-03-11`）、`CONNECTOR__NOTION_API_BASE`（默认 `https://api.notion.com`）、`CONNECTOR__OAUTH_REDIRECT_BASE`。
+- 需要 `AGENT_ORCHESTRATOR__MCP_SECRET`、`AGENT_ORCHESTRATOR__MCP_OAUTH_REDIRECT_URI`（指向网关 `/api/mcp/oauth/callback`）等 MCP 变量；`connector-service` 不再需要任何 Notion 变量。
+- 历史 `CONNECTOR__PROVIDERS_ENABLED` / `CONNECTOR__NOTION_*` 已移除；服务 `Settings(extra="ignore")`，旧 `.env` 里残留不会报错。
 
-## 7. Notion 写工具、对话内确认与其他 provider（P3/P4 预留）
+**历史归档**：内置 provider 时期的规格（public integration 安装、Basic Auth `users/me` 换 token、`Notion-Version` 头、4 只读 + 2 写工具、静态内部集成令牌连接）保留在 §8.3 的 C6.x 清单与 §9 记录中，仅作历史依据。
 
-**Notion 写工具（已实现）**：`Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{block_id}/children`）在 provider manifest 里用 `ToolSpec(..., risk=ToolRisk.WRITE)` 声明，`risk` 经 catalog 透出到目录 API 的 `tools[].risk` 与内部目录的 `ToolDescriptor.risk`。`create_page` 支持 `parent_type=page|data_source` + `parent_id` + `title`/`title_property` + `paragraphs`；`append_blocks` 支持 `block_id` + `paragraphs` + 可选 `after`。实现约束：先读后写（page id 来自 `read_page`/`search`）、不解析 `url`/`href`/`cursor`；审计仍落 tool-service 的 `tool_calls`（D12）。
+## 7. 风险分级与写操作确认（MCP annotations 驱动）
 
-**对话内写操作确认（已实现）**：对话路径没有任务图的审批流，写操作改为「就地确认」——
+MCP 工具的风险**在工具粒度**上计算（同一 server 可以既有只读也有写），规则按顺序命中（见 `services/agent-orchestrator/agent_orchestrator/services/mcp.py` 的 `_tool_risk`）：
 
-1. **工具可见性**：chat 可见工具为 `kind=function && risk!=danger`（read/write 都可见）；`danger`（如 `exec`）仍不进对话，回喂提示改用「任务」。
-2. **发起即挂起**：模型发起 `risk=write` 调用时**不执行**，orchestrator 落一行 `chat_tool_confirmations`（`status=pending`，TTL 10 分钟）；tool 帧返回 `decision="confirm"`、`error_code="tool.confirmation_required"`、`ok=false`，并带 `confirmation_id` / `expires_at`（ISO8601），同时回喂模型「需要用户确认，不要重复调用」。
-3. **确认 / 取消**：`POST /v1/conversations/{cid}/tool-confirmations/{confirmation_id}/confirm` 以 `approved=true` 重放同一个 `tool_call`（arguments 原样），结果落 assistant 消息并回填确认行；`.../cancel` 只置 cancelled、不执行。前端 `tool-confirmation-card.tsx` 就地渲染参数摘要 + 有效期 + 两个按钮，确认后展示 `result_text` 并刷新会话。
-4. **幂等与错误码**：确认时对确认行加 `FOR UPDATE` 并校验状态，重复确认不会重复执行；不存在/跨租户 404 `tool_confirmation.not_found`、过期 409 `tool_confirmation.expired`、已确认/已取消 409 `tool_confirmation.not_pending`、确认时工具已不可用 409 `tool_confirmation.tool_unavailable`。
-5. **边界不变**：tool-service 的「WRITE/DESTRUCTIVE 无 approved → 403」闸门不因对话确认而放宽；对话确认只是「取得 approved 的一条通道」，任务路径仍走 `approval_policies` 的 confirm 闸（见 [tool-execution.md](./tool-execution.md) §7.6）。
+| 顺序 | 条件                                                                                 | 档位       |
+| ---- | ------------------------------------------------------------------------------------ | ---------- |
+| 1    | `annotations.destructiveHint is True`                                                | **DANGER** |
+| 2    | `annotations.readOnlyHint is True`                                                   | **READ**   |
+| 3    | `server.url` 命中内置预设（忽略末尾斜杠）且工具名命中该预设任一 `read_prefixes` 前缀 | **READ**   |
+| 4    | `server.auto_approve`（租户在 `/mcp` 打开「免确认执行」）                            | **WRITE**  |
+| 5    | 其余                                                                                 | **DANGER** |
 
-**授权展示（P3，未做）**：连接详情展示 Notion capabilities 与页面级授权状态（哪些页面已 share 给 integration）；capabilities 变更后提示重新授权。
+Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-fetch`、`notion-list-`、`notion-get-`、`notion-query-`、`notion-read-`、`notion-view-`、`notion-download-`、`notion-wait-`、`notion-calendar-list-`。
 
-**巡检增强（P3/P4，未做）**：当前靠 24h 巡检（`last_refreshed_at`）+ 401 触发刷新；`POST /v1/oauth/introspect` 主动探测与「401 自动刷新一次」的闭环未做。
+- `annotations` 随 `tools/list` 落 `tools_cache`（`MCPToolRead.annotations`）；`/mcp` 的测试端点刷新缓存后生效，旧缓存没有该字段时按空处理（走第 3 步预设前缀兜底）。
+- **annotations 是 server 的自述，不是可信边界**：预设只读前缀只对内置预设生效；非预设 server 仍需租户显式 `auto_approve`（此时非只读工具→WRITE）。「自述 readOnlyHint 的写工具」风险记在 §9.2。
 
-**其他 provider（P4）**：provider 通过 `connector/providers/` 的代码 manifest 注册——新增一个 `BaseProvider` 子类（实现 `authorize_url`/`exchange_code`/`refresh`/`fetch_identity`/`call` 与 `tools`）、在 `_REGISTRY` 登记、`CONNECTOR__PROVIDERS_ENABLED` 列出 key 即出现在目录。MCP 自定义连接器并入 UI（`kind=mcp`，凭证仍走 `mcp_oauth`）与组织共享连接（`owner_subject` 为空 + 授权人留痕）均留 P4。
+**对话路径**（与 [tool-execution.md]（./tool-execution.md） §7.6 同一条链路）
+
+- 工具箱裁剪为 `kind=function && risk!=danger`：READ 直接执行；WRITE **不执行**——落 `chat_tool_confirmations`（`status=pending`，TTL 10 分钟），SSE `tool` 帧返回 `decision="confirm"`、`ok=false`、`error_code="tool.confirmation_required"`、`confirmation_id`、`expires_at`，并回喂模型「需用户确认，不要重复调用」。
+- 前端确认卡点「确认」→ `POST /v1/conversations/{cid}/tool-confirmations/{id}/confirm`，服务端以 `approved=true` 重放同一 `tool_call`；点「取消」→ `.../cancel` 只改状态。
+- 错误码：404 `tool_confirmation.not_found`、409 `tool_confirmation.expired`、409 `tool_confirmation.not_pending`、409 `tool_confirmation.tool_unavailable`。
+- 确认重放用与发消息**同一套工具箱装配**（allow write、排除 danger），不会出现「看到的工具」与「确认时执行的工具」漂移。
+- DANGER 工具不进对话：模型只能收到「该工具需在任务中执行」的提示；任务路径走 `approval_policies` 的 `confirm` 闸，tool-service 的「WRITE/DESTRUCTIVE 无 `approved` → 403」闸门不变（见 [tool-execution.md]（./tool-execution.md） §7.6）。
+
+**默认保守**：预设 server 以 `auto_approve=false` 创建——Notion 上未声明 `readOnlyHint`、也未命中只读前缀的工具一律 DANGER（对话里不执行）；租户在 `/mcp` 打开「免确认执行」后这些工具降为 WRITE，对话内出确认卡。这比内置 provider 时期「写工具固定 WRITE」**更保守**，属预期行为。
+
+**连接器 provider 写工具（历史）**：内置 provider 时期的 `Notion__create_page` / `Notion__append_blocks` 已随 provider 移除；机制不变——provider 的 `ToolSpec.risk=WRITE` 同样编译成 `risk=write` 并走同一条对话确认链（§5.6）。
+
+**其他 provider / 任意 MCP server（P4）**：把任意 MCP server 并入「连接器」UI 同列展示（`kind=mcp`，凭证仍走 `mcp_oauth`）与组织共享连接仍留 P4；`/connectors` 的旧 provider 目录区只在 `providers.length>0` 时渲染（当前隐藏，旧组件与测试暂不删）。
 
 ## 8. 实施清单
 
 估算单位：S ≤ 1 人日，M 2–3 人日，L 4–5 人日。**P0–P2 合计约 25–35 人日**（单人；平台与 provider/前端可并行压缩）。
 
-> **实现状态（2026-11-04 回填）**：P1 平台骨架（C1.1–C1.12）、P2 前端/执行面（C2.3–C2.8）与
-> 内置 **Notion 只读 + 写工具**（C6.1–C6.6，见 §8.3）已完成；对话内写操作确认链路此前补齐，
-> 并与 P2 同批上线——chat 里 `risk=write` 只落 `chat_tool_confirmations` pending（TTL 10 分钟），
-> 用户确认后由 `POST /v1/conversations/{cid}/tool-confirmations/{id}/confirm` 以 `approved=True` 重放（§7）。
-> C0 决策项按本文默认值执行。此前补齐 C1.10（`events` outbox 生命周期事件 + 24h 巡检 + `tenant_apps` 凭证解析）
-> 与 C2.4 的 `connection_id` 审计列。
-> 与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
-> （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
-> 巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
-> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），
-> 改为内置 Notion provider（§6）；平台骨架/页面/执行面/审计保留。
-> **2026-11-04 补充**：新增「粘贴静态令牌」连接路径（`POST /v1/connections`，`auth_kind=token`），Notion 内部集成令牌无需注册 public integration 即可接入；目录 provider 项增 `token_connectable`（§5.3、§6）。
-> **未做/待办（2026-11-04 复核）**：C2.9 只落地最小版——会话内工具失败恢复卡
-> （`apps/web/src/features/chat/connector-recovery-card.tsx`，三类授权错误码 → 「去连接器」，
-> 用户重连后手动重发；「+ 菜单」选择与 run 暂停续跑待 C0.4）；C2.10（真实飞书冒烟）随飞书
-> provider 移除不再适用（清单文件已删除）；P3 剩余（组织共享连接、连接详情授权展示）与
-> P4（其他 provider、MCP）未开始；Notion 写工具的幂等键（C3.2 的一部分）未做。
+> **实现状态（2026-11-04 二次回填）**：P1 平台骨架（C1.1–C1.12）仍有效（平台 API / 授权会话 / 刷新巡检 / outbox / 执行面 / 审计），
+> 但**内置 provider 已清空**：内置飞书 provider（11-04 上旬移除）与内置 Notion provider（11-04 二次变更移除）均已删除，
+> `connector/providers/` 目录为空、`GET /v1/connectors` 返回空目录。Notion 改走**官方 MCP**（§6）：预设 server + 一键授权
+>
+> - 工具 annotations 风险分级已上线（C7.1–C7.5，见 §8.7），`/connectors` 页改为 MCP 预设连接器。
+>   对话内写操作确认链路（`chat_tool_confirmations`）保留并对 MCP 的 WRITE 工具生效（§7）。
+>   与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
+>   （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
+>   巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
+>   **历史记录**：C6.x（内置 Notion 专项）与 C3.1/C3.2（内置写工具）保留为历史，随 provider 移除不再适用；
+>   对应测试/配置（`CONNECTOR__NOTION_*`、`providers/notion.py`、Notion 专项测试）已删除。
+>   **未做/待办（2026-11-04 复核）**：C2.9 只落地最小版——会话内工具失败恢复卡（三类授权错误码 → 「去连接器」，
+>   用户重连后手动重发；「+ 菜单」选择与 run 暂停续跑待 C0.4）；C2.10（真实飞书冒烟）随 provider 移除不再适用；
+>   P3 剩余（组织共享连接、连接详情授权展示）与 P4（其他 provider、任意 MCP server 并入连接器 UI）未开始。
 
 ### 8.1 P0 决策与契约（先做，阻塞后续）
 
@@ -378,11 +409,11 @@ class NotionProvider(BaseProvider):
 - [x] **C1.11** 配置与文档：`.env.example`、README「接入新连接器 5 步」更新为 manifest 流程 — 验收：`check-docs` 通过（S）
 - [x] **C1.12** 测试：`--cov-fail-under=91`；`pytest-socket` 零网络（全 MockTransport） — 验收：`npx nx test connector-service` 绿（M）
 
-### 8.3 P2 前端 + 执行面 + 内置 Notion（只读 + 写工具）
+### 8.3 P2 前端 + 执行面 + 内置 Notion（历史；provider 已移除）
 
-> 2026-11-04：C2.1/C2.2 的飞书 provider 已移除，改为内置 Notion（只读 + 写工具，见下方 C6.1–C6.6）；平台骨架、前端、执行面与审计保留，C2.3–C2.8 仍有效。
+> **历史（2026-11-04 二次变更）**：C2.1/C2.2 的飞书 provider 与 C6.1–C6.7 的内置 Notion provider 均已随「Notion 改走 MCP」移除；平台骨架、前端框架、执行面与审计保留（C2.3–C2.8 仍有效），工具面改由 MCP 提供（§6 / §8.7）。
 
-**内置 Notion 专项清单（2026-11-04，替代原飞书 provider）**
+**内置 Notion 专项清单（2026-11-04，已随 provider 移除，仅作历史）**
 
 - [x] **C6.1** `connector/providers/notion.py`：public integration OAuth（HTTP Basic Auth 换 token）、`Notion-Version` 配置化、4 个只读工具 — 验收：MockTransport 走通授权→检索→读页→读块→查询；401→`auth_expired` 且置 expired；429 解析 `Retry-After`（M）
 - [x] **C6.2** 授权与身份：`authorize` 不带 PKCE、回调用 Basic Auth 换 token、`GET /v1/users/me` 取 workspace；`account = "{workspace_id}:{owner_subject}"` — 验收：回调落库可解密、同 workspace 多用户各自一条连接、`tenant_apps` 可覆盖 client_id/secret（M）
@@ -412,6 +443,8 @@ class NotionProvider(BaseProvider):
 
 ### 8.4 P3 组织共享、授权展示与对话内确认（写工具已完成）
 
+> 2026-11-04 二次变更：C3.1/C3.2 的内置写工具随 provider 移除；对话确认链路本身保留，并对 MCP 的 WRITE 工具生效（§7）。
+
 - [x] **C3.1** Notion 写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{id}/children`），默认 `risk=WRITE` + 确认 — 验收：`approval_policies` 命中 confirm；chat 里 `risk=write` 落 pending 确认，用户点击后以 `approved=True` 执行（M）
   - **2026-11-04 完成**：`providers/notion.py` 以 `ToolSpec(risk=ToolRisk.WRITE)` 声明并透出 `risk`；
     对话路径不直接执行，改落 `chat_tool_confirmations` pending（TTL 10 分钟），由
@@ -427,18 +460,19 @@ class NotionProvider(BaseProvider):
 ### 8.5 P4 其他 provider 与 MCP 并入（预留）
 
 - [ ] **C4.1** 其他 provider：按 `connector/providers/` 代码 manifest 新增 `BaseProvider` 子类 + `_REGISTRY` 登记 + `CONNECTOR__PROVIDERS_ENABLED` 列出 — 验收：目录出现新 provider，授权/刷新/执行复用平台（M/provider）
-- [ ] **C4.2** Notion 主动探测：`POST /v1/oauth/introspect` 接入巡检 + 401 自动刷新一次 — 验收：token 失效后巡检自愈，失败才置 expired（M）
-- [ ] **C4.3** Notion data source 查询独立限流（约 3 次/秒）与 workspace 共享预算隔离 — 验收：多连接不同时打爆预算（M）
-- [ ] **C4.4** MCP 自定义连接器并入 UI（`kind=mcp`，凭证仍走 `mcp_oauth`） — 验收：审批/审计与原生 provider 一致（L）
+- [ ] **C4.2** provider 主动探测：`POST /v1/oauth/introspect` 接入巡检 + 401 自动刷新一次 — 验收：token 失效后巡检自愈，失败才置 expired（M）。（2026-11-04：原为 Notion 专项，provider 移除后暂无对象，能力留待未来 provider。）
+- [ ] **C4.3** provider 级独立限流（如 data source 查询约 3 次/秒）与 workspace 共享预算隔离 — 验收：多连接不同时打爆预算（M）。（2026-11-04：原为 Notion 专项，provider 移除后暂无对象。）
+- [ ] **C4.4** 任意 MCP server 并入连接器 UI（`kind=mcp`，凭证仍走 `mcp_oauth`） — 验收：审批/审计与原生 provider 一致（L）。（2026-11-04：内置 Notion 预设已并入 `/connectors`，任意 server 并入仍待 P4；MCP 侧的审批/审计已由 MCP client 承接。）
 
 ### 8.6 质量与门禁（每期收口）
 
 - [x] **C5.1** `npx nx lint/test connector-service tool-service agent-orchestrator common` 全绿（含覆盖率阈值）
       — 实证（2026-11-04，Notion 写工具与对话内写操作确认合入后）：connector-service 114 passed / 95.30%、
       agent-orchestrator 946 passed / 87.69%、tool-service 343 passed / 89.66%、common 155 passed；
-      四个项目 ruff lint 全绿。
+      四个项目 ruff lint 全绿。最新一轮（MCP 预设迁移后）：connector-service 87 passed / 97.71%、
+      agent-orchestrator 970 passed / 87.87%、tool-service 343 passed / 89.66%、api-gateway 36 passed。
 - [x] **C5.2** `npx nx typecheck/test/lint @beauty/web -- --run` 全绿；`bash scripts/refactor-gate.sh @beauty/web`
-      — web 的 lint/typecheck/test/build/docs/workspace 六步全绿（550 个前端用例，含写操作确认卡与确认列表粘性保持）；refactor-gate 的 `py-size` 基线里
+      — web 的 lint/typecheck/test/build/docs/workspace 六步全绿（572 个前端用例，含写操作确认卡、确认列表粘性保持与 MCP 预设页）；refactor-gate 的 `py-size` 基线里
       `connector-service/connector/providers/feishu.py` 随 provider 移除不再计入，其余超 500 行文件
       （`tool-service/tests/test_connectors.py`、`agent-orchestrator/tests/test_skill_packages.py`）在 HEAD 上即已超限，
       属既有 W5 ratchet 基线，不由本期引入；留待 W5 体量收敛处理。
@@ -456,9 +490,17 @@ class NotionProvider(BaseProvider):
       与过期；`test_auth`/`test_connections::test_tenant_isolation` 覆盖跨租户 404；API 网关只注入 Authorization
       等固定头，透传不了 `X-Internal-Secret`/`X-Tenant-Id`，内部面仅 tool-service 直连携带共享密钥。
 
+### 8.7 P5 MCP 预设与 Notion 接入（2026-11-04 二次变更，已完成）
+
+- [x] **C7.1** `mcp_presets.py`：`MCPPreset` + `PRESETS`（当前 `notion`） + `list_presets`/`preset_for_key`/`preset_for_url`（忽略末尾斜杠）；未知 key → 404 `mcp.preset_not_found` — 验收：单测覆盖 key/url 匹配与去尾斜杠
+- [x] **C7.2** 工具注解与风险分级：`MCPToolRead.annotations` 透传并写回 `tools_cache`；`_tool_risk` 按 destructiveHint → readOnlyHint → 预设只读前缀 → auto_approve → DANGER 的顺序分档 — 验收：对话路径 WRITE 落确认、DANGER 被裁剪
+- [x] **C7.3** 端点：`GET /v1/mcp/presets`、`POST /v1/mcp/presets/{key}`（幂等 ensure，按 url 复用已有 server，重名回退 `Notion-2`）、`POST /v1/mcp/servers/{id}/oauth/start` 接受的 `next`（`/mcp` / `/connectors`）；授权成功尽力刷新 `tools_cache` — 验收：重复调用不重复建 server，回调落点正确
+- [x] **C7.4** Web `/connectors` 改为 MCP 预设页：预设卡片、已连接状态与工具数、一键授权、`去会话使用`（`/?mcp=<id>`）、`管理`（`/mcp`）；旧 provider 目录区仅在存在 provider 时渲染 — 验收：`nx typecheck/test/lint @beauty/web` 绿
+- [x] **C7.5** 文档与部署：本文、tool-execution.md、local-dev.md §3.2、architecture.md、AGENTS.md、README 索引、compose 注释同步；connector-service 删除 Notion provider/配置/测试 — 验收：`check-docs` / `check-workspace` / `compose config` 均通过
+
 ## 9. 风险与开放问题
 
-> 2026-11-04：下述飞书相关条目保留为 2026-11-03 定稿时的历史记录；当前内置 provider 为 Notion（4 只读 + 2 写工具，写操作经对话确认；见 §6 / §7 / §8.3）。
+> 2026-11-04 二次变更：下述飞书 / 内置 Notion provider 相关条目保留为历史记录；**当前平台无内置 provider**，Notion 经官方 MCP 接入（预设 + 一键授权 + annotations 风险分级，见 §6 / §7 / §8.7）。
 
 ### 9.1 待产品确认（阻塞 P1）
 
@@ -470,16 +512,18 @@ class NotionProvider(BaseProvider):
 
 ### 9.2 风险登记
 
-| 风险                               | 影响                   | 缓解                                                                                         |
-| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
-| 飞书 scope 变更需发版 + 管理员审批 | 权限迭代天级，扩能力慢 | scope 白名单配置化；详情页展示「已授予 vs 期望」；提前规划 P1 scope                          |
-| refresh_token 一次性 + 多副本      | 并发刷新导致连接失效   | 数据库行锁单飞 + 二次检查；巡检任务单实例或加锁                                              |
-| 365 天强制重授权                   | 长期连接必然失效       | `metadata.refresh_deadline` 提前 30/7 天提示；失效错误码明确                                 |
-| docx blocks 递归 + 大文档          | 超时/超大响应          | 深度与字节双上限；截断标记 + 分页工具                                                        |
-| 飞书限流（API×应用×租户）          | 批量读触发 429         | 令牌桶按三元组 + 读 reset 头退避；错误可重试                                                 |
-| 凭证密钥泄露                       | 全部第三方 token 暴露  | KMS/长随机 + 启动强校验；撤销路径可批量执行                                                  |
-| 连接器工具污染模型工具面           | 模型选择困难/误用      | 工具按连接启用；描述精简；写工具 confirm（任务路径）/ 就地确认（对话路径）；每连接工具数上限 |
-| Notion token TTL 未知              | 被动 401，可能影响体验 | 401 触发刷新 + introspect 巡检；`expires_at` 空表示未知                                      |
+| 风险                               | 影响                                   | 缓解                                                                                              |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 飞书 scope 变更需发版 + 管理员审批 | 权限迭代天级，扩能力慢                 | scope 白名单配置化；详情页展示「已授予 vs 期望」；提前规划 P1 scope                               |
+| refresh_token 一次性 + 多副本      | 并发刷新导致连接失效                   | 数据库行锁单飞 + 二次检查；巡检任务单实例或加锁                                                   |
+| 365 天强制重授权                   | 长期连接必然失效                       | `metadata.refresh_deadline` 提前 30/7 天提示；失效错误码明确                                      |
+| docx blocks 递归 + 大文档          | 超时/超大响应                          | 深度与字节双上限；截断标记 + 分页工具                                                             |
+| 飞书限流（API×应用×租户）          | 批量读触发 429                         | 令牌桶按三元组 + 读 reset 头退避；错误可重试                                                      |
+| 凭证密钥泄露                       | 全部第三方 token 暴露                  | KMS/长随机 + 启动强校验；撤销路径可批量执行                                                       |
+| 连接器工具污染模型工具面           | 模型选择困难/误用                      | 工具按连接启用；描述精简；写工具 confirm（任务路径）/ 就地确认（对话路径）；每连接工具数上限      |
+| Notion token TTL 未知              | 被动 401，可能影响体验                 | 401 触发刷新 + introspect 巡检；`expires_at` 空表示未知                                           |
+| MCP server 自述 annotations 不可信 | 夸大 readOnlyHint 让写工具被当只读执行 | 预设只读前缀只对内置预设生效；非预设 server 需 `auto_approve` 显式信任并出确认卡；DANGER 不进对话 |
+| Notion MCP 工具面约 70 个          | 模型选择困难 / 误用                    | `/mcp` 可用 `tools_allowlist` 收窄；预设默认 `auto_approve=false`；写操作确认卡                   |
 
 ## 10. 参考
 
@@ -495,4 +539,5 @@ class NotionProvider(BaseProvider):
 - WorkBuddy 连接器：<https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector>、<https://open.workbuddy.cn/docs/connector>
 - 飞书开放平台：<https://open.feishu.cn/document/home/app-types-introduction/overview.md>、<https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token.md>
 - Notion：<https://developers.notion.com/guides/authorization/overview.md>、<https://developers.notion.com/reference/request-limits.md>
+- Notion MCP：<https://developers.notion.com/docs/mcp>
 - 授权安全：RFC 9700（OAuth 2.0 Security BCP）、RFC 7636（PKCE）

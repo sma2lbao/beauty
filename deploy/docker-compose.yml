@@ -182,12 +182,10 @@ services:
       CONNECTOR__AUTO_CREATE_TABLES: 'false'
       CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
-      # 内置 Notion 连接器(4 只读 + 2 写,写操作经对话确认):OAuth public
-      # integration 凭证;留空则目录里 Notion 未配置(前端提示管理员配置),
-      # 但仍可用「粘贴内部集成令牌」建连接,不影响其他内部端点。
-      CONNECTOR__PROVIDERS_ENABLED: notion
-      CONNECTOR__NOTION_CLIENT_ID: ${CONNECTOR_NOTION_CLIENT_ID:-}
-      CONNECTOR__NOTION_CLIENT_SECRET: ${CONNECTOR_NOTION_CLIENT_SECRET:-}
+      # 当前无内置 provider(目录为空):内置 Notion provider 已于 2026-11-04 移除。
+      # Notion 改走官方 MCP(https://mcp.notion.com/mcp):在 Web /connectors 一键授权,
+      # 凭证由 agent-orchestrator 的 mcp_server_auth 托管,本服务不再需要 NOTION_* 变量。
+      # 接入新 provider 时再设 CONNECTOR__PROVIDERS_ENABLED=<key> 并补对应凭证。
       CONNECTOR__INTERNAL_SECRET: ${CONNECTOR_INTERNAL_SECRET:-compose-demo-connector-internal-secret}
       # 浏览器回跳经同源网关 → connector-service;须与 provider 后台登记的重定向 URL 一致。
       CONNECTOR__OAUTH_REDIRECT_BASE: ${CONNECTOR_OAUTH_REDIRECT_BASE:-http://localhost:8080/api/connector}

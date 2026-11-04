@@ -1,6 +1,6 @@
 # 工具执行面设计:exec / web_search / todo(P1-L)
 
-> 状态:**exec MVP(2026-10-27)与 todo 第一轮(2026-10-27)已落地**;web_search 仅为契约与分期,未实施。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器写工具),既有 exec 审批链不变。
+> 状态:**exec MVP(2026-10-27)与 todo 第一轮(2026-10-27)已落地**;web_search 仅为契约与分期,未实施。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
 > 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload)。
 
 ## 1. 摘要
@@ -147,7 +147,7 @@ shell 能绕过文件工具的路径 jail(直接 `cat /workspace/../etc/passwd` 
 2. **confirm 闸**:`RiskDefaultApproval` 对 `danger` 返回 CONFIRM → `interrupt`(kind=confirmation),批量 `writes_approved` 后以 `approved=true` 执行。
 3. **tool-service 兜底**:`execute` 与 `ToolRunner` 都做「WRITE/DESTRUCTIVE 无 approved → 403」,防越权直连。
 4. **目录开关**:`TOOL__EXEC_ENABLED=false` 时 list/get/execute 一致地视为不存在(404),不会有「目录没有但能执行」的缝。
-5. **对话路径的就地确认(2026-11-04)**:`risk=write` 的工具(如连接器写工具 `Notion__create_page`)在 chat 里不直接执行——orchestrator 落 pending 确认、前端卡片确认后以 `approved=true` 重放;tool-service 的「WRITE/DESTRUCTIVE 无 approved → 403」闸门不变(见 §7.6)。
+5. **对话路径的就地确认(2026-11-04)**:`risk=write` 的工具(连接器 provider 写工具,或信任级别允许的 MCP 写工具,如 Notion MCP 的创建/更新类工具)在 chat 里不直接执行——orchestrator 落 pending 确认、前端卡片确认后以 `approved=true` 重放;tool-service 的「WRITE/DESTRUCTIVE 无 approved → 403」闸门不变(见 §7.6)。
 
 ### 7.3 打开 exec 的部署前提
 
@@ -174,13 +174,15 @@ P1-A policy 引擎落地后,exec 可以按「命令前缀 allowlist」(如 `pyte
 
 ### 7.6 对话内写操作就地确认(2026-11-04)
 
-`exec` 这类 `destructive` 工具仍只在任务图里走审批;连接器写工具(`risk=write`,如 `Notion__create_page` / `Notion__append_blocks`)在**对话**里同样需要人工确认,但不建 run,改用「就地确认」:
+`exec` 这类 `destructive` 工具仍只在任务图里走审批;MCP 写工具(`risk=write`,如 Notion MCP 的创建/更新类工具,工具名以 server `tools/list` 为准)在**对话**里同样需要人工确认,但不建 run,改用「就地确认」:
 
 1. **对话可见工具**:orchestrator 裁剪为 `kind=function && risk!=danger`——READ/WRITE 都可见,DANGER(含 `exec`)不进对话,回喂提示改用「任务」。
 2. **发起即挂起**:模型发起 `risk=write` 调用时**不执行**,落 `chat_tool_confirmations`(`status=pending`,TTL 10 分钟);SSE `tool` 帧带 `decision="confirm"`、`error_code="tool.confirmation_required"`、`ok=false`、`confirmation_id`、`expires_at`(ISO8601),并把「需要用户确认,不要重复调用」回喂模型。
 3. **确认/取消**:`POST /v1/conversations/{cid}/tool-confirmations/{confirmation_id}/confirm` 以 `approved=true` 重放同一 `tool_call`(arguments 原样),结果落 assistant 消息并回填卡片;`.../cancel` 只改状态、不执行。
 4. **幂等与错误码**:确认时对确认行加 `FOR UPDATE` 并校验状态,重复确认不重复执行;不存在/跨租户 404 `tool_confirmation.not_found`、过期 409 `tool_confirmation.expired`、已确认/已取消 409 `tool_confirmation.not_pending`、确认时工具已不可用 409 `tool_confirmation.tool_unavailable`。
 5. **边界不变**:对话确认只是「取得 approved 的一条通道」,不替代 tool-service 的写闸门(§7.2 第 3 条)与任务图的审批链;确认时用与发消息相同一套工具箱装配(允许 write、排除 danger),不会出现「看到的工具」与「确认时执行的工具」漂移;前端确认卡片按会话粘性列表展示,SSE 重连不重复出卡。
+
+**MCP 工具的风险从哪来**:orchestrator 按工具 `annotations` 与内置预设的只读前缀分档(详见 [connector.md](./connector.md) §7)——`annotations.destructiveHint=true` → DANGER;`annotations.readOnlyHint=true` 或命中预设只读前缀 → READ;租户开「免确认执行」→ WRITE(对话内出确认卡);其余 → DANGER(不进对话)。
 
 ## 8. 审计与事件
 

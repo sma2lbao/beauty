@@ -50,7 +50,7 @@ npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动�
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
-connector-service(:8004)是连接器平台(内置 Notion 连接器:4 只读 + 2 写工具,写操作经对话确认;支持 OAuth 授权或粘贴内部集成令牌两种连接方式),Web 端有 `/connectors` 页面;邮件与日历能力已下线。
+connector-service(:8004)是通用连接器平台(OAuth 授权会话/凭证托管/刷新巡检/outbox;当前无内置 provider),Web 端 `/connectors` 页面已改为 **MCP 预设连接器**(Notion 一键授权,Notion 经官方 MCP 接入);邮件与日历能力已下线。
 
 打开 http://localhost:5173。
 
@@ -83,41 +83,34 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 工具白名单语义：**未声明 `tools`（接口返回 `null`）= 不限制**，装配全部工具；显式 `"tools": []` 才是"不用工具"。执行时按声明的白名单裁剪，例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
-## 3.2 连接器（内置 Notion：4 只读 + 2 写）
+## 3.2 连接器平台与 MCP 预设(Notion 走 MCP)
 
-- **定位**：connector-service(:8004) 是连接器平台（OAuth 授权会话、凭证托管、连接生命周期：刷新单飞 + 24h 巡检 + outbox 生命周期事件）；内置 **Notion 连接器**（provider key `notion`、工具前缀 `Notion`；4 个只读工具 + 2 个写工具，写操作经对话内确认）。连接支持两种方式：**OAuth public integration** 或**直接粘贴 internal integration token**。邮件/日历能力已于 2026-10 下线，内置飞书 provider 已于 2026-11-04 按新规划移除。设计见 [design/connector.md](./design/connector.md)。
-- **页面**：Web `/connectors` 列出 provider 与连接状态，支持授权、启用/停用、检查、刷新、解除连接。
-- **接口**：`GET /v1/connectors`（目录）、`POST /v1/connectors/{provider}/authorize`、`GET /v1/oauth/{provider}/callback`、`GET /v1/connections`、`POST /v1/connections`（粘贴静态令牌建连接）、`GET/PATCH/DELETE /v1/connections/{id}`、`POST /v1/connections/{id}/refresh|check`；内部面 `GET /v1/internal/connectors/tools`、`POST /v1/connectors/{provider}/execute`（`X-Internal-Secret` + `X-Tenant-Id`）。
-- **本地启用**：
-  1. `cp services/connector-service/.env.example services/connector-service/.env`，按下列示例填值（`CONNECTOR__` 前缀）：
-     ```dotenv
-     CONNECTOR__PROVIDERS_ENABLED=notion
-     CONNECTOR__NOTION_CLIENT_ID=<public integration 的 client id>
-     CONNECTOR__NOTION_CLIENT_SECRET=<client secret>
-     CONNECTOR__OAUTH_REDIRECT_BASE=http://localhost:5173/api/connector
-     CONNECTOR__INTERNAL_SECRET=<内部密钥>
-     CONNECTOR__CREDENTIAL_SECRET=<凭证信封密钥>
-     ```
-     直连 :8004 调试时把 `CONNECTOR__OAUTH_REDIRECT_BASE` 改为 `http://127.0.0.1:8004`。
-  2. 在 Notion 建 **public integration**：Redirect URI 填 `{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `http://localhost:5173/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）。回调是浏览器被授权页重定向回来的（没有会话凭证），所以 API 网关把它做成**公开路由** `/api/connector/v1/oauth/{provider}/callback`，原样转发给 connector-service 并透传它的 302 目标，不经过通用 `/api/{path}` 代理的鉴权；Capabilities 勾选 **Read content**（只读工具必需）与 **Insert content**、**Update content**（`Notion__create_page` / `Notion__append_blocks` 需要，改动后需重新授权）。
-  3. 生成一个内部密钥同时写进 connector-service 的 `CONNECTOR__INTERNAL_SECRET` 与 tool-service 的 `TOOL__CONNECTOR_INTERNAL_SECRET`（留空则连接器工具不暴露，授权页面仍可用）。
-  4. 重启 connector-service 与 tool-service。
-- **替代方式（不想注册 public integration）**：用 Notion **internal integration token** 直接建连接——(1) Notion「Settings → Connections → Develop or manage integrations」新建 internal integration，复制 **Internal Integration Secret**（`ntn_…`）；(2) 在目标页面/数据库的「Connections / Share」里把该 integration 加进去（未 share 的资源会 403/404）；(3) Web `/connectors` → Notion 卡片「粘贴令牌」，或调 `POST /v1/connections`，body `{"provider":"notion","token":"<secret>","display_name":"可选"}` → 201。该路径**不需要** `CONNECTOR__NOTION_CLIENT_ID/SECRET`，也没有授权页/回调；连接 `auth_kind=token`、令牌走同一套信封加密落库，身份按 `integration:<bot_id>` 记录；token 无过期/刷新，调用遇 401 置 `expired`，重新粘贴新令牌即可。
-- **执行链**：orchestrator → tool-service（`TOOL__CONNECTOR_*`，目录按租户缓存 30s）→ connector-service；工具名 `<Provider>__<tool>`。只读 4 个：`Notion__search`、`Notion__read_page`、`Notion__read_blocks`、`Notion__query_data_source`（`risk=read` 自动放行）；写 2 个：`Notion__create_page`、`Notion__append_blocks`（`risk=write`，对话里先挂起、用户就地确认后以 `approved=true` 重放，任务路径走 `approval_policies` 确认）。审计落 tool-service 的 `tool_calls`。
-- **已删除**：IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD；存量连接由迁移统一撤销。
+- **定位**:connector-service(:8004) 是**通用连接器平台**(OAuth 授权会话、凭证托管、连接生命周期:刷新单飞 + 24h 巡检 + outbox 生命周期事件;支持 OAuth 授权与静态令牌两种连接方式)。**当前无内置 provider**(`connector/providers/` 目录为空):内置飞书 provider 已于 2026-11-04 上旬移除,内置 Notion provider 也已于 2026-11-04 二次规划移除。设计见 [design/connector.md](./design/connector.md)。
+- **Notion 改走官方 MCP**(`https://mcp.notion.com/mcp`):凭证、工具与授权都在 **agent-orchestrator** 侧(`mcp_server_auth` + `mcp_oauth`),不再经过 connector-service;`/connectors` 页面从「provider 目录」改为 **MCP 预设连接器**(一键授权)。
+- **三步用起来**:
+  1. 启动服务(`connector-service` 无需任何 Notion 凭证;确认 `agent-orchestrator` 的 `AGENT_ORCHESTRATOR__MCP_OAUTH_*` 开启,默认开)。
+  2. 打开 Web `/connectors`,Notion 卡片点「连接 Notion」→ 前端 `POST /api/v1/mcp/presets/notion`(幂等 ensure server)+ `POST /api/v1/mcp/servers/{id}/oauth/start {"next":"/connectors"}` → 整页跳转授权服务器 → 浏览器授权 → 回跳 `/connectors?oauth=success&server=Notion`。
+     也可以走 `/mcp` 页手动「添加 server」:URL 填 `https://mcp.notion.com/mcp`,测试出现「需要授权」后点「去授权」,回调默认回 `/mcp?oauth=success`。
+  3. 回会话(`/`),在输入区「MCP」选择器里选 `Notion`(或深链 `/?mcp=<server_id>`),让模型用 Notion 工具;不选 = 装配全部已启用 server 的 MCP 工具。
+- **工具面**:以 server `tools/list` 为准(当前约 70 个),命名 `mcp__notion__<tool>`;风险按工具粒度分级(`annotations` + 预设只读前缀,详见 [design/connector.md](./design/connector.md) §7):只读工具直接执行;写工具在对话里出确认卡(`/v1/conversations/{cid}/tool-confirmations/*`);`destructiveHint=true` 等 DANGER 工具不进对话。
+- **默认只授权了什么**:预设 server 以 `auto_approve=false` 创建——未声明 `readOnlyHint`、也未命中预设只读前缀的工具一律按 DANGER 处理(对话里不执行);把 `/mcp` 详情页「免确认执行」打开后,这类工具降为 WRITE,对话里出确认卡后执行。这比内置 provider 时的直连写更保守,属预期行为。
+- **接口(MCP 预设)**:`GET /v1/mcp/presets`(预设目录)、`POST /v1/mcp/presets/{key}`(幂等 ensure server)、`POST /v1/mcp/servers/{id}/oauth/start`(body 可带 `{"next":"/mcp"|"/connectors"}`,决定回调 302 落点)、`GET /v1/mcp/servers`(连接状态:`has_oauth`/`oauth_authorized`/工具数等)。旧 provider 接口(`/v1/connectors`、`/v1/connections` 等)仍保留,但目录为空,仅对未来 provider 生效。
+- **执行链(平台侧,保留)**:orchestrator → tool-service(`TOOL__CONNECTOR_*`)→ connector-service(工具名 `<Provider>__<tool>`;`risk=write` 走对话确认)——当前无 provider 时不会装配任何连接器工具。
+- **已删除**:IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD;内置飞书 provider(2026-11-04);内置 Notion provider 及其 `CONNECTOR__NOTION_*` 配置(2026-11-04 二次规划,Notion 改 MCP)。
 
 ## 3.3 MCP Client（第三方工具）
 
 - `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互是左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
 - 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
-- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图，未信任 server 的工具按危险操作处理（需人工确认），开启「免确认执行」后按受控写自动执行。
-- 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，工具在
-  **对话**里可直接调用（对话没有审批流，见架构 §6.7），任务里也不再逐次确认；关着时
-  对话里只会回喂「请改用任务」。注册表单与详情页都有这个开关。
+- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图。风险按**工具粒度**分级：`annotations.destructiveHint=true` → DANGER、`annotations.readOnlyHint=true` 或命中内置预设(Notion)的只读前缀 → READ、租户开「免确认执行」→ WRITE、其余 → DANGER(见 [design/connector.md](./design/connector.md) §7)。
+- 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，
+  未被 `annotations` 判为只读、也未命中预设只读前缀的工具按 `WRITE` 处理（对话里出确认卡后执行，
+  任务里也不再逐次确认）；关着时这类工具是 `DANGER`，对话里只会回喂「请改用任务」。
+  注册表单与详情页都有这个开关。
 - 对话里的显式引用：Web 对话页输入区在「技能」旁有「MCP」选择器（`?mcp=<server_id>` 可深链），选中后这条消息**只**装配被引用 server 的 MCP 工具；不选 = 全部 server（向后兼容）。引用随消息/run 落库（`mcp_server_ids`，最多 10 个）并进系统提示词，历史消息显示 `MCP · <server>` 徽标；run 建好后引用固化为快照，后续再改选择不影响已建 run。接口侧 `POST /v1/conversations/{id}/messages`（含 `/messages/stream`）与 `POST /v1/runs` 都接受 `mcp_server_ids`，校验在落库前完成：未知 404 `mcp.server_not_found`、停用 409 `mcp.server_disabled`、能力未启用 409 `mcp.disabled`。
 - 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
 - http 传输收到 401 时按「需要授权」处理：测试端点落 `last_status=auth_required`、`/mcp` 页标「需要授权」；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`），响应头 `WWW-Authenticate` 保留下来作发现线索。
-- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **API 网关同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
+- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **API 网关同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`（`oauth/start` 可带 `next=/connectors`，回调就落 `/connectors?oauth=success`）。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
 - http 传输按 Streamable HTTP 规范回带会话头：`initialize` 响应里的 `Mcp-Session-Id` 会带到后续每个请求（含 notification），之后请求带协商出的 `MCP-Protocol-Version`；会话失效（服务端回 404）自动重新 initialize 并重试一次，关闭时尽力 `DELETE` 终止会话。
 - 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
 - MCP Server 对外暴露（M3）尚未实现。
