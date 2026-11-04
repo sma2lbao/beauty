@@ -64,9 +64,19 @@ def test_manifest() -> None:
         "read_page",
         "read_blocks",
         "query_data_source",
+        "create_page",
+        "append_blocks",
+    ]
+    assert [str(spec.risk) for spec in provider.tools] == [
+        "read",
+        "read",
+        "read",
+        "read",
+        "write",
+        "write",
     ]
     with pytest.raises(KeyError):
-        provider.tool_spec("Notion__create_page")
+        provider.tool_spec("Notion__delete_page")
 
 
 def test_not_configured_without_credentials() -> None:
@@ -295,9 +305,7 @@ async def test_tool_error_mapping(response: httpx.Response, code: str) -> None:
     mock.fail["/search"] = response
     async with _client(mock) as client:
         with pytest.raises(ProviderError) as excinfo:
-            await _provider().call(
-                "Notion__search", {}, CREDS.to_payload(), client
-            )
+            await _provider().call("Notion__search", {}, CREDS.to_payload(), client)
     assert excinfo.value.code == code
 
 
@@ -328,6 +336,105 @@ async def test_tool_timeout_and_network_error() -> None:
         with pytest.raises(ProviderError) as excinfo:
             await provider.call("Notion__search", {}, CREDS.to_payload(), client)
     assert excinfo.value.code == "connector.upstream_unavailable"
+
+
+async def test_create_page_posts_parent_title_and_paragraphs() -> None:
+    mock = NotionMock()
+    async with _client(mock) as client:
+        result = await _provider().call(
+            "Notion__create_page",
+            {
+                "parent_type": "data_source",
+                "parent_id": "ds-1",
+                "title": "周报",
+                "title_property": "名称",
+                "paragraphs": ["第一段", " 第二段 "],
+            },
+            CREDS.to_payload(),
+            client,
+        )
+    method, url, body = mock.writes[-1]
+    assert (method, url) == ("POST", "https://api.notion.com/v1/pages")
+    assert body["parent"] == {"data_source_id": "ds-1"}
+    assert body["properties"] == {
+        "名称": {"title": [{"type": "text", "text": {"content": "周报"}}]}
+    }
+    assert [item["type"] for item in body["children"]] == ["paragraph", "paragraph"]
+    assert (
+        body["children"][1]["paragraph"]["rich_text"][0]["text"]["content"] == "第二段"
+    )
+    assert result["id"] == "page-new"
+    assert result["parent"] == {"type": "page_id", "page_id": "page-1"}
+    # 写请求同样带 Notion-Version
+    assert mock.api_calls[-1][3] == "2026-03-11"
+
+
+async def test_create_page_defaults_to_page_parent() -> None:
+    mock = NotionMock()
+    async with _client(mock) as client:
+        await _provider().call(
+            "Notion__create_page",
+            {"parent_id": "page-1", "title": "子页面"},
+            CREDS.to_payload(),
+            client,
+        )
+    _, _, body = mock.writes[-1]
+    assert body["parent"] == {"page_id": "page-1"}
+    assert body["properties"] == {
+        "title": {"title": [{"type": "text", "text": {"content": "子页面"}}]}
+    }
+    assert "children" not in body
+
+
+async def test_append_blocks_patches_children() -> None:
+    mock = NotionMock()
+    async with _client(mock) as client:
+        result = await _provider().call(
+            "Notion__append_blocks",
+            {"block_id": "page-1", "paragraphs": ["补一段"], "after": "block-1"},
+            CREDS.to_payload(),
+            client,
+        )
+    method, url, body = mock.writes[-1]
+    assert (method, url) == (
+        "PATCH",
+        "https://api.notion.com/v1/blocks/page-1/children",
+    )
+    assert body["after"] == "block-1"
+    assert (
+        body["children"][0]["paragraph"]["rich_text"][0]["text"]["content"] == "补一段"
+    )
+    assert result["results"] == [{"id": "block-new-1", "type": "paragraph"}]
+
+
+async def test_write_arguments_are_validated() -> None:
+    mock = NotionMock()
+    async with _client(mock) as client:
+        with pytest.raises(ProviderError) as empty:
+            await _provider().call(
+                "Notion__append_blocks",
+                {"block_id": "page-1", "paragraphs": []},
+                CREDS.to_payload(),
+                client,
+            )
+        with pytest.raises(ProviderError) as parent:
+            await _provider().call(
+                "Notion__create_page",
+                {"parent_id": "page-1", "title": "x", "parent_type": "workspace"},
+                CREDS.to_payload(),
+                client,
+            )
+        with pytest.raises(ProviderError) as bad_paragraphs:
+            await _provider().call(
+                "Notion__create_page",
+                {"parent_id": "page-1", "title": "x", "paragraphs": [1]},
+                CREDS.to_payload(),
+                client,
+            )
+    assert empty.value.code == "connector.invalid_arguments"
+    assert parent.value.code == "connector.invalid_arguments"
+    assert bad_paragraphs.value.code == "connector.invalid_arguments"
+    assert mock.writes == []
 
 
 async def test_invalid_arguments() -> None:
@@ -364,6 +471,10 @@ def test_authorize_callback_and_execute_end_to_end(tmp_path: Path) -> None:
         notion = next(item for item in catalog["providers"] if item["name"] == "notion")
         assert notion["configured"] is True
         assert notion["connected"] is False
+        risks = {tool["name"]: tool["risk"] for tool in notion["tools"]}
+        assert risks["Notion__search"] == "read"
+        assert risks["Notion__create_page"] == "write"
+        assert risks["Notion__append_blocks"] == "write"
 
         resp = client.post("/v1/connectors/notion/authorize", headers=TENANT)
         assert resp.status_code == 200, resp.text
@@ -379,8 +490,7 @@ def test_authorize_callback_and_execute_end_to_end(tmp_path: Path) -> None:
         )
         assert callback.status_code == 302
         params = {
-            key: value[0]
-            for key, value in _query(callback.headers["location"]).items()
+            key: value[0] for key, value in _query(callback.headers["location"]).items()
         }
         assert params["provider"] == "notion"
         assert params["status"] == "connected"
@@ -411,6 +521,19 @@ def test_authorize_callback_and_execute_end_to_end(tmp_path: Path) -> None:
         _, _, auth, version = mock.api_calls[-1]
         assert auth == "Bearer notion-at-1"
         assert version == "2026-03-11"
+
+        # 风险等级随内部目录透出:tool-service 据此要求人工确认
+        descriptors = client.get(
+            "/v1/internal/connectors/tools", headers=INTERNAL_HEADERS
+        ).json()["tools"]
+        by_name = {tool["name"]: tool for tool in descriptors}
+        assert by_name["Notion__search"]["risk"] == "read"
+        assert by_name["Notion__create_page"]["risk"] == "write"
+        assert by_name["Notion__append_blocks"]["risk"] == "write"
+        assert by_name["Notion__create_page"]["input_schema"]["required"] == [
+            "parent_id",
+            "title",
+        ]
 
 
 def test_execute_without_connection_is_tool_failure(tmp_path: Path) -> None:

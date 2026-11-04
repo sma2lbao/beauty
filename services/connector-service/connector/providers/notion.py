@@ -1,11 +1,13 @@
-"""Notion provider:public integration OAuth(bot token)+ 只读工具。
+"""Notion provider:public integration OAuth(bot token)+ 只读/写工具。
 
 授权走 Notion 的 OAuth2:授权页带 `owner=user`(固定值),不支持 PKCE,换 token
 用 HTTP Basic Auth;token 响应不含 `expires_in`(TTL 未知),所以不做按时间惰性
-刷新,401 视为授权失效;有 refresh_token 时支持手动刷新。工具为 search /
-read_page / read_blocks / query_data_source 四个只读能力;写工具(create_page /
-append_blocks)等对话审批链路就绪后再上(设计 §7)。凭证只在本进程内存里出现,
-落库前由 service 层信封加密。
+刷新,401 视为授权失效;有 refresh_token 时支持手动刷新。
+
+工具分两档(风险等级随 ToolDescriptor 透出给 tool-service):只读 search /
+read_page / read_blocks / query_data_source;写入 create_page / append_blocks
+标 `ToolRisk.WRITE`,执行前必须经对话或任务的人工确认(approved=True)。
+凭证只在本进程内存里出现,落库前由 service 层信封加密。
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any, ClassVar
 from urllib.parse import quote, urlencode
 
 import httpx
+from common.tools import ToolRisk
 
 from connector.core.config import Settings
 from connector.providers.base import (
@@ -139,6 +142,71 @@ class NotionProvider(BaseProvider):
                 "required": ["data_source_id"],
             },
         ),
+        ToolSpec(
+            name="create_page",
+            title="新建页面",
+            description=(
+                "在指定页面或 data source 下新建页面并写入段落正文(写操作,"
+                "执行前需要用户确认)。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "parent_type": {
+                        "type": "string",
+                        "enum": ["page", "data_source"],
+                        "description": "父级类型:页面下建子页面,或数据源里建一行",
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "父级页面或 data source 的 id",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "新页面标题(写入 title 属性)",
+                    },
+                    "title_property": {
+                        "type": "string",
+                        "description": "标题属性名;data source 里可指定,默认 title",
+                    },
+                    "paragraphs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "页面正文段落,每项一段纯文本",
+                    },
+                },
+                "required": ["parent_id", "title"],
+            },
+            risk=ToolRisk.WRITE,
+        ),
+        ToolSpec(
+            name="append_blocks",
+            title="追加内容块",
+            description=(
+                "在指定块末尾追加段落(页面本身也是块;写操作,执行前需要用户确认)。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "block_id": {
+                        "type": "string",
+                        "description": "块 id;追加到页面末尾时传页面 id",
+                    },
+                    "paragraphs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                        "description": "要追加的段落,每项一段纯文本",
+                    },
+                    "after": {
+                        "type": "string",
+                        "description": "可选:插到该块之后,不填则追加到末尾",
+                    },
+                },
+                "required": ["block_id", "paragraphs"],
+            },
+            risk=ToolRisk.WRITE,
+        ),
     )
 
     def __init__(
@@ -168,9 +236,7 @@ class NotionProvider(BaseProvider):
 
     def with_tenant_app(self, app_id: str, app_secret: str) -> NotionProvider:
         """租户自带 Notion 集成:app_id=client_id、app_secret=client_secret。"""
-        return NotionProvider(
-            self.settings, client_id=app_id, client_secret=app_secret
-        )
+        return NotionProvider(self.settings, client_id=app_id, client_secret=app_secret)
 
     # ---- 静态描述 ----
 
@@ -454,6 +520,64 @@ class NotionProvider(BaseProvider):
             "next_cursor": data.get("next_cursor"),
         }
 
+    async def _call_create_page(
+        self,
+        arguments: dict[str, Any],
+        creds: Credentials,
+        client: httpx.AsyncClient,
+    ) -> dict[str, Any]:
+        parent_id = _require_str(arguments, "parent_id")
+        title = _require_str(arguments, "title")
+        parent_type = _opt_str(arguments.get("parent_type")) or "page"
+        if parent_type not in ("page", "data_source"):
+            raise ProviderError(
+                "connector.invalid_arguments",
+                "parent_type 只支持 page 或 data_source",
+            )
+        title_property = _opt_str(arguments.get("title_property")) or "title"
+        body: dict[str, Any] = {
+            # 2026-03-11 版接口的父级键是 <type>_id(页面/数据源)
+            "parent": {f"{parent_type}_id": parent_id},
+            "properties": {title_property: {"title": [_rich_text(title)]}},
+        }
+        children = _paragraph_blocks(arguments.get("paragraphs"))
+        if children:
+            body["children"] = children
+        data = await self._request(
+            client, "POST", f"{self._api}/v1/pages", creds, body=body
+        )
+        return {
+            "id": data.get("id"),
+            "url": data.get("url"),
+            "created_time": data.get("created_time"),
+            "last_edited_time": data.get("last_edited_time"),
+            "parent": data.get("parent"),
+        }
+
+    async def _call_append_blocks(
+        self,
+        arguments: dict[str, Any],
+        creds: Credentials,
+        client: httpx.AsyncClient,
+    ) -> dict[str, Any]:
+        block_id = _require_str(arguments, "block_id")
+        children = _paragraph_blocks(arguments.get("paragraphs"), required=True)
+        body: dict[str, Any] = {"children": children}
+        after = _opt_str(arguments.get("after"))
+        if after:
+            body["after"] = after
+        data = await self._request(
+            client,
+            "PATCH",
+            f"{self._api}/v1/blocks/{quote(block_id, safe='')}/children",
+            creds,
+            body=body,
+        )
+        return {
+            "results": [_block_summary(item) for item in _results(data)],
+            "has_more": bool(data.get("has_more")),
+        }
+
     # ---- HTTP ----
 
     async def _request(
@@ -596,6 +720,38 @@ def _plain_text(rich_text: Any) -> str | None:
     ]
     joined = "".join(part for part in parts if part)
     return joined or None
+
+
+def _rich_text(text: str) -> dict[str, Any]:
+    return {"type": "text", "text": {"content": text}}
+
+
+def _paragraph_blocks(value: Any, *, required: bool = False) -> list[dict[str, Any]]:
+    """把纯文本段落转成 Notion 的 paragraph 块(写入接口只收块结构)。"""
+    if not value:
+        if required:
+            raise ProviderError(
+                "connector.invalid_arguments", "缺少必填参数: paragraphs"
+            )
+        return []
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ProviderError(
+            "connector.invalid_arguments", "paragraphs 必须是非空字符串数组"
+        )
+    return [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [_rich_text(item.strip())]},
+        }
+        for item in value
+    ]
+
+
+def _block_summary(item: dict[str, Any]) -> dict[str, Any]:
+    return {"id": item.get("id"), "type": item.get("type")}
 
 
 def _json_or_none(response: httpx.Response) -> dict[str, Any] | None:

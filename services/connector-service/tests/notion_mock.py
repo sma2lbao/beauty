@@ -1,4 +1,4 @@
-"""Notion 上游桩:OAuth、身份与只读工具接口(全部 MockTransport,零网络)。
+"""Notion 上游桩:OAuth、身份与只读/写入工具接口(全部 MockTransport,零网络)。
 
 Notion 的关键差异(相对于一般 OAuth provider):换 token 用 HTTP Basic Auth、
 授权页带 `owner=user`、token 响应不含 `expires_in`、每个 API 请求都要
@@ -57,9 +57,7 @@ PAGE_OBJECT: dict[str, Any] = {
     "archived": False,
     "in_trash": False,
     "parent": {"type": "workspace", "workspace": True},
-    "properties": {
-        "title": {"type": "title", "title": [{"plain_text": "项目计划"}]}
-    },
+    "properties": {"title": {"type": "title", "title": [{"plain_text": "项目计划"}]}},
 }
 
 BLOCKS: list[dict[str, Any]] = [
@@ -68,6 +66,24 @@ BLOCKS: list[dict[str, Any]] = [
         "id": "block-1",
         "type": "paragraph",
         "paragraph": {"rich_text": [{"plain_text": "第一段", "type": "text"}]},
+    }
+]
+
+CREATED_PAGE: dict[str, Any] = {
+    "object": "page",
+    "id": "page-new",
+    "url": "https://www.notion.so/page-new",
+    "created_time": "2026-11-04T10:00:00.000Z",
+    "last_edited_time": "2026-11-04T10:00:00.000Z",
+    "parent": {"type": "page_id", "page_id": "page-1"},
+}
+
+APPENDED_BLOCKS: list[dict[str, Any]] = [
+    {
+        "object": "block",
+        "id": "block-new-1",
+        "type": "paragraph",
+        "paragraph": {"rich_text": [{"plain_text": "新段落", "type": "text"}]},
     }
 ]
 
@@ -87,6 +103,8 @@ class NotionMock:
         self.token_calls: list[dict[str, Any]] = []
         self.token_auth: list[str | None] = []
         self.api_calls: list[tuple[str, str, str | None, str | None]] = []
+        #: 写请求的 (method, url, body):断言 create_page/append_blocks 的载荷
+        self.writes: list[tuple[str, str, dict[str, Any]]] = []
         self.fail: dict[str, httpx.Response] = {}
 
     # ---- httpx 处理器 ----
@@ -113,7 +131,13 @@ class NotionMock:
         if path.endswith("/query"):
             return _json(_list(QUERY_ROWS))
         if path.endswith("/children"):
+            if request.method == "PATCH":
+                self.writes.append((request.method, str(request.url), _body(request)))
+                return _json(_list(APPENDED_BLOCKS))
             return _json(_list(BLOCKS))
+        if path == "/v1/pages" and request.method == "POST":
+            self.writes.append((request.method, str(request.url), _body(request)))
+            return _json(dict(CREATED_PAGE))
         if path.startswith("/v1/pages/"):
             return _json(PAGE_OBJECT)
         return _json({"object": "error", "code": "object_not_found"}, status=404)
@@ -122,6 +146,14 @@ class NotionMock:
         self.token_auth.append(request.headers.get("authorization"))
         self.token_calls.append(json.loads(request.content or b"{}"))
         return _json(dict(TOKEN_PAYLOAD))
+
+
+def _body(request: httpx.Request) -> dict[str, Any]:
+    try:
+        payload = json.loads(request.content or b"{}")
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _user_object() -> dict[str, Any]:

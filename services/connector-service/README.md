@@ -3,8 +3,9 @@
 连接器服务(架构 §8,设计见 [docs/design/connector.md](../../docs/design/connector.md)):
 把外部 SaaS 账号连到租户,凭证只进不出,并把 provider 能力暴露成 agent 可调用的工具。
 
-**内置 Notion 只读连接器**:public integration OAuth(bot token)+ 搜索/读页面/读块/
-查 data source 四个只读工具;平台层(授权、刷新、失效检测、目录、执行、连接管理)
+**内置 Notion 连接器**:public integration OAuth(bot token)+ 搜索/读页面/读块/
+查 data source 四个只读工具,以及新建页面/追加内容块两个**写工具**(risk=write,
+执行前必须经对话确认);平台层(授权、刷新、失效检测、目录、执行、连接管理)
 对任何 provider 通用,新 provider 按同一套 `BaseProvider` 接口实现并注册即可(步骤
 见下文「接入新 provider」)。邮件/日历能力已下线,存量连接在迁移 `b2e4c7a91d33`
 中置为 `revoked`;2026-11-04 按新规划移除了内置的飞书 provider,改以内置 Notion。
@@ -98,15 +99,23 @@ API 细节与一般 OAuth provider 不同:
   `workspace`),展示名取用户/工作区名称;`external_workspace` 记工作区名。
 - **请求头**:所有 API 请求带 `Authorization: Bearer <token>` 与
   `Notion-Version: {CONNECTOR__NOTION_VERSION}`。
-- **工具(只读 4 个)**:`Notion__search`(`POST /v1/search`)、`Notion__read_page`
+- **只读工具(4 个)**:`Notion__search`(`POST /v1/search`)、`Notion__read_page`
   (`GET /v1/pages/{id}`)、`Notion__read_blocks`(`GET /v1/blocks/{id}/children`)、
   `Notion__query_data_source`(`POST /v1/data_sources/{id}/query`)。Notion 的
   `search` 结果会被压成 id/标题/链接摘要;读块与查库保留原始对象。
+- **写工具(2 个,risk=write)**:`Notion__create_page`(`POST /v1/pages`,支持
+  `parent_type=page|data_source` + `title` + 段落 `paragraphs`)、
+  `Notion__append_blocks`(`PATCH /v1/blocks/{block_id}/children`,`paragraphs`
+  每项一段纯文本,`after` 可指定插入位置)。两个工具在目录里透出
+  `risk=write`,tool-service 在 `approved` 未置位时以
+  `tool.confirmation_required` 拦下;对话侧由「工具卡确认执行」或任务侧危险
+  操作确认按钮放行后才真正调用上游。
 - **错误映射**:401 → `auth_expired`(需重连);403 → `scope_missing`(页面没共享给集成);
   400 → `invalid_arguments`;429 读 `Retry-After` → `upstream_rate_limited`;
   ≥500 → `upstream_unavailable`(瞬时,不逼重连)。
-- **写能力(create_page / append_blocks)未实现**:对话侧还没有审批流,写工具会被
-  tool-service 以 `tool.confirmation_required` 拦下,留待 P3(设计 §7)。
+- **写能力的确认口径**:写工具不自动执行——risk=write 会随
+  `ToolDescriptor` 透出,由调用方(对话确认卡 / 任务图确认闸)带
+  `approved=true` 才放行;连接器服务本身不做审批判断(设计 §7)。
 - **租户凭证**:`tenant_apps` 的 `app_id`/`app_secret` 即 Notion 的
   `client_id`/`client_secret`;未配置的租户沿用全局 `Settings`。
 
@@ -115,6 +124,8 @@ Notion 侧准备:在 <https://www.notion.so/my-integrations> 建 public integrat
 `/api/connector/v1/oauth/notion/callback`)填进 Redirect URIs,把 client id/secret 填进
 `CONNECTOR__NOTION_CLIENT_ID`/`CONNECTOR__NOTION_CLIENT_SECRET`;用户授权后还要在
 Notion 里把目标页面/数据库 **share 给该集成**,否则只能搜到空结果或 403。
+要用写工具,还需在该 integration 的 Capabilities 里勾上 **Insert content** /
+**Update content**(只读只需 Read content),否则写入会返回 403/400。
 
 ## 接入新 provider
 
@@ -123,8 +134,9 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 1. 在 `connector/providers/<name>.py` 继承 `BaseProvider`:声明
    `name`/`prefix`/`display_name`/`auth_kind`/`docs_url`/`tools`(每个工具一个
    `ToolSpec`,含 `input_schema`),实现 `authorize_url`、`exchange_code`、
-   `refresh`、`fetch_identity`、`call`;工具 `risk` 当前由目录层统一暴露为 `read`
-   (写工具要等对话审批链路,见「内置 Notion provider」)。
+   `refresh`、`fetch_identity`、`call`;只读工具用默认 `risk=read`,写工具在
+   `ToolSpec` 上标 `risk=ToolRisk.WRITE`,目录与内部目录都会透出该等级
+   (审批由 tool-service/对话侧负责,见「内置 Notion provider」)。
 2. 在 `connector/providers/__init__.py` 的注册表登记构造函数;config 里按需加
    该 provider 的应用凭证字段。
 3. 错误统一抛 `ProviderError(code, message, hint, retryable)`;需要重连的错误码

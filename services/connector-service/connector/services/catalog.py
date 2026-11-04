@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from common.tools import ExecutorKind, ToolDescriptor, ToolKind, ToolRisk
+from common.tools import ExecutorKind, ToolDescriptor, ToolKind
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from connector.core.config import Settings
@@ -75,7 +75,7 @@ async def list_providers(
                         name=provider.full_tool_name(spec.name),
                         title=spec.title,
                         description=spec.description,
-                        risk=ToolRisk.READ.value,
+                        risk=spec.risk.value,
                     )
                     for spec in provider.tools
                 ],
@@ -104,7 +104,7 @@ async def tool_descriptors(
                     description=f"[{provider.display_name}] {spec.description}",
                     input_schema=spec.input_schema,
                     output_schema=spec.output_schema,
-                    risk=ToolRisk.READ,
+                    risk=spec.risk,
                     kind=ToolKind.FUNCTION,
                     executor=ExecutorKind.CONNECTOR,
                     timeout_seconds=30.0,

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, ClassVar
 
 import httpx
+from common.tools import ToolRisk
 
 from connector.core.clock import as_utc
 from connector.core.config import Settings
@@ -26,6 +27,8 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any] | None = None
+    #: 风险等级:只读工具自动执行;写/破坏性工具由确认闸放行(设计 §5.6/§7)
+    risk: ToolRisk = ToolRisk.READ
 
 
 @dataclass(frozen=True, slots=True)
