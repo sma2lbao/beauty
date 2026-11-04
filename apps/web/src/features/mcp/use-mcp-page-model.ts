@@ -1,6 +1,9 @@
 /**
- * MCP 页的数据与交互模型:server 注册表查询、注册/测试/启停/删除/授权变更,
+ * MCP 管理区的数据与交互模型:server 注册表查询、注册/测试/启停/删除/授权变更,
  * 以及 OAuth 回跳参数与表单状态。页面只负责布局与组合。
+ *
+ * options.returnPath:浏览器授权完成后回到哪个前端页面。独立 /mcp 页不传
+ * (后端默认回 /mcp);嵌在「连接器」页时传 /connectors。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -19,9 +22,16 @@ import {
   type FormState,
 } from './form';
 
-export function useMcpPageModel() {
+export type UseMcpPageModelOptions = {
+  /** 授权完成后回到的前端路径;缺省由后端回 /mcp */
+  returnPath?: string;
+};
+
+export function useMcpPageModel(options: UseMcpPageModelOptions = {}) {
+  const { returnPath } = options;
   const queryClient = useQueryClient();
-  // 浏览器 OAuth 回调:API 网关把授权结果重定向回 /mcp?oauth=success&server=…|?oauth=error&error=…
+  // 浏览器 OAuth 回调:API 网关把授权结果重定向回发起页
+  // (默认 /mcp,连接器页为 /connectors)?oauth=success&server=…|?oauth=error&error=…
   const [searchParams] = useSearchParams();
   const oauthStatus = searchParams.get('oauth');
   const oauthServerName = searchParams.get('server');
@@ -122,10 +132,11 @@ export function useMcpPageModel() {
   });
 
   const oauthStartMutation = useMutation({
-    mutationFn: (id: string) => mcpApi.startOAuth(id),
+    mutationFn: (id: string) =>
+      returnPath ? mcpApi.startOAuth(id, returnPath) : mcpApi.startOAuth(id),
     onSuccess: (result) => {
       setActionError(null);
-      // 整页跳到授权服务器;授权完成后由授权服务器 → API 网关 → 本页 ?oauth=success|error
+      // 整页跳到授权服务器;授权完成后由授权服务器 → API 网关 → 发起页 ?oauth=success|error
       window.location.href = result.authorize_url;
     },
     onError: (failure) => setActionError((failure as Error).message),

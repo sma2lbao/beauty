@@ -12,7 +12,6 @@ import {
   Globe,
   Inbox,
   LayoutGrid,
-  Plug,
   Settings,
   Sparkles,
 } from 'lucide-react';
@@ -24,7 +23,7 @@ const PRIMARY_NAV = [
   { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
   { to: '/runs', icon: <Columns3 />, label: '任务编排' },
   { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
-  { to: '/mcp', icon: <Plug />, label: 'MCP' },
+  // MCP 入口已并入连接器页(页内「我的 MCP 服务」段),不再单列
   { to: '/connectors', icon: <Cable />, label: '连接器' },
   { to: '/skills', icon: <Sparkles />, label: 'Skills' },
   { to: '/usage', icon: <BarChart3 />, label: '用量' },

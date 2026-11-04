@@ -170,13 +170,14 @@ describe('ConnectorsPage · MCP 预设', () => {
     renderPage();
 
     expect(await screen.findByText('已连接 · 2 个工具')).toBeTruthy();
-    expect(screen.getByText('已连接')).toBeTruthy();
+    // 「已连接」既在预设卡片、也在下方「我的 MCP 服务」列表里
+    expect(screen.getAllByText('已连接').length).toBeGreaterThan(0);
     const open = screen.getByRole('link', { name: '去会话使用 Notion' });
     // 会话页用 ?mcp=<server_id> 预选 MCP server
     expect(open.getAttribute('href')).toBe('/?mcp=srv-1');
     expect(
       screen.getByRole('link', { name: '管理 Notion' }).getAttribute('href'),
-    ).toBe('/mcp');
+    ).toBe('/connectors#mcp-servers');
     // 已连接不需要再建 server / 再授权
     expect(mcpPresetsApi.ensure).not.toHaveBeenCalled();
     expect(mcpApi.startOAuth).not.toHaveBeenCalled();
@@ -260,20 +261,49 @@ describe('ConnectorsPage · MCP 预设', () => {
     });
   });
 
-  it('已停用的 server 提示到 MCP 页启用,不给连接按钮', async () => {
+  it('已停用的 server 提示到「我的 MCP 服务」启用,不给连接按钮', async () => {
     vi.mocked(mcpApi.list).mockResolvedValue([
       makeServer({ enabled: false, oauth_authorized: true }),
     ]);
     renderPage();
 
-    expect(await screen.findByText('已停用')).toBeTruthy();
-    expect(screen.getByText(/到 MCP 页启用后才能在会话里使用/)).toBeTruthy();
+    expect((await screen.findAllByText('已停用')).length).toBeGreaterThan(0);
+    expect(screen.getByText(/已在「我的 MCP 服务」停用/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: '连接 Notion' })).toBeNull();
     expect(
       screen.queryByRole('button', { name: '重新授权 Notion' }),
     ).toBeNull();
     expect(
       screen.getByRole('link', { name: '管理 Notion' }).getAttribute('href'),
-    ).toBe('/mcp');
+    ).toBe('/connectors#mcp-servers');
+  });
+
+  it('页内「我的 MCP 服务」区列出已注册的自定义 server', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([
+      makeServer({
+        id: 'srv-custom',
+        name: 'GitHub',
+        url: 'https://mcp.github.example/mcp',
+        oauth_authorized: true,
+        tools: [
+          {
+            name: 'search_issues',
+            description: '搜索 issue',
+            input_schema: {},
+          },
+        ],
+      }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByText('我的 MCP 服务')).toBeTruthy();
+    // 自定义 server(非预设)出现在管理区列表里(列表项 + 选中详情卡会各出现一次)
+    expect((await screen.findAllByText('GitHub')).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('https://mcp.github.example/mcp').length,
+    ).toBeGreaterThan(0);
+    // 预设区仍按自己的匹配逻辑显示「连接」,不被自定义 server 影响
+    expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
+    expect(mcpApi.startOAuth).not.toHaveBeenCalled();
   });
 });

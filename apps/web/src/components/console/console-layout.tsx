@@ -8,12 +8,12 @@
 import {
   BarChart3,
   BookOpen,
+  Cable,
   Columns3,
   FolderKanban,
   GitCompareArrows,
   LayoutGrid,
   PanelLeft,
-  Plug,
   Settings,
   Sparkles,
 } from 'lucide-react';
@@ -32,7 +32,8 @@ const MOBILE_NAV = [
   { to: '/workspace', icon: <FolderKanban />, label: '工作区' },
   { to: '/runs', icon: <Columns3 />, label: '任务编排' },
   { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
-  { to: '/mcp', icon: <Plug />, label: 'MCP' },
+  // MCP 管理并入连接器页,移动端同样只留一个入口
+  { to: '/connectors', icon: <Cable />, label: '连接器' },
   { to: '/skills', icon: <Sparkles />, label: 'Skills' },
   { to: '/usage', icon: <BarChart3 />, label: '用量' },
   { to: '/knowledge', icon: <BookOpen />, label: '知识库' },

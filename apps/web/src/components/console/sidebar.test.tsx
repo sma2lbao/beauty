@@ -414,6 +414,17 @@ describe('ConsoleSidebar 工作区/会话', () => {
     );
   });
 
+  it('主导航把 MCP 并入连接器:不再有独立 MCP 入口', async () => {
+    renderSidebar();
+
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+    expect(within(nav).getByRole('link', { name: '连接器' })).toHaveAttribute(
+      'href',
+      '/connectors',
+    );
+    expect(within(nav).queryByRole('link', { name: 'MCP' })).toBeNull();
+  });
+
   it('底部通知入口能就地展开通知面板', async () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');

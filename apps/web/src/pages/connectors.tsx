@@ -1,10 +1,12 @@
 /**
- * 连接器页 = MCP 预设连接器(主)+ connector-service provider 目录(旧,按需)。
+ * 连接器页 = MCP 预设连接器(主)+ 我的 MCP 服务(自定义 server)+ provider 目录(旧)。
  *
- * 主区:Notion 等内置 MCP 预设,一键「幂等创建 server → 浏览器 OAuth → 回跳」,
- * 已连接给「去会话使用」(/ ?mcp=<server_id>)与「管理」(/mcp)。
- * 旧目录区只在后端还返回 provider 时渲染(当前 connector-service 无内置 provider,
- * 即隐藏),组件与旧测试都保留,目录下线不影响本页。
+ * 第一段:Notion 等内置 MCP 预设,一键「幂等创建 server → 浏览器 OAuth → 回跳」,
+ * 已连接给「去会话使用」(/ ?mcp=<server_id>)与「管理」(本页 #mcp-servers)。
+ * 第二段:原 /mcp 页的管理区(注册/测试/启停/删除/免确认开关)内嵌到本页,
+ * 连接器页成为 MCP 的唯一入口;/mcp 路由保留为旧书签与 OAuth 校验失败时的兜底落点。
+ * 第三段:旧 provider 目录只在后端还返回 provider 时渲染(当前 connector-service
+ * 无内置 provider,即隐藏),组件与旧测试都保留。
  *
  * 页面只做组装:数据/动作分别在 use-connector-presets 与 use-connectors-model。
  * 安全边界:凭证永不出后端;授权一律整页跳第三方,本页不接触 access token。
@@ -24,6 +26,8 @@ import { ConnectorTokenDialog } from '@/features/connectors/connector-token-dial
 import { McpPresetCard } from '@/features/connectors/mcp-preset-card';
 import { useConnectorPresets } from '@/features/connectors/use-connector-presets';
 import { useConnectorsModel } from '@/features/connectors/use-connectors-model';
+import { McpManagementSection } from '@/features/mcp/mcp-management-section';
+import { useMcpPageModel } from '@/features/mcp/use-mcp-page-model';
 
 function noticeClass(tone: 'success' | 'danger'): string {
   return tone === 'success'
@@ -33,6 +37,8 @@ function noticeClass(tone: 'success' | 'danger'): string {
 
 export function ConnectorsPage() {
   const presets = useConnectorPresets();
+  // 内嵌 MCP 管理区:授权回跳落在本页,与预设区消费同一组 ?oauth= 参数
+  const mcpModel = useMcpPageModel({ returnPath: '/connectors' });
   const model = useConnectorsModel();
   const {
     selectedConnection,
@@ -72,6 +78,7 @@ export function ConnectorsPage() {
 
   const refreshAll = () => {
     presets.refetch();
+    mcpModel.refresh();
     model.refetch();
   };
 
@@ -79,7 +86,7 @@ export function ConnectorsPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="连接器"
-        subtitle="Notion 等 MCP 预设一键授权 · 凭证只存在服务端，页面只管理连接与工具权限"
+        subtitle="MCP 预设一键授权 · 自定义 MCP server 注册与工具权限 · 凭证只存在服务端"
         actions={
           <ConsoleButton
             variant="secondary"
@@ -197,8 +204,27 @@ export function ConnectorsPage() {
           <p className="text-xs leading-5 text-ha-muted">
             「连接」会按预设幂等创建一个 MCP server，再跳到第三方页面授权；
             授权完成后浏览器回到本页。凭证由服务端加密保存，本页不接触 access
-            token。
+            token。已注册的 server 统一在下方「我的 MCP 服务」管理。
           </p>
+        </section>
+
+        <section
+          id="mcp-servers"
+          aria-labelledby="mcp-servers-heading"
+          className="mt-10 scroll-mt-4 space-y-4"
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <h2
+              id="mcp-servers-heading"
+              className="text-sm font-medium text-ha-text"
+            >
+              我的 MCP 服务
+            </h2>
+            <p className="text-xs text-ha-dim">
+              注册自定义 server、测试工具、决定是否免确认执行
+            </p>
+          </div>
+          <McpManagementSection model={mcpModel} showOAuthNotice={false} />
         </section>
 
         {model.providers.length > 0 ? (

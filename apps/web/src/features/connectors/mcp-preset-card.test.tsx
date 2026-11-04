@@ -126,7 +126,8 @@ describe('McpPresetCard', () => {
     expect(open.getAttribute('href')).toBe('/?mcp=srv-1');
     expect(open.textContent).toContain('去会话使用');
     const manage = screen.getByRole('link', { name: '管理 Notion' });
-    expect(manage.getAttribute('href')).toBe('/mcp');
+    // MCP 管理区已并入连接器页,「管理」直接落到本页的 #mcp-servers
+    expect(manage.getAttribute('href')).toBe('/connectors#mcp-servers');
     expect(screen.queryByRole('button', { name: /连接 Notion/ })).toBeNull();
   });
 
@@ -136,10 +137,10 @@ describe('McpPresetCard', () => {
     });
 
     expect(screen.getByText('已停用')).toBeTruthy();
-    expect(screen.getByText(/到 MCP 页启用后才能在会话里使用/)).toBeTruthy();
+    expect(screen.getByText(/已在「我的 MCP 服务」停用/)).toBeTruthy();
     const manage = screen.getByRole('link', { name: '管理 Notion' });
-    expect(manage.getAttribute('href')).toBe('/mcp');
-    expect(manage.textContent).toContain('到 MCP 页启用');
+    expect(manage.getAttribute('href')).toBe('/connectors#mcp-servers');
+    expect(manage.textContent).toContain('到「我的 MCP 服务」启用');
     expect(screen.queryByRole('link', { name: /去会话使用/ })).toBeNull();
   });
 

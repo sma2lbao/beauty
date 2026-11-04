@@ -1,7 +1,7 @@
 /**
  * MCP 预设卡片:未创建 → 「连接」;已建未授权/授权失败 → 「授权」/「重新授权」;
- * 已连接 → 「去会话使用」(/?mcp=<server_id>)+「管理」(/mcp);
- * 已停用 → 提示到 /mcp 启用 + 「管理」。
+ * 已连接 → 「去会话使用」(/?mcp=<server_id>)+「管理」(本页 #mcp-servers);
+ * 已停用 → 提示到「我的 MCP 服务」启用。
  *
  * 卡片只展示与上抛动作,数据/跳转都在 use-connector-presets。
  */
@@ -52,7 +52,7 @@ function bodyText(
     return '已连接 · ' + (server?.tools.length ?? 0) + ' 个工具';
   }
   if (state === 'disabled') {
-    return '已在 MCP 页停用，到 MCP 页启用后才能在会话里使用。';
+    return '已在「我的 MCP 服务」停用，到该区启用后才能在会话里使用。';
   }
   if (state === 'needs_auth') {
     const reason = server?.oauth_error ?? server?.last_error;
@@ -151,7 +151,7 @@ export function McpPresetCard({
               去会话使用
             </Link>
             <Link
-              to="/mcp"
+              to="/connectors#mcp-servers"
               aria-label={'管理 ' + preset.name}
               className={`${consoleButtonClass({ variant: 'secondary', size: 'sm' })} gap-1`}
             >
@@ -163,11 +163,12 @@ export function McpPresetCard({
 
         {state === 'disabled' ? (
           <Link
-            to="/mcp"
+            to="/connectors#mcp-servers"
             aria-label={'管理 ' + preset.name}
             className={`${consoleButtonClass({ variant: 'secondary', size: 'sm' })} gap-1`}
           >
-            <Wrench aria-hidden className="size-3.5" />到 MCP 页启用
+            <Wrench aria-hidden className="size-3.5" />
+            到「我的 MCP 服务」启用
           </Link>
         ) : null}
 
