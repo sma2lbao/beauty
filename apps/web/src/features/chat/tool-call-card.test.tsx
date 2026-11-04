@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCall } from '@/lib/presentation';
@@ -99,6 +100,38 @@ describe('ToolCallCard', () => {
     expect(onOpenFile).toHaveBeenCalledWith('/workspace/src/b.ts');
   });
 
+  it('连接器授权失败时在卡片内给出恢复入口(折叠态也可见)', () => {
+    render(
+      <MemoryRouter>
+        <ToolCallCard
+          call={{
+            ...LEGACY_CALL,
+            name: 'Demo__read_document',
+            ok: false,
+            errorCode: 'connector.connection_missing',
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('尚未连接Demo')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '去连接器' })).toBeTruthy();
+  });
+
+  it('非连接器错误码不出现恢复入口', () => {
+    render(
+      <ToolCallCard
+        call={{
+          ...LEGACY_CALL,
+          ok: false,
+          errorCode: 'tool.confirmation_required',
+        }}
+      />,
+    );
+
+    expect(screen.queryByRole('link', { name: '去连接器' })).toBeNull();
+  });
+
   it('不传 onOpenFile 时路径保持纯文本,不产生伪按钮', () => {
     render(
       <ToolCallCard
@@ -108,6 +141,8 @@ describe('ToolCallCard', () => {
     );
 
     expect(screen.getByText('src/a.ts')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '查看文件 src/a.ts' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: '查看文件 src/a.ts' }),
+    ).toBeNull();
   });
 });

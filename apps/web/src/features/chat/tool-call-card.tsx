@@ -21,6 +21,8 @@ import {
 } from '@/lib/presentation';
 import { cn } from '@/lib/utils';
 
+import { ConnectorRecoveryCard } from './connector-recovery-card';
+
 /** 风险徽标:read 最克制、write 用警告色、danger 用危险色(靠色阶而不是描边堆叠)。 */
 const RISK_BADGES: Record<
   ToolRisk,
@@ -129,6 +131,13 @@ export function ToolCallCard({
           {statusNote ? ' · ' + statusNote : ''}
         </span>
       </button>
+
+      {call.ok ? null : (
+        <ConnectorRecoveryCard
+          errorCode={call.errorCode}
+          toolName={call.name}
+        />
+      )}
 
       {open && (call.detail || hasMeta) ? (
         <div className="border-t border-ha-border">
