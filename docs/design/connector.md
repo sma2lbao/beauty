@@ -1,14 +1,14 @@
 # 连接器平台（Connector Platform）设计
 
-> 状态：已实现（P1 平台骨架 + P2 内置 Notion 只读） · 2026-11-03 定稿 / 2026-11-04 回填实现状态与内置 Notion 切换
+> 状态：已实现（P1 平台骨架 + P2 内置 Notion 读写 + 对话内写操作确认） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、内置 Notion 切换与写能力
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 内置 **Notion 只读**（provider key `notion`、4 个只读工具）已实现；P3（Notion 写能力）与 P4（其他 provider / 组织共享 / MCP）未开始。
-> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），改为内置 **Notion 只读** provider；平台骨架/页面/执行面/审计保留。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 内置 **Notion**（provider key `notion`、4 个只读 + 2 个写工具）已实现；写工具 `risk=WRITE`，对话里先落待确认（`chat_tool_confirmations`）、用户点击后以 `approved=True` 重放，任务路径走审批闸（§7）；P3 剩余组织共享/授权展示与 P4（其他 provider / MCP）未开始。
+> **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），改为内置 **Notion** provider（先落地 4 个只读工具，随后补 2 个写工具与对话内写操作确认）；平台骨架/页面/执行面/审计保留。
 
 ## 1. 摘要
 
-一句话：把 `connector-service`（:8004，现为「有表无入口」的空框架）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明，内置 provider 是 **Notion 只读**（Notion public integration + 4 个只读工具）。
+一句话：把 `connector-service`（:8004，现为「有表无入口」的空框架）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明，内置 provider 是 **Notion**（Notion public integration；4 个只读 + 2 个写工具，写工具默认 `risk=WRITE`，对话内确认后才执行）。
 
 三条主线（也是本稿与「直接接 MCP」的分野）：
 
@@ -18,36 +18,36 @@
 
 ### 1.1 关键决策（D1–D13）
 
-| #   | 决策                                                                                                                                         | 理由 / 依据                                                                                                                               |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/feishu.py`），能力用**代码 manifest** 声明，不引入 YAML / builder | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据  |
-| D2  | 连接**归属到授权用户**（`owner_subject`），组织内按权限可见；组织共享连接（无 owner）留到 P2                                                 | 撤销与审计必须能回答「谁授权的」；现状 `connections` 无归属字段是明确缺口                                                                 |
-| D3  | 授权走**服务端一次性授权会话**：`oauth_sessions` 存 state nonce / PKCE verifier / tenant / user / redirect / 过期，回调用 nonce 换回身份     | state 只放随机数、身份靠服务端行查回；RFC 9700 强制 PKCE(S256)、精确 redirect、禁隐式流                                                   |
-| D4  | **凭证零出口**：agent 侧新增 `/v1/connections/{id}/execute`，由 connector-service 解密并注入 token；token 不下发给 tool-service 或前端       | WorkBuddy `server-side`、Composio Proxy Execute、Arcade token vault 同构；解密点收敛到一处，泄漏面可控                                    |
-| D5  | **刷新单飞**：按连接行加数据库行锁 + 二次检查 + 同事务写回；到期前 5 分钟懒刷新 + 每 24h 巡检保活；失败置 `expired` 并发 outbox 事件         | 飞书 `refresh_token` 一次性、旧的立即失效，多副本用进程锁会互相覆盖；Nango 24h 保活可防 provider 回收闲置 token                           |
-| D6  | 能力编译为 `ToolDescriptor`，命名 **`<Provider>__<tool>`**（如 `Notion__search`；provider 前缀与 `mcp__` 风格区分）；执行面走 tool-service   | 复用 catalog/审批/审计，不新建权限体系；`mcp__` 是外部协议命名，连接器是自有能力，用可读前缀更利于模型选择                                |
-| D7  | **错误语义分层**：`connector.auth_expired` 与 `connector.upstream_*` 分开；只有 auth/scope 类错误触发前端「重新连接」                        | WorkBuddy 明确只有授权失效才提示重连，超时/无权限不提示；否则所有 4xx/5xx 都会误导用户                                                    |
-| D8  | **只做 on-demand 拉取**：v1 不做同步引擎、不做事件订阅、不做后台定时抓取                                                                     | WorkBuddy 官方「不主动定时抓取」；省掉同步状态机/游标/去重一整块；与架构现状一致                                                          |
-| D9  | **飞书 v1 写死企业自建应用 + 用户身份（`user_access_token`）+ 只读能力**；应用凭证全局配置 + `tenant_apps` 表按租户覆盖                      | 长连接仅自建应用支持、商店应用需 ISV 资质与上架审核；用户身份才符合「谁授权以谁身份读文档」；写 scope 要重新发版 + 管理员审批，边际收益低 |
-| D10 | **Notion 放 P2**，同平台加 provider；`Notion-Version` 做成配置项，token TTL 按未知处理（401 触发刷新 + introspect 巡检）                     | Notion 一个 token 绑「一个 workspace + 一个用户」，唯一键要含 workspace；官方未给 `expires_in`                                            |
-| D11 | **MCP 自定义连接器留到 P2**：把已有 MCP server 也挂进「连接器」UI，复用同一审批/审计，凭证仍由 orchestrator 的 `mcp_oauth` 管                | v1 不混两种凭证模型（自有加密列 vs `mcp_server_auth`）；先让原生 provider 跑通，避免一次改两套生命周期                                    |
-| D12 | 所有连接器调用**必须经 tool-service**（审计唯一落 `tool_calls`）；connector-service 不建第二张调用审计表                                     | 对齐 tool-service 设计 D8「审计单源」；connector-service 只记结构化日志与 usage 指标                                                      |
-| D13 | 写类工具（创建文档/追加块）**默认 risk=WRITE + 审批 confirm**；v1 飞书不暴露任何写工具                                                       | 写错文档不可逆、用户信任成本高；飞书写能力需要重新发版权限，放到 P1 再评估                                                                |
+| #   | 决策                                                                                                                                                                               | 理由 / 依据                                                                                                                                     |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/notion.py`），能力用**代码 manifest** 声明，不引入 YAML / builder                                       | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据        |
+| D2  | 连接**归属到授权用户**（`owner_subject`），组织内按权限可见；组织共享连接（无 owner）留到 P2                                                                                       | 撤销与审计必须能回答「谁授权的」；现状 `connections` 无归属字段是明确缺口                                                                       |
+| D3  | 授权走**服务端一次性授权会话**：`oauth_sessions` 存 state nonce / PKCE verifier / tenant / user / redirect / 过期，回调用 nonce 换回身份                                           | state 只放随机数、身份靠服务端行查回；RFC 9700 强制 PKCE(S256)、精确 redirect、禁隐式流                                                         |
+| D4  | **凭证零出口**：agent 侧新增 `/v1/connections/{id}/execute`，由 connector-service 解密并注入 token；token 不下发给 tool-service 或前端                                             | WorkBuddy `server-side`、Composio Proxy Execute、Arcade token vault 同构；解密点收敛到一处，泄漏面可控                                          |
+| D5  | **刷新单飞**：按连接行加数据库行锁 + 二次检查 + 同事务写回；到期前 5 分钟懒刷新 + 每 24h 巡检保活；失败置 `expired` 并发 outbox 事件                                               | 飞书 `refresh_token` 一次性、旧的立即失效，多副本用进程锁会互相覆盖；Nango 24h 保活可防 provider 回收闲置 token                                 |
+| D6  | 能力编译为 `ToolDescriptor`，命名 **`<Provider>__<tool>`**（如 `Notion__search`；provider 前缀与 `mcp__` 风格区分）；执行面走 tool-service                                         | 复用 catalog/审批/审计，不新建权限体系；`mcp__` 是外部协议命名，连接器是自有能力，用可读前缀更利于模型选择                                      |
+| D7  | **错误语义分层**：`connector.auth_expired` 与 `connector.upstream_*` 分开；只有 auth/scope 类错误触发前端「重新连接」                                                              | WorkBuddy 明确只有授权失效才提示重连，超时/无权限不提示；否则所有 4xx/5xx 都会误导用户                                                          |
+| D8  | **只做 on-demand 拉取**：v1 不做同步引擎、不做事件订阅、不做后台定时抓取                                                                                                           | WorkBuddy 官方「不主动定时抓取」；省掉同步状态机/游标/去重一整块；与架构现状一致                                                                |
+| D9  | **飞书 v1 写死企业自建应用 + 用户身份（`user_access_token`）+ 只读能力**；应用凭证全局配置 + `tenant_apps` 表按租户覆盖                                                            | 长连接仅自建应用支持、商店应用需 ISV 资质与上架审核；用户身份才符合「谁授权以谁身份读文档」；写 scope 要重新发版 + 管理员审批，边际收益低       |
+| D10 | **Notion 放 P2**，同平台加 provider；`Notion-Version` 做成配置项，token TTL 按未知处理（401 触发刷新 + introspect 巡检）                                                           | Notion 一个 token 绑「一个 workspace + 一个用户」，唯一键要含 workspace；官方未给 `expires_in`                                                  |
+| D11 | **MCP 自定义连接器留到 P2**：把已有 MCP server 也挂进「连接器」UI，复用同一审批/审计，凭证仍由 orchestrator 的 `mcp_oauth` 管                                                      | v1 不混两种凭证模型（自有加密列 vs `mcp_server_auth`）；先让原生 provider 跑通，避免一次改两套生命周期                                          |
+| D12 | 所有连接器调用**必须经 tool-service**（审计唯一落 `tool_calls`）；connector-service 不建第二张调用审计表                                                                           | 对齐 tool-service 设计 D8「审计单源」；connector-service 只记结构化日志与 usage 指标                                                            |
+| D13 | 写类工具（创建文档/追加块）**默认 risk=WRITE，执行前必须人工确认**：任务路径走审批闸（confirm），对话路径走就地确认（pending 落库 + confirm/cancel 端点）；DANGER 工具不在对话暴露 | 写错文档不可逆、用户信任成本高；对话没有任务图审批流，用「先生成待确认、用户点击后以 approved=True 重放」补齐，同时不放宽 tool-service 的写闸门 |
 
 ### 1.2 分期
 
-| 期  | 内容                                                                     | 可回滚性                        | 状态   |
-| --- | ------------------------------------------------------------------------ | ------------------------------- | ------ |
-| P0  | 决策确认（§9.1）+ 迁表设计                                               | —                               | 已定稿 |
-| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表 | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现 |
-| P2  | 内置 Notion 只读 provider + 前端 `/connectors` + tool-service 执行面     | 同上（按 provider 关）          | 已实现 |
-| P3  | Notion 写工具（create_page / append_blocks，confirm）+ 组织共享连接      | 按工具关闭                      | 未开始 |
-| P4  | 其他 provider（代码 manifest）+ MCP 自定义连接器并入                     | 按 provider 关                  | 未开始 |
+| 期  | 内容                                                                                | 可回滚性                        | 状态     |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------- | -------- |
+| P0  | 决策确认（§9.1）+ 迁表设计                                                          | —                               | 已定稿   |
+| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表            | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现   |
+| P2  | 内置 Notion provider（4 只读 + 2 写工具）+ 前端 `/connectors` + tool-service 执行面 | 同上（按 provider 关）          | 已实现   |
+| P3  | 组织共享连接 + 连接详情授权展示（Notion 写工具已完成，见 §7/§8.4）                  | 按工具关闭                      | 部分完成 |
+| P4  | 其他 provider（代码 manifest）+ MCP 自定义连接器并入                                | 按 provider 关                  | 未开始   |
 
 ## 2. 实现前现状盘点（2026-11-03，保留作背景）
 
 > 本节是初稿时的缺口清单；P1/P2 已按 §8 清单补齐，落地情况见 §8 实现状态与 §5.3/§5.5 的实现边界。
-> 2026-11-04：内置 provider 由飞书改为 Notion 只读（飞书 provider 已移除），本节其余内容仍作背景。
+> 2026-11-04：内置 provider 由飞书改为 Notion（只读 + 写工具；飞书 provider 已移除），本节其余内容仍作背景。
 
 | 模块                 | 现状                                                                                                              | 与目标差距                                                        |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -187,7 +187,7 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 - 内部鉴权用共享密钥头 `X-Internal-Secret`（`common.security.internal_secret`，留空即整体 401），不引入服务级 token；网关不转发 `/internal`；
 - 目录响应是 `{providers: [...]}`（字段 `name`），授权响应不含 `session_id`；连接 DTO 不返回 `owner_subject` / 工具清单（前端从 provider 目录推导）。
 - 内部目录返回 `{tools: [ToolDescriptor payload]}`，每个 payload 带 `executor="connector"` 与
-  `connector={"provider": "<name>"}`（tool-service 路由执行请求的唯一依据），工具名 `<PascalCase>__<tool>`、`risk="read"`；
+  `connector={"provider": "<name>"}`（tool-service 路由执行请求的唯一依据），工具名 `<PascalCase>__<tool>`、`risk` 取自 `ToolSpec.risk`（`read`/`write`，写工具需确认）；
 - tool-service 侧配置 `TOOL__CONNECTOR_BASE_URL` / `TOOL__CONNECTOR_INTERNAL_SECRET`（空=关闭）/
   `TOOL__CONNECTOR_CATALOG_TTL_SECONDS=30`；目录按租户缓存 30s，撤销/新建连接最长延迟一个 TTL 生效，
   执行时仍按租户实时校验连接（不存在则 404 `connector.connection_missing`）；
@@ -224,21 +224,23 @@ class NotionProvider(BaseProvider):
     prefix = "Notion"
     display_name = "Notion"
     auth_kind = "user"
-    tools = [
-        ToolSpec(key="search", title="检索页面与数据源", risk=ToolRisk.READ, ...),
-        ToolSpec(key="read_page", title="读取页面属性", risk=ToolRisk.READ, ...),
-        ToolSpec(key="read_blocks", title="读取页面子块", risk=ToolRisk.READ, ...),
-        ToolSpec(key="query_data_source", title="查询数据库", risk=ToolRisk.READ, ...),
-    ]
+    tools = (
+        ToolSpec(name="search", title="检索页面与数据源", description="...", input_schema={...}, risk=ToolRisk.READ),
+        ToolSpec(name="read_page", title="读取页面属性", description="...", input_schema={...}, risk=ToolRisk.READ),
+        ToolSpec(name="read_blocks", title="读取页面子块", description="...", input_schema={...}, risk=ToolRisk.READ),
+        ToolSpec(name="query_data_source", title="查询数据库", description="...", input_schema={...}, risk=ToolRisk.READ),
+        ToolSpec(name="create_page", title="新建页面", description="...", input_schema={...}, risk=ToolRisk.WRITE),
+        ToolSpec(name="append_blocks", title="追加内容块", description="...", input_schema={...}, risk=ToolRisk.WRITE),
+    )
 ```
 
-编译规则：`ToolDescriptor(name="Notion__search", executor=ExecutorKind.CONNECTOR, kind=FUNCTION, risk=READ, scopes=[], connector={"provider": "notion"})`。
+编译规则：`ToolDescriptor(name="Notion__search", executor=ExecutorKind.CONNECTOR, kind=FUNCTION, risk=READ, scopes=[], connector={"provider": "notion"})`；**`risk` 由 `ToolSpec.risk` 声明并原样透传**——目录 API 的 `tools[].risk`（`read`/`write`）与内部目录的 `ToolDescriptor.risk` 同源，不在 catalog 里另立规则；写工具同样编译成 `Notion__create_page` / `Notion__append_blocks`。
 实现上 manifest 就是 `BaseProvider` 的子类属性（`name/prefix/display_name/tools: list[ToolSpec]`），不需要单独的 connector manifest 文件。
 
 - **tool-service**：catalog 合并 `GET /v1/internal/connectors/tools` 的结果（按租户），执行时走 `ExecutorKind.CONNECTOR` 转发到 `/execute`，审计落 `tool_calls`（D12）。
 - **agent-orchestrator**：无需感知连接器，只看到普通工具；审批复用 `approval_policies`；调用事件继续写 `run_events`。
 - **命名**：`<Provider>__<tool>`，如 `Notion__search` / `Notion__read_page`；provider 段用 PascalCase，工具段 snake_case；不允许出现 `__` 在工具名内。
-- **v1 装配**：只把 `status=active && enabled=true` 的连接的只读工具暴露给 chat/task；写工具 P3 起默认 `confirm`。
+- **装配**：只把 `status=active && enabled=true` 的连接的**全部工具（含写工具）**暴露给 chat/task，`risk` 随描述符一并透出；chat 路径 `risk=write` 不直接执行（先落 pending 确认，§7），task 路径走 `approval_policies` 的 `confirm` 闸；`danger` 工具不进对话。
 
 ### 5.7 错误码分层
 
@@ -278,22 +280,24 @@ class NotionProvider(BaseProvider):
 
 ## 6. Notion 连接器 v1 规格（内置）
 
-**应用形态**：Notion **public integration**（一套应用服务所有 workspace）。全局 `CONNECTOR__NOTION_CLIENT_ID/SECRET`，可按租户用 `tenant_apps` 覆盖（`app_id` 存 client_id、`app_secret` 存 client_secret）。Notion integration 后台登记 OAuth Redirect URI：`{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `https://<host>/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）。
+**应用形态**：Notion **public integration**（一套应用服务所有 workspace）。全局 `CONNECTOR__NOTION_CLIENT_ID/SECRET`，可按租户用 `tenant_apps` 覆盖（`app_id` 存 client_id、`app_secret` 存 client_secret）。Notion integration 后台登记 OAuth Redirect URI：`{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `https://<host>/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）。integration 的 **Capabilities** 至少勾 `Read content`（4 个只读工具）；启用写工具还要勾 `Insert content` / `Update content`，并在 Notion 侧重新授权使新能力生效。
 
 **授权**：authorize 走 `GET https://api.notion.com/v1/oauth/authorize`（`client_id` / `redirect_uri` / `response_type=code` / `owner=user` / `state`；**不支持 PKCE**，`code_challenge` 被忽略）；换 token 走 `POST /v1/oauth/token`，**HTTP Basic Auth**（`client_id:client_secret`）+ JSON（`grant_type=authorization_code` / `code` / `redirect_uri`）；refresh 同端点 `grant_type=refresh_token`（响应**可能轮换** refresh_token，必须同事务写回）。
 
 **身份**：token 是 **bot token**，绑定「一个 workspace + 一个用户」；`GET /v1/users/me` 取 `workspace_id`/`workspace_name`，`account = f"{workspace_id}:{owner_subject}"`、`external_workspace = workspace_name`。**页面级授权**：用户必须在 Notion 里把页面/数据库 share 给该 integration，未 share 的资源返回 403/404（按「未授权」提示，不提示重连）。
 
-**v1 只读工具（4 个）**：
+**v1 工具（4 只读 + 2 写）**：
 
-| 工具                        | 上游端点                                       | 说明                                        |
-| --------------------------- | ---------------------------------------------- | ------------------------------------------- |
-| `Notion__search`            | `POST /v1/search`                              | 按标题检索页面与数据源，`start_cursor` 分页 |
-| `Notion__read_page`         | `GET /v1/pages/{page_id}`                      | 页面属性（标题、URL、父级、最后编辑）       |
-| `Notion__read_blocks`       | `GET /v1/blocks/{block_id}/children`           | 子块列表，`page_size`/`start_cursor` 分页   |
-| `Notion__query_data_source` | `POST /v1/data_sources/{data_source_id}/query` | 数据库查询（filter/sorts/分页）             |
+| 工具                        | 上游端点                                       | 说明                                         |
+| --------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| `Notion__search`            | `POST /v1/search`                              | 按标题检索页面与数据源，`start_cursor` 分页  |
+| `Notion__read_page`         | `GET /v1/pages/{page_id}`                      | 页面属性（标题、URL、父级、最后编辑）        |
+| `Notion__read_blocks`       | `GET /v1/blocks/{block_id}/children`           | 子块列表，`page_size`/`start_cursor` 分页    |
+| `Notion__query_data_source` | `POST /v1/data_sources/{data_source_id}/query` | 数据库查询（filter/sorts/分页）              |
+| `Notion__create_page`       | `POST /v1/pages`                               | 新建页面并写首段正文（`risk=WRITE`，需确认） |
+| `Notion__append_blocks`     | `PATCH /v1/blocks/{block_id}/children`         | 在块末尾追加段落（`risk=WRITE`，需确认）     |
 
-写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{id}/children`）留 P3，默认 `risk=WRITE` + 需确认（§7）。
+写工具参数：`create_page` 支持 `parent_type=page|data_source` / `parent_id` / `title` / `title_property` / `paragraphs`（每项一段纯文本）；`append_blocks` 支持 `block_id` / `paragraphs` / 可选 `after`。两者固定 `risk=WRITE`，对话里先生成确认卡（§7），用户确认后以 `approved=True` 执行；审计仍落 tool-service 的 `tool_calls`（D12）。
 
 **实现要点**：
 
@@ -305,13 +309,21 @@ class NotionProvider(BaseProvider):
 
 **配置**：`CONNECTOR__PROVIDERS_ENABLED`（默认 `notion`）、`CONNECTOR__NOTION_CLIENT_ID`、`CONNECTOR__NOTION_CLIENT_SECRET`、`CONNECTOR__NOTION_VERSION`（默认 `2026-03-11`）、`CONNECTOR__NOTION_API_BASE`（默认 `https://api.notion.com`）、`CONNECTOR__OAUTH_REDIRECT_BASE`。
 
-## 7. Notion 写能力与其他 provider（P3/P4 预留）
+## 7. Notion 写工具、对话内确认与其他 provider（P3/P4 预留）
 
-**Notion 写工具（P3）**：`Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{id}/children`），默认 `risk=WRITE`、走 `confirm` 审批。**前置条件**是把审批链路补到「对话路径」——当前对话路径没有工具审批流，runner 对未 approved 的 WRITE 工具直接返回 `tool.confirmation_required`，所以写工具在 P3 落地前不暴露给模型。实现约束：先读后写（page id 来自 `read_page`/`search`）、幂等键用 page id、不解析 `url`/`href`/`cursor`。
+**Notion 写工具（已实现）**：`Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{block_id}/children`）在 provider manifest 里用 `ToolSpec(..., risk=ToolRisk.WRITE)` 声明，`risk` 经 catalog 透出到目录 API 的 `tools[].risk` 与内部目录的 `ToolDescriptor.risk`。`create_page` 支持 `parent_type=page|data_source` + `parent_id` + `title`/`title_property` + `paragraphs`；`append_blocks` 支持 `block_id` + `paragraphs` + 可选 `after`。实现约束：先读后写（page id 来自 `read_page`/`search`）、不解析 `url`/`href`/`cursor`；审计仍落 tool-service 的 `tool_calls`（D12）。
 
-**授权展示（P3）**：连接详情展示 Notion capabilities 与页面级授权状态（哪些页面已 share 给 integration）；capabilities 变更后提示重新授权。
+**对话内写操作确认（已实现）**：对话路径没有任务图的审批流，写操作改为「就地确认」——
 
-**巡检增强（P3/P4）**：当前靠 24h 巡检（`last_refreshed_at`）+ 401 触发刷新；`POST /v1/oauth/introspect` 主动探测与「401 自动刷新一次」的闭环未做。
+1. **工具可见性**：chat 可见工具为 `kind=function && risk!=danger`（read/write 都可见）；`danger`（如 `exec`）仍不进对话，回喂提示改用「任务」。
+2. **发起即挂起**：模型发起 `risk=write` 调用时**不执行**，orchestrator 落一行 `chat_tool_confirmations`（`status=pending`，TTL 10 分钟）；tool 帧返回 `decision="confirm"`、`error_code="tool.confirmation_required"`、`ok=false`，并带 `confirmation_id` / `expires_at`（ISO8601），同时回喂模型「需要用户确认，不要重复调用」。
+3. **确认 / 取消**：`POST /v1/conversations/{cid}/tool-confirmations/{confirmation_id}/confirm` 以 `approved=true` 重放同一个 `tool_call`（arguments 原样），结果落 assistant 消息并回填确认行；`.../cancel` 只置 cancelled、不执行。前端 `tool-confirmation-card.tsx` 就地渲染参数摘要 + 有效期 + 两个按钮，确认后展示 `result_text` 并刷新会话。
+4. **幂等与错误码**：确认时对确认行加 `FOR UPDATE` 并校验状态，重复确认不会重复执行；不存在/跨租户 404 `tool_confirmation.not_found`、过期 409 `tool_confirmation.expired`、已确认/已取消 409 `tool_confirmation.not_pending`、确认时工具已不可用 409 `tool_confirmation.tool_unavailable`。
+5. **边界不变**：tool-service 的「WRITE/DESTRUCTIVE 无 approved → 403」闸门不因对话确认而放宽；对话确认只是「取得 approved 的一条通道」，任务路径仍走 `approval_policies` 的 confirm 闸（见 [tool-execution.md](./tool-execution.md) §7.6）。
+
+**授权展示（P3，未做）**：连接详情展示 Notion capabilities 与页面级授权状态（哪些页面已 share 给 integration）；capabilities 变更后提示重新授权。
+
+**巡检增强（P3/P4，未做）**：当前靠 24h 巡检（`last_refreshed_at`）+ 401 触发刷新；`POST /v1/oauth/introspect` 主动探测与「401 自动刷新一次」的闭环未做。
 
 **其他 provider（P4）**：provider 通过 `connector/providers/` 的代码 manifest 注册——新增一个 `BaseProvider` 子类（实现 `authorize_url`/`exchange_code`/`refresh`/`fetch_identity`/`call` 与 `tools`）、在 `_REGISTRY` 登记、`CONNECTOR__PROVIDERS_ENABLED` 列出 key 即出现在目录。MCP 自定义连接器并入 UI（`kind=mcp`，凭证仍走 `mcp_oauth`）与组织共享连接（`owner_subject` 为空 + 授权人留痕）均留 P4。
 
@@ -319,20 +331,22 @@ class NotionProvider(BaseProvider):
 
 估算单位：S ≤ 1 人日，M 2–3 人日，L 4–5 人日。**P0–P2 合计约 25–35 人日**（单人；平台与 provider/前端可并行压缩）。
 
-> **实现状态（2026-11-04 回填）**：P1 平台骨架（C1.1–C1.12）与 P2 前端/执行面（C2.3–C2.8）已完成；
-> P2 内置 provider 已由飞书（C2.1/C2.2，已移除）替换为 **Notion 只读**（C6.1–C6.5 已完成，见 §8.3）。
-> C0 决策项按本文默认值执行。本轮补齐 C1.10（`events` outbox 生命周期事件 + 24h 巡检 + `tenant_apps` 凭证解析）
+> **实现状态（2026-11-04 回填）**：P1 平台骨架（C1.1–C1.12）、P2 前端/执行面（C2.3–C2.8）与
+> 内置 **Notion 只读 + 写工具**（C6.1–C6.6，见 §8.3）已完成；对话内写操作确认链路此前补齐，
+> 并与 P2 同批上线——chat 里 `risk=write` 只落 `chat_tool_confirmations` pending（TTL 10 分钟），
+> 用户确认后由 `POST /v1/conversations/{cid}/tool-confirmations/{id}/confirm` 以 `approved=True` 重放（§7）。
+> C0 决策项按本文默认值执行。此前补齐 C1.10（`events` outbox 生命周期事件 + 24h 巡检 + `tenant_apps` 凭证解析）
 > 与 C2.4 的 `connection_id` 审计列。
 > 与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
 > （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
 > 巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
 > **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），
-> 改为内置 Notion 只读 provider（§6）；平台骨架/页面/执行面/审计保留。
+> 改为内置 Notion provider（§6）；平台骨架/页面/执行面/审计保留。
 > **未做/待办（2026-11-04 复核）**：C2.9 只落地最小版——会话内工具失败恢复卡
 > （`apps/web/src/features/chat/connector-recovery-card.tsx`，三类授权错误码 → 「去连接器」，
 > 用户重连后手动重发；「+ 菜单」选择与 run 暂停续跑待 C0.4）；C2.10（真实飞书冒烟）随飞书
-> provider 移除不再适用（清单文件已删除）；
-> P3/P4（Notion 写能力、组织共享连接、其他 provider、MCP）未开始。
+> provider 移除不再适用（清单文件已删除）；P3 剩余（组织共享连接、连接详情授权展示）与
+> P4（其他 provider、MCP）未开始；Notion 写工具的幂等键（C3.2 的一部分）未做。
 
 ### 8.1 P0 决策与契约（先做，阻塞后续）
 
@@ -357,17 +371,18 @@ class NotionProvider(BaseProvider):
 - [x] **C1.11** 配置与文档：`.env.example`、README「接入新连接器 5 步」更新为 manifest 流程 — 验收：`check-docs` 通过（S）
 - [x] **C1.12** 测试：`--cov-fail-under=91`；`pytest-socket` 零网络（全 MockTransport） — 验收：`npx nx test connector-service` 绿（M）
 
-### 8.3 P2 前端 + 执行面 + 内置 Notion 只读
+### 8.3 P2 前端 + 执行面 + 内置 Notion（只读 + 写工具）
 
-> 2026-11-04：C2.1/C2.2 的飞书 provider 已移除，改为内置 Notion 只读（见下方 C6.1–C6.5）；平台骨架、前端、执行面与审计保留，C2.3–C2.8 仍有效。
+> 2026-11-04：C2.1/C2.2 的飞书 provider 已移除，改为内置 Notion（只读 + 写工具，见下方 C6.1–C6.6）；平台骨架、前端、执行面与审计保留，C2.3–C2.8 仍有效。
 
-**内置 Notion 只读专项清单（2026-11-04，替代原飞书 provider）**
+**内置 Notion 专项清单（2026-11-04，替代原飞书 provider）**
 
 - [x] **C6.1** `connector/providers/notion.py`：public integration OAuth（HTTP Basic Auth 换 token）、`Notion-Version` 配置化、4 个只读工具 — 验收：MockTransport 走通授权→检索→读页→读块→查询；401→`auth_expired` 且置 expired；429 解析 `Retry-After`（M）
 - [x] **C6.2** 授权与身份：`authorize` 不带 PKCE、回调用 Basic Auth 换 token、`GET /v1/users/me` 取 workspace；`account = "{workspace_id}:{owner_subject}"` — 验收：回调落库可解密、同 workspace 多用户各自一条连接、`tenant_apps` 可覆盖 client_id/secret（M）
 - [x] **C6.3** 4 个只读工具：`Notion__search` / `Notion__read_page` / `Notion__read_blocks` / `Notion__query_data_source`，`start_cursor`/`page_size` 分页、结果截断、不解析 `cursor`/`url` — 验收：每工具 1 正常 + 1 错误用例；大结果不超字节上限（M）
 - [x] **C6.4** 测试：全 MockTransport、零网络覆盖授权/刷新/执行/巡检/outbox/租户应用凭证 — 验收：`uv run pytest` 全绿、覆盖率 ≥ 91%（M）
 - [x] **C6.5** 配置与文档：`Settings` / `.env.example` / README / 本文 §6 同步 — 验收：`check-docs` 通过，无飞书配置残留（历史注记除外）（S）
+- [x] **C6.6** Notion 写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{block_id}/children`），`ToolSpec(risk=ToolRisk.WRITE)`，`risk` 经 catalog 透出到 `/v1/connectors` 的 `tools[].risk` 与内部目录 `ToolDescriptor.risk` — 验收：MockTransport 走通建页/追加；对话路径未确认时不执行（由 orchestrator 确认链路兜底）（M）
 
 **原飞书 provider 与前端/执行面条目（历史记录；飞书 provider 已于 2026-11-04 移除）**
 
@@ -387,10 +402,17 @@ class NotionProvider(BaseProvider):
 - [ ] **C2.10** 端到端冒烟：开发环境真实飞书自建应用走通「授权→列文件→读文档→撤销」 — 验收：录屏/截图存 `docs/research/connector/` 或验证报告（M）
   - **2026-11-04**：清单文件已删除；随飞书 provider 移除，本项不再适用。
 
-### 8.4 P3 Notion 写能力与组织共享（预留）
+### 8.4 P3 组织共享、授权展示与对话内确认（写工具已完成）
 
-- [ ] **C3.1** Notion 写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{id}/children`），默认 `risk=WRITE` + `confirm` — 前置：对话路径先补工具审批流（未 approved 的 WRITE 当前返回 `tool.confirmation_required`）；验收：`approval_policies` 命中 confirm、chat 默认不暴露（M）
+- [x] **C3.1** Notion 写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{id}/children`），默认 `risk=WRITE` + 确认 — 验收：`approval_policies` 命中 confirm；chat 里 `risk=write` 落 pending 确认，用户点击后以 `approved=True` 执行（M）
+  - **2026-11-04 完成**：`providers/notion.py` 以 `ToolSpec(risk=ToolRisk.WRITE)` 声明并透出 `risk`；
+    对话路径不直接执行，改落 `chat_tool_confirmations` pending（TTL 10 分钟），由
+    `POST /v1/conversations/{cid}/tool-confirmations/{id}/confirm` 以 `approved=True` 重放同一 `tool_call`，
+    重复确认 409；任务路径继续走 `approval_policies` 的 confirm 闸。实证：connector-service 114 passed / 95.30%、
+    agent-orchestrator 946 passed / 87.69%（含 `test_tool_confirmations.py`）。
 - [ ] **C3.2** 写工具安全约束：先读后写（page id 来自 `read_page`/`search`）、幂等键用 page id、不解析 `url`/`href`/`cursor` — 验收：重复写不产生重复内容（S）
+  - **部分完成（2026-11-04）**：不解析 `url`/`href`/`cursor` 已在 provider 内落实；**幂等键未做**——
+    `append_blocks` 重放同一参数会重复追加，确认行的状态机只能挡住「同一 `tool_call` 被重复确认」。
 - [ ] **C3.3** 组织共享连接（`owner_subject` 为空 + 授权人留痕）与管理员可见 — 验收：租户内非 owner 可列出但不可撤销（L）
 - [ ] **C3.4** 连接详情展示 capabilities 与页面级授权状态（哪些页面已 share 给 integration），capabilities 变更后提示重新授权 — 验收：未 share 资源给出可操作提示而非「重连」（S）
 
@@ -404,11 +426,11 @@ class NotionProvider(BaseProvider):
 ### 8.6 质量与门禁（每期收口）
 
 - [x] **C5.1** `npx nx lint/test connector-service tool-service agent-orchestrator common` 全绿（含覆盖率阈值）
-      — 实证（2026-11-04，内置 Notion provider 合入后重跑）：connector-service 110 passed / 95.21%、
-      tool-service 343 passed / 89.66%、common 155 passed、agent-orchestrator 938 passed；
+      — 实证（2026-11-04，Notion 写工具与对话内写操作确认合入后）：connector-service 114 passed / 95.30%、
+      agent-orchestrator 946 passed / 87.69%、tool-service 343 passed / 89.66%、common 155 passed；
       四个项目 ruff lint 全绿。
 - [x] **C5.2** `npx nx typecheck/test/lint @beauty/web -- --run` 全绿；`bash scripts/refactor-gate.sh @beauty/web`
-      — web 的 lint/typecheck/test/build/docs/workspace 六步全绿；refactor-gate 的 `py-size` 基线里
+      — web 的 lint/typecheck/test/build/docs/workspace 六步全绿（550 个前端用例，含写操作确认卡与确认列表粘性保持）；refactor-gate 的 `py-size` 基线里
       `connector-service/connector/providers/feishu.py` 随 provider 移除不再计入，其余超 500 行文件
       （`tool-service/tests/test_connectors.py`、`agent-orchestrator/tests/test_skill_packages.py`）在 HEAD 上即已超限，
       属既有 W5 ratchet 基线，不由本期引入；留待 W5 体量收敛处理。
@@ -428,7 +450,7 @@ class NotionProvider(BaseProvider):
 
 ## 9. 风险与开放问题
 
-> 2026-11-04：下述飞书相关条目保留为 2026-11-03 定稿时的历史记录；当前内置 provider 为 Notion 只读（见 §6 / §8.3）。
+> 2026-11-04：下述飞书相关条目保留为 2026-11-03 定稿时的历史记录；当前内置 provider 为 Notion（4 只读 + 2 写工具，写操作经对话确认；见 §6 / §7 / §8.3）。
 
 ### 9.1 待产品确认（阻塞 P1）
 
@@ -440,16 +462,16 @@ class NotionProvider(BaseProvider):
 
 ### 9.2 风险登记
 
-| 风险                               | 影响                   | 缓解                                                                |
-| ---------------------------------- | ---------------------- | ------------------------------------------------------------------- |
-| 飞书 scope 变更需发版 + 管理员审批 | 权限迭代天级，扩能力慢 | scope 白名单配置化；详情页展示「已授予 vs 期望」；提前规划 P1 scope |
-| refresh_token 一次性 + 多副本      | 并发刷新导致连接失效   | 数据库行锁单飞 + 二次检查；巡检任务单实例或加锁                     |
-| 365 天强制重授权                   | 长期连接必然失效       | `metadata.refresh_deadline` 提前 30/7 天提示；失效错误码明确        |
-| docx blocks 递归 + 大文档          | 超时/超大响应          | 深度与字节双上限；截断标记 + 分页工具                               |
-| 飞书限流（API×应用×租户）          | 批量读触发 429         | 令牌桶按三元组 + 读 reset 头退避；错误可重试                        |
-| 凭证密钥泄露                       | 全部第三方 token 暴露  | KMS/长随机 + 启动强校验；撤销路径可批量执行                         |
-| 连接器工具污染模型工具面           | 模型选择困难/误用      | 工具按连接启用；描述精简；写工具 confirm；每连接工具数上限          |
-| Notion token TTL 未知              | 被动 401，可能影响体验 | 401 触发刷新 + introspect 巡检；`expires_at` 空表示未知             |
+| 风险                               | 影响                   | 缓解                                                                                         |
+| ---------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| 飞书 scope 变更需发版 + 管理员审批 | 权限迭代天级，扩能力慢 | scope 白名单配置化；详情页展示「已授予 vs 期望」；提前规划 P1 scope                          |
+| refresh_token 一次性 + 多副本      | 并发刷新导致连接失效   | 数据库行锁单飞 + 二次检查；巡检任务单实例或加锁                                              |
+| 365 天强制重授权                   | 长期连接必然失效       | `metadata.refresh_deadline` 提前 30/7 天提示；失效错误码明确                                 |
+| docx blocks 递归 + 大文档          | 超时/超大响应          | 深度与字节双上限；截断标记 + 分页工具                                                        |
+| 飞书限流（API×应用×租户）          | 批量读触发 429         | 令牌桶按三元组 + 读 reset 头退避；错误可重试                                                 |
+| 凭证密钥泄露                       | 全部第三方 token 暴露  | KMS/长随机 + 启动强校验；撤销路径可批量执行                                                  |
+| 连接器工具污染模型工具面           | 模型选择困难/误用      | 工具按连接启用；描述精简；写工具 confirm（任务路径）/ 就地确认（对话路径）；每连接工具数上限 |
+| Notion token TTL 未知              | 被动 401，可能影响体验 | 401 触发刷新 + introspect 巡检；`expires_at` 空表示未知                                      |
 
 ## 10. 参考
 

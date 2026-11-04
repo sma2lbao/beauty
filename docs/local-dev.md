@@ -50,7 +50,7 @@ npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动�
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
-connector-service(:8004)是连接器平台(内置 Notion 只读连接器),Web 端有 `/connectors` 页面;邮件与日历能力已下线。
+connector-service(:8004)是连接器平台(内置 Notion 连接器:4 只读 + 2 写工具,写操作经对话确认),Web 端有 `/connectors` 页面;邮件与日历能力已下线。
 
 打开 http://localhost:5173。
 
@@ -83,9 +83,9 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 - 工具白名单语义：**未声明 `tools`（接口返回 `null`）= 不限制**，装配全部工具；显式 `"tools": []` 才是"不用工具"。执行时按声明的白名单裁剪，例如知识库类技能只能 `search_knowledge`、`list_documents`/`read_document`，只读代码审查技能只能 `read`/`glob`/`grep`/`list_dir`（旧 `code_*` 名仍可用一个发布周期），不能写。
 - Web `/skills` 可浏览技能；任务台输入区的「技能」选择器也可直接绑定。
 
-## 3.2 连接器（内置 Notion 只读）
+## 3.2 连接器（内置 Notion：4 只读 + 2 写）
 
-- **定位**：connector-service(:8004) 是连接器平台（OAuth 授权会话、凭证托管、连接生命周期：刷新单飞 + 24h 巡检 + outbox 生命周期事件）；内置 **Notion 只读连接器**（provider key `notion`、工具前缀 `Notion`，OAuth public integration）。邮件/日历能力已于 2026-10 下线，内置飞书 provider 已于 2026-11-04 按新规划移除。设计见 [design/connector.md](./design/connector.md)。
+- **定位**：connector-service(:8004) 是连接器平台（OAuth 授权会话、凭证托管、连接生命周期：刷新单飞 + 24h 巡检 + outbox 生命周期事件）；内置 **Notion 连接器**（provider key `notion`、工具前缀 `Notion`，OAuth public integration；4 个只读工具 + 2 个写工具，写操作经对话内确认）。邮件/日历能力已于 2026-10 下线，内置飞书 provider 已于 2026-11-04 按新规划移除。设计见 [design/connector.md](./design/connector.md)。
 - **页面**：Web `/connectors` 列出 provider 与连接状态，支持授权、启用/停用、检查、刷新、解除连接。
 - **接口**：`GET /v1/connectors`（目录）、`POST /v1/connectors/{provider}/authorize`、`GET /v1/oauth/{provider}/callback`、`GET/PATCH/DELETE /v1/connections[/{id}]`、`POST /v1/connections/{id}/refresh|check`；内部面 `GET /v1/internal/connectors/tools`、`POST /v1/connectors/{provider}/execute`（`X-Internal-Secret` + `X-Tenant-Id`）。
 - **本地启用**：
@@ -99,10 +99,10 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
      CONNECTOR__CREDENTIAL_SECRET=<凭证信封密钥>
      ```
      直连 :8004 调试时把 `CONNECTOR__OAUTH_REDIRECT_BASE` 改为 `http://127.0.0.1:8004`。
-  2. 在 Notion 建 **public integration**：Redirect URI 填 `{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `http://localhost:5173/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）；Capabilities 勾选 **Read content**（v1 只读；写工具留 P3）。
+  2. 在 Notion 建 **public integration**：Redirect URI 填 `{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/notion/callback`（经网关为 `http://localhost:5173/api/connector/v1/oauth/notion/callback`，直连为 `http://127.0.0.1:8004/v1/oauth/notion/callback`）；Capabilities 勾选 **Read content**（只读工具必需）与 **Insert content**、**Update content**（`Notion__create_page` / `Notion__append_blocks` 需要，改动后需重新授权）。
   3. 生成一个内部密钥同时写进 connector-service 的 `CONNECTOR__INTERNAL_SECRET` 与 tool-service 的 `TOOL__CONNECTOR_INTERNAL_SECRET`（留空则连接器工具不暴露，授权页面仍可用）。
   4. 重启 connector-service 与 tool-service。
-- **执行链**：orchestrator → tool-service（`TOOL__CONNECTOR_*`，目录按租户缓存 30s）→ connector-service；工具名 `<Provider>__<tool>`，示例 `Notion__search`（另有 `Notion__read_page`、`Notion__read_blocks`、`Notion__query_data_source`），审批沿用 `risk=read` 自动放行，审计落 tool-service 的 `tool_calls`。
+- **执行链**：orchestrator → tool-service（`TOOL__CONNECTOR_*`，目录按租户缓存 30s）→ connector-service；工具名 `<Provider>__<tool>`。只读 4 个：`Notion__search`、`Notion__read_page`、`Notion__read_blocks`、`Notion__query_data_source`（`risk=read` 自动放行）；写 2 个：`Notion__create_page`、`Notion__append_blocks`（`risk=write`，对话里先挂起、用户就地确认后以 `approved=true` 重放，任务路径走 `approval_policies` 确认）。审计落 tool-service 的 `tool_calls`。
 - **已删除**：IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD；存量连接由迁移统一撤销。
 
 ## 3.3 MCP Client（第三方工具）
