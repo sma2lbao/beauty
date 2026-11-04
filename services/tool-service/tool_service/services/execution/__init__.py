@@ -9,7 +9,8 @@
 - `exec_output`:exec 输出裁剪、整包回缩与沙箱超时识别;
 - `outcome`:失败信封、交互工具归一、tool_calls 审计列映射;
 - `runner`:执行主流程与调度、超时口径、失败封装;
-- `http_path` / `exec_path` / `sandbox_path`:三条执行路径。
+- `process_path`:进程型直跑(exec / run_code 共用)与输出处理;
+- `http_path` / `exec_path` / `run_code_path` / `sandbox_path`:各执行路径。
 
 执行错误是模型可见的数据(HTTP 200 + ok=false),只有鉴权、未知工具、
 需要确认、上游不可用这类调用方错误才走 API 错误。

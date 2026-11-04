@@ -38,9 +38,11 @@ _settings = settings_factory(
         "workspace_service_url": "http://workspace.test",
         # Nx 会把 services/tool-service/.env 注入任务环境,环境变量优先级高于
         # _env_file=None;这里显式钉住所有外部能力开关,测试才真正自足零网络。
-        # (common.service_testkit 的 NETWORK_SWITCHES 尚未包含 exec_enabled,
-        # 因此必须在本文件显式声明,否则本地开过 exec 时目录/可用性测试会红。)
+        # (common.service_testkit 的 NETWORK_SWITCHES 尚未包含 exec_enabled /
+        # run_code_enabled,因此必须在本文件显式声明,否则本地开过 exec 或
+        # run_code 时目录/可用性测试会红。)
         "exec_enabled": False,
+        "run_code_enabled": False,
         "fetch_enabled": False,
         "connector_internal_secret": "",
     },

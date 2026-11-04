@@ -1,4 +1,4 @@
-"""内置工具目录(P2:只读 + 受控写 + 知识库只读代理;交互工具已启用)。
+"""内置工具目录:只读 + 受控写 + 命令/代码执行 + 知识库与联网只读 + 交互工具。
 
 目录真源在代码而不是数据库:工具的 schema 随镜像版本发布,业务库只存
 调用审计与幂等记录。这样 catalog 与实现同版本、评审走代码评审、
@@ -17,10 +17,15 @@ from common.tools import (
     ToolRisk,
 )
 
-from tool_service.constants import DEFAULT_EXEC_TIMEOUT_SECONDS
+from tool_service.constants import (
+    DEFAULT_EXEC_TIMEOUT_SECONDS,
+    DEFAULT_RUN_CODE_TIMEOUT_SECONDS,
+    MAX_RUN_CODE_CHARS,
+    MAX_RUN_CODE_TIMEOUT_SECONDS,
+)
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-10-27.p5"
+CATALOG_VERSION = "2026-11-04.p6"
 
 READ = ToolDescriptor(
     name="read",
@@ -204,6 +209,48 @@ EXEC = ToolDescriptor(
     enabled=True,
 )
 
+RUN_CODE = ToolDescriptor(
+    name="run_code",
+    description=(
+        "在工作区沙箱内执行一段 Python 3 代码(经 stdin 直传,不经 shell),"
+        "返回退出码与 stdout/stderr;用于数据处理、计算、生成文件等多行脚本,"
+        "一次性 shell 命令请用 exec。代码以 cwd 为工作目录启动,沙箱默认无网络;"
+        "输出会被截断,大结果请写入文件后用 read 分段读取。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_RUN_CODE_CHARS,
+                "description": "完整 Python 3 源码;等价于从 stdin 传给 python3 -,"
+                "顶层语句会直接执行,不会自动调用 main()。",
+            },
+            "cwd": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "工作目录,相对路径按 /workspace 解析;默认 /workspace。",
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_RUN_CODE_TIMEOUT_SECONDS,
+                "default": 60,
+                "description": "本次代码执行超时(秒),默认 60。",
+            },
+        },
+        "required": ["code"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.DESTRUCTIVE,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.SANDBOX,
+    timeout_seconds=DEFAULT_RUN_CODE_TIMEOUT_SECONDS,
+    enabled=True,
+)
+
 SEARCH_KNOWLEDGE = ToolDescriptor(
     name="search_knowledge",
     description=(
@@ -320,7 +367,7 @@ ASK_QUESTION = ToolDescriptor(
     enabled=True,
 )
 
-#: 全部工具:read、glob、grep、list_dir、write、edit、exec、
+#: 全部工具:read、glob、grep、list_dir、write、edit、exec、run_code、
 #: search_knowledge、fetch、ask_question。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
@@ -330,6 +377,7 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     WRITE,
     EDIT,
     EXEC,
+    RUN_CODE,
     SEARCH_KNOWLEDGE,
     FETCH,
     ASK_QUESTION,

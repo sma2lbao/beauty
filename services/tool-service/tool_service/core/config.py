@@ -54,3 +54,7 @@ class Settings(ServiceSettings):
     # 一旦出现在启用目录里,orchestrator 的 plan 闸会对所有 run 触发确认,
     # 因此默认关闭;开启前请确认沙箱用 microsandbox + network=deny。
     exec_enabled: bool = False
+    # P5:run_code 在沙箱内执行 Python 3 代码(destructive,需人工确认)。
+    # 与 exec 同款风险:一旦出现在启用目录里,orchestrator 的 plan 闸会对所有
+    # run 触发确认,因此默认关闭;开启前请确认沙箱用 microsandbox + network=deny。
+    run_code_enabled: bool = False

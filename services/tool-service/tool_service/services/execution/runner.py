@@ -1,7 +1,8 @@
 """执行主流程:目录查找 → 能力开关 → 风险下限 → 参数校验 → 分派执行。
 
-三条执行路径按职责拆在 http_path / exec_path / sandbox_path 三个 mixin 里,
-ToolRunner 只留主流程、超时口径与失败封装;一个实例可被并发请求复用(无状态)。
+执行路径按职责拆在 http_path / exec_path / run_code_path / sandbox_path 里,
+进程型直跑(exec / run_code)再共享 process_path;ToolRunner 只留主流程、
+超时口径与失败封装;一个实例可被并发请求复用(无状态)。
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from tool_service.services.execution.outcome import (
     failure_outcome,
     normalize_interaction,
 )
+from tool_service.services.execution.run_code_path import RunCodeExecutionMixin
 from tool_service.services.execution.sandbox_path import SandboxExecutionMixin
 from tool_service.services.executors.http import HttpToolExecutor
 from tool_service.services.sandbox import SandboxProvider
@@ -44,6 +46,7 @@ from tool_service.services.sandbox import SandboxProvider
 
 class ToolRunner(
     ExecExecutionMixin,
+    RunCodeExecutionMixin,
     SandboxExecutionMixin,
     HttpExecutionMixin,
     ConnectorExecutionMixin,
@@ -127,6 +130,9 @@ class ToolRunner(
         if descriptor.name == "exec":
             # exec 需要真实退出码与 stderr,不走 helper 的 JSON 信封(设计 §6)。
             return await self._run_exec(context, descriptor, arguments, started)
+        if descriptor.name == "run_code":
+            # 代码经 stdin 交给 python3 -,与 exec 同走沙箱直跑路径(设计 §2)。
+            return await self._run_code(context, descriptor, arguments, started)
         if descriptor.executor is ExecutorKind.SANDBOX:
             return await self._run_sandbox(
                 context, descriptor, arguments, started, internal_arguments

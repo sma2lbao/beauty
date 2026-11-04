@@ -72,6 +72,14 @@ MAX_EXEC_STDERR_CHARS = 8_000
 MIN_EXEC_STDOUT_CHARS = 2_000
 MIN_EXEC_STDERR_CHARS = 1_000
 
+# ---- run_code(P5,危险工具,默认关闭;设计见 docs/design/code-execution.md) --
+#: Python 代码字符串上限(字符);超出由 schema 拒绝。
+MAX_RUN_CODE_CHARS = 20_000
+#: 默认代码执行超时(秒),同时是 descriptor 声明的 timeout_seconds。
+DEFAULT_RUN_CODE_TIMEOUT_SECONDS = 60.0
+#: 单次代码执行超时硬上限(秒),请求可在此范围内覆盖。
+MAX_RUN_CODE_TIMEOUT_SECONDS = 120
+
 # ---- 路径策略 -----------------------------------------------------------
 # 只读拒绝的目录/文件名片段(按路径段匹配,大小写不敏感)。
 DENY_READ_PARTS = frozenset(

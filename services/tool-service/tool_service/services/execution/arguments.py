@@ -31,6 +31,8 @@ def is_available(name: str, settings: Settings) -> bool:
         return bool(settings.fetch_enabled)
     if name == "exec":
         return bool(settings.exec_enabled)
+    if name == "run_code":
+        return bool(settings.run_code_enabled)
     return True
 
 

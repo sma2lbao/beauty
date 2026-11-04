@@ -9,7 +9,7 @@ from tool_service.services import catalog
 
 
 def test_catalog_version_is_exposed() -> None:
-    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-10-27.p5"
+    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-11-04.p6"
 
 
 def test_enabled_tools_are_the_function_slice() -> None:
@@ -22,6 +22,7 @@ def test_enabled_tools_are_the_function_slice() -> None:
         "write",
         "edit",
         "exec",
+        "run_code",
         "search_knowledge",
         "fetch",
         "ask_question",
@@ -51,6 +52,7 @@ def test_interaction_tool_schema_is_decoupled() -> None:
         "write",
         "edit",
         "exec",
+        "run_code",
         "search_knowledge",
         "fetch",
         "ask_question",
@@ -92,6 +94,29 @@ def test_search_knowledge_descriptor_shape() -> None:
     }
 
 
+def test_run_code_descriptor_shape() -> None:
+    run_code = catalog.find_descriptor("run_code")
+    assert run_code is not None
+    assert run_code.enabled is True
+    assert run_code.risk is ToolRisk.DESTRUCTIVE
+    assert run_code.kind is ToolKind.FUNCTION
+    assert run_code.executor is ExecutorKind.SANDBOX
+    assert run_code.timeout_seconds == 60.0
+    schema = run_code.input_schema
+    assert schema["required"] == ["code"]
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert properties["code"]["type"] == "string"
+    assert properties["code"]["minLength"] == 1
+    assert properties["code"]["maxLength"] == 20000
+    assert properties["cwd"]["maxLength"] == 512
+    timeout = properties["timeout_seconds"]
+    assert timeout["type"] == "integer"
+    assert timeout["minimum"] == 1
+    assert timeout["maximum"] == 120
+    assert timeout["default"] == 60
+
+
 def test_fetch_descriptor_shape() -> None:
     fetch = catalog.find_descriptor("fetch")
     assert fetch is not None
@@ -124,7 +149,7 @@ def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
 
 def test_openai_tools_shape() -> None:
     tools = catalog.openai_tools()
-    assert len(tools) == 10
+    assert len(tools) == 11
     for item in tools:
         assert item["type"] == "function"
         function = item["function"]
@@ -144,6 +169,7 @@ def test_descriptors_payload_roundtrip() -> None:
         "write",
         "edit",
         "exec",
+        "run_code",
         "search_knowledge",
         "fetch",
         "ask_question",
