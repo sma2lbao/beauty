@@ -96,9 +96,25 @@ async def _persist_assistant_message(
     session: AsyncSession, message: ChatMessage, content: str
 ) -> ChatMessage:
     """落 assistant 回复(直接对话;run 的回复由 runs 服务在终态时投影)。"""
-    reply = ChatMessage(
+    return await _persist_assistant_content(
+        session,
         tenant_id=message.tenant_id,
         conversation_id=message.conversation_id,
+        content=content,
+    )
+
+
+async def _persist_assistant_content(
+    session: AsyncSession, *, tenant_id: str, conversation_id: str, content: str
+) -> ChatMessage:
+    """按租户+对话落一条 assistant 消息(确认链路没有源消息可复制时用)。
+
+    确认端点执行写工具后,结果要作为一条 assistant 消息进入对话历史;那里只有
+    conversation_id(触发消息已不在事务里),所以单独开这个入口。
+    """
+    reply = ChatMessage(
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
         role="assistant",
         content=content,
     )
@@ -183,26 +199,27 @@ async def _toolkit_for(
     extras_factory: ExtrasFactory | None,
     tenant_id: str,
     *,
-    read_only: bool = False,
+    chat: bool = False,
 ) -> ToolkitPort | None:
     """内置工具 + 外部工具(MCP / skill_run)合并成对话可用的注册表。
 
     extras 是"按调用现取"的(见 main._load_extras),取失败只降级外部工具,
     不让一条对话报错——与 run 路径的降级口径一致。
 
-    read_only=True 时内置工具只保留 risk=read 的(设计 §10 决策):对话没有
-    审批流,内置写操作引导用户改用「任务」;MCP 工具(extras)按租户
-    auto_approve 映射出的风险等级走既有口径,不参与这里的裁剪。
+    chat=True 时裁剪成对话可见的**功能**工具(§10 决策 / §6.7 就地确认):
+    interaction 类工具需要用户回答,只在任务图里暴露;DANGER(不可逆)工具在
+    对话里不暴露,引导改用「任务」。risk=read/write 都保留——写操作不再一律
+    拒绝,而是先生成 pending 确认、由用户就地确认后执行(见 tool_confirmations)。
+    MCP 工具(extras)按租户 auto_approve 映射出的风险等级走同一口径。
     远端工具箱目录拉取失败也只降级、不报错。
-    extras 里还有记忆工具(见 docs/design/memory.md §10.2):同样不参与
-    只读裁剪,即对话内可自动执行 memory_write/memory_delete——这是
-    已接受的取舍(与 MCP 写工具的既有口径一致,副作用仅限本租户记忆)。
+    extras 里还有记忆工具(见 docs/design/memory.md §10.2):同样参与裁剪,
+    memory_write/memory_delete 在对话里也需要就地确认。
     """
     toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
     if toolkit is not None:
         await _ensure_chat_toolkit(toolkit, tenant_id)
-    if read_only:
-        toolkit = _read_only_toolkit(toolkit)
+    if chat:
+        toolkit = _chat_toolkit(toolkit)
     if extras_factory is None:
         return toolkit
     try:
@@ -245,20 +262,25 @@ def _tool_kind(toolkit: ToolkitPort, name: str) -> str:
         return "function"
 
 
-def _read_only_toolkit(toolkit: ToolkitPort | None) -> ToolkitPort | None:
-    """裁剪出只读的**功能**工具(chat 无人工应答通道,§10.9)。
+def _chat_toolkit(toolkit: ToolkitPort | None) -> ToolkitPort | None:
+    """裁剪出对话可见的**功能**工具(§10.9 + §6.7 就地确认)。
 
-    interaction 类工具(ask_question)需要用户回答,只随任务图的工具箱
-    (with_interaction)暴露;对话侧即便工具箱里带了也必须过滤掉。
+    - interaction 类工具(ask_question)需要用户回答,只随任务图的工具箱
+      (with_interaction)暴露;对话侧即便工具箱里带了也必须过滤掉;
+    - DANGER 类工具(不可逆/需人工确认)不在对话里暴露,引导走「任务」;
+    - READ/WRITE 保留:写操作由确认链路(chat_tool_confirmations)兜底,
+      模型发起时只落 pending,不直接执行。
     """
     if toolkit is None:
         return None
-    allowed = [
-        entry["function"]["name"]
-        for entry in toolkit.schemas()
-        if str(toolkit.risk(entry["function"]["name"])) == "read"
-        and _tool_kind(toolkit, entry["function"]["name"]) == "function"
-    ]
+    allowed: list[str] = []
+    for entry in toolkit.schemas():
+        name = entry["function"]["name"]
+        if _tool_kind(toolkit, name) != "function":
+            continue
+        if str(toolkit.risk(name)) == "danger":
+            continue
+        allowed.append(name)
     return toolkit.restricted(allowed)
 
 

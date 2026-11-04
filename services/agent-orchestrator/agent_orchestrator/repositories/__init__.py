@@ -62,6 +62,9 @@ from agent_orchestrator.repositories.run import RunRepository as RunRepository
 from agent_orchestrator.repositories.summary import (
     ConversationSummaryRepository as ConversationSummaryRepository,
 )
+from agent_orchestrator.repositories.tool_confirmation import (
+    ChatToolConfirmationRepository as ChatToolConfirmationRepository,
+)
 from agent_orchestrator.repositories_artifacts import (
     _TEXT_CONTENT_TYPE_EXTRA as _TEXT_CONTENT_TYPE_EXTRA,
 )

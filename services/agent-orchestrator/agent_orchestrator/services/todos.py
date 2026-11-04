@@ -101,8 +101,9 @@ def build_todo_tool(
 ) -> ToolSpec:
     """构造 `todo_write` 工具(WRITE):覆盖写本 run 的任务清单。
 
-    risk=WRITE 而不是 READ:它会写 run 状态;若标 READ,chat 路径的只读工具
-    裁剪(_read_only_toolkit)会把它留下来——对话里就多出一个永远不可用的工具。
+    risk=WRITE 而不是 READ:它会写 run 状态;若标 READ,chat 路径的工具裁剪
+    (_chat_toolkit)会把它留下来——对话里就多出一个没有 run 上下文、永远不可用
+    的工具(WRITE 在对话里走就地确认,不会被直接执行)。
     """
 
     async def todo_write(args: dict[str, Any]) -> str:

@@ -3243,6 +3243,78 @@
         "title": "TodoRead",
         "type": "object"
       },
+      "ToolConfirmationCancelResult": {
+        "description": "取消写操作的响应(字段名与前端已约定,不得改名)。",
+        "properties": {
+          "confirmation_id": {
+            "title": "Confirmation Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "cancelled",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_id",
+          "status"
+        ],
+        "title": "ToolConfirmationCancelResult",
+        "type": "object"
+      },
+      "ToolConfirmationConfirmResult": {
+        "description": "确认写操作的响应(字段名与前端已约定,不得改名)。\n\n- ok / error_code / result_text 是工具执行的原始结果投影:\n  成功 ok=true、error_code 为空;失败 ok=false、error_code 是工具错误码;\n- message_id 是本次确认落的 assistant 消息 id(前端据此把结果插入对话)。",
+        "properties": {
+          "confirmation_id": {
+            "title": "Confirmation Id",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "result_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Text"
+          },
+          "status": {
+            "const": "confirmed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_id",
+          "status",
+          "ok",
+          "message_id"
+        ],
+        "title": "ToolConfirmationConfirmResult",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -4542,6 +4614,174 @@
           }
         },
         "summary": "List Conversation Tool Calls",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/tool-confirmations/{confirmation_id}/cancel": {
+      "post": {
+        "description": "取消待确认的写调用(不执行工具、不落 assistant 消息)。",
+        "operationId": "cancel_tool_call_api_v1_conversations__conversation_id__tool_confirmations__confirmation_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "confirmation_id",
+            "required": true,
+            "schema": {
+              "title": "Confirmation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfirmationCancelResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Tool Call",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/tool-confirmations/{confirmation_id}/confirm": {
+      "post": {
+        "description": "确认并执行待确认的写调用(重复确认 409,不重复执行)。",
+        "operationId": "confirm_tool_call_api_v1_conversations__conversation_id__tool_confirmations__confirmation_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "confirmation_id",
+            "required": true,
+            "schema": {
+              "title": "Confirmation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfirmationConfirmResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Tool Call",
         "tags": [
           "conversations"
         ]

@@ -15,6 +15,7 @@ from agent_orchestrator.api.v1 import (
     run_artifacts,
     runs,
     skills,
+    tool_confirmations,
 )
 
 api_router = APIRouter()
@@ -24,6 +25,7 @@ api_router.include_router(run_artifacts.router)
 api_router.include_router(notifications.router)
 api_router.include_router(conversations.router)
 api_router.include_router(conversation_messages.router)
+api_router.include_router(tool_confirmations.router)
 api_router.include_router(conversations.attachments_router)
 api_router.include_router(outbox.router)
 api_router.include_router(skills.router)

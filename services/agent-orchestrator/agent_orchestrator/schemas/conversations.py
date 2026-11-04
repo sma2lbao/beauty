@@ -106,6 +106,29 @@ class MessageRead(BaseModel):
     created_at: datetime
 
 
+class ToolConfirmationConfirmResult(BaseModel):
+    """确认写操作的响应(字段名与前端已约定,不得改名)。
+
+    - ok / error_code / result_text 是工具执行的原始结果投影:
+      成功 ok=true、error_code 为空;失败 ok=false、error_code 是工具错误码;
+    - message_id 是本次确认落的 assistant 消息 id(前端据此把结果插入对话)。
+    """
+
+    confirmation_id: str
+    status: Literal["confirmed"]
+    ok: bool
+    error_code: str | None = None
+    result_text: str | None = None
+    message_id: str
+
+
+class ToolConfirmationCancelResult(BaseModel):
+    """取消写操作的响应(字段名与前端已约定,不得改名)。"""
+
+    confirmation_id: str
+    status: Literal["cancelled"]
+
+
 class MessagePostResult(BaseModel):
     """发消息的结果:前端据此决定接哪个 run 的 SSE、是否刷新对话列表。
 

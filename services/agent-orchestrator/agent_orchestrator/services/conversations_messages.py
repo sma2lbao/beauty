@@ -21,7 +21,7 @@ from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
-from agent_orchestrator.services import chat, triage
+from agent_orchestrator.services import chat, tool_confirmations, triage
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.conversation_targets import require_conversation
 from agent_orchestrator.services.conversations_context import (
@@ -145,9 +145,13 @@ async def post_message(
             ),
         ):
             toolkit = await _toolkit_for(
-                toolkit_factory, extras_factory, tenant_id, read_only=True
+                toolkit_factory, extras_factory, tenant_id, chat=True
             )
             policies = await approval_service.load_policies(session, tenant_id)
+            # 写操作就地确认:非流式路径与请求同事务落 pending(提交时一起生效)
+            confirmations = tool_confirmations.ChatConfirmationRecorder(
+                session, tenant_id=tenant_id, conversation_id=conversation_id
+            )
             context = await _prepare_chat_context(
                 session, llm, message, conversation, settings
             )
@@ -160,6 +164,7 @@ async def post_message(
                 policies=policies,
                 context=context,
                 settings=settings,
+                confirmations=confirmations,
             )
         reply = await _persist_assistant_message(session, message, answer)
         # 有会话边界时推迟到提交后抽取(响应不等二次模型调用);服务层直调
@@ -343,7 +348,7 @@ async def stream_message(
             ),
         ):
             toolkit = await _toolkit_for(
-                toolkit_factory, extras_factory, tenant_id, read_only=True
+                toolkit_factory, extras_factory, tenant_id, chat=True
             )
             if toolkit is None or len(toolkit) == 0:
                 # 无工具:保持原路径——真正的流式增量(边产出边显示)
@@ -359,8 +364,17 @@ async def stream_message(
                     policies = await approval_service.load_policies(
                         policy_session, tenant_id
                     )
+                # 写操作就地确认:流式路径不在长事务里,每条 pending 独立短事务落库
+                confirmations = tool_confirmations.StreamConfirmationRecorder(
+                    factory, tenant_id=tenant_id, conversation_id=conversation_id
+                )
                 async for kind, payload in chat.run_tool_loop(
-                    llm, prompt, toolkit, policies=policies, stream=True
+                    llm,
+                    prompt,
+                    toolkit,
+                    policies=policies,
+                    stream=True,
+                    confirmations=confirmations,
                 ):
                     if kind == "delta":
                         delta = str(payload["text"])

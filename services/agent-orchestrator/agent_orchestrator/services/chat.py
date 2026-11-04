@@ -1,11 +1,13 @@
 """直接对话回复(§6.7):不建 run、不进执行图,直接用模型答一条。
 
-与任务路径的分工:chat 只回答——不产生副作用、不产出交付物、不需要审批;
+与任务路径的分工:chat 只回答——不产出交付物、不建 run;
 模型若判断"这其实是任务",就在回复里引导用户改用任务发送。
 
-对话内 function tools(只读):查资料类工具(文档/知识库/代码读取)
-允许在 chat 里直接调用——问"知识库里怎么写的"不该被迫建 run;
-写操作工具一律拒绝执行,回喂错误并引导改用「任务」(任务路径有确认闸 §6.2)。
+对话内 function tools:查资料类工具(文档/知识库/代码读取)直接调用——
+问"知识库里怎么写的"不该被迫建 run;写操作(risk=write)走**就地确认**:
+服务端不执行,只落一条 pending 确认并把 confirmation_id 交给前端卡片,
+用户点确认后由确认端点执行(§6.7 / services/tool_confirmations.py);
+DANGER(不可逆)工具仍不执行,回喂错误引导改用「任务」(任务路径有确认闸 §6.2)。
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import MessageRepository
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
-from agent_orchestrator.services import history
+from agent_orchestrator.services import history, tool_confirmations
 from agent_orchestrator.services.llm import LLMClient, ToolCall
 from agent_orchestrator.services.tools import ToolRisk
 
@@ -42,10 +44,11 @@ _DECISION_TEXT = {
 }
 
 CHAT_SYSTEM_PROMPT = (
-    "你是对话助手。可以调用提供的只读工具查询信息(如文档、"
+    "你是对话助手。可以调用提供的工具查询信息(如文档、"
     "知识库),拿到结果后直接、简洁地回答(一般 2-5 句),不要输出执行计划、"
-    "不要寒暄客套。写操作请提示用户改用「任务」发送——"
-    "任务路径有人工确认。如果这个问题需要多步执行或产出交付物,"
+    "不要寒暄客套。写操作会在对话里生成确认卡片:请提示用户点击卡片上的"
+    "确认按钮,确认后再根据执行结果继续回答,不要声称已经写入。"
+    "如果这个问题需要多步执行或产出交付物,"
     "也用一句话说明并提示用户改用「任务」发送。"
 )
 
@@ -162,41 +165,66 @@ async def _execute_calls(
     toolkit,
     calls: tuple[ToolCall, ...],
     policies: list[dict[str, str]] | None,
+    confirmations: tool_confirmations.ConfirmationRecorder | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-    """执行一轮工具调用:回填 tool 消息,逐个产出 ("tool", ...) 事件。"""
+    """执行一轮工具调用:回填 tool 消息,逐个产出 ("tool", ...) 事件。
+
+    risk=write 且提供确认通道时**不执行**:落 pending 确认,帧里带
+    confirmation_id/expires_at(前端出确认卡片),回喂"等用户确认"给模型。
+    """
     for call in calls:
         # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
         risk = str(toolkit.risk(call.name))
         decision = approval_service.decide(policies, call.name, ToolRisk(risk))
         duration_ms = 0
+        error_code: str | None = None
+        extra: dict[str, str] = {}
         if decision is approval_service.ApprovalAction.DENY:
             output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
         elif decision is approval_service.ApprovalAction.CONFIRM:
-            # 需要人工确认的动作在 chat 中不执行:回喂错误让模型引导走任务
+            # DANGER 不切流给对话:回喂错误让模型引导走任务(任务里有确认闸)
             output = _tool_error(
                 "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
             )
+        elif risk == "write":
+            # 写操作就地确认:不执行,只落 pending 并让前端出卡片
+            if confirmations is None:
+                output = _tool_error(
+                    "写操作需要用户确认,当前对话不支持就地确认,请提示用户改用「任务」发送"
+                )
+            else:
+                pending = await confirmations.record(
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    risk=risk,
+                    arguments=call.arguments,
+                )
+                output = tool_confirmations.pending_tool_output(call.name)
+                error_code = tool_confirmations.ERROR_CONFIRMATION_REQUIRED
+                extra = pending.frame_fields()
         else:
             started = time.perf_counter()
-            # 对话没有审批流:approved 恒 False,写工具由服务端风险下限兜底。
+            # 走到这里的只有 READ(WRITE 上面已转确认、DANGER 已拒),
+            # approved 恒 False 即可;tool-service 侧仍有风险下限兜底。
             output = await toolkit.execute(call.name, call.arguments, approved=False)
             duration_ms = int((time.perf_counter() - started) * 1000)
         messages.append(_tool_message(call.id, output))
         result_fields = tool_result_fields(output)
-        yield (
-            "tool",
-            {
-                "name": call.name,
-                "arguments": call.arguments,
-                "ok": not is_tool_error(output),
-                "risk": risk,
-                "decision": _DECISION_TEXT[decision],
-                "error_code": parse_tool_error(output),
-                "duration_ms": duration_ms,
-                "result_chars": len(output),
-                "truncated": result_fields.get("truncated"),
-            },
-        )
+        payload: dict[str, Any] = {
+            "name": call.name,
+            "arguments": call.arguments,
+            "ok": not is_tool_error(output),
+            "risk": risk,
+            "decision": "confirm" if extra else _DECISION_TEXT[decision],
+            "error_code": error_code
+            if error_code is not None
+            else parse_tool_error(output),
+            "duration_ms": duration_ms,
+            "result_chars": len(output),
+            "truncated": result_fields.get("truncated"),
+        }
+        payload.update(extra)
+        yield ("tool", payload)
 
 
 async def run_tool_loop(
@@ -206,6 +234,7 @@ async def run_tool_loop(
     *,
     policies: list[dict[str, str]] | None = None,
     stream: bool = False,
+    confirmations: tool_confirmations.ConfirmationRecorder | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any] | str]]:
     """对话内 function-calling 循环(只读 + 受控写,§6.7)。
 
@@ -218,7 +247,9 @@ async def run_tool_loop(
       产出 ("delta", {"text": ...}) 原样转发(不重切);收到工具调用就执行工具、
       进入下一轮,某轮没有工具调用即最终正文轮,直接返回——正文已经实时下发。
 
-    只读与受控写工具自动执行;**危险操作(DANGER)不执行**,
+    READ 工具自动执行;**WRITE 工具就地确认**(不执行,落 pending 并把
+    confirmation_id 交给前端;confirmations 为空时退回"改用任务"提示);
+    **危险操作(DANGER)不执行**,
     回喂错误文本引导走任务路径(对话没有审批流);租户策略 ``deny`` 的工具同样不执行。
     轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
     工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底(仅非流式)。
@@ -245,7 +276,9 @@ async def run_tool_loop(
                 return
             last_text = text or last_text
         messages.append(_assistant_tool_message(text, calls))
-        async for item in _execute_calls(messages, toolkit, calls, policies):
+        async for item in _execute_calls(
+            messages, toolkit, calls, policies, confirmations
+        ):
             yield item
     # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里
     if stream:
@@ -268,6 +301,7 @@ async def answer(
     policies: list[dict[str, str]] | None = None,
     context: ChatPromptContext | None = None,
     settings: Settings | None = None,
+    confirmations: tool_confirmations.ConfirmationRecorder | None = None,
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
@@ -286,7 +320,9 @@ async def answer(
         reply = await llm.complete(messages)
         return reply.content
     final = ""
-    async for kind, payload in run_tool_loop(llm, messages, toolkit, policies=policies):
+    async for kind, payload in run_tool_loop(
+        llm, messages, toolkit, policies=policies, confirmations=confirmations
+    ):
         if kind == "content":
             final = str(payload)
     return final

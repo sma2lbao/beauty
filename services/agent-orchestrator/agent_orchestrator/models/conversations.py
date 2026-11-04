@@ -15,10 +15,12 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -69,6 +71,48 @@ class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text)
     # 用户发消息时显式引用的 MCP server(§6.7):空列表 = 不限制(用全部已启用)
     mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class ChatToolConfirmation(UUIDMixin, TenantMixin, TimestampMixin, Base):
+    """对话内写操作确认(§6.7 就地确认):WRITE 工具在 chat 里先生成待确认行。
+
+    对话没有任务路径的审批闸,但产品要求"写操作就地确认":模型发起 risk=write
+    的调用时,服务端**不执行**,只落一行 pending 并把 confirmation_id 交给前端卡片;
+    用户点确认后由确认端点以 approved=True 执行(见 services/tool_confirmations.py)。
+
+    - tool_call_id 是模型侧的调用 id:唯一约束保证同一次调用只生成一条确认,
+      流式重放/重试不会生成重复卡片;
+    - message_id 指向确认执行后落的 assistant 消息(pending 时为空);
+    - result_text 保存工具原始输出(确认后回填),error_code 同步落工具错误码;
+    - status 状态机:pending → confirmed / cancelled;过期由 expires_at 判定,
+      读取方按时间返回 409(状态位不保证被改写,留待巡检清理)。
+    """
+
+    __tablename__ = "chat_tool_confirmations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "tool_call_id"),
+        Index(
+            "ix_chat_tool_confirmations_tenant_conversation",
+            "tenant_id",
+            "conversation_id",
+        ),
+    )
+
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"))
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_messages.id"), nullable=True
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(128))
+    tool_name: Mapped[str] = mapped_column(String(120))
+    risk: Mapped[str] = mapped_column(String(16))
+    arguments: Mapped[str] = mapped_column(Text)  # 模型给的原始 JSON 字符串
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    result_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Attachment(UUIDMixin, TenantMixin, TimestampMixin, Base):

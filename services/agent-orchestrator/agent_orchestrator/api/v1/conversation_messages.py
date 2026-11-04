@@ -155,7 +155,8 @@ def _message_frames(
                     "arguments": payload["arguments"],
                     "ok": payload["ok"],
                 }
-                # P1 审计字段(可选):有则带,没有则省略键,旧客户端不受影响。
+                # P1 审计字段 + 写操作确认(可选):有则带,没有则省略键,
+                # 旧客户端不受影响(不认确认字段就只是展示一条失败的 tool 帧)。
                 for key in (
                     "risk",
                     "decision",
@@ -163,6 +164,8 @@ def _message_frames(
                     "duration_ms",
                     "result_chars",
                     "truncated",
+                    "confirmation_id",
+                    "expires_at",
                 ):
                     value = payload.get(key)
                     if value is not None:

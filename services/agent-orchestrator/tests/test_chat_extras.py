@@ -1,9 +1,11 @@
 """chat 路径接外部工具(MCP):extras factory → 对话工具注册表(§6.8)。
 
-对话没有审批流(§6.7),所以能不能在对话里执行由工具风险等级
+对话没有任务路径的审批闸(§6.7),能在对话里"执行到什么程度"由工具风险等级
 (ToolSpec.risk)决定(MCP server 的 auto_approve 就在 tool_specs 里映射成它):
 
-- READ/WRITE 的工具:直接执行并回喂结果;
+- READ 的工具:直接执行并回喂结果;
+- WRITE 的工具:不执行,落一行 pending 确认(§6.7 就地确认),工具帧带
+  confirmation_id / expires_at,由前端卡片确认后走确认端点执行;
 - DANGER 的工具:不执行,回喂错误引导改用「任务」;
 - extras 工厂取失败:只降级外部工具,对话照常回答(与 run 路径同口径)。
 """
@@ -61,19 +63,19 @@ def _tool_call_reply(name: str, arguments: str) -> LLMReply:
     )
 
 
-def _mcp_spec(handler, *, danger: bool) -> ToolSpec:
+def _mcp_spec(handler, *, risk: ToolRisk) -> ToolSpec:
     return ToolSpec(
         name="mcp__mock__echo",
         description="回显",
         parameters={"type": "object"},
         handler=handler,
         # 未信任 server → DANGER;auto_approve 的 server → WRITE
-        risk=ToolRisk.DANGER if danger else ToolRisk.WRITE,
+        risk=risk,
     )
 
 
-def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
-    """auto_approve 的 MCP 工具(risk=WRITE):对话里直接执行。"""
+def test_chat_write_mcp_tool_requests_confirmation(tmp_path) -> None:
+    """auto_approve 的 MCP 工具(risk=WRITE):对话里不执行,只落待确认。"""
     seen: list[dict] = []
 
     async def handler(arguments: dict) -> str:
@@ -82,10 +84,13 @@ def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
         assert tenant_id == "t-1"
-        return [_mcp_spec(handler, danger=False)]
+        return [_mcp_spec(handler, risk=ToolRisk.WRITE)]
 
     fake = FakeLLM(
-        [_tool_call_reply("mcp__mock__echo", '{"text": "hi"}'), "工具回了 hi。"]
+        [
+            _tool_call_reply("mcp__mock__echo", '{"text": "hi"}'),
+            "已经生成确认请求,请在卡片上确认。",
+        ]
     )
     with _client(tmp_path, fake, extras_factory) as client:
         conversation_id = _create_conversation(client)
@@ -97,19 +102,21 @@ def test_chat_executes_auto_approved_mcp_tool(tmp_path) -> None:
         event = tool_events[0]
         assert event["name"] == "mcp__mock__echo"
         assert event["arguments"] == '{"text": "hi"}'
-        assert event["ok"] is True
+        assert event["ok"] is False
         assert event["risk"] == "write"
-        assert event["decision"] == "auto"
-        assert event["result_chars"] > 0
-        assert "error_code" not in event
-        assert isinstance(event["duration_ms"], int)
-        # 外部工具真的被执行了(结果回喂给第二轮模型调用)
-        assert seen == [{"text": "hi"}]
-        assert any(m.get("role") == "tool" for m in fake.calls[1])
+        assert event["decision"] == "confirm"
+        assert event["error_code"] == "tool.confirmation_required"
+        assert event["duration_ms"] == 0
+        assert event["confirmation_id"]
+        assert event["expires_at"].endswith("+00:00")
+        # 工具没有执行;回喂给模型的是"请用户确认"
+        assert seen == []
+        tool_messages = [m for m in fake.calls[1] if m.get("role") == "tool"]
+        assert "确认" in tool_messages[0]["content"]
         # 模型从对话工具列表里看得到 MCP 工具(命名空间隔离的名字)
         names = [tool["function"]["name"] for tool in fake.tools_seen[0]]
         assert "mcp__mock__echo" in names
-        assert events[-1][1]["reply"]["content"] == "工具回了 hi。"
+        assert events[-1][1]["reply"]["content"] == "已经生成确认请求,请在卡片上确认。"
 
 
 def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
@@ -121,7 +128,7 @@ def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
         return "不该被调用"
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
-        return [_mcp_spec(handler, danger=True)]
+        return [_mcp_spec(handler, risk=ToolRisk.DANGER)]
 
     fake = FakeLLM(
         [
@@ -139,6 +146,7 @@ def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
         assert tool_events[0]["risk"] == "danger"
         assert tool_events[0]["decision"] == "confirm"
         assert tool_events[0]["duration_ms"] == 0
+        assert "confirmation_id" not in tool_events[0]
         assert called == []
         tool_messages = [m for m in fake.calls[1] if m.get("role") == "tool"]
         assert "「任务」" in tool_messages[0]["content"]
@@ -151,7 +159,7 @@ def test_chat_post_message_path_uses_extras(tmp_path) -> None:
         return "echo: " + str(arguments.get("text"))
 
     async def extras_factory(tenant_id: str) -> list[ToolSpec]:
-        return [_mcp_spec(handler, danger=False)]
+        return [_mcp_spec(handler, risk=ToolRisk.READ)]
 
     fake = FakeLLM(
         [_tool_call_reply("mcp__mock__echo", '{"text": "hi"}'), "回显完成。"]
