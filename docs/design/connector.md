@@ -3,12 +3,12 @@
 > 状态：已实现（P1 平台骨架；2026-11-04 二次调整后**无内置 provider**，Notion 改走官方 MCP） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、移除内置 Notion provider
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；**内置 provider 目录为空**：内置飞书 provider（2026-11-04 上旬移除）与内置 **Notion** provider（provider key `notion`、4 只读 + 2 写工具）均已按 2026-11-04 二次规划移除，平台 API、`tenant_apps` 与静态令牌连接能力保留给后续 provider。**Notion 现通过官方 MCP 接入**（`https://mcp.notion.com/mcp`，见 §6）：`/connectors` 改为 MCP 预设连接器页，一键授权后由 agent-orchestrator 的 MCP client 托管凭证与工具，风险按 MCP 工具 `annotations` + 预设只读前缀分档（§7）；对话内写操作确认链路（`chat_tool_confirmations`）保留，对 `risk=write` 的 MCP 工具同样生效。P3 剩余组织共享/授权展示与 P4（其他 provider）未开始。
-> **2026-11-04 规划变更（二次）**：删除内置 Notion provider（`connector/providers/notion.py`、`CONNECTOR__NOTION_*` 配置项与 Notion provider 专项测试），connector-service 收敛为**通用连接器平台（当前无内置 provider）**；Notion 改为官方 MCP `https://mcp.notion.com/mcp`，`/connectors` 页面改为 **MCP 预设连接器（一键授权）**；agent-orchestrator 按 MCP 工具 `annotations` + 预设 read 前缀做风险分级（读直接执行、写在对话内出确认卡、破坏性工具不进对话，见 §7）。平台骨架/页面/执行面/审计保留。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；**内置 provider 目录为空**：内置飞书 provider（2026-11-04 上旬移除）与内置 **Notion** provider（provider key `notion`、4 只读 + 2 写工具）均已按 2026-11-04 二次规划移除，平台 API、`tenant_apps` 与静态令牌连接能力保留给后续 provider。**Notion 现通过官方 MCP 接入**（`https://mcp.notion.com/mcp`，见 §6）：`/connectors` 改为 MCP 预设连接器页（MCP 唯一入口：预设卡片 + 页内「我的 MCP 服务」区；侧栏不再单列 MCP，`/mcp` 仅兼容直链），一键授权后由 agent-orchestrator 的 MCP client 托管凭证与工具，风险按 MCP 工具 `annotations` + 预设只读前缀分档（§7）；对话内写操作确认链路（`chat_tool_confirmations`）保留，对 `risk=write` 的 MCP 工具同样生效。P3 剩余组织共享/授权展示与 P4（其他 provider）未开始。
+> **2026-11-04 规划变更（二次）**：删除内置 Notion provider（`connector/providers/notion.py`、`CONNECTOR__NOTION_*` 配置项与 Notion provider 专项测试），connector-service 收敛为**通用连接器平台（当前无内置 provider）**；Notion 改为官方 MCP `https://mcp.notion.com/mcp`，`/connectors` 页面改为 **MCP 预设连接器（一键授权）+「我的 MCP 服务」区**（MCP 唯一入口，侧栏不再单列；`/mcp` 仅兼容直链）；agent-orchestrator 按 MCP 工具 `annotations` + 预设 read 前缀做风险分级（读直接执行、写在对话内出确认卡、破坏性工具不进对话，见 §7）。平台骨架/页面/执行面/审计保留。
 
 ## 1. 摘要
 
-一句话：把 `connector-service`（:8004）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明。2026-11-04 二次调整后**平台保留、内置 provider 目录为空**；Notion 不再内置，改由 agent-orchestrator 的 MCP client 接官方 MCP（`https://mcp.notion.com/mcp`），`/connectors` 变为 MCP 预设连接器（一键授权）。
+一句话：把 `connector-service`（:8004）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明。2026-11-04 二次调整后**平台保留、内置 provider 目录为空**；Notion 不再内置，改由 agent-orchestrator 的 MCP client 接官方 MCP（`https://mcp.notion.com/mcp`），`/connectors` 变为 MCP 预设连接器（一键授权）+「我的 MCP 服务」区，成为 MCP 唯一入口（`/mcp` 仅兼容直链）。
 
 三条主线（也是本稿与「直接接 MCP」的分野）：
 
@@ -136,7 +136,7 @@ agent-orchestrator ── mcp_oauth：RFC 9728 PRM → AS 元数据 → DCR(RFC 
    │                                   │ state 校验 → code+PKCE 换 token → 加密落 mcp_server_auth
    │                                   │ 尽力刷新一次 tools_cache → 302
    ▼                                   ▼
-/connectors?oauth=success&server=Notion   （next=/mcp 时回 /mcp?oauth=success）
+/connectors?oauth=success&server=Notion   （next 白名单以 /connectors 为主，/mcp 仅兼容直链）
    │
 agent-orchestrator ── MCP tools/list（工具面以 server 为准，当前约 70 个）
                      ── 工具风险：annotations + 预设 read 前缀（§7）
@@ -306,7 +306,7 @@ class BaseProvider:
 
 ## 6. Notion 接入：官方 MCP（2026-11-04 二次变更）
 
-**结论**：Notion 不再由 `connector-service` 内置 provider 承接，改为 **Notion 官方 MCP server**（`https://mcp.notion.com/mcp`），由 **agent-orchestrator** 的 MCP client 统一接入；`/connectors` 页改为「MCP 预设连接器」，内置 `notion` 预设提供一键授权。内置 provider 的代码（`connector/providers/notion.py`）、`CONNECTOR__NOTION_*` 配置、`tenant_apps` 的 Notion 用法与相关测试均已删除。
+**结论**：Notion 不再由 `connector-service` 内置 provider 承接，改为 **Notion 官方 MCP server**（`https://mcp.notion.com/mcp`），由 **agent-orchestrator** 的 MCP client 统一接入；`/connectors` 页改为「MCP 预设连接器」，内置 `notion` 预设提供一键授权。连接器页是 MCP 的唯一入口：预设卡片在上，页内「我的 MCP 服务」区（锚点 `#mcp-servers`）管理自定义 server；侧栏不再单列「MCP」，`/mcp` 路由仅保留给旧书签与 OAuth `state` 验签失败的兜底回跳。内置 provider 的代码（`connector/providers/notion.py`）、`CONNECTOR__NOTION_*` 配置、`tenant_apps` 的 Notion 用法与相关测试均已删除。
 
 **为什么改**：官方 MCP 已具备完整授权链路——`/.well-known/oauth-protected-resource` 发现（RFC 9728）、AS 元数据、**DCR**（RFC 7591）、**PKCE S256**、`refresh_token`——orchestrator 的 `mcp_oauth` 可直接复用；工具面由 Notion 维护（当前 `tools/list` 约 70 个），平台不需要再为每个能力写 provider 代码与分页/限流/版本适配。`connector-service` 的平台能力保留给**没有官方 MCP**、或需要平台托管凭证/执行面的 SaaS。
 
@@ -320,13 +320,13 @@ class BaseProvider:
 
 1. 页面加载 `GET /v1/mcp/presets` → `{presets:[{key,name,url,description,docs_url}]}`（当前仅 `notion`；`url=https://mcp.notion.com/mcp`，`docs_url=https://developers.notion.com/docs/mcp`）。
 2. 卡片「连接 Notion」→ `POST /v1/mcp/presets/notion`：按 `preset.url` 在**本租户**找已有 server，有则原样返回；没有则创建 `transport="http"`、`auto_approve=false`、`tools_allowlist=[]` 的 server（同名回退 `Notion-2`）。幂等，可重复点。
-3. `POST /v1/mcp/servers/{id}/oauth/start`，body 可带 `{"next":"/connectors"}`（或 `/mcp`，默认 `/mcp`）；`next` 写进 `state` payload，授权成功后 302 到对应页面（`/connectors?oauth=success&server=Notion` 或 `/mcp?oauth=success`）。
+3. `POST /v1/mcp/servers/{id}/oauth/start`，body 可带 `{"next":"/connectors"}`（授权发起页固定用 `/connectors`；`/mcp` 仍被白名单接受，仅供旧直链兼容）；`next` 写进 `state` payload，授权成功后 302 回 `/connectors?oauth=success&server=Notion`（传 `/mcp` 时落 `/mcp?oauth=success`）。
 4. 授权成功后**尽力**刷新一次该 server 的 `tools_cache`（失败只记日志，不影响 302）；回到页面后 `GET /v1/mcp/servers` 即可看到 `oauth_authorized=true` 与工具数。
 5. 会话侧：输入区「MCP」选择器选中该 server（或深链 `/?mcp=<server_id>`），只用被引用 server 的工具；不选 = 全部已启用 server。
 
 **工具面**
 
-- 以 server 的 `tools/list` 为准（当前约 70 个）；平台命名 `mcp__notion__<tool>`（`<server>` 由 server 名 slug 化），参数 schema 与描述原样来自 server，平台不维护工具白名单（`/mcp` 详情可用 `tools_allowlist` 收窄，默认空 = 全量）。
+- 以 server 的 `tools/list` 为准（当前约 70 个）；平台命名 `mcp__notion__<tool>`（`<server>` 由 server 名 slug 化），参数 schema 与描述原样来自 server，平台不维护工具白名单（连接器页「我的 MCP 服务」的 server 详情可用 `tools_allowlist` 收窄，默认空 = 全量）。
 - `kind=function`，风险档位按 §7 的 annotations/预设规则计算——**读直接执行，写在对话内出确认卡，DANGER 不进对话**。
 
 **配置**
@@ -345,12 +345,12 @@ MCP 工具的风险**在工具粒度**上计算（同一 server 可以既有只�
 | 1    | `annotations.destructiveHint is True`                                                | **DANGER** |
 | 2    | `annotations.readOnlyHint is True`                                                   | **READ**   |
 | 3    | `server.url` 命中内置预设（忽略末尾斜杠）且工具名命中该预设任一 `read_prefixes` 前缀 | **READ**   |
-| 4    | `server.auto_approve`（租户在 `/mcp` 打开「免确认执行」）                            | **WRITE**  |
+| 4    | `server.auto_approve`（租户在连接器页「我的 MCP 服务」打开「免确认执行」）           | **WRITE**  |
 | 5    | 其余                                                                                 | **DANGER** |
 
 Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-fetch`、`notion-list-`、`notion-get-`、`notion-query-`、`notion-read-`、`notion-view-`、`notion-download-`、`notion-wait-`、`notion-calendar-list-`。
 
-- `annotations` 随 `tools/list` 落 `tools_cache`（`MCPToolRead.annotations`）；`/mcp` 的测试端点刷新缓存后生效，旧缓存没有该字段时按空处理（走第 3 步预设前缀兜底）。
+- `annotations` 随 `tools/list` 落 `tools_cache`（`MCPToolRead.annotations`）；连接器页「我的 MCP 服务」的测试端点刷新缓存后生效，旧缓存没有该字段时按空处理（走第 3 步预设前缀兜底）。
 - **annotations 是 server 的自述，不是可信边界**：预设只读前缀只对内置预设生效；非预设 server 仍需租户显式 `auto_approve`（此时非只读工具→WRITE）。「自述 readOnlyHint 的写工具」风险记在 §9.2。
 
 **对话路径**（与 [tool-execution.md]（./tool-execution.md） §7.6 同一条链路）
@@ -361,7 +361,7 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 - 确认重放用与发消息**同一套工具箱装配**（allow write、排除 danger），不会出现「看到的工具」与「确认时执行的工具」漂移。
 - DANGER 工具不进对话：模型只能收到「该工具需在任务中执行」的提示；任务路径走 `approval_policies` 的 `confirm` 闸，tool-service 的「WRITE/DESTRUCTIVE 无 `approved` → 403」闸门不变（见 [tool-execution.md]（./tool-execution.md） §7.6）。
 
-**默认保守**：预设 server 以 `auto_approve=false` 创建——Notion 上未声明 `readOnlyHint`、也未命中只读前缀的工具一律 DANGER（对话里不执行）；租户在 `/mcp` 打开「免确认执行」后这些工具降为 WRITE，对话内出确认卡。这比内置 provider 时期「写工具固定 WRITE」**更保守**，属预期行为。
+**默认保守**：预设 server 以 `auto_approve=false` 创建——Notion 上未声明 `readOnlyHint`、也未命中只读前缀的工具一律 DANGER（对话里不执行）；租户在连接器页「我的 MCP 服务」打开「免确认执行」后这些工具降为 WRITE，对话内出确认卡。这比内置 provider 时期「写工具固定 WRITE」**更保守**，属预期行为。
 
 **连接器 provider 写工具（历史）**：内置 provider 时期的 `Notion__create_page` / `Notion__append_blocks` 已随 provider 移除；机制不变——provider 的 `ToolSpec.risk=WRITE` 同样编译成 `risk=write` 并走同一条对话确认链（§5.6）。
 
@@ -375,7 +375,7 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 > 但**内置 provider 已清空**：内置飞书 provider（11-04 上旬移除）与内置 Notion provider（11-04 二次变更移除）均已删除，
 > `connector/providers/` 目录为空、`GET /v1/connectors` 返回空目录。Notion 改走**官方 MCP**（§6）：预设 server + 一键授权
 >
-> - 工具 annotations 风险分级已上线（C7.1–C7.5，见 §8.7），`/connectors` 页改为 MCP 预设连接器。
+> - 工具 annotations 风险分级已上线（C7.1–C7.5，见 §8.7），`/connectors` 页改为 MCP 预设连接器（MCP 唯一入口：预设卡片 +「我的 MCP 服务」区；侧栏不再单列「MCP」，`/mcp` 仅保留给旧书签与 OAuth `state` 验签失败兜底回跳）。
 >   对话内写操作确认链路（`chat_tool_confirmations`）保留并对 MCP 的 WRITE 工具生效（§7）。
 >   与清单的差异：manifest 改为 `BaseProvider` 子类而非 dataclass 注册（§5.6）；执行代理按 provider 寻址
 >   （`POST /v1/connectors/{provider}/execute`，§5.3）；租户应用凭证解析落在 `connector/services/apps.py`、
@@ -494,8 +494,8 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 
 - [x] **C7.1** `mcp_presets.py`：`MCPPreset` + `PRESETS`（当前 `notion`） + `list_presets`/`preset_for_key`/`preset_for_url`（忽略末尾斜杠）；未知 key → 404 `mcp.preset_not_found` — 验收：单测覆盖 key/url 匹配与去尾斜杠
 - [x] **C7.2** 工具注解与风险分级：`MCPToolRead.annotations` 透传并写回 `tools_cache`；`_tool_risk` 按 destructiveHint → readOnlyHint → 预设只读前缀 → auto_approve → DANGER 的顺序分档 — 验收：对话路径 WRITE 落确认、DANGER 被裁剪
-- [x] **C7.3** 端点：`GET /v1/mcp/presets`、`POST /v1/mcp/presets/{key}`（幂等 ensure，按 url 复用已有 server，重名回退 `Notion-2`）、`POST /v1/mcp/servers/{id}/oauth/start` 接受的 `next`（`/mcp` / `/connectors`）；授权成功尽力刷新 `tools_cache` — 验收：重复调用不重复建 server，回调落点正确
-- [x] **C7.4** Web `/connectors` 改为 MCP 预设页：预设卡片、已连接状态与工具数、一键授权、`去会话使用`（`/?mcp=<id>`）、`管理`（`/mcp`）；旧 provider 目录区仅在存在 provider 时渲染 — 验收：`nx typecheck/test/lint @beauty/web` 绿
+- [x] **C7.3** 端点：`GET /v1/mcp/presets`、`POST /v1/mcp/presets/{key}`（幂等 ensure，按 url 复用已有 server，重名回退 `Notion-2`）、`POST /v1/mcp/servers/{id}/oauth/start` 接受的 `next`（`/connectors` 为主，`/mcp` 兼容直链）；授权成功尽力刷新 `tools_cache` — 验收：重复调用不重复建 server，回调落点正确
+- [x] **C7.4** Web `/connectors` 改为 MCP 预设页：预设卡片、已连接状态与工具数、一键授权、`去会话使用`（`/?mcp=<id>`）、`管理`（本页 `#mcp-servers`，即「我的 MCP 服务」区）；页结构为预设卡片 +「我的 MCP 服务」区 + 旧 provider 目录区（仅 `providers.length>0` 时渲染） — 验收：`nx typecheck/test/lint @beauty/web` 绿
 - [x] **C7.5** 文档与部署：本文、tool-execution.md、local-dev.md §3.2、architecture.md、AGENTS.md、README 索引、compose 注释同步；connector-service 删除 Notion provider/配置/测试 — 验收：`check-docs` / `check-workspace` / `compose config` 均通过
 
 ## 9. 风险与开放问题
@@ -523,7 +523,7 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 | 连接器工具污染模型工具面           | 模型选择困难/误用                      | 工具按连接启用；描述精简；写工具 confirm（任务路径）/ 就地确认（对话路径）；每连接工具数上限      |
 | Notion token TTL 未知              | 被动 401，可能影响体验                 | 401 触发刷新 + introspect 巡检；`expires_at` 空表示未知                                           |
 | MCP server 自述 annotations 不可信 | 夸大 readOnlyHint 让写工具被当只读执行 | 预设只读前缀只对内置预设生效；非预设 server 需 `auto_approve` 显式信任并出确认卡；DANGER 不进对话 |
-| Notion MCP 工具面约 70 个          | 模型选择困难 / 误用                    | `/mcp` 可用 `tools_allowlist` 收窄；预设默认 `auto_approve=false`；写操作确认卡                   |
+| Notion MCP 工具面约 70 个          | 模型选择困难 / 误用                    | 连接器页「我的 MCP 服务」可用 `tools_allowlist` 收窄；预设默认 `auto_approve=false`；写操作确认卡 |
 
 ## 10. 参考
 

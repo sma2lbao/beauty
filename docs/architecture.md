@@ -268,7 +268,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 - **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略已实现；**审计与提示注入过滤未实现**（见 06 §2.3 #9）；
 - **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
-  - **内置预设 + 一键授权**（2026-11-04）：`GET /v1/mcp/presets` 暴露静态预设（当前 `notion` → `https://mcp.notion.com/mcp`），`POST /v1/mcp/presets/{key}` 幂等 ensure server，`POST /v1/mcp/servers/{id}/oauth/start` 接受 `next`（`/mcp` / `/connectors`）决定回调落点；`/connectors` 页即「预设连接器」入口，旧 provider 目录区只在存在 provider 时渲染；
+  - **内置预设 + 一键授权**（2026-11-04）：`GET /v1/mcp/presets` 暴露静态预设（当前 `notion` → `https://mcp.notion.com/mcp`），`POST /v1/mcp/presets/{key}` 幂等 ensure server，`POST /v1/mcp/servers/{id}/oauth/start` 接受 `next`（主路径 `/connectors`；`/mcp` 仅兼容直链）决定回调落点；`/connectors` 页是 MCP 唯一入口（预设卡片 +「我的 MCP 服务」区 + 旧 provider 目录区，侧栏不再单列 MCP，旧 provider 区只在存在 provider 时渲染）；
   - **HTTP 型**（M1 已落地）：orchestrator 进程内 httpx（Streamable HTTP），后续补 SSRF/出网代理加固；
   - **stdio 型**（P2 已落地）：命令在 workspace-service 沙箱内拉起，经 stdin/stdout JSON-RPC
     执行（`stdin MCP` 不能进 orchestrator 进程）；沙箱按**对话级**复用
@@ -279,7 +279,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
     `annotations.readOnlyHint=true`，或 server.url 命中内置预设且工具名命中预设只读前缀 → READ；
     server.auto_approve → WRITE；其余 → DANGER。对话路径按 `kind=function && risk!=danger` 裁剪工具面，
     WRITE 落 `chat_tool_confirmations` 出就地确认卡（§6.x）；
-  - **审批策略**（已落地）：每个 server 一个 `auto_approve` 信任开关（Web `/mcp` 页
+  - **审批策略**（已落地）：每个 server 一个 `auto_approve` 信任开关（连接器页「我的 MCP 服务」区
     「免确认执行」，默认关）。关：未判为只读的工具在对话里不暴露、run 里按 DANGER 走确认闸；
     开：这些工具降为 WRITE——run 不再逐次确认、对话里出确认卡后执行——对齐
     操作策略「是配置，不是硬编码」；

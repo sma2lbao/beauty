@@ -86,21 +86,21 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 ## 3.2 连接器平台与 MCP 预设(Notion 走 MCP)
 
 - **定位**:connector-service(:8004) 是**通用连接器平台**(OAuth 授权会话、凭证托管、连接生命周期:刷新单飞 + 24h 巡检 + outbox 生命周期事件;支持 OAuth 授权与静态令牌两种连接方式)。**当前无内置 provider**(`connector/providers/` 目录为空):内置飞书 provider 已于 2026-11-04 上旬移除,内置 Notion provider 也已于 2026-11-04 二次规划移除。设计见 [design/connector.md](./design/connector.md)。
-- **Notion 改走官方 MCP**(`https://mcp.notion.com/mcp`):凭证、工具与授权都在 **agent-orchestrator** 侧(`mcp_server_auth` + `mcp_oauth`),不再经过 connector-service;`/connectors` 页面从「provider 目录」改为 **MCP 预设连接器**(一键授权)。
+- **Notion 改走官方 MCP**(`https://mcp.notion.com/mcp`):凭证、工具与授权都在 **agent-orchestrator** 侧(`mcp_server_auth` + `mcp_oauth`),不再经过 connector-service;`/connectors` 页面从「provider 目录」改为 **MCP 预设连接器**(一键授权)+「我的 MCP 服务」区(自定义 server),已是 MCP 的唯一入口(侧栏不再单列)。
 - **三步用起来**:
   1. 启动服务(`connector-service` 无需任何 Notion 凭证;确认 `agent-orchestrator` 的 `AGENT_ORCHESTRATOR__MCP_OAUTH_*` 开启,默认开)。
   2. 打开 Web `/connectors`,Notion 卡片点「连接 Notion」→ 前端 `POST /api/v1/mcp/presets/notion`(幂等 ensure server)+ `POST /api/v1/mcp/servers/{id}/oauth/start {"next":"/connectors"}` → 整页跳转授权服务器 → 浏览器授权 → 回跳 `/connectors?oauth=success&server=Notion`。
-     也可以走 `/mcp` 页手动「添加 server」:URL 填 `https://mcp.notion.com/mcp`,测试出现「需要授权」后点「去授权」,回调默认回 `/mcp?oauth=success`。
+     也可以在连接器页「我的 MCP 服务」区手动「添加 server」:URL 填 `https://mcp.notion.com/mcp`,测试出现「需要授权」后点「去授权」;从连接器页发起会回 `/connectors?oauth=success`,`/mcp` 只是兼容直链页(从那里发起才回 `/mcp?oauth=success`)。
   3. 回会话(`/`),在输入区「MCP」选择器里选 `Notion`(或深链 `/?mcp=<server_id>`),让模型用 Notion 工具;不选 = 装配全部已启用 server 的 MCP 工具。
 - **工具面**:以 server `tools/list` 为准(当前约 70 个),命名 `mcp__notion__<tool>`;风险按工具粒度分级(`annotations` + 预设只读前缀,详见 [design/connector.md](./design/connector.md) §7):只读工具直接执行;写工具在对话里出确认卡(`/v1/conversations/{cid}/tool-confirmations/*`);`destructiveHint=true` 等 DANGER 工具不进对话。
-- **默认只授权了什么**:预设 server 以 `auto_approve=false` 创建——未声明 `readOnlyHint`、也未命中预设只读前缀的工具一律按 DANGER 处理(对话里不执行);把 `/mcp` 详情页「免确认执行」打开后,这类工具降为 WRITE,对话里出确认卡后执行。这比内置 provider 时的直连写更保守,属预期行为。
+- **默认只授权了什么**:预设 server 以 `auto_approve=false` 创建——未声明 `readOnlyHint`、也未命中预设只读前缀的工具一律按 DANGER 处理(对话里不执行);把连接器页「我的 MCP 服务」的 server 详情「免确认执行」打开后,这类工具降为 WRITE,对话里出确认卡后执行。这比内置 provider 时的直连写更保守,属预期行为。
 - **接口(MCP 预设)**:`GET /v1/mcp/presets`(预设目录)、`POST /v1/mcp/presets/{key}`(幂等 ensure server)、`POST /v1/mcp/servers/{id}/oauth/start`(body 可带 `{"next":"/mcp"|"/connectors"}`,决定回调 302 落点)、`GET /v1/mcp/servers`(连接状态:`has_oauth`/`oauth_authorized`/工具数等)。旧 provider 接口(`/v1/connectors`、`/v1/connections` 等)仍保留,但目录为空,仅对未来 provider 生效。
 - **执行链(平台侧,保留)**:orchestrator → tool-service(`TOOL__CONNECTOR_*`)→ connector-service(工具名 `<Provider>__<tool>`;`risk=write` 走对话确认)——当前无 provider 时不会装配任何连接器工具。
 - **已删除**:IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD;内置飞书 provider(2026-11-04);内置 Notion provider 及其 `CONNECTOR__NOTION_*` 配置(2026-11-04 二次规划,Notion 改 MCP)。
 
 ## 3.3 MCP Client（第三方工具）
 
-- `/mcp` 页「我的 MCP」：注册 MCP server、测试/刷新工具、启用/停用、删除。交互是左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
+- 连接器页「我的 MCP 服务」区（`/connectors#mcp-servers`，左列标题「我的 MCP」+ 添加按钮）：注册 MCP server、测试/刷新工具、启用/停用、删除；`/mcp` 只是兼容直链页（旧书签与 OAuth `state` 验签失败兜底回跳），内容相同。交互是左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
 - 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
 - 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图。风险按**工具粒度**分级：`annotations.destructiveHint=true` → DANGER、`annotations.readOnlyHint=true` 或命中内置预设(Notion)的只读前缀 → READ、租户开「免确认执行」→ WRITE、其余 → DANGER(见 [design/connector.md](./design/connector.md) §7)。
 - 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，
@@ -109,10 +109,10 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
   注册表单与详情页都有这个开关。
 - 对话里的显式引用：Web 对话页输入区在「技能」旁有「MCP」选择器（`?mcp=<server_id>` 可深链），选中后这条消息**只**装配被引用 server 的 MCP 工具；不选 = 全部 server（向后兼容）。引用随消息/run 落库（`mcp_server_ids`，最多 10 个）并进系统提示词，历史消息显示 `MCP · <server>` 徽标；run 建好后引用固化为快照，后续再改选择不影响已建 run。接口侧 `POST /v1/conversations/{id}/messages`（含 `/messages/stream`）与 `POST /v1/runs` 都接受 `mcp_server_ids`，校验在落库前完成：未知 404 `mcp.server_not_found`、停用 409 `mcp.server_disabled`、能力未启用 409 `mcp.disabled`。
 - 凭证只写不读：http 的 token 用 `AGENT_ORCHESTRATOR__MCP_SECRET` 加密存 DB，读端只返回尾号；stdio 的 env 整体加密，读端只返回 `env_keys`。
-- http 传输收到 401 时按「需要授权」处理：测试端点落 `last_status=auth_required`、`/mcp` 页标「需要授权」；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`），响应头 `WWW-Authenticate` 保留下来作发现线索。
-- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，`/mcp` 详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **API 网关同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回 `/mcp?oauth=success`（`oauth/start` 可带 `next=/connectors`，回调就落 `/connectors?oauth=success`）。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
+- http 传输收到 401 时按「需要授权」处理：测试端点落 `last_status=auth_required`、连接器页「我的 MCP 服务」标「需要授权」；工具调用不执行、回喂结构化错误（`code: mcp.auth_required`），响应头 `WWW-Authenticate` 保留下来作发现线索。
+- 浏览器 OAuth 授权（P1，开关 `AGENT_ORCHESTRATOR__MCP_OAUTH_*`，默认开）：server 测试出现 `auth_required` 后，连接器页「我的 MCP 服务」的详情卡出现「去授权」——orchestrator 先用 `WWW-Authenticate` 里的 `resource_metadata`（缺失则按 `<origin>/.well-known/oauth-protected-resource[<path>]`）做 RFC 9728 发现，再按 RFC 8414 / OIDC 元数据找授权服务器，没有预注册客户端时走 RFC 7591 动态注册；返回一次性授权链接（`state` 用 `MCP_SECRET` 签名，默认 10 分钟过期）。浏览器授权后由 **API 网关同源回调** `http://127.0.0.1:8007/api/mcp/oauth/callback` 收 `?code&state`，带 `X-Internal-Secret` 转给 orchestrator，用 PKCE `S256` 换 token（access/refresh 加密存 `mcp_server_auth` 表），再 302 回发起页：从连接器页发起（`oauth/start` 带 `next=/connectors`）落 `/connectors?oauth=success`，不传 `next` 的 `/mcp` 直链页落 `/mcp?oauth=success`。之后工具调用发现令牌过期时单飞刷新；刷新被判 `invalid_grant` 会清空令牌并重新要求授权。stdio server 不适用（凭据走 env），纯静态 token 的 http server 也不需要走这条链路。`MCP_OAUTH_REDIRECT_URI` 必须与 AS 上注册的回调完全一致。
 - http 传输按 Streamable HTTP 规范回带会话头：`initialize` 响应里的 `Mcp-Session-Id` 会带到后续每个请求（含 notification），之后请求带协商出的 `MCP-Protocol-Version`；会话失效（服务端回 404）自动重新 initialize 并重试一次，关闭时尽力 `DELETE` 终止会话。
-- 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在 `/mcp` 页注册后点「测试/刷新」。
+- 本地演示 server：`uv run python scripts/mock-mcp-server.py`（`http://127.0.0.1:8010/mcp`，提供 echo/add），在连接器页「我的 MCP 服务」注册后点「测试/刷新」。
 - MCP Server 对外暴露（M3）尚未实现。
 
 ## 3.4 API Key
