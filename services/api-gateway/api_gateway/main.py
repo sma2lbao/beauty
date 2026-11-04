@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from api_gateway.api.auth import router as auth_router
+from api_gateway.api.connector_oauth import router as connector_oauth_router
 from api_gateway.api.health import health_router
 from api_gateway.api.mcp_oauth import router as mcp_oauth_router
 from api_gateway.api.proxy import router as proxy_router
@@ -80,8 +81,10 @@ def create_app(
         routers=[
             (health_router, ""),
             (auth_router, ""),
-            # 必须在通用 /api/{path} 代理之前注册,否则回调会被代理吃掉
+            # 以下是浏览器直连的公开回调(第三方授权页重定向回来,不带会话),
+            # 必须在通用 /api/{path} 代理之前注册,否则会被代理 401 掉
             (mcp_oauth_router, ""),
+            (connector_oauth_router, ""),
             (proxy_router, ""),
         ],
         state={
