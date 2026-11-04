@@ -40,6 +40,21 @@ class Settings(ServiceSettings):
     refresh_margin_seconds: int = 300
     request_timeout_seconds: float = 10.0
 
+    # ── 事务性 outbox(C1.10)────────────────────────────────────────────
+    # 开启后连接生命周期事件与状态变更同事务写入 outbox_events,再由后台
+    # dispatcher 投递;关闭时降级为结构化日志(单进程/本地开发默认)。
+    outbox_enabled: bool = False
+    outbox_dispatch_interval_seconds: float = 1.0
+    outbox_batch_size: int = 50
+    outbox_max_attempts: int = 5
+
+    # ── 24h 刷新巡检(§5.5)───────────────────────────────────────────────
+    # 生产默认开启;测试/单进程部署可关。巡检跨租户扫 active+enabled 且
+    # 「从未成功刷新」或「上次刷新早于 refresh_stale_seconds」的连接。
+    refresh_patrol_enabled: bool = True
+    refresh_patrol_interval_seconds: int = 3600
+    refresh_stale_seconds: int = 86400
+
     # ── 飞书(企业自建应用)──────────────────────────────────────────────
     feishu_app_id: str = ""
     feishu_app_secret: str = ""

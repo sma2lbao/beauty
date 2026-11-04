@@ -215,6 +215,9 @@ _settings = settings_factory(
         "internal_secret": INTERNAL_SECRET,
         "oauth_redirect_base": "http://testserver",
         "oauth_success_redirect": "http://web.test/connectors",
+        # 默认关闭外部副作用:不写 outbox(降级日志)、不起后台巡检任务
+        "outbox_enabled": False,
+        "refresh_patrol_enabled": False,
     },
 )
 client = client_fixture(
@@ -242,8 +245,9 @@ def insert_connection(
     credentials: dict | None = None,
     expires_at: datetime | None = None,
     owner_subject: str | None = "u1",
+    last_refreshed_at: datetime | None = None,
 ) -> dict:
-    """直接落一行连接(用于读/撤销/执行路径,不经过授权端点)。"""
+    """直接落一行连接(用于读/撤销/执行/巡检路径,不经过授权端点)。"""
     connection_id = uuid.uuid4().hex
     payload = encrypt_credentials(
         CREDENTIAL_SECRET,
@@ -254,8 +258,8 @@ def insert_connection(
             "INSERT INTO connections "
             "(id, tenant_id, provider, account, display_name, status, credentials, "
             " enabled, owner_subject, auth_kind, expires_at, scopes, metadata, "
-            " created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            " last_refreshed_at, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (
                 connection_id,
@@ -271,6 +275,7 @@ def insert_connection(
                 _sqlite_dt(expires_at),
                 json.dumps(["offline_access", "drive:drive:readonly"]),
                 json.dumps({"open_id": account}),
+                _sqlite_dt(last_refreshed_at),
             ),
         )
     return {
@@ -280,6 +285,39 @@ def insert_connection(
         "account": account,
         "status": status,
     }
+
+
+def insert_tenant_app(
+    db_path: Path,
+    *,
+    tenant_id: str = "t-1",
+    provider: str = "feishu",
+    app_id: str = "cli_tenant",
+    app_secret: str = "tenant-secret",
+    encrypted: bool = True,
+) -> str:
+    """直落一行租户应用凭证;默认按与其他凭证相同的信封加密存 secret。"""
+    tenant_app_id = uuid.uuid4().hex
+    if encrypted:
+        stored = encrypt_credentials(CREDENTIAL_SECRET, {"app_secret": app_secret})
+    else:
+        stored = {"app_secret": app_secret}
+    with sqlite3.connect(db_path) as raw:
+        raw.execute(
+            "INSERT INTO tenant_apps "
+            "(id, tenant_id, provider, app_id, app_secret_encrypted, config, "
+            " created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (
+                tenant_app_id,
+                tenant_id,
+                provider,
+                app_id,
+                json.dumps(stored),
+                json.dumps({}),
+            ),
+        )
+    return tenant_app_id
 
 
 def insert_oauth_session(

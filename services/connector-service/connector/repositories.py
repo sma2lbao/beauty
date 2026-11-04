@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from database.repository import TenantRepository
-from sqlalchemy import Select
+from sqlalchemy import Select, or_, select
 
 from connector.models.connections import Connection
 from connector.models.oauth import OAuthSession
@@ -53,6 +55,26 @@ class ConnectionRepository(TenantRepository[Connection]):
             .limit(1)
         )
         return await self.session.scalar(statement)
+
+    async def list_stale_active(self, stale_before: datetime) -> list[Connection]:
+        """巡检用(跨租户):active + enabled 且「从未成功刷新」或上次刷新早于阈值。
+
+        跨租户是刻意为之:巡检是系统任务,不归属任何请求租户;逐条刷新时再按
+        行上的 tenant_id 回到租户作用域(§5.5 的每 24h 巡检)。
+        """
+        statement = (
+            select(Connection)
+            .where(
+                Connection.status == "active",
+                Connection.enabled.is_(True),
+                or_(
+                    Connection.last_refreshed_at.is_(None),
+                    Connection.last_refreshed_at < stale_before,
+                ),
+            )
+            .order_by(Connection.created_at)
+        )
+        return list((await self.session.scalars(statement)).all())
 
     async def find_by_account(
         self, tenant_id: str, provider: str, account: str

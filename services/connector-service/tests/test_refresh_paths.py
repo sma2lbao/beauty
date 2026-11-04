@@ -201,8 +201,12 @@ def test_execute_wraps_http_error(
         async def call(self, *args, **kwargs):
             raise httpx.ConnectError("boom")
 
+    # 执行面改为按租户解析 provider(tenant_apps 优先),桩点随之移动
+    async def _provider_for_tenant(*args, **kwargs):
+        return _Boom()
+
     monkeypatch.setattr(
-        execute_service, "require_provider", lambda *args, **kwargs: _Boom()
+        execute_service, "provider_for_tenant", _provider_for_tenant
     )
 
     async def _run() -> dict:

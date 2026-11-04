@@ -108,6 +108,12 @@ class BaseProvider(ABC):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    # ---- 租户应用凭证 ----
+
+    def with_tenant_app(self, app_id: str, app_secret: str) -> BaseProvider:
+        """返回使用租户自带应用凭证的 provider;默认无租户概念,原样返回。"""
+        return self
+
     # ---- 静态描述 ----
 
     @property

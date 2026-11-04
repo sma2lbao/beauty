@@ -128,11 +128,29 @@ class FeishuProvider(BaseProvider):
         ),
     )
 
+    # ---- 应用凭证 ----
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        app_id: str | None = None,
+        app_secret: str | None = None,
+    ) -> None:
+        """应用凭证默认取全局 Settings;租户自带应用经 with_tenant_app 覆盖。"""
+        super().__init__(settings)
+        self._app_id = app_id or settings.feishu_app_id
+        self._app_secret = app_secret or settings.feishu_app_secret
+
+    def with_tenant_app(self, app_id: str, app_secret: str) -> FeishuProvider:
+        """用 tenant_apps 行的应用凭证构造副本;secret 只在内存,不落日志。"""
+        return FeishuProvider(self.settings, app_id=app_id, app_secret=app_secret)
+
     # ---- 配置 ----
 
     @property
     def configured(self) -> bool:
-        return bool(self.settings.feishu_app_id and self.settings.feishu_app_secret)
+        return bool(self._app_id and self._app_secret)
 
     def scopes(self) -> tuple[str, ...]:
         return tuple(scope for scope in self.settings.feishu_scopes.split() if scope)
@@ -152,7 +170,7 @@ class FeishuProvider(BaseProvider):
     ) -> str:
         query = urlencode(
             {
-                "client_id": self.settings.feishu_app_id,
+                "client_id": self._app_id,
                 "response_type": "code",
                 "redirect_uri": redirect_uri,
                 "scope": " ".join(self.scopes()),
@@ -175,8 +193,8 @@ class FeishuProvider(BaseProvider):
             client,
             {
                 "grant_type": "authorization_code",
-                "client_id": self.settings.feishu_app_id,
-                "client_secret": self.settings.feishu_app_secret,
+                "client_id": self._app_id,
+                "client_secret": self._app_secret,
                 "code": code,
                 "redirect_uri": redirect_uri,
                 "code_verifier": code_verifier,
@@ -197,8 +215,8 @@ class FeishuProvider(BaseProvider):
             client,
             {
                 "grant_type": "refresh_token",
-                "client_id": self.settings.feishu_app_id,
-                "client_secret": self.settings.feishu_app_secret,
+                "client_id": self._app_id,
+                "client_secret": self._app_secret,
                 "refresh_token": credentials.refresh_token,
             },
         )

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import events.outbox  # noqa: F401  注册 outbox_events/processed_events
 from alembic import context
 from common.alembic_kit import apply_service_config, run_migrations
 from database.base import Base

@@ -189,3 +189,30 @@ def test_execute_refresh_failure_is_reported(
     assert payload["error"]["code"] == "connector.auth_expired"
     conn = client.get("/v1/connections", headers=TENANT).json()[0]
     assert conn["status"] == "expired"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "connector.auth_expired"
+    conn = client.get("/v1/connections", headers=TENANT).json()[0]
+    assert conn["status"] == "expired"
+
+
+def test_execute_success_has_connection_id(
+    client: TestClient, feishu: FeishuMock, tmp_path: Path
+) -> None:
+    """C2.4:执行信封带 connection_id 供 tool-service 审计。"""
+    conn = insert_connection(tmp_path / "test.db")
+    payload = _execute(client, "Feishu__get_me").json()
+    assert payload["ok"] is True
+    assert payload["connection_id"] == conn["id"]
+
+
+def test_execute_tool_failure_has_connection_id(
+    client: TestClient, feishu: FeishuMock, tmp_path: Path
+) -> None:
+    conn = insert_connection(tmp_path / "test.db")
+    feishu.fail["/raw_content"] = httpx.Response(401, json={"code": 99991663})
+    payload = _execute(
+        client, "Feishu__read_document", {"document_id": "d1"}
+    ).json()
+    assert payload["ok"] is False
+    assert payload["connection_id"] == conn["id"]
+

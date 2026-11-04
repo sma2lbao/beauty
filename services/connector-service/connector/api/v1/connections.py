@@ -95,11 +95,14 @@ async def update_connection(
 
 @router.delete("/{connection_id}", response_model=ConnectionRead)
 async def revoke_connection(
-    connection_id: str, session: DBSession, tenant_id: TenantId
+    connection_id: str,
+    request: Request,
+    session: DBSession,
+    tenant_id: TenantId,
 ) -> ConnectionRead:
     """撤销连接(留痕不物理删,§8);仅 active 可撤,重复撤销 409。"""
     conn = await connections_service.revoke_connection(
-        session, tenant_id, connection_id
+        session, _settings(request), tenant_id, connection_id
     )
     return ConnectionRead.model_validate(conn)
 

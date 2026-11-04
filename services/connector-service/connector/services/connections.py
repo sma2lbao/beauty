@@ -18,11 +18,17 @@ from connector.core.config import Settings
 from connector.core.crypto import decrypt_credentials, encrypt_credentials
 from connector.core.http import open_client
 from connector.models.connections import Connection
-from connector.providers import require_provider
 from connector.providers.base import Credentials, Identity
 from connector.providers.errors import REAUTH_ERROR_CODES, ProviderError
 from connector.repositories import ConnectionRepository
 from connector.schemas.connections import ConnectionStatus
+from connector.services.apps import provider_for_tenant
+from connector.services.events import (
+    CONNECTION_CREATED,
+    CONNECTION_EXPIRED,
+    CONNECTION_REVOKED,
+    publish_connection_event,
+)
 
 _UNSET: Any = object()
 
@@ -60,9 +66,12 @@ def _require_active(conn: Connection) -> None:
 
 
 async def revoke_connection(
-    session: AsyncSession, tenant_id: str, connection_id: str
+    session: AsyncSession,
+    settings: Settings,
+    tenant_id: str,
+    connection_id: str,
 ) -> Connection:
-    """撤销而非物理删除:凭证与审计需要留痕(§8)。"""
+    """撤销而非物理删除:凭证与审计需要留痕(§8);revoked 事件同事务入 outbox。"""
     connections = ConnectionRepository(session)
     conn = await connections.require_for_tenant(tenant_id, connection_id)
     _require_active(conn)
@@ -70,7 +79,9 @@ async def revoke_connection(
     conn.enabled = False
     conn.revoked_at = utcnow()
     conn.revoked_by = conn.owner_subject
-    return await connections.add(conn)
+    conn = await connections.add(conn)
+    await publish_connection_event(session, settings, conn, CONNECTION_REVOKED)
+    return conn
 
 
 async def update_connection(
@@ -102,10 +113,15 @@ async def upsert_authorized_connection(
     identity: Identity,
     scopes: list[str],
 ) -> Connection:
-    """授权回调落库:同租户同 provider 同 account 复用行,否则新建。"""
+    """授权回调落库:同租户同 provider 同 account 复用行,否则新建。
+
+    新建(首次授权)时在同一事务里登记 connector.connection.created.v1;
+    复用已有行属于重新授权,不改 created 语义(其状态变更由 refreshed 埋点覆盖)。
+    """
     connections = ConnectionRepository(session)
     conn = await connections.find_by_account(tenant_id, provider_name, identity.account)
-    if conn is None:
+    created = conn is None
+    if created:
         conn = Connection(
             tenant_id=tenant_id,
             provider=provider_name,
@@ -121,7 +137,10 @@ async def upsert_authorized_connection(
         identity=identity,
         scopes=scopes,
     )
-    return await connections.add(conn)
+    conn = await connections.add(conn)
+    if created:
+        await publish_connection_event(session, settings, conn, CONNECTION_CREATED)
+    return conn
 
 
 def _apply_authorized(
@@ -210,8 +229,15 @@ async def _refresh_locked(
     conn: Connection,
     transport: httpx.AsyncBaseTransport | None,
 ) -> None:
-    """调用方已持有该连接行锁;失败时按错误码决定是否置 expired。"""
-    provider = require_provider(settings, conn.provider)
+    """调用方已持有该连接行锁;失败时按错误码决定是否置 expired。
+
+    provider 按租户解析(tenant_apps 优先,factory 回退全局 Settings),否则租户
+    自带应用密钥的连接会拿全局应用去换/刷 token,直接 invalid_grant,
+    并与连接实际归属的应用不一致。
+    """
+    provider = await provider_for_tenant(
+        session, settings, conn.tenant_id, conn.provider
+    )
     credentials = _decrypt(conn, settings)
     async with open_client(settings, transport) as client:
         try:
@@ -220,6 +246,10 @@ async def _refresh_locked(
             conn.last_error_code = exc.code
             if exc.code in REAUTH_ERROR_CODES:
                 conn.status = ConnectionStatus.EXPIRED.value
+                # 每失败一次发一次:消费方(通知/前端)据此提示重新授权
+                await publish_connection_event(
+                    session, settings, conn, CONNECTION_EXPIRED
+                )
             await session.flush()
             raise
     _apply_credentials(conn, settings, fresh)
@@ -238,7 +268,9 @@ async def check_connection(
     """连通性探测:失败不 500,只把错误码写到连接上(前端展示)。"""
     repo = ConnectionRepository(session)
     conn = await repo.require_for_tenant(tenant_id, connection_id)
-    provider = require_provider(settings, conn.provider)
+    provider = await provider_for_tenant(
+        session, settings, conn.tenant_id, conn.provider
+    )
     credentials = _decrypt(conn, settings)
     async with open_client(settings, transport) as client:
         try:
@@ -249,6 +281,9 @@ async def check_connection(
             )
             if conn.last_error_code in REAUTH_ERROR_CODES:
                 conn.status = ConnectionStatus.EXPIRED.value
+                await publish_connection_event(
+                    session, settings, conn, CONNECTION_EXPIRED
+                )
             conn.last_checked_at = utcnow()
             await session.flush()
             return conn

@@ -22,10 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from connector.core.clock import as_utc, utcnow
 from connector.core.config import Settings
 from connector.core.http import open_client
-from connector.providers import build_provider, require_provider
+from connector.providers import build_provider
 from connector.providers.errors import ProviderError
 from connector.repositories import OAuthSessionRepository
 from connector.services import connections as connections_service
+from connector.services.apps import provider_for_tenant
 
 _STATUS_PENDING = "pending"
 _STATUS_COMPLETED = "completed"
@@ -67,7 +68,8 @@ async def start_authorize(
     provider_name: str,
     owner_subject: str | None,
 ) -> AuthorizeStart:
-    provider = require_provider(settings, provider_name)
+    # 租户自带应用(tenant_apps)优先:授权页 client_id 与实际换 token 的应用一致
+    provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
     if not provider.configured:
         raise ConflictError(
             "connector.provider_not_configured",
@@ -115,6 +117,11 @@ async def handle_callback(
     row = await repo.get_by_state(state or "")
     if row is None or row.provider != provider.name:
         return CallbackResult(provider.name, "error", "connector.invalid_state")
+    # 回调本身没有用户身份,但会话行带 tenant_id:按该租户解析应用凭证,
+    # 保证换 token 用的 client_id/secret 与发起授权时是同一套(§5.2 解析顺序)。
+    provider = await provider_for_tenant(
+        session, settings, row.tenant_id, provider.name
+    )
     if row.status != _STATUS_PENDING:
         return CallbackResult(provider.name, "error", "connector.state_used")
     if as_utc(row.expires_at) <= utcnow():

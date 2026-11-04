@@ -7,24 +7,28 @@ v1 内置**飞书**(企业自建应用 + 用户身份 + 只读能力):授权、�
 执行与连接管理都已打通;Notion 按同一 provider 接口预留。邮件/日历能力已下线,
 存量连接在迁移 `b2e4c7a91d33` 中置为 `revoked`。
 
+除惰性/手动刷新外,还有 **24h 刷新巡检**兜底;连接生命周期事件
+(`connector.connection.created/expired/revoked.v1`)经 **outbox** 与状态变更同事务发出。
+多租户可各自配置企业应用凭证(`tenant_apps`),未配置的租户沿用全局应用。详见下文。
+
 ## 端点
 
 浏览器经 API 网关 `/api/connector/v1/...` 访问用户端点;内部端点只给 tool-service,
 网关不转发 `/internal`。
 
-| 方法/路径                                  | 说明                                                                         | 鉴权                         |
-| ------------------------------------------ | ---------------------------------------------------------------------------- | ---------------------------- |
-| `GET /v1/connectors`                       | provider 目录:名称、scope、工具清单(含 risk)、是否配置、是否已连接           | 用户 JWT                     |
-| `POST /v1/connectors/{provider}/authorize` | 建一次性授权会话,返回 `{provider, authorize_url, expires_at}`                | 用户 JWT                     |
-| `GET /v1/oauth/{provider}/callback`        | 校验 state → 换 token → 拉身份 → 落库 → 302 回 `/connectors?...`             | 无(一次性 nonce)             |
-| `GET /v1/connections`                      | 列表,可按 `provider`/`status`/`enabled` 过滤;**永不返回 credentials**        | 用户 JWT                     |
-| `GET /v1/connections/{id}`                 | 详情(跨租户一律 404,不泄漏存在性)                                            | 用户 JWT                     |
-| `PATCH /v1/connections/{id}`               | `{display_name?, enabled?}`;关闭启用 ≠ 解绑                                  | 用户 JWT                     |
-| `POST /v1/connections/{id}/refresh`        | 手动刷新(行锁单飞);上游失败返回 400 + `error.code`,连接状态留痕              | 用户 JWT                     |
-| `POST /v1/connections/{id}/check`          | 连通性探测;失败不 500,只写 `last_error_code`                                 | 用户 JWT                     |
-| `DELETE /v1/connections/{id}`              | 本地撤销(留痕不物理删);仅 active 可撤,重复撤销 409 `connector.invalid_state` | 用户 JWT                     |
-| `POST /v1/connectors/{provider}/execute`   | `{tool, arguments, run_id}`;成功 `{"ok":true,...}`,失败 HTTP 200 + 错误信封  | `X-Internal-Secret` + 租户头 |
-| `GET /v1/internal/connectors/tools`        | 按租户返回可用工具(ToolDescriptor 载荷),供 tool-service 装配                 | `X-Internal-Secret` + 租户头 |
+| 方法/路径                                  | 说明                                                                                                                            | 鉴权                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `GET /v1/connectors`                       | provider 目录:名称、scope、工具清单(含 risk)、是否配置、是否已连接                                                              | 用户 JWT                     |
+| `POST /v1/connectors/{provider}/authorize` | 建一次性授权会话,返回 `{provider, authorize_url, expires_at}`                                                                   | 用户 JWT                     |
+| `GET /v1/oauth/{provider}/callback`        | 校验 state → 换 token → 拉身份 → 落库 → 302 回 `/connectors?...`                                                                | 无(一次性 nonce)             |
+| `GET /v1/connections`                      | 列表,可按 `provider`/`status`/`enabled` 过滤;**永不返回 credentials**                                                           | 用户 JWT                     |
+| `GET /v1/connections/{id}`                 | 详情(跨租户一律 404,不泄漏存在性)                                                                                               | 用户 JWT                     |
+| `PATCH /v1/connections/{id}`               | `{display_name?, enabled?}`;关闭启用 ≠ 解绑                                                                                     | 用户 JWT                     |
+| `POST /v1/connections/{id}/refresh`        | 手动刷新(行锁单飞);上游失败返回 400 + `error.code`,连接状态留痕                                                                 | 用户 JWT                     |
+| `POST /v1/connections/{id}/check`          | 连通性探测;失败不 500,只写 `last_error_code`                                                                                    | 用户 JWT                     |
+| `DELETE /v1/connections/{id}`              | 本地撤销(留痕不物理删);仅 active 可撤,重复撤销 409 `connector.invalid_state`                                                    | 用户 JWT                     |
+| `POST /v1/connectors/{provider}/execute`   | `{tool, arguments, run_id}`;成功 `{"ok":true,...}`、失败 HTTP 200 + 错误信封,两者顶层都带 `connection_id`(供 tool-service 审计) | `X-Internal-Secret` + 租户头 |
+| `GET /v1/internal/connectors/tools`        | 按租户返回可用工具(ToolDescriptor 载荷),供 tool-service 装配                                                                    | `X-Internal-Secret` + 租户头 |
 
 `/healthz`、`/readyz` 为存活/就绪探针(数据库可用即就绪)。
 
@@ -53,15 +57,20 @@ v1 内置**飞书**(企业自建应用 + 用户身份 + 只读能力):授权、�
 
 见 [.env.example](.env.example)。核心项:
 
-| 变量                                | 说明                                                                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `CONNECTOR__PROVIDERS_ENABLED`      | 启用哪些 provider(逗号分隔),默认 `feishu`                                                                                 |
-| `CONNECTOR__INTERNAL_SECRET`        | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                        |
-| `CONNECTOR__OAUTH_REDIRECT_BASE`    | `{base}/v1/oauth/{provider}/callback`,须与飞书后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
-| `CONNECTOR__OAUTH_SUCCESS_REDIRECT` | 授权结束 302 回前端的地址                                                                                                 |
-| `CONNECTOR__FEISHU_APP_ID/SECRET`   | 飞书企业自建应用凭证;未配置时目录里 `configured=false`                                                                    |
-| `CONNECTOR__FEISHU_SCOPES`          | 空格分隔,必须含 `offline_access` 才能拿到 refresh_token                                                                   |
-| `CONNECTOR__CREDENTIAL_SECRET`      | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                    |
+| 变量                                                                                  | 说明                                                                                                                      |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `CONNECTOR__PROVIDERS_ENABLED`                                                        | 启用哪些 provider(逗号分隔),默认 `feishu`                                                                                 |
+| `CONNECTOR__INTERNAL_SECRET`                                                          | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                        |
+| `CONNECTOR__OAUTH_REDIRECT_BASE`                                                      | `{base}/v1/oauth/{provider}/callback`,须与飞书后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
+| `CONNECTOR__OAUTH_SUCCESS_REDIRECT`                                                   | 授权结束 302 回前端的地址                                                                                                 |
+| `CONNECTOR__FEISHU_APP_ID/SECRET`                                                     | 飞书企业自建应用凭证;未配置时目录里 `configured=false`                                                                    |
+| `CONNECTOR__FEISHU_SCOPES`                                                            | 空格分隔,必须含 `offline_access` 才能拿到 refresh_token                                                                   |
+| `CONNECTOR__CREDENTIAL_SECRET`                                                        | 连接凭证加密密钥(生产换随机长密钥/KMS)                                                                                    |
+| `CONNECTOR__OUTBOX_ENABLED`                                                           | 是否把连接生命周期事件写 outbox 并后台投递;默认 `false`(降级为结构化日志)                                                 |
+| `CONNECTOR__OUTBOX_DISPATCH_INTERVAL_SECONDS` / `..._BATCH_SIZE` / `..._MAX_ATTEMPTS` | outbox 派发轮询间隔(1s)/每批条数(50)/最大尝试次数(5)                                                                      |
+| `CONNECTOR__REFRESH_PATROL_ENABLED`                                                   | 是否启动 24h 刷新巡检;生产默认 `true`,测试关闭                                                                            |
+| `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS`                                          | 巡检轮询间隔(默认 3600s)                                                                                                  |
+| `CONNECTOR__REFRESH_STALE_SECONDS`                                                    | 超过多久没刷新算「过期」候选(默认 86400s = 24h)                                                                           |
 
 ## 接入新 provider(如 Notion)
 
@@ -81,8 +90,40 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 5. 补测试:上游用 `httpx.MockTransport` 打桩(见 `tests/conftest.py` 的 FeishuMock),
    零网络、零外呼;新 provider 也要覆盖授权/刷新/执行/错误映射分支。
 
-tenant_apps 表已建(按租户覆盖应用凭证),v1 只由配置/脚本写入,解析顺序
-「租户行 → 全局 Settings」尚未接入。
+## 租户级应用凭证(tenant_apps)
+
+`tenant_apps` 每租户每 provider 一行,让不同租户用**自己的**企业应用
+(`app_id`/`app_secret`);没配的租户继续用全局 `CONNECTOR__FEISHU_APP_*`。
+
+- 解析顺序:租户行 → 全局 `Settings`(见 `connector/services/apps.py`);
+  行里 `app_id` 与 `app_secret` **都可用**才生效,半配置行记 warning 后回退全局。
+- `app_secret_encrypted` 与连接凭证同一套信封加密,payload 约定
+  `{"app_secret": "<明文>"}`(兼容历史明文行),密钥同为 `CONNECTOR__CREDENTIAL_SECRET`。
+- 授权(发起/回调)、刷新(惰性/手动/巡检)与执行面都按租户解析 provider;
+  目录 `/v1/connectors` 的 `configured` 仍用全局应用判断(不暴露租户凭证)。
+- v1 无管理 UI/端点,由配置或脚本写入(参考 `tests/conftest.py::insert_tenant_app`)。
+
+## 连接生命周期事件(outbox)与 24h 巡检
+
+`connector/services/events.py` 定义三个事件,与状态变更**同事务**写 outbox:
+
+| 事件                              | 触发                                           |
+| --------------------------------- | ---------------------------------------------- |
+| `connector.connection.created.v1` | 首次授权落库(重新授权复用行不重复发)           |
+| `connector.connection.expired.v1` | 因需重新授权类失败被置 `expired`(每次失败都发) |
+| `connector.connection.revoked.v1` | 用户撤销连接                                   |
+
+payload 至少含 `connection_id`、`provider`、`account`、`status`、`owner_subject`,
+不含凭证。`CONNECTOR__OUTBOX_ENABLED=false`(默认)时降级为结构化日志
+`connection_event`、不写库;开启后由 `ConnectorRuntime` 起 `OutboxDispatcher`
+后台投递(至少一次,消费方按事件 id 去重)。
+
+`connector/services/patrol.py` 的巡检兜住「长期没人调用执行面」的连接:
+每 `CONNECTOR__REFRESH_PATROL_INTERVAL_SECONDS` 扫一轮 `active + enabled`
+且 `last_refreshed_at` 为空或早于 `now - CONNECTOR__REFRESH_STALE_SECONDS` 的连接,
+逐条在独立事务里走与手动刷新相同的单飞路径;单条失败只留痕
+(`last_error_code` / `status`)不中断整轮。后台任务由 `connector/core/runtime.py`
+统一启停:lifespan 关闭时先停任务再释放 DB/transport(测试两个开关都关,零任务)。
 
 ## 迁移
 
@@ -92,7 +133,8 @@ cd services/connector-service && uv run alembic upgrade head
 
 迁移链:`cd993640a7eb`(连接表)→ `b2e4c7a91d33`(下线邮件/日历,存量置
 `revoked`,数据清理不可逆、downgrade 为 no-op)→ `8f1c2a5d7b90`(连接生命周期列 +
-`oauth_sessions` + `tenant_apps`)。服务默认 `AUTO_CREATE_TABLES=false`,改表结构必须
+`oauth_sessions` + `tenant_apps`)→ `c4f7b1e93a52`(`outbox_events` +
+`processed_events`,与 events 包共享模型)。服务默认 `AUTO_CREATE_TABLES=false`,改表结构必须
 配迁移,并在服务目录跑 `uv run alembic check` 确认模型与迁移一致。
 
 ## 命令(仓库根)

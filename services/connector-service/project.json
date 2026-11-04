@@ -69,6 +69,6 @@
       }
     }
   },
-  "implicitDependencies": ["common", "database"],
+  "implicitDependencies": ["common", "database", "events"],
   "tags": []
 }
