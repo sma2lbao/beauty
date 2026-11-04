@@ -1,7 +1,7 @@
 # 工具执行面设计:exec / web_search / todo(P1-L)
 
 > 状态:**exec MVP(2026-10-27)与 todo 第一轮(2026-10-27)已落地**;web_search 仅为契约与分期,未实施。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
-> 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload)。
+> 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload);双工具分工与 `run_code` 见 [code-execution.md](./code-execution.md)。
 
 ## 1. 摘要
 

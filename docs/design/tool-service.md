@@ -10,33 +10,35 @@
 
 当前仓库的工具实现散落在 `services/agent-orchestrator/agent_orchestrator/services/`：`tools.py`（目录与注册表）、`code_tools.py`（5 个 `code_*` 工具）、`mcp.py`、`skill_runner.py`。它们与图执行进程强耦合，且存在**写操作未走审批**、**路径越界**、**静默截断**、**无超时**、**无公共工具命名**、**无模型提问通道**等缺陷（§2.2 逐条取证）。本设计同时给出「模块设计 → 与现有系统集成 → 分三期实施步骤」的完整落地路径。
 
-### 1.1 关键决策（D1–D13）
+### 1.1 关键决策（D1–D14）
 
-| #   | 决策                                                                                                                                                                            | 理由 / 依据                                                                                                                                      |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| D1  | 新建 **`services/tool-service`**，Nx/PyPI 名 `tool-service`，import 包 `tool_service`，端口 **:8008**，env 前缀 **`TOOL__`**，入口 `tool_service.main:app`                      | `docs/architecture.md:123`「M1 起把 tool registry 从 orchestrator 内拆出」；命名护栏 `docs/architecture.md:161-164`；8001-8007 已占用            |
-| D2  | **catalog 真源在代码**（`tool_service/services/catalog.py`）；数据库只建 `tool_calls`（审计 + 幂等），不做「工具定义表 / 租户级覆盖」                                           | 工具集随版本发布、可代码评审、可类型检查；DB 化收益低而迁移成本高（P3 再议）                                                                     |
-| D3  | 工具统一**裸名**：`read` `write` `edit` `glob` `grep` `list_dir` `ask_question`；旧 `code_*` 以 **alias** 兼容一个发布周期                                                      | 用户明确点名 read/write/grep/ask_question；OpenCode/DSH 裸名先例；与桌面端工具名统一；存量引用（技能包、run 快照、文档、测试）需要过渡期（§7.8） |
-| D4  | 结果统一 **JSON 信封**：成功 `{"ok":true,...}`、失败 `{"ok":false,"error":{code,message,hint,retryable}}`；`execute` 永不抛异常，错误一律回喂模型                               | 截断/总数/下一步 offset 必须结构化；错误码可驱动模型自我纠正；沿用现有「错误 JSON 回喂」契约（`services/tools.py:141-154`）                      |
-| D5  | 跨服务 wire DTO 放 **`packages/common/common/tools.py`**，不新建 workspace member                                                                                               | DTO 少（7 个类型）、变更频率低；新建包会扩 CI matrix 与版本门禁（`scripts/check-versions.sh:36-48`），收益不匹配                                 |
-| D6  | 文件类工具的执行后端是 **workspace-service 沙箱**（microVM），tool-service 不接触宿主文件系统                                                                                   | 多实例/容器化下本机目录不可共享（`services/code_tools.py:17-29`）；沙箱已是 workspace-service 的一等对象（`docs/architecture.md` §11.4）         |
-| D7  | **审批策略与中断留在 orchestrator**；tool-service 只做**风险下限防御**（`destructive` 且未带「已确认」凭据 → `403 tool.confirmation_required`）                                 | LangGraph `interrupt` 只能在 orchestrator 进程内（`graph/nodes.py:326-343`）；审批表/API 也在 orchestrator（`models/approval.py`）               |
-| D8  | `run.tool.called.v1` 仍由 **orchestrator 唯一落库**；tool-service 写自有 `tool_calls` 表（运维查询、幂等、限流计数）                                                            | 事件 seq 与 SSE 断线回放由 run_events 独占（`services/run_events.py`）；双源会重复/乱序                                                          |
-| D9  | `ask_question` 是 **interaction 类工具**：tool-service 只声明目录与参数校验，**中断与答案回填在 orchestrator 图内**（`ask_gate` + `awaiting_input` + `POST /runs/{id}/answer`） | 同上，跨服务 interrupt 不可行；复用现有 interrupts sweeper / jobs / 事件机制                                                                     |
-| D10 | **chat 模式只装配只读工具**；写工具只在 task 模式（有审批闸）                                                                                                                   | 对话内 CONFIRM 被明确拒绝（`services/chat.py:112-116`），装配写工具只会产生必然失败的调用                                                        |
-| D11 | **MCP 发现/执行与 `skill_run` 本期不下沉**，仍留 orchestrator                                                                                                                   | 依赖租户 DB、stdio 沙箱池、run 快照（`skill_tools`/`skill_package`）、OAuth 回调，拆分收益小风险大                                               |
-| D12 | 本期 **不经 API 网关** 暴露 `/api/v1/tools*`（仅服务间内部调用）；orchestrator 侧 `TOOL_SERVICE_ENABLED` 双路径可一键回滚                                                       | 控制台暂无工具管理需求；先保证生产路径可回退（对齐现有 feature flag 风格）                                                                       |
-| D13 | 新增只读 **`fetch`** 工具（HTTP GET 抓公网文本：SSRF 防护 + 主机允许列表 + 字节/重定向上限），默认关闭（`TOOL__FETCH_ENABLED=false`）                                           | 产品需要读 GitHub 等公网资料；**不**引入任意命令执行、**不**开沙箱联网（攻击面小、出口边界可自控）；risk=READ 使 chat 与任务两种模式都可用       |
+| #   | 决策                                                                                                                                                                                     | 理由 / 依据                                                                                                                                                                           |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | 新建 **`services/tool-service`**，Nx/PyPI 名 `tool-service`，import 包 `tool_service`，端口 **:8008**，env 前缀 **`TOOL__`**，入口 `tool_service.main:app`                               | `docs/architecture.md:123`「M1 起把 tool registry 从 orchestrator 内拆出」；命名护栏 `docs/architecture.md:161-164`；8001-8007 已占用                                                 |
+| D2  | **catalog 真源在代码**（`tool_service/services/catalog.py`）；数据库只建 `tool_calls`（审计 + 幂等），不做「工具定义表 / 租户级覆盖」                                                    | 工具集随版本发布、可代码评审、可类型检查；DB 化收益低而迁移成本高（P3 再议）                                                                                                          |
+| D3  | 工具统一**裸名**：`read` `write` `edit` `glob` `grep` `list_dir` `ask_question`；旧 `code_*` 以 **alias** 兼容一个发布周期                                                               | 用户明确点名 read/write/grep/ask_question；OpenCode/DSH 裸名先例；与桌面端工具名统一；存量引用（技能包、run 快照、文档、测试）需要过渡期（§7.8）                                      |
+| D4  | 结果统一 **JSON 信封**：成功 `{"ok":true,...}`、失败 `{"ok":false,"error":{code,message,hint,retryable}}`；`execute` 永不抛异常，错误一律回喂模型                                        | 截断/总数/下一步 offset 必须结构化；错误码可驱动模型自我纠正；沿用现有「错误 JSON 回喂」契约（`services/tools.py:141-154`）                                                           |
+| D5  | 跨服务 wire DTO 放 **`packages/common/common/tools.py`**，不新建 workspace member                                                                                                        | DTO 少（7 个类型）、变更频率低；新建包会扩 CI matrix 与版本门禁（`scripts/check-versions.sh:36-48`），收益不匹配                                                                      |
+| D6  | 文件类工具的执行后端是 **workspace-service 沙箱**（microVM），tool-service 不接触宿主文件系统                                                                                            | 多实例/容器化下本机目录不可共享（`services/code_tools.py:17-29`）；沙箱已是 workspace-service 的一等对象（`docs/architecture.md` §11.4）                                              |
+| D7  | **审批策略与中断留在 orchestrator**；tool-service 只做**风险下限防御**（`destructive` 且未带「已确认」凭据 → `403 tool.confirmation_required`）                                          | LangGraph `interrupt` 只能在 orchestrator 进程内（`graph/nodes.py:326-343`）；审批表/API 也在 orchestrator（`models/approval.py`）                                                    |
+| D8  | `run.tool.called.v1` 仍由 **orchestrator 唯一落库**；tool-service 写自有 `tool_calls` 表（运维查询、幂等、限流计数）                                                                     | 事件 seq 与 SSE 断线回放由 run_events 独占（`services/run_events.py`）；双源会重复/乱序                                                                                               |
+| D9  | `ask_question` 是 **interaction 类工具**：tool-service 只声明目录与参数校验，**中断与答案回填在 orchestrator 图内**（`ask_gate` + `awaiting_input` + `POST /runs/{id}/answer`）          | 同上，跨服务 interrupt 不可行；复用现有 interrupts sweeper / jobs / 事件机制                                                                                                          |
+| D10 | **chat 模式只装配只读工具**；写工具只在 task 模式（有审批闸）                                                                                                                            | 对话内 CONFIRM 被明确拒绝（`services/chat.py:112-116`），装配写工具只会产生必然失败的调用                                                                                             |
+| D11 | **MCP 发现/执行与 `skill_run` 本期不下沉**，仍留 orchestrator                                                                                                                            | 依赖租户 DB、stdio 沙箱池、run 快照（`skill_tools`/`skill_package`）、OAuth 回调，拆分收益小风险大                                                                                    |
+| D12 | 本期 **不经 API 网关** 暴露 `/api/v1/tools*`（仅服务间内部调用）；orchestrator 侧 `TOOL_SERVICE_ENABLED` 双路径可一键回滚                                                                | 控制台暂无工具管理需求；先保证生产路径可回退（对齐现有 feature flag 风格）                                                                                                            |
+| D13 | 新增只读 **`fetch`** 工具（HTTP GET 抓公网文本：SSRF 防护 + 主机允许列表 + 字节/重定向上限），默认关闭（`TOOL__FETCH_ENABLED=false`）                                                    | 产品需要读 GitHub 等公网资料；**不**引入任意命令执行、**不**开沙箱联网（攻击面小、出口边界可自控）；risk=READ 使 chat 与任务两种模式都可用                                            |
+| D14 | 新增一等工具 `run_code`（P5）：模型给的 Python 3 源码**经 stdin** 交给沙箱 `python3 -` 执行（代码不进 argv、不经 shell），risk=`destructive`、默认关闭（`TOOL__RUN_CODE_ENABLED=false`） | 多行脚本用 `exec` 只有 `python3 -c`/heredoc 两条转义路；代码走 stdin 复用 `exec` 的沙箱、审批、审计与结果信封，orchestrator 零改动（设计见 [code-execution.md](./code-execution.md)） |
 
 ### 1.2 分期
 
-| 期  | 内容                                                                                                                                                    | 可回滚性                                        | 状态                         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------- |
-| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具(`read/glob/grep/list_dir`)+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换         | `TOOL_SERVICE_ENABLED=false` 回旧路径           | 已落地(2026-10-25,`fde652a`) |
-| P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                                       | 仅回退写工具注册(catalog feature 开关)          | 已落地(2026-10-25)           |
-| P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `search_knowledge` 代理（`documents` 延后） + `code_*` alias 下线 | catalog 关 interaction 工具 + 前端隐藏卡片      | 已落地(2026-10-25)           |
-| P3  | 只读 `fetch`（公网文本抓取）：catalog + HTTP 执行器 + SSRF/允许列表/大小上限 + 开关默认关                                                               | `TOOL__FETCH_ENABLED=false`（目录不暴露该工具） | 已落地(2026-10-25)           |
-| P4  | 受控 `exec`（P1-L）：沙箱内 `/bin/sh -lc` 执行、risk=`destructive`、默认关 + 逐次确认 + 截断/审计（设计见 [tool-execution.md](./tool-execution.md)）    | `TOOL__EXEC_ENABLED=false`（目录不暴露该工具）  | 已落地(2026-10-27)           |
+| 期  | 内容                                                                                                                                                                        | 可回滚性                                           | 状态                         |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------- |
+| P0  | `common.tools` DTO + 工具服务骨架 + catalog + 只读工具(`read/glob/grep/list_dir`)+ workspace 沙箱 `scope_key`/`:ensure` + orchestrator 只读切换                             | `TOOL_SERVICE_ENABLED=false` 回旧路径              | 已落地(2026-10-25,`fde652a`) |
+| P1  | 写工具(`write/edit`)+ 风险等级修正 + 两阶段确认对接 + per-run 配额 + 审计字段扩展                                                                                           | 仅回退写工具注册(catalog feature 开关)             | 已落地(2026-10-25)           |
+| P2  | `ask_question` 全栈(`awaiting_input` 状态 + `ask_gate` 节点 + answer API + 前端卡片)+ `search_knowledge` 代理（`documents` 延后） + `code_*` alias 下线                     | catalog 关 interaction 工具 + 前端隐藏卡片         | 已落地(2026-10-25)           |
+| P3  | 只读 `fetch`（公网文本抓取）：catalog + HTTP 执行器 + SSRF/允许列表/大小上限 + 开关默认关                                                                                   | `TOOL__FETCH_ENABLED=false`（目录不暴露该工具）    | 已落地(2026-10-25)           |
+| P4  | 受控 `exec`（P1-L）：沙箱内 `/bin/sh -lc` 执行、risk=`destructive`、默认关 + 逐次确认 + 截断/审计（设计见 [tool-execution.md](./tool-execution.md)）                        | `TOOL__EXEC_ENABLED=false`（目录不暴露该工具）     | 已落地(2026-10-27)           |
+| P5  | 代码执行 `run_code`（P5）：沙箱内 `python3 -` 执行、代码经 stdin 直传、risk=`destructive`、默认关 + 逐次确认 + 截断/审计（设计见 [code-execution.md](./code-execution.md)） | `TOOL__RUN_CODE_ENABLED=false`（目录不暴露该工具） | 已落地(2026-11-04)           |
 
 > **D13 修订（2026-10-27，P1-L）**：D13 原写「**不**引入任意命令执行、**不**开沙箱联网」。沙箱（microVM + `network=deny`）已提供隔离执行面，缺的只是受控暴露，因此新增 `exec` 作为**例外通道**：risk=`destructive`、默认关闭（`TOOL__EXEC_ENABLED=false`）、开启后逐次人工确认、输出截断 + 审计；**沙箱联网仍不开**。文件 helper 仍不执行命令。详见 [tool-execution.md](./tool-execution.md) §1/§7。
 
@@ -511,6 +513,8 @@ CATALOG: tuple[ToolDescriptor, ...] = (
 ## 7. 内置工具规格
 
 工具面按「文件类最小完备集 + 一个交互工具」设计：`read` `write` `edit` `glob` `grep` `list_dir` `ask_question`。命名与 Claude Code / OpenCode 对齐（模型先验强），参数与返回按 §6 信封规范化。所有文件类工具的 `path` 都**相对工作区根**（沙箱内 `/workspace`），禁止绝对路径。
+
+执行类工具另立两册：`exec`（P1-L，沙箱内 `/bin/sh -lc` 一次性命令，设计见 [tool-execution.md](./tool-execution.md)）与 `run_code`（P5，沙箱内 `python3 -` 执行模型给的 Python 源码，代码经 stdin 直传，设计见 [code-execution.md](./code-execution.md)）。两者都是 `risk=destructive`、默认关闭、逐次人工确认；结果信封、截断、审计与非零退出语义完全一致，区别只在 argv、stdin 与超时文案。本节其余小节仍只描述文件类与交互类工具。
 
 ### 7.1 `read`
 
@@ -1401,6 +1405,8 @@ ALIASES: dict[str, str] = {"code_read_file": "read", "code_write_file": "write",
 ```
 
 首版（P0）只注册 read、glob、grep、list_dir 加 5 个 alias；write、edit、ask_question 用 enabled=False 预埋（P1/P2 打开，避免单个 PR 过大）。单测：工具名与 alias 唯一、risk 与 executor 组合合法（interaction 等价于 executor=none）、每个 input_schema 可 json.dumps、description 非空且不超过 1,024 字符。
+
+> **版本注记（2026-11-04，P5）**：当前 `CATALOG_VERSION` 为 `2026-11-04.p6`，`TOOLS` 共 11 个工具（`read`/`glob`/`grep`/`list_dir`/`write`/`edit`/`exec`/`run_code`/`search_knowledge`/`fetch`/`ask_question`）。上方代码块是 P0 首版的**历史快照**，不代表当前目录；执行类工具的现状见 §1.1 D14 与 §1.2 P5。
 
 #### 第 10 步：数据模型与 alembic 迁移
 

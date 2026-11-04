@@ -1,22 +1,22 @@
 # tool-service(工具服务, :8008)
 
-内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),P1-L 起新增沙箱内命令执行 `exec`(默认关闭,risk=destructive),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
+内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),P1-L 起新增沙箱内命令执行 `exec`(默认关闭,risk=destructive),P5 起新增沙箱内 Python 代码执行 `run_code`(默认关闭,risk=destructive,代码经 stdin 直传 `python3 -`),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
 
 ## 职责边界
 
-| 关注点                                 | 归属                                                                          |
-| -------------------------------------- | ----------------------------------------------------------------------------- |
-| 工具目录(catalog)、参数 schema、限额   | tool-service(代码即真源,`tool_service/services/catalog.py`)                   |
-| 工具执行(沙箱内 helper 脚本)           | tool-service → workspace-service 沙箱                                         |
-| 命令执行(`exec`,默认关)                | tool-service → workspace-service 沙箱 `POST /exec`(`/bin/sh -lc`,不经 helper) |
-| 知识库只读检索(`search_knowledge`)     | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱)               |
-| 公网文本抓取(`fetch`,默认关)           | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令) |
-| 审批决策(allow/ask/deny)               | orchestrator 保留;tool-service 只做风险下限防御                               |
-| run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events                                   |
-| 调用审计与幂等(`tool_calls` 表)        | tool-service                                                                  |
-| `ask_question` 的挂起/恢复             | orchestrator 图(`interrupt`)+ run 事件                                        |
-
-| 连接器工具(`Demo__*` 等) | 目录与执行都代理到 connector-service;本服务只做路由、限额与审计 |
+| 关注点                                 | 归属                                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 工具目录(catalog)、参数 schema、限额   | tool-service(代码即真源,`tool_service/services/catalog.py`)                              |
+| 工具执行(沙箱内 helper 脚本)           | tool-service → workspace-service 沙箱                                                    |
+| 命令执行(`exec`,默认关)                | tool-service → workspace-service 沙箱 `POST /exec`(`/bin/sh -lc`,不经 helper)            |
+| 代码执行(`run_code`,默认关)            | tool-service → workspace-service 沙箱 `POST /exec`(`python3 -`,代码经 stdin,不经 helper) |
+| 知识库只读检索(`search_knowledge`)     | tool-service → knowledge-service HTTP API(HTTP 执行器,不进沙箱)                          |
+| 公网文本抓取(`fetch`,默认关)           | tool-service 直连公网 HTTP GET(SSRF 防护 + 主机允许列表;不进沙箱、不执行命令)            |
+| 审批决策(allow/ask/deny)               | orchestrator 保留;tool-service 只做风险下限防御                                          |
+| run 事件流(`run.tool.called.v1`)与 SSE | orchestrator 唯一落库;本服务不写 run_events                                              |
+| 调用审计与幂等(`tool_calls` 表)        | tool-service                                                                             |
+| `ask_question` 的挂起/恢复             | orchestrator 图(`interrupt`)+ run 事件                                                   |
+| 连接器工具(`Demo__*` 等)               | 目录与执行都代理到 connector-service;本服务只做路由、限额与审计                          |
 
 ## HTTP API
 
@@ -56,6 +56,7 @@
 | `TOOL__FETCH_MAX_REDIRECTS`           | `3`                             | 最多跟随的重定向跳数                                                                        |
 | `TOOL__FETCH_ALLOWED_HOSTS`           | 空                              | 出口收紧:逗号分隔主机允许列表(空=任意公网,`example.com` 含子域)                             |
 | `TOOL__EXEC_ENABLED`                  | `false`                         | 开启沙箱内命令执行 `exec`(risk=destructive);关闭时目录不暴露、执行 404(P1-L)                |
+| `TOOL__RUN_CODE_ENABLED`              | `false`                         | 开启沙箱内 Python 代码执行 `run_code`(risk=destructive);关闭时目录不暴露、执行 404(P5)      |
 | `TOOL__CONNECTOR_INTERNAL_SECRET`     | 空                              | 调用 connector-service 内部端点;空 = 关闭连接器工具(须与 `CONNECTOR__INTERNAL_SECRET` 一致) |
 | `TOOL__CONNECTOR_BASE_URL`            | `http://127.0.0.1:8004`         | connector-service 基地址                                                                    |
 | `TOOL__CONNECTOR_CATALOG_TTL_SECONDS` | `30`                            | 连接器目录按租户缓存 TTL(新建/撤销连接最长延迟一个 TTL 生效)                                |
@@ -102,6 +103,15 @@
 - **输出可控**:stdout 截断到 16,000 字符(保头)、stderr 到 8,000 字符(保尾),再按整包 JSON 回缩到 `MAX_TOOL_CHARS`(25,000)以内,`notes` 提示「重定向到文件后用 `read` 分段读取」;exec 不会回 `tool.too_large`。
 - 沙箱边界不变:`network=deny`(装依赖会失败,这是有意的)、`/workspace` 为工作目录、执行后 `touch` 续 TTL;审计行记 `tool_name/risk/decision/arguments/duration_ms/sandbox_id`。
 - 设计见 `docs/design/tool-execution.md`(P1-L;修订了 `docs/design/tool-service.md` 的 D13)。
+
+## 代码执行(run_code,P5)
+
+- `run_code` 是 `risk=destructive`(legacy `danger`)、`executor=sandbox` 的函数工具:参数 `code`(1..20000 字符,Python 3 源码)、`cwd`(≤512 字符,相对 `/workspace`,绝对路径也必须落在其内)、`timeout_seconds`(1..120,默认 60)。
+- **代码经 stdin 直传**:argv 固定 `[python3, -]`,源码走 `stdin`——不进 argv、不经 shell,多行脚本不必处理引号/转义(exec 的 `python3 -c` 与 heredoc 两条路都不再需要);`python3 -` 的语义:顶层语句直接执行、`__name__` 为 `"__main__"`、没有 `__file__`、traceback 文件名是 `<stdin>`、`input()` 立即读到 EOF。
+- **默认关闭**(`TOOL__RUN_CODE_ENABLED=false`):关闭时目录不暴露、GET/execute 一律 404 `tool.not_found`。开启后 orchestrator 的 plan 闸与 confirm 闸都会因危险工具而中断,需人工放行。
+- **与 `exec` 共用执行路径**:都由 `ToolRunner._run_process`(ensure → `SandboxProvider.exec` → 截断/回缩 → 审计)处理,区别只在 argv、`stdin` 与超时文案;结果信封、`notes`、非零退出码语义(仍为 `ok=true`)、截断上限(16,000/8,000,整包 ≤25,000)与 exec 一致。
+- **沙箱边界不变**:`network=deny`、`/workspace` 为工作目录、执行后 `touch` 续 TTL;审计行记 `tool_name=run_code/risk/decision/arguments/duration_ms/sandbox_id`,代码全文不落库。
+- 设计见 `docs/design/code-execution.md`(P5;与 `docs/design/tool-execution.md` 的 exec 单册互为姊妹)。
 
 ## 交互工具(P2)
 
