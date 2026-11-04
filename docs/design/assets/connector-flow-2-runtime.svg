@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1722"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker></defs><rect width="1680" height="1722" fill="#f6f7fb"/><text x="60" y="64" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="32" font-weight="700" fill="#0f172a">连接器流程 ②：日常使用、刷新与失效重连</text>
+<text x="60" y="96" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="15" fill="#64748b">失效是常态而非异常：令牌会过期，前端提示重连，后台每 24h 巡检兜底。</text>
+<line x1="60" y1="118" x2="1620" y2="118" stroke="#e2e8f0" stroke-width="1"/><g>
+  <rect x="650" y="150" width="600" height="104" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="150" width="6" height="104" rx="3" fill="#2563eb"/>
+  <text x="674" y="180" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">用户 · 会话</text>
+  <text x="674" y="210" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">发消息，让 agent 用飞书</text>
+  <text x="674" y="236" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">例如「帮我读一下这份飞书文档」；模型按任务挑选工具</text>
+</g><path d="M 950 254 L 950 304" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="650" y="304" width="600" height="104" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="304" width="6" height="104" rx="3" fill="#4f46e5"/>
+  <text x="674" y="334" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#4f46e5">agent-orchestrator</text>
+  <text x="674" y="364" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">模型决定调用连接器工具</text>
+  <text x="674" y="390" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">工具名 Feishu__read_document（目录来自 /v1/internal/connectors/tools）</text>
+</g><path d="M 950 408 L 950 458" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="650" y="458" width="600" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="458" width="6" height="125" rx="3" fill="#0d9488"/>
+  <text x="674" y="488" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#0d9488">tool-service</text>
+  <text x="674" y="518" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">转发到 connector-service</text>
+  <text x="674" y="544" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">POST /v1/connectors/feishu/execute（X-Internal-Secret + X-Tenant-Id）</text><text x="674" y="565" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">run_id / tool_call_id 透传，审计落 tool_calls</text>
+</g><path d="M 950 583 L 950 633" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <polygon points="760,703 950,633 1140,703 950,773" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="950" y="697" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="16.5" font-weight="600" fill="#92400e">有 active + enabled 的连接？</text>
+  <text x="950" y="721" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="13" fill="#a16207">（按租户 + provider 取最新一条）</text>
+</g><path d="M 950 773 L 950 823" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><text x="964" y="799" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="13" fill="#a16207">是</text><text x="726" y="693" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="13" fill="#dc2626">否</text><g>
+  <rect x="650" y="823" width="600" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="823" width="6" height="125" rx="3" fill="#7c3aed"/>
+  <text x="674" y="853" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#7c3aed">connector-service</text>
+  <text x="674" y="883" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">按需刷新凭证</text>
+  <text x="674" y="909" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">距 expires_at &lt; 5 分钟 → 惰性刷新（行锁 + 二次检查单飞）</text><text x="674" y="930" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">失败 invalid_grant / 20037 → status=expired，下次执行前需重连</text>
+</g><path d="M 950 948 L 950 998" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="650" y="998" width="600" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="998" width="6" height="125" rx="3" fill="#0891b2"/>
+  <text x="674" y="1028" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#0891b2">飞书开放平台</text>
+  <text x="674" y="1058" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">调用飞书 OpenAPI</text>
+  <text x="674" y="1084" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">只读工具：读文档 / 列文件 / wiki 节点…</text><text x="674" y="1105" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">429 读 x-ogw-ratelimit-reset 退避，最多重试 2 次</text>
+</g><path d="M 950 1123 L 950 1173" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="650" y="1173" width="600" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="650" y="1173" width="6" height="125" rx="3" fill="#2563eb"/>
+  <text x="674" y="1203" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">回到模型 → 用户</text>
+  <text x="674" y="1233" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">工具结果回流，流式答复</text>
+  <text x="674" y="1259" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">成功：工具结果进入上下文，模型组织答复</text><text x="674" y="1280" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">失败：{ok:false} 也作为工具结果，由模型解释</text>
+</g><g>
+  <rect x="60" y="553" width="430" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="60" y="553" width="6" height="125" rx="3" fill="#dc2626"/>
+  <text x="84" y="583" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#dc2626">失败返回</text>
+  <text x="84" y="613" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">connection_missing</text>
+  <text x="84" y="639" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">{ok:false, error:{code: connector.connection_missing}}</text><text x="84" y="660" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">模型看到工具失败，答复里说明「还没连接飞书」</text>
+</g><g>
+  <rect x="60" y="723" width="430" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="60" y="723" width="6" height="125" rx="3" fill="#64748b"/>
+  <text x="84" y="753" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#64748b">用户 · 当前状态</text>
+  <text x="84" y="783" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">手动去连接后重发</text>
+  <text x="84" y="809" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">C2.9 专用中断卡未做：当前只有错误文本/失败卡</text><text x="84" y="830" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">完整版「run 暂停 → 授权 → 续跑」在 P3</text>
+</g><path d="M 760 703 H 560 V 615.5 H 496" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><path d="M 254 678 L 254 723" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="1300" y="968" width="320" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="1300" y="968" width="6" height="125" rx="3" fill="#dc2626"/>
+  <text x="1324" y="998" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#dc2626">上游失败</text>
+  <text x="1324" y="1028" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">令牌 / 权限错误</text>
+  <text x="1324" y="1054" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">401 / invalid_grant</text><text x="1324" y="1075" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">20037 / 20027（scope 缺失）</text>
+</g><g>
+  <rect x="1300" y="1139" width="320" height="146" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="1300" y="1139" width="6" height="146" rx="3" fill="#7c3aed"/>
+  <text x="1324" y="1169" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#7c3aed">connector-service</text>
+  <text x="1324" y="1199" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">置 expired + 发事件</text>
+  <text x="1324" y="1225" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">status=expired</text><text x="1324" y="1246" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">connector.connection.expired.v1</text><text x="1324" y="1267" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">scope 缺失需补 scope 重新授权</text>
+</g><g>
+  <rect x="1300" y="1331" width="320" height="146" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="1300" y="1331" width="6" height="146" rx="3" fill="#d97706"/>
+  <text x="1324" y="1361" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#d97706">用户 · 恢复</text>
+  <text x="1324" y="1391" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">重新连接后重试</text>
+  <text x="1324" y="1417" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">控制台提示「需要重新连接」</text><text x="1324" y="1438" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">重走首次连接 → 手动重试任务</text><text x="1324" y="1459" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">C2.9 目标：单步自动重试一次</text>
+</g><path d="M 1256 1060.5 H 1260 V 1030.5 H 1294" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><path d="M 1460 1093 L 1460 1139" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><path d="M 1460 1285 L 1460 1331" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><g>
+  <rect x="60" y="1537" width="1560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="60" y="1537" width="6" height="125" rx="3" fill="#0f766e"/>
+  <text x="84" y="1567" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#0f766e">后台 · 不影响前台请求</text>
+  <text x="84" y="1597" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">每 24h 巡检刷新（REFRESH_PATROL_ENABLED）</text>
+  <text x="84" y="1623" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">扫描 last_refreshed_at 超 24h 的 active + enabled 连接 → 逐条刷新；失败置 expired 并发事件</text><text x="84" y="1644" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">禁用（保留凭证）/ 解绑（revoked）后，下一次执行会按「无连接」处理</text>
+</g></svg>

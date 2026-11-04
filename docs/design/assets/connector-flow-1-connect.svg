@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1706"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/></marker></defs><rect width="1500" height="1706" fill="#f6f7fb"/><text x="60" y="64" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="32" font-weight="700" fill="#0f172a">连接器流程 ①：首次连接（飞书 OAuth）</text>
+<text x="60" y="96" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="15" fill="#64748b">用户只做两步：点「连接飞书」→ 在飞书页面同意授权；其余由 connector-service 与前端自动完成。</text>
+<line x1="60" y1="118" x2="1440" y2="118" stroke="#e2e8f0" stroke-width="1"/><g>
+  <rect x="470" y="150" width="560" height="104" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="150" width="6" height="104" rx="3" fill="#2563eb"/>
+  <text x="494" y="180" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">用户 · Web 控制台</text>
+  <text x="494" y="210" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">打开「连接器」页面</text>
+  <text x="494" y="236" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">侧栏「连接器」→ /connectors 卡片网格；飞书卡片显示「未连接」。</text>
+</g><path d="M 750 254 L 750 308" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="308" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="308" width="6" height="125" rx="3" fill="#2563eb"/>
+  <text x="494" y="338" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">用户 · Web 控制台</text>
+  <text x="494" y="368" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">点卡片上的「连接飞书」</text>
+  <text x="494" y="394" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">前端发起 POST /v1/connectors/feishu/authorize</text><text x="494" y="415" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">打开授权页（整页跳转，不是弹窗）</text>
+</g><path d="M 750 433 L 750 487" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="487" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="487" width="6" height="125" rx="3" fill="#7c3aed"/>
+  <text x="494" y="517" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#7c3aed">connector-service</text>
+  <text x="494" y="547" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">生成授权会话并 302 到飞书</text>
+  <text x="494" y="573" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">state_nonce（一次性）+ PKCE S256 code_verifier 落 oauth_sessions</text><text x="494" y="594" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">scope 需含 offline_access，否则拿不到 refresh_token</text>
+</g><path d="M 750 612 L 750 706" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="706" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="706" width="6" height="125" rx="3" fill="#0891b2"/>
+  <text x="494" y="736" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#0891b2">飞书开放平台</text>
+  <text x="494" y="766" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">登录并同意授权</text>
+  <text x="494" y="792" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">显示应用申请的权限（文档 / 云盘 / wiki 只读）</text><text x="494" y="813" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">用户可拒绝；同意后带 code + state 回跳</text>
+</g><path d="M 750 831 L 750 885" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="885" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="885" width="6" height="125" rx="3" fill="#7c3aed"/>
+  <text x="494" y="915" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#7c3aed">connector-service</text>
+  <text x="494" y="945" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">回调换取令牌</text>
+  <text x="494" y="971" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">GET /v1/oauth/feishu/callback?code&amp;state → 校验 state 一次性消费</text><text x="494" y="992" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">用 code + code_verifier 换 user_access_token / refresh_token</text>
+</g><path d="M 750 1010 L 750 1064" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="1064" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="1064" width="6" height="125" rx="3" fill="#7c3aed"/>
+  <text x="494" y="1094" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#7c3aed">connector-service</text>
+  <text x="494" y="1124" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">拉身份、加密落库、发事件</text>
+  <text x="494" y="1150" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">拉用户身份 → connections 行（凭证 Fernet 加密，不出服务）</text><text x="494" y="1171" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">成功后同事务写 connector.connection.created.v1（outbox）</text>
+</g><path d="M 750 1189 L 750 1243" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="1243" width="560" height="104" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="1243" width="6" height="104" rx="3" fill="#2563eb"/>
+  <text x="494" y="1273" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">用户 · Web 控制台</text>
+  <text x="494" y="1303" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">回到控制台：已连接</text>
+  <text x="494" y="1329" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">302 → /connectors?connected=feishu，卡片变「已连接」+ toast</text>
+</g><path d="M 750 1347 L 750 1401" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="470" y="1401" width="560" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="470" y="1401" width="6" height="125" rx="3" fill="#2563eb"/>
+  <text x="494" y="1431" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#2563eb">用户 · Web 控制台</text>
+  <text x="494" y="1461" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">点卡片 → 详情抽屉</text>
+  <text x="494" y="1487" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">账号 / scopes / 可用工具 / 最近刷新时间</text><text x="494" y="1508" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">按钮：手动刷新、禁用、解绑</text>
+</g><g>
+  <rect x="1090" y="885" width="340" height="146" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="1090" y="885" width="6" height="146" rx="3" fill="#dc2626"/>
+  <text x="1114" y="915" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#dc2626">错误处理</text>
+  <text x="1114" y="945" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">授权失败</text>
+  <text x="1114" y="971" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">拒绝授权 / state 过期 / code 换取失败</text><text x="1114" y="992" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">→ 302 回控制台带错误码 + toast</text><text x="1114" y="1013" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">可再次点「连接飞书」（重走第 2 步）</text>
+</g><path d="M 1036 947.5 L 1084 958" stroke="#94a3b8" stroke-width="2"  marker-end="url(#arrow)"/><g>
+  <rect x="60" y="1373" width="340" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="60" y="1373" width="6" height="125" rx="3" fill="#d97706"/>
+  <text x="84" y="1403" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#d97706">详情抽屉</text>
+  <text x="84" y="1433" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">禁用（不是解绑）</text>
+  <text x="84" y="1459" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">enabled=false，凭证保留</text><text x="84" y="1480" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">执行面不再选中，可再次启用</text>
+</g><g>
+  <rect x="60" y="1521" width="340" height="125" rx="12" fill="#ffffff" stroke="#dde2ec" stroke-width="1.5"/>
+  <rect x="60" y="1521" width="6" height="125" rx="3" fill="#d97706"/>
+  <text x="84" y="1551" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="12.5" letter-spacing="1" fill="#d97706">详情抽屉</text>
+  <text x="84" y="1581" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="19" font-weight="600" fill="#0f172a">解绑 / 撤销</text>
+  <text x="84" y="1607" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">DELETE /v1/connections/{id}</text><text x="84" y="1628" font-family="PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif" font-size="14.5" fill="#475569">status=revoked + revoked 事件；卡片回到未连接</text>
+</g><path d="M 464 1441 H 440 V 1420 H 406" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/><path d="M 464 1471 H 440 V 1568 H 406" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/></svg>
