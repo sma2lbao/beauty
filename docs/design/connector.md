@@ -3,7 +3,7 @@
 > 状态：已实现（P1 平台骨架 + P2 内置 Notion 读写 + 对话内写操作确认） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、内置 Notion 切换与写能力
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 内置 **Notion**（provider key `notion`、4 个只读 + 2 个写工具）已实现；写工具 `risk=WRITE`，对话里先落待确认（`chat_tool_confirmations`）、用户点击后以 `approved=True` 重放，任务路径走审批闸（§7）；P3 剩余组织共享/授权展示与 P4（其他 provider / MCP）未开始。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；P2 内置 **Notion**（provider key `notion`、4 个只读 + 2 个写工具）已实现，连接支持 **OAuth 授权**与**粘贴静态令牌**两种方式（§5.3 / §6）；写工具 `risk=WRITE`，对话里先落待确认（`chat_tool_confirmations`）、用户点击后以 `approved=True` 重放，任务路径走审批闸（§7）；P3 剩余组织共享/授权展示与 P4（其他 provider / MCP）未开始。
 > **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），改为内置 **Notion** provider（先落地 4 个只读工具，随后补 2 个写工具与对话内写操作确认）；平台骨架/页面/执行面/审计保留。
 
 ## 1. 摘要
@@ -143,21 +143,21 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 **connections 扩展**（迁移 `8f1c2a5d7b90`，`down_revision = 'b2e4c7a91d33'`）：
 
-| 列                          | 类型                  | 说明                                                       |
-| --------------------------- | --------------------- | ---------------------------------------------------------- |
-| `owner_subject`             | String(64)            | 授权用户的 subject（JWT `sub`）；组织共享连接为空，P3 再补 |
-| `auth_kind`                 | String(16)            | `user` / `tenant`；飞书 v1 固定 `user`                     |
-| `provider_account_id`       | String(128)           | 飞书 `open_id` / Notion `bot_id`                           |
-| `external_workspace`        | String(128)           | 飞书 `tenant_key` / Notion `workspace_id`                  |
-| `scopes`                    | JSON                  | 实际授予的 scope 列表                                      |
-| `metadata`                  | JSON                  | provider 附加信息（workspace_name、user_name、app_id 等）  |
-| `enabled`                   | Boolean               | 「关闭启用」≠「解绑」；默认 true                           |
-| `expires_at`                | DateTime(tz)          | access token 过期时间；Notion 未知时为空                   |
-| `last_refreshed_at`         | DateTime(tz)          | 最近一次成功刷新                                           |
-| `last_error_code`           | String(64)            | 最近一次失败码，用于前端展示                               |
-| `revoked_at` / `revoked_by` | DateTime / String(64) | 撤销留痕                                                   |
+| 列                          | 类型                  | 说明                                                                         |
+| --------------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| `owner_subject`             | String(64)            | 授权用户的 subject（JWT `sub`）；组织共享连接为空，P3 再补                   |
+| `auth_kind`                 | String(16)            | `user`（OAuth 授权）/ `token`（用户粘贴静态令牌）；飞书 v1 为 `user`（历史） |
+| `provider_account_id`       | String(128)           | 飞书 `open_id` / Notion `bot_id`                                             |
+| `external_workspace`        | String(128)           | 飞书 `tenant_key` / Notion `workspace_id`                                    |
+| `scopes`                    | JSON                  | 实际授予的 scope 列表                                                        |
+| `metadata`                  | JSON                  | provider 附加信息（workspace_name、user_name、app_id 等）                    |
+| `enabled`                   | Boolean               | 「关闭启用」≠「解绑」；默认 true                                             |
+| `expires_at`                | DateTime(tz)          | access token 过期时间；Notion 未知时为空                                     |
+| `last_refreshed_at`         | DateTime(tz)          | 最近一次成功刷新                                                             |
+| `last_error_code`           | String(64)            | 最近一次失败码，用于前端展示                                                 |
+| `revoked_at` / `revoked_by` | DateTime / String(64) | 撤销留痕                                                                     |
 
-保留现有唯一约束 `(tenant_id, provider, account)`；`account` 写稳定可读标识（飞书 `open_id`，Notion `workspace_id:owner_subject`），并在 provider 内校验，避免同账号重复授权。
+保留现有唯一约束 `(tenant_id, provider, account)`；`account` 写稳定可读标识（飞书 `open_id`，Notion OAuth 为 `workspace_id:owner_subject`、静态令牌为 `integration:<bot_id>`），并在 provider 内校验，避免同账号重复授权。
 
 **oauth_sessions**（新表）：`id`(32 hex)、`tenant_id`、`owner_subject`、`provider`、`state_nonce`(unique, 64)、`code_verifier`(nullable)、`redirect_uri`、`scopes`、`status`(`pending|completed|failed|expired`)、`error_code`、`connection_id`、`expires_at`、`created_at`、`completed_at`。**回调成功/token 落库后再置 completed**；重复 nonce 一律 400。
 
@@ -167,19 +167,20 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 ### 5.3 API 契约（connector-service）
 
-| 方法/路径                                  | 说明                                                                                                                         | 鉴权                                  |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `GET /v1/connectors`                       | provider 目录：名称、`auth_kind`、所需 scope、工具清单（含 risk）、是否已配置                                                | 用户 JWT                              |
-| `POST /v1/connectors/{provider}/authorize` | 建授权会话，返回 `{provider, authorize_url, expires_at}`（session 只在服务端）                                               | 用户 JWT                              |
-| `GET /v1/oauth/{provider}/callback`        | 校验 state → 换 token → 落库 → 302 回 `/connectors?provider=&status=connected&connection_id=`（失败带 `status=error&code=`） | 无（一次性 nonce）                    |
-| `GET /v1/connections`                      | 列表，可按 `provider`/`status`/`enabled` 过滤；永不返回 credentials                                                          | 用户 JWT                              |
-| `GET /v1/connections/{id}`                 | 详情：scopes 已授予/期望、工具、`expires_at`、`last_error_code`                                                              | 用户 JWT                              |
-| `PATCH /v1/connections/{id}`               | `{display_name?, enabled?}`                                                                                                  | 用户 JWT + owner                      |
-| `POST /v1/connections/{id}/refresh`        | 手动刷新（单飞）；成功返回连接；失败按错误码映射 409/429/504/502（§5.7）                                                     | 用户 JWT + owner                      |
-| `POST /v1/connections/{id}/check`          | 连通性探测（飞书 `user_info` / Notion `users/me`）                                                                           | 用户 JWT + owner                      |
-| `DELETE /v1/connections/{id}`              | 本地撤销 + 尽力调 provider revoke；仅 active 可撤，重复 409                                                                  | 用户 JWT + owner                      |
-| `POST /v1/connectors/{provider}/execute`   | `{tool, arguments, run_id}`；成功 `{"ok":true,...}`，工具级失败 HTTP 200 + 错误信封                                          | **X-Internal-Secret** + `X-Tenant-Id` |
-| `GET /v1/internal/connectors/tools`        | 按租户返回可用连接工具（ToolDescriptor 形状），供 tool-service 装配                                                          | **X-Internal-Secret** + `X-Tenant-Id` |
+| 方法/路径                                  | 说明                                                                                                                                                                                                                                         | 鉴权                                  |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `GET /v1/connectors`                       | provider 目录：名称、`auth_kind`、所需 scope、工具清单（含 risk）、是否已配置、`token_connectable`（是否支持粘贴静态令牌）                                                                                                                   | 用户 JWT                              |
+| `POST /v1/connectors/{provider}/authorize` | 建授权会话，返回 `{provider, authorize_url, expires_at}`（session 只在服务端）                                                                                                                                                               | 用户 JWT                              |
+| `GET /v1/oauth/{provider}/callback`        | 校验 state → 换 token → 落库 → 302 回 `/connectors?provider=&status=connected&connection_id=`（失败带 `status=error&code=`）                                                                                                                 | 无（一次性 nonce）                    |
+| `GET /v1/connections`                      | 列表，可按 `provider`/`status`/`enabled` 过滤；永不返回 credentials                                                                                                                                                                          | 用户 JWT                              |
+| `POST /v1/connections`                     | 静态令牌连接：`{provider, token, display_name?}` → 201 `ConnectionRead`；`auth_kind="token"`，不建授权会话、无回调/PKCE；不支持令牌连接 400 `connector.token_not_supported`、令牌无效 400 `connector.invalid_credentials`、未知 provider 404 | 用户 JWT                              |
+| `GET /v1/connections/{id}`                 | 详情：scopes 已授予/期望、工具、`expires_at`、`last_error_code`                                                                                                                                                                              | 用户 JWT                              |
+| `PATCH /v1/connections/{id}`               | `{display_name?, enabled?}`                                                                                                                                                                                                                  | 用户 JWT + owner                      |
+| `POST /v1/connections/{id}/refresh`        | 手动刷新（单飞）；成功返回连接；失败按错误码映射 409/429/504/502（§5.7）                                                                                                                                                                     | 用户 JWT + owner                      |
+| `POST /v1/connections/{id}/check`          | 连通性探测（飞书 `user_info` / Notion `users/me`）                                                                                                                                                                                           | 用户 JWT + owner                      |
+| `DELETE /v1/connections/{id}`              | 本地撤销 + 尽力调 provider revoke；仅 active 可撤，重复 409                                                                                                                                                                                  | 用户 JWT + owner                      |
+| `POST /v1/connectors/{provider}/execute`   | `{tool, arguments, run_id}`；成功 `{"ok":true,...}`，工具级失败 HTTP 200 + 错误信封                                                                                                                                                          | **X-Internal-Secret** + `X-Tenant-Id` |
+| `GET /v1/internal/connectors/tools`        | 按租户返回可用连接工具（ToolDescriptor 形状），供 tool-service 装配                                                                                                                                                                          | **X-Internal-Secret** + `X-Tenant-Id` |
 
 实现说明（与初稿的差异）：
 
@@ -204,12 +205,15 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 5. 拉 `GET /v1/users/me` 拿 bot user 与 `workspace_id`/`workspace_name`；`account = f"{workspace_id}:{owner_subject}"`（同一 workspace 的不同用户各自一条连接）；凭证 `encrypt_credentials` 落库；写 `connections`；置会话 `completed`。
 6. 302 回 `/connectors?provider=<p>&status=connected&connection_id=<id>`；失败回 `...&status=error&code=<code>`，错误码只暴露白名单（不泄漏上游原文）。
 
+**令牌连接（`auth_kind=token`）不经过本节**：不建 `oauth_sessions`、无 `state`/PKCE/回调，直接 `POST /v1/connections` 校验令牌身份后落库（§5.3、§6）。
+
 ### 5.5 刷新与失效
 
 - **触发**：懒刷新（`expires_at - 5min` 内首次使用时）+ 手动 `/refresh` + 每 24h 巡检任务（`last_refreshed_at` 超 24h）。
 - **单飞**：`SELECT … FOR UPDATE` 锁连接行 → 复盘 `expires_at` 是否已被他人刷新 → 调 provider → 同事务写回 `access/refresh/expires_at`。
 - **失败**：`invalid_grant`/`20037` 等置 `status=expired`、写 `last_error_code`、发 outbox `connector.connection.expired.v1`；前端卡片变「需要重新连接」。
 - **Notion 特例**：响应无 `expires_in`，`expires_at` 留空表示「未知」；正常调用遇 401 置 `connector.auth_expired` 并**尝试一次 refresh**，失败则置 `status=expired` 并提示重新连接；手动 `/refresh` 走 `grant_type=refresh_token`（响应**可能轮换** refresh_token，必须同事务写回，旧值立即作废）；24h 巡检仍按 `last_refreshed_at` 判定，不依赖 `expires_at`。
+- **令牌连接特例**：`auth_kind=token`（Notion 内部集成令牌）无 `expires_at`、无 refresh token——手动 `/refresh` 与懒刷新都会因缺 refresh token 失败（`connector.auth_expired`），属预期；正常调用遇 401 置 `status=expired` + `last_error_code`，前端提示「重新粘贴令牌」而不是走 OAuth 重连；24h 巡检按 `last_refreshed_at` 同样会扫到令牌连接，刷新失败只留痕、不销毁连接。
 - **飞书特例（历史，provider 已移除）**：refresh 一次性、禁止并发；365 天强制重授权，`expires_at` 之外另存 `metadata.refresh_deadline` 做提前提示。
 - **outbox**：已接入 `events.outbox`（迁移 `c4f7b1e93a52`）；`connector.connection.created/expired/revoked.v1` 与状态变更同事务写入，`CONNECTOR__OUTBOX_ENABLED=true` 时由 `ConnectorRuntime` 起后台 `OutboxDispatcher` 至少一次投递（消费方按事件 id 去重），关闭时降级为结构化日志 `connection_event`、不写库；只发生命周期事件，不发业务数据。
 - **当前实现边界**：惰性刷新 + 手动刷新 + 24h 巡检均已上线。巡检（`connector/services/patrol.py`）跨租户扫 `active + enabled` 且 `last_refreshed_at` 为空或早于 `now - CONNECTOR__REFRESH_STALE_SECONDS` 的连接，逐条独立事务走同一单飞刷新路径，单条失败只留痕不中断整轮；由 `CONNECTOR__REFRESH_PATROL_ENABLED`（生产默认 true、测试关）控制。`tenant_apps` 已参与凭证解析（见 §5.2）。
@@ -286,6 +290,8 @@ class NotionProvider(BaseProvider):
 
 **身份**：token 是 **bot token**，绑定「一个 workspace + 一个用户」；`GET /v1/users/me` 取 `workspace_id`/`workspace_name`，`account = f"{workspace_id}:{owner_subject}"`、`external_workspace = workspace_name`。**页面级授权**：用户必须在 Notion 里把页面/数据库 share 给该 integration，未 share 的资源返回 403/404（按「未授权」提示，不提示重连）。
 
+**内部集成令牌连接（不想注册 public integration 时的接入路径）**：在 Notion「Settings → Connections → Develop or manage integrations」创建 **internal integration**，复制 Internal Integration Secret（`ntn_…`），并在目标页面/数据库的「Connections / Share」里把该 integration 加进去（未 share 的资源仍返回 403/404）。平台侧 `POST /v1/connections {provider:"notion", token}`：服务端用该令牌调 `GET /v1/users/me` 校验（无效/已撤销/缺权限 → 400 `connector.invalid_credentials`），`account = "integration:<bot_id>"`、`display_name` 取集成/工作区名、`external_workspace = workspace_name`，凭证以 `auth_kind="token"` 走同一套信封加密落库（`credentials.access_token`）。该路径**不需要** client id/secret、无授权页、无回调、无 PKCE，`tenant_apps` 与应用凭证对它不适用；integration 的 Capabilities 仍决定能读写哪些内容。token 无 `expires_in`、无 refresh token，401 即置 `expired`，用户重新粘贴新令牌即可（不需要重建连接配置）。
+
 **v1 工具（4 只读 + 2 写）**：
 
 | 工具                        | 上游端点                                       | 说明                                         |
@@ -342,6 +348,7 @@ class NotionProvider(BaseProvider):
 > 巡检在 `connector/services/patrol.py`、后台任务统一由 `ConnectorRuntime` 启停。
 > **2026-11-04 规划变更**：按新规划移除内置飞书 provider（`providers/feishu.py`、飞书配置项与飞书专属测试），
 > 改为内置 Notion provider（§6）；平台骨架/页面/执行面/审计保留。
+> **2026-11-04 补充**：新增「粘贴静态令牌」连接路径（`POST /v1/connections`，`auth_kind=token`），Notion 内部集成令牌无需注册 public integration 即可接入；目录 provider 项增 `token_connectable`（§5.3、§6）。
 > **未做/待办（2026-11-04 复核）**：C2.9 只落地最小版——会话内工具失败恢复卡
 > （`apps/web/src/features/chat/connector-recovery-card.tsx`，三类授权错误码 → 「去连接器」，
 > 用户重连后手动重发；「+ 菜单」选择与 run 暂停续跑待 C0.4）；C2.10（真实飞书冒烟）随飞书
@@ -383,6 +390,7 @@ class NotionProvider(BaseProvider):
 - [x] **C6.4** 测试：全 MockTransport、零网络覆盖授权/刷新/执行/巡检/outbox/租户应用凭证 — 验收：`uv run pytest` 全绿、覆盖率 ≥ 91%（M）
 - [x] **C6.5** 配置与文档：`Settings` / `.env.example` / README / 本文 §6 同步 — 验收：`check-docs` 通过，无飞书配置残留（历史注记除外）（S）
 - [x] **C6.6** Notion 写工具 `Notion__create_page`（`POST /v1/pages`）与 `Notion__append_blocks`（`PATCH /v1/blocks/{block_id}/children`），`ToolSpec(risk=ToolRisk.WRITE)`，`risk` 经 catalog 透出到 `/v1/connectors` 的 `tools[].risk` 与内部目录 `ToolDescriptor.risk` — 验收：MockTransport 走通建页/追加；对话路径未确认时不执行（由 orchestrator 确认链路兜底）（M）
+- [x] **C6.7** 静态令牌连接：`POST /v1/connections`（`{provider, token, display_name?}` → 201）；Notion `connect_with_token` 用令牌调 `GET /v1/users/me` 校验身份（`account="integration:<bot_id>"`），`auth_kind="token"` + 信封加密落库；目录 provider 项增 `token_connectable`；错误码 400 `connector.token_not_supported` / 400 `connector.invalid_credentials` / 404 `connector.provider_not_found` — 验收：MockTransport 走通「粘贴令牌 → 建连接 → 工具暴露 → 执行」，无效令牌不入库（M）
 
 **原飞书 provider 与前端/执行面条目（历史记录；飞书 provider 已于 2026-11-04 移除）**
 

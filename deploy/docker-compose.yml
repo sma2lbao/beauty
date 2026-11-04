@@ -183,8 +183,8 @@ services:
       CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
       # 内置 Notion 连接器(4 只读 + 2 写,写操作经对话确认):OAuth public
-      # integration 凭证;留空则目录里 Notion 未配置
-      # (前端提示管理员配置),不影响其他内部端点。
+      # integration 凭证;留空则目录里 Notion 未配置(前端提示管理员配置),
+      # 但仍可用「粘贴内部集成令牌」建连接,不影响其他内部端点。
       CONNECTOR__PROVIDERS_ENABLED: notion
       CONNECTOR__NOTION_CLIENT_ID: ${CONNECTOR_NOTION_CLIENT_ID:-}
       CONNECTOR__NOTION_CLIENT_SECRET: ${CONNECTOR_NOTION_CLIENT_SECRET:-}
