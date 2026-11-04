@@ -1,4 +1,4 @@
-"""Notion provider:public integration OAuth(bot token)+ 只读/写工具。
+"""Notion provider:OAuth 或内部集成令牌 + 只读/写工具。
 
 授权走 Notion 的 OAuth2:授权页带 `owner=user`(固定值),不支持 PKCE,换 token
 用 HTTP Basic Auth;token 响应不含 `expires_in`(TTL 未知),所以不做按时间惰性
@@ -41,6 +41,9 @@ class NotionProvider(BaseProvider):
     display_name: ClassVar[str] = "Notion"
     description: ClassVar[str] = "以你授权的 Notion 集成只读访问页面、数据库与内容块"
     docs_url: ClassVar[str] = "https://developers.notion.com"
+    #: 支持粘贴「内部集成令牌」(internal integration secret)直接建连接:
+    #: 不需要注册 public integration、不需要 client id/secret 与回调。
+    token_connectable: ClassVar[bool] = True
     tools: ClassVar[tuple[ToolSpec, ...]] = (
         ToolSpec(
             name="search",
@@ -405,6 +408,29 @@ class NotionProvider(BaseProvider):
                 "owner_subject": owner_subject,
                 "user_name": user_name,
             },
+        )
+
+    # ---- 静态令牌连接 ----
+
+    async def connect_with_token(
+        self, token: str, client: httpx.AsyncClient
+    ) -> tuple[Credentials, Identity]:
+        """内部集成令牌直连:令牌即凭据,这里只校验身份并取工作区信息。
+
+        Notion internal integration 的 secret 没有有效期、也没有 refresh token,
+        所以凭证里 expires_at/refresh_token 都为 None;身份用集成 bot id 作唯一键
+        (integration:<bot_id>),与 OAuth 授权的 owner 身份区分开。
+        """
+        credentials = Credentials(access_token=token, token_type="Bearer")
+        self._token_meta = {}
+        identity = await self.fetch_identity(credentials, client)
+        bot_id = identity.provider_account_id or "unknown"
+        return credentials, Identity(
+            account=f"integration:{bot_id}",
+            display_name=identity.display_name,
+            provider_account_id=identity.provider_account_id,
+            external_workspace=identity.external_workspace,
+            metadata={**identity.metadata, "connect": "token"},
         )
 
     # ---- 工具 ----

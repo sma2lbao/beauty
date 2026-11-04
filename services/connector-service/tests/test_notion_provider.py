@@ -549,3 +549,147 @@ def test_execute_without_connection_is_tool_failure(tmp_path: Path) -> None:
     assert resp.status_code == 404
     assert resp.json()["code"] == "connector.connection_missing"
     assert mock.api_calls == []
+
+
+# ---- 静态令牌连接(内部集成令牌,不需要 public integration) ----
+
+
+async def test_connect_with_token_returns_static_credentials() -> None:
+    mock = NotionMock()
+    async with _client(mock) as client:
+        credentials, identity = await _provider().connect_with_token(
+            "ntn_secret_1", client
+        )
+    assert credentials.access_token == "ntn_secret_1"
+    assert credentials.refresh_token is None
+    assert credentials.expires_at is None
+    assert identity.account == "integration:bot-1"
+    assert identity.display_name == "张三"
+    assert identity.external_workspace == "Acme Workspace"
+    assert identity.metadata["connect"] == "token"
+    method, url, auth, version = mock.api_calls[0]
+    assert method == "GET"
+    assert url == "https://api.notion.com/v1/users/me"
+    assert auth == "Bearer ntn_secret_1"
+    assert version == "2026-03-11"
+
+
+def _token_app(tmp_path: Path, mock: NotionMock) -> TestClient:
+    return create_app(
+        _settings(tmp_path, providers_enabled="notion"),
+        token_verifier=_IDP.verifier(),
+        http_transport=httpx.MockTransport(mock.handler),
+    )
+
+
+def test_token_connect_creates_connection_without_app_credentials(
+    tmp_path: Path,
+) -> None:
+    mock = NotionMock()
+    app = _token_app(tmp_path, mock)
+    with app_client(app) as client:
+        notion = client.get("/v1/connectors", headers=TENANT).json()["providers"][0]
+        assert notion["name"] == "notion"
+        assert notion["token_connectable"] is True
+        # 没配 client id/secret 也能连:令牌路径不依赖应用凭证
+        assert notion["configured"] is False
+        assert notion["connected"] is False
+
+        resp = client.post(
+            "/v1/connections",
+            headers=TENANT,
+            json={
+                "provider": "notion",
+                "token": "ntn_secret_1",
+                "display_name": "我的 Notion",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        connection = resp.json()
+        assert connection["provider"] == "notion"
+        assert connection["account"] == "integration:bot-1"
+        assert connection["auth_kind"] == "token"
+        assert connection["display_name"] == "我的 Notion"
+        assert connection["external_workspace"] == "Acme Workspace"
+        assert connection["status"] == "active"
+        assert connection["enabled"] is True
+        assert connection["expires_at"] is None
+        assert "credentials" not in connection
+        assert connection["scopes"] == []
+        assert mock.api_calls[0][2] == "Bearer ntn_secret_1"
+
+        notion = client.get("/v1/connectors", headers=TENANT).json()["providers"][0]
+        assert notion["connected"] is True
+        assert notion["connection"]["id"] == connection["id"]
+
+        # 工具链直接用这条令牌:执行面不需要额外授权
+        executed = client.post(
+            "/v1/connectors/notion/execute",
+            headers=INTERNAL_HEADERS,
+            json={"tool": "Notion__search", "arguments": {}},
+        )
+        assert executed.status_code == 200, executed.text
+        body = executed.json()
+        assert body["ok"] is True
+        assert body["connection_id"] == connection["id"]
+        assert mock.api_calls[-1][2] == "Bearer ntn_secret_1"
+
+        # 同一集成的令牌重复连接复用同一行(account = integration:<bot_id>)
+        again = client.post(
+            "/v1/connections",
+            headers=TENANT,
+            json={"provider": "notion", "token": "ntn_secret_1"},
+        )
+        assert again.status_code == 201
+        assert again.json()["id"] == connection["id"]
+        assert len(client.get("/v1/connections", headers=TENANT).json()) == 1
+
+
+def test_token_connect_rejects_invalid_token(tmp_path: Path) -> None:
+    mock = NotionMock()
+    mock.fail["/users/me"] = error_response(401, "unauthorized")
+    app = _token_app(tmp_path, mock)
+    with app_client(app) as client:
+        resp = client.post(
+            "/v1/connections",
+            headers=TENANT,
+            json={"provider": "notion", "token": "ntn_broken"},
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["code"] == "connector.invalid_credentials"
+        assert "令牌" in body["message"]
+        assert body["details"]["retryable"] is False
+        # 校验失败不落库
+        assert client.get("/v1/connections", headers=TENANT).json() == []
+
+
+def test_token_connect_rejects_unsupported_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock = NotionMock()
+    app = _token_app(tmp_path, mock)
+    monkeypatch.setattr(NotionProvider, "token_connectable", False)
+    with app_client(app) as client:
+        resp = client.post(
+            "/v1/connections",
+            headers=TENANT,
+            json={"provider": "notion", "token": "ntn_secret_1"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "connector.token_not_supported"
+        assert mock.api_calls == []
+
+
+def test_token_connect_unknown_provider(tmp_path: Path) -> None:
+    mock = NotionMock()
+    app = _token_app(tmp_path, mock)
+    with app_client(app) as client:
+        resp = client.post(
+            "/v1/connections",
+            headers=TENANT,
+            json={"provider": "acme", "token": "ntn_secret_1"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "connector.provider_not_found"
+        assert mock.api_calls == []

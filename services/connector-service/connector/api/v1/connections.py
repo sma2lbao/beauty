@@ -8,18 +8,19 @@ from common.errors import AppError
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from connector.api.deps import get_session, get_tenant_id
+from connector.api.deps import get_owner_subject, get_session, get_tenant_id
 from connector.core.config import Settings
 from connector.core.http import get_http_transport
 from connector.providers.errors import ProviderError
 from connector.schemas.connections import ConnectionRead
-from connector.schemas.connectors import ConnectionUpdate
+from connector.schemas.connectors import ConnectionTokenCreate, ConnectionUpdate
 from connector.services import connections as connections_service
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 TenantId = Annotated[str, Depends(get_tenant_id)]
+OwnerSubject = Annotated[str | None, Depends(get_owner_subject)]
 
 #: ProviderError → HTTP 状态,与 docs/design/connector.md §5.7 的错误码表一致。
 #: 瞬时故障(限流/超时/5xx)用可重试状态码,凭据类问题用 409 引导重连。
@@ -34,6 +35,17 @@ _FAILURE_STATUS: dict[str, int] = {
     "connector.upstream_error": 502,
 }
 
+
+
+#: 令牌连接时,上游鉴权类错误统一收敛成「令牌无效」;上游故障仍按原错误码映射。
+_CONNECT_AUTH_ERRORS = frozenset(
+    {
+        "connector.auth_expired",
+        "connector.auth_revoked",
+        "connector.oauth_failed",
+        "connector.scope_missing",
+    }
+)
 
 class _ProviderFailure(AppError):
     """把 provider 错误码映射成协议层状态码(响应体仍是标准错误信封)。"""
@@ -67,6 +79,59 @@ async def list_connections(
     )
     return [ConnectionRead.model_validate(conn) for conn in conns]
 
+
+
+
+@router.post("", response_model=ConnectionRead, status_code=201)
+async def create_connection(
+    payload: ConnectionTokenCreate,
+    request: Request,
+    session: DBSession,
+    tenant_id: TenantId,
+    owner_subject: OwnerSubject,
+) -> ConnectionRead:
+    """粘贴静态令牌建连接(如 Notion 内部集成令牌):无 OAuth、无回调。
+
+    令牌只随本次请求传输,落库前与本服务其它凭证同一套信封加密;失败不改任何
+    已有连接(先校验上游身份,再写库)。
+    """
+    try:
+        conn = await connections_service.connect_with_token(
+            session,
+            _settings(request),
+            tenant_id,
+            owner_subject=owner_subject,
+            provider_name=payload.provider,
+            token=payload.token,
+            transport=get_http_transport(request),
+            display_name=payload.display_name,
+        )
+    except ProviderError as exc:
+        code = (
+            "connector.invalid_credentials"
+            if exc.code in _CONNECT_AUTH_ERRORS
+            else exc.code
+        )
+        message = (
+            "令牌无效、已撤销或缺少所需权限"
+            if code == "connector.invalid_credentials"
+            else exc.message
+        )
+        raise _ProviderFailure(
+            code,
+            message,
+            status=(
+                400
+                if code == "connector.invalid_credentials"
+                else _FAILURE_STATUS.get(exc.code, 400)
+            ),
+            details={
+                "provider": payload.provider,
+                "hint": exc.hint,
+                "retryable": exc.retryable,
+            },
+        ) from exc
+    return ConnectionRead.model_validate(conn)
 
 @router.get("/{connection_id}", response_model=ConnectionRead)
 async def get_connection(

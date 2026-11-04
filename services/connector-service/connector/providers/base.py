@@ -105,6 +105,8 @@ class BaseProvider(ABC):
     display_name: ClassVar[str]
     description: ClassVar[str]
     auth_kind: ClassVar[str] = "user"
+    #: 是否支持「用户粘贴静态令牌」直接建连接(目录里据此暴露入口)
+    token_connectable: ClassVar[bool] = False
     docs_url: ClassVar[str] = ""
     tools: ClassVar[tuple[ToolSpec, ...]] = ()
 
@@ -167,6 +169,18 @@ class BaseProvider(ABC):
         self, credentials: Credentials, client: httpx.AsyncClient
     ) -> Identity:
         """拉授权用户身份(用于 account/display_name 与连通性探测)。"""
+
+    # ---- 静态令牌连接 ----
+
+    async def connect_with_token(
+        self, token: str, client: httpx.AsyncClient
+    ) -> tuple[Credentials, Identity]:
+        """用用户粘贴的静态令牌建连接:返回凭证与校验过的身份。
+
+        只支持令牌连接的 provider(如 Notion 的内部集成令牌)覆写这里;其余
+        provider 走 token_connectable=False,由服务层直接拒绝。
+        """
+        raise NotImplementedError(f"{self.name} 不支持令牌连接")
 
     # ---- 工具 ----
 

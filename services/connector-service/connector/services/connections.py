@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from common.errors import ConflictError
+from common.errors import AppError, ConflictError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from connector.core.clock import is_expiring, utcnow
@@ -112,8 +112,9 @@ async def upsert_authorized_connection(
     credentials: Credentials,
     identity: Identity,
     scopes: list[str],
+    auth_kind: str = "user",
 ) -> Connection:
-    """授权回调落库:同租户同 provider 同 account 复用行,否则新建。
+    """授权回调/令牌连接落库:同租户同 provider 同 account 复用行,否则新建。
 
     新建(首次授权)时在同一事务里登记 connector.connection.created.v1;
     复用已有行属于重新授权,不改 created 语义(其状态变更由 refreshed 埋点覆盖)。
@@ -136,12 +137,52 @@ async def upsert_authorized_connection(
         credentials=credentials,
         identity=identity,
         scopes=scopes,
+        auth_kind=auth_kind,
     )
     conn = await connections.add(conn)
     if created:
         await publish_connection_event(session, settings, conn, CONNECTION_CREATED)
     return conn
 
+async def connect_with_token(
+    session: AsyncSession,
+    settings: Settings,
+    tenant_id: str,
+    *,
+    owner_subject: str | None,
+    provider_name: str,
+    token: str,
+    transport: httpx.AsyncBaseTransport | None,
+    display_name: str | None = None,
+) -> Connection:
+    """静态令牌连接:校验令牌 -> 加密落库;不经过 OAuth 会话与回调。
+
+    provider 必须声明 token_connectable(如 Notion 的内部集成令牌);令牌无效或
+    缺权限时由 provider 抛 ProviderError,API 层翻成 400 connector.invalid_credentials。
+    """
+    provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
+    if not provider.token_connectable:
+        raise AppError(
+            "connector.token_not_supported",
+            f"{provider.display_name} 不支持粘贴令牌连接",
+            details={"provider": provider.name},
+        )
+    async with open_client(settings, transport) as client:
+        credentials, identity = await provider.connect_with_token(token, client)
+    conn = await upsert_authorized_connection(
+        session,
+        settings=settings,
+        tenant_id=tenant_id,
+        provider_name=provider.name,
+        owner_subject=owner_subject,
+        credentials=credentials,
+        identity=identity,
+        scopes=list(provider.scopes()),
+        auth_kind="token",
+    )
+    if display_name:
+        conn.display_name = display_name
+    return conn
 
 def _apply_authorized(
     conn: Connection,
@@ -151,12 +192,13 @@ def _apply_authorized(
     credentials: Credentials,
     identity: Identity,
     scopes: list[str],
+    auth_kind: str,
 ) -> None:
     _apply_credentials(conn, settings, credentials)
     conn.status = ConnectionStatus.ACTIVE.value
     conn.enabled = True
     conn.owner_subject = owner_subject
-    conn.auth_kind = "user"
+    conn.auth_kind = auth_kind
     conn.account = identity.account
     conn.provider_account_id = identity.provider_account_id
     conn.external_workspace = identity.external_workspace

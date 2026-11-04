@@ -68,6 +68,7 @@ async def list_providers(
                 scopes=list(provider.scopes()),
                 docs_url=provider.docs_url,
                 configured=provider.configured,
+                token_connectable=provider.token_connectable,
                 connected=_usable(conn),
                 connection=_brief(conn) if conn is not None else None,
                 tools=[

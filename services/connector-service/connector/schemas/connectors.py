@@ -41,6 +41,10 @@ class ProviderInfo(BaseModel):
     scopes: list[str]
     docs_url: str
     configured: bool = Field(description="应用凭证是否齐备;false 时不能发起授权")
+    token_connectable: bool = Field(
+        default=False,
+        description="支持用户粘贴静态令牌直接建连接(不需要应用凭证)",
+    )
     connected: bool = Field(description="存在 active 且 enabled 的连接")
     connection: ConnectionBrief | None = None
     tools: list[ToolInfo]
@@ -64,6 +68,25 @@ class ExecuteRequest(BaseModel):
     tool: str = Field(description="完整工具名,如 Acme__read_document")
     arguments: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = None
+
+
+class ConnectionTokenCreate(BaseModel):
+    """粘贴静态令牌建连接(如 Notion 的内部集成令牌):无 OAuth、无回调。"""
+
+    provider: str = Field(
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z][a-z0-9_-]{0,31}$",
+        description="provider key,如 notion",
+    )
+    token: str = Field(
+        min_length=8,
+        max_length=4096,
+        description="第三方集成令牌;只随本次请求传输,服务端加密落库",
+    )
+    display_name: str | None = Field(
+        default=None, max_length=120, description="自定义展示名,不填用 provider 身份"
+    )
 
 
 class ConnectionUpdate(BaseModel):
