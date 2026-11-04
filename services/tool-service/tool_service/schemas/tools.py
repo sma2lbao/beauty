@@ -85,6 +85,8 @@ class ToolCallRead(BaseModel):
     tool_call_id: str
     run_id: str | None = None
     conversation_id: str | None = None
+    # 连接器工具解析到的连接 id(内置工具为 null)。
+    connection_id: str | None = None
     tool_name: str
     tool_version: str
     risk: str

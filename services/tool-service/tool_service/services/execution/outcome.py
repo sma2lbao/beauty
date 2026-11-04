@@ -121,6 +121,8 @@ def audit_columns(
         "lines_removed": patch.lines_removed if patch is not None else None,
         "patch_truncated": patch.patch_truncated if patch is not None else False,
         "sandbox_id": outcome.sandbox_id,
+        # 连接器侧解析出的连接 id(C2.4);内置工具与未解析连接为 None。
+        "connection_id": outcome.connector_connection_id,
     }
 
 

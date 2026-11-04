@@ -80,3 +80,5 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
     assert "ix_tool_calls_tool" in indexes
     assert {"tool_call_id", "tenant_id", "tool_name", "arguments_sha256"} <= columns
     assert {"patch", "lines_added", "lines_removed", "patch_truncated"} <= columns
+    # C2.4:连接器审计列必须随迁移落到真实库(create_all 测不出来)。
+    assert "connection_id" in columns

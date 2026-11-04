@@ -152,6 +152,7 @@ def to_read(entity: ToolCall, *, include_patch: bool = False) -> ToolCallRead:
         tool_call_id=entity.tool_call_id,
         run_id=entity.run_id,
         conversation_id=entity.conversation_id,
+        connection_id=entity.connection_id,
         tool_name=entity.tool_name,
         tool_version=entity.tool_version,
         risk=entity.risk,

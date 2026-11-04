@@ -29,7 +29,11 @@ from tests.conftest import (
 )
 from tests.execution_support import execution_context
 from tool_service.main import create_app
-from tool_service.services.connectors import CATALOG_PATH, ConnectorGateway
+from tool_service.services.connectors import (
+    CATALOG_PATH,
+    ConnectorExecution,
+    ConnectorGateway,
+)
 from tool_service.services.execution import ToolRunner, audit_columns, connector_path
 from tool_service.services.executors.http import HttpToolExecutor
 
@@ -233,13 +237,15 @@ async def test_execute_posts_envelope_and_passes_result_through() -> None:
     service.exec_body = {"ok": True, "content": "hello", "bytes": 5}
     gateway = make_gateway(service)
 
-    response = await gateway.execute(
+    execution = await gateway.execute(
         "t-1",
         FEISHU_TOOL,
         {"document_id": "doc-1"},
         run_id="run-1",
     )
 
+    assert execution.connection_id is None
+    response = execution.response
     assert response.ok is True
     assert response.result == {"content": "hello", "bytes": 5}
     [request] = service.execute_requests()
@@ -259,8 +265,9 @@ async def test_execute_omits_empty_run_id() -> None:
     service = FakeConnectorService()
     gateway = make_gateway(service)
 
-    await gateway.execute("t-1", FEISHU_TOOL, {"document_id": "doc-1"})
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {"document_id": "doc-1"})
 
+    assert execution.connection_id is None
     [request] = service.execute_requests()
     assert "run_id" not in json.loads(request.content)
     await gateway.aclose()
@@ -271,8 +278,10 @@ async def test_execute_without_provider_is_executor_unavailable() -> None:
     gateway = make_gateway(service)
     bare = ToolDescriptor.from_payload({**feishu_payload(), "connector": None})
 
-    response = await gateway.execute("t-1", bare, {"document_id": "doc-1"})
+    execution = await gateway.execute("t-1", bare, {"document_id": "doc-1"})
 
+    assert execution.connection_id is None
+    response = execution.response
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "tool.executor_unavailable"
@@ -297,8 +306,10 @@ async def test_execute_maps_status_errors(
     service.exec_body = "down"
     gateway = make_gateway(service)
 
-    response = await gateway.execute("t-1", FEISHU_TOOL, {})
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
 
+    response = execution.response
+    assert execution.connection_id is None
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "tool.connector_unavailable"
@@ -322,8 +333,10 @@ async def test_execute_maps_transport_errors(
     service.exec_raise = error
     gateway = make_gateway(service)
 
-    response = await gateway.execute("t-1", FEISHU_TOOL, {})
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
 
+    assert execution.connection_id is None
+    response = execution.response
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == code
@@ -345,8 +358,10 @@ async def test_execute_maps_bad_envelopes(body: Any) -> None:
     service.exec_body = body
     gateway = make_gateway(service)
 
-    response = await gateway.execute("t-1", FEISHU_TOOL, {})
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
 
+    assert execution.connection_id is None
+    response = execution.response
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "tool.connector_unavailable"
@@ -366,13 +381,70 @@ async def test_execute_passes_through_tool_level_failure() -> None:
     }
     gateway = make_gateway(service)
 
-    response = await gateway.execute("t-1", FEISHU_TOOL, {})
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
 
+    assert execution.connection_id is None
+    response = execution.response
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "connector.auth_required"
     assert response.error.message == "请先连接飞书"
     assert response.error.retryable is False
+    await gateway.aclose()
+
+
+# ---- 执行:connection_id 提取与剥离(C2.4 审计) --------------------------
+
+
+async def test_execute_extracts_connection_id_and_strips_it_from_result() -> None:
+    service = FakeConnectorService()
+    service.exec_body = {
+        "ok": True,
+        "content": "hello",
+        "connection_id": "conn-feishu-1",
+    }
+    gateway = make_gateway(service)
+
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {"document_id": "doc-1"})
+
+    assert execution.connection_id == "conn-feishu-1"
+    # connection_id 只进审计:不能泄漏到模型可见的 result。
+    assert execution.response.result == {"content": "hello"}
+    await gateway.aclose()
+
+
+async def test_execute_failure_envelope_still_carries_connection_id() -> None:
+    service = FakeConnectorService()
+    service.exec_body = {
+        "ok": False,
+        "connection_id": "conn-feishu-1",
+        "error": {
+            "code": "connector.auth_required",
+            "message": "请先连接飞书",
+            "retryable": False,
+        },
+    }
+    gateway = make_gateway(service)
+
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
+
+    assert execution.connection_id == "conn-feishu-1"
+    assert execution.response.ok is False
+    assert execution.response.result in (None, {})
+    await gateway.aclose()
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", 42, {"id": "x"}])
+async def test_execute_ignores_non_string_connection_id(raw: Any) -> None:
+    service = FakeConnectorService()
+    service.exec_body = {"ok": True, "content": "hello", "connection_id": raw}
+    gateway = make_gateway(service)
+
+    execution = await gateway.execute("t-1", FEISHU_TOOL, {})
+
+    assert execution.connection_id is None
+    # 非法值同样剥离,避免混进模型可见的结果。
+    assert execution.response.result == {"content": "hello"}
     await gateway.aclose()
 
 
@@ -387,6 +459,7 @@ class FakeConnectorGateway:
         self.tool_calls: list[str] = []
         self.executed: list[dict[str, Any]] = []
         self.response = ToolExecuteResponse(ok=True, result={"content": "hello"})
+        self.connection_id: str | None = None
         self.execute_error: BaseException | None = None
         self.closed = False
 
@@ -408,7 +481,7 @@ class FakeConnectorGateway:
         arguments: dict[str, Any],
         *,
         run_id: str | None = None,
-    ) -> ToolExecuteResponse:
+    ) -> ConnectorExecution:
         self.executed.append(
             {
                 "tenant_id": tenant_id,
@@ -419,7 +492,7 @@ class FakeConnectorGateway:
         )
         if self.execute_error is not None:
             raise self.execute_error
-        return self.response
+        return ConnectorExecution(self.response, connection_id=self.connection_id)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -458,10 +531,29 @@ async def test_runner_dispatches_connector_tool(tmp_path: Path) -> None:
         }
     ]
     columns = audit_columns(outcome, context, {"document_id": "doc-1"}, decision="auto")
+    assert outcome.connector_connection_id is None
     assert columns["tool_name"] == "Feishu__read_document"
     assert columns["risk"] == "read"
     assert columns["bytes_written"] == 0
     assert columns["result_chars"] > 0
+    assert columns["connection_id"] is None
+
+
+async def test_runner_carries_connection_id_into_audit(tmp_path: Path) -> None:
+    """gateway 带回的连接 id 必须原样进入审计列(C2.4 端到端)。"""
+
+    gateway = FakeConnectorGateway()
+    gateway.connection_id = "conn-feishu-9"
+    runner = make_connector_runner(tmp_path, gateway)
+    context = execution_context(run_id="run-1")
+
+    outcome = await runner.execute(
+        context, "Feishu__read_document", {"document_id": "doc-1"}
+    )
+    columns = audit_columns(outcome, context, {"document_id": "doc-1"}, decision="auto")
+
+    assert outcome.connector_connection_id == "conn-feishu-9"
+    assert columns["connection_id"] == "conn-feishu-9"
 
 
 async def test_runner_passes_tool_level_failure_through(tmp_path: Path) -> None:
@@ -508,6 +600,27 @@ async def test_runner_rejects_too_large_connector_result(
     assert outcome.response.error is not None
     assert outcome.response.error.code == "tool.too_large"
     assert outcome.response.error.retryable is True
+    assert outcome.connector_connection_id is None
+
+
+async def test_runner_too_large_keeps_connection_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """结果过大被拦下时也要保留连接 id,审计才能回溯到具体连接。"""
+
+    monkeypatch.setattr(connector_path, "MAX_TOOL_CHARS", 5)
+    gateway = FakeConnectorGateway()
+    gateway.connection_id = "conn-feishu-9"
+    gateway.response = ToolExecuteResponse(ok=True, result={"content": "too long"})
+    runner = make_connector_runner(tmp_path, gateway)
+
+    outcome = await runner.execute(
+        execution_context(), "Feishu__read_document", {"document_id": "doc-1"}
+    )
+
+    assert outcome.response.error is not None
+    assert outcome.response.error.code == "tool.too_large"
+    assert outcome.connector_connection_id == "conn-feishu-9"
 
 
 async def test_runner_without_gateway_cannot_resolve_connector_tool(
@@ -601,6 +714,7 @@ def test_get_connector_tool_requires_tenant(tmp_path: Path) -> None:
 
 def test_execute_connector_tool_audits_and_returns_envelope(tmp_path: Path) -> None:
     gateway = FakeConnectorGateway()
+    gateway.connection_id = "conn-feishu-9"
     with connector_client(tmp_path, gateway) as client:
         resp = client.post(
             "/v1/tools/Feishu__read_document:execute",
@@ -619,6 +733,8 @@ def test_execute_connector_tool_audits_and_returns_envelope(tmp_path: Path) -> N
     assert body["content"] == "hello"
     assert body["tool_call_id"] == "call-9"
     assert body["idempotent_replay"] is False
+    # connection_id 只进审计,不出现在模型可见的执行信封里。
+    assert "connection_id" not in body
     assert gateway.executed == [
         {
             "tenant_id": "t-1",
@@ -633,6 +749,7 @@ def test_execute_connector_tool_audits_and_returns_envelope(tmp_path: Path) -> N
     assert record["decision"] == "auto"
     assert record["ok"] is True
     assert record["run_id"] == "run-1"
+    assert record["connection_id"] == "conn-feishu-9"
 
 
 def test_execute_unknown_connector_tool_is_404(tmp_path: Path) -> None:

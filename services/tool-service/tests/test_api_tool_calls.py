@@ -53,6 +53,8 @@ def test_list_returns_audit_rows(client: TestClient) -> None:
     assert item["paths"] == ["a.txt"]
     assert item["sandbox_id"] == "sbx-1"
     assert item["run_id"] == "run-1"
+    # 内置工具没有连接器连接,审计列显式为 null。
+    assert item["connection_id"] is None
 
 
 def test_list_filters_by_run_id(client: TestClient) -> None:

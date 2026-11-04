@@ -73,6 +73,9 @@
   `tool.connector_timeout`;
 - 执行仍走本服务的限额、幂等与审计(`tool_calls`),审批沿用 orchestrator 的
   `risk=read` → 自动放行规则;
+- 审计补 `connection_id`(C2.4):execute 响应顶层的 `connection_id`(连接已解析时)
+  由 gateway 提取并从模型可见 `result` 中剥离,落 `tool_calls.connection_id`;
+  `GET /v1/tool-calls` 运维查询可见该字段,内置工具为 null;
 - 未配置 `TOOL__CONNECTOR_INTERNAL_SECRET` 时整体关闭,`/v1/tools` 只返回内置工具。
 
 ## 知识库检索代理(P2)

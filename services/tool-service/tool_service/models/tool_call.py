@@ -40,6 +40,11 @@ class ToolCall(UUIDMixin, TenantMixin, Base):
     conversation_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True, default=None
     )
+    # 连接器侧解析到的连接 id(仅 executor=connector 且连接已解析时非空);
+    # 来自 execute 响应顶层字段,已从模型可见 result 中剥离(C2.4 审计)。
+    connection_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, default=None
+    )
     # 主名(命中 alias 时也记主名,alias 只用在入站解析)。
     tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
     tool_version: Mapped[str] = mapped_column(String(16), nullable=False, default="1")

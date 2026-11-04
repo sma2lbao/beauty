@@ -46,7 +46,7 @@ class ConnectorExecutionMixin:
             )
         timeout = self._timeout_seconds(context, descriptor)
         try:
-            response = await asyncio.wait_for(
+            execution = await asyncio.wait_for(
                 self._connector.execute(
                     context.tenant_id,
                     descriptor,
@@ -66,19 +66,27 @@ class ConnectorExecutionMixin:
                 duration_ms=_elapsed_ms(started),
             )
         response = replace(
-            response,
+            execution.response,
             duration_ms=_elapsed_ms(started),
             tool_call_id=context.tool_call_id,
             idempotent_replay=False,
         )
         if response.ok and self._result_chars(response) > MAX_TOOL_CHARS:
-            return self._failure(
-                context,
-                descriptor,
-                "tool.too_large",
-                f"工具结果超过 {MAX_TOOL_CHARS} 字符上限",
-                hint="缩小返回范围后重试",
-                retryable=True,
-                duration_ms=_elapsed_ms(started),
+            # 结果过大仍保留连接 id,审计才能回溯到具体连接。
+            return replace(
+                self._failure(
+                    context,
+                    descriptor,
+                    "tool.too_large",
+                    f"工具结果超过 {MAX_TOOL_CHARS} 字符上限",
+                    hint="缩小返回范围后重试",
+                    retryable=True,
+                    duration_ms=_elapsed_ms(started),
+                ),
+                connector_connection_id=execution.connection_id,
             )
-        return ExecutionOutcome(descriptor=descriptor, response=response)
+        return ExecutionOutcome(
+            descriptor=descriptor,
+            response=response,
+            connector_connection_id=execution.connection_id,
+        )

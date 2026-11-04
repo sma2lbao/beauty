@@ -44,6 +44,9 @@ class ExecutionOutcome:
     response: ToolExecuteResponse
     sandbox_id: str | None = None
     patch: PatchAudit | None = None
+    # 连接器侧解析出的连接 id(仅 executor=connector 且连接已解析时非空);
+    # 只进 tool_calls 审计,已在 gateway 层从模型可见 result 中剥离。
+    connector_connection_id: str | None = None
 
 
 def _elapsed_ms(started: float) -> int:

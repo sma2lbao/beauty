@@ -41,6 +41,7 @@ async def test_audit_columns_for_success(tmp_path: Path) -> None:
     assert columns["sha256_before"] is None
     assert columns["sha256_after"] is None
     assert columns["sandbox_id"] == "sbx-1"
+    assert columns["connection_id"] is None
     assert columns["arguments_sha256"] == arguments_digest(arguments)
     assert json.loads(columns["arguments"]) == arguments
 
@@ -58,6 +59,7 @@ async def test_audit_columns_for_failure(tmp_path: Path) -> None:
     assert columns["result_chars"] == 0
     assert json.loads(columns["paths"]) == []
     assert columns["sandbox_id"] is None
+    assert columns["connection_id"] is None
 
 
 async def test_audit_paths_are_capped(tmp_path: Path) -> None:
