@@ -41,6 +41,8 @@ class DemoProvider(BaseProvider):
     description: ClassVar[str] = "测试与本地联调用的示例只读连接器"
     docs_url: ClassVar[str] = "https://example.test/docs"
     auth_kind: ClassVar[str] = "user"
+    # 平台能力:允许用户粘贴静态令牌建连接(OAuth 之外的第二条路径)
+    token_connectable: ClassVar[bool] = True
     # 应用凭证默认值;测试可通过改成空串模拟「未配置」。
     DEFAULT_APP_ID: ClassVar[str] = "demo-client"
     DEFAULT_APP_SECRET: ClassVar[str] = "demo-secret"
@@ -314,6 +316,26 @@ class DemoProvider(BaseProvider):
                 "name": data.get("name"),
                 "avatar_url": data.get("avatar_url"),
             },
+        )
+
+    # ---- 静态令牌连接 ----
+
+    async def connect_with_token(
+        self, token: str, client: httpx.AsyncClient
+    ) -> tuple[Credentials, Identity]:
+        """粘贴的静态令牌没有有效期/refresh,先用 /userinfo 校验再落库。
+
+        account 用 "token:<账号 id>",与 OAuth 的 "u-1" 区分:同一账号两种接入方式
+        各自一条连接,互不覆盖。
+        """
+        credentials = Credentials(access_token=token, token_type="Bearer")
+        identity = await self.fetch_identity(credentials, client)
+        return credentials, Identity(
+            account=f"token:{identity.provider_account_id or 'unknown'}",
+            display_name=identity.display_name,
+            provider_account_id=identity.provider_account_id,
+            external_workspace=identity.external_workspace,
+            metadata={**identity.metadata, "connect": "token"},
         )
 
     # ---- 工具 ----

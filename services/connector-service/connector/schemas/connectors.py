@@ -71,7 +71,7 @@ class ExecuteRequest(BaseModel):
 
 
 class ConnectionTokenCreate(BaseModel):
-    """粘贴静态令牌建连接(如 Notion 的内部集成令牌):无 OAuth、无回调。"""
+    """粘贴静态令牌建连接(如内部集成令牌):无 OAuth、无回调。"""
 
     provider: str = Field(
         min_length=1,

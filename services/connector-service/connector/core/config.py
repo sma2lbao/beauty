@@ -1,8 +1,9 @@
 """服务配置(env 前缀 CONNECTOR__,公共字段见 common.service_kit)。
 
 连接器平台:provider 由代码 manifest 注册(见 connector.providers),配置只负责
-「启用哪些 provider」与各自的应用凭证。仓库内置 Notion 只读连接器;新增 provider
-后由它自己声明配置字段。未配置应用凭证时 provider 仍出现在目录里但标记未配置。
+「启用哪些 provider」与各自的应用凭证。当前仓库没有内置 provider(Notion 等产品
+改走 MCP 接入);新增 provider 后由它自己声明配置字段。未配置应用凭证时 provider
+仍出现在目录里但标记未配置。
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ class Settings(ServiceSettings):
 
     # ── 连接器平台 ────────────────────────────────────────────────────────
     # 启用的 provider(逗号分隔);代码里没有对应 manifest 的名字会被忽略。
-    # 内置 Notion 只读连接器;不配置时目录里仍显示「未配置应用凭证」。
-    providers_enabled: str = "notion"
+    # 当前仓库没有内置 provider,默认空;新增 provider 后在此登记 key。
+    providers_enabled: str = ""
     # 服务间内部调用鉴权(X-Internal-Secret);留空 = 内部端点整体关闭(401)。
     internal_secret: str = ""
     # OAuth 回调基址:redirect_uri = {base}/v1/oauth/{provider}/callback,
@@ -55,15 +56,6 @@ class Settings(ServiceSettings):
     refresh_patrol_enabled: bool = True
     refresh_patrol_interval_seconds: int = 3600
     refresh_stale_seconds: int = 86400
-
-    # ── 内置 Notion 连接器(§6)────────────────────────────────────────────
-    # public integration 的全局应用凭证;可用 tenant_apps 按租户覆盖
-    # (app_id 当 client_id、app_secret 当 client_secret)。
-    notion_client_id: str = ""
-    notion_client_secret: str = ""
-    # Notion-Version 请求头:Notion 只对不兼容变更发新版本,加性变更对所有版本生效。
-    notion_version: str = "2026-03-11"
-    notion_api_base: str = "https://api.notion.com"
 
     @property
     def provider_names(self) -> tuple[str, ...]:

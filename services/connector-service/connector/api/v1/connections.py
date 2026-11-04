@@ -90,7 +90,7 @@ async def create_connection(
     tenant_id: TenantId,
     owner_subject: OwnerSubject,
 ) -> ConnectionRead:
-    """粘贴静态令牌建连接(如 Notion 内部集成令牌):无 OAuth、无回调。
+    """粘贴静态令牌建连接(如内部集成令牌):无 OAuth、无回调。
 
     令牌只随本次请求传输,落库前与本服务其它凭证同一套信封加密;失败不改任何
     已有连接(先校验上游身份,再写库)。

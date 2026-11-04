@@ -177,7 +177,7 @@ class BaseProvider(ABC):
     ) -> tuple[Credentials, Identity]:
         """用用户粘贴的静态令牌建连接:返回凭证与校验过的身份。
 
-        只支持令牌连接的 provider(如 Notion 的内部集成令牌)覆写这里;其余
+        支持「用户粘贴静态令牌」的 provider(如内部集成令牌)覆写这里;其余
         provider 走 token_connectable=False,由服务层直接拒绝。
         """
         raise NotImplementedError(f"{self.name} 不支持令牌连接")

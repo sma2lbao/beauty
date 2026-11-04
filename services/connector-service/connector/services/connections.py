@@ -157,7 +157,7 @@ async def connect_with_token(
 ) -> Connection:
     """静态令牌连接:校验令牌 -> 加密落库;不经过 OAuth 会话与回调。
 
-    provider 必须声明 token_connectable(如 Notion 的内部集成令牌);令牌无效或
+    provider 必须声明 token_connectable(如内部集成令牌、个人 API token);令牌无效或
     缺权限时由 provider 抛 ProviderError,API 层翻成 400 connector.invalid_credentials。
     """
     provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
@@ -177,7 +177,8 @@ async def connect_with_token(
         owner_subject=owner_subject,
         credentials=credentials,
         identity=identity,
-        scopes=list(provider.scopes()),
+        # 令牌路径没有 OAuth scope 协商:记录为空,权限由 provider 侧的集成配置决定
+        scopes=[],
         auth_kind="token",
     )
     if display_name:
