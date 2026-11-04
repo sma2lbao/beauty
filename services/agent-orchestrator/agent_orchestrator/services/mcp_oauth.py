@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 
 import httpx
 from common.errors import AppError, ConflictError, UpstreamError
+from common.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
@@ -35,6 +36,7 @@ from agent_orchestrator.repositories import (
     MCPServerRepository,
 )
 from agent_orchestrator.schemas.mcp import MCPOAuthCallbackRead
+from agent_orchestrator.services import mcp_runtime
 from agent_orchestrator.services.mcp_crypto import encrypt_token
 from agent_orchestrator.services.mcp_oauth_discovery import _USER_AGENT as _USER_AGENT
 from agent_orchestrator.services.mcp_oauth_discovery import (
@@ -96,6 +98,27 @@ from agent_orchestrator.services.mcp_oauth_discovery import verify_state as veri
 #: 同一 server 的刷新单飞:并发调用只让一个请求去换 token
 
 
+logger = get_logger(__name__)
+
+#: 浏览器授权完成后允许落回的站内路径(白名单,挡开放重定向)
+OAUTH_NEXT_PATHS = frozenset({"/mcp", "/connectors"})
+DEFAULT_OAUTH_NEXT_PATH = "/mcp"
+
+
+def _normalize_next(next_path: str | None) -> str:
+    candidate = (next_path or "").strip()
+    return candidate if candidate in OAUTH_NEXT_PATHS else DEFAULT_OAUTH_NEXT_PATH
+
+
+def next_path_from_state(settings: Settings, state: str) -> str:
+    """失败回跳用:state 能验签就取 payload 里的 next,否则按 /mcp。"""
+    try:
+        payload = verify_state(settings, state)
+    except AppError:
+        return DEFAULT_OAUTH_NEXT_PATH
+    return _normalize_next(payload.get("next"))
+
+
 async def start_authorization(
     session: AsyncSession,
     tenant_id: str,
@@ -104,6 +127,7 @@ async def start_authorization(
     settings: Settings,
     secret: str,
     transport: httpx.AsyncBaseTransport | None = None,
+    next_path: str | None = None,
 ) -> str:
     """发现 + 注册 + 签发 state,返回浏览器应跳转的授权地址。"""
     if not settings.mcp_oauth_enabled:
@@ -188,6 +212,8 @@ async def start_authorization(
         "token_endpoint": token_endpoint,
         "scopes": scope_list,
         "verifier": encrypt_token(secret, verifier),
+        # 授权完成后前端要落回的站内路径(白名单外一律 /mcp)
+        "next": _normalize_next(next_path),
     }
     params = {
         "response_type": "code",
@@ -316,13 +342,30 @@ async def complete_authorization(
         transport=transport,
         timeout=settings.mcp_oauth_timeout_seconds,
     )
-    _apply_token(row, token, secret)
+    access = _apply_token(row, token, secret)
     row.last_error = None
     if server.last_status == "auth_required":
         server.last_status = None
         server.last_error = None
+    # 授权成功顺手把工具清单灌进缓存:失败只是"暂时还没有工具列表",
+    # 不能影响 302 回前端(用户仍看到授权成功,可再点测试连接重试)。
+    try:
+        await mcp_runtime.refresh_tools(
+            server, secret, token=access, transport=transport
+        )
+    except Exception as exc:  # noqa: BLE001 - 尽力而为,失败只记日志
+        logger.warning(
+            "mcp oauth 授权后刷新工具失败",
+            server_id=server.id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
     return MCPOAuthCallbackRead(
-        ok=True, redirect_path=redirect_path(ok=True, server_name=server.name)
+        ok=True,
+        redirect_path=redirect_path(
+            ok=True,
+            server_name=server.name,
+            next_path=_normalize_next(payload.get("next")),
+        ),
     )
 
 

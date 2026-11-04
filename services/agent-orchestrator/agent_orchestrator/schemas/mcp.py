@@ -40,6 +40,22 @@ class MCPToolRead(BaseModel):
     name: str
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
+    #: MCP 工具注解(readOnlyHint/destructiveHint 等),原样透传;风险分级依赖它
+    annotations: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPPresetRead(BaseModel):
+    """内置 MCP 预设(如 Notion 官方 MCP)的公开描述。"""
+
+    key: str
+    name: str
+    url: str
+    description: str = ""
+    docs_url: str | None = None
+
+
+class MCPPresetListRead(BaseModel):
+    presets: list[MCPPresetRead]
 
 
 class MCPServerCreate(BaseModel):
@@ -173,6 +189,15 @@ class MCPTestRead(BaseModel):
     tools: list[MCPToolRead]
     #: 服务端要求(重新)授权(HTTP 401):前端据此给出"重新授权"指引,而不是笼统的失败
     auth_required: bool = False
+
+
+class MCPOAuthStartRequest(BaseModel):
+    """发起授权的可选参数:授权完成后前端要回到的站内路径。
+
+    只允许 /mcp 与 /connectors;其他值按 /mcp 处理(不允许开放重定向)。
+    """
+
+    next: str | None = None
 
 
 class MCPOAuthStartRead(BaseModel):

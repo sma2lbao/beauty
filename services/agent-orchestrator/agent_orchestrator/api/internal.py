@@ -58,5 +58,10 @@ async def mcp_oauth_callback(
     except AppError as exc:
         return MCPOAuthCallbackRead(
             ok=False,
-            redirect_path=mcp_oauth.redirect_path(ok=False, error=exc.message),
+            redirect_path=mcp_oauth.redirect_path(
+                ok=False,
+                error=exc.message,
+                # state 能验签就回用户发起授权的页面(预设连接器页),否则降级 /mcp
+                next_path=mcp_oauth.next_path_from_state(settings, body.state),
+            ),
         )

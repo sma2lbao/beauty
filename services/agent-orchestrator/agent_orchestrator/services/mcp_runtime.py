@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+import httpx
 from common.errors import AppError
 from common.logging import get_logger
 
@@ -49,10 +50,13 @@ def _slug(value: str) -> str:
 
 def _wrap_tool(tool: dict[str, Any]) -> MCPToolRead:
     schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+    annotations = tool.get("annotations")
     return MCPToolRead(
         name=str(tool.get("name") or ""),
         description=str(tool.get("description") or ""),
         input_schema=schema if isinstance(schema, dict) else {},
+        # 只保留对象形状:非 dict 的 annotations 一律忽略(MCP 契约是对象)
+        annotations=annotations if isinstance(annotations, dict) else {},
     )
 
 
@@ -107,9 +111,33 @@ def _cache_tools(server: MCPServer, tools: list[MCPToolRead]) -> None:
             "name": tool.name,
             "description": tool.description,
             "inputSchema": tool.input_schema,
+            "annotations": dict(tool.annotations or {}),
         }
         for tool in tools
     ]
+
+
+async def refresh_tools(
+    server: MCPServer,
+    secret: str,
+    *,
+    token: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[MCPToolRead]:
+    """连一次 server 拉 tools/list 并写回 tools_cache(调用方决定失败怎么办)。
+
+    浏览器授权成功后用它把工具立刻灌进缓存(否则要等用户手动「测试连接」);
+    这里只做机制,不落状态——异常原样抛给调用方,由调用方决定"尽力"边界。
+    """
+    client = _client_with_token(server, secret, token, transport)
+    try:
+        await client.initialize()
+        raw_tools = await client.list_tools()
+        tools = [_wrap_tool(tool) for tool in raw_tools]
+        _cache_tools(server, tools)
+        return tools
+    finally:
+        await client.aclose()
 
 
 def _stdio_request(

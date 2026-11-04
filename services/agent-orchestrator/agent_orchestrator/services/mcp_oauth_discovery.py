@@ -295,11 +295,16 @@ def _maybe_decrypt(secret: str, value: str | None) -> str | None:
 
 
 def redirect_path(
-    *, ok: bool, server_name: str | None = None, error: str | None = None
+    *,
+    ok: bool,
+    server_name: str | None = None,
+    error: str | None = None,
+    next_path: str = "/mcp",
 ) -> str:
+    """拼授权后前端落回的相对路径(默认 /mcp,预设连接器页传 /connectors)。"""
     params: dict[str, str] = {"oauth": "success" if ok else "error"}
     if server_name:
         params["server"] = server_name
     if not ok and error:
         params["error"] = error[:300]
-    return "/mcp?" + urlencode(params)
+    return f"{next_path or '/mcp'}?" + urlencode(params)

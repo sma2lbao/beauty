@@ -1,11 +1,13 @@
 """MCP OAuth 发起授权、回调换 token 与 token 刷新。"""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 from common.errors import AppError
 from database.session import session_scope
@@ -244,3 +246,213 @@ def test_access_token_is_none_when_oauth_disabled(tmp_path: Path) -> None:
             await factory.engine.dispose()
 
     assert asyncio.run(scenario()) is None
+
+
+# ---------------------------------------- 授权后回跳位置(/connectors)与刷新工具
+
+
+def _combined_transport(auth_server: FakeAuthServer) -> httpx.MockTransport:
+    """授权服务器 + 资源服务器(JSON-RPC tools/list)合一的 MockTransport。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and str(request.url) == RESOURCE_URL:
+            body = json.loads(request.content)
+            method = body.get("method")
+            if method == "initialize":
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                        },
+                    },
+                )
+            if method == "notifications/initialized":
+                return httpx.Response(202)
+            if method == "tools/list":
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "notion-search",
+                                    "description": "搜索",
+                                    "inputSchema": {"type": "object"},
+                                    "annotations": {"readOnlyHint": True},
+                                }
+                            ]
+                        },
+                    },
+                )
+            return httpx.Response(404)
+        return auth_server.handler(request)
+
+    return httpx.MockTransport(handler)
+
+
+def test_authorization_next_is_signed_into_state_and_used_for_redirect(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    auth_server = FakeAuthServer()
+
+    async def scenario() -> tuple[dict[str, Any], str]:
+        factory = await _database(settings)
+        try:
+            server_id = await _seed_server(factory)
+            async with session_scope(factory) as session:
+                url = await mcp_oauth.start_authorization(
+                    session,
+                    "t-1",
+                    server_id,
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                    next_path="/connectors",
+                )
+            state = parse_qs(urlsplit(url).query)["state"][0]
+            payload = mcp_oauth.verify_state(settings, state)
+            async with session_scope(factory) as session:
+                result = await mcp_oauth.complete_authorization(
+                    session,
+                    state=state,
+                    code="auth-code-1",
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                )
+            return payload, result.redirect_path
+        finally:
+            await factory.engine.dispose()
+
+    payload, redirect_path = asyncio.run(scenario())
+    assert payload["next"] == "/connectors"
+    assert redirect_path.startswith("/connectors?oauth=success")
+    assert "server=" in redirect_path
+
+
+def test_invalid_next_falls_back_to_mcp(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    auth_server = FakeAuthServer()
+
+    async def scenario() -> tuple[dict[str, Any], str]:
+        factory = await _database(settings)
+        try:
+            server_id = await _seed_server(factory)
+            async with session_scope(factory) as session:
+                url = await mcp_oauth.start_authorization(
+                    session,
+                    "t-1",
+                    server_id,
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                    # 白名单外(试图开放重定向):一律按 /mcp
+                    next_path="https://evil.example/steal",
+                )
+            state = parse_qs(urlsplit(url).query)["state"][0]
+            payload = mcp_oauth.verify_state(settings, state)
+            async with session_scope(factory) as session:
+                result = await mcp_oauth.complete_authorization(
+                    session,
+                    state=state,
+                    code="auth-code-1",
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                )
+            return payload, result.redirect_path
+        finally:
+            await factory.engine.dispose()
+
+    payload, redirect_path = asyncio.run(scenario())
+    assert payload["next"] == "/mcp"
+    assert redirect_path.startswith("/mcp?oauth=success")
+
+
+def test_complete_authorization_refreshes_tools_cache(tmp_path: Path) -> None:
+    """授权成功顺手拉一次 tools/list:annotations 一并落进缓存。"""
+    settings = _settings(tmp_path)
+    auth_server = FakeAuthServer()
+    transport = _combined_transport(auth_server)
+
+    async def scenario() -> tuple[str, list[dict[str, Any]]]:
+        factory = await _database(settings)
+        try:
+            server_id = await _seed_server(factory)
+            async with session_scope(factory) as session:
+                url = await mcp_oauth.start_authorization(
+                    session,
+                    "t-1",
+                    server_id,
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=transport,
+                    next_path="/connectors",
+                )
+            state = parse_qs(urlsplit(url).query)["state"][0]
+            async with session_scope(factory) as session:
+                result = await mcp_oauth.complete_authorization(
+                    session,
+                    state=state,
+                    code="auth-code-1",
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=transport,
+                )
+            async with session_scope(factory) as session:
+                server = await session.get(MCPServer, server_id)
+                assert server is not None
+                cached = list(server.tools_cache or [])
+            return result.redirect_path, cached
+        finally:
+            await factory.engine.dispose()
+
+    redirect_path, cached = asyncio.run(scenario())
+    assert redirect_path.startswith("/connectors?oauth=success")
+    assert [tool["name"] for tool in cached] == ["notion-search"]
+    assert cached[0]["annotations"] == {"readOnlyHint": True}
+
+
+def test_complete_authorization_survives_tool_refresh_failure(
+    tmp_path: Path,
+) -> None:
+    """刷新工具失败只记日志:授权本身必须成功并正常回跳。"""
+    settings = _settings(tmp_path)
+    auth_server = FakeAuthServer()
+
+    async def scenario() -> str:
+        factory = await _database(settings)
+        try:
+            server_id = await _seed_server(factory)
+            async with session_scope(factory) as session:
+                url = await mcp_oauth.start_authorization(
+                    session,
+                    "t-1",
+                    server_id,
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                )
+            state = parse_qs(urlsplit(url).query)["state"][0]
+            async with session_scope(factory) as session:
+                result = await mcp_oauth.complete_authorization(
+                    session,
+                    # 资源端点不在假授权服务器的路由里 → tools/list 必然失败
+                    state=state,
+                    code="auth-code-1",
+                    settings=settings,
+                    secret="mcp-secret",
+                    transport=auth_server.transport,
+                )
+            return result.redirect_path
+        finally:
+            await factory.engine.dispose()
+
+    assert asyncio.run(scenario()).startswith("/mcp?oauth=success")

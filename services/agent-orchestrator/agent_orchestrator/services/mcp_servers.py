@@ -32,6 +32,7 @@ from agent_orchestrator.services.mcp_client import (
     MCPError,
 )
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
+from agent_orchestrator.services.mcp_presets import preset_for_key, preset_for_url
 from agent_orchestrator.services.mcp_runtime import (
     TRANSPORT_HTTP,
     TRANSPORT_STDIO,
@@ -183,6 +184,52 @@ async def create_server(
     )
     await repo.add(server)
     return _to_read(server, secret)
+
+
+def _preset_server_name(base: str, taken: set[str]) -> str:
+    """预设名被占用时的回退名:保持 MCPServerCreate 的 name 字符集(无空格/括号)。"""
+    if base not in taken:
+        return base
+    index = 2
+    while f"{base}-{index}" in taken:
+        index += 1
+    return f"{base}-{index}"
+
+
+async def ensure_preset_server(
+    session: AsyncSession,
+    tenant_id: str,
+    key: str,
+    *,
+    secret: str,
+    allowlist: Sequence[str] | None = None,
+) -> MCPServerRead:
+    """按预设幂等建 server:同 url 已存在就直接返回(反复点「连接」不重复建)。
+
+    新建时固定 transport=http、auto_approve=False(未信任,写工具仍逐次确认)、
+    tools_allowlist 为空(预设的工具集合由 server 侧 tools/list 决定)。
+    """
+    preset = preset_for_key(key)
+    servers = await MCPServerRepository(session).list_scoped(
+        tenant_id, order_by=[MCPServer.created_at]
+    )
+    for server in servers:
+        matched = preset_for_url(server.url)
+        if matched is not None and matched.key == preset.key:
+            auth = await MCPServerAuthRepository(session).get_for_server(
+                tenant_id, server.id
+            )
+            return _to_read(server, secret, auth)
+    data = MCPServerCreate(
+        name=_preset_server_name(preset.name, {server.name for server in servers}),
+        transport=TRANSPORT_HTTP,
+        url=preset.url,
+        auto_approve=False,
+        tools_allowlist=[],
+    )
+    return await create_server(
+        session, tenant_id, data, secret=secret, allowlist=allowlist
+    )
 
 
 def _decrypt_token_hint(server: MCPServer, secret: str) -> str | None:

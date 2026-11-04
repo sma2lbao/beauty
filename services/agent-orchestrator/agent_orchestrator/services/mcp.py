@@ -23,6 +23,8 @@ from agent_orchestrator.models.mcp import MCPServer
 from agent_orchestrator.repositories import (
     MCPServerRepository,
 )
+from agent_orchestrator.schemas.mcp import MCPToolRead
+from agent_orchestrator.services.mcp_presets import preset_for_url
 from agent_orchestrator.services.mcp_runtime import (
     TRANSPORT_HTTP,
     TRANSPORT_STDIO,
@@ -87,6 +89,31 @@ __all__ = [
 ]
 
 
+def _tool_risk(server: MCPServer, tool: MCPToolRead) -> ToolRisk:
+    """按工具粒度定风险(MCP 2025-06 的 annotations + 预设只读前缀)。
+
+    顺序即优先级:
+    1. destructiveHint=True → DANGER(服务端自己声明有破坏性,压过一切);
+    2. readOnlyHint=True → READ;
+    3. 命中内置预设(按 url 匹配)且工具名命中只读前缀 → READ;
+    4. 租户信任该 server(auto_approve) → WRITE(自动执行);
+    5. 其余 → DANGER(对话路径没有审批流,一律不执行)。
+    """
+    annotations = tool.annotations if isinstance(tool.annotations, dict) else {}
+    if annotations.get("destructiveHint") is True:
+        return ToolRisk.DANGER
+    if annotations.get("readOnlyHint") is True:
+        return ToolRisk.READ
+    preset = preset_for_url(server.url)
+    if preset is not None and any(
+        tool.name.startswith(prefix) for prefix in preset.read_prefixes
+    ):
+        return ToolRisk.READ
+    if server.auto_approve:
+        return ToolRisk.WRITE
+    return ToolRisk.DANGER
+
+
 async def tool_specs(
     session: AsyncSession,
     tenant_id: str,
@@ -142,10 +169,9 @@ async def tool_specs(
                     description=wrapped.description or f"MCP {server.name} 工具",
                     parameters=wrapped.input_schema or {"type": "object"},
                     handler=handler,
-                    # 未信任 server 的工具可能对外产生不可逆副作用 → DANGER;
-                    # 用户开了 auto_approve(信任该 server)→ WRITE,自动执行。
+                    # 风险按工具粒度:annotations/预设只读前缀优先,再看 server 信任级别。
                     # 对话路径没有审批流,所以 DANGER 工具在 chat 里一律不执行。
-                    risk=(ToolRisk.WRITE if server.auto_approve else ToolRisk.DANGER),
+                    risk=_tool_risk(server, wrapped),
                 )
             )
     return specs

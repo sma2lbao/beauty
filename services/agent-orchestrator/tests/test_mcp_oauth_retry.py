@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import mcp as mcp_service
+from agent_orchestrator.services.mcp_oauth import sign_state
 from tests.support.mcp_oauth import _patch_client, _server, _settings
 
 # ------------------------------------------------ 工具调用:401 → 刷新 → 重试
@@ -108,3 +110,30 @@ def test_internal_callback_returns_error_redirect_data_for_bad_state(
         body = resp.json()
         assert body["ok"] is False
         assert body["redirect_path"].startswith("/mcp?oauth=error")
+
+
+def test_internal_callback_error_redirect_keeps_state_next(tmp_path: Path) -> None:
+    """失败也回用户发起授权的页面:state 能验签时用其中的 next。"""
+    settings = _settings(tmp_path, internal_auth_secret="dev-internal-secret")
+    state = sign_state(
+        settings,
+        {
+            "tenant_id": "t-1",
+            "server_id": "deleted-server",
+            "ts": int(time.time()),
+            "next": "/connectors",
+        },
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/internal/mcp/oauth/callback",
+            json={"state": state, "code": "auth-code"},
+            headers={"X-Internal-Secret": "dev-internal-secret"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        # server 已被删除 → 业务失败,但回跳页仍是 /connectors
+        assert body["redirect_path"].startswith("/connectors?oauth=error")
+        assert "error=" in body["redirect_path"]
