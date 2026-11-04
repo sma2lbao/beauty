@@ -119,6 +119,9 @@ export function useConnectorsModel() {
     searchParams.get('status') ??
     (connectedId ? 'connected' : callbackError ? 'error' : null);
   useEffect(() => {
+    // ?oauth=… 是 MCP 预设连接器的回调(见 use-connector-presets),
+    // 两种回调共用 /connectors 路由,这里不抢参数、不重复弹 toast。
+    if (searchParams.get('oauth')) return;
     if (!callbackStatus) return;
     // 回调可能先于列表到达:等两条查询有结果(成功或失败)再弹,提示里才带得出名字
     if (providersQuery.isPending || connectionsQuery.isPending) return;

@@ -116,6 +116,8 @@ export const queryKeys = {
 
   /** MCP / Skills 域。 */
   mcpServers: ['mcp-servers'] as const,
+  /** MCP 预设目录(连接器页的一键接入清单)。 */
+  mcpPresets: ['mcp-presets'] as const,
   skills: ['skills'] as const,
   skillPackages: ['skill-packages'] as const,
   oauthClient: (clientId: string) => ['oauth-client', clientId] as const,

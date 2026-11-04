@@ -92,6 +92,24 @@ describe('mcpApi', () => {
     expect((updateMock.mock.calls[0]?.[1] as RequestInit).method).toBe('PATCH');
     expect(bodyOf(updateMock)).toEqual({ enabled: false, url: null });
   });
+
+  it('发起 OAuth 授权:默认不带 body,指定 next 时作为回跳路径发送', async () => {
+    const plainMock = mockFetch(200, { authorize_url: 'https://idp/x' });
+    await mcpApi.startOAuth('m1');
+    expect(plainMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/mcp/servers/m1/oauth/start',
+    );
+    const plainInit = plainMock.mock.calls[0]?.[1] as RequestInit;
+    expect(plainInit.method).toBe('POST');
+    expect(plainInit.body).toBeUndefined();
+
+    const nextMock = mockFetch(200, { authorize_url: 'https://idp/y' });
+    await mcpApi.startOAuth('m2', '/connectors');
+    expect(nextMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/mcp/servers/m2/oauth/start',
+    );
+    expect(bodyOf(nextMock)).toEqual({ next: '/connectors' });
+  });
 });
 
 describe('stdio 表单解析', () => {

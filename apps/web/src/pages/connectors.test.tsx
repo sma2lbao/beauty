@@ -15,7 +15,12 @@ import type {
   ConnectorProvider,
 } from '@/lib/connector-api';
 import { connectorApi } from '@/lib/connector-api';
+import { mcpApi } from '@/lib/mcp-api';
 import { useNotificationsStore } from '@/stores/notifications-store';
+import {
+  mcpPresetsApi,
+  type McpPreset,
+} from '@/features/connectors/mcp-presets';
 
 import { ConnectorsPage } from './connectors';
 
@@ -38,6 +43,34 @@ vi.mock('@/lib/connector-api', async () => {
     },
   };
 });
+
+// 预设区与旧目录区都自己取数,页面测试把两条请求都打桩,避免真实 fetch
+vi.mock('@/lib/mcp-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/mcp-api')>('@/lib/mcp-api');
+  return {
+    ...actual,
+    mcpApi: { list: vi.fn(), startOAuth: vi.fn() },
+  };
+});
+
+vi.mock('@/features/connectors/mcp-presets', async () => {
+  const actual = await vi.importActual<
+    typeof import('@/features/connectors/mcp-presets')
+  >('@/features/connectors/mcp-presets');
+  return {
+    ...actual,
+    mcpPresetsApi: { list: vi.fn(), ensure: vi.fn() },
+  };
+});
+
+const notionPreset: McpPreset = {
+  key: 'notion',
+  name: 'Notion',
+  url: 'https://mcp.notion.com/mcp',
+  description: '搜索与读取页面/数据库、更新内容、查看日历。',
+  docs_url: null,
+};
 
 const demoProvider: ConnectorProvider = {
   provider: 'demo',
@@ -171,21 +204,37 @@ beforeEach(() => {
     ...activeConnection,
   });
   vi.mocked(connectorApi.connectWithToken).mockResolvedValue(tokenConnection);
+  // 默认为空:预设区不渲染 Notion 卡片,避免与旧目录区的 provider 重名
+  vi.mocked(mcpPresetsApi.list).mockResolvedValue([]);
+  vi.mocked(mcpApi.list).mockResolvedValue([]);
+  vi.mocked(mcpApi.startOAuth).mockResolvedValue({
+    authorize_url: '#mcp-oauth',
+    expires_in: 600,
+  });
 });
 
 describe('ConnectorsPage', () => {
-  it('加载中提示,加载完成后按 provider 渲染卡片', async () => {
+  it('加载中提示,加载完成后按 provider 渲染旧目录卡片', async () => {
     let resolveProviders: (value: ConnectorProvider[]) => void = () => {};
+    let resolvePresets: (value: McpPreset[]) => void = () => {};
     vi.mocked(connectorApi.listProviders).mockReturnValue(
       new Promise((resolve) => {
         resolveProviders = resolve;
       }),
     );
+    vi.mocked(mcpPresetsApi.list).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePresets = resolve;
+      }),
+    );
     renderPage();
 
-    expect(screen.getByText('正在加载连接器…')).toBeTruthy();
+    // MCP 预设区先进入加载态;旧目录区在 provider 加载完成前不渲染
+    expect(screen.getByText('正在加载 MCP 预设…')).toBeTruthy();
+    expect(screen.queryByText('正在加载连接器…')).toBeNull();
 
     await act(async () => {
+      resolvePresets([]);
       resolveProviders([demoProvider, notionProvider]);
     });
 
@@ -320,25 +369,33 @@ describe('ConnectorsPage', () => {
     expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
   });
 
-  it('目录为空时给空状态', async () => {
+  it('provider 目录为空时隐藏旧目录区,只保留 MCP 预设空态', async () => {
     vi.mocked(connectorApi.listProviders).mockResolvedValue([]);
     vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
     renderPage();
 
-    expect(await screen.findByText('暂无可用连接器')).toBeTruthy();
+    expect(await screen.findByText('暂无 MCP 预设')).toBeTruthy();
+    expect(screen.queryByText('暂无可用连接器')).toBeNull();
+    expect(screen.queryByText('其它连接器')).toBeNull();
   });
 
-  it('目录加载失败展示错误与重试', async () => {
-    vi.mocked(connectorApi.listProviders)
-      .mockRejectedValueOnce(new Error('连接器服务不可用'))
-      .mockResolvedValueOnce([demoProvider]);
+  it('MCP 预设加载失败展示错误与重试', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    vi.mocked(mcpPresetsApi.list)
+      .mockRejectedValueOnce(new Error('预设服务不可用'))
+      .mockResolvedValueOnce([notionPreset]);
     renderPage();
 
-    expect(await screen.findByText('连接器目录加载失败')).toBeTruthy();
-    expect(screen.getByText('连接器服务不可用')).toBeTruthy();
+    expect(await screen.findByText('MCP 预设加载失败')).toBeTruthy();
+    expect(screen.getByText('预设服务不可用')).toBeTruthy();
+    // 旧目录区已隐藏,不再出现旧错误文案
+    expect(screen.queryByText('连接器目录加载失败')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
-    expect(await screen.findByText('示例连接器')).toBeTruthy();
+    expect(
+      await screen.findByRole('button', { name: '连接 Notion' }),
+    ).toBeTruthy();
   });
 
   it('失效连接显示「需要重新连接」,点击重新发起授权', async () => {

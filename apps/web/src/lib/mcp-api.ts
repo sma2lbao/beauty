@@ -162,10 +162,15 @@ export const mcpApi = {
   remove: (id: string) => http.request<void>('/' + id, { method: 'DELETE' }),
   test: (id: string) =>
     http.request<MCPTestRead>('/' + id + '/test', { method: 'POST' }),
-  /** 发起浏览器 OAuth 授权:拿到授权页地址,由调用方整页跳转 */
-  startOAuth: (id: string) =>
+  /**
+   * 发起浏览器 OAuth 授权:拿到授权页地址,由调用方整页跳转。
+   * next 是授权完成后的回跳路径(后端只接受页面白名单,如 /connectors);
+   * 不传时后端沿用 /mcp 回跳,MCP 管理页行为不变。
+   */
+  startOAuth: (id: string, next?: string) =>
     http.request<MCPOAuthStartRead>('/' + id + '/oauth/start', {
       method: 'POST',
+      ...(next === undefined ? {} : { body: JSON.stringify({ next }) }),
     }),
   /** 解除浏览器授权(丢弃本地 token,server 保留) */
   disconnectOAuth: (id: string) =>
