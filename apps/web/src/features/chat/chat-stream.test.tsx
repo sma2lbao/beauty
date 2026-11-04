@@ -225,6 +225,57 @@ describe('ChatPage 发送与流式', () => {
     expect(screen.queryByText('前半')).toBeNull();
   });
 
+  it('写工具待确认:确认卡不随流结束消失,确认后就地展示结果', async () => {
+    vi.mocked(conversationsApi.confirmToolCall).mockResolvedValue({
+      confirmation_id: 'cfm-1',
+      status: 'confirmed',
+      ok: true,
+      result_text: '已创建页面《周报》',
+      message_id: 'm3',
+    });
+    vi.mocked(streamMessage).mockImplementation(
+      async (_conversationId, _content, _mode, handlers) => {
+        handlers.onMeta?.({
+          mode: 'chat',
+          message: makeMessage({
+            id: 'm2',
+            run_id: null,
+            content: '发布到 Notion',
+          }),
+          run: null,
+        });
+        handlers.onTool?.({
+          name: 'Notion__create_page',
+          arguments: '{"title":"周报"}',
+          ok: false,
+          errorCode: 'tool.confirmation_required',
+          confirmationId: 'cfm-1',
+          confirmationExpiresAt: '2026-11-04T21:40:00+08:00',
+        });
+        handlers.onDelta?.('需要你确认');
+        handlers.onDone?.({ mode: 'chat', reply: null });
+      },
+    );
+    renderPage('/?conversation=c1');
+
+    await screen.findAllByText('待审批');
+    typeAndSend('发布到 Notion');
+
+    // 流已结束(临时气泡撤掉),确认卡仍按会话粘着:否则用户永远点不到按钮
+    expect(
+      await screen.findByText('该操作会写入外部服务,确认后才会执行'),
+    ).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('需要你确认')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: '确认执行' }));
+
+    expect(await screen.findByText('已创建页面《周报》')).toBeTruthy();
+    expect(conversationsApi.confirmToolCall).toHaveBeenCalledWith(
+      'c1',
+      'cfm-1',
+    );
+  });
+
   it('发送硬失败:内容还给输入框,便于重发', async () => {
     vi.mocked(streamMessage).mockRejectedValue(new Error('网络断了'));
     renderPage();

@@ -17,6 +17,8 @@ describe('toolCallMetaFrom', () => {
       paths: ['src/a.ts', '', 'src/b.ts'],
       sha256_before: 'a'.repeat(64),
       sha256_after: 'b'.repeat(64),
+      confirmation_id: 'cfm_1',
+      expires_at: '2026-11-04T21:40:00+00:00',
     });
 
     expect(meta).toEqual({
@@ -30,6 +32,8 @@ describe('toolCallMetaFrom', () => {
       paths: ['src/a.ts', 'src/b.ts'],
       sha256Before: 'a'.repeat(64),
       sha256After: 'b'.repeat(64),
+      confirmationId: 'cfm_1',
+      confirmationExpiresAt: '2026-11-04T21:40:00+00:00',
     });
   });
 
@@ -44,6 +48,8 @@ describe('toolCallMetaFrom', () => {
       paths: [],
       truncated: false,
       error_code: '   ',
+      confirmation_id: '   ',
+      expires_at: 42,
     });
     expect(invalid).toEqual({});
   });

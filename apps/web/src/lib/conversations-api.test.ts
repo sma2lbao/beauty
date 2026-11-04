@@ -298,6 +298,56 @@ describe('conversationsApi', () => {
     expect(error.status).toBe(404);
     expect(error.code).toBe('conversation.not_found');
   });
+
+  it('confirmToolCall 走确认端点并返回执行结果', async () => {
+    const body = {
+      confirmation_id: 'cfm-1',
+      status: 'confirmed',
+      ok: true,
+      result_text: '已创建页面《周报》',
+      message_id: 'm2',
+    };
+    const fetchMock = mockFetch(200, body);
+
+    const result = await conversationsApi.confirmToolCall('c1', 'cfm-1');
+
+    expect(result).toEqual(body);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      '/api/v1/conversations/c1/tool-confirmations/cfm-1/confirm',
+    );
+    expect(init.method).toBe('POST');
+  });
+
+  it('cancelToolCall 走取消端点', async () => {
+    const fetchMock = mockFetch(200, {
+      confirmation_id: 'cfm-1',
+      status: 'cancelled',
+    });
+
+    await conversationsApi.cancelToolCall('c1', 'cfm-1');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      '/api/v1/conversations/c1/tool-confirmations/cfm-1/cancel',
+    );
+    expect(init.method).toBe('POST');
+  });
+
+  it('已处理/已过期的确认返回 409 并映射为 ApiError', async () => {
+    mockFetch(409, {
+      code: 'tool_confirmation.not_pending',
+      message: '该确认已处理',
+    });
+
+    const error = (await conversationsApi
+      .confirmToolCall('c1', 'cfm-1')
+      .catch((failure: unknown) => failure)) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(409);
+    expect(error.code).toBe('tool_confirmation.not_pending');
+  });
 });
 
 describe('attachments API', () => {

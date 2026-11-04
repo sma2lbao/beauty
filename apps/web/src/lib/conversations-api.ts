@@ -93,6 +93,17 @@ export type MessagePostResult = {
   mode: 'chat' | 'run_created' | 'instruction_queued';
 };
 
+/** 工具写操作确认的结果:confirm 执行并回结果,cancel 只回 status=cancelled。 */
+export type ToolConfirmationResult = {
+  confirmation_id: string;
+  status: 'confirmed' | 'cancelled';
+  /** confirm 专用:执行是否成功;失败时 ok=false 并带 error_code。 */
+  ok?: boolean;
+  error_code?: string;
+  result_text?: string;
+  message_id?: string;
+};
+
 const http = createHttpClient(BASE);
 
 function listPath(params: ConversationListParams = {}): string {
@@ -189,6 +200,18 @@ export const conversationsApi = {
           model: model ?? undefined,
         }),
       },
+    ),
+  /** 确认执行待确认的写工具(后端执行并落一条 assistant 消息)。 */
+  confirmToolCall: (conversationId: string, confirmationId: string) =>
+    http.request<ToolConfirmationResult>(
+      `/api/v1/conversations/${conversationId}/tool-confirmations/${confirmationId}/confirm`,
+      { method: 'POST' },
+    ),
+  /** 取消待确认的写工具:不执行;已处理/已过期返回 409。 */
+  cancelToolCall: (conversationId: string, confirmationId: string) =>
+    http.request<ToolConfirmationResult>(
+      `/api/v1/conversations/${conversationId}/tool-confirmations/${confirmationId}/cancel`,
+      { method: 'POST' },
     ),
   attachments: (conversationId: string) =>
     http.request<Attachment[]>(

@@ -244,6 +244,8 @@ export function conversationsModuleMock() {
       remove: vi.fn(),
       messages: vi.fn(),
       postMessage: vi.fn(),
+      confirmToolCall: vi.fn(),
+      cancelToolCall: vi.fn(),
       attachments: vi.fn(async () => []),
       uploadAttachment: vi.fn(),
       downloadAttachment: vi.fn(),

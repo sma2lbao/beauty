@@ -4,7 +4,11 @@ import { Link } from 'react-router';
 import { RunArtifacts } from '@/features/runs/run-artifacts';
 import { ToolCallCard } from '@/features/chat/tool-call-card';
 import { ConsoleButton, StatusDot, ToneBadge } from '@/components/console/ui';
-import { RUN_PHASE_LABELS, isRunTerminal } from '@/lib/presentation';
+import {
+  RUN_PHASE_LABELS,
+  isRunTerminal,
+  type ToolCall,
+} from '@/lib/presentation';
 
 import { DangerConfirmCard, PlanApprovalCard } from './approval-block';
 import { ChatEmptyState } from './chat-empty-state';
@@ -45,6 +49,8 @@ export function ChatMessageList({
   unauthorized,
 }: ChatMessageListProps) {
   const pending = stream.visiblePending;
+  // 待确认的写工具单独渲染:它们不随流结束消失,需要自己的工具卡 + 确认区。
+  const confirmations = stream.visibleConfirmations;
   const {
     hasNoWorkspaces,
     workspaces,
@@ -74,6 +80,7 @@ export function ChatMessageList({
     pendingReplyLength: pending?.reply.length,
     questionPhase: question?.phase,
     questionId: question?.question.question_id,
+    confirmationsCount: confirmations.length,
   });
 
   return (
@@ -108,6 +115,26 @@ export function ChatMessageList({
         ))}
 
         {pending ? <ChatPendingBlock pending={pending} /> : null}
+
+        {confirmations.length > 0 ? (
+          <div className="flex flex-col gap-2.5">
+            {confirmations.map((item, index) => {
+              const call: ToolCall = {
+                ...item.call,
+                seq: index + 1,
+                detail: '',
+              };
+              return (
+                <ToolCallCard
+                  key={item.call.confirmationId ?? call.seq}
+                  call={call}
+                  conversationId={activeConversationId ?? undefined}
+                  onOpenFile={onOpenFile}
+                />
+              );
+            })}
+          </div>
+        ) : null}
 
         {/* 任务执行期的实时正文气泡:phase 变一段、run 终态(inFlight 变 false)
             就整块消失,此时落库的 assistant 消息已通过 invalidate 出现,避免正文重复。 */}
@@ -154,6 +181,7 @@ export function ChatMessageList({
               <ToolCallCard
                 key={call.seq}
                 call={call}
+                conversationId={activeConversationId ?? undefined}
                 onOpenFile={onOpenFile}
                 live={
                   (status === 'running' || status === 'planning') &&

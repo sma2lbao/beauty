@@ -5,7 +5,8 @@
  * - 字段缺省(旧数据/旧后端)一律不产出键,渲染层据此优雅降级;
  * - risk 收窄成 read | write | danger(destructive 落到 danger);
  * - decision 收窄成 auto | approved(confirmed 落到 approved);
- * - duration_ms / result_chars 兼容数字字符串,非法值当作缺省。
+ * - duration_ms / result_chars 兼容数字字符串,非法值当作缺省;
+ * - confirmation_id / expires_at 透传「写操作待人工确认」的凭据与过期时间。
  */
 export type ToolRisk = 'read' | 'write' | 'danger';
 
@@ -23,6 +24,10 @@ export type ToolCallMeta = {
   paths?: string[];
   sha256Before?: string;
   sha256After?: string;
+  /** 写工具待人工确认的凭据:有值时卡片渲染「确认执行 / 取消」。 */
+  confirmationId?: string;
+  /** 确认过期时间(ISO);过期后服务端返回 409 tool_confirmation.expired。 */
+  confirmationExpiresAt?: string;
 };
 
 const RISK_BY_FIELD: Record<string, ToolRisk> = {
@@ -95,5 +100,11 @@ export function toolCallMetaFrom(
   if (sha256Before) meta.sha256Before = sha256Before;
   const sha256After = asText(source.sha256_after);
   if (sha256After) meta.sha256After = sha256After;
+  const confirmationId = asText(source.confirmation_id);
+  if (confirmationId) meta.confirmationId = confirmationId;
+  const confirmationExpiresAt = asText(source.expires_at);
+  if (confirmationExpiresAt) {
+    meta.confirmationExpiresAt = confirmationExpiresAt;
+  }
   return meta;
 }

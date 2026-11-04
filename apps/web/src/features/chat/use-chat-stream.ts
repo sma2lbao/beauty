@@ -30,6 +30,16 @@ export type ChatPending = {
   chatTools: ChatToolCall[];
 };
 
+/**
+ * 待人工确认的写工具调用(按会话粘住)。
+ * 这类帧不能放进 pending:onDone 会清掉临时气泡,确认按钮就消失了;
+ * 因此单独存一份,直到用户确认/取消(或服务端返回 409)。
+ */
+export type ChatToolConfirmation = {
+  conversationId: string;
+  call: ChatToolCall;
+};
+
 type UseChatStreamOptions = {
   activeConversationId: string | null;
   activeWorkspaceId: string | null;
@@ -73,6 +83,10 @@ export function useChatStream({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
   const [pending, setPending] = useState<ChatPending | null>(null);
+  // 待确认的写工具:跨流存活,仅在用户确认/取消/失效后仍留在列表里展示结果
+  const [toolConfirmations, setToolConfirmations] = useState<
+    ChatToolConfirmation[]
+  >([]);
   const [streamError, setStreamError] = useState<{
     conversationId: string;
     error: Error;
@@ -124,6 +138,11 @@ export function useChatStream({
 
   const visiblePending =
     pending && pending.conversationId === activeConversationId ? pending : null;
+  const visibleConfirmations = activeConversationId
+    ? toolConfirmations.filter(
+        (item) => item.conversationId === activeConversationId,
+      )
+    : [];
   const visibleError =
     streamError &&
     (streamError.conversationId === activeConversationId ||
@@ -220,12 +239,27 @@ export function useChatStream({
               ? { ...previous, reply: previous.reply + delta }
               : previous,
           ),
-        onTool: (call) =>
+        onTool: (call) => {
+          // 需要人工确认的写工具:粘在会话上常驻(见 ChatToolConfirmation)。
+          // 同一 confirmation_id 只登记一次,避免重连/重放时出现两张确认卡。
+          if (call.confirmationId) {
+            setToolConfirmations((previous) =>
+              previous.some(
+                (item) =>
+                  item.conversationId === targetConversationId &&
+                  item.call.confirmationId === call.confirmationId,
+              )
+                ? previous
+                : [...previous, { conversationId: targetConversationId, call }],
+            );
+            return;
+          }
           setPending((previous) =>
             previous && previous.conversationId === targetConversationId
               ? { ...previous, chatTools: [...previous.chatTools, call] }
               : previous,
-          ),
+          );
+        },
         onDone: () => {
           void settle(targetConversationId);
         },
@@ -301,6 +335,7 @@ export function useChatStream({
     submit,
     stop,
     visiblePending,
+    visibleConfirmations,
     visibleError,
     sendStreaming,
   };

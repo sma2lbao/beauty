@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -130,6 +131,50 @@ describe('ToolCallCard', () => {
     );
 
     expect(screen.queryByRole('link', { name: '去连接器' })).toBeNull();
+  });
+
+  it('写工具待确认:就地渲染确认区并把状态切成「待确认」', () => {
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToolCallCard
+          conversationId="c1"
+          call={{
+            ...LEGACY_CALL,
+            name: 'Notion__create_page',
+            ok: false,
+            errorCode: 'tool.confirmation_required',
+            confirmationId: 'cfm-1',
+            confirmationExpiresAt: '2026-11-04T21:40:00+08:00',
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('待确认')).toBeTruthy();
+    expect(
+      screen.getByText('该操作会写入外部服务,确认后才会执行'),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '确认执行' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '取消' })).toBeTruthy();
+  });
+
+  it('没有会话 id 时不渲染确认区(避免无上下文的死按钮)', () => {
+    render(
+      <ToolCallCard
+        call={{
+          ...LEGACY_CALL,
+          ok: false,
+          errorCode: 'tool.confirmation_required',
+          confirmationId: 'cfm-1',
+        }}
+      />,
+    );
+
+    expect(
+      screen.queryByText('该操作会写入外部服务,确认后才会执行'),
+    ).toBeNull();
+    expect(screen.getByText(/失败/)).toBeTruthy();
   });
 
   it('不传 onOpenFile 时路径保持纯文本,不产生伪按钮', () => {

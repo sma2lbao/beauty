@@ -1,5 +1,5 @@
 /**
- * 消息流滚动跟随:新消息 / 新事件 / 新工具卡 / 正文增长 / 提问状态变化时,
+ * 消息流滚动跟随:新消息 / 新事件 / 新工具卡 / 待确认卡 / 正文增长 / 提问状态变化时,
  * 把消息流底部滚动到最近可见位置。依赖项显式列出,便于页面按需传入。
  */
 import { useEffect, useRef } from 'react';
@@ -12,6 +12,7 @@ export function useMessageListScroll({
   pendingReplyLength,
   questionPhase,
   questionId,
+  confirmationsCount,
 }: {
   messagesCount: number;
   eventLinesCount: number;
@@ -20,6 +21,7 @@ export function useMessageListScroll({
   pendingReplyLength: number | undefined;
   questionPhase: string | undefined;
   questionId: string | undefined;
+  confirmationsCount: number;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -33,6 +35,7 @@ export function useMessageListScroll({
     pendingReplyLength,
     questionPhase,
     questionId,
+    confirmationsCount,
   ]);
 
   return bottomRef;

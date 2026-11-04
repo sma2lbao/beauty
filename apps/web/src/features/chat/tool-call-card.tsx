@@ -5,6 +5,9 @@
  * detail 里若是 unified diff 就按增删行渲染,否则按结果文本展示。
  * P1 受控写起后端还会补 risk/decision/error_code/duration_ms/paths/sha256 等富字段;
  * 富字段全部可缺省——旧数据只显示核心信息,不渲染空块。
+ *
+ * 写工具待人工确认时(error_code=tool.confirmation_required + confirmation_id),
+ * 卡片就地挂一张确认区(ToolConfirmationCard),并把标题栏状态切成「待确认」。
  */
 import { ChevronDown, ChevronRight, Terminal } from 'lucide-react';
 import { useState } from 'react';
@@ -22,6 +25,10 @@ import {
 import { cn } from '@/lib/utils';
 
 import { ConnectorRecoveryCard } from './connector-recovery-card';
+import {
+  ToolConfirmationCard,
+  type ToolConfirmationStatus,
+} from './tool-confirmation-card';
 
 /** 风险徽标:read 最克制、write 用警告色、danger 用危险色(靠色阶而不是描边堆叠)。 */
 const RISK_BADGES: Record<
@@ -46,22 +53,48 @@ function shortSha(value: string): string {
   return value.slice(0, 8);
 }
 
+/** 确认收尾后标题栏显示的结果文案。 */
+const CONFIRMATION_STATUS_LABELS: Record<ToolConfirmationStatus, string> = {
+  confirmed: '完成',
+  failed: '失败',
+  cancelled: '已取消',
+  resolved: '已处理',
+};
+
 export function ToolCallCard({
   call,
   live = false,
   defaultOpen = false,
+  conversationId,
   onOpenFile,
 }: {
   call: ToolCall;
   live?: boolean;
   defaultOpen?: boolean;
+  /** 所属会话:写工具待确认时确认区需要它来回调 confirm/cancel 并刷新消息。 */
+  conversationId?: string;
   /** 点路径时打开文件查看器;不传则路径保持纯文本(其他页面复用本卡片不受影响)。 */
   onOpenFile?: (path: string) => void;
 }) {
   const [override, setOverride] = useState<boolean | null>(null);
+  const [confirmationStatus, setConfirmationStatus] =
+    useState<ToolConfirmationStatus | null>(null);
   const open = override ?? (defaultOpen || live);
   const rows = call.detail ? parseUnifiedDiff(call.detail) : null;
-  const status = live ? '运行中' : call.ok ? '完成' : '失败';
+  const pendingConfirmation = Boolean(
+    call.errorCode === 'tool.confirmation_required' &&
+      call.confirmationId &&
+      conversationId,
+  );
+  const status = live
+    ? '运行中'
+    : confirmationStatus
+      ? CONFIRMATION_STATUS_LABELS[confirmationStatus]
+      : call.ok
+        ? '完成'
+        : pendingConfirmation
+          ? '待确认'
+          : '失败';
   const duration = formatDuration(call.durationMs);
   const risk = call.risk ? RISK_BADGES[call.risk] : null;
   const paths = call.paths ?? [];
@@ -122,15 +155,33 @@ export function ToolCallCard({
             'shrink-0 font-mono text-[11px] font-medium',
             live
               ? 'text-ha-info'
-              : call.ok
-                ? 'text-ha-success'
-                : 'text-ha-danger',
+              : confirmationStatus
+                ? confirmationStatus === 'confirmed'
+                  ? 'text-ha-success'
+                  : confirmationStatus === 'failed'
+                    ? 'text-ha-danger'
+                    : 'text-ha-dim'
+                : call.ok
+                  ? 'text-ha-success'
+                  : pendingConfirmation
+                    ? 'text-ha-warning'
+                    : 'text-ha-danger',
           )}
         >
           {status}
           {statusNote ? ' · ' + statusNote : ''}
         </span>
       </button>
+
+      {pendingConfirmation && call.confirmationId && conversationId ? (
+        <ToolConfirmationCard
+          conversationId={conversationId}
+          confirmationId={call.confirmationId}
+          argumentsText={call.arguments}
+          expiresAt={call.confirmationExpiresAt}
+          onSettled={setConfirmationStatus}
+        />
+      ) : null}
 
       {call.ok ? null : (
         <ConnectorRecoveryCard
