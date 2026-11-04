@@ -50,6 +50,11 @@ export type ConnectorProvider = {
   tools: ConnectorTool[];
   /** 后端是否已配置该 provider 的应用凭证;缺省视为已配置 */
   configured?: boolean;
+  /**
+   * 支持直接粘贴静态令牌建立连接(如 Notion internal integration)。
+   * 这类 provider 不需要应用凭证:configured=false 也能连接。
+   */
+  token_connectable?: boolean;
   docs_url?: string | null;
   /** 目录附带的「存在 active 且 enabled 连接」标记 */
   connected?: boolean;
@@ -66,6 +71,7 @@ type RawConnectorProvider = {
   scopes?: string[] | null;
   tools?: ConnectorTool[] | null;
   configured?: boolean;
+  token_connectable?: boolean;
   docs_url?: string | null;
   connected?: boolean;
   connection?: ConnectorConnectionBrief | null;
@@ -145,6 +151,13 @@ export type ConnectorCheckOutcome = {
 
 export type ConnectorAuthorizeInput = { redirect_uri?: string };
 
+/** 粘贴静态令牌建立连接:令牌只随这一次请求发送,前端不缓存。 */
+export type ConnectorConnectTokenInput = {
+  provider: string;
+  token: string;
+  display_name?: string;
+};
+
 export type ConnectorUpdateInput = {
   display_name?: string;
   enabled?: boolean;
@@ -191,6 +204,7 @@ function normalizeProvider(
     scopes: Array.isArray(raw.scopes) ? raw.scopes : [],
     tools: Array.isArray(raw.tools) ? raw.tools : [],
     configured: raw.configured,
+    token_connectable: raw.token_connectable,
     docs_url: raw.docs_url ?? null,
     connected: raw.connected,
     connection: raw.connection ?? null,
@@ -258,6 +272,16 @@ export const connectorApi = {
       { method: 'POST', body: JSON.stringify(input) },
     ),
   listConnections: () => http.request<ConnectorConnection[]>('/connections'),
+  /**
+   * 用静态令牌建立连接(provider 需 token_connectable):
+   * POST /connections → 201 ConnectionRead(auth_kind="token")。
+   * 令牌只进请求体,调用方不得写入 localStorage/任何缓存。
+   */
+  connectWithToken: (input: ConnectorConnectTokenInput) =>
+    http.request<ConnectorConnection>('/connections', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   getConnection: (id: string) =>
     http.request<ConnectorConnection>(connectionPath(id)),
   updateConnection: (id: string, patch: ConnectorUpdateInput) =>

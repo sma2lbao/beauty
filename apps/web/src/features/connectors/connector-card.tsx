@@ -1,8 +1,10 @@
 /**
  * provider 卡片:未连接给授权入口,已连接给账号/状态与「去对话」「管理」,
- * 失效给「重新连接」。卡片只负责展示,动作经回调上抛。
+ * 失效给「重新连接」。支持静态令牌的 provider(token_connectable)给
+ * 「粘贴令牌连接」——不需要应用凭证,令牌在弹窗里粘贴。
+ * 卡片只负责展示,动作经回调上抛。
  */
-import { ArrowUpRight, Loader2, PlugZap, Wrench } from 'lucide-react';
+import { ArrowUpRight, KeyRound, Loader2, PlugZap, Wrench } from 'lucide-react';
 import { Link } from 'react-router';
 
 import {
@@ -22,6 +24,8 @@ export type ConnectorCardProps = {
   card: ConnectorCardData;
   connecting: boolean;
   onConnect: (provider: string) => void;
+  /** token_connectable 的 provider:打开「粘贴令牌」弹窗 */
+  onConnectWithToken: (provider: string) => void;
   onManage: (connectionId: string) => void;
 };
 
@@ -32,13 +36,20 @@ export function ConnectorCard({
   card,
   connecting,
   onConnect,
+  onConnectWithToken,
   onManage,
 }: ConnectorCardProps) {
   const { provider, connection, state, extraConnections } = card;
-  const notConfigured = provider.configured === false;
+  const providerConfigured = provider.configured !== false;
+  const tokenConnectable = provider.token_connectable === true;
   const canChat = state === 'connected';
   const toolCount = provider.tools?.length ?? 0;
   const needsReconnect = state === 'reconnect';
+  const canAuthorize = state === 'none' || needsReconnect;
+  // token_connectable 的 provider 没配应用凭证也能连(粘贴令牌),
+  // 所以「未配置应用凭证」只对纯 OAuth 的 provider 成立
+  const notConfigured = !providerConfigured && !tokenConnectable;
+  const canTokenConnect = tokenConnectable && canAuthorize;
 
   return (
     <ConsolePanel className="flex h-full flex-col gap-4 p-5">
@@ -84,17 +95,17 @@ export function ConnectorCard({
       )}
 
       <div className="mt-auto flex flex-wrap items-center gap-2">
-        {state === 'none' || needsReconnect ? (
+        {canAuthorize && (providerConfigured || !tokenConnectable) ? (
           <ConsoleButton
-            variant="primary"
+            variant={providerConfigured ? 'primary' : 'secondary'}
             size="sm"
             aria-label={
               needsReconnect
                 ? `重新连接 ${provider.display_name}`
                 : `连接 ${provider.display_name}`
             }
-            disabled={connecting || notConfigured}
-            title={notConfigured ? NOT_CONFIGURED_HINT : undefined}
+            disabled={connecting || !providerConfigured}
+            title={providerConfigured ? undefined : NOT_CONFIGURED_HINT}
             onClick={() => onConnect(provider.provider)}
           >
             {connecting ? (
@@ -103,6 +114,18 @@ export function ConnectorCard({
               <PlugZap aria-hidden className="size-3.5" />
             )}
             {needsReconnect ? '重新连接' : '连接'}
+          </ConsoleButton>
+        ) : null}
+
+        {canTokenConnect ? (
+          <ConsoleButton
+            variant={providerConfigured ? 'secondary' : 'primary'}
+            size="sm"
+            aria-label={`粘贴令牌连接 ${provider.display_name}`}
+            onClick={() => onConnectWithToken(provider.provider)}
+          >
+            <KeyRound aria-hidden className="size-3.5" />
+            粘贴令牌连接
           </ConsoleButton>
         ) : null}
 

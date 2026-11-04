@@ -50,6 +50,7 @@ describe('connectorApi', () => {
           auth_kind: 'oauth_user',
           scopes: ['demo:read'],
           configured: true,
+          token_connectable: true,
           docs_url: 'https://example.com/docs',
           connected: true,
           tools: [
@@ -72,6 +73,7 @@ describe('connectorApi', () => {
       auth_kind: 'oauth_user',
       scopes: ['demo:read'],
       configured: true,
+      token_connectable: true,
       docs_url: 'https://example.com/docs',
       connected: true,
     });
@@ -99,6 +101,7 @@ describe('connectorApi', () => {
         scopes: [],
         tools: [],
         configured: undefined,
+        token_connectable: undefined,
         docs_url: null,
         connected: undefined,
         connection: null,
@@ -126,6 +129,36 @@ describe('connectorApi', () => {
       redirect_uri: 'http://localhost/connectors',
     });
     expect(result.authorize_url).toBe('https://auth.example.com/oauth');
+  });
+
+  it('connectWithToken 发送 provider/token 到 /connections', async () => {
+    const fetchMock = mockFetch(201, {
+      id: 'c9',
+      provider: 'notion',
+      status: 'active',
+      auth_kind: 'token',
+      account: '我的 Notion',
+      enabled: true,
+    });
+
+    const connection = await connectorApi.connectWithToken({
+      provider: 'notion',
+      token: 'secret_abc',
+      display_name: '我的 Notion',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe('/api/connector/connections');
+    expect(init.method).toBe('POST');
+    expect(bodyOf(fetchMock)).toEqual({
+      provider: 'notion',
+      token: 'secret_abc',
+      display_name: '我的 Notion',
+    });
+    expect(connection.auth_kind).toBe('token');
   });
 
   it('详情/更新/删除/刷新/检查的路径与方法', async () => {

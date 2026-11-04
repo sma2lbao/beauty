@@ -16,6 +16,7 @@ import {
 import { ConnectorCard } from '@/features/connectors/connector-card';
 import { ConnectorDeleteDialog } from '@/features/connectors/connector-delete-dialog';
 import { ConnectorDetailDrawer } from '@/features/connectors/connector-detail-drawer';
+import { ConnectorTokenDialog } from '@/features/connectors/connector-token-dialog';
 import { useConnectorsModel } from '@/features/connectors/use-connectors-model';
 
 export function ConnectorsPage() {
@@ -34,6 +35,12 @@ export function ConnectorsPage() {
     checkState,
     connectingProvider,
     connect,
+    tokenProvider,
+    tokenConnecting,
+    tokenConnectError,
+    openTokenConnect,
+    dismissTokenConnect,
+    submitTokenConnect,
     togglingId,
     checkingId,
     refreshingId,
@@ -46,6 +53,17 @@ export function ConnectorsPage() {
     cancelRemoval,
     confirmRemoval,
   } = model;
+
+  // 支持粘贴令牌的 provider 不需要应用凭证,不进「未配置」告警
+  const unconfigured = model.providers.filter(
+    (provider) =>
+      provider.configured === false && provider.token_connectable !== true,
+  );
+
+  const tokenProviderName = tokenProvider
+    ? (model.providers.find((item) => item.provider === tokenProvider)
+        ?.display_name ?? tokenProvider)
+    : '';
 
   const removalProviderName = removal
     ? (model.providers.find((item) => item.provider === removal.provider)
@@ -115,6 +133,36 @@ export function ConnectorsPage() {
               </p>
             ) : null}
 
+            {unconfigured.length > 0 ? (
+              <div
+                role="status"
+                className="rounded-lg border border-ha-warning-border bg-ha-warning-bg px-3 py-2 text-xs leading-5 text-ha-warning"
+              >
+                <p className="font-medium">
+                  以下连接器还没配应用凭证，卡片上的「连接」按钮暂时不可用：
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {unconfigured.map((provider) => {
+                    const envPrefix = `CONNECTOR__${provider.provider.toUpperCase()}`;
+                    return (
+                      <li key={provider.provider}>
+                        {provider.display_name}：在 connector-service 的{' '}
+                        <code>.env</code> 里填{' '}
+                        <code>{envPrefix}_CLIENT_ID</code> 与{' '}
+                        <code>{envPrefix}_CLIENT_SECRET</code>，重启服务后生效；
+                        第三方后台登记的 Redirect URI 填{' '}
+                        <code>
+                          {window.location.origin}/api/connector/v1/oauth/
+                          {provider.provider}/callback
+                        </code>
+                        。
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {cards.map((card) => (
                 <ConnectorCard
@@ -122,6 +170,7 @@ export function ConnectorsPage() {
                   card={card}
                   connecting={connectingProvider === card.provider.provider}
                   onConnect={connect}
+                  onConnectWithToken={openTokenConnect}
                   onManage={model.openDetail}
                 />
               ))}
@@ -153,6 +202,15 @@ export function ConnectorsPage() {
           onRemove={() => requestRemoval(selectedConnection)}
         />
       ) : null}
+
+      <ConnectorTokenDialog
+        open={tokenProvider !== null}
+        providerName={tokenProviderName}
+        pending={tokenConnecting}
+        error={tokenConnectError}
+        onSubmit={submitTokenConnect}
+        onClose={dismissTokenConnect}
+      />
 
       <ConnectorDeleteDialog
         connection={removal}

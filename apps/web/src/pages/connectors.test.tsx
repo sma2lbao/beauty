@@ -34,6 +34,7 @@ vi.mock('@/lib/connector-api', async () => {
       removeConnection: vi.fn(),
       refreshConnection: vi.fn(),
       checkConnection: vi.fn(),
+      connectWithToken: vi.fn(),
     },
   };
 });
@@ -61,6 +62,26 @@ const notionProvider: ConnectorProvider = {
   tools: [
     { name: 'Notion__query_database', description: '查询数据库', risk: 'read' },
   ],
+};
+
+/** 支持粘贴内部集成令牌的 provider:没有应用凭证也能连接。 */
+const tokenConnectableProvider: ConnectorProvider = {
+  ...notionProvider,
+  auth_kind: 'token',
+  configured: false,
+  token_connectable: true,
+};
+
+const tokenConnection: ConnectorConnection = {
+  id: 'c9',
+  provider: 'notion',
+  status: 'active',
+  account: '我的 Notion',
+  auth_kind: 'token',
+  enabled: true,
+  scopes: ['read_content'],
+  created_at: '2026-11-04T08:00:00+00:00',
+  updated_at: '2026-11-04T08:00:00+00:00',
 };
 
 const activeConnection: ConnectorConnection = {
@@ -149,6 +170,7 @@ beforeEach(() => {
   vi.mocked(connectorApi.checkConnection).mockResolvedValue({
     ...activeConnection,
   });
+  vi.mocked(connectorApi.connectWithToken).mockResolvedValue(tokenConnection);
 });
 
 describe('ConnectorsPage', () => {
@@ -174,6 +196,127 @@ describe('ConnectorsPage', () => {
     expect(
       screen.getByRole('button', { name: '管理 示例连接器' }),
     ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
+  });
+
+  it('provider 未配应用凭证时给出可操作的说明', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      { ...notionProvider, configured: false },
+    ]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText(/还没配应用凭证/)).toBeTruthy();
+    expect(screen.getByText('CONNECTOR__NOTION_CLIENT_ID')).toBeTruthy();
+    expect(screen.getByText('CONNECTOR__NOTION_CLIENT_SECRET')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: '连接 Notion' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it('token_connectable 的 provider 提供粘贴令牌入口,且不算未配置', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      tokenConnectableProvider,
+    ]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText('Notion')).toBeTruthy();
+    const button = screen.getByRole('button', {
+      name: '粘贴令牌连接 Notion',
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    // 不需要应用凭证,不应该出现在「未配应用凭证」告警里
+    expect(screen.queryByText(/还没配应用凭证/)).toBeNull();
+  });
+
+  it('既配了应用凭证又支持令牌时,两种连接方式都给入口', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      { ...tokenConnectableProvider, configured: true },
+    ]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    renderPage();
+
+    expect(
+      await screen.findByRole('button', { name: '连接 Notion' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: '粘贴令牌连接 Notion' }),
+    ).toBeTruthy();
+  });
+
+  it('粘贴令牌提交成功:调用连接接口、关闭弹窗并提示已连接', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      tokenConnectableProvider,
+    ]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '粘贴令牌连接 Notion' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: /粘贴令牌连接 Notion/,
+    });
+    // 弹窗里给出获取令牌的路径说明
+    expect(
+      within(dialog).getByText(/Develop or manage integrations/),
+    ).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByLabelText('集成令牌'), {
+      target: { value: '  secret_abc  ' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('显示名（可选）'), {
+      target: { value: '我的 Notion' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '连接' }));
+
+    await waitFor(() => {
+      expect(connectorApi.connectWithToken).toHaveBeenCalledWith({
+        provider: 'notion',
+        token: 'secret_abc',
+        display_name: '我的 Notion',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /粘贴令牌连接/ })).toBeNull();
+    });
+    expect(toasts().some((toast) => toast.title === '连接器已连接')).toBe(true);
+  });
+
+  it('粘贴令牌失败时保留弹窗并展示后端 message', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      tokenConnectableProvider,
+    ]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    vi.mocked(connectorApi.connectWithToken).mockRejectedValueOnce(
+      new Error('令牌无效，请重新生成'),
+    );
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '粘贴令牌连接 Notion' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: /粘贴令牌连接 Notion/,
+    });
+    fireEvent.change(within(dialog).getByLabelText('集成令牌'), {
+      target: { value: 'bad_token' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '连接' }));
+
+    expect(await screen.findByText('令牌无效，请重新生成')).toBeTruthy();
+    expect(
+      screen.getByRole('dialog', { name: /粘贴令牌连接 Notion/ }),
+    ).toBeTruthy();
+  });
+
+  it('token_connectable 缺省时不显示粘贴令牌入口', async () => {
+    renderPage();
+
+    expect(await screen.findByText('Notion')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /粘贴令牌连接/ })).toBeNull();
     expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
   });
 

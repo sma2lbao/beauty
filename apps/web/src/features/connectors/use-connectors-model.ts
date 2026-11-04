@@ -15,10 +15,13 @@ import {
   checkOutcome,
   connectorApi,
   connectorsReturnUrl,
+  type ConnectorConnectTokenInput,
   type ConnectorConnection,
 } from '@/lib/connector-api';
 import { queryKeys } from '@/lib/query-keys';
 import { useNotificationsStore } from '@/stores/notifications-store';
+
+import type { ConnectorTokenSubmit } from './connector-token-dialog';
 
 /** 动作结果提示(抽屉/页头脚注用,不发 toast)。 */
 export type ConnectorNotice = {
@@ -45,6 +48,8 @@ export function useConnectorsModel() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [removal, setRemoval] = useState<ConnectorConnection | null>(null);
+  // 「粘贴令牌连接」弹窗针对的 provider key(打开即记住,提交时不再问)
+  const [tokenProvider, setTokenProvider] = useState<string | null>(null);
   const [notice, setNotice] = useState<ConnectorNotice | null>(null);
   const [checkState, setCheckState] = useState<ConnectorCheckState | null>(
     null,
@@ -181,6 +186,25 @@ export function useConnectorsModel() {
       }),
   });
 
+  const tokenConnectMutation = useMutation({
+    mutationFn: (input: ConnectorConnectTokenInput) =>
+      connectorApi.connectWithToken(input),
+    onSuccess: async (connection) => {
+      setTokenProvider(null);
+      setNotice({
+        tone: 'success',
+        text: `已连接 ${connectionName(connection)}。`,
+      });
+      useNotificationsStore.getState().push({
+        tone: 'success',
+        title: '连接器已连接',
+        description: `${connectionName(connection)} 可以开始对话了。`,
+      });
+      await invalidateAll(connection.id);
+    },
+    // 失败保留弹窗:错误文案在弹窗里展示,便于用户改令牌重试
+  });
+
   const updateMutation = useMutation({
     mutationFn: (input: {
       id: string;
@@ -294,6 +318,26 @@ export function useConnectorsModel() {
     connect: (provider: string) => {
       setNotice(null);
       authorizeMutation.mutate(provider);
+    },
+
+    // 粘贴令牌连接:令牌只在提交时随请求发送,不落任何缓存
+    tokenProvider,
+    tokenConnecting: tokenConnectMutation.isPending,
+    tokenConnectError: tokenConnectMutation.isError
+      ? failureText(tokenConnectMutation.error, '连接失败,请检查令牌后重试。')
+      : null,
+    openTokenConnect: (provider: string) => {
+      setNotice(null);
+      tokenConnectMutation.reset();
+      setTokenProvider(provider);
+    },
+    dismissTokenConnect: () => {
+      setTokenProvider(null);
+      tokenConnectMutation.reset();
+    },
+    submitTokenConnect: (input: ConnectorTokenSubmit) => {
+      if (!tokenProvider) return;
+      tokenConnectMutation.mutate({ provider: tokenProvider, ...input });
     },
 
     // 行内动作的忙碌态:同一时刻只允许一个同类型动作
