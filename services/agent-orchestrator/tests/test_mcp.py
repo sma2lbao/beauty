@@ -261,6 +261,30 @@ def _create_server(client: TestClient) -> dict:
     return response.json()
 
 
+def test_mcp_server_patch_token_updates_static_token(client: TestClient) -> None:
+    """「改用令牌」替代路径:浏览器授权走不通时用 PATCH {"token"} 接上凭证。"""
+    created = _create_server(client)
+    patched = client.patch(
+        f"/api/v1/mcp/servers/{created['id']}",
+        json={"token": "brand-new-token-9876"},
+        headers=TENANT,
+    )
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["has_token"] is True
+    assert body["token_hint"] == "9876"
+    assert "brand-new-token" not in str(body)
+    # 空串 = 清除已保存令牌(退回无凭证访问)
+    cleared = client.patch(
+        f"/api/v1/mcp/servers/{created['id']}",
+        json={"token": ""},
+        headers=TENANT,
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["has_token"] is False
+    assert cleared.json()["token_hint"] is None
+
+
 def test_mcp_server_crud_and_test(client: TestClient) -> None:
     created = _create_server(client)
     assert created["has_token"] is True

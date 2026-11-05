@@ -9,6 +9,8 @@ import hmac
 import json
 import secrets
 import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlsplit
@@ -70,19 +72,79 @@ def _http_client(
     )
 
 
-async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
-    """GET 一个 well-known 文档;不可达/非 200/非 JSON 都返回 None 继续下一个候选。"""
+#: 探测结果分类:网络不可达与「有响应但内容不对」必须分开,
+#: 否则用户分不清该改网络还是改配置。
+_OUTCOME_NETWORK = "network"
+_OUTCOME_HTTP = "http"
+_OUTCOME_INVALID_JSON = "invalid_json"
+_OUTCOME_NOT_OBJECT = "not_object"
+_OUTCOME_OK = "ok"
+
+
+@dataclass(frozen=True)
+class _Probe:
+    """一次 well-known 探测的结果:保留失败原因,供上层聚合成可区分的错误码。"""
+
+    url: str
+    outcome: str
+    status: int | None = None
+    error: str | None = None
+    data: dict[str, Any] | None = None
+
+    def as_detail(self) -> dict[str, Any]:
+        detail: dict[str, Any] = {"url": self.url, "outcome": self.outcome}
+        if self.status is not None:
+            detail["status"] = self.status
+        if self.error:
+            detail["error"] = self.error
+        return detail
+
+
+async def _probe_json(client: httpx.AsyncClient, url: str) -> _Probe:
+    """探测一个 well-known 文档;把「网络错 / 非 200 / 非 JSON / 非对象」分别记下来。"""
     try:
         response = await client.get(url)
-    except httpx.HTTPError:
-        return None
+    except httpx.HTTPError as exc:
+        return _Probe(url, _OUTCOME_NETWORK, error=f"{type(exc).__name__}: {exc}"[:200])
     if response.status_code != 200:
-        return None
+        return _Probe(url, _OUTCOME_HTTP, status=response.status_code)
     try:
         data = response.json()
     except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
+        return _Probe(url, _OUTCOME_INVALID_JSON, status=response.status_code)
+    if not isinstance(data, dict):
+        return _Probe(url, _OUTCOME_NOT_OBJECT, status=response.status_code)
+    return _Probe(url, _OUTCOME_OK, status=response.status_code, data=data)
+
+
+async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
+    """只要可用的 JSON 对象(兼容旧调用);新代码一律用 _probe_json 保留失败原因。"""
+    probe = await _probe_json(client, url)
+    return probe.data if probe.outcome == _OUTCOME_OK else None
+
+
+async def _probe_all(client: httpx.AsyncClient, urls: Sequence[str]) -> list[_Probe]:
+    return [await _probe_json(client, url) for url in urls]
+
+
+def _has_http_response(probes: Sequence[_Probe]) -> bool:
+    """至少有一个候选真的收到了 HTTP 响应 → 说明地址可达,问题在配置/内容。"""
+    return any(probe.outcome != _OUTCOME_NETWORK for probe in probes)
+
+
+def _first_json_probe(probes: Sequence[_Probe]) -> _Probe | None:
+    for probe in probes:
+        if probe.outcome == _OUTCOME_OK:
+            return probe
+    return None
+
+
+def _network_detail(probes: Sequence[_Probe]) -> str:
+    """第一条网络错误原文(给用户看的"为什么连不上")。"""
+    for probe in probes:
+        if probe.error:
+            return probe.error
+    return "无 HTTP 响应"
 
 
 def _candidate_urls(
@@ -127,6 +189,93 @@ def _challenge_hint(last_error: str | None) -> str | None:
     return raw if raw.startswith(("http://", "https://")) else None
 
 
+def _valid_resource_metadata(probes: Sequence[_Probe]) -> dict[str, Any] | None:
+    """候选里第一个带 http(s) authorization_servers 的 PRM。"""
+    for probe in probes:
+        data = probe.data
+        if probe.outcome != _OUTCOME_OK or data is None:
+            continue
+        servers = data.get("authorization_servers")
+        if isinstance(servers, list) and any(
+            isinstance(item, str) and item.startswith(("http://", "https://"))
+            for item in servers
+        ):
+            return data
+    return None
+
+
+async def probe_resource_challenge(
+    client: httpx.AsyncClient, resource_url: str
+) -> str | None:
+    """主动打一次 MCP initialize:401 的 WWW-Authenticate 里带 resource_metadata。
+
+    预设一键连接没有历史 401 文本(hint 为空),靠这次探测拿到权威的元数据地址,
+    而不是只猜 origin 级 well-known;连不通时直接返回 None(不额外拖延失败)。
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "beauty-moon-discovery",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "beauty-moon-agent", "version": "0.1"},
+        },
+    }
+    try:
+        response = await client.post(
+            resource_url,
+            json=payload,
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 401:
+        return None
+    return _challenge_hint(response.headers.get("www-authenticate"))
+
+
+def _resource_discovery_error(
+    resource_url: str, hint: str | None, probes: Sequence[_Probe]
+) -> UpstreamError:
+    """把探测结果聚合成可区分、可行动的错误(details 带证据链)。"""
+    details: dict[str, Any] = {
+        "stage": "resource_metadata",
+        "resource": resource_url,
+        "hint": hint,
+        "tried": [probe.as_detail() for probe in probes],
+    }
+    broken = _first_json_probe(probes)
+    if broken is not None:
+        return UpstreamError(
+            "mcp.oauth_discovery_invalid",
+            "MCP server 的 OAuth 资源元数据不合法(缺少 authorization_servers):"
+            f"{broken.url}。请检查该 server 的配置;"
+            "若它用静态令牌访问,可直接填写令牌连接。",
+            details={
+                **details,
+                "reason": "missing_authorization_servers",
+                "action": "use_static_token",
+                "url": broken.url,
+            },
+        )
+    if _has_http_response(probes):
+        return UpstreamError(
+            "mcp.oauth_discovery_failed",
+            "该 MCP server 未公布 OAuth 资源元数据(RFC 9728),无法走浏览器授权。"
+            "若该 server 用静态令牌/API Key 访问,请改用「更新令牌」;"
+            "否则请让 server 维护者开启 OAuth 元数据。",
+            details={**details, "reason": "no_metadata", "action": "use_static_token"},
+        )
+    return UpstreamError(
+        "mcp.oauth_discovery_unreachable",
+        f"无法连接 MCP server({resource_url}):{_network_detail(probes)}。"
+        "请检查服务地址、网络、代理或 DNS 后重试;"
+        "若该 server 用静态令牌,也可直接填写令牌连接。",
+        details={**details, "reason": "network", "action": "check_network"},
+    )
+
+
 async def discover_protected_resource(
     resource_url: str,
     *,
@@ -134,23 +283,65 @@ async def discover_protected_resource(
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
-    """RFC 9728:找到资源所属的授权服务器(至少一个 http(s) issuer)。"""
+    """RFC 9728:找到资源所属的授权服务器(至少一个 http(s) issuer)。
+
+    失败按「网络不可达 / 可达但未公布元数据 / 元数据不合法」返回不同错误码,
+    用户据此判断是查网络还是改用静态令牌。
+    """
+    probes: list[_Probe] = []
     async with _http_client(transport, timeout) as client:
-        for url in _candidate_urls(
+        candidates = _candidate_urls(
             resource_url, suffix=RESOURCE_METADATA_PATH, hint=hint
-        ):
-            data = await _get_json(client, url)
-            if data is None:
-                continue
-            servers = data.get("authorization_servers")
-            if isinstance(servers, list) and any(
-                isinstance(item, str) and item.startswith(("http://", "https://"))
-                for item in servers
-            ):
-                return data
-    raise UpstreamError(
-        "mcp.oauth_discovery_failed",
-        "该 MCP server 未公布 OAuth 资源元数据(RFC 9728),无法发起浏览器授权",
+        )
+        probes = await _probe_all(client, candidates)
+        data = _valid_resource_metadata(probes)
+        if data is not None:
+            return data
+        # 没有历史 401 文本时主动探测一次 challenge(预设一键连接走这条路径);
+        # 完全不可达就别再打 initialize,免得失败延迟翻倍。
+        if hint is None and _has_http_response(probes):
+            discovered = await probe_resource_challenge(client, resource_url)
+            if discovered is not None and discovered not in candidates:
+                probe = await _probe_json(client, discovered)
+                probes.append(probe)
+                data = _valid_resource_metadata([probe])
+                if data is not None:
+                    return data
+    raise _resource_discovery_error(resource_url, hint, probes)
+
+
+def _authorization_server_error(issuer: str, probes: Sequence[_Probe]) -> UpstreamError:
+    """AS 元数据失败同样分「不可达」与「可达但元数据不可用」。"""
+    details: dict[str, Any] = {
+        "stage": "authorization_server",
+        "issuer": issuer,
+        "tried": [probe.as_detail() for probe in probes],
+    }
+    broken = _first_json_probe(probes)
+    if broken is not None:
+        return UpstreamError(
+            "mcp.oauth_authorization_server_invalid",
+            f"授权服务器({issuer})的元数据缺少 authorization_endpoint 或 "
+            "token_endpoint,无法继续授权。请检查授权服务器配置,或改用静态令牌。",
+            details={
+                **details,
+                "reason": "missing_endpoints",
+                "action": "use_static_token",
+                "url": broken.url,
+            },
+        )
+    if _has_http_response(probes):
+        return UpstreamError(
+            "mcp.oauth_authorization_server_invalid",
+            f"授权服务器({issuer})未公布可用的 OAuth 元数据(RFC 8414/OIDC)。"
+            "请确认授权服务器地址是否正确,或改用静态令牌。",
+            details={**details, "reason": "no_metadata", "action": "use_static_token"},
+        )
+    return UpstreamError(
+        "mcp.oauth_authorization_server_unreachable",
+        f"无法连接授权服务器({issuer}):{_network_detail(probes)}。"
+        "请检查网络与代理后重试,或改用静态令牌。",
+        details={**details, "reason": "network", "action": "check_network"},
     )
 
 
@@ -164,19 +355,16 @@ async def discover_authorization_server(
     candidates = _candidate_urls(issuer, suffix=AS_METADATA_PATH)
     candidates += _candidate_urls(issuer, suffix=OIDC_CONFIGURATION_PATH)
     async with _http_client(transport, timeout) as client:
-        for url in candidates:
-            data = await _get_json(client, url)
-            if data is None:
+        probes = await _probe_all(client, candidates)
+        for probe in probes:
+            data = probe.data
+            if probe.outcome != _OUTCOME_OK or data is None:
                 continue
             if _endpoint(data, "authorization_endpoint") and _endpoint(
                 data, "token_endpoint"
             ):
                 return data
-    raise UpstreamError(
-        "mcp.oauth_discovery_failed",
-        "授权服务器的元数据不可用(缺少 authorization/token 端点)",
-        details={"issuer": issuer},
-    )
+    raise _authorization_server_error(issuer, probes)
 
 
 async def register_client(

@@ -456,3 +456,38 @@ def test_complete_authorization_survives_tool_refresh_failure(
             await factory.engine.dispose()
 
     assert asyncio.run(scenario()).startswith("/mcp?oauth=success")
+
+
+def test_start_authorization_surfaces_classified_discovery_error(
+    tmp_path: Path,
+) -> None:
+    """发现阶段失败原样冒到 API 层(502 + code/details),不被启动流程吞掉。"""
+    settings = _settings(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("mcp: connection refused", request=request)
+
+    async def scenario() -> AppError:
+        factory = await _database(settings)
+        try:
+            server_id = await _seed_server(factory)
+            async with session_scope(factory) as session:
+                with pytest.raises(AppError) as caught:
+                    await mcp_oauth.start_authorization(
+                        session,
+                        "t-1",
+                        server_id,
+                        settings=settings,
+                        secret="mcp-secret",
+                        transport=httpx.MockTransport(handler),
+                    )
+                return caught.value
+        finally:
+            await factory.engine.dispose()
+
+    error = asyncio.run(scenario())
+    assert error.code == "mcp.oauth_discovery_unreachable"
+    assert error.status == 502
+    assert error.details["action"] == "check_network"
+    # 没写授权行,也不污染 server 记录(用户可原地重试/改用令牌)
+    assert error.details["resource"] == RESOURCE_URL
