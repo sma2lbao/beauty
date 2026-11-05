@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from common.errors import AppError, NotFoundError
@@ -16,6 +17,7 @@ from account.repositories import (
     UsageEventRepository,
 )
 from account.schemas.insights import (
+    BYOKCatalogRead,
     BYOKRead,
     BYOKRotateResult,
     BYOKSecretRead,
@@ -27,6 +29,13 @@ from account.schemas.insights import (
 )
 
 log = get_logger("account.insights")
+
+# provider:小写字母数字开头,后可含 . _ -;总长 1~32
+_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
+# 模型 id:形如 "<provider>/<model>",只允许字母数字与 . _ : / + -
+_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")
+_MAX_MODELS = 32
+_MAX_MODEL_LENGTH = 128
 
 
 def _aware(value: datetime) -> datetime:
@@ -112,12 +121,49 @@ async def usage_quota(session: AsyncSession, tenant_id: str) -> UsageQuota:
     )
 
 
+def _normalize_provider(provider: str) -> str:
+    """provider 归一:strip().lower();不匹配字符集/长度即 400 byok.invalid_provider。"""
+    normalized = provider.strip().lower()
+    if _PROVIDER_PATTERN.fullmatch(normalized) is None:
+        raise AppError("byok.invalid_provider", "provider 无效")
+    return normalized
+
+
+def _normalize_models(provider: str, models: list[str]) -> list[str]:
+    """模型清单归一:strip、丢空、去重保序,并校验前缀/字符集/长度/条数。
+
+    模型必须属于本 provider("<provider>/" 前缀),这样网关按前缀路由时
+    不会出现「A provider 的 key 调 B provider 的模型」。
+    """
+    prefix = f"{provider}/"
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in models:
+        value = raw.strip()
+        if not value:
+            continue
+        if (
+            len(value) > _MAX_MODEL_LENGTH
+            or not value.startswith(prefix)
+            or _MODEL_PATTERN.fullmatch(value) is None
+        ):
+            raise AppError("byok.invalid_model", "model 无效")
+        if value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    if len(normalized) > _MAX_MODELS:
+        raise AppError("byok.invalid_model", "model 数量超过 32 条上限")
+    return normalized
+
+
 def _to_read(record: BYOKKey) -> BYOKRead:
     return BYOKRead(
         provider=record.provider,
         masked_key="••••" + record.key_hint,
         key_hint=record.key_hint,
         updated_at=record.updated_at,
+        models=list(record.models or []),
     )
 
 
@@ -136,25 +182,55 @@ async def upsert_byok(
     *,
     kms: BYOKKms,
 ) -> BYOKRead:
-    normalized = provider.strip().lower()
-    if not normalized or len(normalized) > 32:
-        raise AppError("byok.invalid_provider", "provider 无效")
+    normalized = _normalize_provider(provider)
+    models = _normalize_models(normalized, data.models)
     repo = BYOKRepository(session)
     record = await repo.find_for_provider(tenant_id, normalized)
-    encrypted = await kms.encrypt(data.api_key)
-    hint = data.api_key[-4:]
+    api_key = (data.api_key or "").strip()
+    if api_key:
+        encrypted = await kms.encrypt(api_key)
+        hint = api_key[-4:]
+    elif record is None:
+        # 首次保存必须有 key,否则没有任何可保留的密文
+        raise AppError("byok.invalid_key", "首次保存 BYOK 必须提供 api_key")
+    else:
+        # 只改模型:复用旧密文与提示,不重新加密(避免无谓的 KMS 调用)
+        encrypted = record.encrypted_key
+        hint = record.key_hint
     if record is None:
         record = BYOKKey(
             tenant_id=tenant_id,
             provider=normalized,
             encrypted_key=encrypted,
             key_hint=hint,
+            models=models,
         )
         await repo.add(record)
     else:
         record.encrypted_key = encrypted
         record.key_hint = hint
+        record.models = models
     return _to_read(record)
+
+
+async def custom_models(session: AsyncSession, tenant_id: str) -> BYOKCatalogRead:
+    """租户 BYOK 自定义模型并集:按 provider 排序展开,全局去重保序。
+
+    内部端点(llm-gateway)用它把「租户自定义模型」并入模型目录与白名单;
+    只读,跨租户隔离由仓储保证。
+    """
+    records = await BYOKRepository(session).list_scoped(
+        tenant_id, order_by=[BYOKKey.provider]
+    )
+    seen: set[str] = set()
+    models: list[str] = []
+    for record in records:
+        for model in record.models or []:
+            if model in seen:
+                continue
+            seen.add(model)
+            models.append(model)
+    return BYOKCatalogRead(models=models)
 
 
 async def get_byok_secret(

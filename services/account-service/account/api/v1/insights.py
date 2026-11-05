@@ -15,6 +15,7 @@ from account.api.deps import (
 )
 from account.core.byok_kms import BYOKKms
 from account.schemas.insights import (
+    BYOKCatalogRead,
     BYOKRead,
     BYOKRotateResult,
     BYOKSecretRead,
@@ -58,6 +59,20 @@ async def usage_quota(session: DBSession, tenant_id: InternalTenantId) -> UsageQ
 @router.get("/byok", response_model=list[BYOKRead])
 async def list_byok(session: DBSession, tenant_id: TenantId) -> list[BYOKRead]:
     return await insights_service.list_byok(session, tenant_id)
+
+
+@router.get("/byok/catalog", response_model=BYOKCatalogRead)
+async def byok_catalog(
+    response: Response,
+    session: DBSession,
+    tenant_id: InternalTenantId,
+) -> BYOKCatalogRead:
+    """内部读取租户 BYOK 自定义模型并集(网关白名单/目录):响应禁止缓存。
+
+    必须声明在 /byok/{provider} 之前,避免被通配路由抢占。
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await insights_service.custom_models(session, tenant_id)
 
 
 @router.put("/byok/{provider}", response_model=BYOKRead)

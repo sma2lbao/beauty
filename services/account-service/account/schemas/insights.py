@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UsageByModel(BaseModel):
@@ -39,7 +39,18 @@ class UsageQuota(BaseModel):
 
 
 class BYOKUpsert(BaseModel):
-    api_key: str = Field(min_length=8, max_length=4096)
+    """BYOK 写入:api_key 省略/null/空串 = 沿用原密钥(仅更新模型清单)。"""
+
+    api_key: str | None = Field(default=None, min_length=8, max_length=4096)
+    models: list[str] = Field(default_factory=list)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _blank_key_means_keep(cls, value: object) -> object:
+        """空串/纯空白等价于「不换 key」:契约允许省略、null 与空串三种写法。"""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class BYOKRead(BaseModel):
@@ -49,6 +60,13 @@ class BYOKRead(BaseModel):
     masked_key: str
     key_hint: str
     updated_at: datetime
+    models: list[str]
+
+
+class BYOKCatalogRead(BaseModel):
+    """内部目录:该租户全部 BYOK 自定义模型并集(去重保序)。"""
+
+    models: list[str]
 
 
 class BYOKSecretRead(BaseModel):

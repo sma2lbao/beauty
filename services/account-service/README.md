@@ -50,8 +50,16 @@
 KMS 有 `local`(Fernet + 本地密钥材料)与 `vault`(Vault Transit)两种实现,
 见 `account/core/byok_kms.py`;测试/特殊部署可经 `create_app(byok_kms=…)` 注入。
 
-- `PUT /v1/byok/{provider}`:按当前 KMS 加密保存(响应只回 masked key);
-- `GET /v1/byok` / `DELETE /v1/byok/{provider}`:列表(不回明文)与删除;
+- `PUT /v1/byok/{provider}`:按当前 KMS 加密保存(响应只回 masked key);body 中
+  `api_key` 可省略(`null`/空串 = **保留原密钥**,只改 `models`;首次保存缺 key 则
+  400 `byok.invalid_key`),`models` 是该 provider 的自定义模型 id 清单(如
+  `["openai/gpt-4o-mini"]`,**整表替换**,省略 = 清空;须 `<provider>/` 前缀、≤128
+  字符、≤32 条,否则 400 `byok.invalid_model`)。`provider` 接受任意合法名
+  (`^[a-z0-9][a-z0-9._-]{0,31}$`),不再限于内置几家;
+- `GET /v1/byok` / `DELETE /v1/byok/{provider}`:列表(不回明文,含 `models`)与删除;
+- `GET /v1/byok/catalog`:**内部**返回该租户全部 BYOK 的 `models` 并集
+  (`{"models":[...]}`,按 provider 排序展开、去重保序,`Cache-Control: no-store`),
+  供 llm-gateway 合并模型目录与放行白名单;
 - `GET /v1/byok/{provider}/secret`:**内部解析明文**(`X-Internal-Secret` +
   `X-Tenant-Id`),供 llm-gateway 取用;响应带 `Cache-Control: no-store`。
   历史密文在读取时**懒轮换**到当前 kid,轮换失败只记 warning,仍返回明文;

@@ -85,7 +85,7 @@ class UsageEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
 
 
 class BYOKKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """BYOK 占位(M0-11):应用层加密存储,暂不参与模型调用。"""
+    """BYOK(M0-11):应用层加密存储 provider key + 该 provider 下的自定义模型清单。"""
 
     __tablename__ = "byok_keys"
     __table_args__ = (UniqueConstraint("tenant_id", "provider"),)
@@ -93,6 +93,8 @@ class BYOKKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
     provider: Mapped[str] = mapped_column(String(32), index=True)
     encrypted_key: Mapped[str] = mapped_column(Text)
     key_hint: Mapped[str] = mapped_column(String(16))
+    # 自定义模型 id(如 "openai/gpt-4o-mini"):整体替换语义,空清单 = 无自定义模型
+    models: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
 
 
 class ApiKey(UUIDMixin, TenantMixin, TimestampMixin, Base):
