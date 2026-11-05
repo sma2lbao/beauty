@@ -14,6 +14,10 @@ import { queryKeys } from '@/lib/query-keys';
 
 import { serverStatus } from './display';
 import {
+  describeOAuthStartError,
+  type OAuthStartErrorInfo,
+} from './oauth-start-error';
+import {
   buildCreateInput,
   canCreateFor,
   commandErrorFor,
@@ -41,6 +45,15 @@ export function useMcpPageModel(options: UseMcpPageModelOptions = {}) {
   const [formError, setFormError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // oauth/start 失败按根因分类,保留 ApiError 里的 code 而不只是 message;
+  // 只对发起它的 server 展示(id 不同视为已过期,不串到别的 server 上)
+  const [oauthStartFailure, setOauthStartFailure] = useState<{
+    id: string;
+    info: OAuthStartErrorInfo;
+  } | null>(null);
+  // 「改用令牌」弹窗目标:null 表示未打开;保存走 PATCH {token}
+  const [tokenTargetId, setTokenTargetId] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{
     id: string;
     ok: boolean;
@@ -134,12 +147,32 @@ export function useMcpPageModel(options: UseMcpPageModelOptions = {}) {
   const oauthStartMutation = useMutation({
     mutationFn: (id: string) =>
       returnPath ? mcpApi.startOAuth(id, returnPath) : mcpApi.startOAuth(id),
+    onMutate: () => {
+      // 重试/重新发起时先清掉上一次的分类结果
+      setOauthStartFailure(null);
+      setActionError(null);
+    },
     onSuccess: (result) => {
       setActionError(null);
       // 整页跳到授权服务器;授权完成后由授权服务器 → API 网关 → 发起页 ?oauth=success|error
       window.location.href = result.authorize_url;
     },
-    onError: (failure) => setActionError((failure as Error).message),
+    // 失败保留 ApiError:分类需要 code,只展示 message 会让用户看不出下一步
+    onError: (failure, id) =>
+      setOauthStartFailure({ id, info: describeOAuthStartError(failure) }),
+  });
+
+  // 静态令牌保存:浏览器授权走不通时的替代路径
+  const tokenMutation = useMutation({
+    mutationFn: (input: { id: string; token: string }) =>
+      mcpApi.update(input.id, { token: input.token }),
+    onSuccess: async () => {
+      setTokenTargetId(null);
+      setTokenError(null);
+      setOauthStartFailure(null);
+      await refresh();
+    },
+    onError: (failure) => setTokenError((failure as Error).message),
   });
 
   const oauthDisconnectMutation = useMutation({
@@ -172,6 +205,30 @@ export function useMcpPageModel(options: UseMcpPageModelOptions = {}) {
   const oauthNeedsAuthorize =
     !oauthAuthorized || selected?.last_status === 'auth_required';
   const oauthScopes = selected?.oauth_scopes ?? [];
+  // 分类结果按当前选中 server 派生:切到别的 server 时旧错误自然不展示
+  const oauthStartError =
+    selected && oauthStartFailure?.id === selected.id
+      ? oauthStartFailure.info
+      : null;
+  const tokenDialogOpen = tokenTargetId !== null;
+
+  /** 重试当前 server 的浏览器授权 */
+  const retryOAuth = () => {
+    if (selected) oauthStartMutation.mutate(selected.id);
+  };
+  const openTokenDialog = () => {
+    if (!selected) return;
+    setTokenError(null);
+    setTokenTargetId(selected.id);
+  };
+  const closeTokenDialog = () => {
+    setTokenTargetId(null);
+    setTokenError(null);
+  };
+  const saveToken = (token: string) => {
+    if (!tokenTargetId) return;
+    tokenMutation.mutate({ id: tokenTargetId, token });
+  };
 
   return {
     // OAuth 回跳提示
@@ -207,6 +264,16 @@ export function useMcpPageModel(options: UseMcpPageModelOptions = {}) {
     oauthAuthorized,
     oauthNeedsAuthorize,
     oauthScopes,
+    // oauth/start 失败分类 + 替代路径(改用令牌)
+    oauthStartError,
+    oauthStartRetrying: oauthStartMutation.isPending,
+    retryOAuth,
+    tokenDialogOpen,
+    tokenSaving: tokenMutation.isPending,
+    tokenError,
+    openTokenDialog,
+    closeTokenDialog,
+    saveToken,
     refresh,
   };
 }

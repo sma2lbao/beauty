@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '@/lib/http';
 import type { MCPServer } from '@/lib/mcp-api';
 import { mcpApi } from '@/lib/mcp-api';
 
@@ -394,6 +395,71 @@ describe('McpPage', () => {
     await waitFor(() => {
       expect(mcpApi.startOAuth).toHaveBeenCalledWith('m4');
     });
+  });
+
+  it('oauth/start 失败按错误码分类:展示原因、错误码与「改用令牌」', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([oauthServer]);
+    vi.mocked(mcpApi.startOAuth).mockRejectedValue(
+      new ApiError(
+        502,
+        'mcp.oauth_discovery_failed',
+        'server 未公布 RFC 9728 OAuth 资源元数据',
+      ),
+    );
+    renderPage();
+    await screen.findAllByText('linear');
+    fireEvent.click(screen.getByRole('button', { name: '去授权' }));
+
+    // 不再只显示后端 message:先给可行动的标题,再给具体下一步
+    expect(await screen.findByText('该 server 未启用 OAuth 授权')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '改用令牌' })).toBeTruthy();
+    expect(screen.getByText('错误码 mcp.oauth_discovery_failed')).toBeTruthy();
+  });
+
+  it('「改用令牌」保存:走 PATCH {token},成功后关闭弹窗并刷新列表', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([oauthServer]);
+    vi.mocked(mcpApi.startOAuth).mockRejectedValue(
+      new ApiError(
+        502,
+        'mcp.oauth_discovery_failed',
+        '该 server 只支持静态令牌',
+      ),
+    );
+    renderPage();
+    await screen.findAllByText('linear');
+    fireEvent.click(screen.getByRole('button', { name: '去授权' }));
+    fireEvent.click(await screen.findByRole('button', { name: '改用令牌' }));
+
+    fireEvent.change(await screen.findByLabelText('访问令牌'), {
+      target: { value: '  static-token  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存令牌' }));
+
+    await waitFor(() => {
+      expect(mcpApi.update).toHaveBeenCalledWith('m4', {
+        token: 'static-token',
+      });
+    });
+    // 成功后弹窗关闭;列表刷新会重新拉一次
+    await waitFor(() => {
+      expect(screen.queryByLabelText('访问令牌')).toBeNull();
+    });
+    expect(mcpApi.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('未知错误码保留后端说明并展示原始 code', async () => {
+    vi.mocked(mcpApi.list).mockResolvedValue([oauthServer]);
+    vi.mocked(mcpApi.startOAuth).mockRejectedValue(
+      new ApiError(502, 'mcp.oauth_brand_new_failure', '授权服务器返回 503'),
+    );
+    renderPage();
+    await screen.findAllByText('linear');
+
+    fireEvent.click(screen.getByRole('button', { name: '去授权' }));
+
+    expect(await screen.findByText('发起授权失败')).toBeTruthy();
+    expect(screen.getByText(/授权服务器返回 503/)).toBeTruthy();
+    expect(screen.getByText('错误码 mcp.oauth_brand_new_failure')).toBeTruthy();
   });
 
   it('已授权的 http server 提供「重新授权」与「解除授权」,解除走接口', async () => {

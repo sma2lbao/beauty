@@ -85,12 +85,25 @@ describe('mcpApi', () => {
     expect(body).not.toHaveProperty('token');
   });
 
-  it('更新仍只支持 enabled/url 补丁', async () => {
+  it('更新支持 enabled/url/token 补丁', async () => {
     const updateMock = mockFetch(200, { id: 'm1', enabled: false });
     await mcpApi.update('m1', { enabled: false, url: null });
     expect(updateMock.mock.calls[0]?.[0]).toBe('/api/v1/mcp/servers/m1');
     expect((updateMock.mock.calls[0]?.[1] as RequestInit).method).toBe('PATCH');
     expect(bodyOf(updateMock)).toEqual({ enabled: false, url: null });
+  });
+
+  it('保存静态令牌:token 随 PATCH 发送,空串表示清除', async () => {
+    const setMock = mockFetch(200, { id: 'm1' });
+    await mcpApi.update('m1', { token: 'static-secret' });
+    expect(setMock.mock.calls[0]?.[0]).toBe('/api/v1/mcp/servers/m1');
+    expect((setMock.mock.calls[0]?.[1] as RequestInit).method).toBe('PATCH');
+    expect(bodyOf(setMock)).toEqual({ token: 'static-secret' });
+
+    // 空串是「清除已保存令牌」的接口约定,不能被过滤掉
+    const clearMock = mockFetch(200, { id: 'm1' });
+    await mcpApi.update('m1', { token: '' });
+    expect(bodyOf(clearMock)).toEqual({ token: '' });
   });
 
   it('发起 OAuth 授权:默认不带 body,指定 next 时作为回跳路径发送', async () => {

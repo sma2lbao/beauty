@@ -92,6 +92,8 @@ export type MCPServerUpdateInput = {
   enabled?: boolean;
   auto_approve?: boolean;
   url?: string | null;
+  /** 静态访问令牌;空串表示清除已保存的令牌 */
+  token?: string;
 };
 
 /** 浏览器授权启动结果:前端整页跳到 authorize_url,回调由 API 网关转回 /mcp?oauth=… */

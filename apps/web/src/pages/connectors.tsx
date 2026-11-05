@@ -26,6 +26,7 @@ import { ConnectorTokenDialog } from '@/features/connectors/connector-token-dial
 import { McpPresetCard } from '@/features/connectors/mcp-preset-card';
 import { useConnectorPresets } from '@/features/connectors/use-connector-presets';
 import { useConnectorsModel } from '@/features/connectors/use-connectors-model';
+import { McpTokenDialog } from '@/features/mcp/mcp-token-dialog';
 import { McpManagementSection } from '@/features/mcp/mcp-management-section';
 import { useMcpPageModel } from '@/features/mcp/use-mcp-page-model';
 
@@ -75,6 +76,12 @@ export function ConnectorsPage() {
     ? (model.providers.find((item) => item.provider === removal.provider)
         ?.display_name ?? removal.provider)
     : '';
+
+  // 预设「改用令牌」弹窗:标题用预设名;卡片数据还没到时给通用名
+  const tokenPreset = presets.tokenPresetKey
+    ? (presets.cards.find((card) => card.preset.key === presets.tokenPresetKey)
+        ?.preset ?? null)
+    : null;
 
   const refreshAll = () => {
     presets.refetch();
@@ -181,23 +188,36 @@ export function ConnectorsPage() {
             />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {presets.cards.map((card) => (
-                <McpPresetCard
-                  key={card.preset.key}
-                  preset={card.preset}
-                  server={card.server}
-                  state={card.state}
-                  connecting={presets.connectingKey === card.preset.key}
-                  actionError={
-                    presets.actionError?.presetKey === card.preset.key
-                      ? presets.actionError.message
-                      : null
-                  }
-                  onConnect={() =>
-                    presets.connectPreset(card.preset, card.server)
-                  }
-                />
-              ))}
+              {presets.cards.map((card) => {
+                const failure =
+                  presets.actionError?.presetKey === card.preset.key
+                    ? presets.actionError
+                    : null;
+                // 授权失败时 ensure 可能已建出 server:用它的 id 才能发 PATCH
+                const tokenServerId = failure?.serverId ?? card.server?.id;
+                return (
+                  <McpPresetCard
+                    key={card.preset.key}
+                    preset={card.preset}
+                    server={card.server}
+                    state={card.state}
+                    connecting={presets.connectingKey === card.preset.key}
+                    actionError={failure?.info ?? null}
+                    {...(tokenServerId
+                      ? {
+                          onUseToken: () =>
+                            presets.openTokenDialog(
+                              card.preset.key,
+                              tokenServerId,
+                            ),
+                        }
+                      : {})}
+                    onConnect={() =>
+                      presets.connectPreset(card.preset, card.server)
+                    }
+                  />
+                );
+              })}
             </div>
           )}
 
@@ -261,6 +281,15 @@ export function ConnectorsPage() {
           onRemove={() => requestRemoval(selectedConnection)}
         />
       ) : null}
+
+      <McpTokenDialog
+        open={presets.tokenPresetKey !== null}
+        serverName={tokenPreset?.name ?? 'MCP 连接器'}
+        pending={presets.tokenSaving}
+        error={presets.tokenError}
+        onSubmit={presets.saveToken}
+        onClose={presets.closeTokenDialog}
+      />
 
       <ConnectorTokenDialog
         open={tokenProvider !== null}

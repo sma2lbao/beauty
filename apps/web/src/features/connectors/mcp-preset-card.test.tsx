@@ -4,11 +4,14 @@
  * 卡片是 /connectors 预设区的最小单元,状态判定在 mcp-presets.ts,
  * 这里只钉住每种状态下用户看到的文案与可达链接。
  */
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '@/lib/http';
 import type { MCPServer } from '@/lib/mcp-api';
+import { describeOAuthStartError } from '@/features/mcp/oauth-start-error';
+import type { OAuthStartErrorInfo } from '@/features/mcp/oauth-start-error';
 
 import { McpPresetCard } from './mcp-preset-card';
 import type { McpPreset, McpPresetCardState } from './mcp-presets';
@@ -59,8 +62,9 @@ function renderCard(
   options: {
     server?: MCPServer | null;
     connecting?: boolean;
-    actionError?: string | null;
+    actionError?: OAuthStartErrorInfo | null;
     onConnect?: () => void;
+    onUseToken?: () => void;
   } = {},
 ) {
   const onConnect = options.onConnect ?? vi.fn();
@@ -73,6 +77,7 @@ function renderCard(
         connecting={options.connecting ?? false}
         actionError={options.actionError ?? null}
         onConnect={onConnect}
+        onUseToken={options.onUseToken}
       />
     </MemoryRouter>,
   );
@@ -145,11 +150,42 @@ describe('McpPresetCard', () => {
   });
 
   it('发起授权失败:错误只落在这张卡片上,按钮可再试', () => {
-    renderCard('not_linked', { actionError: '预设创建失败，请稍后重试。' });
+    renderCard('not_linked', {
+      actionError: describeOAuthStartError(
+        new Error('预设创建失败，请稍后重试。'),
+      ),
+    });
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('预设创建失败');
     expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
+  });
+
+  it('分类失败面板:token 类给出「改用令牌」并回调', () => {
+    const onUseToken = vi.fn();
+    renderCard('needs_auth', {
+      server: makeServer(),
+      actionError: describeOAuthStartError(
+        new ApiError(502, 'mcp.oauth_discovery_failed', '只支持静态令牌'),
+      ),
+      onUseToken,
+    });
+
+    expect(screen.getByText('该 server 未启用 OAuth 授权')).toBeTruthy();
+    expect(screen.getByText('错误码 mcp.oauth_discovery_failed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '改用令牌' }));
+    expect(onUseToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('分类失败面板:没有 onUseToken 时不渲染「改用令牌」', () => {
+    renderCard('needs_auth', {
+      server: makeServer(),
+      actionError: describeOAuthStartError(
+        new ApiError(502, 'mcp.oauth_discovery_failed', '只支持静态令牌'),
+      ),
+    });
+
+    expect(screen.queryByRole('button', { name: '改用令牌' })).toBeNull();
   });
 
   it('跳转中:按钮禁用并显示加载文案', () => {

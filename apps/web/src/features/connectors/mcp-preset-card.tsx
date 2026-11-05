@@ -17,6 +17,9 @@ import {
 import type { Tone } from '@/lib/presentation';
 import type { MCPServer } from '@/lib/mcp-api';
 
+import type { OAuthStartErrorInfo } from '@/features/mcp/oauth-start-error';
+import { OAuthStartErrorPanel } from '@/features/mcp/oauth-start-error-panel';
+
 import type { McpPreset, McpPresetCardState } from './mcp-presets';
 
 export type McpPresetCardProps = {
@@ -25,7 +28,9 @@ export type McpPresetCardProps = {
   state: McpPresetCardState;
   connecting: boolean;
   /** 该预设上一次发起授权失败的原因;仅落在它自己的卡片上 */
-  actionError: string | null;
+  actionError: OAuthStartErrorInfo | null;
+  /** 改用静态令牌;server 尚未创建成功时不传 */
+  onUseToken?: () => void;
   onConnect: () => void;
 };
 
@@ -55,6 +60,10 @@ function bodyText(
     return '已在「我的 MCP 服务」停用，到该区启用后才能在会话里使用。';
   }
   if (state === 'needs_auth') {
+    // 已经存过静态令牌:即使 OAuth 没走通也能用令牌访问
+    if (server?.has_token) {
+      return '已保存静态令牌，可直接在会话里使用；需要 OAuth 权限时再重新授权。';
+    }
     const reason = server?.oauth_error ?? server?.last_error;
     if (reason) return '上次授权没有成功：' + reason;
     if (server?.last_status === 'auth_required') {
@@ -73,6 +82,7 @@ export function McpPresetCard({
   state,
   connecting,
   actionError,
+  onUseToken,
   onConnect,
 }: McpPresetCardProps) {
   const canConnect = state === 'not_linked' || state === 'needs_auth';
@@ -114,12 +124,13 @@ export function McpPresetCard({
       </p>
 
       {actionError ? (
-        <p
-          role="alert"
-          className="rounded-md border border-ha-danger-border bg-ha-danger-bg px-2 py-1.5 text-xs leading-5 text-ha-danger"
-        >
-          {actionError}
-        </p>
+        <OAuthStartErrorPanel
+          error={actionError}
+          retrying={connecting}
+          showRetry={false}
+          onRetry={onConnect}
+          onUseToken={onUseToken}
+        />
       ) : null}
 
       <div className="mt-auto flex flex-wrap items-center gap-2">

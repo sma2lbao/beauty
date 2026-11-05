@@ -12,6 +12,7 @@ import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { connectorApi } from '@/lib/connector-api';
+import { ApiError } from '@/lib/http';
 import { mcpApi, type MCPServer } from '@/lib/mcp-api';
 import { useNotificationsStore } from '@/stores/notifications-store';
 import type { McpPreset } from '@/features/connectors/mcp-presets';
@@ -43,7 +44,10 @@ vi.mock('@/lib/connector-api', async () => {
 vi.mock('@/lib/mcp-api', async () => {
   const actual =
     await vi.importActual<typeof import('@/lib/mcp-api')>('@/lib/mcp-api');
-  return { ...actual, mcpApi: { list: vi.fn(), startOAuth: vi.fn() } };
+  return {
+    ...actual,
+    mcpApi: { list: vi.fn(), update: vi.fn(), startOAuth: vi.fn() },
+  };
 });
 
 vi.mock('@/features/connectors/mcp-presets', async () => {
@@ -134,6 +138,7 @@ beforeEach(() => {
     expires_in: 600,
   });
   vi.mocked(mcpPresetsApi.ensure).mockResolvedValue(makeServer());
+  vi.mocked(mcpApi.update).mockResolvedValue(makeServer());
 });
 
 describe('ConnectorsPage · MCP 预设', () => {
@@ -227,6 +232,41 @@ describe('ConnectorsPage · MCP 预设', () => {
       expect(mcpApi.startOAuth).toHaveBeenCalledWith('srv-1', '/connectors');
     });
     expect(mcpPresetsApi.ensure).toHaveBeenCalledTimes(2);
+  });
+
+  it('授权失败按错误码分类:可改用令牌,PATCH token 并提示已保存', async () => {
+    vi.mocked(mcpApi.startOAuth).mockRejectedValue(
+      new ApiError(
+        502,
+        'mcp.oauth_discovery_failed',
+        '该 server 未公布 RFC 9728 OAuth 资源元数据',
+      ),
+    );
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '连接 Notion' }));
+
+    // 卡片上给的是分类标题与下一步,不是原始 message
+    expect(await screen.findByText('该 server 未启用 OAuth 授权')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '改用令牌' }));
+
+    fireEvent.change(await screen.findByLabelText('访问令牌'), {
+      target: { value: 'static-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存令牌' }));
+
+    await waitFor(() => {
+      expect(mcpApi.update).toHaveBeenCalledWith('srv-1', {
+        token: 'static-secret',
+      });
+    });
+    await waitFor(() => {
+      expect(toasts().some((toast) => toast.title === '已保存静态令牌')).toBe(
+        true,
+      );
+    });
+    // 保存令牌不会发起浏览器授权
+    expect(window.location.hash).not.toBe('#mcp-authorize');
   });
 
   it('授权回跳成功:提示一次并清掉 query', async () => {

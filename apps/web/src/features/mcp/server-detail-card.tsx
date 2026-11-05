@@ -18,7 +18,9 @@ import { Mono, ToneBadge } from '@/components/console/ui';
 import { formatDateTime } from '@/lib/presentation';
 
 import { testResultClass, testResultText } from './display';
+import { McpTokenDialog } from './mcp-token-dialog';
 import { OAuthAuthorizationBlock } from './oauth-authorization-block';
+import { OAuthStartErrorPanel } from './oauth-start-error-panel';
 import type { McpPageModel } from './use-mcp-page-model';
 
 function DefinitionRow({
@@ -49,6 +51,15 @@ export function ServerDetailCard({ model }: { model: McpPageModel }) {
     toggleMutation,
     deleteMutation,
     autoApproveMutation,
+    oauthStartError,
+    oauthStartRetrying,
+    retryOAuth,
+    tokenDialogOpen,
+    tokenSaving,
+    tokenError,
+    openTokenDialog,
+    closeTokenDialog,
+    saveToken,
   } = model;
   if (!selected || !status) return null;
 
@@ -95,9 +106,7 @@ export function ServerDetailCard({ model }: { model: McpPageModel }) {
               disabled={deleteMutation.isPending}
               onClick={() => {
                 if (
-                  window.confirm(
-                    '删除后该 server 的工具不再注入任务,确认删除?',
-                  )
+                  window.confirm('删除后该 server 的工具不再注入任务,确认删除?')
                 ) {
                   deleteMutation.mutate(selected.id);
                 }
@@ -145,6 +154,16 @@ export function ServerDetailCard({ model }: { model: McpPageModel }) {
           </div>
         ) : null}
         {showOAuth ? <OAuthAuthorizationBlock model={model} /> : null}
+        {oauthStartError ? (
+          <OAuthStartErrorPanel
+            error={oauthStartError}
+            retrying={oauthStartRetrying}
+            onRetry={retryOAuth}
+            onUseToken={
+              selected.transport === 'http' ? openTokenDialog : undefined
+            }
+          />
+        ) : null}
         {result ? (
           <p className={testResultClass(result)}>
             {testResultText(result)}
@@ -245,6 +264,14 @@ export function ServerDetailCard({ model }: { model: McpPageModel }) {
           </DefinitionRow>
         </dl>
       </CardContent>
+      <McpTokenDialog
+        open={tokenDialogOpen}
+        serverName={selected.name}
+        pending={tokenSaving}
+        error={tokenError}
+        onSubmit={saveToken}
+        onClose={closeTokenDialog}
+      />
     </Card>
   );
 }
