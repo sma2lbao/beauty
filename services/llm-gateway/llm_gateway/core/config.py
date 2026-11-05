@@ -43,6 +43,9 @@ class Settings(BaseAppSettings):
     # (仅本地 dev;生产必须配,否则任何内网进程都能调模型)
     internal_secret: str = ""
     byok_enabled: bool = True
+    # 租户 BYOK 自定义模型目录(account-service GET /v1/byok/catalog)缓存 TTL:
+    # 模型清单变更不频繁,缓存一个窗口避免每次 /v1/models 与 completions 都打 account
+    byok_catalog_cache_ttl_seconds: float = 60.0
     # 正缓存 TTL(秒):租户密钥命中后多久重新解析(密钥轮换的延迟窗口)
     byok_cache_ttl_seconds: float = 300.0
     # 负缓存 TTL(秒):租户没配 key(404)时短缓存,避免每次都打 account

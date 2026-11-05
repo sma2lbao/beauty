@@ -18,7 +18,11 @@ from common.security import TENANT_HEADER
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
-from llm_gateway.api.deps import require_internal_secret, resolve_byok_api_key
+from llm_gateway.api.deps import (
+    require_internal_secret,
+    resolve_byok_api_key,
+    resolve_custom_models,
+)
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import (
     CompletionChunk,
@@ -44,14 +48,26 @@ def _provider(model: str) -> str:
     return model.split("/", 1)[0] if "/" in model else ""
 
 
-def _prepare(settings: Settings, body: CompletionRequest) -> str:
-    """入口层体检 + 主模型解析:必须早于开流,错误才能还是 400(§5.1/§3)。"""
+async def _prepare(
+    settings: Settings,
+    body: CompletionRequest,
+    request: Request,
+    tenant_id: str | None,
+) -> tuple[str, list[str]]:
+    """入口层体检 + 主模型解析:必须早于开流,错误才能还是 400(§5.1/§3)。
+
+    先取租户 BYOK 自定义模型,再解析模型:租户自己开通的模型不应被平台
+    白名单拦下。返回 (主模型, 自定义模型),后者要一路传给服务层——流式
+    生成器内部还会再解析一次模型,不传就会被误判 400。
+    """
     validate_request(
         body,
         max_images=settings.max_images_per_request,
         max_image_data_chars=settings.max_image_data_chars,
     )
-    return completions_service.resolve_model(settings, body.model)
+    extra = await resolve_custom_models(request, tenant_id)
+    model = completions_service.resolve_model(settings, body.model, extra_models=extra)
+    return model, extra
 
 
 async def _resolve_key(
@@ -75,9 +91,11 @@ async def create_completion(
     x_tenant_id: TenantHeader = None,
 ) -> CompletionResponse:
     settings: Settings = request.app.state.settings
-    model = _prepare(settings, body)
+    model, extra = await _prepare(settings, body, request, x_tenant_id)
     api_key = await _resolve_key(request, x_tenant_id, model)
-    return await completions_service.complete(settings, body, api_key=api_key)
+    return await completions_service.complete(
+        settings, body, api_key=api_key, extra_models=extra
+    )
 
 
 async def _sse(chunks: AsyncIterator[CompletionChunk]) -> AsyncIterator[str]:
@@ -98,10 +116,14 @@ async def create_completion_stream(
     不会在流中途才暴露鉴权问题。
     """
     settings: Settings = request.app.state.settings
-    model = _prepare(settings, body)
+    model, extra = await _prepare(settings, body, request, x_tenant_id)
     api_key = await _resolve_key(request, x_tenant_id, model)
     return StreamingResponse(
-        _sse(completions_service.stream(settings, body, api_key=api_key)),
+        _sse(
+            completions_service.stream(
+                settings, body, api_key=api_key, extra_models=extra
+            )
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

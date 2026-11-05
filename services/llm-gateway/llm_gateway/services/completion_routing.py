@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import litellm
@@ -43,14 +44,25 @@ def _observe_upstream(model: str, code: str) -> None:
     metrics.observe_llm_error(provider=provider, code=code)
 
 
-def resolve_model(settings: Settings, requested: str | None) -> str:
+def resolve_model(
+    settings: Settings,
+    requested: str | None,
+    *,
+    extra_models: Iterable[str] = (),
+) -> str:
     """解析最终主模型并做白名单校验(model-routing §3)。
 
     显式模型 > 网关默认;``AVAILABLE_MODELS`` 非空时白名单外的模型返回 400,
-    留空则不限制(只按默认模型语义校验)。
+    留空则不限制(只按默认模型语义校验)。``extra_models`` 是本次调用所属
+    租户的 BYOK 自定义模型(来自 account-service 目录),与平台列表并集放行。
     """
     model = requested or settings.default_model
-    if settings.available_models and model not in settings.available_models:
+    allowed_extra = tuple(extra_models)
+    if (
+        settings.available_models
+        and model not in settings.available_models
+        and model not in allowed_extra
+    ):
         raise AppError(
             "llm.model_not_allowed",
             f"模型不在允许列表内:{model}",

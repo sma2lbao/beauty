@@ -17,7 +17,7 @@
   其余返回 400 `llm.invalid_response_format`(模型服务商不支持时按上游错误 502);
 - `POST /v1/completions/stream`:同上的 **SSE 流式**入口(litellm `stream=True`),
   正文每帧 `data: {"delta": "..."}`,收尾帧 `{"done": true, "content": "<全文>",
-  "model", "usage", "fallbacks"}`;function-calling 的 `tool_calls` 按 `index` 装配后
+"model", "usage", "fallbacks"}`;function-calling 的 `tool_calls` 按 `index` 装配后
   **只随收尾帧**整包带出(中途失败不会吐出半截 JSON;无工具调用时省略该键);
   失败帧 `{"error": {"code", "message"}}`——HTTP 头已按 200 发出,错误只能换载体
   (与 complete 的 502 同 code);对话据此"边输出边显示";
@@ -55,6 +55,11 @@ account-service 换该租户配置的提供商密钥(共享内部密钥保护),�
   404(租户没配该 provider)走更短的负缓存 `BYOK_NEGATIVE_CACHE_TTL_SECONDS`
   (默认 30s);非 200/超时/网络错误**不缓存**,下一请求立即重试;条目上限
   `BYOK_CACHE_MAX_ENTRIES`(LRU 淘汰);未命中解析用单把锁串行化,并发只穿透一次。
+- **自定义模型目录**:租户可在 BYOK 记录里声明每个 provider 的自定义模型 id(`models`,如
+  `["openai/gpt-4o-mini"]`)。网关按租户缓存这份清单(内部端点
+  `GET {ACCOUNT_BASE_URL}/v1/byok/catalog`,双头认证,`BYOK_CATALOG_CACHE_TTL_SECONDS`,
+  默认 60s,失败不缓存),用于 ① 把自定义模型并入 `GET /v1/models`(仅当请求同时带
+  `X-Tenant-Id` 且内部密钥校验通过,`owned_by="byok"`)② 扩宽白名单(见下节)。
 - **回退与失败语义**:`BYOK_ENABLED=false`、`INTERNAL_SECRET` 为空、无租户头、租户
   没配 key(404)、account 超时/5xx/坏响应——一律回退平台 key,不因 BYOK 故障拖垮
   模型调用;只有内部鉴权失败才拒绝(401)。
@@ -69,8 +74,10 @@ account-service 换该租户配置的提供商密钥(共享内部密钥保护),�
 
 模型解析顺序:**请求显式 `model` > 网关默认 `DEFAULT_MODEL`**。`AVAILABLE_MODELS`
 非空时是**白名单**:解析结果不在列表内 → 400 `llm.model_not_allowed`(默认模型
-同样要过白名单,不允许隐式越权);留空则不限制。`GET /v1/models` 仍只返回
-`AVAILABLE_MODELS`(空时只有默认模型),不受 fallback 影响。
+同样要过白名单,不允许隐式越权);留空则不限制。带租户身份时允许集合 = `AVAILABLE_MODELS`
+∪ 该租户 BYOK 声明的自定义模型(目录查询失败/无租户 → 只按平台列表,不会因此 400)。
+`GET /v1/models` 返回平台列表(空时只有默认模型),带合法内部头 + `X-Tenant-Id` 时
+额外合并该租户自定义模型,不受 fallback 影响。
 
 `FALLBACK_MODELS`(有序,默认空 = 关闭)是备用模型链,候选链 = 主模型 + 备用模型
 (去重保序)。**只有临时性故障才切换**:限流 429、超时、连接失败,以及

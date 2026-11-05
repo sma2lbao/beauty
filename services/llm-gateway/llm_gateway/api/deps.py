@@ -15,6 +15,7 @@ from common.security import SECRET_HEADER
 from fastapi import Header, Request
 
 from llm_gateway.services.byok import ByokResolver
+from llm_gateway.services.byok_catalog import ByokCatalog
 
 
 async def require_internal_secret(
@@ -44,3 +45,20 @@ async def resolve_byok_api_key(
         return None
     key = await resolver.resolve(tenant_id, provider)
     return key.api_key if key is not None else None
+
+
+async def resolve_custom_models(request: Request, tenant_id: str | None) -> list[str]:
+    """取租户 BYOK 自定义模型;未装配/无租户/查询异常都返回 [](不抛错)。
+
+    空列表的语义 = 白名单只按平台列表校验——目录查询失败不能把模型调用
+    整体拖垮(BYOK 故障降级,不是调用方错误)。
+    """
+    if not tenant_id:
+        return []
+    catalog: ByokCatalog | None = getattr(request.app.state, "byok_catalog", None)
+    if catalog is None:
+        return []
+    try:
+        return await catalog.custom_models(tenant_id)
+    except Exception:  # 防御:目录故障绝不影响模型列表/补全主流程
+        return []

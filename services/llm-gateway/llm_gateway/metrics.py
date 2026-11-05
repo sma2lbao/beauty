@@ -8,7 +8,9 @@
 - `llm_fallbacks_total{service,from_provider,to_provider,code}`:fallback 切换计数
   (model-routing §5.3);
 - `llm_byok_lookups_total{service,status}`:BYOK 密钥解析计数
-  (status=disabled/negative/error/byok/cache_hit)。
+  (status=disabled/negative/error/byok/cache_hit);
+- `llm_byok_catalog_lookups_total{service,status}`:租户 BYOK 自定义模型目录
+  查询计数(status=disabled/error/hit/miss)。
 
 `service` 标签统一走 `common.metrics.service_label`。
 """
@@ -37,6 +39,11 @@ llm_request_duration_seconds = Histogram(
 llm_byok_lookups_total = Counter(
     "llm_byok_lookups_total",
     "BYOK 密钥解析计数(按结果状态)",
+    ("service", "status"),
+)
+llm_byok_catalog_lookups_total = Counter(
+    "llm_byok_catalog_lookups_total",
+    "租户 BYOK 自定义模型目录查询计数(按结果状态)",
     ("service", "status"),
 )
 llm_fallbacks_total = Counter(
@@ -80,6 +87,14 @@ def observe_llm_tokens(
 def observe_byok_lookup(*, status: str, service: str | None = None) -> None:
     """记录一次 BYOK 解析结果(disabled/negative/error/byok/cache_hit)。"""
     llm_byok_lookups_total.labels(
+        service=service_label(service),
+        status=status or "unknown",
+    ).inc()
+
+
+def observe_byok_catalog_lookup(*, status: str, service: str | None = None) -> None:
+    """记录一次租户模型目录查询(disabled/error/hit/miss)。"""
+    llm_byok_catalog_lookups_total.labels(
         service=service_label(service),
         status=status or "unknown",
     ).inc()

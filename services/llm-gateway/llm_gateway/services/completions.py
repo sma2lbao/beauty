@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from common.errors import UpstreamError
@@ -99,8 +99,9 @@ async def complete(
     data: CompletionRequest,
     *,
     api_key: str | None = None,
+    extra_models: Sequence[str] = (),
 ) -> CompletionResponse:
-    model = resolve_model(settings, data.model)
+    model = resolve_model(settings, data.model, extra_models=extra_models)
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
     _log_request(settings, log, data, model, stream=False)
@@ -169,6 +170,7 @@ async def stream(
     data: CompletionRequest,
     *,
     api_key: str | None = None,
+    extra_models: Sequence[str] = (),
 ) -> AsyncIterator[CompletionChunk]:
     """流式补全:逐片产出增量正文,最后一片 done=true 带全文、用量与 tool_calls。
 
@@ -177,7 +179,7 @@ async def stream(
     状态码改不了,重试会让调用方收到重复正文)。错误片不带 fallbacks——
     成功收尾的 done 片才带切换记录(§5.2)。
     """
-    model = resolve_model(settings, data.model)
+    model = resolve_model(settings, data.model, extra_models=extra_models)
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
     _log_request(settings, log, data, model, stream=True)
