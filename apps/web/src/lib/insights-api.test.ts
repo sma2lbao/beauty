@@ -31,16 +31,23 @@ describe('insightsApi', () => {
     );
   });
 
-  it('BYOK 保存/删除', async () => {
+  it('BYOK 保存(含密钥)同时整体提交 models', async () => {
     const saveMock = mockFetch(200, { provider: 'openai' });
-    await insightsApi.saveByok('openai', 'sk-secret-1234');
+    await insightsApi.saveByok('openai', 'sk-secret-1234', [
+      'openai/gpt-4o-mini',
+    ]);
     const [url, init] = saveMock.mock.calls[0] as unknown as [
       string,
       RequestInit,
     ];
     expect(url).toBe('/api/byok/openai');
     expect(init.method).toBe('PUT');
-    expect(init.body).toBe(JSON.stringify({ api_key: 'sk-secret-1234' }));
+    expect(init.body).toBe(
+      JSON.stringify({
+        api_key: 'sk-secret-1234',
+        models: ['openai/gpt-4o-mini'],
+      }),
+    );
 
     const deleteMock = mockFetch(204);
     await insightsApi.deleteByok('openai');
@@ -50,5 +57,19 @@ describe('insightsApi', () => {
     ];
     expect(deleteUrl).toBe('/api/byok/openai');
     expect(deleteInit.method).toBe('DELETE');
+  });
+
+  it('BYOK 保存:apiKey 为 null 时不带 api_key,只提交 models', async () => {
+    const saveMock = mockFetch(200, { provider: 'openai' });
+    await insightsApi.saveByok('openai', null, ['openai/gpt-4o-mini']);
+
+    const [url, init] = saveMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe('/api/byok/openai');
+    expect(init.body).toBe(JSON.stringify({ models: ['openai/gpt-4o-mini'] }));
+    // 留空密钥时请求体里不应出现 api_key 键
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('api_key');
   });
 });

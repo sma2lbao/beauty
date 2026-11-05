@@ -37,6 +37,8 @@ export type BYOKKey = {
   masked_key: string;
   key_hint: string;
   updated_at: string;
+  /** 该 provider 下的自定义模型 id(每项以 `<provider>/` 开头)。 */
+  models: string[];
 };
 
 const http = createHttpClient('');
@@ -45,10 +47,19 @@ export const insightsApi = {
   models: () => http.request<ModelList>('/api/models'),
   usage: () => http.request<UsageSummary>('/api/usage/summary'),
   byok: () => http.request<BYOKKey[]>('/api/byok'),
-  saveByok: (provider: string, apiKey: string) =>
+  /**
+   * 保存/更新某个 provider 的 BYOK 配置。
+   *
+   * `apiKey` 为 null 或空串表示"不更换密钥"(该 provider 已有记录时合法);
+   * `models` 是自定义模型清单,整体替换(空数组 = 清空)。
+   */
+  saveByok: (provider: string, apiKey: string | null, models: string[]) =>
     http.request<BYOKKey>(`/api/byok/${provider}`, {
       method: 'PUT',
-      body: JSON.stringify({ api_key: apiKey }),
+      body: JSON.stringify({
+        ...(apiKey ? { api_key: apiKey } : {}),
+        models,
+      }),
     }),
   deleteByok: (provider: string) =>
     http.request<void>(`/api/byok/${provider}`, { method: 'DELETE' }),
