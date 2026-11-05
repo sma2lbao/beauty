@@ -11,7 +11,7 @@ import pytest
 
 from agent_orchestrator.services import usage
 from agent_orchestrator.services.llm import LLMReply
-from tests.conftest import TENANT, FakeLLM, _client, _create_run
+from tests.conftest import ACCOUNT, FakeLLM, _client, _create_run
 
 
 class UsageLLM:
@@ -71,7 +71,7 @@ def reporter():
             {
                 "path": request.url.path,
                 "secret": request.headers.get("X-Internal-Secret"),
-                "tenant": request.headers.get("X-Tenant-Id"),
+                "account": request.headers.get("X-Account-Id"),
                 "body": json.loads(request.content),
             }
         )
@@ -115,13 +115,13 @@ def test_run_reports_usage_once_per_model_call(tmp_path, reporter) -> None:
     )
     with _client(tmp_path, UsageLLM(fake)) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
     assert [item["path"] for item in reporter] == ["/v1/usage/events"] * 4
     assert {item["secret"] for item in reporter} == {"s3cret"}
-    assert {item["tenant"] for item in reporter} == {"t-1"}
+    assert {item["account"] for item in reporter} == {"t-1"}
     for item in reporter:
         body = item["body"]
         assert body["run_id"] == run_id
@@ -152,8 +152,8 @@ def test_usage_report_failure_does_not_break_run(tmp_path) -> None:
         )
         with _client(tmp_path, UsageLLM(fake)) as client:
             run_id = _create_run(client)
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-            run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+            run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
             assert run["status"] == "completed"
     finally:
         usage.configure_reporter(base_url="", internal_secret="")
@@ -172,7 +172,7 @@ async def test_reporter_skips_empty_samples() -> None:
         transport=httpx.MockTransport(handler),
     )
     try:
-        await reporter.report(tenant_id="t-1", run_id=None, samples=[])
+        await reporter.report(account_id="t-1", run_id=None, samples=[])
     finally:
         await reporter.aclose()
     assert calls == []
@@ -195,7 +195,7 @@ async def test_reporter_swallows_non_http_errors() -> None:
     )
     try:
         await reporter.report(
-            tenant_id="t-1",
+            account_id="t-1",
             run_id="r-1",
             samples=[usage.UsageSample("m", 1, 2, 3)],
         )
@@ -204,7 +204,7 @@ async def test_reporter_swallows_non_http_errors() -> None:
 
 
 def _create_conversation(client) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
@@ -217,12 +217,12 @@ def test_stream_chat_reports_usage_without_run(tmp_path, reporter) -> None:
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages/stream",
             json={"content": "你好", "mode": "auto"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 200
 
     assert [item["path"] for item in reporter] == ["/v1/usage/events"]
-    assert reporter[0]["tenant"] == "t-1"
+    assert reporter[0]["account"] == "t-1"
     body = reporter[0]["body"]
     assert body["run_id"] is None
     assert body["model"] == "deepseek-chat"

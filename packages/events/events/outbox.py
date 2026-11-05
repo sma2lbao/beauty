@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common.logging import get_logger
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -49,7 +49,7 @@ FAILED = "failed"
 DEFAULT_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 5.0, 30.0, 120.0)
 
 
-class OutboxEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class OutboxEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """待投递事件(id 即信封 id,作为消费幂等的去重键)。"""
 
     __tablename__ = "outbox_events"
@@ -57,8 +57,8 @@ class OutboxEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
     event_type: Mapped[str] = mapped_column(String(80), index=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     occurred_at: Mapped[str] = mapped_column(String(40))  # 信封里的发生时间(原样保留)
-    # 事件里带的租户:消费方按租户写自己的库,不依赖外部上下文
-    envelope_tenant_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 事件里带的账号:消费方按账号写自己的库,不依赖外部上下文
+    envelope_account_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=PENDING, index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     available_at: Mapped[datetime] = mapped_column(
@@ -75,29 +75,29 @@ class OutboxEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
             type=self.event_type,
             occurred_at=self.occurred_at,
             payload=dict(self.payload or {}),
-            tenant_id=self.envelope_tenant_id or self.tenant_id,
+            account_id=self.envelope_account_id or self.account_id,
         )
 
 
-class ProcessedEvent(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """消费幂等:同一 (租户, 消费者, 事件) 只处理一次。"""
+class ProcessedEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """消费幂等:同一 (账号, 消费者, 事件) 只处理一次。"""
 
     __tablename__ = "processed_events"
-    __table_args__ = (UniqueConstraint("tenant_id", "consumer", "event_id"),)
+    __table_args__ = (UniqueConstraint("account_id", "consumer", "event_id"),)
 
     consumer: Mapped[str] = mapped_column(String(80))
     event_id: Mapped[str] = mapped_column(String(32), index=True)
 
 
 class OutboxRepository:
-    """outbox 的读写(故意不做成 TenantRepository:dispatcher 跨租户扫表)。"""
+    """outbox 的读写(故意不做成 AccountRepository:dispatcher 跨账号扫表)。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def record(
         self,
-        tenant_id: str,
+        account_id: str,
         envelope: EventEnvelope,
         *,
         available_at: datetime | None = None,
@@ -105,11 +105,11 @@ class OutboxRepository:
         """与业务状态同一事务登记事件;调用方随后提交,两者一起生效。"""
         event = OutboxEvent(
             id=envelope.id,
-            tenant_id=tenant_id,
+            account_id=account_id,
             event_type=envelope.type,
             payload=envelope.payload,
             occurred_at=envelope.occurred_at,
-            envelope_tenant_id=envelope.tenant_id or tenant_id,
+            envelope_account_id=envelope.account_id or account_id,
             available_at=available_at or datetime.now(UTC),
         )
         self.session.add(event)
@@ -119,7 +119,7 @@ class OutboxRepository:
     async def claim(
         self, *, limit: int = 50, now: datetime | None = None
     ) -> list[OutboxEvent]:
-        """取一批待投递事件(跨租户,按登记顺序)。"""
+        """取一批待投递事件(跨账号,按登记顺序)。"""
         moment = now or datetime.now(UTC)
         rows = await self.session.scalars(
             select(OutboxEvent)
@@ -180,15 +180,15 @@ class OutboxRepository:
     async def list_events(
         self,
         *,
-        tenant_id: str | None = None,
+        account_id: str | None = None,
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[OutboxEvent]:
-        """按租户/状态列出事件(运维排查用);最新在前。"""
+        """按账号/状态列出事件(运维排查用);最新在前。"""
         statement = select(OutboxEvent)
-        if tenant_id is not None:
-            statement = statement.where(OutboxEvent.tenant_id == tenant_id)
+        if account_id is not None:
+            statement = statement.where(OutboxEvent.account_id == account_id)
         if status is not None:
             statement = statement.where(OutboxEvent.status == status)
         statement = (
@@ -198,15 +198,15 @@ class OutboxRepository:
         )
         return list(await self.session.scalars(statement))
 
-    async def stats(self, *, tenant_id: str | None = None) -> dict[str, int]:
+    async def stats(self, *, account_id: str | None = None) -> dict[str, int]:
         """各状态计数(控制台徽标/告警用)。"""
         from sqlalchemy import func
 
         statement = select(OutboxEvent.status, func.count()).group_by(
             OutboxEvent.status
         )
-        if tenant_id is not None:
-            statement = statement.where(OutboxEvent.tenant_id == tenant_id)
+        if account_id is not None:
+            statement = statement.where(OutboxEvent.account_id == account_id)
         rows = await self.session.execute(statement)
         counts = {PENDING: 0, DISPATCHED: 0, FAILED: 0}
         for status_value, count in rows.all():
@@ -227,10 +227,12 @@ class OutboxRepository:
         return event
 
     async def requeue_failed(
-        self, *, tenant_id: str | None = None, limit: int = 100
+        self, *, account_id: str | None = None, limit: int = 100
     ) -> int:
         """批量重放 failed 事件,返回重放条数。"""
-        events = await self.list_events(tenant_id=tenant_id, status=FAILED, limit=limit)
+        events = await self.list_events(
+            account_id=account_id, status=FAILED, limit=limit
+        )
         for event in events:
             await self.requeue(event)
         return len(events)
@@ -338,14 +340,14 @@ class OutboxDispatcher:
 async def is_processed(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     consumer: str,
     event_id: str,
 ) -> bool:
     """该事件是否已被这个消费者处理过(与 `mark_processed` 配对,消费方先查后做)。"""
     found = await session.scalar(
         select(ProcessedEvent.id).where(
-            ProcessedEvent.tenant_id == tenant_id,
+            ProcessedEvent.account_id == account_id,
             ProcessedEvent.consumer == consumer,
             ProcessedEvent.event_id == event_id,
         )
@@ -356,7 +358,7 @@ async def is_processed(
 async def mark_processed(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     consumer: str,
     event_id: str,
 ) -> bool:
@@ -369,7 +371,7 @@ async def mark_processed(
         async with session.begin_nested():
             session.add(
                 ProcessedEvent(
-                    tenant_id=tenant_id, consumer=consumer, event_id=event_id
+                    account_id=account_id, consumer=consumer, event_id=event_id
                 )
             )
             await session.flush()

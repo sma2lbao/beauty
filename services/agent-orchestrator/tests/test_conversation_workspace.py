@@ -2,7 +2,7 @@
 
 三条入口各自的口径:
 - 显式 workspace_id:先过工作区存在性校验(未知 → 404 workspace.not_found);
-- 不给:落租户默认工作区;
+- 不给:落账号默认工作区;
 - 工作区集成未启用:降级为归属为空,但绝不阻断建对话。
 
 外加列表按工作区过滤、存量空归属的懒回填,以及 run 从对话继承工作区。
@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import TENANT, FakeWorkspace, _settings, verifier
+from tests.conftest import ACCOUNT, FakeWorkspace, _settings, verifier
 
 #: FakeWorkspace 登记过的工作区(id 存在即校验通过,未登记即 404)
 WS = {
@@ -36,13 +36,13 @@ def _client(
 
 
 def _create(client: TestClient, payload: dict | None = None) -> dict:
-    resp = client.post("/api/v1/conversations", json=payload or {}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json=payload or {}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()
 
 
 def _detail(client: TestClient, conversation_id: str) -> dict:
-    resp = client.get(f"/api/v1/conversations/{conversation_id}", headers=TENANT)
+    resp = client.get(f"/api/v1/conversations/{conversation_id}", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -65,7 +65,7 @@ def test_unknown_workspace_is_404(tmp_path: Path) -> None:
         tmp_path, "conv-ws-unknown.db", FakeWorkspace(workspaces=WS)
     ) as client:
         resp = client.post(
-            "/api/v1/conversations", json={"workspace_id": "ws-404"}, headers=TENANT
+            "/api/v1/conversations", json={"workspace_id": "ws-404"}, headers=ACCOUNT
         )
 
     assert resp.status_code == 404
@@ -96,7 +96,7 @@ def test_workspace_upstream_error_is_502(tmp_path: Path) -> None:
     """显式指定工作区但工作区服务不可达:502,不静默改归属。"""
     with _client(tmp_path, "conv-ws-upstream.db", FakeWorkspace(fail=True)) as client:
         resp = client.post(
-            "/api/v1/conversations", json={"workspace_id": "ws-1"}, headers=TENANT
+            "/api/v1/conversations", json={"workspace_id": "ws-1"}, headers=ACCOUNT
         )
 
     assert resp.status_code == 502
@@ -126,7 +126,7 @@ def test_list_filters_by_workspace(tmp_path: Path) -> None:
         first = _create(client, {"workspace_id": "ws-1"})
         _create(client, {"workspace_id": "ws-2"})
         items = client.get(
-            "/api/v1/conversations?workspace_id=ws-1", headers=TENANT
+            "/api/v1/conversations?workspace_id=ws-1", headers=ACCOUNT
         ).json()["items"]
 
     assert [item["id"] for item in items] == [first["id"]]
@@ -142,7 +142,7 @@ def test_list_filter_default_workspace_backfills_legacy(tmp_path: Path) -> None:
     workspace = FakeWorkspace(default_id="ws-default")
     with _client(tmp_path, "conv-ws-filter-default.db", workspace) as client:
         items = client.get(
-            "/api/v1/conversations?workspace_id=ws-default", headers=TENANT
+            "/api/v1/conversations?workspace_id=ws-default", headers=ACCOUNT
         ).json()["items"]
 
     assert [item["id"] for item in items] == [legacy["id"]]
@@ -159,7 +159,7 @@ def test_list_filter_other_workspace_keeps_legacy_null(tmp_path: Path) -> None:
     with _client(tmp_path, "conv-ws-filter-other.db", workspace) as client:
         current = _create(client, {"workspace_id": "ws-1"})
         items = client.get(
-            "/api/v1/conversations?workspace_id=ws-1", headers=TENANT
+            "/api/v1/conversations?workspace_id=ws-1", headers=ACCOUNT
         ).json()["items"]
         legacy_row = _detail(client, legacy["id"])
 
@@ -177,7 +177,7 @@ def test_list_backfills_legacy_conversations(tmp_path: Path) -> None:
     # 换成启用了工作区集成的部署,还是同一个库
     workspace = FakeWorkspace(default_id="ws-default")
     with _client(tmp_path, "conv-ws-backfill.db", workspace) as client:
-        items = client.get("/api/v1/conversations", headers=TENANT).json()["items"]
+        items = client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"]
         assert [item["workspace_id"] for item in items] == ["ws-default"]
         assert workspace.default_calls == ["t-1"]
         assert _detail(client, legacy["id"])["workspace_id"] == "ws-default"
@@ -196,11 +196,11 @@ def test_run_created_from_conversation_borrows_workspace(tmp_path: Path) -> None
                 "acceptance_criteria": ["日程已整理"],
                 "conversation_id": conversation["id"],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 201
         run_id = resp.json()["id"]
-        stored = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        stored = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
 
     assert resp.json()["workspace_id"] == "ws-1"
     assert stored["workspace_id"] == "ws-1"
@@ -219,7 +219,7 @@ def test_explicit_run_workspace_wins_over_conversation(tmp_path: Path) -> None:
                 "conversation_id": conversation["id"],
                 "workspace_id": "ws-2",
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
     assert resp.status_code == 201
@@ -236,9 +236,9 @@ def test_message_task_path_run_carries_conversation_workspace(
         result = client.post(
             f"/api/v1/conversations/{conversation['id']}/messages",
             json={"content": "把本周日程整理成周报", "mode": "auto"},
-            headers=TENANT,
+            headers=ACCOUNT,
         ).json()
         assert result["mode"] == "run_created"
-        run = client.get(f"/api/v1/runs/{result['run']['id']}", headers=TENANT).json()
+        run = client.get(f"/api/v1/runs/{result['run']['id']}", headers=ACCOUNT).json()
 
     assert run["workspace_id"] == "ws-1"

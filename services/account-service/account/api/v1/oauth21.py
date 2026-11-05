@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from account.api.deps import get_session, get_settings, get_tenant_id
+from account.api.deps import get_account_id, get_session, get_settings
 from account.core.config import Settings
 from account.schemas.oauth21 import (
     AuthorizeApprove,
@@ -27,7 +27,7 @@ from account.services import oauth21 as oauth_service
 router = APIRouter(prefix="/oauth", tags=["oauth21"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
@@ -76,10 +76,10 @@ async def get_client(client_id: str, session: DBSession) -> OAuthClientRead:
 async def approve_authorization(
     body: AuthorizeApprove,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
 ) -> AuthorizeResult:
-    return await oauth_service.authorize(session, tenant_id, body, settings)
+    return await oauth_service.authorize(session, account_id, body, settings)
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -117,8 +117,10 @@ async def introspect(
     x_internal_secret: Annotated[str | None, Header()] = None,
 ) -> OAuthIntrospectRead | JSONResponse:
     expected = settings.internal_secret
-    if not expected or not x_internal_secret or not secrets.compare_digest(
-        x_internal_secret, expected
+    if (
+        not expected
+        or not x_internal_secret
+        or not secrets.compare_digest(x_internal_secret, expected)
     ):
         raise UnauthorizedError("oauth.internal_forbidden", "内部 introspect 未开放")
     body: dict[str, Any] = await request.json()
@@ -137,16 +139,14 @@ async def revoke(request: Request, session: DBSession) -> dict[str, bool]:
 
 @router.get("/authorizations", response_model=list[AuthorizedClientRead])
 async def list_authorizations(
-    session: DBSession, tenant_id: TenantId
+    session: DBSession, account_id: AccountId
 ) -> list[AuthorizedClientRead]:
-    return await oauth_service.list_authorizations(session, tenant_id)
+    return await oauth_service.list_authorizations(session, account_id)
 
 
-@router.delete(
-    "/authorizations/{client_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/authorizations/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_authorization(
-    client_id: str, session: DBSession, tenant_id: TenantId
+    client_id: str, session: DBSession, account_id: AccountId
 ) -> Response:
-    await oauth_service.revoke_authorization(session, tenant_id, client_id)
+    await oauth_service.revoke_authorization(session, account_id, client_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

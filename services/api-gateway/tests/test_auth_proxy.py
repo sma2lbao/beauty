@@ -27,7 +27,7 @@ def test_login_sets_httponly_cookie_and_hides_tokens(client: TestClient) -> None
 
     session = client.get("/api/auth/session")
     assert session.status_code == 200
-    assert session.json()["user"]["tenant_id"] == "t1"
+    assert session.json()["user"]["account_id"] == "a1"
 
 
 def test_refresh_and_logout_require_csrf(client: TestClient) -> None:
@@ -36,7 +36,7 @@ def test_refresh_and_logout_require_csrf(client: TestClient) -> None:
     assert client.post("/api/auth/refresh").status_code == 403
     refreshed = client.post("/api/auth/refresh", headers={"X-CSRF-Token": csrf})
     assert refreshed.status_code == 200
-    assert refreshed.json()["user"]["user_id"] == "u1"
+    assert refreshed.json()["user"]["account_id"] == "a1"
 
     # refresh 会轮换 CSRF cookie,后续请求要用新的
     rotated = client.cookies.get("bm_csrf")

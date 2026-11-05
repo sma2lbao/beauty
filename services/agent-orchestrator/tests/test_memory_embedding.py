@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import pytest
 from common.logging import bind_request_context, clear_request_context
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 from database.base import Base
 from database.session import create_session_factory, session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,8 +25,8 @@ from agent_orchestrator.services import embeddings as embedding_service
 from agent_orchestrator.services import memory as memory_service
 from tests.conftest import _settings
 
-#: 记忆服务只认 tenant_id 字符串;这里与 conftest 的 bearer 租户保持一致。
-TENANT = "t-1"
+#: 记忆服务只认 account_id 字符串;这里与 conftest 的 bearer 账号保持一致。
+ACCOUNT = "t-1"
 
 
 @pytest.fixture(autouse=True)
@@ -207,7 +207,7 @@ async def test_gateway_provider_maps_network_error() -> None:
             await provider.embed(["a"])
 
 
-async def test_gateway_provider_injects_tenant_and_secret_headers() -> None:
+async def test_gateway_provider_injects_account_and_secret_headers() -> None:
     seen: list[httpx.Headers] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -215,13 +215,13 @@ async def test_gateway_provider_injects_tenant_and_secret_headers() -> None:
         return httpx.Response(200, json={"model": "bge-m3", "embeddings": [[1.0]]})
 
     provider, client = _gateway_provider(handler, internal_secret="s3cret")
-    bind_request_context(tenant_id="t-1")
+    bind_request_context(account_id="t-1")
     try:
         async with client:
             await provider.embed(["a"])
     finally:
         clear_request_context()
-    assert seen[0][TENANT_HEADER] == "t-1"
+    assert seen[0][ACCOUNT_HEADER] == "t-1"
     assert seen[0][SECRET_HEADER] == "s3cret"
 
 
@@ -236,7 +236,7 @@ async def test_gateway_provider_without_identity_sends_no_headers() -> None:
     clear_request_context()
     async with client:
         await provider.embed(["a"])
-    assert TENANT_HEADER not in seen[0]
+    assert ACCOUNT_HEADER not in seen[0]
     assert SECRET_HEADER not in seen[0]
 
 
@@ -354,7 +354,7 @@ async def test_write_memory_stores_provider_embedding(
 
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="preference"
         )
     assert memory.embedding == vector
     assert memory.embedding_model == provider.model
@@ -371,11 +371,13 @@ async def test_search_memories_uses_provider_query_vector(
 
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="preference"
         )
     async with session_scope(factory) as session:
-        hits = await memory_service.search_memories(session, TENANT, "完全无关的主题词")
-        block = await memory_service.recall_block(session, TENANT, "完全无关的主题词")
+        hits = await memory_service.search_memories(
+            session, ACCOUNT, "完全无关的主题词"
+        )
+        block = await memory_service.recall_block(session, ACCOUNT, "完全无关的主题词")
     assert [hit.id for hit in hits] == [memory.id]
     assert memory.content in block
 
@@ -391,7 +393,7 @@ async def test_write_memory_falls_back_to_local_embedding(
         embedding_service.configure_embedding(provider)
         async with session_scope(factory) as session:
             memory = await memory_service.write_memory(
-                session, TENANT, content="项目代号是蓝鲸"
+                session, ACCOUNT, content="项目代号是蓝鲸"
             )
     assert memory.embedding_model == embedding_service.EMBEDDING_MODEL_LOCAL
     assert memory.embedding == memory_service.embed_text("项目代号是蓝鲸")
@@ -403,14 +405,14 @@ def test_score_memory_ignores_mismatched_embedding_dimensions() -> None:
     query_tokens = set(embedding_service.tokenize(content))
     query_embedding = memory_service.embed_text(content)
 
-    mismatched = Memory(tenant_id=TENANT, content=content, embedding=[1.0, 0.0, 0.0])
+    mismatched = Memory(account_id=ACCOUNT, content=content, embedding=[1.0, 0.0, 0.0])
     relevance, _score = memory_service._score_memory(
         query_tokens, query_embedding, mismatched, now
     )
     # 维度不一致:只剩词面分量(词元集合相同 = 1.0)。
     assert relevance == pytest.approx(0.65)
 
-    matched = Memory(tenant_id=TENANT, content=content, embedding=query_embedding)
+    matched = Memory(account_id=ACCOUNT, content=content, embedding=query_embedding)
     relevance, _score = memory_service._score_memory(
         query_tokens, query_embedding, matched, now
     )

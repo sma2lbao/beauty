@@ -17,14 +17,14 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
-from tests.conftest import TENANT, FakeKnowledge, FakeLLM, _settings, verifier
+from tests.conftest import ACCOUNT, FakeKnowledge, FakeLLM, _settings, verifier
 
 
 def _client(tmp_path, fake: FakeLLM, extras_factory) -> TestClient:
     app = create_app(
         _settings(tmp_path, "chat-extras.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(tenant, knowledge=FakeKnowledge()),
+        toolkit_factory=lambda account: build_tools(account, knowledge=FakeKnowledge()),
         tool_extras_factory=extras_factory,
         token_verifier=verifier(),
     )
@@ -32,7 +32,7 @@ def _client(tmp_path, fake: FakeLLM, extras_factory) -> TestClient:
 
 
 def _create_conversation(client: TestClient) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
@@ -41,7 +41,7 @@ def _stream(client: TestClient, conversation_id: str, content: str, mode="chat")
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages/stream",
         json={"content": content, "mode": mode},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     events = []
     for frame in resp.text.split("\n\n"):
@@ -82,8 +82,8 @@ def test_chat_write_mcp_tool_requests_confirmation(tmp_path) -> None:
         seen.append(arguments)
         return f"echo: {arguments.get('text')}"
 
-    async def extras_factory(tenant_id: str) -> list[ToolSpec]:
-        assert tenant_id == "t-1"
+    async def extras_factory(account_id: str) -> list[ToolSpec]:
+        assert account_id == "t-1"
         return [_mcp_spec(handler, risk=ToolRisk.WRITE)]
 
     fake = FakeLLM(
@@ -127,7 +127,7 @@ def test_chat_rejects_mcp_tool_needing_confirmation(tmp_path) -> None:
         called.append(arguments)
         return "不该被调用"
 
-    async def extras_factory(tenant_id: str) -> list[ToolSpec]:
+    async def extras_factory(account_id: str) -> list[ToolSpec]:
         return [_mcp_spec(handler, risk=ToolRisk.DANGER)]
 
     fake = FakeLLM(
@@ -158,7 +158,7 @@ def test_chat_post_message_path_uses_extras(tmp_path) -> None:
     async def handler(arguments: dict) -> str:
         return "echo: " + str(arguments.get("text"))
 
-    async def extras_factory(tenant_id: str) -> list[ToolSpec]:
+    async def extras_factory(account_id: str) -> list[ToolSpec]:
         return [_mcp_spec(handler, risk=ToolRisk.READ)]
 
     fake = FakeLLM(
@@ -169,7 +169,7 @@ def test_chat_post_message_path_uses_extras(tmp_path) -> None:
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "回显 hi", "mode": "chat"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
         assert resp.status_code == 201
@@ -181,7 +181,7 @@ def test_chat_post_message_path_uses_extras(tmp_path) -> None:
 def test_chat_degrades_when_extras_factory_fails(tmp_path) -> None:
     """extras 取失败只降级外部工具:对话仍能回答,不报错。"""
 
-    async def broken_extras(tenant_id: str) -> list[ToolSpec]:
+    async def broken_extras(account_id: str) -> list[ToolSpec]:
         raise RuntimeError("MCP 注册表挂了")
 
     fake = FakeLLM(["你好,有什么可以帮你的?"])

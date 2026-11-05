@@ -76,11 +76,9 @@ export const queryKeys = {
     ['workspace-artifact-blob', artifactId] as const,
   artifacts: ['artifacts'] as const,
 
-  /** 账号/组织域。 */
+  /** 账号域:当前账号资料与设备会话。 */
   authAccount: ['auth-account'] as const,
-  organization: ['organization'] as const,
-  accountOrganization: ['account-organization'] as const,
-  accountMembers: ['account-members'] as const,
+  accountMe: ['account-me'] as const,
   accountSessions: ['account-sessions'] as const,
 
   /** 模型与用量域。 */

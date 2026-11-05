@@ -27,10 +27,10 @@ async def test_manager_fans_out_to_all_subscribers() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     backlog_a, queue_a = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
     backlog_b, queue_b = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
     assert backlog_a == [] and backlog_b == []
 
@@ -55,7 +55,7 @@ async def test_manager_ring_buffer_replay_and_byte_eviction() -> None:
     await asyncio.sleep(0.05)
 
     backlog, _ = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
     # 8 字节上限只留得下最后一块,前一块按字节淘汰
     assert [event.data for event in backlog] == ["7890"]
@@ -63,11 +63,11 @@ async def test_manager_ring_buffer_replay_and_byte_eviction() -> None:
 
     # after 是「最后收到的 seq」:0 仍在缓冲里就回放,1 已跟上就没有历史
     replay_after, _ = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id, after=0
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id, after=0
     )
     assert [event.data for event in replay_after] == ["7890"]
     replay_caught_up, _ = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id, after=1
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id, after=1
     )
     assert replay_caught_up == []
     await manager.shutdown()
@@ -78,7 +78,7 @@ async def test_manager_reports_exit_code() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     backlog, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
     assert backlog == []
 
@@ -96,7 +96,7 @@ async def test_manager_reports_exit_code() -> None:
 
     # 已关闭的会话仍可回放,并且订阅立刻结束
     replay, replay_queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
     assert [event.kind for event in replay] == ["output", "exit"]
     assert await asyncio.wait_for(replay_queue.get(), timeout=1) is None
@@ -108,7 +108,7 @@ async def test_manager_read_error_becomes_error_event() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     _, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
 
     shell.emit(b"partial")
@@ -145,7 +145,7 @@ async def test_manager_sweeps_idle_sessions_with_injected_clock() -> None:
     assert shell.closed is True
     assert (
         await manager.close(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
         )
         is False
     )
@@ -165,7 +165,7 @@ async def test_manager_rejects_new_sessions_after_shutdown() -> None:
 
     with pytest.raises(ConflictError) as exc:
         await manager.open(
-            tenant_id="t-1",
+            account_id="t-1",
             sandbox_id="sb-1",
             runtime_name="bm-1",
             provider=provider,
@@ -178,11 +178,11 @@ async def test_manager_enforces_subscriber_limit() -> None:
     provider = FakeSandboxProvider()
     manager = ShellSessionManager(max_subscribers=1)
     info, _ = await _open_managed(manager, provider)
-    manager.subscribe(tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id)
+    manager.subscribe(account_id="t-1", sandbox_id="sb-1", session_id=info.session_id)
 
     with pytest.raises(ConflictError) as exc:
         manager.subscribe(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
         )
     assert exc.value.code == "sandbox.session_busy"
     await manager.shutdown()
@@ -205,7 +205,7 @@ async def test_manager_close_sandbox_closes_every_session() -> None:
 async def test_manager_unknown_session_404() -> None:
     manager = ShellSessionManager()
     with pytest.raises(Exception) as exc:
-        manager.subscribe(tenant_id="t-1", sandbox_id="sb-1", session_id="nope")
+        manager.subscribe(account_id="t-1", sandbox_id="sb-1", session_id="nope")
     assert exc.value.code == "sandbox.session_not_found"  # type: ignore[attr-defined]
     await manager.shutdown()
 

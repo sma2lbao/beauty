@@ -19,7 +19,7 @@ from workspace.main import create_app
 from workspace.services.sandbox_provider import ExecResult, FileEntry, SandboxSpec
 
 _IDP = TestIdP()
-TENANT = _IDP.bearer("t-1")
+ACCOUNT = _IDP.bearer("t-1")
 OTHER = _IDP.bearer("t-2")
 
 
@@ -241,5 +241,5 @@ def _create_artifact(
     return client.post(
         "/v1/artifacts",
         json={"title": title, "content": content, **extra},
-        headers=TENANT,
+        headers=ACCOUNT,
     )

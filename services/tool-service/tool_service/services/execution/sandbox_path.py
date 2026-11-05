@@ -44,7 +44,7 @@ class SandboxExecutionMixin:
         )
         timeout = self._timeout_seconds(context, descriptor)
         scope_key = scope_key_for(
-            context.tenant_id,
+            context.account_id,
             sandbox_scope=context.sandbox_scope,
             conversation_id=context.conversation_id,
             run_id=context.run_id,
@@ -52,7 +52,7 @@ class SandboxExecutionMixin:
         try:
             sandbox_id = await asyncio.wait_for(
                 self._sandbox.ensure(
-                    context.tenant_id, scope_key=scope_key, run_id=context.run_id
+                    context.account_id, scope_key=scope_key, run_id=context.run_id
                 ),
                 timeout + limits.SANDBOX_CALL_GRACE_SECONDS,
             )
@@ -69,7 +69,7 @@ class SandboxExecutionMixin:
         try:
             result = await asyncio.wait_for(
                 self._sandbox.exec(
-                    context.tenant_id,
+                    context.account_id,
                     sandbox_id,
                     helper_argv(),
                     stdin=build_request(descriptor.name, helper_arguments),
@@ -172,7 +172,7 @@ class SandboxExecutionMixin:
 
         try:
             await asyncio.wait_for(
-                self._sandbox.touch(context.tenant_id, sandbox_id), 5.0
+                self._sandbox.touch(context.account_id, sandbox_id), 5.0
             )
         except (TimeoutError, UpstreamError):
             return

@@ -9,20 +9,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from database.base import Base, TenantMixin, UUIDMixin
+from database.base import AccountMixin, Base, UUIDMixin
 from sqlalchemy import DateTime, Index, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class FileRead(UUIDMixin, TenantMixin, Base):
-    """一次成功 read 的路径与内容摘要(按 tenant+scope+path upsert)。"""
+class FileRead(UUIDMixin, AccountMixin, Base):
+    """一次成功 read 的路径与内容摘要(按 account+scope+path upsert)。"""
 
     __tablename__ = "file_reads"
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "scope_key", "path", name="uq_file_reads_scope_path"
+            "account_id", "scope_key", "path", name="uq_file_reads_scope_path"
         ),
-        Index("ix_file_reads_run", "tenant_id", "run_id", "path"),
+        Index("ix_file_reads_run", "account_id", "run_id", "path"),
     )
 
     run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)

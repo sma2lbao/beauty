@@ -18,7 +18,7 @@ from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.skill_runner import UNPACK_PATH
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
 from agent_orchestrator.services.tools import ToolRisk
-from tests.conftest import TENANT, FakeLLM, FakeWorkspace, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, FakeWorkspace, _settings, verifier
 from tests.support.skill_runner import FakeSandbox, plain_package
 
 
@@ -27,7 +27,7 @@ class HashingWorkspace(FakeWorkspace):
 
     async def put_object(
         self,
-        tenant_id: str,
+        account_id: str,
         data: bytes,
         *,
         filename: str | None = None,
@@ -35,7 +35,7 @@ class HashingWorkspace(FakeWorkspace):
     ) -> dict[str, Any]:
         self.sha256 = hashlib.sha256(data).hexdigest()
         return await super().put_object(
-            tenant_id, data, filename=filename, content_type=content_type
+            account_id, data, filename=filename, content_type=content_type
         )
 
 
@@ -43,7 +43,7 @@ def _upload_package(client: TestClient) -> dict[str, Any]:
     response = client.post(
         "/api/v1/skills/packages",
         files={"file": ("weekly.zip", plain_package(), "application/zip")},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -53,7 +53,7 @@ def _create_run(client: TestClient, **payload: Any) -> dict[str, Any]:
     response = client.post(
         "/api/v1/runs",
         json={"title": "周报", "goal": "生成周报", **payload},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -62,7 +62,7 @@ def _create_run(client: TestClient, **payload: Any) -> dict[str, Any]:
 def _extras(client: TestClient, ctx: ToolContext) -> list[Any]:
     factory = client.app.state.tool_extras_factory
     with bind_tool_context(ctx):
-        return asyncio.run(factory(ctx.tenant_id))
+        return asyncio.run(factory(ctx.account_id))
 
 
 @pytest.fixture()
@@ -84,7 +84,7 @@ def skill_client(tmp_path: Path) -> Iterator[TestClient]:
 def test_extras_exposes_skill_run_for_package_run(skill_client: TestClient) -> None:
     _upload_package(skill_client)
     run = _create_run(skill_client, skill_id="team.weekly-report")
-    specs = _extras(skill_client, ToolContext(tenant_id="t-1", run_id=run["id"]))
+    specs = _extras(skill_client, ToolContext(account_id="t-1", run_id=run["id"]))
     # 顺序由装配段决定:skill_run 在 MCP/上下文工具之前,这里只锁"who 和风险"
     by_name = {spec.name: spec for spec in specs}
     assert sorted(by_name) == ["skill_run", "spawn_subagent", "todo_write"]
@@ -94,7 +94,7 @@ def test_extras_exposes_skill_run_for_package_run(skill_client: TestClient) -> N
 
 def test_extras_skips_skill_run_without_package(skill_client: TestClient) -> None:
     run = _create_run(skill_client)
-    ctx = ToolContext(tenant_id="t-1", run_id=run["id"])
+    ctx = ToolContext(account_id="t-1", run_id=run["id"])
     assert [spec.name for spec in _extras(skill_client, ctx)] == [
         "todo_write",
         "spawn_subagent",
@@ -104,13 +104,13 @@ def test_extras_skips_skill_run_without_package(skill_client: TestClient) -> Non
 def test_extras_has_no_skill_run_in_chat_path(skill_client: TestClient) -> None:
     _upload_package(skill_client)
     _create_run(skill_client, skill_id="team.weekly-report")
-    ctx = ToolContext(tenant_id="t-1", conversation_id="conv-1")
+    ctx = ToolContext(account_id="t-1", conversation_id="conv-1")
     assert _extras(skill_client, ctx) == []
 
 
 def test_extras_unknown_run_id_has_no_skill_run(skill_client: TestClient) -> None:
     _upload_package(skill_client)
-    ctx = ToolContext(tenant_id="t-1", run_id="no-such-run")
+    ctx = ToolContext(account_id="t-1", run_id="no-such-run")
     # run 不存在 = 不在 run 上下文:连 todo/spawn 都不给
     assert [spec.name for spec in _extras(skill_client, ctx)] == ["todo_write"]
 
@@ -132,7 +132,7 @@ def test_extras_mcp_failure_does_not_block_skill(
     with TestClient(app) as client:
         _upload_package(client)
         run = _create_run(client, skill_id="team.weekly-report")
-        specs = _extras(client, ToolContext(tenant_id="t-1", run_id=run["id"]))
+        specs = _extras(client, ToolContext(account_id="t-1", run_id=run["id"]))
     assert sorted(spec.name for spec in specs) == [
         "skill_run",
         "spawn_subagent",
@@ -202,11 +202,11 @@ def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
             acceptance_criteria=["日程已整理"],
         )
 
-        planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=TENANT)
+        planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=ACCOUNT)
         assert planned.status_code == 200, planned.text
         assert sandbox.execs == []  # 审批前不执行上传代码
 
-        done = client.post(f"/api/v1/runs/{run['id']}/approve", headers=TENANT)
+        done = client.post(f"/api/v1/runs/{run['id']}/approve", headers=ACCOUNT)
         assert done.status_code == 200, done.text
         # 受控写自动执行:不再停在 awaiting_confirmation,直接跑完
         assert done.json()["status"] == "completed"
@@ -223,11 +223,11 @@ def test_graph_executes_skill_run_without_confirmation(tmp_path: Path) -> None:
         assert "skill_run" in schema_names
 
         artifact = client.get(
-            f"/api/v1/runs/{run['id']}/artifact", headers=TENANT
+            f"/api/v1/runs/{run['id']}/artifact", headers=ACCOUNT
         ).json()
         assert artifact["content"] == "# 最终交付正文"
 
-        events = client.get(f"/api/v1/runs/{run['id']}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run['id']}/events", headers=ACCOUNT).json()
         types = [event["type"] for event in events]
         # 没有确认闸事件:受控写不打断
         assert "run.confirmation.required.v1" not in types

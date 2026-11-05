@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -25,7 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class Conversation(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class Conversation(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """一段持续对话:消息的容器,也是多轮上下文的边界。
 
     archived_at / deleted_at 采用软状态:
@@ -51,7 +51,7 @@ class Conversation(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
 
 
-class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class ChatMessage(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """对话消息(user/assistant 双向,均持久化)。
 
     run_id 把消息与它关联的 run 绑起来:user 消息指向触发它的 run
@@ -73,7 +73,7 @@ class ChatMessage(UUIDMixin, TenantMixin, TimestampMixin, Base):
     mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
-class ChatToolConfirmation(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class ChatToolConfirmation(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """对话内写操作确认(§6.7 就地确认):WRITE 工具在 chat 里先生成待确认行。
 
     对话没有任务路径的审批闸,但产品要求"写操作就地确认":模型发起 risk=write
@@ -90,10 +90,10 @@ class ChatToolConfirmation(UUIDMixin, TenantMixin, TimestampMixin, Base):
 
     __tablename__ = "chat_tool_confirmations"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "tool_call_id"),
+        UniqueConstraint("account_id", "tool_call_id"),
         Index(
-            "ix_chat_tool_confirmations_tenant_conversation",
-            "tenant_id",
+            "ix_chat_tool_confirmations_account_conversation",
+            "account_id",
             "conversation_id",
         ),
     )
@@ -115,7 +115,7 @@ class ChatToolConfirmation(UUIDMixin, TenantMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class Attachment(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class Attachment(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """会话附件(本地最小版):内容存 DB,消息发送时再绑定 message_id。
 
     M0-12 不引入对象存储;生产多实例前改为共享存储/对象存储。

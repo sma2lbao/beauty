@@ -6,7 +6,7 @@
   decision="confirm"、error_code="tool.confirmation_required"、ok=false;
 - 确认端点以 approved=True 重放同一 tool_call,结果落 assistant 消息并回填;
 - 重复确认 / 已取消 → 409 tool_confirmation.not_pending(不重复执行);
-- 过期 → 409 tool_confirmation.expired;不存在 / 跨租户 → 404。
+- 过期 → 409 tool_confirmation.expired;不存在 / 跨账号 → 404。
 """
 
 import asyncio
@@ -21,9 +21,9 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.repositories import ChatToolConfirmationRepository
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk, ToolSpec
-from tests.conftest import OTHER, TENANT, FakeLLM, _settings, verifier
+from tests.conftest import ACCOUNT, OTHER, FakeLLM, _settings, verifier
 
-TENANT_ID = "t-1"
+ACCOUNT_ID = "t-1"
 WRITE_TOOL = "notes__create"
 SECOND_TOOL = "notes__archive"
 
@@ -60,14 +60,14 @@ def _app(tmp_path: Path, seen: list[dict], replies: list) -> TestClient:
     app = create_app(
         settings,
         llm_client=FakeLLM(replies),
-        toolkit_factory=lambda tenant: registry,
+        toolkit_factory=lambda account: registry,
         token_verifier=verifier(),
     )
     return TestClient(app)
 
 
 def _create_conversation(client: TestClient) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
@@ -93,7 +93,7 @@ def _stream_write_call(
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages/stream",
         json={"content": "把周报写进笔记", "mode": "chat"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert resp.status_code == 200
     events = _sse_events(resp.text)
@@ -118,7 +118,7 @@ def _cancel_url(conversation_id: str, confirmation_id: str) -> str:
 
 def _messages(client: TestClient, conversation_id: str) -> list[dict]:
     resp = client.get(
-        f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+        f"/api/v1/conversations/{conversation_id}/messages", headers=ACCOUNT
     )
     assert resp.status_code == 200
     return resp.json()
@@ -137,7 +137,7 @@ def test_chat_write_call_creates_pending_confirmation(tmp_path: Path) -> None:
     app = create_app(
         settings,
         llm_client=fake,
-        toolkit_factory=lambda tenant: registry,
+        toolkit_factory=lambda account: registry,
         token_verifier=verifier(),
     )
     with TestClient(app) as client:
@@ -178,7 +178,7 @@ def test_confirm_executes_once_and_persists_assistant_message(tmp_path: Path) ->
         confirmation_id = frame["confirmation_id"]
 
         resp = client.post(
-            _confirm_url(conversation_id, confirmation_id), headers=TENANT
+            _confirm_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert resp.status_code == 200
         result = resp.json()
@@ -197,7 +197,7 @@ def test_confirm_executes_once_and_persists_assistant_message(tmp_path: Path) ->
 
         # 重复确认:409 且不重复执行
         again = client.post(
-            _confirm_url(conversation_id, confirmation_id), headers=TENANT
+            _confirm_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert again.status_code == 409
         assert again.json()["code"] == "tool_confirmation.not_pending"
@@ -213,7 +213,7 @@ def test_cancel_marks_cancelled_without_executing(tmp_path: Path) -> None:
         confirmation_id = frame["confirmation_id"]
 
         resp = client.post(
-            _cancel_url(conversation_id, confirmation_id), headers=TENANT
+            _cancel_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert resp.status_code == 200
         assert resp.json() == {
@@ -223,7 +223,7 @@ def test_cancel_marks_cancelled_without_executing(tmp_path: Path) -> None:
         assert seen == []
 
         confirm = client.post(
-            _confirm_url(conversation_id, confirmation_id), headers=TENANT
+            _confirm_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert confirm.status_code == 409
         assert confirm.json()["code"] == "tool_confirmation.not_pending"
@@ -235,13 +235,13 @@ def test_confirmation_not_found(tmp_path: Path) -> None:
     replies = [_tool_call_reply(WRITE_TOOL), "请确认。"]
     with _app(tmp_path, seen, replies) as client:
         conversation_id = _create_conversation(client)
-        resp = client.post(_confirm_url(conversation_id, "missing"), headers=TENANT)
+        resp = client.post(_confirm_url(conversation_id, "missing"), headers=ACCOUNT)
         assert resp.status_code == 404
         assert resp.json()["code"] == "tool_confirmation.not_found"
 
 
-def test_confirmation_is_scoped_to_conversation_and_tenant(tmp_path: Path) -> None:
-    """同一租户其它会话 / 其它租户都看不到这条确认(404)。"""
+def test_confirmation_is_scoped_to_conversation_and_account(tmp_path: Path) -> None:
+    """同一账号其它会话 / 其它账号都看不到这条确认(404)。"""
     seen: list[dict] = []
     replies = [_tool_call_reply(WRITE_TOOL), "请确认。"]
     with _app(tmp_path, seen, replies) as client:
@@ -251,12 +251,12 @@ def test_confirmation_is_scoped_to_conversation_and_tenant(tmp_path: Path) -> No
 
         other_conversation = _create_conversation(client)
         resp = client.post(
-            _confirm_url(other_conversation, confirmation_id), headers=TENANT
+            _confirm_url(other_conversation, confirmation_id), headers=ACCOUNT
         )
         assert resp.status_code == 404
         assert resp.json()["code"] == "tool_confirmation.not_found"
 
-        # 跨租户:会话本身按既有口径不可见(conversation.not_found,404)
+        # 跨账号:会话本身按既有口径不可见(conversation.not_found,404)
         cross = client.post(
             _confirm_url(conversation_id, confirmation_id), headers=OTHER
         )
@@ -275,7 +275,7 @@ def test_expired_confirmation_returns_409(tmp_path: Path) -> None:
     app = create_app(
         settings,
         llm_client=FakeLLM(replies),
-        toolkit_factory=lambda tenant: registry,
+        toolkit_factory=lambda account: registry,
         token_verifier=verifier(),
     )
     with TestClient(app) as client:
@@ -289,7 +289,7 @@ def test_expired_confirmation_returns_409(tmp_path: Path) -> None:
                 async with session_scope(factory) as session:
                     repository = ChatToolConfirmationRepository(session)
                     row = await repository.get_for_conversation(
-                        TENANT_ID, conversation_id, confirmation_id
+                        ACCOUNT_ID, conversation_id, confirmation_id
                     )
                     assert row is not None
                     row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
@@ -299,7 +299,7 @@ def test_expired_confirmation_returns_409(tmp_path: Path) -> None:
         asyncio.run(expire())
 
         resp = client.post(
-            _confirm_url(conversation_id, confirmation_id), headers=TENANT
+            _confirm_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert resp.status_code == 409
         assert resp.json()["code"] == "tool_confirmation.expired"
@@ -315,7 +315,7 @@ def test_post_message_path_also_creates_pending(tmp_path: Path) -> None:
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "把周报写进笔记", "mode": "chat"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 201
         assert resp.json()["reply"]["content"] == "已生成确认请求。"
@@ -335,7 +335,7 @@ def test_post_message_path_also_creates_pending(tmp_path: Path) -> None:
                 async with session_scope(factory) as session:
                     row = await ChatToolConfirmationRepository(
                         session
-                    ).get_by_tool_call(TENANT_ID, "call-1")
+                    ).get_by_tool_call(ACCOUNT_ID, "call-1")
                     assert row is not None
                     assert row.conversation_id == conversation_id
                     return row.id
@@ -345,7 +345,7 @@ def test_post_message_path_also_creates_pending(tmp_path: Path) -> None:
         confirmation_id = asyncio.run(pending_id())
 
         confirm = client.post(
-            _confirm_url(conversation_id, confirmation_id), headers=TENANT
+            _confirm_url(conversation_id, confirmation_id), headers=ACCOUNT
         )
         assert confirm.status_code == 200
         assert confirm.json()["ok"] is True

@@ -24,18 +24,18 @@ DEFAULT_REASON = "已取消"
 
 async def cancel_run(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     reason: str | None = None,
 ) -> Run:
     """取消一个非终态 run;reason 落 status_reason 与 run.cancelled.v1 载荷。"""
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     require_transition(run, "cancel")
     text = (reason or "").strip() or DEFAULT_REASON
     run.status = RunStatus.CANCELLED.value
     run.status_reason = text[:500]
     cancelled_jobs = await JobRepository(session).cancel_queued_for_run(
-        run.tenant_id, run.id
+        run.account_id, run.id
     )
     await append_event(
         session,

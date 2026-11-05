@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from connector.core.config import Settings
 from connector.main import create_app
-from tests.conftest import _IDP, INTERNAL_HEADERS, TENANT, DemoMock, _settings
+from tests.conftest import _IDP, ACCOUNT, INTERNAL_HEADERS, DemoMock, _settings
 from tests.demo_provider import DemoProvider
 
 TOKEN = "static-token-1"
@@ -73,7 +73,7 @@ def test_token_connect_creates_connection_without_app_credentials(
     mock = DemoMock()
     app = _token_app(tmp_path, mock)
     with app_client(app) as client:
-        entry = client.get("/v1/connectors", headers=TENANT).json()["providers"][0]
+        entry = client.get("/v1/connectors", headers=ACCOUNT).json()["providers"][0]
         assert entry["name"] == "demo"
         assert entry["token_connectable"] is True
         assert entry["configured"] is False
@@ -81,7 +81,7 @@ def test_token_connect_creates_connection_without_app_credentials(
 
         resp = client.post(
             "/v1/connections",
-            headers=TENANT,
+            headers=ACCOUNT,
             json={
                 "provider": "demo",
                 "token": TOKEN,
@@ -102,7 +102,7 @@ def test_token_connect_creates_connection_without_app_credentials(
         assert connection["scopes"] == []
         assert mock.api_calls[0][2] == f"Bearer {TOKEN}"
 
-        entry = client.get("/v1/connectors", headers=TENANT).json()["providers"][0]
+        entry = client.get("/v1/connectors", headers=ACCOUNT).json()["providers"][0]
         assert entry["connected"] is True
         assert entry["connection"]["id"] == connection["id"]
 
@@ -118,15 +118,15 @@ def test_token_connect_creates_connection_without_app_credentials(
         assert body["connection_id"] == connection["id"]
         assert mock.api_calls[-1][2] == f"Bearer {TOKEN}"
 
-        # 同一租户/provider/account 重复粘贴复用同一行(幂等)
+        # 同一账号/provider/account 重复粘贴复用同一行(幂等)
         again = client.post(
             "/v1/connections",
-            headers=TENANT,
+            headers=ACCOUNT,
             json={"provider": "demo", "token": TOKEN},
         )
         assert again.status_code == 201
         assert again.json()["id"] == connection["id"]
-        assert len(client.get("/v1/connections", headers=TENANT).json()) == 1
+        assert len(client.get("/v1/connections", headers=ACCOUNT).json()) == 1
 
 
 def test_token_connect_rejects_invalid_token(tmp_path: Path) -> None:
@@ -136,7 +136,7 @@ def test_token_connect_rejects_invalid_token(tmp_path: Path) -> None:
     with app_client(app) as client:
         resp = client.post(
             "/v1/connections",
-            headers=TENANT,
+            headers=ACCOUNT,
             json={"provider": "demo", "token": "broken-token"},
         )
         assert resp.status_code == 400
@@ -145,7 +145,7 @@ def test_token_connect_rejects_invalid_token(tmp_path: Path) -> None:
         assert "令牌" in body["message"]
         assert body["details"]["retryable"] is False
         # 校验失败不落库
-        assert client.get("/v1/connections", headers=TENANT).json() == []
+        assert client.get("/v1/connections", headers=ACCOUNT).json() == []
 
 
 def test_token_connect_rejects_unsupported_provider(
@@ -157,7 +157,7 @@ def test_token_connect_rejects_unsupported_provider(
     with app_client(app) as client:
         resp = client.post(
             "/v1/connections",
-            headers=TENANT,
+            headers=ACCOUNT,
             json={"provider": "demo", "token": TOKEN},
         )
         assert resp.status_code == 400
@@ -171,7 +171,7 @@ def test_token_connect_unknown_provider(tmp_path: Path) -> None:
     with app_client(app) as client:
         resp = client.post(
             "/v1/connections",
-            headers=TENANT,
+            headers=ACCOUNT,
             json={"provider": "acme", "token": TOKEN},
         )
         assert resp.status_code == 404

@@ -1,4 +1,4 @@
-"""知识库 ORM:文档与分块(租户隔离,向量先存 JSON 列)。
+"""知识库 ORM:文档与分块(账号隔离,向量先存 JSON 列)。
 
 阶段 A:向量以 JSON list 存 `document_chunks.embedding`,检索在 Python 侧算余弦;
 阶段 B 换 pgvector/专用向量库时,本表只留引用,读端契约不变。
@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import JSON, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class KnowledgeDocument(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class KnowledgeDocument(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """一篇被登记的文档(正文只保留分块,不再存全文)。"""
 
     __tablename__ = "knowledge_documents"
@@ -24,7 +24,7 @@ class KnowledgeDocument(UUIDMixin, TenantMixin, TimestampMixin, Base):
     embedding_model: Mapped[str] = mapped_column(String(64))
 
 
-class DocumentChunk(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class DocumentChunk(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """文档分块 + 向量(ordinal 从 0 递增,便于回放原文顺序)。"""
 
     __tablename__ = "document_chunks"

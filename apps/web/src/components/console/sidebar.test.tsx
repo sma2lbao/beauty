@@ -14,6 +14,7 @@ import type { Conversation } from '@/lib/conversations-api';
 import type { Workspace } from '@/lib/workspace-api';
 import { workspaceApi } from '@/lib/workspace-api';
 import { WORKSPACES_KEY } from '@/lib/workspace-selection';
+import { useUiStore } from '@/stores/ui-store';
 
 import { ConsoleSidebar } from './sidebar';
 
@@ -39,12 +40,6 @@ vi.mock('@/lib/runs-api', async () => {
   };
 });
 
-vi.mock('@/lib/account-api', () => ({
-  accountApi: {
-    organization: vi.fn(async () => ({ plan: '团队版' })),
-  },
-}));
-
 vi.mock('@/lib/auth', () => ({
   // workspace-api 在模块加载时读取 authMode,必须一并提供
   authMode: () => 'token',
@@ -69,7 +64,7 @@ vi.mock('@/lib/workspace-api', async () => {
 const workspace: Workspace = {
   id: 'ws-1',
   name: '默认工作区',
-  description: '自动创建:租户默认工作区',
+  description: '自动创建:账号默认工作区',
   status: 'active',
   created_at: '2026-10-13T00:00:00+00:00',
   is_default: true,
@@ -160,6 +155,8 @@ function sessionMenuButton(title: string) {
 }
 
 beforeEach(() => {
+  // 命令面板开合是全局状态:每个用例从关闭态开始,否则上个用例打开的面板会串场。
+  useUiStore.setState({ commandPaletteOpen: false });
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([
     workspace,
     otherWorkspace,
@@ -181,7 +178,7 @@ afterEach(() => {
 });
 
 describe('ConsoleSidebar 工作区/会话', () => {
-  it('取租户全部会话:分页请求不带 workspace_id', async () => {
+  it('取账号全部会话:分页请求不带 workspace_id', async () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
@@ -352,10 +349,11 @@ describe('ConsoleSidebar 工作区/会话', () => {
     expect(
       screen.getByRole('menuitem', { name: '添加工作区…' }),
     ).toHaveAttribute('href', '/workspace?new=1');
-    expect(screen.getByRole('link', { name: '工作区' })).toHaveAttribute(
-      'href',
-      '/workspace',
-    );
+    // 桌面端不再平铺「工作区」页:切换器菜单里的「管理工作区…」是唯一入口
+    expect(
+      screen.getByRole('menuitem', { name: '管理工作区…' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '工作区' })).toBeNull();
   });
 
   it('游标加载更多:追加下一页会话', async () => {
@@ -418,11 +416,64 @@ describe('ConsoleSidebar 工作区/会话', () => {
     renderSidebar();
 
     const nav = screen.getByRole('navigation', { name: '主导航' });
+    fireEvent.click(within(nav).getByRole('button', { name: '更多' }));
     expect(within(nav).getByRole('link', { name: '连接器' })).toHaveAttribute(
       'href',
       '/connectors',
     );
     expect(within(nav).queryByRole('link', { name: 'MCP' })).toBeNull();
+  });
+
+  it('主导航只铺开工作组三项,其余入口收进「更多」弹层', async () => {
+    renderSidebar();
+    const nav = screen.getByRole('navigation', { name: '主导航' });
+
+    // 每个会话都会碰的三项常驻,不需要多一次点击
+    expect(
+      within(nav).getByRole('link', { name: '工作台' }),
+    ).toBeInTheDocument();
+    expect(
+      within(nav).getByRole('link', { name: '任务编排' }),
+    ).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '变更' })).toBeInTheDocument();
+
+    // 资源类入口不再常驻:弹层行为本身由 more-nav.test.tsx 覆盖
+    expect(within(nav).queryByRole('link', { name: '知识库' })).toBeNull();
+    fireEvent.click(within(nav).getByRole('button', { name: '更多' }));
+    expect(within(nav).getByRole('link', { name: '知识库' })).toHaveAttribute(
+      'href',
+      '/knowledge',
+    );
+  });
+
+  it('品牌行的放大镜是命令面板的可视入口', async () => {
+    renderSidebar();
+    fireEvent.click(screen.getByRole('button', { name: '搜索与命令' }));
+    expect(useUiStore.getState().commandPaletteOpen).toBe(true);
+  });
+
+  it('账户卡片是菜单:设置与官网收在这里,不再和导航重复', async () => {
+    renderSidebar();
+    await screen.findByText('整理本周日程成周报');
+
+    // 设置不再是导航里的一项,也没有重复的直链
+    expect(screen.queryByRole('link', { name: '设置' })).toBeNull();
+
+    const trigger = screen.getByRole('button', { name: '账户菜单' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole('menu', { name: '账户' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '设置' })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(
+      screen.getByRole('menuitem', { name: '官网' }).getAttribute('href'),
+    ).toMatch(/^https?:/);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: '账户' })).toBeNull();
   });
 
   it('底部通知入口能就地展开通知面板', async () => {

@@ -4,11 +4,11 @@ import json
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 
 
 def _create_conversation(client: TestClient) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
@@ -19,7 +19,7 @@ def _post_message(
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": content, "mode": mode},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert resp.status_code == 201
     return resp.json()
@@ -27,14 +27,14 @@ def _post_message(
 
 def _messages(client: TestClient, conversation_id: str) -> list[dict]:
     resp = client.get(
-        f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+        f"/api/v1/conversations/{conversation_id}/messages", headers=ACCOUNT
     )
     assert resp.status_code == 200
     return resp.json()
 
 
 def _detail(client: TestClient, conversation_id: str) -> dict:
-    resp = client.get(f"/api/v1/conversations/{conversation_id}", headers=TENANT)
+    resp = client.get(f"/api/v1/conversations/{conversation_id}", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -46,7 +46,7 @@ def _stream_message(
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages/stream",
         json={"content": content, "mode": mode},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     return resp, _sse_events(resp.text)
 

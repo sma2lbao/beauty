@@ -32,7 +32,7 @@ PROTOCOL_VERSION = "2025-03-26"
 
 @dataclass(frozen=True)
 class MCPPrincipal:
-    tenant_id: str
+    account_id: str
     api_key_id: str
     scopes: frozenset[str]
 
@@ -74,7 +74,7 @@ class OAuthTokenIntrospector:
         if not body.get("active"):
             return None
         return MCPPrincipal(
-            tenant_id=str(body["tenant_id"]),
+            account_id=str(body["account_id"]),
             api_key_id=str(body.get("client_id") or "oauth"),
             scopes=frozenset(str(body.get("scope") or "").split()),
         )
@@ -118,7 +118,7 @@ class ApiKeyVerifier:
             raise UnauthorizedError("mcp.unauthorized", "API Key 无效或已吊销")
         body = response.json()
         return MCPPrincipal(
-            tenant_id=str(body["tenant_id"]),
+            account_id=str(body["account_id"]),
             api_key_id=str(body["api_key_id"]),
             scopes=frozenset(body.get("scopes") or []),
         )
@@ -170,9 +170,9 @@ def _read_only_tools(toolkit: Any | None) -> list[dict[str, Any]]:
     return out
 
 
-async def _run_tools(factory, tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
+async def _run_tools(factory, account_id: str, limit: int = 10) -> list[dict[str, Any]]:
     async with session_scope(factory) as session:
-        runs = await RunRepository(session).list_recent(tenant_id, limit)
+        runs = await RunRepository(session).list_recent(account_id, limit)
     return [
         {
             "id": run.id,
@@ -186,12 +186,12 @@ async def _run_tools(factory, tenant_id: str, limit: int = 10) -> list[dict[str,
 
 
 async def _artifact_read(
-    factory, tenant_id: str, artifact_id: str, store: Any = None
+    factory, account_id: str, artifact_id: str, store: Any = None
 ) -> dict[str, Any]:
     """按 id 取交付物并装载文本;二进制件不返回正文(MCP 只承载文本)。"""
     async with session_scope(factory) as session:
-        artifact = await ArtifactRepository(session).require_for_tenant(
-            tenant_id, artifact_id
+        artifact = await ArtifactRepository(session).require_for_account(
+            account_id, artifact_id
         )
         text = await artifacts_service.read_artifact_text(artifact, store)
         mime_type = artifact.content_type or "text/markdown"
@@ -204,10 +204,10 @@ async def _artifact_read(
     return {"uri": uri, "mimeType": mime_type, "text": text}
 
 
-async def _list_resources(factory, tenant_id: str, limit: int = 20):
+async def _list_resources(factory, account_id: str, limit: int = 20):
     async with session_scope(factory) as session:
         artifacts = await ArtifactRepository(session).list_scoped(
-            tenant_id, limit=limit, order_by=[RunArtifact.created_at.desc()]
+            account_id, limit=limit, order_by=[RunArtifact.created_at.desc()]
         )
     return [
         {
@@ -238,7 +238,7 @@ async def call_tool(
         return _tool_result(
             json.dumps(
                 {
-                    "tenant_id": principal.tenant_id,
+                    "account_id": principal.account_id,
                     "api_key_id": principal.api_key_id,
                     "scopes": sorted(principal.scopes),
                 },
@@ -246,7 +246,7 @@ async def call_tool(
             )
         )
     if name == "beauty.list_runs":
-        runs = await _run_tools(factory, principal.tenant_id)
+        runs = await _run_tools(factory, principal.account_id)
         return _tool_result(json.dumps({"runs": runs}, ensure_ascii=False))
     if name == "beauty.get_artifact":
         artifact_id = str(arguments.get("artifact_id") or "")
@@ -255,7 +255,7 @@ async def call_tool(
         try:
             content = await _artifact_read(
                 factory,
-                principal.tenant_id,
+                principal.account_id,
                 artifact_id,
                 getattr(request.app.state, "artifact_store", None),
             )
@@ -264,7 +264,7 @@ async def call_tool(
         return _tool_result(content["text"])
     # 只读工具经工具箱执行(进程内注册表或 tool-service 远程目录)
     toolkit_factory = getattr(request.app.state, "toolkit_factory", None)
-    toolkit = toolkit_factory(principal.tenant_id) if toolkit_factory else None
+    toolkit = toolkit_factory(principal.account_id) if toolkit_factory else None
     if toolkit is None:
         return _tool_result("工具未配置", is_error=True)
     tool_name = name.removeprefix("beauty.")
@@ -281,12 +281,12 @@ def _builtin_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "beauty.whoami",
-            "description": "查看当前 API Key 的租户与 scopes",
+            "description": "查看当前 API Key 的账号与 scopes",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "beauty.list_runs",
-            "description": "列出当前租户最近的 run(只读)",
+            "description": "列出当前账号最近的 run(只读)",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
@@ -315,7 +315,7 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
     if method == "tools/list":
         _require_scope(principal, "mcp:tools:read")
         toolkit_factory = getattr(request.app.state, "toolkit_factory", None)
-        toolkit = toolkit_factory(principal.tenant_id) if toolkit_factory else None
+        toolkit = toolkit_factory(principal.account_id) if toolkit_factory else None
         return {"tools": [*_builtin_tools(), *_read_only_tools(toolkit)]}
     if method == "tools/call":
         _require_scope(principal, "mcp:tools:call")
@@ -328,7 +328,7 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
         _require_scope(principal, "artifacts:read")
         return {
             "resources": await _list_resources(
-                request.app.state.session_factory, principal.tenant_id
+                request.app.state.session_factory, principal.account_id
             )
         }
     if method == "resources/read":
@@ -342,7 +342,7 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
                 "contents": [
                     await _artifact_read(
                         request.app.state.session_factory,
-                        principal.tenant_id,
+                        principal.account_id,
                         artifact_id,
                         getattr(request.app.state, "artifact_store", None),
                     )

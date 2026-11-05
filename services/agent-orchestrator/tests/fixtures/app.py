@@ -23,7 +23,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services import models as models_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.tools import ToolSpec, build_tools
-from tests.fixtures.auth import _IDP, TENANT
+from tests.fixtures.auth import _IDP, ACCOUNT
 from tests.fixtures.knowledge import FakeKnowledge
 from tests.fixtures.llm import FakeLLM
 
@@ -127,8 +127,8 @@ def _tool_client(
     app = create_app(
         _settings(tmp_path, "tools.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(
-            tenant, knowledge=knowledge
+        toolkit_factory=lambda account: build_tools(
+            account, knowledge=knowledge
         ).extended(list(extras)),
         token_verifier=_IDP.verifier(),
     )
@@ -139,7 +139,7 @@ def _create_run(client: TestClient, goal: str = "整理本周日程") -> str:
     resp = client.post(
         "/api/v1/runs",
         json={"title": "周报", "goal": goal, "acceptance_criteria": ["日程已整理"]},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     return resp.json()["id"]
 

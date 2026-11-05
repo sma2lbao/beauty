@@ -128,9 +128,7 @@ def authorize_url(
     return f"{GITHUB_AUTHORIZE}?{urlencode(query)}", state
 
 
-async def _json(
-    client: httpx.AsyncClient, method: str, url: str, **kwargs
-) -> dict:
+async def _json(client: httpx.AsyncClient, method: str, url: str, **kwargs) -> dict:
     try:
         response = await client.request(method, url, **kwargs)
     except httpx.HTTPError as exc:

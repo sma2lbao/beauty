@@ -53,9 +53,9 @@ from agent_orchestrator.services.tools import (  # noqa: E402
     build_tools,
 )
 
-TENANT_ID = "tenant-golden"
+ACCOUNT_ID = "0123456789abcdef0123456789abcdef"
 _IDP = TestIdP()
-TENANT = _IDP.bearer(TENANT_ID)
+ACCOUNT = _IDP.bearer(ACCOUNT_ID)
 
 CHAT_TEXT = "你好"
 CHAT_REPLY = "你好!我是测试助手,可以帮你整理日程。"
@@ -217,8 +217,8 @@ class FakeKnowledge:
     def __init__(self) -> None:
         self.queries: list[tuple[str, str, int]] = []
 
-    async def search(self, tenant_id: str, query: str, limit: int) -> dict[str, Any]:
-        self.queries.append((tenant_id, query, limit))
+    async def search(self, account_id: str, query: str, limit: int) -> dict[str, Any]:
+        self.queries.append((account_id, query, limit))
         return {
             "query": query,
             "provider": "local",
@@ -442,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def phase_chat_sse() -> None:
-        response = ctx.client.post("/api/v1/conversations", json={}, headers=TENANT)
+        response = ctx.client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
         check(
             response.status_code == 201,
             f"建会话期望 201,实际 {response.status_code}:{response.text[:200]}",
@@ -452,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
         response = ctx.client.post(
             f"/api/v1/conversations/{ctx.conversation_id}/messages/stream",
             json={"content": CHAT_TEXT, "mode": "auto"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         check(
             response.status_code == 200,
@@ -483,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         messages = ctx.client.get(
-            f"/api/v1/conversations/{ctx.conversation_id}/messages", headers=TENANT
+            f"/api/v1/conversations/{ctx.conversation_id}/messages", headers=ACCOUNT
         ).json()
         check(
             [item["role"] for item in messages] == ["user", "assistant"],
@@ -498,7 +498,7 @@ def main(argv: list[str] | None = None) -> int:
         response = ctx.client.post(
             f"/api/v1/conversations/{ctx.conversation_id}/messages/stream",
             json={"content": TASK_TEXT, "mode": "task"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         check(
             response.status_code == 200,
@@ -529,7 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             "任务路径的 done.reply 应为 null",
         )
 
-        plan = ctx.client.get(f"/api/v1/runs/{ctx.run_id}/plan", headers=TENANT).json()
+        plan = ctx.client.get(f"/api/v1/runs/{ctx.run_id}/plan", headers=ACCOUNT).json()
         check(
             plan.get("status") == "awaiting_approval",
             f"/plan 期望 awaiting_approval,实际 {plan.get('status')}",
@@ -537,11 +537,11 @@ def main(argv: list[str] | None = None) -> int:
         check("执行计划" in plan.get("plan_markdown", ""), "计划正文未落在 plan_markdown")
 
         detail = ctx.client.get(
-            f"/api/v1/conversations/{ctx.conversation_id}", headers=TENANT
+            f"/api/v1/conversations/{ctx.conversation_id}", headers=ACCOUNT
         ).json()
         check(detail.get("active_run_id") == ctx.run_id, "会话 active_run_id 未指向新 run")
         messages = ctx.client.get(
-            f"/api/v1/conversations/{ctx.conversation_id}/messages", headers=TENANT
+            f"/api/v1/conversations/{ctx.conversation_id}/messages", headers=ACCOUNT
         ).json()
         check(
             [item["role"] for item in messages] == ["user", "assistant", "user"],
@@ -549,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def phase_approve_and_confirm() -> None:
-        response = ctx.client.post(f"/api/v1/runs/{ctx.run_id}/approve", headers=TENANT)
+        response = ctx.client.post(f"/api/v1/runs/{ctx.run_id}/approve", headers=ACCOUNT)
         check(
             response.status_code == 200,
             f"审批期望 200,实际 {response.status_code}:{response.text[:300]}",
@@ -564,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
             f"确认前危险工具绝不能执行,实际已执行 {ctx.danger.sent}",
         )
         events = ctx.client.get(
-            f"/api/v1/runs/{ctx.run_id}/events", headers=TENANT
+            f"/api/v1/runs/{ctx.run_id}/events", headers=ACCOUNT
         ).json()
         required = [e for e in events if e["type"] == "run.confirmation.required.v1"]
         check(len(required) == 1, "缺少 run.confirmation.required.v1 事件")
@@ -582,7 +582,7 @@ def main(argv: list[str] | None = None) -> int:
         response = ctx.client.post(
             f"/api/v1/runs/{ctx.run_id}/confirm",
             json={"action": "approve"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         check(
             response.status_code == 200,
@@ -600,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def phase_events() -> None:
         events = ctx.client.get(
-            f"/api/v1/runs/{ctx.run_id}/events", headers=TENANT
+            f"/api/v1/runs/{ctx.run_id}/events", headers=ACCOUNT
         ).json()
         ctx.events = events
         # P1-D 起同一事件流里还写 run.item.v1(过程项),它不参与关键生命周期
@@ -644,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def phase_run_sse() -> None:
         with ctx.client.stream(
-            "GET", f"/api/v1/runs/{ctx.run_id}/events/stream", headers=TENANT
+            "GET", f"/api/v1/runs/{ctx.run_id}/events/stream", headers=ACCOUNT
         ) as response:
             check(
                 response.status_code == 200,
@@ -672,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def phase_artifact() -> None:
         response = ctx.client.get(
-            f"/api/v1/runs/{ctx.run_id}/artifact", headers=TENANT
+            f"/api/v1/runs/{ctx.run_id}/artifact", headers=ACCOUNT
         )
         check(
             response.status_code == 200,
@@ -689,14 +689,14 @@ def main(argv: list[str] | None = None) -> int:
         ctx.artifact = artifact
 
         metas = ctx.client.get(
-            f"/api/v1/runs/{ctx.run_id}/artifacts", headers=TENANT
+            f"/api/v1/runs/{ctx.run_id}/artifacts", headers=ACCOUNT
         ).json()
         check(len(metas) == 1, f"交付物清单期望 1 件,实际 {len(metas)}")
         check(metas[0]["id"] == artifact["id"], "清单与主交付物 id 不一致")
 
         download = ctx.client.get(
             f"/api/v1/runs/{ctx.run_id}/artifacts/{artifact['id']}/download",
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         check(
             download.status_code == 200,
@@ -785,7 +785,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"FakeLLM 调用次数期望 {len(LLM_SCRIPT)},实际 {calls}",
             )
             check(
-                ctx.knowledge.queries == [(TENANT_ID, "本周日程", 5)],
+                ctx.knowledge.queries == [(ACCOUNT_ID, "本周日程", 5)],
                 f"知识库检索调用不符:{ctx.knowledge.queries}",
             )
         finally:
@@ -818,8 +818,8 @@ def main(argv: list[str] | None = None) -> int:
     app = create_app(
         _settings(db_path),
         llm_client=ctx.fake,
-        toolkit_factory=lambda tenant_id: build_tools(
-            tenant_id, knowledge=ctx.knowledge
+        toolkit_factory=lambda account_id: build_tools(
+            account_id, knowledge=ctx.knowledge
         ).extended([ctx.danger.spec()]),
         token_verifier=_IDP.verifier(),
     )

@@ -17,9 +17,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "attachments", sa.Column("extracted_text", sa.Text(), nullable=True)
-    )
+    op.add_column("attachments", sa.Column("extracted_text", sa.Text(), nullable=True))
     op.add_column(
         "attachments",
         sa.Column("extraction_error", sa.String(length=500), nullable=True),

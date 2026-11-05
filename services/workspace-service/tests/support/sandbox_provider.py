@@ -402,7 +402,7 @@ def _use_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> FakeSdk:
 
 def _spec(**overrides: Any) -> SandboxSpec:
     defaults: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "name": "bm-abc",
         "kind": "generic",
         "image": "python",

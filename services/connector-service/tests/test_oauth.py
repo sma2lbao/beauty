@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from connector.main import create_app
 from tests.conftest import (
     _IDP,
-    TENANT,
+    ACCOUNT,
     DemoMock,
     _settings,
     insert_oauth_session,
@@ -23,7 +23,7 @@ from tests.demo_provider import DemoProvider
 
 
 def _start(client: TestClient) -> tuple[str, str]:
-    resp = client.post("/v1/connectors/demo/authorize", headers=TENANT)
+    resp = client.post("/v1/connectors/demo/authorize", headers=ACCOUNT)
     assert resp.status_code == 200, resp.text
     payload = resp.json()
     query = parse_qs(urlparse(payload["authorize_url"]).query)
@@ -59,7 +59,7 @@ def test_authorize_and_callback_creates_connection(
     assert params["status"] == "connected"
     assert params["connection_id"]
 
-    connections = client.get("/v1/connections", headers=TENANT).json()
+    connections = client.get("/v1/connections", headers=ACCOUNT).json()
     assert len(connections) == 1
     conn = connections[0]
     assert conn["status"] == "active"
@@ -142,7 +142,7 @@ def test_callback_token_failure(
     params = _redirect_params(_callback(client, state))
     assert params["status"] == "error"
     assert params["code"] == "connector.auth_expired"
-    assert client.get("/v1/connections", headers=TENANT).json() == []
+    assert client.get("/v1/connections", headers=ACCOUNT).json() == []
     with sqlite3.connect(tmp_path / "test.db") as raw:
         status, error_code = raw.execute(
             "SELECT status, error_code FROM oauth_sessions"
@@ -159,7 +159,7 @@ def test_callback_missing_open_id(client: TestClient, demo: DemoMock) -> None:
 
 
 def test_authorize_unknown_provider(client: TestClient) -> None:
-    resp = client.post("/v1/connectors/acme/authorize", headers=TENANT)
+    resp = client.post("/v1/connectors/acme/authorize", headers=ACCOUNT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "connector.provider_not_found"
 
@@ -173,8 +173,8 @@ def test_authorize_unconfigured_provider(
     settings = _settings(tmp_path)
     app = create_app(settings, token_verifier=_IDP.verifier())
     with TestClient(app) as scoped:
-        catalog = scoped.get("/v1/connectors", headers=TENANT).json()["providers"][0]
+        catalog = scoped.get("/v1/connectors", headers=ACCOUNT).json()["providers"][0]
         assert catalog["configured"] is False
-        resp = scoped.post("/v1/connectors/demo/authorize", headers=TENANT)
+        resp = scoped.post("/v1/connectors/demo/authorize", headers=ACCOUNT)
         assert resp.status_code == 409
         assert resp.json()["code"] == "connector.provider_not_configured"

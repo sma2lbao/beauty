@@ -39,7 +39,7 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import _settings
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 ITEMS = [
@@ -68,10 +68,10 @@ async def factory(
 async def _create_run(
     factory: async_sessionmaker[AsyncSession],
     *,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
 ) -> str:
     async with session_scope(factory) as session:
-        run = Run(tenant_id=tenant_id, title="周报", goal="整理本周日程")
+        run = Run(account_id=account_id, title="周报", goal="整理本周日程")
         session.add(run)
         await session.flush()
         return run.id
@@ -196,7 +196,7 @@ async def test_write_persists_snapshot_and_event(
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         raw = await tool.handler({"todos": ITEMS})
         payload = json.loads(raw)
 
@@ -215,7 +215,7 @@ async def test_write_persists_snapshot_and_event(
     events = await _events(factory, run_id)
     todo_events = [event for event in events if event.type == TODO_UPDATED_EVENT]
     assert [event.type for event in todo_events] == [TODO_UPDATED_EVENT]
-    assert todo_events[0].tenant_id == TENANT
+    assert todo_events[0].account_id == ACCOUNT
     assert todo_events[0].payload == {
         "todos": ITEMS,
         "counts": {"pending": 1, "in_progress": 1, "completed": 1},
@@ -230,7 +230,7 @@ async def test_second_write_advances_revision(
     tool = _tool(factory)
     run_id = await _create_run(factory)
     changed = [{"content": "收集本周进展", "status": "completed"}]
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         first = json.loads(await tool.handler({"todos": ITEMS}))
         second = json.loads(await tool.handler({"todos": changed}))
 
@@ -251,7 +251,7 @@ async def test_identical_list_is_idempotent(
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         first = json.loads(await tool.handler({"todos": ITEMS}))
         again = json.loads(await tool.handler({"todos": ITEMS}))
 
@@ -268,7 +268,7 @@ async def test_invalid_arguments_return_error_without_side_effects(
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         raw = await tool.handler({"todos": [{"content": "a", "status": "x"}]})
     payload = json.loads(raw)
     assert "error" in payload
@@ -280,19 +280,19 @@ async def test_write_requires_run_context(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tool = _tool(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         payload = json.loads(await tool.handler({"todos": ITEMS}))
     assert "缺少工具上下文" in payload["error"]
 
 
-async def test_write_rejects_other_tenant(
+async def test_write_rejects_other_account(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=OTHER, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=OTHER, run_id=run_id)):
         payload = json.loads(await tool.handler({"todos": ITEMS}))
-    assert "不属于当前租户" in payload["error"]
+    assert "不属于当前账号" in payload["error"]
     assert await _stored_todos(factory, run_id) == []
 
 
@@ -301,7 +301,7 @@ async def test_write_reports_missing_run(
 ) -> None:
     tool = _tool(factory)
     with bind_tool_context(
-        ToolContext(tenant_id=TENANT, run_id="00000000000000000000000000000000")
+        ToolContext(account_id=ACCOUNT, run_id="00000000000000000000000000000000")
     ):
         payload = json.loads(await tool.handler({"todos": ITEMS}))
     assert "error" in payload
@@ -315,7 +315,7 @@ async def test_read_end_returns_empty_before_first_write(
 ) -> None:
     run_id = await _create_run(factory)
     async with session_scope(factory) as session:
-        todo_read = await list_todos(session, TENANT, run_id)
+        todo_read = await list_todos(session, ACCOUNT, run_id)
     assert todo_read.todos == []
     assert todo_read.counts.model_dump() == {
         "pending": 0,
@@ -331,12 +331,12 @@ async def test_read_end_reflects_snapshot_and_latest_revision(
     tool = _tool(factory)
     run_id = await _create_run(factory)
     changed = [{"content": "收集本周进展", "status": "completed"}]
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         await tool.handler({"todos": ITEMS})
         await tool.handler({"todos": changed})
 
     async with session_scope(factory) as session:
-        todo_read = await list_todos(session, TENANT, run_id)
+        todo_read = await list_todos(session, ACCOUNT, run_id)
     assert todo_read.run_id == run_id
     assert [item.content for item in todo_read.todos] == ["收集本周进展"]
     assert todo_read.todos[0].status == "completed"

@@ -51,7 +51,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         await action(
             session,
             graph,
-            job.tenant_id,
+            job.account_id,
             job.run_id,
             store=container.artifact_store,
             workspace=container.workspace_client,
@@ -66,7 +66,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         await runs_service.approve_run(
             session,
             graph,
-            job.tenant_id,
+            job.account_id,
             job.run_id,
             container.artifact_store,
             container.workspace_client,
@@ -79,7 +79,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         await runs_service.confirm_run(
             session,
             graph,
-            job.tenant_id,
+            job.account_id,
             job.run_id,
             str(payload.get("action") or "approve"),
             payload.get("reason"),
@@ -97,7 +97,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         await runs_service.answer_run(
             session,
             graph,
-            job.tenant_id,
+            job.account_id,
             job.run_id,
             question_id=str(payload.get("question_id") or ""),
             action=str(payload.get("action") or "decline"),
@@ -115,7 +115,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         await runs_service.reject_run(
             session,
             graph,
-            job.tenant_id,
+            job.account_id,
             job.run_id,
             str(payload.get("reason") or "已拒绝"),
         )
@@ -128,7 +128,7 @@ async def process_one(container: AppContainer) -> bool:
     settings = container.settings
     factory = container.session_factory
     assert factory is not None
-    tenant_id: str | None = None
+    account_id: str | None = None
     job_id: str | None = None
     async with session_scope(factory) as session:
         job = await JobRepository(session).claim_next(
@@ -136,12 +136,14 @@ async def process_one(container: AppContainer) -> bool:
         )
         if job is None:
             return False
-        tenant_id = job.tenant_id
+        account_id = job.account_id
         job_id = job.id
-    assert tenant_id is not None and job_id is not None
+    assert account_id is not None and job_id is not None
 
     # 后台任务没有 HTTP 请求:用 job id 作种子,让同一 job 的日志可串联
-    bind_request_context(request_id=f"job-{job_id}", tenant_id=tenant_id, job_id=job_id)
+    bind_request_context(
+        request_id=f"job-{job_id}", account_id=account_id, job_id=job_id
+    )
     runtime = PostCommitRuntime(
         session_factory=factory,
         llm=container.llm_client,
@@ -151,7 +153,9 @@ async def process_one(container: AppContainer) -> bool:
         try:
             async with session_scope(factory) as session:
                 bind_runtime(session, runtime)
-                job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
+                job = await JobRepository(session).require_for_account(
+                    account_id, job_id
+                )
                 await _dispatch(container, session, job)
             # 事务已提交:执行 run 完成等提交后副作用(记忆抽取),失败不影响 job
             await drain_after_commit(session)
@@ -159,7 +163,7 @@ async def process_one(container: AppContainer) -> bool:
             logger.exception("job failed", job_id=job_id)
             async with session_scope(factory) as session:
                 repo = JobRepository(session)
-                job = await repo.require_for_tenant(tenant_id, job_id)
+                job = await repo.require_for_account(account_id, job_id)
                 metrics.observe_job_failure(kind=job.kind)
                 job.last_error = f"{type(exc).__name__}: {exc}"[:1000]
                 job.lease_until = None
@@ -173,7 +177,7 @@ async def process_one(container: AppContainer) -> bool:
             return True
 
         async with session_scope(factory) as session:
-            job = await JobRepository(session).require_for_tenant(tenant_id, job_id)
+            job = await JobRepository(session).require_for_account(account_id, job_id)
             job.status = "succeeded"
             job.lease_until = None
             job.locked_by = None

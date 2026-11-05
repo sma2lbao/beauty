@@ -23,7 +23,7 @@ from connector.services.connections import (
     refresh_if_expiring,
     upsert_authorized_connection,
 )
-from tests.conftest import TENANT, _settings, demo_credentials, insert_connection
+from tests.conftest import ACCOUNT, _settings, demo_credentials, insert_connection
 
 
 def _db(tmp_path: Path) -> Path:
@@ -41,7 +41,7 @@ def test_refresh_skips_when_not_expiring(
     async def _run() -> str:
         factory = client.app.state.session_factory
         async with factory() as session:
-            row = await ConnectionRepository(session).require_for_tenant(
+            row = await ConnectionRepository(session).require_for_account(
                 "t-1", conn["id"]
             )
             refreshed = await refresh_if_expiring(session, settings, "t-1", row, None)
@@ -67,7 +67,7 @@ def test_refresh_rechecks_under_lock(
     async def _run() -> str:
         factory = client.app.state.session_factory
         async with factory() as session:
-            row = await ConnectionRepository(session).require_for_tenant(
+            row = await ConnectionRepository(session).require_for_account(
                 "t-1", conn["id"]
             )
             refreshed = await refresh_if_expiring(session, settings, "t-1", row, None)
@@ -91,7 +91,7 @@ def test_refresh_returns_inactive_connection_under_lock(
     async def _run() -> tuple[str, str]:
         factory = client.app.state.session_factory
         async with factory() as session:
-            row = await ConnectionRepository(session).require_for_tenant(
+            row = await ConnectionRepository(session).require_for_account(
                 "t-1", conn["id"]
             )
             refreshed = await refresh_if_expiring(session, settings, "t-1", row, None)
@@ -112,11 +112,11 @@ def test_transient_refresh_failure_keeps_connection_active(
         headers={"x-ogw-ratelimit-reset": "7"},
         json={"code": 99991400, "msg": "rate limited"},
     )
-    response = client.post(f"/v1/connections/{conn['id']}/refresh", headers=TENANT)
+    response = client.post(f"/v1/connections/{conn['id']}/refresh", headers=ACCOUNT)
     assert response.status_code == 429
     assert response.json()["code"] == "connector.upstream_rate_limited"
 
-    fresh = client.get(f"/v1/connections/{conn['id']}", headers=TENANT).json()
+    fresh = client.get(f"/v1/connections/{conn['id']}", headers=ACCOUNT).json()
     assert fresh["status"] == "active"
     assert fresh["last_error_code"] == "connector.upstream_rate_limited"
 
@@ -129,17 +129,17 @@ def test_upstream_outage_refresh_failure_keeps_connection_active(
         _db(tmp_path), expires_at=datetime.now(UTC) - timedelta(seconds=1)
     )
     demo.fail["/oauth/token"] = httpx.Response(503, text="upstream down")
-    response = client.post(f"/v1/connections/{conn['id']}/refresh", headers=TENANT)
+    response = client.post(f"/v1/connections/{conn['id']}/refresh", headers=ACCOUNT)
     assert response.status_code == 502
     assert response.json()["code"] == "connector.upstream_unavailable"
 
-    fresh = client.get(f"/v1/connections/{conn['id']}", headers=TENANT).json()
+    fresh = client.get(f"/v1/connections/{conn['id']}", headers=ACCOUNT).json()
     assert fresh["status"] == "active"
     assert fresh["last_error_code"] == "connector.upstream_unavailable"
 
 
 def test_apply_credentials_keeps_scopes_when_scope_empty() -> None:
-    conn = Connection(tenant_id="t-1", provider="demo", account="u-1", scopes=["old"])
+    conn = Connection(account_id="t-1", provider="demo", account="u-1", scopes=["old"])
     credentials = Credentials(
         access_token="at-x",
         expires_at=datetime.now(UTC) + timedelta(seconds=60),
@@ -165,7 +165,7 @@ def test_upsert_reuses_existing_connection(
             merged = await upsert_authorized_connection(
                 session,
                 settings=settings,
-                tenant_id="t-1",
+                account_id="t-1",
                 provider_name="demo",
                 owner_subject="u2",
                 credentials=Credentials(
@@ -199,11 +199,11 @@ def test_execute_wraps_http_error(
         async def call(self, *args, **kwargs):
             raise httpx.ConnectError("boom")
 
-    # 执行面改为按租户解析 provider(tenant_apps 优先),桩点随之移动
-    async def _provider_for_tenant(*args, **kwargs):
+    # 执行面改为按账号解析 provider(account_apps 优先),桩点随之移动
+    async def _provider_for_account(*args, **kwargs):
         return _Boom()
 
-    monkeypatch.setattr(execute_service, "provider_for_tenant", _provider_for_tenant)
+    monkeypatch.setattr(execute_service, "provider_for_account", _provider_for_account)
 
     async def _run() -> dict:
         factory = client.app.state.session_factory
@@ -211,7 +211,7 @@ def test_execute_wraps_http_error(
             payload = await execute_service.execute_tool(
                 session,
                 settings,
-                tenant_id="t-1",
+                account_id="t-1",
                 provider_name="demo",
                 tool_name="Demo__get_me",
                 arguments={},
@@ -235,7 +235,7 @@ def test_check_transient_failure_keeps_active(
         headers={"x-ogw-ratelimit-reset": "3"},
         json={"code": 99991400, "msg": "rate limited"},
     )
-    response = client.post(f"/v1/connections/{conn['id']}/check", headers=TENANT)
+    response = client.post(f"/v1/connections/{conn['id']}/check", headers=ACCOUNT)
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "active"
@@ -248,7 +248,7 @@ def test_check_unknown_identity_shape_is_not_auth_failure(
     """上游返回结构调整不该判成"需要重新授权",只留错误码。"""
     conn = insert_connection(_db(tmp_path))
     demo.fail["/userinfo"] = httpx.Response(200, json={"code": 0, "data": {}})
-    response = client.post(f"/v1/connections/{conn['id']}/check", headers=TENANT)
+    response = client.post(f"/v1/connections/{conn['id']}/check", headers=ACCOUNT)
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "active"

@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 from common.errors import NotFoundError
-from common.security.internal_secret import SECRET_HEADER, TENANT_HEADER
+from common.security.internal_secret import ACCOUNT_HEADER, SECRET_HEADER
 from common.service_testkit.client import app_client
 from common.tools import (
     ExecutorKind,
@@ -21,7 +21,7 @@ from common.tools import (
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledgeClient,
     FakeSandboxProvider,
     _settings,
@@ -119,7 +119,7 @@ def make_gateway(
 # ---- 目录:TTL 缓存与降级 ------------------------------------------------
 
 
-async def test_tools_fetches_catalog_once_per_tenant() -> None:
+async def test_tools_fetches_catalog_once_per_account() -> None:
     service = FakeConnectorService()
     gateway = make_gateway(service)
 
@@ -130,12 +130,12 @@ async def test_tools_fetches_catalog_once_per_tenant() -> None:
     assert [tool.name for tool in first] == ["Demo__read_document"]
     assert second == first
     assert [tool.name for tool in other] == ["Demo__read_document"]
-    # 同租户命中缓存,跨租户各自拉取。
+    # 同账号命中缓存,跨账号各自拉取。
     assert len(service.catalog_requests()) == 2
     first_request, second_request = service.catalog_requests()
     assert first_request.headers[SECRET_HEADER] == SECRET
-    assert first_request.headers[TENANT_HEADER] == "t-1"
-    assert second_request.headers[TENANT_HEADER] == "t-2"
+    assert first_request.headers[ACCOUNT_HEADER] == "t-1"
+    assert second_request.headers[ACCOUNT_HEADER] == "t-2"
     await gateway.aclose()
 
 
@@ -250,7 +250,7 @@ async def test_execute_posts_envelope_and_passes_result_through() -> None:
     assert request.method == "POST"
     assert request.url.path == "/v1/connectors/demo/execute"
     assert request.headers[SECRET_HEADER] == SECRET
-    assert request.headers[TENANT_HEADER] == "t-1"
+    assert request.headers[ACCOUNT_HEADER] == "t-1"
     assert json.loads(request.content) == {
         "tool": "Demo__read_document",
         "arguments": {"document_id": "doc-1"},
@@ -465,16 +465,16 @@ class FakeConnectorGateway:
     def enabled(self) -> bool:
         return True
 
-    async def tools(self, tenant_id: str) -> tuple[ToolDescriptor, ...]:
-        self.tool_calls.append(tenant_id)
+    async def tools(self, account_id: str) -> tuple[ToolDescriptor, ...]:
+        self.tool_calls.append(account_id)
         return self.tools_result
 
-    async def find(self, tenant_id: str, name: str) -> ToolDescriptor | None:
+    async def find(self, account_id: str, name: str) -> ToolDescriptor | None:
         return next((tool for tool in self.tools_result if tool.name == name), None)
 
     async def execute(
         self,
-        tenant_id: str,
+        account_id: str,
         descriptor: ToolDescriptor,
         arguments: dict[str, Any],
         *,
@@ -482,7 +482,7 @@ class FakeConnectorGateway:
     ) -> ConnectorExecution:
         self.executed.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "tool": descriptor.name,
                 "arguments": arguments,
                 "run_id": run_id,
@@ -522,7 +522,7 @@ async def test_runner_dispatches_connector_tool(tmp_path: Path) -> None:
     assert outcome.sandbox_id is None
     assert gateway.executed == [
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "tool": "Demo__read_document",
             "arguments": {"document_id": "doc-1"},
             "run_id": "run-1",
@@ -652,10 +652,10 @@ def connector_client(
         yield test_client
 
 
-def test_list_tools_merges_connector_tools_for_tenant(tmp_path: Path) -> None:
+def test_list_tools_merges_connector_tools_for_account(tmp_path: Path) -> None:
     gateway = FakeConnectorGateway()
     with connector_client(tmp_path, gateway) as client:
-        resp = client.get("/v1/tools", headers=TENANT)
+        resp = client.get("/v1/tools", headers=ACCOUNT)
 
     assert resp.status_code == 200
     tools = resp.json()["tools"]
@@ -673,15 +673,15 @@ def test_list_tools_without_credentials_is_builtin_only(tmp_path: Path) -> None:
     gateway = FakeConnectorGateway()
     with connector_client(tmp_path, gateway) as client:
         anonymous = client.get("/v1/tools")
-        tenant_header_only = client.get("/v1/tools", headers={"X-Tenant-Id": "t-1"})
+        account_header_only = client.get("/v1/tools", headers={"X-Account-Id": "t-1"})
 
     assert anonymous.status_code == 200
     assert "Demo__read_document" not in [
         tool["name"] for tool in anonymous.json()["tools"]
     ]
-    # 鉴权开启时 X-Tenant-Id 不算凭据,仍只返回内置目录。
+    # 鉴权开启时 X-Account-Id 不算凭据,仍只返回内置目录。
     assert "Demo__read_document" not in [
-        tool["name"] for tool in tenant_header_only.json()["tools"]
+        tool["name"] for tool in account_header_only.json()["tools"]
     ]
     assert gateway.tool_calls == []
 
@@ -689,17 +689,17 @@ def test_list_tools_without_credentials_is_builtin_only(tmp_path: Path) -> None:
 def test_connector_tools_absent_when_gateway_not_configured(
     client: TestClient,
 ) -> None:
-    resp = client.get("/v1/tools", headers=TENANT)
+    resp = client.get("/v1/tools", headers=ACCOUNT)
 
     assert resp.status_code == 200
     assert "Demo__read_document" not in [tool["name"] for tool in resp.json()["tools"]]
 
 
-def test_get_connector_tool_requires_tenant(tmp_path: Path) -> None:
+def test_get_connector_tool_requires_account(tmp_path: Path) -> None:
     gateway = FakeConnectorGateway()
     with connector_client(tmp_path, gateway) as client:
         anonymous = client.get("/v1/tools/Demo__read_document")
-        found = client.get("/v1/tools/Demo__read_document", headers=TENANT)
+        found = client.get("/v1/tools/Demo__read_document", headers=ACCOUNT)
 
     assert anonymous.status_code == 404
     assert anonymous.json()["code"] == "tool.not_found"
@@ -719,9 +719,9 @@ def test_execute_connector_tool_audits_and_returns_envelope(tmp_path: Path) -> N
                 "arguments": {"document_id": "doc-1"},
                 "run_id": "run-1",
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
-        calls = client.get("/v1/tool-calls", headers=TENANT)
+        calls = client.get("/v1/tool-calls", headers=ACCOUNT)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -733,7 +733,7 @@ def test_execute_connector_tool_audits_and_returns_envelope(tmp_path: Path) -> N
     assert "connection_id" not in body
     assert gateway.executed == [
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "tool": "Demo__read_document",
             "arguments": {"document_id": "doc-1"},
             "run_id": "run-1",
@@ -754,7 +754,7 @@ def test_execute_unknown_connector_tool_is_404(tmp_path: Path) -> None:
         resp = client.post(
             "/v1/tools/Demo__nope:execute",
             json={"tool_call_id": "call-9", "arguments": {}},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
     assert resp.status_code == 404

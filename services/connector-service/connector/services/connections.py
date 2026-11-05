@@ -1,4 +1,4 @@
-"""连接业务逻辑:凭证只进不出;状态守卫与租户隔离同 orchestrator 约定。
+"""连接业务逻辑:凭证只进不出;状态守卫与账号隔离同 orchestrator 约定。
 
 刷新是单飞:先按连接行加锁(with_for_update),锁内二次检查「是否仍需刷新」再
 换 token 写回。部分 provider 的 refresh_token 是一次性的,并发各自刷新的后到者
@@ -22,7 +22,7 @@ from connector.providers.base import Credentials, Identity
 from connector.providers.errors import REAUTH_ERROR_CODES, ProviderError
 from connector.repositories import ConnectionRepository
 from connector.schemas.connections import ConnectionStatus
-from connector.services.apps import provider_for_tenant
+from connector.services.apps import provider_for_account
 from connector.services.events import (
     CONNECTION_CREATED,
     CONNECTION_EXPIRED,
@@ -34,24 +34,24 @@ _UNSET: Any = object()
 
 
 async def require_connection(
-    session: AsyncSession, tenant_id: str, connection_id: str
+    session: AsyncSession, account_id: str, connection_id: str
 ) -> Connection:
-    """取租户内连接;不存在 → 404。"""
-    return await ConnectionRepository(session).require_for_tenant(
-        tenant_id, connection_id
+    """取账号内连接;不存在 → 404。"""
+    return await ConnectionRepository(session).require_for_account(
+        account_id, connection_id
     )
 
 
 async def list_connections(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     provider: str | None = None,
     status: str | None = None,
     enabled: bool | None = None,
 ) -> list[Connection]:
     return await ConnectionRepository(session).list_filtered(
-        tenant_id, provider=provider, status=status, enabled=enabled
+        account_id, provider=provider, status=status, enabled=enabled
     )
 
 
@@ -68,12 +68,12 @@ def _require_active(conn: Connection) -> None:
 async def revoke_connection(
     session: AsyncSession,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     connection_id: str,
 ) -> Connection:
     """撤销而非物理删除:凭证与审计需要留痕(§8);revoked 事件同事务入 outbox。"""
     connections = ConnectionRepository(session)
-    conn = await connections.require_for_tenant(tenant_id, connection_id)
+    conn = await connections.require_for_account(account_id, connection_id)
     _require_active(conn)
     conn.status = ConnectionStatus.REVOKED.value
     conn.enabled = False
@@ -86,7 +86,7 @@ async def revoke_connection(
 
 async def update_connection(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     connection_id: str,
     *,
     display_name: str | None = _UNSET,
@@ -94,7 +94,7 @@ async def update_connection(
 ) -> Connection:
     """PATCH:只改传了的字段;关闭启用 != 解绑。"""
     connections = ConnectionRepository(session)
-    conn = await connections.require_for_tenant(tenant_id, connection_id)
+    conn = await connections.require_for_account(account_id, connection_id)
     if display_name is not _UNSET:
         conn.display_name = display_name
     if enabled is not _UNSET and enabled is not None:
@@ -106,7 +106,7 @@ async def upsert_authorized_connection(
     session: AsyncSession,
     *,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     provider_name: str,
     owner_subject: str | None,
     credentials: Credentials,
@@ -114,17 +114,19 @@ async def upsert_authorized_connection(
     scopes: list[str],
     auth_kind: str = "user",
 ) -> Connection:
-    """授权回调/令牌连接落库:同租户同 provider 同 account 复用行,否则新建。
+    """授权回调/令牌连接落库:同账号同 provider 同 account 复用行,否则新建。
 
     新建(首次授权)时在同一事务里登记 connector.connection.created.v1;
     复用已有行属于重新授权,不改 created 语义(其状态变更由 refreshed 埋点覆盖)。
     """
     connections = ConnectionRepository(session)
-    conn = await connections.find_by_account(tenant_id, provider_name, identity.account)
+    conn = await connections.find_by_account(
+        account_id, provider_name, identity.account
+    )
     created = conn is None
     if created:
         conn = Connection(
-            tenant_id=tenant_id,
+            account_id=account_id,
             provider=provider_name,
             account=identity.account,
             status=ConnectionStatus.ACTIVE.value,
@@ -144,10 +146,11 @@ async def upsert_authorized_connection(
         await publish_connection_event(session, settings, conn, CONNECTION_CREATED)
     return conn
 
+
 async def connect_with_token(
     session: AsyncSession,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     *,
     owner_subject: str | None,
     provider_name: str,
@@ -160,7 +163,7 @@ async def connect_with_token(
     provider 必须声明 token_connectable(如内部集成令牌、个人 API token);令牌无效或
     缺权限时由 provider 抛 ProviderError,API 层翻成 400 connector.invalid_credentials。
     """
-    provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
+    provider = await provider_for_account(session, settings, account_id, provider_name)
     if not provider.token_connectable:
         raise AppError(
             "connector.token_not_supported",
@@ -172,7 +175,7 @@ async def connect_with_token(
     conn = await upsert_authorized_connection(
         session,
         settings=settings,
-        tenant_id=tenant_id,
+        account_id=account_id,
         provider_name=provider.name,
         owner_subject=owner_subject,
         credentials=credentials,
@@ -184,6 +187,7 @@ async def connect_with_token(
     if display_name:
         conn.display_name = display_name
     return conn
+
 
 def _apply_authorized(
     conn: Connection,
@@ -234,13 +238,13 @@ def _decrypt(conn: Connection, settings: Settings) -> Credentials:
 async def refresh_connection(
     session: AsyncSession,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     connection_id: str,
     transport: httpx.AsyncBaseTransport | None,
 ) -> Connection:
     """手动刷新:强制换一次 token(仍走行锁,和惰性刷新同一条路径)。"""
     repo = ConnectionRepository(session)
-    conn = await repo.require_for_update(tenant_id, connection_id)
+    conn = await repo.require_for_update(account_id, connection_id)
     _require_active(conn)
     await _refresh_locked(session, settings, conn, transport)
     return conn
@@ -249,7 +253,7 @@ async def refresh_connection(
 async def refresh_if_expiring(
     session: AsyncSession,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     connection: Connection,
     transport: httpx.AsyncBaseTransport | None,
 ) -> Connection:
@@ -257,7 +261,7 @@ async def refresh_if_expiring(
     if not is_expiring(connection.expires_at, settings.refresh_margin_seconds):
         return connection
     repo = ConnectionRepository(session)
-    conn = await repo.require_for_update(tenant_id, connection.id)
+    conn = await repo.require_for_update(account_id, connection.id)
     if not is_expiring(conn.expires_at, settings.refresh_margin_seconds):
         return conn  # 等锁期间已被别的请求刷新
     if conn.status != ConnectionStatus.ACTIVE.value:
@@ -274,12 +278,12 @@ async def _refresh_locked(
 ) -> None:
     """调用方已持有该连接行锁;失败时按错误码决定是否置 expired。
 
-    provider 按租户解析(tenant_apps 优先,factory 回退全局 Settings),否则租户
+    provider 按账号解析(account_apps 优先,factory 回退全局 Settings),否则账号
     自带应用密钥的连接会拿全局应用去换/刷 token,直接 invalid_grant,
     并与连接实际归属的应用不一致。
     """
-    provider = await provider_for_tenant(
-        session, settings, conn.tenant_id, conn.provider
+    provider = await provider_for_account(
+        session, settings, conn.account_id, conn.provider
     )
     credentials = _decrypt(conn, settings)
     async with open_client(settings, transport) as client:
@@ -304,15 +308,15 @@ async def _refresh_locked(
 async def check_connection(
     session: AsyncSession,
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     connection_id: str,
     transport: httpx.AsyncBaseTransport | None,
 ) -> Connection:
     """连通性探测:失败不 500,只把错误码写到连接上(前端展示)。"""
     repo = ConnectionRepository(session)
-    conn = await repo.require_for_tenant(tenant_id, connection_id)
-    provider = await provider_for_tenant(
-        session, settings, conn.tenant_id, conn.provider
+    conn = await repo.require_for_account(account_id, connection_id)
+    provider = await provider_for_account(
+        session, settings, conn.account_id, conn.provider
     )
     credentials = _decrypt(conn, settings)
     async with open_client(settings, transport) as client:

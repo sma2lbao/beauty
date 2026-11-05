@@ -43,7 +43,7 @@ class HttpExecutionMixin:
         timeout = self._timeout_seconds(context, descriptor)
         try:
             response = await asyncio.wait_for(
-                self._http.execute(context.tenant_id, descriptor.name, arguments),
+                self._http.execute(context.account_id, descriptor.name, arguments),
                 timeout,
             )
         except TimeoutError:

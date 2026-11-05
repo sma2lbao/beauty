@@ -7,7 +7,7 @@
 checkpointer:生产 Postgres(容器/compose 起的库)用 AsyncPostgresSaver,
 图线程跨进程可恢复;SQLite/dev 回退 InMemorySaver(进程内,测试即隔离)。
 llm:模型客户端(架构 §5 唯一出口经 llm-gateway);
-toolkit_factory:租户 → 工具注册表(§8,execute 的 function-calling 用);
+toolkit_factory:账号 → 工具注册表(§8,execute 的 function-calling 用);
 两者为 None 时回退确定性桩——dev/测试零外部依赖。
 """
 

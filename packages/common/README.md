@@ -22,7 +22,7 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   `install_metrics_endpoint`(挂 `GET /internal/metrics`,`<SERVICE>__METRICS_ENABLED=false` 不注册);
 - `common.sentry`:错误聚合装配(docs/observability.md P1)——`<SERVICE>__SENTRY_DSN` 为空
   即完全不初始化;`before_send` 丢弃业务 4xx、脱敏请求头/cookie/query/body,
-  并把 `request_id`/`trace_id`/`tenant_id`/`user_id` 写进 tags;
+  并把 `request_id`/`trace_id`/`account_id`/`user_id` 写进 tags;
 - `common.tracing`:链路追踪装配(docs/observability.md P2)——`init_tracing` 建进程级
   provider(资源属性 service.name/deployment.environment/version、`<SERVICE>__TRACE_SAMPLE_RATIO`
   默认 0.1 父级采样);`<SERVICE>__OTLP_ENDPOINT` 空则零出口(span 只用于日志串联),
@@ -30,9 +30,9 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   `/internal/metrics` 经 `exclude_telemetry` 排除,出站用 httpx 插桩自动注入 `traceparent`;
 - `common.observability`:`install_observability(app, settings)`——一行同时装
   Sentry、指标端点与追踪(7 个服务的 `create_app` 统一调用);
-- `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与租户提取:
+- `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与账号提取:
   OIDC 发现 + JWKS 拉取(TTL 缓存、未知 kid 触发刷新以支持密钥轮换)、
-  RS256 签名 + `iss`/`aud`/`exp` 校验;租户来自可配置 claim,缺失即拒绝
+  RS256 签名 + `iss`/`aud`/`exp` 校验;账号来自可配置 claim,缺失即拒绝
   (绝不回退请求头);JWKS 不可达是 502(上游问题);fetcher 可注入,测试零网络;
 - `common.artifacts`:交付物内容存储抽象(§7 阶段 B)——`ArtifactStore` 协议
   (put/get/delete)与 `FilesystemArtifactStore`(本地目录,键只允许安全字符、

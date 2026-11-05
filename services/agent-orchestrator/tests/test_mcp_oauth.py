@@ -263,7 +263,7 @@ def test_registration_unsupported_without_registration_endpoint() -> None:
 
 def test_state_roundtrip_tamper_and_expiry(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    payload = {"tenant_id": "t-1", "server_id": "s-1", "ts": time.time()}
+    payload = {"account_id": "t-1", "server_id": "s-1", "ts": time.time()}
     signed = mcp_oauth.sign_state(settings, payload)
     assert mcp_oauth.verify_state(settings, signed)["server_id"] == "s-1"
 

@@ -17,7 +17,7 @@ export type Workspace = {
   name: string;
   description: string | null;
   status: string;
-  /** 租户默认工作区:系统维护,可改名但不可删除。 */
+  /** 账号默认工作区:系统维护,可改名但不可删除。 */
   is_default?: boolean;
   created_at: string;
 };

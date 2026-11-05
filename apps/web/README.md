@@ -103,10 +103,10 @@ apps/web/
     │   ├── layout/             # 官网页头、页脚、站点布局
     │   ├── brand/              # 品牌标识（官方几何内联）
     │   └── auth-guard.tsx 等   # 路由守卫、重定向、route fallback
-    ├── features/               # 业务域（16 个）：组件 + use-<domain>-model.ts 数据层
+    ├── features/               # 业务域（17 个）：组件 + use-<domain>-model.ts 数据层
     │   ├── chat/  runs/  sandbox/  workspace/  settings/  sidebar/  mcp/
-    │   ├── knowledge/  outbox/  changes/  usage/  memory/  skills/
-    │   └── artifacts/  auth/  notifications/
+    │   ├── command-palette/  knowledge/  outbox/  changes/  usage/
+    │   └── memory/  skills/  artifacts/  auth/  notifications/
     ├── lib/                    # 取数与协议层：*-api 客户端、presentation 格式化、query-keys、http、sse
     ├── stores/                 # zustand：UI 偏好、任务看板选中/筛选
     └── pages/                  # 路由页面，只做组装（PageHeader + 子面板），不直接取数
@@ -118,13 +118,24 @@ apps/web/
 
 ## 工作区与会话（交互契约）
 
-交互参照 dsh（DeepSeek Harness）的「工作区 / 会话」模型：**会话必须归属于某个工作区**（服务端也强制：不传工作区时落租户默认工作区）。
+交互参照 dsh（DeepSeek Harness）的「工作区 / 会话」模型：**会话必须归属于某个工作区**（服务端也强制：不传工作区时落账号默认工作区）。
 
 - `?workspace=<id>` 是当前工作区的**唯一真源**（`src/lib/workspace-selection.ts` 的 `useWorkspaceSelection`）：URL 没带时用默认工作区补上并 `replace` 回 URL；切换工作区会清掉当前会话/新建标记。
 - `/`：会话页。`/?workspace=<id>&conversation=<id>` 打开某段会话，`/?workspace=<id>&new=1` 直接进新会话输入态；新会话空态里可以「选择工作区」，文案提示「会话将保存在「X」中」。
 - `/workspace`：工作区中心。左侧工作区清单（每行有 `⋯` 菜单可重命名 / 删除）内联新建表单，右侧是选中工作区的会话、交付物与产物预览；`/workspace?new=1` 会展开并聚焦新建工作区表单。
 - 侧栏不再平铺工作区，改用**一行切换器 + 下拉菜单**（`src/features/workspace/workspace-switcher.tsx`）：触发器显示当前工作区，点开菜单即可切换（带会话数与当前项对勾）、「添加工作区…」「管理工作区…」，底部提示沙盒边界；「管理工作区」弹窗内就地重命名 / 删除（默认工作区不可删）。会话区只列**当前工作区**的会话（标题「<工作区> 的会话」），归属为空或指向已删工作区的会话收进「未分组」一段；搜索时改为扁平结果。
 - 工作区生命周期：默认工作区由系统维护（`is_default`，可改名、不可删除）；删除工作区会级联清掉该工作区的交付物，但会话不跨服务级联删除——它们保留并落「未分组」，URL 上失效的 `?workspace=` 由 `useWorkspaceSelection` 自动回落到默认 / 第一个工作区。
+
+## 侧栏信息层级与命令面板（交互契约）
+
+侧栏只回答两件事:「我现在能去哪」和「我最近的会话」,其余入口不常驻:
+
+- **主导航三项**:工作台 / 任务编排 / 变更 —— 每个会话都会碰的入口直接铺开,不用多一次点击。
+- **「更多」弹层**（`src/features/sidebar/more-nav.tsx`）:资源组（知识库 / 记忆 / Skills / 连接器）与管理组（用量 / 事件队列）收在弹层里;当前路由落在弹层中时触发器亮激活点,选完一项自动收起。
+- **账户菜单**（`src/features/sidebar/sidebar-footer.tsx`）:设置与官网挂在底部账户卡片上,不再和导航重复;`/workspace` 页从桌面侧栏移除（切换器菜单里的「管理工作区…」是入口）,移动端仍保留。
+- **⌘K 命令面板**（`src/features/command-palette/`）:按标题搜页面、按关键词搜会话（`conversationsApi.page({ q })`）、直达三个动作（新建会话 / 新建工作区 / 切换侧栏）;↑↓ 选择、回车执行、Esc 关闭、`aria-activedescendant` 播报选中项。桌面品牌行与移动端顶栏的放大镜是它的可视入口,快捷键监听挂在 `ConsoleLayout` 上,侧栏隐藏时同样可用。
+
+页面入口只在 `src/features/sidebar/nav-data.tsx` 定义一份:侧栏、移动端顶栏与命令面板都从这份数据派生,新增页面时不要各写一份。
 
 ## 约定
 

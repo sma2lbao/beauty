@@ -116,7 +116,7 @@ async def _database(settings):
 async def _seed_server(factory, *, status: str | None = None) -> str:
     async with session_scope(factory) as session:
         server = MCPServer(
-            tenant_id="t-1",
+            account_id="t-1",
             name="远程 MCP",
             url=RESOURCE_URL,
             transport="http",
@@ -140,7 +140,7 @@ async def _seed_auth_row(
     async with session_scope(factory) as session:
         session.add(
             MCPServerAuth(
-                tenant_id="t-1",
+                account_id="t-1",
                 server_id=server_id,
                 authorization_server=ISSUER,
                 token_endpoint=TOKEN_ENDPOINT,
@@ -179,7 +179,7 @@ class FakeToolClient:
 def _server(status: str | None = None) -> MCPServer:
     server = MCPServer(
         id="server-1",
-        tenant_id="t-1",
+        account_id="t-1",
         name="远程 MCP",
         url=RESOURCE_URL,
         transport="http",

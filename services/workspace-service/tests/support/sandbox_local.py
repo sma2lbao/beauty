@@ -28,7 +28,7 @@ MAX_OUTPUT_BYTES = 1024
 
 def _spec(name: str = NAME) -> SandboxSpec:
     return SandboxSpec(
-        tenant_id="t-1",
+        account_id="t-1",
         name=name,
         kind="generic",
         image="python",

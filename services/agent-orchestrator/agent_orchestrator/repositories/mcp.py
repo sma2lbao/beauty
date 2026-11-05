@@ -4,22 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 
 from agent_orchestrator.models.mcp import MCPServer, MCPServerAuth
 
 
-class MCPServerRepository(TenantRepository[MCPServer]):
+class MCPServerRepository(AccountRepository[MCPServer]):
     model = MCPServer
     not_found_code = "mcp.server_not_found"
     not_found_message = "MCP server 不存在"
     id_detail_key = "mcp_server_id"
 
-    async def find_by_name(self, tenant_id: str, name: str) -> MCPServer | None:
-        return await self.session.scalar(self.scoped(tenant_id, MCPServer.name == name))
+    async def find_by_name(self, account_id: str, name: str) -> MCPServer | None:
+        return await self.session.scalar(
+            self.scoped(account_id, MCPServer.name == name)
+        )
 
 
-class MCPServerAuthRepository(TenantRepository[MCPServerAuth]):
+class MCPServerAuthRepository(AccountRepository[MCPServerAuth]):
     """MCP server 的浏览器 OAuth 授权行(与 server 一对一)。"""
 
     model = MCPServerAuth
@@ -28,19 +30,19 @@ class MCPServerAuthRepository(TenantRepository[MCPServerAuth]):
     id_detail_key = "mcp_server_id"
 
     async def get_for_server(
-        self, tenant_id: str, server_id: str
+        self, account_id: str, server_id: str
     ) -> MCPServerAuth | None:
         return await self.session.scalar(
-            self.scoped(tenant_id, MCPServerAuth.server_id == server_id)
+            self.scoped(account_id, MCPServerAuth.server_id == server_id)
         )
 
     async def list_for_servers(
-        self, tenant_id: str, server_ids: Sequence[str]
+        self, account_id: str, server_ids: Sequence[str]
     ) -> dict[str, MCPServerAuth]:
         """列表页一次取回所有授权行,避免 N+1。"""
         if not server_ids:
             return {}
         rows = await self.session.scalars(
-            self.scoped(tenant_id, MCPServerAuth.server_id.in_(list(server_ids)))
+            self.scoped(account_id, MCPServerAuth.server_id.in_(list(server_ids)))
         )
         return {row.server_id: row for row in rows}

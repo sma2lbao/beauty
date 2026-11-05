@@ -181,18 +181,18 @@ async def test_run_forever_drains_until_stop(factory) -> None:
 async def test_mark_processed_is_idempotent_per_consumer(factory) -> None:
     async with session_scope(factory) as session:
         assert await mark_processed(
-            session, tenant_id="t-1", consumer="knowledge-ingest", event_id="e1"
+            session, account_id="t-1", consumer="knowledge-ingest", event_id="e1"
         )
         # 同一消费者重复事件 → False(跳过)
         assert not await mark_processed(
-            session, tenant_id="t-1", consumer="knowledge-ingest", event_id="e1"
+            session, account_id="t-1", consumer="knowledge-ingest", event_id="e1"
         )
-        # 不同消费者/不同租户各自独立
+        # 不同消费者/不同账号各自独立
         assert await mark_processed(
-            session, tenant_id="t-1", consumer="audit", event_id="e1"
+            session, account_id="t-1", consumer="audit", event_id="e1"
         )
         assert await mark_processed(
-            session, tenant_id="t-2", consumer="knowledge-ingest", event_id="e1"
+            session, account_id="t-2", consumer="knowledge-ingest", event_id="e1"
         )
 
 
@@ -200,10 +200,10 @@ async def test_mark_processed_does_not_poison_outer_transaction(factory) -> None
     """重复判定用 SAVEPOINT 兜住:外层事务仍可继续写自己的状态。"""
     async with session_scope(factory) as session:
         assert await mark_processed(
-            session, tenant_id="t-1", consumer="c", event_id="e1"
+            session, account_id="t-1", consumer="c", event_id="e1"
         )
         assert not await mark_processed(
-            session, tenant_id="t-1", consumer="c", event_id="e1"
+            session, account_id="t-1", consumer="c", event_id="e1"
         )
         # 冲突之后仍能正常写入并提交
         await OutboxRepository(session).record("t-1", _envelope())
@@ -236,7 +236,7 @@ async def test_handler_runs_outside_outbox_transaction(factory) -> None:
             async with session_scope(self._factory) as session:
                 await mark_processed(
                     session,
-                    tenant_id=envelope.tenant_id or "t-1",
+                    account_id=envelope.account_id or "t-1",
                     consumer="writing-consumer",
                     event_id=envelope.id,
                 )
@@ -267,12 +267,14 @@ async def test_is_processed_matches_mark_processed(factory) -> None:
     """查与标记配对:未处理 → False;标记后 → True;别的消费者不受影响。"""
     async with session_scope(factory) as session:
         assert not await is_processed(
-            session, tenant_id="t-1", consumer="c", event_id="e9"
+            session, account_id="t-1", consumer="c", event_id="e9"
         )
-        await mark_processed(session, tenant_id="t-1", consumer="c", event_id="e9")
-        assert await is_processed(session, tenant_id="t-1", consumer="c", event_id="e9")
+        await mark_processed(session, account_id="t-1", consumer="c", event_id="e9")
+        assert await is_processed(
+            session, account_id="t-1", consumer="c", event_id="e9"
+        )
         assert not await is_processed(
-            session, tenant_id="t-1", consumer="other", event_id="e9"
+            session, account_id="t-1", consumer="other", event_id="e9"
         )
 
 
@@ -288,16 +290,16 @@ async def test_ops_list_stats_and_requeue(factory) -> None:
 
     async with session_scope(factory) as session:
         repository = OutboxRepository(session)
-        # 计数(可全局也可按租户)
+        # 计数(可全局也可按账号)
         assert await repository.stats() == {PENDING: 1, DISPATCHED: 1, FAILED: 1}
-        tenant_stats = await repository.stats(tenant_id="t-1")
-        assert tenant_stats[FAILED] == 1
-        assert tenant_stats[PENDING] == 0
+        account_stats = await repository.stats(account_id="t-1")
+        assert account_stats[FAILED] == 1
+        assert account_stats[PENDING] == 0
 
-        # 列事件:按状态 + 按租户
+        # 列事件:按状态 + 按账号
         failed = await repository.list_events(status=FAILED)
         assert [event.id for event in failed] == [broken.id]
-        assert await repository.list_events(tenant_id="t-2") != []
+        assert await repository.list_events(account_id="t-2") != []
 
         # 单个重放:回 pending、attempts 清零、保留上次原因
         await repository.requeue(failed[0])

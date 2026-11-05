@@ -142,37 +142,37 @@ def _definition(package: SkillPackage, version: SkillVersion) -> SkillDefinition
 
 
 async def list_packages(
-    session: AsyncSession, tenant_id: str
+    session: AsyncSession, account_id: str
 ) -> list[SkillPackageRead]:
-    """租户内全部技能包(含各自全部版本,最新版本在 versions[0])。"""
-    packages = await SkillPackageRepository(session).list_for_tenant(tenant_id)
+    """账号内全部技能包(含各自全部版本,最新版本在 versions[0])。"""
+    packages = await SkillPackageRepository(session).list_for_account(account_id)
     versions = SkillVersionRepository(session)
     result: list[SkillPackageRead] = []
     for package in packages:
         result.append(
             _package_read(
-                package, await versions.list_for_package(tenant_id, package.id)
+                package, await versions.list_for_package(account_id, package.id)
             )
         )
     return result
 
 
 async def get_package(
-    session: AsyncSession, tenant_id: str, package_id: str
+    session: AsyncSession, account_id: str, package_id: str
 ) -> SkillPackageRead:
-    """按 id 取包(跨租户 404,由仓储统一语义)。"""
-    package = await SkillPackageRepository(session).require_for_tenant(
-        tenant_id, package_id
+    """按 id 取包(跨账号 404,由仓储统一语义)。"""
+    package = await SkillPackageRepository(session).require_for_account(
+        account_id, package_id
     )
     versions = await SkillVersionRepository(session).list_for_package(
-        tenant_id, package.id
+        account_id, package.id
     )
     return _package_read(package, versions)
 
 
 async def delete_package(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     package_id: str,
     *,
     workspace: Workspace | None = None,
@@ -180,8 +180,8 @@ async def delete_package(
     """删除 DB 包/版本,再 best-effort 删对象(对象删除失败不阻塞 DB 删除)。"""
     packages = SkillPackageRepository(session)
     versions = SkillVersionRepository(session)
-    package = await packages.require_for_tenant(tenant_id, package_id)
-    rows = await versions.list_for_package(tenant_id, package.id)
+    package = await packages.require_for_account(account_id, package_id)
+    rows = await versions.list_for_package(account_id, package.id)
     object_keys = [row.object_key for row in rows]
     for row in rows:
         await versions.delete(row)
@@ -190,11 +190,11 @@ async def delete_package(
         return
     for key in object_keys:
         try:
-            await workspace.delete_object(tenant_id, key)
+            await workspace.delete_object(account_id, key)
         except Exception as exc:  # noqa: BLE001 - best-effort:DB 已删,留日志
             logger.warning(
                 "skill package object delete failed",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 object_key=key,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -202,19 +202,19 @@ async def delete_package(
 
 async def resolve_skill(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     skill_id: str,
     registry: SkillRegistry,
 ) -> SkillDefinition | None:
-    """解析 run 要绑定的技能:内置优先,其次租户上传包的最新版本。"""
+    """解析 run 要绑定的技能:内置优先,其次账号上传包的最新版本。"""
     builtin = registry.get(skill_id)
     if builtin is not None:
         return SkillDefinition(manifest=builtin)
-    package = await SkillPackageRepository(session).find_by_slug(tenant_id, skill_id)
+    package = await SkillPackageRepository(session).find_by_slug(account_id, skill_id)
     if package is None or package.status != ACTIVE:
         return None
     version = await SkillVersionRepository(session).latest_for_package(
-        tenant_id, package.id
+        account_id, package.id
     )
     if version is None:
         return None
@@ -222,16 +222,16 @@ async def resolve_skill(
 
 
 async def list_manifests(
-    session: AsyncSession, tenant_id: str, registry: SkillRegistry
+    session: AsyncSession, account_id: str, registry: SkillRegistry
 ) -> list[SkillManifest]:
     """GET /skills:内置 manifest + 每个上传包的最新版本(按 id 排序)。"""
     manifests = list(registry.list())
-    packages = await SkillPackageRepository(session).list_for_tenant(tenant_id)
+    packages = await SkillPackageRepository(session).list_for_account(account_id)
     versions = SkillVersionRepository(session)
     for package in packages:
         if package.status != ACTIVE:
             continue
-        version = await versions.latest_for_package(tenant_id, package.id)
+        version = await versions.latest_for_package(account_id, package.id)
         if version is not None:
             manifests.append(_manifest_for(package, version))
     return sorted(manifests, key=lambda manifest: manifest.id)

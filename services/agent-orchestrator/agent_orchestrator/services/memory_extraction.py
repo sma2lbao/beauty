@@ -100,13 +100,13 @@ def _keep_priority(memory: Memory) -> tuple[int, int, float, str]:
 
 
 def _workspace_key(memory: Memory) -> str | None:
-    """记忆的"工作区域"标识:租户级记忆归 None,工作区级记忆归其 workspace_id。"""
+    """记忆的"工作区域"标识:账号级记忆归 None,工作区级记忆归其 workspace_id。"""
     return memory.workspace_id if memory.scope == "workspace" else None
 
 
 async def remember_candidates(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     candidates: Sequence[ExtractedMemory],
     workspace_id: str | None = None,
@@ -116,7 +116,7 @@ async def remember_candidates(
     max_entries: int = 2000,
     dedupe_threshold: float = 0.9,
 ) -> list[Memory]:
-    """把候选写入长期记忆;与同租户/同工作区/同 kind 的活跃记忆近重复时跳过。
+    """把候选写入长期记忆;与同账号/同工作区/同 kind 的活跃记忆近重复时跳过。
 
     去重只用词面相似,不调 embedding:这里比的是"是不是同一句话",而不是检索
     相关性;写入本身仍由 write_memory 统一做校验/限额/嵌入。
@@ -124,7 +124,9 @@ async def remember_candidates(
     if not candidates:
         return []
     repository = MemoryRepository(session)
-    existing = await repository.list_active(tenant_id, limit=max(_DEDUPE_SCAN_LIMIT, 1))
+    existing = await repository.list_active(
+        account_id, limit=max(_DEDUPE_SCAN_LIMIT, 1)
+    )
     known: dict[tuple[str, str | None], list[set[str]]] = {}
     for memory in existing:
         known.setdefault((memory.kind, _workspace_key(memory)), []).append(
@@ -139,7 +141,7 @@ async def remember_candidates(
         scope = (
             candidate.scope
             if candidate.scope in memory_service.MEMORY_SCOPES
-            else "tenant"
+            else "account"
         )
         target_workspace = workspace_id if scope == "workspace" else None
         key = (kind, target_workspace)
@@ -152,7 +154,7 @@ async def remember_candidates(
         try:
             memory = await memory_service.write_memory(
                 session,
-                tenant_id,
+                account_id,
                 content=candidate.content,
                 kind=kind,
                 scope=scope,
@@ -182,7 +184,7 @@ async def extract_from_messages(
     session: AsyncSession,
     llm: LLMClient,
     *,
-    tenant_id: str,
+    account_id: str,
     messages: Sequence[ChatMessage],
     workspace_id: str | None = None,
     source_type: str = "chat",
@@ -210,7 +212,7 @@ async def extract_from_messages(
         return []
     return await remember_candidates(
         session,
-        tenant_id,
+        account_id,
         candidates=candidates,
         workspace_id=workspace_id,
         source_type=source_type,
@@ -219,7 +221,7 @@ async def extract_from_messages(
             getattr(settings, "memory_max_content_chars", 8000) or 8000
         ),
         max_entries=int(
-            getattr(settings, "memory_max_entries_per_tenant", 2000) or 2000
+            getattr(settings, "memory_max_entries_per_account", 2000) or 2000
         ),
         dedupe_threshold=float(getattr(settings, "memory_dedupe_threshold", 0.9)),
     )
@@ -243,17 +245,17 @@ def schedule_run_extraction(session: AsyncSession, run: Run) -> None:
     if getattr(settings, "outbox_enabled", False):
         return
     post_commit.register_after_commit(
-        session, partial(_extract_run_memories, runtime, run.tenant_id, run.id)
+        session, partial(_extract_run_memories, runtime, run.account_id, run.id)
     )
 
 
 async def _extract_run_memories(
-    runtime: post_commit.PostCommitRuntime, tenant_id: str, run_id: str
+    runtime: post_commit.PostCommitRuntime, account_id: str, run_id: str
 ) -> None:
     """提交后回调:读已提交的 run/对话,按与 chat 同一口径节流后抽取。"""
     try:
         async with session_scope(runtime.session_factory) as session:
-            run = await RunRepository(session).get_for_tenant(tenant_id, run_id)
+            run = await RunRepository(session).get_for_account(account_id, run_id)
             if run is None or not run.conversation_id:
                 return
             settings = runtime.settings
@@ -264,7 +266,7 @@ async def _extract_run_memories(
                 return
             message_repository = MessageRepository(session)
             count = await message_repository.count_for_conversation(
-                tenant_id, run.conversation_id
+                account_id, run.conversation_id
             )
             if count % min_messages != 0:
                 logger.debug(
@@ -276,12 +278,12 @@ async def _extract_run_memories(
                 )
                 return
             messages = await message_repository.list_for_conversation(
-                tenant_id, run.conversation_id
+                account_id, run.conversation_id
             )
             written = await extract_from_messages(
                 session,
                 runtime.llm,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 messages=messages,
                 workspace_id=run.workspace_id,
                 source_type="run",
@@ -305,7 +307,7 @@ async def _extract_run_memories(
 
 async def consolidate(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     workspace_id: str | None = None,
     threshold: float = 0.92,
@@ -319,7 +321,7 @@ async def consolidate(
     """
     repository = MemoryRepository(session)
     rows = await repository.list_active(
-        tenant_id, workspace_id=workspace_id, limit=max(limit, 1)
+        account_id, workspace_id=workspace_id, limit=max(limit, 1)
     )
     if len(rows) < 2:
         return 0

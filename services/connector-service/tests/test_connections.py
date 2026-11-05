@@ -1,4 +1,4 @@
-"""连接读端点:列表/详情/撤销、凭证只进不出、租户隔离与状态守卫。"""
+"""连接读端点:列表/详情/撤销、凭证只进不出、账号隔离与状态守卫。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, insert_connection
+from tests.conftest import ACCOUNT, OTHER, insert_connection
 
 TEST_DB = "test.db"
 
@@ -19,7 +19,7 @@ def test_list_and_detail(client: TestClient, tmp_path: Path) -> None:
         tmp_path / TEST_DB, provider="imap", account="legacy@example.com"
     )
 
-    listing = client.get("/v1/connections", headers=TENANT)
+    listing = client.get("/v1/connections", headers=ACCOUNT)
     assert listing.status_code == 200
     rows = listing.json()
     assert {row["id"] for row in rows} == {active["id"], legacy["id"]}
@@ -28,7 +28,7 @@ def test_list_and_detail(client: TestClient, tmp_path: Path) -> None:
     assert "refresh_token" not in listing.text
     assert "ciphertext" not in listing.text
 
-    detail = client.get(f"/v1/connections/{active['id']}", headers=TENANT)
+    detail = client.get(f"/v1/connections/{active['id']}", headers=ACCOUNT)
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["provider"] == "gmail"
@@ -37,13 +37,13 @@ def test_list_and_detail(client: TestClient, tmp_path: Path) -> None:
     assert "credentials" not in payload
 
 
-def test_tenant_isolation(client: TestClient, tmp_path: Path) -> None:
+def test_account_isolation(client: TestClient, tmp_path: Path) -> None:
     foreign = insert_connection(
-        tmp_path / TEST_DB, tenant_id="t-2", account="other@example.com"
+        tmp_path / TEST_DB, account_id="t-2", account="other@example.com"
     )
-    assert client.get("/v1/connections", headers=TENANT).json() == []
+    assert client.get("/v1/connections", headers=ACCOUNT).json() == []
     assert (
-        client.get(f"/v1/connections/{foreign['id']}", headers=TENANT).status_code
+        client.get(f"/v1/connections/{foreign['id']}", headers=ACCOUNT).status_code
         == 404
     )
     assert [
@@ -53,15 +53,15 @@ def test_tenant_isolation(client: TestClient, tmp_path: Path) -> None:
 
 def test_revoke_and_guards(client: TestClient, tmp_path: Path) -> None:
     conn = insert_connection(tmp_path / TEST_DB)
-    revoked = client.delete(f"/v1/connections/{conn['id']}", headers=TENANT).json()
+    revoked = client.delete(f"/v1/connections/{conn['id']}", headers=ACCOUNT).json()
     assert revoked["status"] == "revoked"
     # 撤销是留痕不是物理删除:仍可被列出
     assert [
-        row["id"] for row in client.get("/v1/connections", headers=TENANT).json()
+        row["id"] for row in client.get("/v1/connections", headers=ACCOUNT).json()
     ] == [conn["id"]]
 
     # 重复撤销 → 409(状态守卫)
-    again = client.delete(f"/v1/connections/{conn['id']}", headers=TENANT)
+    again = client.delete(f"/v1/connections/{conn['id']}", headers=ACCOUNT)
     assert again.status_code == 409
     assert again.json()["code"] == "connector.invalid_state"
 
@@ -69,17 +69,17 @@ def test_revoke_and_guards(client: TestClient, tmp_path: Path) -> None:
     expired = insert_connection(
         tmp_path / TEST_DB, account="expired@example.com", status="expired"
     )
-    blocked = client.delete(f"/v1/connections/{expired['id']}", headers=TENANT)
+    blocked = client.delete(f"/v1/connections/{expired['id']}", headers=ACCOUNT)
     assert blocked.status_code == 409
     assert (
-        client.get(f"/v1/connections/{expired['id']}", headers=TENANT).json()["status"]
+        client.get(f"/v1/connections/{expired['id']}", headers=ACCOUNT).json()["status"]
         == "expired"
     )
 
 
 def test_unknown_connection_404(client: TestClient) -> None:
     for method in ("get", "delete"):
-        response = getattr(client, method)("/v1/connections/nope", headers=TENANT)
+        response = getattr(client, method)("/v1/connections/nope", headers=ACCOUNT)
         assert response.status_code == 404
         assert response.json()["code"] == "connector.connection_not_found"
         assert response.json()["details"] == {"connection_id": "nope"}

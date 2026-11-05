@@ -4,7 +4,7 @@ import httpx
 import pytest
 from common.errors import UpstreamError
 from common.logging import bind_request_context, clear_request_context
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 from knowledge.services.embeddings import (
     GatewayEmbeddingProvider,
@@ -120,19 +120,19 @@ def test_build_embedder_validates_provider() -> None:
         build_embedder("pinecone", model="m", gateway_url="http://x")
 
 
-# ---- BYOK 头注入:租户来自 contextvars,内部密钥来自配置 ----
+# ---- BYOK 头注入:账号来自 contextvars,内部密钥来自配置 ----
 
 
-async def test_gateway_provider_injects_tenant_and_secret_headers() -> None:
-    """绑定租户上下文且配置了密钥:两个头都随请求发出,嵌入行为不变。"""
+async def test_gateway_provider_injects_account_and_secret_headers() -> None:
+    """绑定账号上下文且配置了密钥:两个头都随请求发出,嵌入行为不变。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(200, json={"embeddings": [[0.1, 0.2], [0.3, 0.4]]})
 
-    bind_request_context(tenant_id="t-1")
+    bind_request_context(account_id="t-1")
     provider = GatewayEmbeddingProvider(
         "http://gateway",
         "bge-m3",
@@ -146,15 +146,15 @@ async def test_gateway_provider_injects_tenant_and_secret_headers() -> None:
         clear_request_context()
 
     assert vectors == [[0.1, 0.2], [0.3, 0.4]]
-    assert captured == {"tenant": "t-1", "secret": "s3cret"}
+    assert captured == {"account": "t-1", "secret": "s3cret"}
 
 
 async def test_gateway_provider_defaults_send_no_identity_headers() -> None:
-    """未绑定租户且未配置密钥:两个头都不发(保持既有行为)。"""
+    """未绑定账号且未配置密钥:两个头都不发(保持既有行为)。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(200, json={"embeddings": [[0.1]]})
 
@@ -167,7 +167,7 @@ async def test_gateway_provider_defaults_send_no_identity_headers() -> None:
     finally:
         await provider.aclose()
 
-    assert captured == {"tenant": None, "secret": None}
+    assert captured == {"account": None, "secret": None}
 
 
 def test_build_embedder_passes_internal_secret() -> None:

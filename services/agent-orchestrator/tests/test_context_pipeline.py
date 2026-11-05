@@ -55,7 +55,7 @@ class FakeProvider:
 
 
 def _request(**overrides: Any) -> ContextRequest:
-    return ContextRequest(tenant_id="t-1", run_id="run-1", **overrides)
+    return ContextRequest(account_id="t-1", run_id="run-1", **overrides)
 
 
 async def test_build_returns_sections_in_policy_order() -> None:

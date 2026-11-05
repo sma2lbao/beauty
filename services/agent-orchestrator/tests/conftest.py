@@ -13,7 +13,7 @@ tools/app),本文件只负责两件事:
 - 每个测试独立 sqlite 文件库,建表走 lifespan(auto_create_tables);
 - LLM 与工具全部注入 fake:零网络、零 token;
 - 鉴权开且验真 token(架构 §10):TestIdP 本地密钥,JWKS 走 MockTransport,
-  测试请求一律带 Bearer(租户在 claim 里),不再用 X-Tenant-Id 临时头;
+  测试请求一律带 Bearer(账号在 claim 里),不再用 X-Account-Id 临时头;
 - 契约由 duck typing 满足(见 services/llm.py、services/knowledge.py 的 Protocol)。
 """
 
@@ -29,7 +29,7 @@ from tests.fixtures.app import (
     _tool_client,
     client,
 )
-from tests.fixtures.auth import _IDP, OTHER, TENANT, bearer, verifier
+from tests.fixtures.auth import _IDP, ACCOUNT, OTHER, bearer, verifier
 from tests.fixtures.knowledge import FakeKnowledge
 from tests.fixtures.llm import FakeLLM
 from tests.fixtures.outbox import RecordingBus
@@ -46,7 +46,7 @@ __all__ = [
     "ASK_QUESTION_SCHEMA",
     "DEFAULT_ASK_QUESTIONS",
     "OTHER",
-    "TENANT",
+    "ACCOUNT",
     "_IDP",
     "_SETTINGS_DEFAULTS",
     "_client",

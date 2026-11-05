@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from agent_orchestrator.schemas.mcp import MCPServerCreate
 from agent_orchestrator.services.mcp_client import MCPError
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 from tests.support.mcp_stdio import (
     HTTP_SERVER,
     STDIO_SERVER,
@@ -66,7 +66,7 @@ def test_create_stdio_masks_env_and_stores_ciphertext(tmp_path: Path) -> None:
         assert data["has_token"] is False
         assert data["has_env"] is True
         assert data["env_keys"] == ["API_TOKEN"]
-        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
         assert "S3CRET-VALUE" not in json.dumps(listing, ensure_ascii=False)
 
     conn = sqlite3.connect(tmp_path / "stdio.db")
@@ -87,7 +87,7 @@ def test_update_stdio_args_and_clear_env(tmp_path: Path) -> None:
         updated = client.patch(
             f"/api/v1/mcp/servers/{created['id']}",
             json={"args": ["mcp-server-git"]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["args"] == ["mcp-server-git"]
@@ -96,7 +96,7 @@ def test_update_stdio_args_and_clear_env(tmp_path: Path) -> None:
         cleared = client.patch(
             f"/api/v1/mcp/servers/{created['id']}",
             json={"env": {}},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert cleared.status_code == 200, cleared.text
         assert cleared.json()["has_env"] is False
@@ -109,7 +109,7 @@ def test_update_stdio_to_http_requires_clearing_command_fields(tmp_path: Path) -
         response = client.patch(
             f"/api/v1/mcp/servers/{created['id']}",
             json={"transport": "http", "url": "http://127.0.0.1:9999/mcp"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         # 合并后仍有 command/args/env → 明确拒绝(400 mcp.invalid_config)
         assert response.status_code == 400, response.text
@@ -121,7 +121,7 @@ def test_create_stdio_command_must_be_allowlisted(tmp_path: Path) -> None:
         response = client.post(
             "/api/v1/mcp/servers",
             json={**STDIO_SERVER, "name": "evil", "command": "curl"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert response.status_code == 409, response.text
         assert response.json()["code"] == "mcp.command_denied"
@@ -132,13 +132,13 @@ def test_allowlist_comes_from_settings(tmp_path: Path) -> None:
         ok = client.post(
             "/api/v1/mcp/servers",
             json={**STDIO_SERVER, "name": "ok"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert ok.status_code == 201, ok.text
         denied = client.post(
             "/api/v1/mcp/servers",
             json={**STDIO_SERVER, "name": "node-one", "command": "node"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert denied.status_code == 409, denied.text
 
@@ -148,18 +148,18 @@ def test_test_server_stdio_caches_tools_via_pool(tmp_path: Path) -> None:
     with _app_with_pool(tmp_path, pool) as client:
         created = _create_stdio(client)
         tested = client.post(
-            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=ACCOUNT
         )
         assert tested.status_code == 200, tested.text
         assert tested.json()["ok"] is True
         assert tested.json()["tools"][0]["name"] == "echo"
 
-        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
         assert listing[0]["tools"][0]["name"] == "echo"
         assert listing[0]["last_status"] == "ok"
 
-    tenant_id, key, request = pool.calls[0]
-    assert tenant_id.startswith("t-")
+    account_id, key, request = pool.calls[0]
+    assert account_id.startswith("t-")
     assert key.startswith(f"test:{created['id']}:")
     assert request["action"] == "tools/list"
     assert request["command"] == "uvx"
@@ -173,11 +173,11 @@ def test_test_server_stdio_without_pool_reports_sandbox_disabled(
     with _app(tmp_path, "nopool.db") as client:
         created = _create_stdio(client)
         tested = client.post(
-            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=ACCOUNT
         ).json()
         assert tested["ok"] is False
         assert "需要启用沙箱" in tested["detail"]
-        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
         assert listing[0]["last_status"] == "error"
 
 
@@ -186,7 +186,7 @@ def test_test_server_stdio_pool_error_is_readable(tmp_path: Path) -> None:
     with _app_with_pool(tmp_path, pool) as client:
         created = _create_stdio(client)
         tested = client.post(
-            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=ACCOUNT
         ).json()
         assert tested["ok"] is False
         assert "沙箱炸了" in tested["detail"]

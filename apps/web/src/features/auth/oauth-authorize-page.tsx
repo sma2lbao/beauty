@@ -74,7 +74,7 @@ export function OAuthAuthorizePage() {
         <p className="mt-2 text-[13px] leading-6 text-ha-muted">
           {clientQuery.data?.client_name ||
             (clientQuery.isError ? '客户端不存在' : '读取客户端信息…')}
-          请求访问你的租户数据。
+          请求访问你的账号数据。
         </p>
 
         {clientQuery.data ? (

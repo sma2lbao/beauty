@@ -43,7 +43,7 @@ def test_before_send_drops_business_4xx() -> None:
 
 def test_before_send_keeps_5xx_and_scrubs_request() -> None:
     exc = UpstreamError("llm.upstream_error", "上游挂了")
-    bind_request_context(request_id="req-1", tenant_id="t-1", trace_id="trace-1")
+    bind_request_context(request_id="req-1", account_id="t-1", trace_id="trace-1")
     try:
         event: dict[str, Any] = {
             "request": {
@@ -70,7 +70,7 @@ def test_before_send_keeps_5xx_and_scrubs_request() -> None:
     assert sent["tags"] == {
         "request_id": "req-1",
         "trace_id": "trace-1",
-        "tenant_id": "t-1",
+        "account_id": "t-1",
     }
 
 
@@ -85,7 +85,7 @@ def test_init_sentry_captures_event_with_scrubbed_payload() -> None:
             )
             is True
         )
-        bind_request_context(request_id="req-cap", tenant_id="t-cap")
+        bind_request_context(request_id="req-cap", account_id="t-cap")
         try:
             sentry_sdk.capture_exception(RuntimeError("boom"))
         finally:
@@ -100,7 +100,7 @@ def test_init_sentry_captures_event_with_scrubbed_payload() -> None:
         assert events, "没有捕获到事件"
         event = events[0]
         assert event["tags"]["request_id"] == "req-cap"
-        assert event["tags"]["tenant_id"] == "t-cap"
+        assert event["tags"]["account_id"] == "t-cap"
         assert "data" not in event.get("request", {})
     finally:
         sentry_sdk.get_client().close(timeout=1)

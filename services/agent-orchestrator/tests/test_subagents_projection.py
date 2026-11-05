@@ -28,7 +28,7 @@ from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.run_quota import _usage_boundary
 from tests.conftest import _create_run, _settings, bearer
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 PARAMS = {
@@ -113,14 +113,14 @@ def settings(tmp_path: Path):
 async def _create_parent(
     factory: async_sessionmaker[AsyncSession],
     *,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
     parent_kind: str | None = None,
     parent_run_id: str | None = None,
     **kwargs: Any,
 ) -> Run:
     async with session_scope(factory) as session:
         run = Run(
-            tenant_id=tenant_id,
+            account_id=account_id,
             title="主任务",
             goal="把竞品资料整理成表格",
             parent_kind=parent_kind,
@@ -139,7 +139,7 @@ async def _spawn(
     *,
     params: dict[str, Any] | None = None,
     graph: Any = None,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
 ):
     async with session_scope(factory) as session:
         return await subagents.spawn_subagent(
@@ -196,7 +196,7 @@ async def test_list_subagents_empty_is_not_404(
 ) -> None:
     parent = await _create_parent(factory)
     async with session_scope(factory) as session:
-        assert await subagents.list_subagents(session, TENANT, parent.id) == []
+        assert await subagents.list_subagents(session, ACCOUNT, parent.id) == []
 
 
 async def test_list_subagents_requires_run(
@@ -215,7 +215,7 @@ async def test_list_subagents_returns_summary_and_usage(
     parent = await _create_parent(factory)
     await _spawn(factory, settings, parent)
     async with session_scope(factory) as session:
-        entries = await subagents.list_subagents(session, TENANT, parent.id)
+        entries = await subagents.list_subagents(session, ACCOUNT, parent.id)
     assert len(entries) == 1
     entry = entries[0]
     assert entry.parent_run_id == parent.id
@@ -275,7 +275,7 @@ async def test_usage_totals_aggregate_and_by_model(
                 record_outbox=False,
             )
     async with session_scope(factory) as session:
-        read = await usage_events.run_usage(session, TENANT, parent.id)
+        read = await usage_events.run_usage(session, ACCOUNT, parent.id)
     assert read.run_id == parent.id
     assert read.calls == 3
     assert read.total_tokens == 35
@@ -289,12 +289,12 @@ async def test_usage_totals_aggregate_and_by_model(
 def test_api_subagents_and_usage_endpoints(client) -> None:
     run_id = _create_run(client)
     subagents_resp = client.get(
-        f"/api/v1/runs/{run_id}/subagents", headers=bearer(TENANT)
+        f"/api/v1/runs/{run_id}/subagents", headers=bearer(ACCOUNT)
     )
     assert subagents_resp.status_code == 200
     assert subagents_resp.json() == []
 
-    usage_resp = client.get(f"/api/v1/runs/{run_id}/usage", headers=bearer(TENANT))
+    usage_resp = client.get(f"/api/v1/runs/{run_id}/usage", headers=bearer(ACCOUNT))
     assert usage_resp.status_code == 200
     assert usage_resp.json() == {
         "run_id": run_id,
@@ -311,7 +311,7 @@ def test_api_subagents_and_usage_endpoints(client) -> None:
 
 def test_run_read_exposes_parent_fields(client) -> None:
     run_id = _create_run(client)
-    body = client.get(f"/api/v1/runs/{run_id}", headers=bearer(TENANT)).json()
+    body = client.get(f"/api/v1/runs/{run_id}", headers=bearer(ACCOUNT)).json()
     assert body["parent_kind"] is None
     assert body["agent_name"] is None
 
@@ -322,7 +322,7 @@ async def test_thread_id_falls_back_to_root_run(
     top = await _create_parent(factory)
     async with session_scope(factory) as session:
         child = Run(
-            tenant_id=TENANT,
+            account_id=ACCOUNT,
             title="子",
             goal="g",
             parent_run_id=top.id,

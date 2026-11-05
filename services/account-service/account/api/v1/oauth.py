@@ -79,10 +79,7 @@ async def exchange(
         access_token=result.access_token,
         refresh_token=result.refresh_token,
         expires_in=result.expires_in,
-        tenant_id=result.tenant_id,
-        organization_id=result.organization_id,
-        user_id=result.user_id,
+        account_id=result.account_id,
         subject=result.subject,
-        role=result.role,
         session_id=result.session_id,
     )

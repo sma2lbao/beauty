@@ -86,7 +86,7 @@ async def prompt(
     """
     if context is None:
         rows = await MessageRepository(session).list_before(
-            message.tenant_id,
+            message.account_id,
             message.conversation_id,
             before=message.created_at,
             exclude_id=message.id,
@@ -112,7 +112,7 @@ async def prompt(
     image_ids = [message.id, *(row.id for row in reversed(history_rows))]
     images_by_message = await attachments_service.image_parts_by_message(
         session,
-        message.tenant_id,
+        message.account_id,
         image_ids,
         max_count=max_count,
         max_bytes=max_bytes,
@@ -123,7 +123,7 @@ async def prompt(
         history.to_prompt(rows, summary=summary, images_by_message=images_by_message)
     )
     attachment_context = await attachments_service.context_for_message(
-        session, message.tenant_id, message.id
+        session, message.account_id, message.id
     )
     text = message.content + attachment_context
     current_images = images_by_message.get(message.id) or []
@@ -180,7 +180,7 @@ async def _execute_calls(
         error_code: str | None = None
         extra: dict[str, str] = {}
         if decision is approval_service.ApprovalAction.DENY:
-            output = _tool_error(f"工具 {call.name} 被租户审批策略禁止使用")
+            output = _tool_error(f"工具 {call.name} 被账号审批策略禁止使用")
         elif decision is approval_service.ApprovalAction.CONFIRM:
             # DANGER 不切流给对话:回喂错误让模型引导走任务(任务里有确认闸)
             output = _tool_error(
@@ -250,7 +250,7 @@ async def run_tool_loop(
     READ 工具自动执行;**WRITE 工具就地确认**(不执行,落 pending 并把
     confirmation_id 交给前端;confirmations 为空时退回"改用任务"提示);
     **危险操作(DANGER)不执行**,
-    回喂错误文本引导走任务路径(对话没有审批流);租户策略 ``deny`` 的工具同样不执行。
+    回喂错误文本引导走任务路径(对话没有审批流);账号策略 ``deny`` 的工具同样不执行。
     轮次达上限仍在要工具时,再要一次"不带工具"的收束调用,避免已执行的
     工具白跑、正文为空;真拿不到正文再用最后一轮输出兜底(仅非流式)。
     """

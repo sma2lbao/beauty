@@ -57,7 +57,7 @@ class TokenResponse(BaseModel):
 
 class OAuthIntrospectRead(BaseModel):
     active: bool
-    tenant_id: str | None = None
+    account_id: str | None = None
     client_id: str | None = None
     scope: str | None = None
     exp: int | None = None

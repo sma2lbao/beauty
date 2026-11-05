@@ -7,7 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeSandboxProvider,
 )
 
@@ -20,7 +20,7 @@ def _execute(
     headers: dict[str, str] | None = None,
 ) -> Any:
     return client.post(
-        f"/v1/tools/{tool}:execute", json=payload, headers=headers or TENANT
+        f"/v1/tools/{tool}:execute", json=payload, headers=headers or ACCOUNT
     )
 
 
@@ -95,7 +95,9 @@ def test_execute_search_knowledge_proxies_to_knowledge(
     assert body["ok"] is True
     assert body["hits"] == [{"title": "发布流程", "score": 0.8, "content": "先灰度"}]
     assert body["tool_call_id"] == "call-kb"
-    assert knowledge_client.calls == [{"tenant_id": "t-1", "query": "部署", "limit": 5}]
+    assert knowledge_client.calls == [
+        {"account_id": "t-1", "query": "部署", "limit": 5}
+    ]
 
 
 def test_execute_search_knowledge_upstream_error_is_envelope(

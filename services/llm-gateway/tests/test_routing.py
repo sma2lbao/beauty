@@ -134,11 +134,11 @@ def test_stream_whitelisted_model_streams(client: TestClient, monkeypatch) -> No
     assert sse_frames(resp.text)[-1]["done"] is True
 
 
-# ── 租户 BYOK 自定义模型:白名单并集放行(目录走 MockTransport) ──────────────────
+# ── 账号 BYOK 自定义模型:白名单并集放行(目录走 MockTransport) ──────────────────
 
 CUSTOM = "openai/gpt-4o-mini"
 SECRET = "internal-secret"
-TENANT_HEADERS = {"X-Internal-Secret": SECRET, "X-Tenant-Id": "t1"}
+ACCOUNT_HEADERS = {"X-Internal-Secret": SECRET, "X-Account-Id": "t1"}
 
 
 class CatalogStub:
@@ -201,7 +201,7 @@ def test_catalog_custom_model_runs_completion(monkeypatch) -> None:
 
     with _client_with_catalog(stub) as client:
         resp = client.post(
-            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=TENANT_HEADERS
+            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=ACCOUNT_HEADERS
         )
 
     assert resp.status_code == 200
@@ -218,7 +218,7 @@ def test_catalog_custom_model_runs_stream(monkeypatch) -> None:
         resp = client.post(
             "/v1/completions/stream",
             json={**BODY, "model": CUSTOM},
-            headers=TENANT_HEADERS,
+            headers=ACCOUNT_HEADERS,
         )
 
     assert resp.status_code == 200
@@ -237,7 +237,7 @@ def test_custom_model_missing_from_catalog_is_400(monkeypatch) -> None:
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
     with _client_with_catalog(stub) as client:
         resp = client.post(
-            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=TENANT_HEADERS
+            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=ACCOUNT_HEADERS
         )
 
     assert resp.status_code == 400
@@ -251,7 +251,7 @@ def test_stream_unknown_custom_model_is_json_400(monkeypatch) -> None:
         resp = client.post(
             "/v1/completions/stream",
             json={**BODY, "model": CUSTOM},
-            headers=TENANT_HEADERS,
+            headers=ACCOUNT_HEADERS,
         )
 
     assert resp.status_code == 400
@@ -264,7 +264,7 @@ def test_catalog_failure_falls_back_to_platform_whitelist(monkeypatch) -> None:
     _stub(monkeypatch)
     with _client_with_catalog(stub) as client:
         resp = client.post(
-            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=TENANT_HEADERS
+            "/v1/completions", json={**BODY, "model": CUSTOM}, headers=ACCOUNT_HEADERS
         )
 
     assert resp.status_code == 400  # 目录故障时仍按平台白名单拦截
@@ -277,7 +277,7 @@ def test_platform_model_still_allowed_with_catalog(monkeypatch) -> None:
     _stub(monkeypatch, captured)
     with _client_with_catalog(stub) as client:
         resp = client.post(
-            "/v1/completions", json={**BODY, "model": ALLOWED}, headers=TENANT_HEADERS
+            "/v1/completions", json={**BODY, "model": ALLOWED}, headers=ACCOUNT_HEADERS
         )
 
     assert resp.status_code == 200

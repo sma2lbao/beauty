@@ -112,8 +112,8 @@ async def _ready(
     return toolkit, catalog, client
 
 
-async def _token(tenant_id: str) -> str:
-    return f"tok-{tenant_id}"
+async def _token(account_id: str) -> str:
+    return f"tok-{account_id}"
 
 
 # ---------------------------------------------------------------- ToolClient
@@ -135,7 +135,7 @@ async def test_list_tools_parses_catalog() -> None:
     await client.aclose()
 
 
-async def test_list_tools_sends_tenant_bearer() -> None:
+async def test_list_tools_sends_account_bearer() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -363,7 +363,7 @@ async def test_execute_transport_error_raises_upstream() -> None:
 
 
 async def test_execute_token_failure_raises_upstream() -> None:
-    async def broken(tenant_id: str) -> str:
+    async def broken(account_id: str) -> str:
         raise RuntimeError("no secret")
 
     client = _client(
@@ -401,7 +401,7 @@ async def test_catalog_ensure_loads_once_concurrently() -> None:
     await client.aclose()
 
 
-async def test_catalog_is_tenant_scoped() -> None:
+async def test_catalog_is_account_scoped() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         token = request.headers["authorization"]
         name = "read" if token.endswith("t-1") else "grep"

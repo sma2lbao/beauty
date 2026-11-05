@@ -13,7 +13,7 @@ from common.errors import UpstreamError
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import _IDP, OTHER, TENANT, _settings
+from tests.conftest import _IDP, ACCOUNT, OTHER, _settings
 
 
 def _audit_item(**overrides: Any) -> dict[str, Any]:
@@ -60,7 +60,7 @@ class FakeToolClient:
 
     async def list_tool_calls(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         conversation_id: str,
         limit: int = 50,
@@ -68,7 +68,7 @@ class FakeToolClient:
     ) -> dict[str, Any]:
         self.calls.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "conversation_id": conversation_id,
                 "limit": limit,
                 "offset": offset,
@@ -89,14 +89,14 @@ def _app(tmp_path: Path, name: str, tool_client: Any = None) -> Any:
 
 
 def _create_conversation(client: TestClient) -> str:
-    response = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    response = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert response.status_code == 201
     return response.json()["id"]
 
 
 def _tool_calls(client: TestClient, conversation_id: str, query: str = "") -> Any:
     return client.get(
-        f"/api/v1/conversations/{conversation_id}/tool-calls{query}", headers=TENANT
+        f"/api/v1/conversations/{conversation_id}/tool-calls{query}", headers=ACCOUNT
     )
 
 
@@ -123,7 +123,7 @@ def test_returns_server_generated_patch_across_runs(tmp_path: Path) -> None:
     assert item["run_id"] == "run-1"
     assert fake.calls == [
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "conversation_id": conversation_id,
             "limit": 50,
             "offset": 0,
@@ -153,7 +153,7 @@ def test_rejects_invalid_pagination(tmp_path: Path) -> None:
     assert fake.calls == []
 
 
-def test_cross_tenant_conversation_is_404(tmp_path: Path) -> None:
+def test_cross_account_conversation_is_404(tmp_path: Path) -> None:
     fake = FakeToolClient()
     with TestClient(_app(tmp_path, "tool-calls-other.db", fake)) as client:
         conversation_id = _create_conversation(client)

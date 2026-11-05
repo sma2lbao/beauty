@@ -28,7 +28,7 @@ _SHELL_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
 class SandboxSpec:
     """创建沙箱所需的全部参数(provider 无关)。"""
 
-    tenant_id: str
+    account_id: str
     name: str
     kind: str
     image: str

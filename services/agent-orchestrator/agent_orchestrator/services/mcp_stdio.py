@@ -1,7 +1,7 @@
 """stdio 型 MCP(P2):在沙箱里拉起 MCP 进程,经 stdin/stdout JSON-RPC 调用。
 
 为什么必须进沙箱:stdio MCP 是任意本地进程(npx/uvx 拉第三方包),直接跑在
-orchestrator 进程里等于把租户配置变成宿主机代码执行。这里统一交给
+orchestrator 进程里等于把账号配置变成宿主机代码执行。这里统一交给
 workspace-service 的沙箱(microsandbox),orchestrator 只做两件事:
 
 1. StdioSandboxPool:按作用域(对话/run)常驻沙箱、写 probe、执行 probe;
@@ -127,13 +127,13 @@ class StdioSandboxPool:
             if item_id == sandbox_id
         }
 
-    async def ensure(self, tenant_id: str, key: str, server: MCPServer) -> str:
+    async def ensure(self, account_id: str, key: str, server: MCPServer) -> str:
         """确保 key 对应的沙箱存在并续期,返回 sandbox_id(同 key 并发只建一个)。"""
         async with self._lock(key):
             sandbox_id = self._sandboxes.get(key)
             if sandbox_id is not None:
                 try:
-                    await self._sandbox.touch(tenant_id, sandbox_id)
+                    await self._sandbox.touch(account_id, sandbox_id)
                     return sandbox_id
                 except UpstreamError:
                     logger.info("stdio MCP 沙箱已失效,重建", key=key)
@@ -141,7 +141,7 @@ class StdioSandboxPool:
             runtime = server.runtime or "python"
             image = server.image or self._images.get(runtime, "python")
             info = await self._sandbox.create(
-                tenant_id,
+                account_id,
                 kind="mcp",
                 image=image,
                 ttl_seconds=self._ttl_seconds,
@@ -150,13 +150,13 @@ class StdioSandboxPool:
             self._sandboxes[key] = info.id
             return info.id
 
-    async def _probe_path(self, tenant_id: str, sandbox_id: str, runtime: str) -> str:
+    async def _probe_path(self, account_id: str, sandbox_id: str, runtime: str) -> str:
         if runtime not in PROBE_SOURCES:
             raise MCPError(f"不支持的 MCP runtime:{runtime}")
         marker = (sandbox_id, runtime)
         if marker not in self._probes:
             await self._sandbox.write_file(
-                tenant_id,
+                account_id,
                 sandbox_id,
                 PROBE_PATHS[runtime],
                 PROBE_SOURCES[runtime].encode("utf-8"),
@@ -165,15 +165,15 @@ class StdioSandboxPool:
         return PROBE_PATHS[runtime]
 
     async def run(
-        self, tenant_id: str, key: str, server: MCPServer, request: dict[str, Any]
+        self, account_id: str, key: str, server: MCPServer, request: dict[str, Any]
     ) -> dict[str, Any]:
         """在沙箱内跑一次 probe,返回 JSON-RPC result(失败抛 MCPError)。"""
-        sandbox_id = await self.ensure(tenant_id, key, server)
+        sandbox_id = await self.ensure(account_id, key, server)
         runtime = server.runtime or "python"
-        probe_path = await self._probe_path(tenant_id, sandbox_id, runtime)
+        probe_path = await self._probe_path(account_id, sandbox_id, runtime)
         timeout = max(int(self._timeout_seconds), int(server.timeout_seconds or 0) + 30)
         result = await self._sandbox.exec(
-            tenant_id,
+            account_id,
             sandbox_id,
             [RUNTIME_BINS[runtime], probe_path],
             stdin=json.dumps(request, ensure_ascii=False),
@@ -181,14 +181,14 @@ class StdioSandboxPool:
         )
         return parse_probe_output(result)
 
-    async def release(self, tenant_id: str, key: str) -> None:
+    async def release(self, account_id: str, key: str) -> None:
         """销毁该 key 的沙箱并清缓存(测试端点等一次性场景用)。"""
         sandbox_id = self._sandboxes.get(key)
         self._forget(key)
         if sandbox_id is None:
             return
         with suppress(UpstreamError):
-            await self._sandbox.destroy(tenant_id, sandbox_id)
+            await self._sandbox.destroy(account_id, sandbox_id)
 
     def forget(self, key: str) -> None:
         """只清本地缓存(不销毁):沙箱交给 TTL 自然回收。"""

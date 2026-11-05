@@ -21,14 +21,14 @@ class Settings(BaseAppSettings):
     # 通用二进制对象(P3:skill 包 zip)单对象字节上限;超限返回 400 object.too_large
     object_max_bytes: int = 20 * 1024 * 1024
     default_workspace_name: str = "默认工作区"
-    # 鉴权(架构 §10):默认开启,与其他服务同一套 token→租户约定(自建 IdP)
+    # 鉴权(架构 §10):默认开启,与其他服务同一套 token→账号约定(自建 IdP)
     auth_enabled: bool = True
     auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
     auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None
-    auth_tenant_claim: str = "tenant_id"
+    auth_account_claim: str = "account_id"
     # 沙箱(§7 阶段 B / P1):provider=microsandbox 用真 microVM;
-    # provider=local 直接在宿主目录/宿主进程上跑(无隔离,仅本地单租户可信环境);
+    # provider=local 直接在宿主目录/宿主进程上跑(无隔离,仅本地单账号可信环境);
     # provider=unavailable 供没有 runtime 的 dev 使用(调用即得到明确 502,不静默)
     sandbox_provider: str = "microsandbox"
     sandbox_default_image: str = "python"  # microsandbox 镜像别名

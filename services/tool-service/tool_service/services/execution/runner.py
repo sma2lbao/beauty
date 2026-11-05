@@ -88,9 +88,9 @@ class ToolRunner(
         started = time.monotonic()
         descriptor = catalog.find_descriptor(name)
         if descriptor is None and self._connector is not None:
-            # 连接器工具不在静态目录里,按租户从 connector-service 目录现查
+            # 连接器工具不在静态目录里,按账号从 connector-service 目录现查
             # (TTL 缓存);未启用连接器时这里直接跳过。
-            descriptor = await self._connector.find(context.tenant_id, name)
+            descriptor = await self._connector.find(context.account_id, name)
         if descriptor is None or not descriptor.enabled:
             raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
         if not is_available(descriptor.name, self._settings):

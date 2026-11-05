@@ -1,4 +1,4 @@
-"""通用二进制对象(P3):skill 包往返、租户隔离、大小/编码校验、无存储后端。"""
+"""通用二进制对象(P3):skill 包往返、账号隔离、大小/编码校验、无存储后端。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import hashlib
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, _settings, verifier
+from tests.conftest import ACCOUNT, OTHER, _settings, verifier
 from workspace.main import create_app
 
 # 带 zip 魔数与 NUL/非 UTF-8 字节,确认二进制不被文本路径破坏
@@ -23,7 +23,7 @@ def _put(client: TestClient, payload: bytes = SKILL_ZIP, **body):
             "content_base64": base64.b64encode(payload).decode("ascii"),
             **body,
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -36,7 +36,7 @@ def test_put_get_roundtrip(client: TestClient, tmp_path) -> None:
     assert body["size_bytes"] == len(SKILL_ZIP)
     assert body["sha256"] == hashlib.sha256(SKILL_ZIP).hexdigest()
 
-    fetched = client.get("/v1/objects", params={"key": body["key"]}, headers=TENANT)
+    fetched = client.get("/v1/objects", params={"key": body["key"]}, headers=ACCOUNT)
     assert fetched.status_code == 200
     read = fetched.json()
     assert read["key"] == body["key"]
@@ -44,7 +44,7 @@ def test_put_get_roundtrip(client: TestClient, tmp_path) -> None:
     assert read["sha256"] == body["sha256"]
     assert base64.b64decode(read["content_base64"]) == SKILL_ZIP
 
-    # 对象真的落盘在 <租户>/objects/ 下
+    # 对象真的落盘在 <账号>/objects/ 下
     files = [path for path in (tmp_path / "objects").rglob("*") if path.is_file()]
     assert len(files) == 1
     assert files[0].read_bytes() == SKILL_ZIP
@@ -66,7 +66,7 @@ def test_object_without_filename_has_no_suffix(client: TestClient) -> None:
     assert "." not in key.rsplit("/", 1)[-1]
 
 
-def test_cross_tenant_read_and_delete_are_404(client: TestClient) -> None:
+def test_cross_account_read_and_delete_are_404(client: TestClient) -> None:
     key = _put(client).json()["key"]
     assert (
         client.get("/v1/objects", params={"key": key}, headers=OTHER).status_code == 404
@@ -76,21 +76,21 @@ def test_cross_tenant_read_and_delete_are_404(client: TestClient) -> None:
         == 404
     )
     # 主人仍能读:越权请求没有副作用
-    owner = client.get("/v1/objects", params={"key": key}, headers=TENANT)
+    owner = client.get("/v1/objects", params={"key": key}, headers=ACCOUNT)
     assert owner.status_code == 200
 
 
 def test_delete_is_scoped_and_idempotent(client: TestClient) -> None:
     key = _put(client).json()["key"]
     assert (
-        client.delete("/v1/objects", params={"key": key}, headers=TENANT).status_code
+        client.delete("/v1/objects", params={"key": key}, headers=ACCOUNT).status_code
         == 204
     )
-    missing = client.get("/v1/objects", params={"key": key}, headers=TENANT)
+    missing = client.get("/v1/objects", params={"key": key}, headers=ACCOUNT)
     assert missing.status_code == 404
     # 已删除再删仍 204(幂等)
     assert (
-        client.delete("/v1/objects", params={"key": key}, headers=TENANT).status_code
+        client.delete("/v1/objects", params={"key": key}, headers=ACCOUNT).status_code
         == 204
     )
 
@@ -98,23 +98,23 @@ def test_delete_is_scoped_and_idempotent(client: TestClient) -> None:
 def test_missing_or_malformed_key_is_404(client: TestClient) -> None:
     missing = "t-1/objects/" + "0" * 32 + ".zip"
     assert (
-        client.get("/v1/objects", params={"key": missing}, headers=TENANT).status_code
+        client.get("/v1/objects", params={"key": missing}, headers=ACCOUNT).status_code
         == 404
     )
     for key in (
-        "t-2/objects/" + "0" * 32 + ".zip",  # 别的租户
+        "t-2/objects/" + "0" * 32 + ".zip",  # 别的账号
         "t-1/objects/../t-2/secret.zip",  # 路径穿越
         "t-1/objects/",  # 没有对象名
         "/etc/passwd",  # 绝对路径
     ):
-        response = client.get("/v1/objects", params={"key": key}, headers=TENANT)
+        response = client.get("/v1/objects", params={"key": key}, headers=ACCOUNT)
         assert response.status_code == 404
         assert response.json()["code"] == "object.not_found"
 
 
 def test_invalid_base64_is_400(client: TestClient) -> None:
     response = client.post(
-        "/v1/objects", json={"content_base64": "not-base64!!"}, headers=TENANT
+        "/v1/objects", json={"content_base64": "not-base64!!"}, headers=ACCOUNT
     )
     assert response.status_code == 400
     assert response.json()["code"] == "object.content_invalid"
@@ -141,7 +141,7 @@ def test_database_backend_has_no_object_store(tmp_path) -> None:
         assert created.status_code == 503
         assert created.json()["code"] == "object.store_missing"
         fetched = client.get(
-            "/v1/objects", params={"key": "t-1/objects/x.zip"}, headers=TENANT
+            "/v1/objects", params={"key": "t-1/objects/x.zip"}, headers=ACCOUNT
         )
         assert fetched.status_code == 503
         assert fetched.json()["code"] == "object.store_missing"

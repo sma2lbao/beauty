@@ -97,7 +97,7 @@ def _normalize_answers(answers: list[dict[str, Any]] | None) -> list[dict[str, A
 async def answer_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     *,
     question_id: str,
@@ -119,7 +119,7 @@ async def answer_run(
     事件流记 run.question.answered.v1 → 状态回到 running →
     jobs 入队(worker 恢复图)或直接 resume 图。
     """
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     events = RunEventRepository(session)
     required = await events.latest_of_type(run.id, QUESTION_REQUIRED_EVENT)
     pending = _event_payload(required)
@@ -166,7 +166,7 @@ async def answer_run(
     if jobs_enabled and not from_job:
         await jobs_service.enqueue(
             session,
-            tenant_id,
+            account_id,
             "answer",
             run.id,
             payload={

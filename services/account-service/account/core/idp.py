@@ -1,8 +1,8 @@
 """自建 IdP 签发器(由 dev 桩转正,架构 §10/§11):
 
-- RS256 签发(进程启动时生成 RSA 密钥,JWT `kid` 头指向它),claims
-  携带 `tenant_id`(JwtVerifier 的租户约定),`iss`/`aud`/`exp` 与
-  托管 IdP 的 access token 完全同构;
+- RS256 签发(进程启动时生成 RSA 密钥,JWT `kid` 头指向它),claims 携带
+  `account_id`(账号即隔离边界:account_id = users.id),`iss`/`aud`/`exp`
+  与托管 IdP 的 access token 完全同构;
 - 暴露 OIDC 发现文档 + JWKS 端点——兄弟服务用同一个 `JwtVerifier`
   经 HTTP 发现来验签,**没有任何专用后门**;将来要换 Logto 等托管 IdP
   只改各服务 `AUTH_ISSUER`,业务代码零改动;
@@ -61,14 +61,14 @@ class IdPSigner:
     def ttl_seconds(self) -> int:
         return self._ttl
 
-    def sign(self, *, subject: str, tenant_id: str) -> str:
-        """签发 access token:claims 与 IdP 契约一致(§10 tenant claim)。"""
+    def sign(self, *, subject: str, account_id: str) -> str:
+        """签发 access token:claims 与 IdP 契约一致(§10 账号 claim)。"""
         now = int(time.time())
         claims = {
             "iss": self._issuer,
             "aud": self._audience,
             "sub": subject,
-            "tenant_id": tenant_id,
+            "account_id": account_id,
             "iat": now,
             "exp": now + self._ttl,
         }

@@ -1,4 +1,4 @@
-"""鉴权(架构 §10):connector-service 与 orchestrator 同一套 token→租户约定。"""
+"""鉴权(架构 §10):connector-service 与 orchestrator 同一套 token→账号约定。"""
 
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ def private_key() -> rsa.RSAPrivateKey:
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def _token(private_key, tenant: str = "t-1") -> str:
+def _token(private_key, account: str = "t-1") -> str:
     return jwt.encode(
         {
             "sub": "u1",
             "iss": ISSUER,
-            "tenant_id": tenant,
+            "account_id": account,
             "exp": datetime.now(UTC) + timedelta(seconds=300),
         },
         private_key,
@@ -72,17 +72,17 @@ def test_connection_requires_token(tmp_path: Path, private_key) -> None:
         assert resp.json()["code"] == "auth.token_missing"
 
 
-def test_connection_scoped_to_token_tenant(tmp_path: Path, private_key) -> None:
+def test_connection_scoped_to_token_account(tmp_path: Path, private_key) -> None:
     with _auth_client(tmp_path, private_key) as client:
-        conn = insert_connection(tmp_path / AUTH_DB, tenant_id="t-1")
-        headers = {"Authorization": f"Bearer {_token(private_key, tenant='t-1')}"}
+        conn = insert_connection(tmp_path / AUTH_DB, account_id="t-1")
+        headers = {"Authorization": f"Bearer {_token(private_key, account='t-1')}"}
         assert [
             row["id"] for row in client.get("/v1/connections", headers=headers).json()
         ] == [conn["id"]]
 
         other = {
-            "Authorization": f"Bearer {_token(private_key, tenant='t-2')}",
-            "X-Tenant-Id": "t-1",  # 鉴权开启时伪造请求头无效
+            "Authorization": f"Bearer {_token(private_key, account='t-2')}",
+            "X-Account-Id": "t-1",  # 鉴权开启时伪造请求头无效
         }
         assert client.get("/v1/connections", headers=other).json() == []
         assert (

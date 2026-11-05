@@ -46,7 +46,7 @@ class AuthAssemblyMixin:
         # token 预算(P0-3):进程级固定,0 = 不限制
         usage_service.configure_budget(settings.run_token_budget)
 
-        # 配额快照(P0-2):建 run 前读 account 的租户配额;密钥缺失即关闭
+        # 配额快照(P0-2):建 run 前读 account 的账号配额;密钥缺失即关闭
         if quota_service.client() is None and quota_service.configure_client(
             base_url=settings.account_service_url,
             internal_secret=settings.internal_auth_secret,

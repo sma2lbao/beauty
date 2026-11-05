@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, _settings, verifier
+from tests.conftest import ACCOUNT, _settings, verifier
 from tests.support.sandbox_local import (
     _dir_of,
     posix_only,
@@ -41,7 +41,7 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
         assert isinstance(app.state.sandbox_provider, LocalSandboxProvider)
         assert app.state.sandbox_provider.provider == "local"
 
-        created = client.post("/v1/sandboxes", json={}, headers=TENANT)
+        created = client.post("/v1/sandboxes", json={}, headers=ACCOUNT)
         assert created.status_code == 201, created.text
         body = created.json()
         assert body["provider"] == "local"
@@ -52,7 +52,7 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
         executed = client.post(
             f"/v1/sandboxes/{body['id']}/exec",
             json={"argv": ["sh", "-c", "printf 'from-local'"]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert executed.status_code == 200, executed.text
         assert executed.json()["exit_code"] == 0
@@ -66,13 +66,13 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
                 "path": "/workspace/notes/hello.txt",
                 "content_base64": base64.b64encode(payload).decode("ascii"),
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert written.status_code == 204
         read = client.get(
             f"/v1/sandboxes/{body['id']}/files",
             params={"path": "/workspace/notes/hello.txt"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert read.status_code == 200
         assert base64.b64decode(read.json()["content_base64"]) == payload
@@ -81,7 +81,7 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
 
         # 执行现场:根目录只列直接子项,进一层才看到文件
         root_tree = client.get(
-            f"/v1/sandboxes/{body['id']}/tree", headers=TENANT
+            f"/v1/sandboxes/{body['id']}/tree", headers=ACCOUNT
         ).json()
         assert root_tree["path"] == "/workspace"
         assert [(item["name"], item["kind"]) for item in root_tree["entries"]] == [
@@ -91,7 +91,7 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
         notes_tree = client.get(
             f"/v1/sandboxes/{body['id']}/tree",
             params={"path": "/workspace/notes", "depth": 2},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert notes_tree.status_code == 200, notes_tree.text
         assert notes_tree.json()["truncated"] is False
@@ -100,6 +100,6 @@ def test_http_local_provider_lifecycle(tmp_path: Path) -> None:
             for item in notes_tree.json()["entries"]
         ] == [("hello.txt", "file", len(payload))]
 
-        deleted = client.delete(f"/v1/sandboxes/{body['id']}", headers=TENANT)
+        deleted = client.delete(f"/v1/sandboxes/{body['id']}", headers=ACCOUNT)
         assert deleted.status_code == 204
         assert not sandbox_dir.exists()

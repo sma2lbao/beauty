@@ -93,7 +93,7 @@ def _new_name() -> str:
 
 
 def _new_sandbox(
-    tenant_id: str,
+    account_id: str,
     data: SandboxCreate,
     provider: SandboxProvider,
     settings: Settings,
@@ -117,7 +117,7 @@ def _new_sandbox(
     )
     return SandboxInstance(
         id=uuid4().hex,
-        tenant_id=tenant_id,
+        account_id=account_id,
         name=name,
         scope_key=scope_key,
         kind=data.kind,
@@ -139,7 +139,7 @@ def _new_sandbox(
 def _spec_from(record: SandboxInstance, settings: Settings) -> SandboxSpec:
     """把已落库的行翻译成 provider 需要的运行时规格。"""
     return SandboxSpec(
-        tenant_id=record.tenant_id,
+        account_id=record.account_id,
         name=record.external_name,
         kind=record.kind,
         image=record.image,
@@ -179,28 +179,28 @@ async def _start_runtime(
 
 
 async def _find_by_scope(
-    session: AsyncSession, tenant_id: str, scope_key: str
+    session: AsyncSession, account_id: str, scope_key: str
 ) -> SandboxInstance | None:
     statement = SandboxRepository(session).scoped(
-        tenant_id, SandboxInstance.scope_key == scope_key
+        account_id, SandboxInstance.scope_key == scope_key
     )
     return await session.scalar(statement)
 
 
 async def _insert_ensured(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     scope_key: str,
     data: SandboxCreate,
     provider: SandboxProvider,
     settings: Settings,
 ) -> SandboxInstance | None:
     """插入带 scope_key 的新行;并发撞唯一约束时 rollback 并返回 None。"""
-    record = _new_sandbox(tenant_id, data, provider, settings, scope_key=scope_key)
+    record = _new_sandbox(account_id, data, provider, settings, scope_key=scope_key)
     try:
         await SandboxRepository(session).add(record)
     except IntegrityError:
-        # 另一个副本已插入同一 (tenant_id, scope_key):回滚后由调用方重查
+        # 另一个副本已插入同一 (account_id, scope_key):回滚后由调用方重查
         await session.rollback()
         return None
     await _start_runtime(session, record, provider, settings)
@@ -220,7 +220,7 @@ async def _claim_rebuild(
     调用方 rollback 后重新查询(此时通常已是 running)。
     """
     candidate = _new_sandbox(
-        record.tenant_id, data, provider, settings, scope_key=record.scope_key
+        record.account_id, data, provider, settings, scope_key=record.scope_key
     )
     values: dict[str, object] = {
         field: getattr(candidate, field)

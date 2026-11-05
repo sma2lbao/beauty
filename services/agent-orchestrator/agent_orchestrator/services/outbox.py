@@ -5,7 +5,7 @@
 - **记录**(`record_run_event`):与业务状态**同一事务**落库。挂在
   `session.info["outbox"]` 上由 `append_event` 取用,所以 run_events 与
   outbox_events 要么一起提交、要么一起回滚——不会出现"状态改了但事件没发"。
-  事件 payload 额外带上 `run_id`、信封带 `tenant_id`,让**跨服务消费者
+  事件 payload 额外带上 `run_id`、信封带 `account_id`,让**跨服务消费者
   不依赖外部上下文**就能自洽处理;
 - **投递**:lifespan 起 `OutboxDispatcher` 后台轮询,经进程内总线路由;
   失败退避重试,超过上限落 failed 留痕(可查、可人工重放);
@@ -57,9 +57,9 @@ async def record_run_event(
         type=envelope.type,
         occurred_at=envelope.occurred_at,
         payload={**envelope.payload, "run_id": run.id},
-        tenant_id=run.tenant_id,
+        account_id=envelope.account_id or run.account_id,
     )
-    await OutboxRepository(session).record(run.tenant_id, outbox_envelope)
+    await OutboxRepository(session).record(run.account_id, outbox_envelope)
 
 
 def artifact_source(run_id: str, artifact: RunArtifact) -> str:
@@ -75,7 +75,7 @@ class KnowledgeIngestConsumer:
 
     幂等策略(至少一次投递下必须的):
 
-    1. 事件级去重:`processed_events` 记 (租户, 消费者, 事件 id);
+    1. 事件级去重:`processed_events` 记 (账号, 消费者, 事件 id);
     2. 内容级去重:入库前先按 source 查一次,已存在就跳过——覆盖
        "投递成功但进程在登记已处理前崩溃"的窗口。
     """
@@ -96,23 +96,23 @@ class KnowledgeIngestConsumer:
     async def __call__(self, envelope: EventEnvelope) -> None:
         if envelope.type != DELIVERED_EVENT:
             return
-        tenant_id = envelope.tenant_id
+        account_id = envelope.account_id
         run_id = str(envelope.payload.get("run_id") or "")
-        if not tenant_id or not run_id:
+        if not account_id or not run_id:
             # 事件不自洽 = 记录侧的问题,按失败处理让 outbox 留痕
-            raise ValueError(f"{DELIVERED_EVENT} 缺少 tenant_id/run_id")
+            raise ValueError(f"{DELIVERED_EVENT} 缺少 account_id/run_id")
 
-        if await self._already_processed(tenant_id, envelope.id):
+        if await self._already_processed(account_id, envelope.id):
             return
 
-        pending = await self._pending_artifacts(tenant_id, run_id)
+        pending = await self._pending_artifacts(account_id, run_id)
         if pending:
-            ingested_sources = await self._ingested_sources(tenant_id)
+            ingested_sources = await self._ingested_sources(account_id)
             for artifact, text, source in pending:
                 if source in ingested_sources:
                     continue
                 await self._knowledge.ingest_document(
-                    tenant_id,
+                    account_id,
                     title=artifact.title,
                     content=text,
                     source=source,
@@ -124,15 +124,15 @@ class KnowledgeIngestConsumer:
                     title=artifact.title,
                     chars=len(text),
                 )
-        await self._remember(tenant_id, envelope.id)
+        await self._remember(account_id, envelope.id)
         self._log.info("run_artifacts_ingested", run_id=run_id, count=len(pending))
 
     async def _pending_artifacts(
-        self, tenant_id: str, run_id: str
+        self, account_id: str, run_id: str
     ) -> list[tuple[RunArtifact, str, str]]:
         """该 run 名下需要入库的文本交付物(二进制件与空正文跳过)。"""
         async with session_scope(self._factory) as session:
-            rows = await artifacts_service.list_artifacts(session, tenant_id, run_id)
+            rows = await artifacts_service.list_artifacts(session, account_id, run_id)
             pending: list[tuple[RunArtifact, str, str]] = []
             for row in rows:
                 text = await artifacts_service.read_artifact_text(row, self._store)
@@ -141,27 +141,27 @@ class KnowledgeIngestConsumer:
                 pending.append((row, text, artifact_source(run_id, row)))
             return pending
 
-    async def _already_processed(self, tenant_id: str, event_id: str) -> bool:
+    async def _already_processed(self, account_id: str, event_id: str) -> bool:
         async with session_scope(self._factory) as session:
             return await is_processed(
                 session,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 consumer=self.name,
                 event_id=event_id,
             )
 
-    async def _ingested_sources(self, tenant_id: str) -> set[str]:
+    async def _ingested_sources(self, account_id: str) -> set[str]:
         """已入库文档的 source 集合(逐件去重;也兼容旧版 `run:<id>`)。"""
         documents = await self._knowledge.list_documents(
-            tenant_id, limit=INGEST_LIST_LIMIT
+            account_id, limit=INGEST_LIST_LIMIT
         )
         return {str(document.get("source") or "") for document in documents}
 
-    async def _remember(self, tenant_id: str, event_id: str) -> None:
+    async def _remember(self, account_id: str, event_id: str) -> None:
         async with session_scope(self._factory) as session:
             await mark_processed(
                 session,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 consumer=self.name,
                 event_id=event_id,
             )
@@ -191,22 +191,22 @@ class MemoryExtractionConsumer:
     async def __call__(self, envelope: EventEnvelope) -> None:
         if envelope.type != DELIVERED_EVENT:
             return
-        tenant_id = envelope.tenant_id
+        account_id = envelope.account_id
         run_id = str(envelope.payload.get("run_id") or "")
-        if not tenant_id or not run_id:
+        if not account_id or not run_id:
             self._log.warning("memory_extract_bad_event", event_id=envelope.id)
             return
-        if await self._already_processed(tenant_id, envelope.id):
+        if await self._already_processed(account_id, envelope.id):
             return
         try:
-            await self._extract(tenant_id, run_id)
+            await self._extract(account_id, run_id)
         except Exception as exc:  # noqa: BLE001 - 抽取失败不影响交付主链路
             self._log.warning("memory_extract_failed", run_id=run_id, error=str(exc))
-        await self._remember(tenant_id, envelope.id)
+        await self._remember(account_id, envelope.id)
 
-    async def _extract(self, tenant_id: str, run_id: str) -> None:
+    async def _extract(self, account_id: str, run_id: str) -> None:
         async with session_scope(self._factory) as session:
-            run = await RunRepository(session).get_for_tenant(tenant_id, run_id)
+            run = await RunRepository(session).get_for_account(account_id, run_id)
             if run is None or not run.conversation_id:
                 return
             # 与 chat 路径同口径节流:每累计 N 条会话消息才抽一次,避免每个 run
@@ -215,7 +215,7 @@ class MemoryExtractionConsumer:
                 getattr(self._settings, "memory_extraction_min_messages", 0) or 0
             )
             count = await MessageRepository(session).count_for_conversation(
-                tenant_id, run.conversation_id
+                account_id, run.conversation_id
             )
             if min_messages > 0 and count % min_messages != 0:
                 self._log.debug(
@@ -226,12 +226,12 @@ class MemoryExtractionConsumer:
                 )
                 return
             messages = await MessageRepository(session).list_for_conversation(
-                tenant_id, run.conversation_id
+                account_id, run.conversation_id
             )
             memories = await memory_extraction.extract_from_messages(
                 session,
                 self._llm,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 messages=messages,
                 workspace_id=run.workspace_id,
                 source_type="run",
@@ -243,20 +243,20 @@ class MemoryExtractionConsumer:
                     "run_memories_extracted", run_id=run_id, count=len(memories)
                 )
 
-    async def _already_processed(self, tenant_id: str, event_id: str) -> bool:
+    async def _already_processed(self, account_id: str, event_id: str) -> bool:
         async with session_scope(self._factory) as session:
             return await is_processed(
                 session,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 consumer=self.name,
                 event_id=event_id,
             )
 
-    async def _remember(self, tenant_id: str, event_id: str) -> None:
+    async def _remember(self, account_id: str, event_id: str) -> None:
         async with session_scope(self._factory) as session:
             await mark_processed(
                 session,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 consumer=self.name,
                 event_id=event_id,
             )
@@ -295,21 +295,21 @@ def register_consumers(
 
 async def list_events(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Any]:
-    """列本租户事件(最新在前),可按状态过滤。"""
+    """列本账号事件(最新在前),可按状态过滤。"""
     return await OutboxRepository(session).list_events(
-        tenant_id=tenant_id, status=status, limit=limit, offset=offset
+        account_id=account_id, status=status, limit=limit, offset=offset
     )
 
 
-async def stats(session: AsyncSession, tenant_id: str) -> dict[str, int]:
-    """本租户各状态计数(缺省 0,便于端点直接取三项)。"""
-    counts = await OutboxRepository(session).stats(tenant_id=tenant_id)
+async def stats(session: AsyncSession, account_id: str) -> dict[str, int]:
+    """本账号各状态计数(缺省 0,便于端点直接取三项)。"""
+    counts = await OutboxRepository(session).stats(account_id=account_id)
     return {
         PENDING: counts.get(PENDING, 0),
         DISPATCHED: counts.get(DISPATCHED, 0),
@@ -317,14 +317,14 @@ async def stats(session: AsyncSession, tenant_id: str) -> dict[str, int]:
     }
 
 
-async def requeue_event(session: AsyncSession, tenant_id: str, event_id: str) -> Any:
+async def requeue_event(session: AsyncSession, account_id: str, event_id: str) -> Any:
     """人工重放单条:回到 pending,等 dispatcher 下一轮投递。
 
-    跨租户一律 404(不泄漏存在性),与其它资源同一约定。
+    跨账号一律 404(不泄漏存在性),与其它资源同一约定。
     """
     repository = OutboxRepository(session)
     event = await repository.get_by_id(event_id)
-    if event is None or event.tenant_id != tenant_id:
+    if event is None or event.account_id != account_id:
         raise NotFoundError(
             "outbox.event_not_found",
             "outbox 事件不存在",
@@ -334,6 +334,6 @@ async def requeue_event(session: AsyncSession, tenant_id: str, event_id: str) ->
     return event
 
 
-async def requeue_failed(session: AsyncSession, tenant_id: str) -> int:
-    """批量重放本租户所有 failed 事件(消费者恢复后一键补投)。"""
-    return await OutboxRepository(session).requeue_failed(tenant_id=tenant_id)
+async def requeue_failed(session: AsyncSession, account_id: str) -> int:
+    """批量重放本账号所有 failed 事件(消费者恢复后一键补投)。"""
+    return await OutboxRepository(session).requeue_failed(account_id=account_id)

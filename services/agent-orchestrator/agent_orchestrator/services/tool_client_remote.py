@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class RemoteToolkit:
-    """把 tool-service 目录包装成 graph 侧 ToolkitPort(按租户实例化)。
+    """把 tool-service 目录包装成 graph 侧 ToolkitPort(按账号实例化)。
 
     - schemas():默认只暴露可执行的普通工具(kind=function);交互工具
       (ask_question)只在执行图里经 with_interaction() 开启——对话路径默认
@@ -51,7 +51,7 @@ class RemoteToolkit:
 
     def __init__(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         client: ToolClient,
         catalog: ToolCatalog,
@@ -59,7 +59,7 @@ class RemoteToolkit:
         allowed: frozenset[str] | None = None,
         interaction: bool = False,
     ) -> None:
-        self._tenant_id = tenant_id
+        self._account_id = account_id
         self._client = client
         self._catalog = catalog
         self._timeout_grace = timeout_grace_seconds
@@ -70,7 +70,7 @@ class RemoteToolkit:
     async def ensure_ready(self) -> None:
         """惰性加载目录;图节点/对话循环在拿到 toolkit 后显式等待一次。"""
 
-        await self._catalog.ensure(self._client, self._tenant_id)
+        await self._catalog.ensure(self._client, self._account_id)
 
     def __len__(self) -> int:
         return len(self._model_tools())
@@ -164,7 +164,7 @@ class RemoteToolkit:
         """复制工具箱:restricted/with_interaction 都走这里,保证标志不丢。"""
 
         return RemoteToolkit(
-            self._tenant_id,
+            self._account_id,
             client=self._client,
             catalog=self._catalog,
             timeout_grace_seconds=self._timeout_grace,
@@ -229,7 +229,7 @@ class RemoteToolkit:
         timeout = descriptor.timeout_seconds + self._timeout_grace
         try:
             response = await asyncio.wait_for(
-                self._client.execute(self._tenant_id, descriptor.name, request),
+                self._client.execute(self._account_id, descriptor.name, request),
                 timeout=timeout,
             )
         except TimeoutError:
@@ -263,7 +263,7 @@ class RemoteToolkit:
         )
 
     def _visible_tools(self) -> tuple[ToolDescriptor, ...]:
-        tools = self._catalog.descriptors(self._tenant_id)
+        tools = self._catalog.descriptors(self._account_id)
         if self._allowed is None:
             return tools
         return tuple(tool for tool in tools if tool.name in self._allowed)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT
+from tests.conftest import ACCOUNT, OTHER
 
 
 def _create_workspace(
@@ -13,7 +13,7 @@ def _create_workspace(
     body: dict[str, object] = {"name": name}
     if description is not None:
         body["description"] = description
-    created = client.post("/v1/workspaces", json=body, headers=TENANT)
+    created = client.post("/v1/workspaces", json=body, headers=ACCOUNT)
     assert created.status_code == 201
     return created.json()
 
@@ -24,7 +24,7 @@ def _create_artifact_in(
     created = client.post(
         "/v1/artifacts",
         json={"title": title, "content": "# 周报\n要点", "workspace_id": workspace_id},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert created.status_code == 201
     return created.json()
@@ -36,7 +36,7 @@ def test_rename_updates_name_and_description(client: TestClient) -> None:
     patched = client.patch(
         f"/v1/workspaces/{workspace['id']}",
         json={"name": "销售资料库", "description": "全国区"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert patched.status_code == 200
     body = patched.json()
@@ -45,10 +45,10 @@ def test_rename_updates_name_and_description(client: TestClient) -> None:
     assert body["description"] == "全国区"
     assert body["is_default"] is False
 
-    fetched = client.get(f"/v1/workspaces/{workspace['id']}", headers=TENANT).json()
+    fetched = client.get(f"/v1/workspaces/{workspace['id']}", headers=ACCOUNT).json()
     assert fetched["name"] == "销售资料库"
     assert fetched["description"] == "全国区"
-    listed = client.get("/v1/workspaces", headers=TENANT).json()
+    listed = client.get("/v1/workspaces", headers=ACCOUNT).json()
     assert [item["name"] for item in listed] == ["销售资料库"]
 
 
@@ -58,21 +58,21 @@ def test_rename_only_keeps_description_and_null_clears_it(client: TestClient) ->
     renamed = client.patch(
         f"/v1/workspaces/{workspace['id']}",
         json={"name": "销售资料库"},
-        headers=TENANT,
+        headers=ACCOUNT,
     ).json()
     assert renamed["description"] == "华东区"  # 只改名不动描述
 
     cleared = client.patch(
         f"/v1/workspaces/{workspace['id']}",
         json={"description": None},
-        headers=TENANT,
+        headers=ACCOUNT,
     ).json()
     assert cleared["name"] == "销售资料库"
     assert cleared["description"] is None  # 显式 null 清空
 
     # 空 body 什么都不改(仍 200)
     unchanged = client.patch(
-        f"/v1/workspaces/{workspace['id']}", json={}, headers=TENANT
+        f"/v1/workspaces/{workspace['id']}", json={}, headers=ACCOUNT
     ).json()
     assert unchanged["name"] == "销售资料库"
     assert unchanged["description"] is None
@@ -85,7 +85,7 @@ def test_rename_to_existing_name_conflicts(client: TestClient) -> None:
     response = client.patch(
         f"/v1/workspaces/{first['id']}",
         json={"name": "市场资料"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 409
     body = response.json()
@@ -96,12 +96,12 @@ def test_rename_to_existing_name_conflicts(client: TestClient) -> None:
     same = client.patch(
         f"/v1/workspaces/{first['id']}",
         json={"name": "销售资料"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert same.status_code == 200
 
 
-def test_rename_and_delete_are_tenant_isolated(client: TestClient) -> None:
+def test_rename_and_delete_are_account_isolated(client: TestClient) -> None:
     workspace = _create_workspace(client, "销售资料")
 
     assert (
@@ -116,16 +116,16 @@ def test_rename_and_delete_are_tenant_isolated(client: TestClient) -> None:
         client.delete(f"/v1/workspaces/{workspace['id']}", headers=OTHER).status_code
         == 404
     )
-    # 跨租户的 404 与不存在不可区分,且没有真的改动
-    missing = client.patch("/v1/workspaces/nope", json={"name": "x"}, headers=TENANT)
+    # 跨账号的 404 与不存在不可区分,且没有真的改动
+    missing = client.patch("/v1/workspaces/nope", json={"name": "x"}, headers=ACCOUNT)
     assert missing.status_code == 404
     assert missing.json()["code"] == "workspace.not_found"
     assert (
-        client.delete("/v1/workspaces/nope", headers=TENANT).json()["code"]
+        client.delete("/v1/workspaces/nope", headers=ACCOUNT).json()["code"]
         == "workspace.not_found"
     )
     assert (
-        client.get(f"/v1/workspaces/{workspace['id']}", headers=TENANT).json()["name"]
+        client.get(f"/v1/workspaces/{workspace['id']}", headers=ACCOUNT).json()["name"]
         == "销售资料"
     )
 
@@ -137,18 +137,19 @@ def test_delete_workspace_cascades_artifacts(client: TestClient, tmp_path) -> No
     files = [path for path in root.rglob("*") if path.is_file()]
     assert len(files) == 1
 
-    deleted = client.delete(f"/v1/workspaces/{workspace['id']}", headers=TENANT)
+    deleted = client.delete(f"/v1/workspaces/{workspace['id']}", headers=ACCOUNT)
     assert deleted.status_code == 204
 
     assert (
-        client.get(f"/v1/workspaces/{workspace['id']}", headers=TENANT).status_code
+        client.get(f"/v1/workspaces/{workspace['id']}", headers=ACCOUNT).status_code
         == 404
     )
     assert workspace["id"] not in [
-        item["id"] for item in client.get("/v1/workspaces", headers=TENANT).json()
+        item["id"] for item in client.get("/v1/workspaces", headers=ACCOUNT).json()
     ]
     assert (
-        client.get(f"/v1/artifacts/{artifact['id']}", headers=TENANT).status_code == 404
+        client.get(f"/v1/artifacts/{artifact['id']}", headers=ACCOUNT).status_code
+        == 404
     )
     assert [path for path in root.rglob("*") if path.is_file()] == []
 
@@ -160,12 +161,12 @@ def test_delete_keeps_other_workspace_artifacts(client: TestClient, tmp_path) ->
     _create_artifact_in(client, doomed["id"], title="删除")
 
     assert (
-        client.delete(f"/v1/workspaces/{doomed['id']}", headers=TENANT).status_code
+        client.delete(f"/v1/workspaces/{doomed['id']}", headers=ACCOUNT).status_code
         == 204
     )
 
     assert (
-        client.get(f"/v1/artifacts/{kept_artifact['id']}", headers=TENANT).status_code
+        client.get(f"/v1/artifacts/{kept_artifact['id']}", headers=ACCOUNT).status_code
         == 200
     )
     root = tmp_path / "objects"
@@ -173,10 +174,10 @@ def test_delete_keeps_other_workspace_artifacts(client: TestClient, tmp_path) ->
 
 
 def test_default_workspace_is_protected_but_renameable(client: TestClient) -> None:
-    default = client.get("/v1/workspaces/default", headers=TENANT).json()
+    default = client.get("/v1/workspaces/default", headers=ACCOUNT).json()
     assert default["is_default"] is True
 
-    protected = client.delete(f"/v1/workspaces/{default['id']}", headers=TENANT)
+    protected = client.delete(f"/v1/workspaces/{default['id']}", headers=ACCOUNT)
     assert protected.status_code == 409
     body = protected.json()
     assert body["code"] == "workspace.default_protected"
@@ -184,31 +185,31 @@ def test_default_workspace_is_protected_but_renameable(client: TestClient) -> No
 
     renamed = client.patch(
         f"/v1/workspaces/{default['id']}",
-        json={"name": "团队资料"},
-        headers=TENANT,
+        json={"name": "账号资料"},
+        headers=ACCOUNT,
     )
     assert renamed.status_code == 200
-    assert renamed.json()["name"] == "团队资料"
+    assert renamed.json()["name"] == "账号资料"
     assert renamed.json()["is_default"] is True
 
     # 改名后仍然是同一个默认工作区(不会因为按名称找不到而重复建档)
-    again = client.get("/v1/workspaces/default", headers=TENANT).json()
+    again = client.get("/v1/workspaces/default", headers=ACCOUNT).json()
     assert again["id"] == default["id"]
-    assert again["name"] == "团队资料"
+    assert again["name"] == "账号资料"
     # 交付物不传 workspace_id 时仍落这个(已改名的)默认工作区
     artifact = client.post(
-        "/v1/artifacts", json={"title": "周报", "content": "# 周报"}, headers=TENANT
+        "/v1/artifacts", json={"title": "周报", "content": "# 周报"}, headers=ACCOUNT
     )
     assert artifact.status_code == 201
     assert artifact.json()["workspace_id"] == default["id"]
-    assert len(client.get("/v1/workspaces", headers=TENANT).json()) == 1
+    assert len(client.get("/v1/workspaces", headers=ACCOUNT).json()) == 1
 
 
 def test_list_workspaces_exposes_is_default(client: TestClient) -> None:
-    default = client.get("/v1/workspaces/default", headers=TENANT).json()
+    default = client.get("/v1/workspaces/default", headers=ACCOUNT).json()
     other = _create_workspace(client, "销售资料")
 
-    listed = client.get("/v1/workspaces", headers=TENANT).json()
+    listed = client.get("/v1/workspaces", headers=ACCOUNT).json()
     by_id = {item["id"]: item for item in listed}
     assert by_id[default["id"]]["is_default"] is True
     assert by_id[other["id"]]["is_default"] is False

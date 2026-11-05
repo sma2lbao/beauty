@@ -48,9 +48,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_jobs_tenant_id"), "jobs", ["tenant_id"], unique=False)
     op.create_index(op.f("ix_jobs_run_id"), "jobs", ["run_id"], unique=False)
     op.create_index(op.f("ix_jobs_status"), "jobs", ["status"], unique=False)
-    op.create_index(
-        "ix_jobs_status_run_at", "jobs", ["status", "run_at"], unique=False
-    )
+    op.create_index("ix_jobs_status_run_at", "jobs", ["status", "run_at"], unique=False)
 
 
 def downgrade() -> None:

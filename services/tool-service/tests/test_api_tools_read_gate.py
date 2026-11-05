@@ -8,7 +8,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeSandboxProvider,
     write_envelope,
 )
@@ -22,7 +22,7 @@ def _execute(
     headers: dict[str, str] | None = None,
 ) -> Any:
     return client.post(
-        f"/v1/tools/{tool}:execute", json=payload, headers=headers or TENANT
+        f"/v1/tools/{tool}:execute", json=payload, headers=headers or ACCOUNT
     )
 
 
@@ -61,7 +61,7 @@ def test_write_new_file_without_read_is_allowed(
     request = json.loads(sandbox_provider.exec_calls[0]["stdin"])
     assert request["arguments"]["_read_gate_absent"] is True
     assert "_expected_read_sha256" not in request["arguments"]
-    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=ACCOUNT)
     assert audit.json()["items"][0]["ok"] is True
 
 
@@ -109,7 +109,7 @@ def test_edit_without_read_is_rejected_with_envelope(
     assert body["ok"] is False
     assert body["error"]["code"] == "tool.read_required"
     assert sandbox_provider.exec_calls == []
-    audit = client.get("/v1/tool-calls", params={"tool_name": "edit"}, headers=TENANT)
+    audit = client.get("/v1/tool-calls", params={"tool_name": "edit"}, headers=ACCOUNT)
     assert audit.json()["items"][0]["error_code"] == "tool.read_required"
 
 
@@ -146,7 +146,7 @@ def test_read_then_write_passes_expected_sha(
     assert len(sandbox_provider.exec_calls) == 2
     request = json.loads(sandbox_provider.exec_calls[1]["stdin"])
     assert request["arguments"]["_expected_read_sha256"] == "0" * 64
-    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=TENANT)
+    audit = client.get("/v1/tool-calls", params={"tool_name": "write"}, headers=ACCOUNT)
     item = audit.json()["items"][0]
     assert item["ok"] is True
     assert item["bytes_written"] == 12

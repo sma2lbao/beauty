@@ -18,7 +18,7 @@ from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
 from tests.conftest import (
     _IDP,
-    TENANT,
+    ACCOUNT,
     FakeDangerTool,
     FakeInteractionToolkit,
     FakeKnowledge,
@@ -39,7 +39,7 @@ def _wait_status(
     end = time.monotonic() + deadline
     run: dict = {}
     while time.monotonic() < end:
-        run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
         if run["status"] == expected:
             return run
         time.sleep(0.02)
@@ -48,7 +48,7 @@ def _wait_status(
 
 def _events(client: TestClient, run_id: str) -> list[dict]:
     """该 run 的完整事件列表(类型 + payload 断言用)。"""
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -69,7 +69,7 @@ def test_approval_timeout_rejects_plan_and_allows_resume(tmp_path: Path) -> None
         created = client.post(
             "/api/v1/runs",
             json={"title": "超时审批", "goal": "跑一下", "acceptance_criteria": []},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 201
         run_id = created.json()["id"]
@@ -88,7 +88,7 @@ def test_approval_timeout_rejects_plan_and_allows_resume(tmp_path: Path) -> None
         assert "run.rejected.v1" in types
         # 超时收场后仍可 resume 重新进闸(与人工拒绝同语义);
         # jobs 模式下 resume 只入队 plan job,状态由 worker 推进
-        resumed = client.post(f"/api/v1/runs/{run_id}/resume", headers=TENANT)
+        resumed = client.post(f"/api/v1/runs/{run_id}/resume", headers=ACCOUNT)
         assert resumed.status_code == 200
         _wait_status(client, run_id, "awaiting_approval")
 
@@ -134,8 +134,8 @@ def test_confirmation_timeout_rejects_danger_write_and_completes(
             interrupt_sweep_interval_seconds=0.05,
         ),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(
-            tenant, knowledge=knowledge
+        toolkit_factory=lambda account: build_tools(
+            account, knowledge=knowledge
         ).extended([danger.spec()]),
         token_verifier=_IDP.verifier(),
     )
@@ -143,7 +143,7 @@ def test_confirmation_timeout_rejects_danger_write_and_completes(
         run_id = _create_run(client)
 
         _wait_status(client, run_id, "awaiting_approval")
-        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
         assert approved.status_code == 200
         _wait_status(client, run_id, "awaiting_confirmation")
         # 确认等待期间危险写绝不能执行
@@ -195,13 +195,13 @@ def test_question_timeout_declines_and_resumes(tmp_path: Path) -> None:
             interrupt_sweep_interval_seconds=0.05,
         ),
         llm_client=fake,
-        toolkit_factory=lambda tenant: toolkit,
+        toolkit_factory=lambda account: toolkit,
         token_verifier=_IDP.verifier(),
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
         _wait_status(client, run_id, "awaiting_approval")
-        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
         assert approved.status_code == 200
         _wait_status(client, run_id, "awaiting_input")
 

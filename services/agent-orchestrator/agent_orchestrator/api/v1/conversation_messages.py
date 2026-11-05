@@ -1,7 +1,7 @@
 """conversation 发消息端点:一次全文 + SSE 流式(共用同一套分流与上下文口径)。
 
 从 conversations.py 拆出(R-29):会话 CRUD/附件留在原模块,消息发送单独成组,
-两个入口的差异只在"怎么把回复交给调用方",分流、技能/MCP 解析与租户校验只有一份。
+两个入口的差异只在"怎么把回复交给调用方",分流、技能/MCP 解析与账号校验只有一份。
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
+    get_account_id,
     get_artifact_store,
     get_container,
     get_context_pipeline,
@@ -25,7 +26,6 @@ from agent_orchestrator.api.deps import (
     get_session,
     get_settings,
     get_skills,
-    get_tenant_id,
     get_tool_extras_factory,
     get_toolkit_factory,
     get_workspace_client,
@@ -49,7 +49,7 @@ from agent_orchestrator.services.workspace import Workspace
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 LLM = Annotated[LLMClient | None, Depends(get_llm_client)]
 SettingsDep = Annotated[Any, Depends(get_settings)]
@@ -74,7 +74,7 @@ async def post_message(
     body: MessageCreate,
     conversation_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     llm: LLM,
     settings: SettingsDep,
@@ -90,7 +90,7 @@ async def post_message(
     await models_service.validate_model(body.model, llm=llm, settings=settings)
     target = await conversations_service.resolve_message_target(
         session,
-        tenant_id,
+        account_id,
         skills=skills,
         settings=settings,
         skill_id=body.skill_id,
@@ -100,7 +100,7 @@ async def post_message(
         session,
         graph,
         llm,
-        tenant_id,
+        account_id,
         conversation_id,
         body.content,
         mode=body.mode,
@@ -192,7 +192,7 @@ async def stream_message(
     body: MessageCreate,
     conversation_id: str,
     request: Request,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     llm: LLM,
     settings: SettingsDep,
@@ -218,7 +218,7 @@ async def stream_message(
     # 会话存在性/技能/MCP 解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
     target = await conversations_service.resolve_stream_target(
         factory,
-        tenant_id,
+        account_id,
         conversation_id,
         skills=skills,
         settings=settings,
@@ -231,7 +231,7 @@ async def stream_message(
                 factory,
                 graph,
                 llm,
-                tenant_id,
+                account_id,
                 conversation_id,
                 body.content,
                 mode=body.mode,

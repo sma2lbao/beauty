@@ -12,7 +12,7 @@
 - **压缩策略**:沿用既有 `services/compaction.py`,阈值/保留条数/摘要预算改由 `ContextPolicy.compaction()` 提供(policy 是 settings 的运行期投影,不是第二份配置)。
 - **大结果 offload**:工具执行结果超过阈值时,orchestrator 把完整结果落沙箱工作区文件(`/workspace/.agent/offload/<run_id>/...`),消息流里只留「引用信封 + 预览」;模型需要细节时用 `read_offloaded` 工具或 `read` 工具分段读取。
 - **SKILL.md 渐进加载**:技能正文不再全文常驻系统提示,只注入 `load_skill` 卡片(~100 token);`load_skill` 工具按 `offset/limit` 分页返回正文,并落 `run.skill.loaded.v1` 事件。
-- **AGENTS.md 注入**:从**沙箱工作区**(/workspace 根 + 子目录)发现 AGENTS.md,按根→深的顺序注入;不做宿主文件系统读取(多租户无宿主真源)。
+- **AGENTS.md 注入**:从**沙箱工作区**(/workspace 根 + 子目录)发现 AGENTS.md,按根→深的顺序注入;不做宿主文件系统读取(多账号无宿主真源)。
 
 ## 2. 背景与现状
 
@@ -21,9 +21,9 @@
 | 对话压缩       | 已有:按阈值折叠最老消息进摘要                                      | `services/compaction.py`、`core/config.py` 的 `context_*`                                                       |
 | run 内工具输出 | 硬截断:超过 25K 直接报错,tool 消息原样回填                         | `services/tool-service/tool_service/constants.py`(`MAX_TOOL_CHARS=25_000`)、`graph/nodes.py` 的 `_tool_message` |
 | SKILL.md       | 全文常驻(plan/execute/verify/deliver 都注入 `skill_system_prompt`) | `graph/plan_nodes.py` 的 `_skill_block`、`services/run_execution.py`                                            |
-| AGENTS.md      | 无注入(此前明确决定见 `docs/design/memory.md`:多租户无文件真源)    | —                                                                                                               |
+| AGENTS.md      | 无注入(此前明确决定见 `docs/design/memory.md`:多账号无文件真源)    | —                                                                                                               |
 
-本期改变第二个决定:**工作区沙箱内仓库文件**就是文件真源(租户/对话由 scope_key 隔离),因此可以注入 AGENTS.md;宿主文件系统仍然不读。
+本期改变第二个决定:**工作区沙箱内仓库文件**就是文件真源(账号/对话由 scope_key 隔离),因此可以注入 AGENTS.md;宿主文件系统仍然不读。
 
 ## 3. 目标与非目标
 
@@ -78,8 +78,8 @@ settings ──policy_from_settings──▶ ContextPolicy ──snapshot──�
 要点:
 
 - **节点不碰 IO**:AGENTS.md/offload 的 IO 都在 `context/` 或 services 层;节点只读 state 里渲染好的 `context_block`,或调用由装配方注入的 offload 端口。
-- **依赖方向**:`graph` 不 import `services`;offload 端口以 Protocol 形式定义在 `graph/ports.py`,实现落在 `context/offload.py`(接收 `current_tool_context()` 拿租户/run/对话)。
-- **沙箱复用**:orchestrator 与 tool-service 共用同一沙箱作用域规则(`conversation:<id>` > `run:<id>` > `tenant:<id>`),否则 AGENTS.md 与工具看到的工作区不是同一份。
+- **依赖方向**:`graph` 不 import `services`;offload 端口以 Protocol 形式定义在 `graph/ports.py`,实现落在 `context/offload.py`(接收 `current_tool_context()` 拿账号/run/对话)。
+- **沙箱复用**:orchestrator 与 tool-service 共用同一沙箱作用域规则(`conversation:<id>` > `run:<id>` > `account:<id>`),否则 AGENTS.md 与工具看到的工作区不是同一份。
 
 ## 6. 模块契约
 
@@ -163,7 +163,7 @@ class ContextPlan:
 
 @dataclass(frozen=True, slots=True)
 class ContextRequest:
-    tenant_id: str
+    account_id: str
     run_id: str
     conversation_id: str | None = None
     workspace_id: str | None = None
@@ -194,14 +194,14 @@ build() 语义:按 `policy.normalized_order()` 遍历;
 ```python
 SCOPE_CONVERSATION_PREFIX = "conversation:"
 SCOPE_RUN_PREFIX = "run:"
-SCOPE_TENANT_PREFIX = "tenant:"
+SCOPE_ACCOUNT_PREFIX = "account:"
 
-def scope_key_for(tenant_id: str, *, conversation_id: str | None = None, run_id: str | None = None) -> str
+def scope_key_for(account_id: str, *, conversation_id: str | None = None, run_id: str | None = None) -> str
 
 class WorkspaceFiles(Protocol):
-    async def read_text(self, tenant_id: str, scope_key: str, path: str) -> str | None: ...
-    async def write_bytes(self, tenant_id: str, scope_key: str, path: str, data: bytes) -> None: ...
-    async def find(self, tenant_id: str, scope_key: str, names: Sequence[str], *, max_depth: int) -> list[str]: ...
+    async def read_text(self, account_id: str, scope_key: str, path: str) -> str | None: ...
+    async def write_bytes(self, account_id: str, scope_key: str, path: str, data: bytes) -> None: ...
+    async def find(self, account_id: str, scope_key: str, names: Sequence[str], *, max_depth: int) -> list[str]: ...
 
 @dataclass
 class SandboxWorkspaceFiles:
@@ -213,7 +213,7 @@ class SandboxWorkspaceFiles:
     async def find(...)              # 走 exec(find ...),只返回 /workspace 下绝对路径
 ```
 
-`ensure(tenant_id, scope_key=..., ttl_seconds=..., run_id=...` 与 tool-service 同参,`read_file/write_file/exec` 都带 tenant_id + sandbox_id。
+`ensure(account_id, scope_key=..., ttl_seconds=..., run_id=...` 与 tool-service 同参,`read_file/write_file/exec` 都带 account_id + sandbox_id。
 
 ### 6.4 `agent_orchestrator/context/agents.py`
 
@@ -229,7 +229,7 @@ class AgentsMdProvider:                  # section_id = "agents_md"
     def __init__(self, files: WorkspaceFiles, policy: ContextPolicy) -> None
     async def build(self, request: ContextRequest) -> ContextSection | None
 
-async def discover_agents_documents(files, policy, *, tenant_id, scope_key) -> list[AgentsDocument]
+async def discover_agents_documents(files, policy, *, account_id, scope_key) -> list[AgentsDocument]
 ```
 
 发现规则:文件名取 `policy.agents_md_names`;范围 `/workspace` 根 + 相对深度 ≤ `agents_md_max_depth`(`find -maxdepth`),排序(浅→深,同层按路径字典序),最多 `agents_md_max_files` 个;单文件截前 `agents_md_file_max_chars` 并标 `truncated`,总量超 `agents_md_max_chars` 时后续文件丢弃并在 section 里注明。section content = 每个文件 `### <path>\n<content>`,title=「工作区规则(AGENTS.md)」,source=逗号拼接的相对路径。
@@ -384,7 +384,7 @@ offload 判定:输出长度 ≤ threshold 或 `offload_enabled=False` 或取不�
 - **工具结果 >25K**:tool-service 先报错,offload 看不到——本期不解决,后续抬 `MAX_TOOL_CHARS` 或让 tool-service 直接回 offload 引用。
 - **沙箱作用域不一致**:AGENTS.md/offload 与工具必须落在同一 scope_key;规则已在 `context/sandbox_files.py` 固定,跨服务靠约定 + 测试(scope_key_for 单测)。
 - **注入预算抢占**:AGENTS.md/技能卡变长会挤占提示;每段都有预算,超预算先截断再标 `truncated`,不静默丢弃。
-- **多租户**:只在租户 scope 的沙箱内读文件,不读宿主;`find` 只在 `/workspace` 下。
+- **多账号**:只在账号 scope 的沙箱内读文件,不读宿主;`find` 只在 `/workspace` 下。
 - **回放**:policy 只快照进事件,不参与图状态机;重跑同一 run 读同 state(checkpoint),不重算 AGENTS.md。
 
 ## 11. 分期

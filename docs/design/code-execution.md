@@ -1,6 +1,6 @@
 # 代码执行面设计:run_code(P5)
 
-> 状态:**已落地(2026-11-04)**。范围:在 `services/tool-service` 目录新增一等工具 `run_code`——把模型给的 **Python 3 源码经 stdin** 交给沙箱里的 `python3 -` 执行,返回真实退出码与 stdout/stderr;审批、审计、限额、幂等、租户隔离全部复用既有链路,orchestrator 不加新代码。
+> 状态:**已落地(2026-11-04)**。范围:在 `services/tool-service` 目录新增一等工具 `run_code`——把模型给的 **Python 3 源码经 stdin** 交给沙箱里的 `python3 -` 执行,返回真实退出码与 stdout/stderr;审批、审计、限额、幂等、账号隔离全部复用既有链路,orchestrator 不加新代码。
 > 关联:`docs/design/tool-service.md`(决策 D14 与分期 P5)、`docs/design/tool-execution.md`(exec 单册,本册的结构范本)、`docs/design/connector.md`(连接器工具的风险分档)、`docs/gap-2026-10/08-refresh-2026-10-27.md`(工具面能力矩阵)。
 
 ## 1. 摘要
@@ -214,7 +214,7 @@ Python 进程能做 shell 能做的所有事,而且更省事:`os.system`/`subpro
 
 ### 8.3 打开 run_code 的部署前提
 
-- 沙箱必须用 `sandbox_provider=microsandbox`(microVM);`local` provider 无隔离,只允许本地单租户开发。
+- 沙箱必须用 `sandbox_provider=microsandbox`(microVM);`local` provider 无隔离,只允许本地单账号开发。
 - `sandbox_network=deny` 保持默认;**不要**为了 `pip install` 打开网络。
 - 单 run 配额(`TOOL__MAX_TOOL_CALLS_PER_RUN`)与沙箱 TTL 是唯一的时间/次数兜底,生产建议调低。
 - 需要人工确认 UI(orchestrator 的 confirmation 闸);无人值守的自动化 run 不应开启。

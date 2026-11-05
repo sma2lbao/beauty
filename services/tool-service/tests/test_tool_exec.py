@@ -13,7 +13,7 @@ from common.errors import NotFoundError, UpstreamError
 from common.tools import ExecutorKind, ToolKind, ToolRisk
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FakeSandboxProvider, _settings, verifier
+from tests.conftest import ACCOUNT, FakeSandboxProvider, _settings, verifier
 from tool_service.constants import MAX_EXEC_STDOUT_CHARS, MAX_TOOL_CHARS
 from tool_service.main import create_app
 from tool_service.services import catalog, execution
@@ -29,7 +29,7 @@ from tool_service.services.execution import limits as execution_limits
 
 def _context(**overrides: Any) -> ExecutionContext:
     values: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "tool_call_id": "call-exec",
         "conversation_id": "c-1",
         # exec 是 DESTRUCTIVE:runner 层要求调用方已确认(API 层由审批前置)。
@@ -55,7 +55,7 @@ def _exec_client(
 
 
 def _execute(client: TestClient, payload: dict[str, Any]) -> Any:
-    return client.post("/v1/tools/exec:execute", json=payload, headers=TENANT)
+    return client.post("/v1/tools/exec:execute", json=payload, headers=ACCOUNT)
 
 
 # ---- 目录与开关 ---------------------------------------------------------
@@ -176,7 +176,7 @@ def test_exec_audit_row_is_destructive(tmp_path: Path) -> None:
                 "run_id": "run-exec",
             },
         )
-        audit = client.get("/v1/tool-calls", headers=TENANT).json()["items"][0]
+        audit = client.get("/v1/tool-calls", headers=ACCOUNT).json()["items"][0]
 
     assert audit["tool_name"] == "exec"
     assert audit["risk"] == "destructive"
@@ -328,7 +328,7 @@ class _SlowExecProvider(FakeSandboxProvider):
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,

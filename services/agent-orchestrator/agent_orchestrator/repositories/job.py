@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -37,24 +37,24 @@ def _is_postgres(session: Session) -> bool:
     return getattr(getattr(bind, "dialect", None), "name", "") == "postgresql"
 
 
-class JobRepository(TenantRepository[Job]):
+class JobRepository(AccountRepository[Job]):
     model = Job
     not_found_code = "job.not_found"
     not_found_message = "任务不存在"
     id_detail_key = "job_id"
 
-    async def find_queued(self, tenant_id: str, kind: str, run_id: str) -> Job | None:
+    async def find_queued(self, account_id: str, kind: str, run_id: str) -> Job | None:
         """同一 run 的同类 job 去重(避免用户连点产生重复执行)。"""
         return await self.session.scalar(
             self.scoped(
-                tenant_id,
+                account_id,
                 Job.kind == kind,
                 Job.run_id == run_id,
                 Job.status.in_(("queued", "running")),
             ).order_by(Job.created_at)
         )
 
-    async def cancel_queued_for_run(self, tenant_id: str, run_id: str) -> int:
+    async def cancel_queued_for_run(self, account_id: str, run_id: str) -> int:
         """把该 run 还没被领取的 job 置为 cancelled(取消 run 时用)。
 
         只动 queued:running 的 job 由执行边界自己收尾(协作式取消),
@@ -63,7 +63,7 @@ class JobRepository(TenantRepository[Job]):
         """
         rows = await self.session.scalars(
             self.scoped(
-                tenant_id,
+                account_id,
                 Job.run_id == run_id,
                 Job.status == QUEUED,
             )

@@ -128,18 +128,18 @@ class SkillRunner:
 
     def spec(self, run: Run) -> ToolSpec:
         """构造 skill_run 工具:跑任意代码,必须过人工确认闸(§6.2)。"""
-        tenant_id = run.tenant_id
+        account_id = run.account_id
         run_id = run.id
         skill_label = run.skill_id or "上传技能包"
 
         async def handler(args: dict[str, Any]) -> str:
             input_text = str(args.get("input") or "")
             try:
-                return await self.execute(tenant_id, run_id, input_text)
+                return await self.execute(account_id, run_id, input_text)
             except Exception as exc:  # noqa: BLE001 - 工具失败回喂模型,不炸图
                 logger.warning(
                     "skill run failed",
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     run_id=run_id,
                     error=f"{type(exc).__name__}: {exc}",
                 )
@@ -169,16 +169,16 @@ class SkillRunner:
     # ---- 执行 ----
 
     async def execute(
-        self, tenant_id: str, run_id: str, input_text: str | None = None
+        self, account_id: str, run_id: str, input_text: str | None = None
     ) -> str:
         """取 run 快照 → 沙箱执行 entrypoint → 登记产物;返回 JSON 文本。
 
         失败一律以 {"error": ...} 文本返回(工具边界不抛):模型据此决策,
         用户看到可读原因。沙箱在 finally 里销毁,不泄漏资源。
         """
-        run = await self._load_run(tenant_id, run_id)
+        run = await self._load_run(account_id, run_id)
         if run is None:
-            return _error("run 不存在或不属于该租户")
+            return _error("run 不存在或不属于该账号")
         if not run.skill_object_key:
             return _error("该 run 没有绑定可执行的技能包")
         if not run.skill_sha256:
@@ -188,14 +188,14 @@ class SkillRunner:
 
         sandbox_id: str | None = None
         try:
-            sandbox_id = await self._create_sandbox(tenant_id, run)
-            await self._unpack(tenant_id, sandbox_id, run)
-            result = await self._run_entrypoint(tenant_id, sandbox_id, run, input_text)
+            sandbox_id = await self._create_sandbox(account_id, run)
+            await self._unpack(account_id, sandbox_id, run)
+            result = await self._run_entrypoint(account_id, sandbox_id, run, input_text)
             outputs, listing_truncated = await self._collect_outputs(
-                tenant_id, sandbox_id
+                account_id, sandbox_id
             )
             registered, summary = await self._register_outputs(
-                tenant_id, run_id, outputs
+                account_id, run_id, outputs
             )
             return self._result_payload(
                 result, outputs, listing_truncated, registered, summary
@@ -203,7 +203,7 @@ class SkillRunner:
         except SkillRunError as exc:
             logger.info(
                 "skill run rejected",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 run_id=run_id,
                 reason=str(exc),
             )
@@ -211,19 +211,19 @@ class SkillRunner:
         finally:
             if sandbox_id is not None:
                 with suppress(Exception):
-                    await self._sandbox.destroy(tenant_id, sandbox_id)
+                    await self._sandbox.destroy(account_id, sandbox_id)
 
-    async def _load_run(self, tenant_id: str, run_id: str) -> Run | None:
-        """短事务取 run 快照(租户隔离;不存在返回 None)。"""
+    async def _load_run(self, account_id: str, run_id: str) -> Run | None:
+        """短事务取 run 快照(账号隔离;不存在返回 None)。"""
         async with session_scope(self._session_factory) as session:
             try:
-                return await RunRepository(session).require_for_tenant(
-                    tenant_id, run_id
+                return await RunRepository(session).require_for_account(
+                    account_id, run_id
                 )
             except Exception:  # noqa: BLE001 - 不存在与越权同义(404)
                 return None
 
-    async def _create_sandbox(self, tenant_id: str, run: Run) -> str:
+    async def _create_sandbox(self, account_id: str, run: Run) -> str:
         """按 run 快照的 runtime/network 起一次性沙箱(kind=skill)。"""
         runtime = run.skill_runtime or "python"
         image = (
@@ -232,7 +232,7 @@ class SkillRunner:
             else self._settings.skill_python_image
         )
         info = await self._sandbox.create(
-            tenant_id,
+            account_id,
             kind="skill",
             image=image,
             ttl_seconds=self._settings.skill_sandbox_ttl_seconds,
@@ -241,11 +241,11 @@ class SkillRunner:
         )
         return info.id
 
-    async def _unpack(self, tenant_id: str, sandbox_id: str, run: Run) -> None:
+    async def _unpack(self, account_id: str, sandbox_id: str, run: Run) -> None:
         """取包 → 校验 sha256 → 写包与解包脚本 → 沙箱内解包(再校验)。"""
         key = str(run.skill_object_key)
         try:
-            package = await self._workspace.get_object(tenant_id, key)
+            package = await self._workspace.get_object(account_id, key)
         except Exception as exc:  # noqa: BLE001 - 上游不可用/不存在统一转可读错误
             message = f"{type(exc).__name__}: {exc}"
             raise SkillRunError(f"技能包读取失败:{message}") from exc
@@ -255,12 +255,12 @@ class SkillRunner:
                 "技能包 sha256 与 run 快照不一致,拒绝执行"
                 f"(快照 {run.skill_sha256[:12]},实际 {digest[:12]})"
             )
-        await self._sandbox.write_file(tenant_id, sandbox_id, PACKAGE_PATH, package)
+        await self._sandbox.write_file(account_id, sandbox_id, PACKAGE_PATH, package)
         await self._sandbox.write_file(
-            tenant_id, sandbox_id, UNPACK_PATH, UNPACK_PY.encode("utf-8")
+            account_id, sandbox_id, UNPACK_PATH, UNPACK_PY.encode("utf-8")
         )
         result = await self._sandbox.exec(
-            tenant_id,
+            account_id,
             sandbox_id,
             ["python3", UNPACK_PATH],
             cwd="/workspace",
@@ -274,7 +274,7 @@ class SkillRunner:
 
     async def _run_entrypoint(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         run: Run,
         input_text: str | None,
@@ -295,7 +295,7 @@ class SkillRunner:
             "title": run.title,
         }
         return await self._sandbox.exec(
-            tenant_id,
+            account_id,
             sandbox_id,
             argv,
             cwd=SKILL_ROOT,
@@ -304,11 +304,11 @@ class SkillRunner:
         )
 
     async def _collect_outputs(
-        self, tenant_id: str, sandbox_id: str
+        self, account_id: str, sandbox_id: str
     ) -> tuple[list[OutputFile], bool]:
         """列产物目录并读回文本产物(超限/二进制只报元数据)。"""
         result = await self._sandbox.exec(
-            tenant_id,
+            account_id,
             sandbox_id,
             [
                 "python3",
@@ -331,12 +331,12 @@ class SkillRunner:
                 continue
             try:
                 data = await self._sandbox.read_file(
-                    tenant_id, sandbox_id, f"{OUTPUT_ROOT}/{path}"
+                    account_id, sandbox_id, f"{OUTPUT_ROOT}/{path}"
                 )
             except Exception as exc:  # noqa: BLE001 - 单文件读失败不中止整次执行
                 logger.warning(
                     "skill output read failed",
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     path=path,
                     error=f"{type(exc).__name__}: {exc}",
                 )
@@ -374,7 +374,7 @@ class SkillRunner:
         return payload if isinstance(payload, dict) else {}
 
     async def _register_outputs(
-        self, tenant_id: str, run_id: str, outputs: list[OutputFile]
+        self, account_id: str, run_id: str, outputs: list[OutputFile]
     ) -> tuple[list[RunArtifact], str]:
         """把每个读到字节的产物**逐件**登记为 run 交付物(文本/二进制都留字节)。
 
@@ -390,8 +390,8 @@ class SkillRunner:
             content_type = _content_type_for(item)
             try:
                 async with session_scope(self._session_factory) as session:
-                    run = await RunRepository(session).require_for_tenant(
-                        tenant_id, run_id
+                    run = await RunRepository(session).require_for_account(
+                        account_id, run_id
                     )
                     row = await artifacts.persist_file_artifact(
                         session,
@@ -409,7 +409,7 @@ class SkillRunner:
             except Exception as exc:  # noqa: BLE001 - 单件登记失败不改变执行结果
                 logger.warning(
                     "skill output artifact persist failed",
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     run_id=run_id,
                     path=item.path,
                     error=f"{type(exc).__name__}: {exc}",

@@ -4,43 +4,45 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 
 from agent_orchestrator.models.conversations import ChatMessage
 
 
-class MessageRepository(TenantRepository[ChatMessage]):
+class MessageRepository(AccountRepository[ChatMessage]):
     model = ChatMessage
     not_found_code = "conversation.not_found"
     not_found_message = "消息不存在"
     id_detail_key = "message_id"
 
     async def list_for_conversation(
-        self, tenant_id: str, conversation_id: str
+        self, account_id: str, conversation_id: str
     ) -> list[ChatMessage]:
         """对话消息回放:按时间升序(id 兜底保证顺序确定)。"""
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             ChatMessage.conversation_id == conversation_id,
             order_by=[ChatMessage.created_at, ChatMessage.id],
         )
 
-    async def has_any_message(self, tenant_id: str, conversation_id: str) -> bool:
+    async def has_any_message(self, account_id: str, conversation_id: str) -> bool:
         """对话里是否已有消息(判定首条消息 → 自动定题)。"""
-        return await self.exists_for_tenant(
-            tenant_id, ChatMessage.conversation_id == conversation_id
+        return await self.exists_for_account(
+            account_id, ChatMessage.conversation_id == conversation_id
         )
 
-    async def count_for_conversation(self, tenant_id: str, conversation_id: str) -> int:
+    async def count_for_conversation(
+        self, account_id: str, conversation_id: str
+    ) -> int:
         """对话消息条数:自动抽取按"累计 N 条"节流时用来判断是否该再抽一次。"""
         return await self.count(
-            ChatMessage.tenant_id == tenant_id,
+            ChatMessage.account_id == account_id,
             ChatMessage.conversation_id == conversation_id,
         )
 
     async def list_history(
         self,
-        tenant_id: str,
+        account_id: str,
         conversation_id: str,
         *,
         before: datetime,
@@ -53,7 +55,7 @@ class MessageRepository(TenantRepository[ChatMessage]):
         追加指令(建 run 之后落库)两条都能拦住,不会重复进上下文。
         """
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             ChatMessage.conversation_id == conversation_id,
             ChatMessage.created_at < before,
             (ChatMessage.run_id != exclude_run_id) | (ChatMessage.run_id.is_(None)),
@@ -62,7 +64,7 @@ class MessageRepository(TenantRepository[ChatMessage]):
 
     async def list_before(
         self,
-        tenant_id: str,
+        account_id: str,
         conversation_id: str,
         *,
         before: datetime,
@@ -74,7 +76,7 @@ class MessageRepository(TenantRepository[ChatMessage]):
         这里只排除消息自身——闲聊要看得到此前所有往来。
         """
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             ChatMessage.conversation_id == conversation_id,
             ChatMessage.created_at < before,
             ChatMessage.id != exclude_id,

@@ -1,4 +1,8 @@
-"""API Key 业务(M3-01):生成/轮换/吊销/校验;只存哈希。"""
+"""API Key 业务(M3-01):生成/轮换/吊销/校验;只存哈希。
+
+API Key 归属账号:明文只在创建响应里出现一次,库里存 sha256;
+轮换 = 吊销旧 + 建新(同名字同 scopes),已吊销的 key 不能再次轮换。
+"""
 
 from __future__ import annotations
 
@@ -56,20 +60,20 @@ def _validate_scopes(scopes: list[str]) -> list[str]:
     return scopes
 
 
-async def list_keys(session: AsyncSession, tenant_id: str) -> list[ApiKeyRead]:
+async def list_keys(session: AsyncSession, account_id: str) -> list[ApiKeyRead]:
     records = await ApiKeyRepository(session).list_scoped(
-        tenant_id, order_by=[ApiKey.created_at.desc()]
+        account_id, order_by=[ApiKey.created_at.desc()]
     )
     return [_to_read(record) for record in records]
 
 
 async def create_key(
-    session: AsyncSession, tenant_id: str, data: ApiKeyCreate
+    session: AsyncSession, account_id: str, data: ApiKeyCreate
 ) -> ApiKeyCreated:
     scopes = _validate_scopes(data.scopes)
     plaintext = _new_key()
     record = ApiKey(
-        tenant_id=tenant_id,
+        account_id=account_id,
         name=data.name,
         prefix=plaintext[:16],
         key_hash=_hash_key(plaintext),
@@ -81,26 +85,24 @@ async def create_key(
 
 
 async def rotate_key(
-    session: AsyncSession, tenant_id: str, key_id: str
+    session: AsyncSession, account_id: str, key_id: str
 ) -> ApiKeyCreated:
     repo = ApiKeyRepository(session)
-    record = await repo.require_for_tenant(tenant_id, key_id)
+    record = await repo.require_for_account(account_id, key_id)
     if record.revoked_at is not None:
         raise AppError("api_key.revoked", "API Key 已吊销", status=409)
     record.revoked_at = datetime.now(UTC)
     created = await create_key(
         session,
-        tenant_id,
+        account_id,
         ApiKeyCreate(name=record.name, scopes=list(record.scopes or [])),
     )
     return created
 
 
-async def revoke_key(
-    session: AsyncSession, tenant_id: str, key_id: str
-) -> None:
+async def revoke_key(session: AsyncSession, account_id: str, key_id: str) -> None:
     repo = ApiKeyRepository(session)
-    record = await repo.require_for_tenant(tenant_id, key_id)
+    record = await repo.require_for_account(account_id, key_id)
     if record.revoked_at is None:
         record.revoked_at = datetime.now(UTC)
 
@@ -111,7 +113,7 @@ async def verify_key(session: AsyncSession, plaintext: str) -> ApiKeyVerifyRead:
         raise UnauthorizedError("api_key.invalid", "API Key 无效或已吊销")
     record.last_used_at = datetime.now(UTC)
     return ApiKeyVerifyRead(
-        tenant_id=record.tenant_id,
+        account_id=record.account_id,
         api_key_id=record.id,
         scopes=list(record.scopes or []),
     )

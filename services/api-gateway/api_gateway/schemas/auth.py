@@ -23,13 +23,10 @@ class RegisterRequest(BaseModel):
 class SessionUser(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    user_id: str
-    tenant_id: str
-    organization_id: str
+    account_id: str
     subject: str
     email: str
     display_name: str | None = None
-    role: str
     session_id: str
 
 

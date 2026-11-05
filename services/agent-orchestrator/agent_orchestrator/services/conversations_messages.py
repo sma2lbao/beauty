@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from agent_orchestrator.services.tools import ToolSpec
 
     ToolkitFactory = Callable[[str], ToolRegistry]
-    #: 外部工具(MCP/skill_run)工厂:按租户现取,与 run 执行图共用
+    #: 外部工具(MCP/skill_run)工厂:按账号现取,与 run 执行图共用
     ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
 
 
@@ -65,7 +65,7 @@ async def post_message(
     session: AsyncSession,
     graph: CompiledStateGraph,
     llm: LLMClient | None,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     content: str,
     *,
@@ -100,14 +100,14 @@ async def post_message(
     model 是本次消息的模型覆盖(P1-G):优先级 message > conversation > 网关默认;
     chat 分支的模型调用(triage/压缩/直答)与新建 run 的快照都用它。
     """
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     message = await _persist_user_message(
         session, conversation, content, mcp_server_ids=mcp_server_ids
     )
     if attachment_ids:
         await attachments_service.link_attachments(
             session,
-            tenant_id,
+            account_id,
             conversation_id,
             message,
             attachment_ids,
@@ -116,11 +116,11 @@ async def post_message(
     attachment_context = ""
     if attachment_ids:
         attachment_context = await attachments_service.context_for_message(
-            session, tenant_id, message.id
+            session, account_id, message.id
         )
     resolved_model = model or model_for_conversation(conversation)
     with bind_dialogue_llm(
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         model=resolved_model,
     ):
@@ -131,13 +131,13 @@ async def post_message(
         # mcp_server_ids 让外部工具工厂只装配被引用的 server
         with (
             bind_dialogue_llm(
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 model=resolved_model,
             ),
             bind_tool_context(
                 ToolContext(
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     conversation_id=conversation_id,
                     workspace_id=conversation.workspace_id,
                     mcp_server_ids=tuple(mcp_server_ids or ()),
@@ -145,12 +145,12 @@ async def post_message(
             ),
         ):
             toolkit = await _toolkit_for(
-                toolkit_factory, extras_factory, tenant_id, chat=True
+                toolkit_factory, extras_factory, account_id, chat=True
             )
-            policies = await approval_service.load_policies(session, tenant_id)
+            policies = await approval_service.load_policies(session, account_id)
             # 写操作就地确认:非流式路径与请求同事务落 pending(提交时一起生效)
             confirmations = tool_confirmations.ChatConfirmationRecorder(
-                session, tenant_id=tenant_id, conversation_id=conversation_id
+                session, account_id=account_id, conversation_id=conversation_id
             )
             context = await _prepare_chat_context(
                 session, llm, message, conversation, settings
@@ -172,7 +172,7 @@ async def post_message(
         if not _schedule_chat_extraction(
             session,
             llm,
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation_id,
             workspace_id=conversation.workspace_id,
             settings=settings,
@@ -180,7 +180,7 @@ async def post_message(
             await _maybe_extract_memories(
                 session,
                 llm,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 workspace_id=conversation.workspace_id,
                 settings=settings,
@@ -215,7 +215,7 @@ async def stream_message(
     factory: async_sessionmaker[AsyncSession],
     graph: CompiledStateGraph,
     llm: LLMClient | None,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     content: str,
     *,
@@ -256,7 +256,7 @@ async def stream_message(
     prompt: list[dict[str, str]] = []
     conversation_workspace_id: str | None = None
     async with session_scope(factory) as session:
-        conversation = await require_conversation(session, tenant_id, conversation_id)
+        conversation = await require_conversation(session, account_id, conversation_id)
         conversation_workspace_id = conversation.workspace_id
         message = await _persist_user_message(
             session, conversation, content, mcp_server_ids=mcp_server_ids
@@ -264,7 +264,7 @@ async def stream_message(
         if attachment_ids:
             await attachments_service.link_attachments(
                 session,
-                tenant_id,
+                account_id,
                 conversation_id,
                 message,
                 attachment_ids,
@@ -273,11 +273,11 @@ async def stream_message(
         attachment_context = ""
         if attachment_ids:
             attachment_context = await attachments_service.context_for_message(
-                session, tenant_id, message.id
+                session, account_id, message.id
             )
         resolved_model = model or model_for_conversation(conversation)
         with bind_dialogue_llm(
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation_id,
             model=resolved_model,
         ):
@@ -334,13 +334,13 @@ async def stream_message(
         # 生成器被 aclose 时 with 会退出,reset contextvar,不跨请求泄漏
         with (
             bind_dialogue_llm(
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 model=resolved_model,
             ),
             bind_tool_context(
                 ToolContext(
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     conversation_id=conversation_id,
                     workspace_id=conversation.workspace_id,
                     mcp_server_ids=tuple(mcp_server_ids or ()),
@@ -348,7 +348,7 @@ async def stream_message(
             ),
         ):
             toolkit = await _toolkit_for(
-                toolkit_factory, extras_factory, tenant_id, chat=True
+                toolkit_factory, extras_factory, account_id, chat=True
             )
             if toolkit is None or len(toolkit) == 0:
                 # 无工具:保持原路径——真正的流式增量(边产出边显示)
@@ -362,11 +362,11 @@ async def stream_message(
                 # 复用已 close 的 session 会隐式 autobegin 再签出连接,无人归还
                 async with session_scope(factory) as policy_session:
                     policies = await approval_service.load_policies(
-                        policy_session, tenant_id
+                        policy_session, account_id
                     )
                 # 写操作就地确认:流式路径不在长事务里,每条 pending 独立短事务落库
                 confirmations = tool_confirmations.StreamConfirmationRecorder(
-                    factory, tenant_id=tenant_id, conversation_id=conversation_id
+                    factory, account_id=account_id, conversation_id=conversation_id
                 )
                 async for kind, payload in chat.run_tool_loop(
                     llm,
@@ -392,7 +392,7 @@ async def stream_message(
         if text:
             reply = await _persist_reply(factory, message, text)
         await usage_service.report(
-            tenant_id=tenant_id, run_id=None, samples=collector.samples
+            account_id=account_id, run_id=None, samples=collector.samples
         )
     if failure is not None:
         yield "error", {"code": failure.code, "message": failure.message}
@@ -405,7 +405,7 @@ async def stream_message(
             await _maybe_extract_memories(
                 extract_session,
                 llm,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 workspace_id=conversation_workspace_id,
                 settings=settings,

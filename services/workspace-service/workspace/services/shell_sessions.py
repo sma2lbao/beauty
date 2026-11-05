@@ -83,7 +83,7 @@ class ShellSessionInfo:
 class _ShellSessionState:
     """一个会话的内部状态(不对外暴露)。"""
 
-    tenant_id: str
+    account_id: str
     sandbox_id: str
     session_id: str
     runtime_name: str
@@ -106,7 +106,7 @@ class _ShellSessionState:
 
     @property
     def key(self) -> tuple[str, str, str]:
-        return (self.tenant_id, self.sandbox_id, self.session_id)
+        return (self.account_id, self.sandbox_id, self.session_id)
 
 
 def _new_decoder() -> codecs.IncrementalDecoder:
@@ -115,7 +115,7 @@ def _new_decoder() -> codecs.IncrementalDecoder:
 
 
 class ShellSessionManager:
-    """进程内会话表(键 = tenant_id / sandbox_id / session_id)。
+    """进程内会话表(键 = account_id / sandbox_id / session_id)。
 
     `clock` 可注入,便于测试空闲回收而不真的等 30 分钟。
     """
@@ -147,7 +147,7 @@ class ShellSessionManager:
     async def open(
         self,
         *,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         runtime_name: str,
         provider: SandboxProvider,
@@ -161,7 +161,7 @@ class ShellSessionManager:
         active = sum(
             1
             for state in self._sessions.values()
-            if state.tenant_id == tenant_id
+            if state.account_id == account_id
             and state.sandbox_id == sandbox_id
             and not state.closed
         )
@@ -176,7 +176,7 @@ class ShellSessionManager:
         session_id = uuid.uuid4().hex
         now = self._clock()
         state = _ShellSessionState(
-            tenant_id=tenant_id,
+            account_id=account_id,
             sandbox_id=sandbox_id,
             session_id=session_id,
             runtime_name=runtime_name,
@@ -195,7 +195,7 @@ class ShellSessionManager:
         )
         logger.info(
             "shell_session.opened",
-            tenant_id=tenant_id,
+            account_id=account_id,
             sandbox_id=sandbox_id,
             session_id=session_id,
             tty=state.tty,
@@ -211,9 +211,9 @@ class ShellSessionManager:
         )
 
     async def write(
-        self, *, tenant_id: str, sandbox_id: str, session_id: str, data: bytes
+        self, *, account_id: str, sandbox_id: str, session_id: str, data: bytes
     ) -> None:
-        state = self._require(tenant_id, sandbox_id, session_id)
+        state = self._require(account_id, sandbox_id, session_id)
         if state.closed:
             raise ConflictError("sandbox.session_closed", "shell 会话已结束")
         try:
@@ -226,9 +226,9 @@ class ShellSessionManager:
             raise
         state.last_activity = self._clock()
 
-    async def close(self, *, tenant_id: str, sandbox_id: str, session_id: str) -> bool:
+    async def close(self, *, account_id: str, sandbox_id: str, session_id: str) -> bool:
         """关闭会话;返回本次是否真的从"运行中"被关掉(幂等)。"""
-        state = self._sessions.get((tenant_id, sandbox_id, session_id))
+        state = self._sessions.get((account_id, sandbox_id, session_id))
         if state is None:
             raise NotFoundError(
                 "sandbox.session_not_found",
@@ -240,12 +240,12 @@ class ShellSessionManager:
         await self._close_state(state)
         return True
 
-    async def close_sandbox(self, tenant_id: str, sandbox_id: str) -> int:
+    async def close_sandbox(self, account_id: str, sandbox_id: str) -> int:
         """关闭某个沙箱的全部会话(沙箱被销毁/过期时调用),返回关闭个数。"""
         states = [
             state
             for state in list(self._sessions.values())
-            if state.tenant_id == tenant_id and state.sandbox_id == sandbox_id
+            if state.account_id == account_id and state.sandbox_id == sandbox_id
         ]
         closed = 0
         for state in states:
@@ -258,7 +258,7 @@ class ShellSessionManager:
     def subscribe(
         self,
         *,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         session_id: str,
         after: int | None = None,
@@ -268,7 +268,7 @@ class ShellSessionManager:
         回放 + 注册队列在同一同步段完成,不会与读循环交错,因此不丢事件。
         会话已关闭时队列里直接放一个 None(回放完就结束)。
         """
-        state = self._require(tenant_id, sandbox_id, session_id)
+        state = self._require(account_id, sandbox_id, session_id)
         backlog = [
             event for event in state.buffer if after is None or event.seq > after
         ]
@@ -287,13 +287,13 @@ class ShellSessionManager:
     def unsubscribe(
         self,
         *,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         session_id: str,
         queue: asyncio.Queue[ShellEvent | None],
     ) -> None:
         """断开订阅(不关会话)。"""
-        state = self._sessions.get((tenant_id, sandbox_id, session_id))
+        state = self._sessions.get((account_id, sandbox_id, session_id))
         if state is not None:
             state.subscribers.discard(queue)
 
@@ -313,7 +313,7 @@ class ShellSessionManager:
             if moment - state.last_activity >= self._idle_seconds:
                 logger.info(
                     "shell_session.idle_reaped",
-                    tenant_id=state.tenant_id,
+                    account_id=state.account_id,
                     sandbox_id=state.sandbox_id,
                     session_id=state.session_id,
                     idle_seconds=self._idle_seconds,
@@ -332,9 +332,9 @@ class ShellSessionManager:
     # --- 内部 ---
 
     def _require(
-        self, tenant_id: str, sandbox_id: str, session_id: str
+        self, account_id: str, sandbox_id: str, session_id: str
     ) -> _ShellSessionState:
-        state = self._sessions.get((tenant_id, sandbox_id, session_id))
+        state = self._sessions.get((account_id, sandbox_id, session_id))
         if state is None:
             raise NotFoundError(
                 "sandbox.session_not_found",
@@ -390,7 +390,7 @@ class ShellSessionManager:
         state.subscribers.clear()
         logger.info(
             "shell_session.exited",
-            tenant_id=state.tenant_id,
+            account_id=state.account_id,
             sandbox_id=state.sandbox_id,
             session_id=state.session_id,
             exit_code=code,

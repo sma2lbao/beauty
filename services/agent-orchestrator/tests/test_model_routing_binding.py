@@ -24,7 +24,7 @@ from agent_orchestrator.services.llm import (
     reset_fallback_observer,
     reset_model,
 )
-from tests.conftest import TENANT, FakeLLM, _client
+from tests.conftest import ACCOUNT, FakeLLM, _client
 
 #: 1x1 PNG(内容本身不重要,只验证 base64 往返与 parts 形状)
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
@@ -67,7 +67,7 @@ def _gateway(handler) -> GatewayClient:
 
 def _create_run(client: TestClient, **extra: Any) -> dict[str, Any]:
     body = {"title": "周报", "goal": "整理本周日程", **extra}
-    resp = client.post("/api/v1/runs", json=body, headers=TENANT)
+    resp = client.post("/api/v1/runs", json=body, headers=ACCOUNT)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -113,11 +113,11 @@ def test_run_binding_uses_run_model(tmp_path: Path) -> None:
     with _client(tmp_path, fake) as client:
         run = _create_run(client, model="run-model")
         assert run["model"] == "run-model"
-        planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=TENANT)
+        planned = client.post(f"/api/v1/runs/{run['id']}/plan", headers=ACCOUNT)
         assert planned.status_code == 200
         assert set(fake.context_models) == {"run-model"}
 
-        approved = client.post(f"/api/v1/runs/{run['id']}/approve", headers=TENANT)
+        approved = client.post(f"/api/v1/runs/{run['id']}/approve", headers=ACCOUNT)
         assert approved.status_code == 200
         # 审批恢复的图调用同样在绑定作用域内
         assert fake.context_models[-1] == "run-model"
@@ -128,7 +128,7 @@ def test_dialogue_binding_prefers_message_model(tmp_path: Path) -> None:
     fake = RecordingLLM()
     with _client(tmp_path, fake) as client:
         created = client.post(
-            "/api/v1/conversations", json={"model": "conv-model"}, headers=TENANT
+            "/api/v1/conversations", json={"model": "conv-model"}, headers=ACCOUNT
         )
         assert created.status_code == 201
         assert created.json()["model"] == "conv-model"
@@ -137,7 +137,7 @@ def test_dialogue_binding_prefers_message_model(tmp_path: Path) -> None:
         first = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "你好", "mode": "chat", "model": "msg-model"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert first.status_code == 201
         assert fake.context_models[-1] == "msg-model"
@@ -145,7 +145,7 @@ def test_dialogue_binding_prefers_message_model(tmp_path: Path) -> None:
         second = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "再聊一句", "mode": "chat"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert second.status_code == 201
         assert fake.context_models[-1] == "conv-model"
@@ -239,10 +239,10 @@ def test_run_records_fallback_event(tmp_path: Path) -> None:
     with _client(tmp_path, fake) as client:
         run = _create_run(client, model="a")
         assert (
-            client.post(f"/api/v1/runs/{run['id']}/plan", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run['id']}/plan", headers=ACCOUNT).status_code
             == 200
         )
-        events = client.get(f"/api/v1/runs/{run['id']}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run['id']}/events", headers=ACCOUNT).json()
 
     fallbacks = [event for event in events if event["type"] == "run.llm.fallback.v1"]
     assert fallbacks

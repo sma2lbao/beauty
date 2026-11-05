@@ -24,8 +24,8 @@ class ToolsAssemblyMixin:
 
     async def _assemble_tools(self) -> KnowledgeClient | None:
         settings = self.settings
-        # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——租户来自
-        # 签名 claim,不再有 X-Tenant-Id 裸调路径;密钥未配置时在换发处明确报错
+        # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——账号来自
+        # 签名 claim,不再有 X-Account-Id 裸调路径;密钥未配置时在换发处明确报错
         broker = TokenBroker(
             base_url=settings.auth_issuer,  # 签发方即 account-service
             internal_secret=settings.internal_auth_secret,

@@ -1,6 +1,6 @@
 """记忆工具:模型自己搜索/写入/删除长期记忆(读走 READ,写走 WRITE)。
 
-handler 只能拿到 args dict,租户/工作区/来源从 current_tool_context() 读;
+handler 只能拿到 args dict,账号/工作区/来源从 current_tool_context() 读;
 取不到上下文或业务校验失败时返回 JSON 错误字符串而不是抛异常——工具失败
 不应炸掉整个 run(与 services/tools.py 的约定一致)。
 """
@@ -75,7 +75,7 @@ def build_memory_tools(
     async def memory_search(args: dict[str, Any]) -> str:
         context = current_tool_context()
         if context is None:
-            return _error("缺少工具上下文(租户),无法检索记忆")
+            return _error("缺少工具上下文(账号),无法检索记忆")
         query = _string_arg(args, "query", max_chars=_MAX_QUERY_CHARS)
         if not query:
             return _error("参数 query 不能为空")
@@ -84,7 +84,7 @@ def build_memory_tools(
             try:
                 hits = await search_memories(
                     session,
-                    context.tenant_id,
+                    context.account_id,
                     query,
                     workspace_id=context.workspace_id,
                     limit=limit,
@@ -104,12 +104,12 @@ def build_memory_tools(
     async def memory_write(args: dict[str, Any]) -> str:
         context = current_tool_context()
         if context is None:
-            return _error("缺少工具上下文(租户),无法写入记忆")
+            return _error("缺少工具上下文(账号),无法写入记忆")
         content = _string_arg(args, "content", max_chars=max_content_chars)
         if not content:
             return _error("参数 content 不能为空")
         kind = _string_arg(args, "kind", max_chars=16) or "note"
-        scope = _string_arg(args, "scope", max_chars=16) or "tenant"
+        scope = _string_arg(args, "scope", max_chars=16) or "account"
         if kind not in MEMORY_KINDS:
             return _error(f"未知记忆类型: {kind}")
         if scope not in MEMORY_SCOPES:
@@ -121,7 +121,7 @@ def build_memory_tools(
             try:
                 memory = await write_memory(
                     session,
-                    context.tenant_id,
+                    context.account_id,
                     content=content,
                     kind=kind,
                     scope=scope,
@@ -138,13 +138,13 @@ def build_memory_tools(
     async def memory_delete(args: dict[str, Any]) -> str:
         context = current_tool_context()
         if context is None:
-            return _error("缺少工具上下文(租户),无法删除记忆")
+            return _error("缺少工具上下文(账号),无法删除记忆")
         memory_id = _string_arg(args, "memory_id", max_chars=64)
         if not memory_id:
             return _error("参数 memory_id 不能为空")
         async with session_scope(session_factory) as session:
             try:
-                await delete_memory(session, context.tenant_id, memory_id)
+                await delete_memory(session, context.account_id, memory_id)
             except AppError as exc:
                 return _error(exc.message)
         return json.dumps({"deleted": memory_id}, ensure_ascii=False)
@@ -199,7 +199,7 @@ def build_memory_tools(
                     "scope": {
                         "type": "string",
                         "enum": sorted(MEMORY_SCOPES),
-                        "description": "tenant=全租户可见,workspace=仅当前工作区",
+                        "description": "account=全账号可见,workspace=仅当前工作区",
                     },
                     "pinned": {
                         "type": "boolean",

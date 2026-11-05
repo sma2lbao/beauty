@@ -23,7 +23,7 @@ NOW = datetime(2026, 10, 25, 12, 0)
 
 def _msg(role: str, content: str, *, created_at: datetime | None = None) -> ChatMessage:
     return ChatMessage(
-        tenant_id="t-1",
+        account_id="t-1",
         conversation_id="c-1",
         role=role,
         content=content,
@@ -115,18 +115,18 @@ async def test_prompt_without_context_reads_recent_history_from_db(
 ) -> None:
     """context=None:保持旧口径——从 DB 取当前消息之前的全部轮次。"""
     async with _session(tmp_path) as session:
-        conversation = Conversation(tenant_id="t-1", title="历史")
+        conversation = Conversation(account_id="t-1", title="历史")
         session.add(conversation)
         await session.flush()
         first = ChatMessage(
-            tenant_id="t-1",
+            account_id="t-1",
             conversation_id=conversation.id,
             role="user",
             content="第一句",
             created_at=NOW,
         )
         current = ChatMessage(
-            tenant_id="t-1",
+            account_id="t-1",
             conversation_id=conversation.id,
             role="user",
             content="现在是",

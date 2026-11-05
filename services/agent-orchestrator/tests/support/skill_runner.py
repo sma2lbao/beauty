@@ -114,8 +114,8 @@ class FakeSandbox:
         self.read_error: Exception | None = None
         self.destroy_error: Exception | None = None
 
-    async def create(self, tenant_id: str, **kwargs: Any) -> SandboxInfo:
-        self.created.append({"tenant_id": tenant_id, **kwargs})
+    async def create(self, account_id: str, **kwargs: Any) -> SandboxInfo:
+        self.created.append({"account_id": account_id, **kwargs})
         index = len(self.created)
         return SandboxInfo(
             id=f"sb-{index}",
@@ -127,13 +127,13 @@ class FakeSandbox:
         )
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None:
         self.files[f"{sandbox_id}:{path}"] = data
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: Any,
         *,
@@ -161,7 +161,7 @@ class FakeSandbox:
             return _exec(stdout=json.dumps(self.listing or {}))
         return self.entry
 
-    async def read_file(self, tenant_id: str, sandbox_id: str, path: str) -> bytes:
+    async def read_file(self, account_id: str, sandbox_id: str, path: str) -> bytes:
         self.reads.append(path)
         if self.read_error is not None:
             raise self.read_error
@@ -172,7 +172,7 @@ class FakeSandbox:
             raise RuntimeError(f"沙箱文件不存在:{path}")
         return self.output_files[relative]
 
-    async def destroy(self, tenant_id: str, sandbox_id: str) -> None:
+    async def destroy(self, account_id: str, sandbox_id: str) -> None:
         self.destroyed.append(sandbox_id)
         if self.destroy_error is not None:
             raise self.destroy_error
@@ -261,7 +261,7 @@ async def make_env(
     }
     run_kwargs.update(run_overrides or {})
     async with session_scope(factory) as session:
-        run = Run(tenant_id="t-1", **run_kwargs)
+        run = Run(account_id="t-1", **run_kwargs)
         session.add(run)
         await session.flush()
         run_id = run.id

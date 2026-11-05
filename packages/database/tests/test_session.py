@@ -5,11 +5,11 @@ from datetime import datetime
 from sqlalchemy import String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from database.session import create_session_factory, session_scope
 
 
-class ProbeRow(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class ProbeRow(UUIDMixin, AccountMixin, TimestampMixin, Base):
     __tablename__ = "probe_rows"
 
     name: Mapped[str] = mapped_column(String(50))
@@ -21,11 +21,11 @@ async def test_scope_commit_and_query(tmp_path) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     async with session_scope(factory) as session:
-        session.add(ProbeRow(tenant_id="t-1", name="a"))
+        session.add(ProbeRow(account_id="t-1", name="a"))
 
     async with session_scope(factory) as session:
         row = (await session.scalars(select(ProbeRow))).one()
-        assert row.tenant_id == "t-1"
+        assert row.account_id == "t-1"
         assert len(row.id) == 32
         assert isinstance(row.created_at, datetime)
 
@@ -42,7 +42,7 @@ async def test_scope_rollback_on_error(tmp_path) -> None:
 
     try:
         async with session_scope(factory) as session:
-            session.add(ProbeRow(tenant_id="t-1", name="bad"))
+            session.add(ProbeRow(account_id="t-1", name="bad"))
             raise Boom
     except Boom:
         pass

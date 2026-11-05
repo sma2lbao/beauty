@@ -24,7 +24,7 @@ vi.mock('@/lib/workspace-api', async () => {
 const workspace: Workspace = {
   id: 'ws-1',
   name: '默认工作区',
-  description: '自动创建:租户默认工作区',
+  description: '自动创建:账号默认工作区',
   status: 'active',
   created_at: '2026-10-13T00:00:00+00:00',
 };

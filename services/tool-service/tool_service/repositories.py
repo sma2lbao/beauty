@@ -1,4 +1,4 @@
-"""仓储层:租户隔离 + 统一 404(仓储不提交,事务由 session_scope 负责)。"""
+"""仓储层:账号隔离 + 统一 404(仓储不提交,事务由 session_scope 负责)。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 from sqlalchemy import func, select
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -33,7 +33,7 @@ def decode_paths(raw: str) -> list[str]:
     return [str(item) for item in value]
 
 
-class ToolCallRepository(TenantRepository[ToolCall]):
+class ToolCallRepository(AccountRepository[ToolCall]):
     """tool_calls 表:按 tool_call_id 幂等查询 + 运维过滤。"""
 
     model = ToolCall
@@ -42,23 +42,23 @@ class ToolCallRepository(TenantRepository[ToolCall]):
     id_detail_key = "tool_call_id"
 
     async def find_by_call_id(
-        self, tenant_id: str, tool_call_id: str
+        self, account_id: str, tool_call_id: str
     ) -> ToolCall | None:
         return await self.session.scalar(
-            self.scoped(tenant_id, ToolCall.tool_call_id == tool_call_id)
+            self.scoped(account_id, ToolCall.tool_call_id == tool_call_id)
         )
 
-    async def require_by_call_id(self, tenant_id: str, tool_call_id: str) -> ToolCall:
-        """按业务幂等键取审计行;不存在(或跨租户)一律 404。"""
+    async def require_by_call_id(self, account_id: str, tool_call_id: str) -> ToolCall:
+        """按业务幂等键取审计行;不存在(或跨账号)一律 404。"""
 
-        record = await self.find_by_call_id(tenant_id, tool_call_id)
+        record = await self.find_by_call_id(account_id, tool_call_id)
         if record is None:
             raise self._not_found(tool_call_id)
         return record
 
     async def list_page(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         run_id: str | None = None,
         conversation_id: str | None = None,
@@ -74,7 +74,7 @@ class ToolCallRepository(TenantRepository[ToolCall]):
             ok=ok,
         )
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             *criteria,
             limit=limit,
             offset=offset,
@@ -83,7 +83,7 @@ class ToolCallRepository(TenantRepository[ToolCall]):
 
     async def count_page(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         run_id: str | None = None,
         conversation_id: str | None = None,
@@ -99,21 +99,25 @@ class ToolCallRepository(TenantRepository[ToolCall]):
         statement = (
             select(func.count())
             .select_from(ToolCall)
-            .where(ToolCall.tenant_id == tenant_id, *criteria)
+            .where(ToolCall.account_id == account_id, *criteria)
         )
         return int(await self.session.scalar(statement) or 0)
 
-    async def delete_by_call_id(self, tenant_id: str, tool_call_id: str) -> int:
-        return await self.delete_where(tenant_id, ToolCall.tool_call_id == tool_call_id)
+    async def delete_by_call_id(self, account_id: str, tool_call_id: str) -> int:
+        return await self.delete_where(
+            account_id, ToolCall.tool_call_id == tool_call_id
+        )
 
-    async def write_usage_for_run(self, tenant_id: str, run_id: str) -> tuple[int, int]:
+    async def write_usage_for_run(
+        self, account_id: str, run_id: str
+    ) -> tuple[int, int]:
         """单 run 已成功的写次数与累计字节数(写配额依据)。"""
 
         statement = select(
             func.count(),
             func.coalesce(func.sum(ToolCall.bytes_written), 0),
         ).where(
-            ToolCall.tenant_id == tenant_id,
+            ToolCall.account_id == account_id,
             ToolCall.run_id == run_id,
             ToolCall.tool_name.in_(WRITE_TOOL_NAMES),
             ToolCall.ok.is_(True),
@@ -181,17 +185,17 @@ def encode_arguments(arguments: dict[str, Any]) -> str:
     return json.dumps(arguments, ensure_ascii=False, sort_keys=True)[:2000]
 
 
-class FileReadRepository(TenantRepository[FileRead]):
+class FileReadRepository(AccountRepository[FileRead]):
     """file_reads 表:read 成功后 upsert,write/edit 前校验(读前置)。"""
 
     model = FileRead
 
     async def find_read(
-        self, tenant_id: str, *, scope_key: str, path: str
+        self, account_id: str, *, scope_key: str, path: str
     ) -> FileRead | None:
         return await self.session.scalar(
             self.scoped(
-                tenant_id,
+                account_id,
                 FileRead.scope_key == scope_key,
                 FileRead.path == path,
             )
@@ -199,7 +203,7 @@ class FileReadRepository(TenantRepository[FileRead]):
 
     async def upsert_read(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         path: str,
@@ -209,10 +213,10 @@ class FileReadRepository(TenantRepository[FileRead]):
     ) -> FileRead:
         """记录一次读取;已存在则刷新 sha256/read_at(同一 scope 内文件版本)。"""
 
-        record = await self.find_read(tenant_id, scope_key=scope_key, path=path)
+        record = await self.find_read(account_id, scope_key=scope_key, path=path)
         if record is None:
             record = FileRead(
-                tenant_id=tenant_id,
+                account_id=account_id,
                 scope_key=scope_key,
                 path=path,
                 sha256=sha256,

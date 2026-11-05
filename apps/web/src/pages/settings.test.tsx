@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Member, Organization, Session } from '@/lib/account-api';
+import type { Account, Session } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { ApiError } from '@/lib/http';
 
@@ -10,15 +10,14 @@ import { SettingsPage } from './settings';
 
 vi.mock('@/lib/account-api', async () => {
   const actual =
-    await vi.importActual<typeof import('@/lib/account-api')>('@/lib/account-api');
+    await vi.importActual<typeof import('@/lib/account-api')>(
+      '@/lib/account-api',
+    );
   return {
     ...actual,
     accountApi: {
-      organization: vi.fn(),
-      updateOrganization: vi.fn(),
-      members: vi.fn(),
-      addMember: vi.fn(),
-      updateMember: vi.fn(),
+      me: vi.fn(),
+      updateMe: vi.fn(),
       sessions: vi.fn(),
       addSession: vi.fn(),
       revokeSession: vi.fn(),
@@ -30,27 +29,16 @@ vi.mock('@/features/auth/auth-bar', () => ({
   AuthBar: () => <div data-testid="auth-bar" />,
 }));
 
-const organization: Organization = {
-  id: 'org-1',
-  name: '示例科技',
-  plan: 'team',
-  quota: { seats: 20 },
-  created_at: '2026-10-13T00:00:00+00:00',
-};
-
-const member: Member = {
-  id: 'u1',
-  subject: 'idp|u1',
-  email: 'u1@example.com',
+const account: Account = {
+  id: 'a'.repeat(32),
+  email: 'me@example.com',
   display_name: '小月',
-  role: 'owner',
   status: 'active',
   created_at: '2026-10-13T00:00:00+00:00',
 };
 
 const session: Session = {
   id: 's1',
-  user_id: 'u1',
   device: 'MacBook / Chrome',
   status: 'active',
   last_seen_at: null,
@@ -71,114 +59,68 @@ function renderPage() {
 beforeEach(() => {
   // 清掉上一个用例的调用历史:否则 not.toHaveBeenCalled 之类的断言会跨用例误判
   vi.clearAllMocks();
-  vi.mocked(accountApi.organization).mockResolvedValue(organization);
-  vi.mocked(accountApi.members).mockResolvedValue([member]);
+  vi.mocked(accountApi.me).mockResolvedValue(account);
   vi.mocked(accountApi.sessions).mockResolvedValue([session]);
 });
 
 describe('SettingsPage', () => {
-  it('展示组织档案、成员与会话', async () => {
+  it('展示账号资料与设备会话', async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '示例科技');
+      expect(screen.getByLabelText('邮箱')).toHaveProperty(
+        'value',
+        'me@example.com',
+      );
     });
-    expect(screen.getByLabelText('套餐')).toHaveProperty('value', 'team');
-    expect(screen.getByLabelText('配额(JSON)')).toHaveProperty(
-      'value',
-      JSON.stringify({ seats: 20 }),
-    );
-    expect(await screen.findAllByText('小月')).not.toHaveLength(0);
+    expect(screen.getByLabelText('显示名')).toHaveProperty('value', '小月');
+    expect(screen.getByText('正常')).toBeTruthy();
     expect(screen.getByText('MacBook / Chrome')).toBeTruthy();
-    expect(screen.getByText(/共 1 人/)).toBeTruthy();
   });
 
-  it('保存组织档案时带上编辑后的值', async () => {
-    vi.mocked(accountApi.updateOrganization).mockResolvedValue({
-      ...organization,
-      name: '示例科技(新)',
+  it('保存显示名时调用 PATCH /me', async () => {
+    vi.mocked(accountApi.updateMe).mockResolvedValue({
+      ...account,
+      display_name: '新月',
     });
 
     renderPage();
     await waitFor(() => {
-      expect(screen.getByLabelText('组织名称')).toHaveProperty('value', '示例科技');
+      expect(screen.getByLabelText('显示名')).toHaveProperty('value', '小月');
     });
 
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: '示例科技(新)' },
+    fireEvent.change(screen.getByLabelText('显示名'), {
+      target: { value: '新月' },
     });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
     await waitFor(() => {
-      expect(accountApi.updateOrganization).toHaveBeenCalledWith({
-        name: '示例科技(新)',
-        plan: 'team',
-        quota: { seats: 20 },
+      expect(accountApi.updateMe).toHaveBeenCalledWith({
+        display_name: '新月',
       });
     });
   });
 
-  it('配额不是合法 JSON 时报错且不发请求', async () => {
-    renderPage();
-    await waitFor(() => {
-      expect(screen.getByLabelText('配额(JSON)')).toBeTruthy();
-    });
-
-    fireEvent.change(screen.getByLabelText('配额(JSON)'), {
-      target: { value: '{oops' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
-
-    expect(await screen.findByText(/配额必须是合法 JSON/)).toBeTruthy();
-    expect(accountApi.updateOrganization).not.toHaveBeenCalled();
-  });
-
-  it('添加成员后清空表单并刷新列表', async () => {
-    vi.mocked(accountApi.addMember).mockResolvedValue(member);
+  it('登记新会话时只提交设备', async () => {
+    vi.mocked(accountApi.addSession).mockResolvedValue(session);
 
     renderPage();
     await waitFor(() => {
-      expect(screen.getByLabelText('IdP subject')).toBeTruthy();
+      expect(screen.getByLabelText('设备')).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByLabelText('IdP subject'), {
-      target: { value: 'idp|u2' },
+    fireEvent.change(screen.getByLabelText('设备'), {
+      target: { value: 'iPhone / Safari' },
     });
-    fireEvent.change(screen.getByLabelText('邮箱'), {
-      target: { value: 'u2@example.com' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '添加成员' }));
+    fireEvent.click(screen.getByRole('button', { name: '登记会话' }));
 
     await waitFor(() => {
-      expect(accountApi.addMember).toHaveBeenCalledWith({
-        subject: 'idp|u2',
-        email: 'u2@example.com',
-        display_name: null,
-        role: 'member',
+      expect(accountApi.addSession).toHaveBeenCalledWith({
+        device: 'iPhone / Safari',
       });
     });
     await waitFor(() => {
-      expect(screen.getByLabelText('IdP subject')).toHaveProperty('value', '');
-    });
-  });
-
-  it('切换角色调用更新接口', async () => {
-    vi.mocked(accountApi.updateMember).mockResolvedValue({
-      ...member,
-      role: 'member',
-    });
-
-    renderPage();
-    await screen.findByText(/u1@example\.com · idp\|u1/);
-
-    fireEvent.change(screen.getByLabelText('u1@example.com 的角色'), {
-      target: { value: 'member' },
-    });
-
-    await waitFor(() => {
-      expect(accountApi.updateMember).toHaveBeenCalledWith('u1', {
-        role: 'member',
-      });
+      expect(screen.getByLabelText('设备')).toHaveProperty('value', '');
     });
   });
 
@@ -199,7 +141,7 @@ describe('SettingsPage', () => {
   });
 
   it('401 时提示先去鉴权', async () => {
-    vi.mocked(accountApi.organization).mockRejectedValue(
+    vi.mocked(accountApi.me).mockRejectedValue(
       new ApiError(401, 'auth.token_invalid', '令牌无效或已过期'),
     );
 

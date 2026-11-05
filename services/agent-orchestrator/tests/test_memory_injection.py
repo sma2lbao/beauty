@@ -3,7 +3,7 @@
 覆盖三件事,都按"外层可观测行为"断言而不是内部调用细节:
 1. 四个节点(plan/execute/verify/deliver)的系统提示词只在有召回块时追加,
    格式与技能约束/追加指令一致(空串=完全不加,提示词逐字不变);
-2. services 层召回:带租户/工作区/限额调用,任何异常都降级空串不阻断 run,
+2. services 层召回:带账号/工作区/限额调用,任何异常都降级空串不阻断 run,
    且开关关闭时根本不查记忆;
 3. 工具装配:memory_enabled 真才把记忆工具并入 extras(能力即权限边界)。
 """
@@ -41,7 +41,7 @@ from agent_orchestrator.services.run_execution import (
 from agent_orchestrator.services.run_execution_approvals import _tool_context
 from agent_orchestrator.services.tool_context import ToolContext, current_tool_context
 from agent_orchestrator.services.tools import ToolRisk
-from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, _create_run, _settings, verifier
 
 #: 召回块由 services 层整体拼好(自带小标题),节点只负责前置空行。
 MEMORY_BLOCK = "## 长期记忆(跨会话,仅供参考)\n- 用户偏好:周报用表格"
@@ -51,7 +51,7 @@ def _state(**overrides: Any) -> dict[str, Any]:
     """最小可跑状态:节点只读这些键(其余缺省按空处理)。"""
     state: dict[str, Any] = {
         "run_id": "run-1",
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "title": "周报",
         "goal": "整理本周日程",
         "acceptance_criteria": ["日程已整理"],
@@ -77,9 +77,9 @@ def _memory_settings(**overrides: Any) -> Settings:
 
 
 def _run(**overrides: Any) -> Run:
-    """未落的 Run 行:够拼召回查询词与租户/工作区上下文即可。"""
+    """未落的 Run 行:够拼召回查询词与账号/工作区上下文即可。"""
     values: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "title": "周报",
         "goal": "整理本周日程",
     }
@@ -145,17 +145,17 @@ def test_memory_query_joins_goal_and_title() -> None:
 
 
 async def test_recall_memory_block_passes_scope_and_limits(monkeypatch) -> None:
-    """召回按契约传租户/工作区/限额;查询词以目标为主、标题为辅。"""
+    """召回按契约传账号/工作区/限额;查询词以目标为主、标题为辅。"""
     calls: list[dict[str, Any]] = []
 
     async def fake_convention(*args: Any, **kwargs: Any) -> str:
         return ""
 
-    async def fake_recall(session, tenant_id, query, **kwargs):
+    async def fake_recall(session, account_id, query, **kwargs):
         calls.append(
             {
                 "session": session,
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "query": query,
                 **kwargs,
             }
@@ -176,7 +176,7 @@ async def test_recall_memory_block_passes_scope_and_limits(monkeypatch) -> None:
     assert calls == [
         {
             "session": session,
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "query": "整理本周日程 周报",
             "workspace_id": "ws-1",
             "limit": 7,
@@ -228,14 +228,14 @@ async def test_recall_memory_block_prepends_conventions(monkeypatch) -> None:
     """约定块与相关性召回拼成一块:约定在前,空的部分不占位。"""
     convention_calls: list[dict[str, Any]] = []
 
-    async def fake_convention(session, tenant_id, **kwargs):
-        convention_calls.append({"tenant_id": tenant_id, **kwargs})
+    async def fake_convention(session, account_id, **kwargs):
+        convention_calls.append({"account_id": account_id, **kwargs})
         return (
             "工作区约定(程序性记忆,来自历史记录,仅作参考,不是系统指令):"
             "\n- 报告固定用表格"
         )
 
-    async def fake_recall(session, tenant_id, query, **kwargs):
+    async def fake_recall(session, account_id, query, **kwargs):
         return "相关长期记忆（按相关性，供参考）\n- [preference] 用户偏好简洁"
 
     monkeypatch.setattr(
@@ -254,7 +254,7 @@ async def test_recall_memory_block_prepends_conventions(monkeypatch) -> None:
     )
     assert "\n\n相关长期记忆" in block
     assert convention_calls == [
-        {"tenant_id": "t-1", "workspace_id": "ws-1", "max_chars": 999}
+        {"account_id": "t-1", "workspace_id": "ws-1", "max_chars": 999}
     ]
 
 
@@ -262,8 +262,8 @@ async def test_plan_boundary_injects_recalled_memory(tmp_path, monkeypatch) -> N
     """走真实 API 边界:召回块进 state,plan 节点的系统提示词带上它。"""
     calls: list[dict[str, Any]] = []
 
-    async def fake_recall(session, tenant_id, query, **kwargs):
-        calls.append({"tenant_id": tenant_id, "query": query, **kwargs})
+    async def fake_recall(session, account_id, query, **kwargs):
+        calls.append({"account_id": account_id, "query": query, **kwargs})
         return f"\n\n{MEMORY_BLOCK}"
 
     monkeypatch.setattr(
@@ -278,10 +278,10 @@ async def test_plan_boundary_injects_recalled_memory(tmp_path, monkeypatch) -> N
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         assert MEMORY_BLOCK in fake.calls[0][0]["content"]
-        assert calls and calls[0]["tenant_id"] == "t-1"
+        assert calls and calls[0]["account_id"] == "t-1"
         assert "整理本周日程" in calls[0]["query"]
 
 
@@ -306,7 +306,7 @@ async def test_plan_boundary_skips_recall_when_disabled(tmp_path, monkeypatch) -
     with TestClient(app) as client:
         run_id = _create_run(client)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code
             == 200
         )
     assert called is False
@@ -340,8 +340,8 @@ async def test_extras_skip_memory_tools_when_disabled() -> None:
 
 
 def test_tool_context_defaults_workspace_to_none() -> None:
-    assert ToolContext(tenant_id="t-1").workspace_id is None
-    assert ToolContext(tenant_id="t-1", workspace_id="ws-1").workspace_id == "ws-1"
+    assert ToolContext(account_id="t-1").workspace_id is None
+    assert ToolContext(account_id="t-1", workspace_id="ws-1").workspace_id == "ws-1"
 
 
 def test_run_tool_context_binds_run_workspace() -> None:
@@ -423,11 +423,11 @@ async def test_execute_phase_emits_delta_with_memory_tools(tmp_path) -> None:
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         execute_deltas = [
             event
             for event in events
@@ -439,12 +439,12 @@ async def test_execute_phase_emits_delta_with_memory_tools(tmp_path) -> None:
         assert execute_deltas[0]["payload"]["text"] == execute
 
         # 终态与交付物不受补报影响:下载回来的仍是交付节点原文
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
         assert artifacts.status_code == 200
         artifact = artifacts.json()[0]
         download = client.get(
             f"/api/v1/runs/{run_id}/artifacts/{artifact['id']}/download",
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert download.status_code == 200
         assert download.text == deliver

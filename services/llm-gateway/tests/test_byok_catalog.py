@@ -1,6 +1,6 @@
-"""租户 BYOK 自定义模型目录:account-service 全走 httpx.MockTransport,零网络。
+"""账号 BYOK 自定义模型目录:account-service 全走 httpx.MockTransport,零网络。
 
-覆盖:未启用/无租户直接空列表且不请求、成功解析与内部请求头、按租户
+覆盖:未启用/无账号直接空列表且不请求、成功解析与内部请求头、按账号
 TTL 缓存与命中/过期、非 200/网络错误/坏 JSON 不缓存且降级为空、脏条目
 过滤、指标 status、以及日志不含内部密钥。
 """
@@ -67,7 +67,7 @@ def _catalog_with(stub: CatalogStub, **overrides) -> ByokCatalog:
 
 def _custom_models(
     catalog: ByokCatalog,
-    tenant: str | None = "t1",
+    account: str | None = "t1",
     *,
     count: int = 1,
 ) -> list[list[str]]:
@@ -75,7 +75,7 @@ def _custom_models(
 
     async def scenario() -> list[list[str]]:
         try:
-            return [await catalog.custom_models(tenant) for _ in range(count)]
+            return [await catalog.custom_models(account) for _ in range(count)]
         finally:
             await catalog.aclose()
 
@@ -89,18 +89,18 @@ def _status_count(status: str) -> float:
 
 
 @pytest.mark.parametrize(
-    ("overrides", "tenant"),
+    ("overrides", "account"),
     [
         ({"internal_secret": ""}, "t1"),  # 未配共享密钥 = 内部端点不可用,停用
         ({"byok_enabled": False}, "t1"),  # 显式关闭
-        ({}, None),  # 无租户(不是 BYOK 调用)
-        ({}, ""),  # 空租户
+        ({}, None),  # 无账号(不是 BYOK 调用)
+        ({}, ""),  # 空账号
     ],
 )
-def test_disabled_paths_skip_account(overrides, tenant) -> None:
+def test_disabled_paths_skip_account(overrides, account) -> None:
     stub = CatalogStub()
     before = _status_count("disabled")
-    assert _custom_models(_catalog_with(stub, **overrides), tenant=tenant) == [[]]
+    assert _custom_models(_catalog_with(stub, **overrides), account=account) == [[]]
     assert stub.requests == []  # 完全没发请求
     assert _status_count("disabled") - before == 1
 
@@ -118,7 +118,7 @@ def test_returns_models_and_sends_internal_headers() -> None:
     assert request.url.host == "account.test"
     assert request.url.path == "/v1/byok/catalog"
     assert request.headers["X-Internal-Secret"] == SECRET
-    assert request.headers["X-Tenant-Id"] == "t1"
+    assert request.headers["X-Account-Id"] == "t1"
 
 
 def test_cache_hit_does_not_hit_account_again() -> None:
@@ -153,11 +153,11 @@ def test_cache_ttl_expiry_refetches() -> None:
     assert len(stub.requests) == 2
 
 
-def test_cache_is_per_tenant() -> None:
+def test_cache_is_per_account() -> None:
     stub = CatalogStub(
         lambda request: httpx.Response(
             200,
-            json={"models": [f"{request.headers['X-Tenant-Id']}/model"]},
+            json={"models": [f"{request.headers['X-Account-Id']}/model"]},
         )
     )
 
@@ -188,7 +188,7 @@ def test_upstream_error_is_not_cached() -> None:
         entry for entry in logs if entry.get("event") == "byok_catalog_lookup_failed"
     ]
     assert len(events) == 2
-    assert events[0]["tenant"] == "t1"
+    assert events[0]["account"] == "t1"
     assert events[0]["status"] == 500
     assert SECRET not in json.dumps(events, default=str, ensure_ascii=False)
 
@@ -204,7 +204,7 @@ def test_network_error_degrades_to_empty() -> None:
         entry for entry in logs if entry.get("event") == "byok_catalog_lookup_failed"
     ]
     assert events[0]["reason"] == "ConnectError"
-    assert events[0]["tenant"] == "t1"
+    assert events[0]["account"] == "t1"
 
 
 def test_bad_json_is_error_and_not_cached() -> None:

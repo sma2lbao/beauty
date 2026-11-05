@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
 )
 from tool_service.services import catalog
 
@@ -21,7 +21,7 @@ def _execute(
     headers: dict[str, str] | None = None,
 ) -> Any:
     return client.post(
-        f"/v1/tools/{tool}:execute", json=payload, headers=headers or TENANT
+        f"/v1/tools/{tool}:execute", json=payload, headers=headers or ACCOUNT
     )
 
 

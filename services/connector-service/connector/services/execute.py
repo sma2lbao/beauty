@@ -25,7 +25,7 @@ from connector.providers.errors import REAUTH_ERROR_CODES, ProviderError
 from connector.repositories import ConnectionRepository
 from connector.schemas.connections import ConnectionStatus
 from connector.services import connections as connections_service
-from connector.services.apps import provider_for_tenant
+from connector.services.apps import provider_for_account
 from connector.services.events import CONNECTION_EXPIRED, publish_connection_event
 
 
@@ -33,7 +33,7 @@ async def execute_tool(
     session: AsyncSession,
     settings: Settings,
     *,
-    tenant_id: str,
+    account_id: str,
     provider_name: str,
     tool_name: str,
     arguments: dict[str, Any],
@@ -42,11 +42,11 @@ async def execute_tool(
 ) -> dict[str, Any]:
     """执行一个连接器工具。
 
-    provider 按租户解析:tenant_apps 有可用行时用租户自带应用(刷新/换 token 与
+    provider 按账号解析:account_apps 有可用行时用账号自带应用(刷新/换 token 与
     连接归属一致),否则回退全局 Settings。响应的 connection_id 只在连接已解析
     之后才带,供 tool-service 审计。
     """
-    provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
+    provider = await provider_for_account(session, settings, account_id, provider_name)
     try:
         provider.tool_spec(tool_name)
     except KeyError as exc:
@@ -56,7 +56,7 @@ async def execute_tool(
             details={"provider": provider.name, "tool": tool_name},
         ) from exc
 
-    conn = await ConnectionRepository(session).latest_active(tenant_id, provider.name)
+    conn = await ConnectionRepository(session).latest_active(account_id, provider.name)
     if conn is None:
         raise NotFoundError(
             "connector.connection_missing",
@@ -66,7 +66,7 @@ async def execute_tool(
 
     try:
         conn = await connections_service.refresh_if_expiring(
-            session, settings, tenant_id, conn, transport
+            session, settings, account_id, conn, transport
         )
     except ProviderError as exc:
         # 刷新失败时状态已由 _refresh_locked 落库(REAUTH 已置 expired 并发事件)

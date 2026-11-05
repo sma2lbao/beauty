@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 
 from agent_orchestrator.models.approval import ApprovalPolicy
 
 
-class ApprovalPolicyRepository(TenantRepository[ApprovalPolicy]):
+class ApprovalPolicyRepository(AccountRepository[ApprovalPolicy]):
     model = ApprovalPolicy
     not_found_code = "approval_policy.not_found"
     not_found_message = "审批策略不存在"

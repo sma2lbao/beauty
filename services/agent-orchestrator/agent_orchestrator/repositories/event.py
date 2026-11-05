@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 from sqlalchemy import func, select
 
 from agent_orchestrator.models.runs import RunEvent
 
 
-class RunEventRepository(TenantRepository[RunEvent]):
+class RunEventRepository(AccountRepository[RunEvent]):
     """run_events 是 append-only 审计流水(§6.3):只追加、按 seq 读。"""
 
     model = RunEvent
@@ -47,11 +47,11 @@ class RunEventRepository(TenantRepository[RunEvent]):
         )
 
     async def list_for_run(
-        self, tenant_id: str, run_id: str, *, after: int = 0
+        self, account_id: str, run_id: str, *, after: int = 0
     ) -> list[RunEvent]:
         """事件回放:按 seq 升序;after 为 SSE 续传游标。"""
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             RunEvent.run_id == run_id,
             RunEvent.seq > after,
             order_by=[RunEvent.seq],

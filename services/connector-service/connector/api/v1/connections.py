@@ -1,4 +1,4 @@
-"""连接端点:同租户列表/详情/撤销/改配置/刷新/探测;凭证只进不出。"""
+"""连接端点:同账号列表/详情/撤销/改配置/刷新/探测;凭证只进不出。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from common.errors import AppError
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from connector.api.deps import get_owner_subject, get_session, get_tenant_id
+from connector.api.deps import get_account_id, get_owner_subject, get_session
 from connector.core.config import Settings
 from connector.core.http import get_http_transport
 from connector.providers.errors import ProviderError
@@ -19,7 +19,7 @@ from connector.services import connections as connections_service
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 OwnerSubject = Annotated[str | None, Depends(get_owner_subject)]
 
 #: ProviderError → HTTP 状态,与 docs/design/connector.md §5.7 的错误码表一致。
@@ -36,7 +36,6 @@ _FAILURE_STATUS: dict[str, int] = {
 }
 
 
-
 #: 令牌连接时,上游鉴权类错误统一收敛成「令牌无效」;上游故障仍按原错误码映射。
 _CONNECT_AUTH_ERRORS = frozenset(
     {
@@ -46,6 +45,7 @@ _CONNECT_AUTH_ERRORS = frozenset(
         "connector.scope_missing",
     }
 )
+
 
 class _ProviderFailure(AppError):
     """把 provider 错误码映射成协议层状态码(响应体仍是标准错误信封)。"""
@@ -69,17 +69,15 @@ def _settings(request: Request) -> Settings:
 @router.get("", response_model=list[ConnectionRead])
 async def list_connections(
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     provider: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
     enabled: Annotated[bool | None, Query()] = None,
 ) -> list[ConnectionRead]:
     conns = await connections_service.list_connections(
-        session, tenant_id, provider=provider, status=status, enabled=enabled
+        session, account_id, provider=provider, status=status, enabled=enabled
     )
     return [ConnectionRead.model_validate(conn) for conn in conns]
-
-
 
 
 @router.post("", response_model=ConnectionRead, status_code=201)
@@ -87,7 +85,7 @@ async def create_connection(
     payload: ConnectionTokenCreate,
     request: Request,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     owner_subject: OwnerSubject,
 ) -> ConnectionRead:
     """粘贴静态令牌建连接(如内部集成令牌):无 OAuth、无回调。
@@ -99,7 +97,7 @@ async def create_connection(
         conn = await connections_service.connect_with_token(
             session,
             _settings(request),
-            tenant_id,
+            account_id,
             owner_subject=owner_subject,
             provider_name=payload.provider,
             token=payload.token,
@@ -133,12 +131,13 @@ async def create_connection(
         ) from exc
     return ConnectionRead.model_validate(conn)
 
+
 @router.get("/{connection_id}", response_model=ConnectionRead)
 async def get_connection(
-    connection_id: str, session: DBSession, tenant_id: TenantId
+    connection_id: str, session: DBSession, account_id: AccountId
 ) -> ConnectionRead:
     conn = await connections_service.require_connection(
-        session, tenant_id, connection_id
+        session, account_id, connection_id
     )
     return ConnectionRead.model_validate(conn)
 
@@ -148,12 +147,12 @@ async def update_connection(
     connection_id: str,
     payload: ConnectionUpdate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
 ) -> ConnectionRead:
     """只改传了的字段;关闭启用 != 解绑(解绑用 DELETE)。"""
     fields = payload.model_dump(exclude_unset=True)
     conn = await connections_service.update_connection(
-        session, tenant_id, connection_id, **fields
+        session, account_id, connection_id, **fields
     )
     return ConnectionRead.model_validate(conn)
 
@@ -163,11 +162,11 @@ async def revoke_connection(
     connection_id: str,
     request: Request,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
 ) -> ConnectionRead:
     """撤销连接(留痕不物理删,§8);仅 active 可撤,重复撤销 409。"""
     conn = await connections_service.revoke_connection(
-        session, _settings(request), tenant_id, connection_id
+        session, _settings(request), account_id, connection_id
     )
     return ConnectionRead.model_validate(conn)
 
@@ -177,14 +176,14 @@ async def refresh_connection(
     connection_id: str,
     request: Request,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
 ) -> ConnectionRead:
     """手动刷新凭证(仍走行锁单飞);凭证失效 400,前端据此提示重连。"""
     try:
         conn = await connections_service.refresh_connection(
             session,
             _settings(request),
-            tenant_id,
+            account_id,
             connection_id,
             get_http_transport(request),
         )
@@ -205,13 +204,13 @@ async def check_connection(
     connection_id: str,
     request: Request,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
 ) -> ConnectionRead:
     """连通性探测:失败不 500,只把 last_error_code 写在连接上。"""
     conn = await connections_service.check_connection(
         session,
         _settings(request),
-        tenant_id,
+        account_id,
         connection_id,
         get_http_transport(request),
     )

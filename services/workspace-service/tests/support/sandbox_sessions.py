@@ -15,14 +15,14 @@ async def _open_managed(
     manager: ShellSessionManager,
     provider: FakeSandboxProvider,
     *,
-    tenant_id: str = "t-1",
+    account_id: str = "t-1",
     sandbox_id: str = "sb-1",
     runtime_name: str = "bm-1",
     cwd: str = "/workspace",
 ):
     """在管理器中开一个会话,返回 (会话信息, 夹具记录的 shell 对象)。"""
     info = await manager.open(
-        tenant_id=tenant_id,
+        account_id=account_id,
         sandbox_id=sandbox_id,
         runtime_name=runtime_name,
         provider=provider,

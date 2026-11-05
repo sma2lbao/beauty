@@ -22,11 +22,8 @@ def token_payload(access: str = ACCESS, refresh: str = REFRESH) -> dict:
         "refresh_token": refresh,
         "token_type": "Bearer",
         "expires_in": 3600,
-        "tenant_id": "t1",
-        "organization_id": "t1",
-        "user_id": "u1",
+        "account_id": "a1",
         "subject": "user@example.com",
-        "role": "owner",
         "session_id": "s1",
     }
 

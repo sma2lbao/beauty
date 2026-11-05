@@ -129,7 +129,7 @@ class UsagePort(Protocol):
 
 
 class ApprovalPort(Protocol):
-    """审批策略引擎:给定租户策略与工具风险,求本次调用的审批动作。"""
+    """审批策略引擎:给定账号策略与工具风险,求本次调用的审批动作。"""
 
     def decide(
         self,
@@ -162,9 +162,9 @@ class OffloadPort(Protocol):
         ...
 
 
-#: 租户 → 基础工具注册表(services 层按需装配,可为 None 表示无工具)。
+#: 账号 → 基础工具注册表(services 层按需装配,可为 None 表示无工具)。
 ToolkitFactory = Callable[[str], ToolkitPort]
-#: 租户 → 外部工具(如 MCP)的 specs;graph 侧不关心具体类型,交给注册表合并。
+#: 账号 → 外部工具(如 MCP)的 specs;graph 侧不关心具体类型,交给注册表合并。
 ToolExtrasFactory = Callable[[str], Awaitable[list[Any]]]
 #: 空工具注册表工厂:只有外部工具、没有基础工具工厂时用它兜底合并。
 EmptyToolkitFactory = Callable[[], ToolkitPort]
@@ -178,9 +178,9 @@ class _NullUsage:
 
 
 class RiskDefaultApproval:
-    """默认策略引擎:忽略租户策略表,只按风险等级回落到既有默认值。
+    """默认策略引擎:忽略账号策略表,只按风险等级回落到既有默认值。
 
-    生产装配注入 services.approval 的真实实现(含租户策略表);这里只是
+    生产装配注入 services.approval 的真实实现(含账号策略表);这里只是
     未注入时的保守兜底——DANGER 一律要确认,其余自动放行。
     """
 

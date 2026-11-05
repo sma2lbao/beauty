@@ -27,7 +27,7 @@ KINDS = frozenset(
 
 async def enqueue(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     kind: str,
     run_id: str,
     *,
@@ -38,11 +38,11 @@ async def enqueue(
     if kind not in KINDS:
         raise ValueError(f"unknown job kind: {kind}")
     repo = JobRepository(session)
-    existing = await repo.find_queued(tenant_id, kind, run_id)
+    existing = await repo.find_queued(account_id, kind, run_id)
     if existing is not None:
         return existing
     job = Job(
-        tenant_id=tenant_id,
+        account_id=account_id,
         kind=kind,
         run_id=run_id,
         payload=payload or {},

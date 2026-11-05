@@ -31,7 +31,7 @@ import { useWorkspaceSelection } from '@/lib/workspace-selection';
 export function useChatQueries(activeConversationId: string | null) {
   const queryClient = useQueryClient();
   const [, setSearchParams] = useSearchParams();
-  // 会话必须归属工作区:当前工作区由 URL ?workspace 决定,缺省回落到租户默认工作区
+  // 会话必须归属工作区:当前工作区由 URL ?workspace 决定,缺省回落到账号默认工作区
   const {
     workspaces,
     activeWorkspace,

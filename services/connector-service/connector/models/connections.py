@@ -1,24 +1,24 @@
-"""连接 ORM:外部系统账号连接(租户隔离,凭证只进不出)。
+"""连接 ORM:外部系统账号连接(账号隔离,凭证只进不出)。
 
 凭证经 connector.core.crypto 信封加密后存 JSON 列(读端永不返回,
 由 schema 层保证);密钥见配置 credential_secret(架构 §10 密钥库)。
-provider 特有的附加字段统一收进 metadata 列(如工作区/租户标识等)。
+provider 特有的附加字段统一收进 metadata 列(如工作区/账号标识等)。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import JSON, Boolean, DateTime, String, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
+class Connection(UUIDMixin, TimestampMixin, AccountMixin, Base):
     __tablename__ = "connections"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "provider", "account"),
-        {"comment": "同租户同提供商同账号只允许一条连接"},
+        UniqueConstraint("account_id", "provider", "account"),
+        {"comment": "同账号同提供商同外部账号只允许一条连接"},
     )
 
     provider: Mapped[str] = mapped_column(String(32), comment="provider 名")
@@ -33,16 +33,16 @@ class Connection(UUIDMixin, TimestampMixin, TenantMixin, Base):
 
     # ── 连接平台扩展(设计见 docs/design/connector.md §5.2)────────────────
     owner_subject: Mapped[str | None] = mapped_column(
-        String(64), comment="授权用户的 subject;组织共享连接为空"
+        String(64), comment="授权用户 subject;无用户身份时为空"
     )
     auth_kind: Mapped[str | None] = mapped_column(
-        String(16), comment="授权主体: user/tenant"
+        String(16), comment="授权主体: user/token"
     )
     provider_account_id: Mapped[str | None] = mapped_column(
         String(128), comment="provider 账号 id"
     )
     external_workspace: Mapped[str | None] = mapped_column(
-        String(128), comment="provider 工作区/租户标识"
+        String(128), comment="provider 工作区/账号标识"
     )
     scopes: Mapped[list | None] = mapped_column(JSON, comment="实际授予的 scope 列表")
     provider_metadata: Mapped[dict | None] = mapped_column(

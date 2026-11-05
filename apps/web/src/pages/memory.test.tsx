@@ -49,7 +49,7 @@ function makeMemory(overrides: Partial<Memory> = {}): Memory {
   return {
     id: 'm1',
     workspace_id: null,
-    scope: 'tenant',
+    scope: 'account',
     kind: 'note',
     content: '默认使用中文回复',
     pinned: false,
@@ -137,7 +137,7 @@ describe('MemoryPage', () => {
     expect(await screen.findByText('先用中文回答')).toBeInTheDocument();
     const list = screen.getByRole('list');
     expect(within(list).getByText('偏好')).toBeInTheDocument();
-    expect(within(list).getByText('租户级')).toBeInTheDocument();
+    expect(within(list).getByText('账号级')).toBeInTheDocument();
     expect(within(list).getByText('置顶')).toBeInTheDocument();
   });
 

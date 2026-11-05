@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 #: 记忆类型与作用域:与 services.memory 的常量保持同一份字面量。
 MemoryKind = Literal["note", "preference", "fact", "procedure"]
-MemoryScope = Literal["tenant", "workspace"]
+MemoryScope = Literal["account", "workspace"]
 
 
 class MemoryCreate(BaseModel):
@@ -21,7 +21,7 @@ class MemoryCreate(BaseModel):
 
     content: str = Field(min_length=1, max_length=8000)
     kind: MemoryKind = "note"
-    scope: MemoryScope = "tenant"
+    scope: MemoryScope = "account"
     workspace_id: str | None = Field(default=None, max_length=32)
     pinned: bool = False
     ttl_days: int | None = Field(default=None, ge=0, le=3650)
@@ -55,7 +55,7 @@ class MemorySearchResponse(BaseModel):
 
 
 class MemoryStatsRead(BaseModel):
-    """租户记忆计数。"""
+    """账号记忆计数。"""
 
     total: int
     active: int

@@ -48,7 +48,7 @@ class ConnectorExecutionMixin:
         try:
             execution = await asyncio.wait_for(
                 self._connector.execute(
-                    context.tenant_id,
+                    context.account_id,
                     descriptor,
                     arguments,
                     run_id=context.run_id,

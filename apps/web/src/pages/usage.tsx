@@ -15,7 +15,7 @@ export function UsagePage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="用量"
-        subtitle="今日 / 本月 token 与请求次数;模型调用统一经 llm-gateway,按租户聚合"
+        subtitle="今日 / 本月 token 与请求次数;模型调用统一经 llm-gateway,按账号聚合"
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         {model.error ? (

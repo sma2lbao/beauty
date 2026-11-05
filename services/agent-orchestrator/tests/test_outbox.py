@@ -16,7 +16,7 @@ from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services.artifacts import persist_file_artifact
 from agent_orchestrator.services.outbox import KnowledgeIngestConsumer, record_run_event
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledge,
     FakeLLM,
     RecordingBus,
@@ -31,8 +31,8 @@ DELIVERY = "# 周报(成品)\n\n- 日程已整理\n"
 
 def _complete_run(client: TestClient) -> str:
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"
     return run_id
 
@@ -111,9 +111,9 @@ def test_run_events_land_in_outbox_and_dispatch(tmp_path: Path) -> None:
         assert stats.claimed == len(rows)
         assert stats.failed == 0
 
-        # 事件自洽:租户随信封、run_id 在 payload 里
+        # 事件自洽:账号随信封、run_id 在 payload 里
         delivered = next(e for e in bus.received if e.type == "run.delivered.v1")
-        assert delivered.tenant_id == "t-1"
+        assert delivered.account_id == "t-1"
         assert delivered.payload["run_id"] == run_id
         assert "run.completed.v1" in bus.types
 
@@ -144,7 +144,7 @@ async def test_append_event_rolls_back_outbox_row(tmp_path: Path) -> None:
 
         with pytest.raises(Boom):
             async with session_scope(factory) as session:
-                run = Run(tenant_id="t-1", title="滚回", goal="g", status="pending")
+                run = Run(account_id="t-1", title="滚回", goal="g", status="pending")
                 session.add(run)
                 await session.flush()
                 await record_run_event(
@@ -181,7 +181,7 @@ def test_knowledge_ingest_consumer_ingests_delivery(tmp_path: Path) -> None:
             type="run.delivered.v1",
             occurred_at="2026-10-13T00:00:00+00:00",
             payload={"run_id": run_id},
-            tenant_id="t-1",
+            account_id="t-1",
         )
         asyncio.run(consumer(envelope))
 
@@ -190,7 +190,7 @@ def test_knowledge_ingest_consumer_ingests_delivery(tmp_path: Path) -> None:
         assert knowledge.ingested[0]["content"] == DELIVERY
         # 逐件去重键 = run 前缀 + artifact id 前缀(一个 run 可以多件)
         assert knowledge.ingested[0]["source"].startswith(f"run:{run_id}:")
-        assert knowledge.ingested[0]["tenant_id"] == "t-1"
+        assert knowledge.ingested[0]["account_id"] == "t-1"
 
         # 重投(至少一次语义):事件级去重 + 内容级去重都不该重复入库
         asyncio.run(consumer(envelope))
@@ -263,7 +263,7 @@ def test_knowledge_ingest_consumer_ingests_all_text_artifacts(
             type="run.delivered.v1",
             occurred_at="2026-10-13T00:00:00+00:00",
             payload={"run_id": run_id},
-            tenant_id="t-1",
+            account_id="t-1",
         )
         asyncio.run(consumer(envelope))
 
@@ -302,7 +302,7 @@ def test_knowledge_ingest_failure_propagates_for_retry(tmp_path: Path) -> None:
             type="run.delivered.v1",
             occurred_at="2026-10-13T00:00:00+00:00",
             payload={"run_id": run_id},
-            tenant_id="t-1",
+            account_id="t-1",
         )
         with pytest.raises(RuntimeError):
             asyncio.run(consumer(envelope))
@@ -325,7 +325,7 @@ def test_consumer_ignores_other_event_types(tmp_path: Path) -> None:
                 type="run.approved.v1",
                 occurred_at="2026-10-13T00:00:00+00:00",
                 payload={},
-                tenant_id="t-1",
+                account_id="t-1",
             )
         )
     )

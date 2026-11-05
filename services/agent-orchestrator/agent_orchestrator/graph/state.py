@@ -13,7 +13,7 @@ class RunGraphState(TypedDict, total=False):
     """graph 全流程共享状态。"""
 
     run_id: str
-    tenant_id: str
+    account_id: str
     title: str
     goal: str
     acceptance_criteria: list[str]

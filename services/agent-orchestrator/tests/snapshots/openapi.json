@@ -354,7 +354,7 @@
         "type": "object"
       },
       "ConversationCreate": {
-        "description": "建对话:标题可空(首条消息会自动定题)。\n\nworkspace_id 显式指定对话所属工作区(不存在 → 404 workspace.not_found);\n不传则落租户默认工作区(workspace 客户端未启用/不可达时降级为空,不阻断建对话)。",
+        "description": "建对话:标题可空(首条消息会自动定题)。\n\nworkspace_id 显式指定对话所属工作区(不存在 → 404 workspace.not_found);\n不传则落账号默认工作区(workspace 客户端未启用/不可达时降级为空,不阻断建对话)。",
         "properties": {
           "model": {
             "anyOf": [
@@ -1581,8 +1581,8 @@
             "type": "boolean"
           },
           "scope": {
-            "default": "tenant",
-            "enum": ["tenant", "workspace"],
+            "default": "account",
+            "enum": ["account", "workspace"],
             "title": "Scope",
             "type": "string"
           },
@@ -1750,7 +1750,7 @@
         "type": "object"
       },
       "MemoryStatsRead": {
-        "description": "租户记忆计数。",
+        "description": "账号记忆计数。",
         "properties": {
           "active": {
             "title": "Active",
@@ -3284,7 +3284,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3295,7 +3295,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3349,7 +3349,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3360,7 +3360,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3435,7 +3435,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3446,7 +3446,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3499,7 +3499,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3510,7 +3510,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3556,7 +3556,7 @@
     },
     "/api/v1/conversations": {
       "get": {
-        "description": "租户内对话列表,最近活跃在前(对话页侧栏)。\n\nq 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor;\nworkspace_id 给出时只看该工作区的会话(不给则全租户,并顺手把历史空归属\n会话回填到默认工作区)。",
+        "description": "账号内对话列表,最近活跃在前(对话页侧栏)。\n\nq 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor;\nworkspace_id 给出时只看该工作区的会话(不给则全账号,并顺手把历史空归属\n会话回填到默认工作区)。",
         "operationId": "list_conversations_api_v1_conversations_get",
         "parameters": [
           {
@@ -3633,7 +3633,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3644,7 +3644,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3690,12 +3690,12 @@
         "tags": ["conversations"]
       },
       "post": {
-        "description": "建对话:标题可空(首条消息自动定题)。\n\n工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),\n不给则落租户默认工作区——\"对话必须在工作区中\"由服务层兜底。\n模型偏好(P1-G):不在可用列表时 400,不落库。",
+        "description": "建对话:标题可空(首条消息自动定题)。\n\n工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),\n不给则落账号默认工作区——\"对话必须在工作区中\"由服务层兜底。\n模型偏好(P1-G):不在可用列表时 400,不落库。",
         "operationId": "create_conversation_api_v1_conversations_post",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3706,7 +3706,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3786,7 +3786,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3797,7 +3797,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3850,7 +3850,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3861,7 +3861,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -3921,7 +3921,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3932,7 +3932,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4003,7 +4003,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4014,7 +4014,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4078,7 +4078,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4089,7 +4089,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4161,7 +4161,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4172,7 +4172,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4236,7 +4236,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4247,7 +4247,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4319,7 +4319,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4330,7 +4330,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4386,7 +4386,7 @@
     },
     "/api/v1/conversations/{conversation_id}/tool-calls": {
       "get": {
-        "description": "会话级工具调用审计:跨 run 聚合,附服务端生成的 unified diff。\n\n先校验会话归属(跨租户一律 404,不泄漏存在性)。tool-service 未启用或\n不可达时**不炸请求**:返回 200 + degraded=true 的空页,前端据此回退到\n从事件参数本地重建补丁。",
+        "description": "会话级工具调用审计:跨 run 聚合,附服务端生成的 unified diff。\n\n先校验会话归属(跨账号一律 404,不泄漏存在性)。tool-service 未启用或\n不可达时**不炸请求**:返回 200 + degraded=true 的空页,前端据此回退到\n从事件参数本地重建补丁。",
         "operationId": "list_conversation_tool_calls_api_v1_conversations__conversation_id__tool_calls_get",
         "parameters": [
           {
@@ -4423,7 +4423,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4434,7 +4434,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4505,7 +4505,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4516,7 +4516,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4587,7 +4587,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4598,7 +4598,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4680,7 +4680,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4691,7 +4691,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4743,7 +4743,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4754,7 +4754,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4808,7 +4808,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4819,7 +4819,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4890,7 +4890,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4901,7 +4901,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -4953,7 +4953,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -4964,7 +4964,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5036,7 +5036,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5047,7 +5047,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5102,7 +5102,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5113,7 +5113,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5191,7 +5191,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5202,7 +5202,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5250,7 +5250,7 @@
     },
     "/api/v1/memories": {
       "get": {
-        "description": "列出仍然有效的记忆;workspace_id 给定时含租户级 + 该工作区级两类。",
+        "description": "列出仍然有效的记忆;workspace_id 给定时含账号级 + 该工作区级两类。",
         "operationId": "list_memories_api_v1_memories_get",
         "parameters": [
           {
@@ -5318,7 +5318,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5329,7 +5329,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5384,7 +5384,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5395,7 +5395,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5458,7 +5458,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5469,7 +5469,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5579,7 +5579,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5590,7 +5590,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5638,12 +5638,12 @@
     },
     "/api/v1/memories/stats": {
       "get": {
-        "description": "租户维度记忆计数(控制台概览用)。",
+        "description": "账号维度记忆计数(控制台概览用)。",
         "operationId": "get_memory_stats_api_v1_memories_stats_get",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5654,7 +5654,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5702,7 +5702,7 @@
     },
     "/api/v1/memories/{memory_id}": {
       "delete": {
-        "description": "软删除一条记忆;不存在或跨租户一律 404 memory.not_found。",
+        "description": "软删除一条记忆;不存在或跨账号一律 404 memory.not_found。",
         "operationId": "delete_memory_api_v1_memories__memory_id__delete",
         "parameters": [
           {
@@ -5716,7 +5716,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5727,7 +5727,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5788,7 +5788,7 @@
     },
     "/api/v1/notifications/stream": {
       "get": {
-        "description": "订阅租户内 run 状态变化(SSE)。\n\nLast-Event-ID 当前只用于兼容重连语义(服务端不做回放:通知是提醒投影,\n漏掉一条事件等价于多一次轮询,客户端会从 /runs 列表补齐真实状态)。",
+        "description": "订阅账号内 run 状态变化(SSE)。\n\nLast-Event-ID 当前只用于兼容重连语义(服务端不做回放:通知是提醒投影,\n漏掉一条事件等价于多一次轮询,客户端会从 /runs 列表补齐真实状态)。",
         "operationId": "stream_notifications_api_v1_notifications_stream_get",
         "parameters": [
           {
@@ -5809,7 +5809,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5820,7 +5820,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5866,7 +5866,7 @@
     },
     "/api/v1/outbox/events": {
       "get": {
-        "description": "列出本租户的 outbox 事件(最新在前),可按状态过滤。",
+        "description": "列出本账号的 outbox 事件(最新在前),可按状态过滤。",
         "operationId": "list_outbox_events_api_v1_outbox_events_get",
         "parameters": [
           {
@@ -5911,7 +5911,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5922,7 +5922,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -5988,7 +5988,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -5999,7 +5999,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6047,12 +6047,12 @@
     },
     "/api/v1/outbox/retry-failed": {
       "post": {
-        "description": "批量重放本租户所有 failed 事件(消费者恢复后一键补投)。",
+        "description": "批量重放本账号所有 failed 事件(消费者恢复后一键补投)。",
         "operationId": "retry_failed_events_api_v1_outbox_retry_failed_post",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6063,7 +6063,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6111,12 +6111,12 @@
     },
     "/api/v1/outbox/stats": {
       "get": {
-        "description": "本租户各状态计数(pending/dispatched/failed)。",
+        "description": "本账号各状态计数(pending/dispatched/failed)。",
         "operationId": "outbox_stats_api_v1_outbox_stats_get",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6127,7 +6127,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6175,7 +6175,7 @@
     },
     "/api/v1/runs": {
       "get": {
-        "description": "租户内 run 列表,最新在前(控制台首页)。",
+        "description": "账号内 run 列表,最新在前(控制台首页)。",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
@@ -6192,7 +6192,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6203,7 +6203,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6258,7 +6258,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6269,7 +6269,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6340,7 +6340,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6351,7 +6351,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6413,7 +6413,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6424,7 +6424,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6496,7 +6496,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6507,7 +6507,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6569,7 +6569,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6580,7 +6580,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6642,7 +6642,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6653,7 +6653,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6705,7 +6705,7 @@
     },
     "/api/v1/runs/{run_id}/artifacts/{artifact_id}/download": {
       "get": {
-        "description": "下载交付物原始字节(文本/二进制同一入口)。\n\n不属于该 run/租户的 artifact 一律 404 `artifact.not_found`;\n缺失对象由 service 抛 `artifact.object_missing`(500,存储配置问题)。",
+        "description": "下载交付物原始字节(文本/二进制同一入口)。\n\n不属于该 run/账号的 artifact 一律 404 `artifact.not_found`;\n缺失对象由 service 抛 `artifact.object_missing`(500,存储配置问题)。",
         "operationId": "download_run_artifact_api_v1_runs__run_id__artifacts__artifact_id__download_get",
         "parameters": [
           {
@@ -6728,7 +6728,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6739,7 +6739,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6799,7 +6799,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6810,7 +6810,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6889,7 +6889,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6900,7 +6900,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -6972,7 +6972,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -6983,7 +6983,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7065,7 +7065,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7076,7 +7076,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7136,7 +7136,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7147,7 +7147,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7211,7 +7211,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7222,7 +7222,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7294,7 +7294,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7305,7 +7305,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7370,7 +7370,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7381,7 +7381,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7441,7 +7441,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7452,7 +7452,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7522,7 +7522,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7533,7 +7533,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7595,7 +7595,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7606,7 +7606,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7678,7 +7678,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7689,7 +7689,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7751,7 +7751,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7762,7 +7762,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7824,7 +7824,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7835,7 +7835,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7887,7 +7887,7 @@
     },
     "/api/v1/runs/{run_id}/subagents": {
       "get": {
-        "description": "子代理面板(P1-E):该 run 派生的子代理(按创建时间,空数组合法)。\n\n先 ``require_run``:跨租户/不存在一律 404,不泄漏存在性;``summary`` 取父级\n``kind=subagent`` item 里最近一次的完成摘要(未结束为 null)。",
+        "description": "子代理面板(P1-E):该 run 派生的子代理(按创建时间,空数组合法)。\n\n先 ``require_run``:跨账号/不存在一律 404,不泄漏存在性;``summary`` 取父级\n``kind=subagent`` item 里最近一次的完成摘要(未结束为 null)。",
         "operationId": "list_run_subagents_api_v1_runs__run_id__subagents_get",
         "parameters": [
           {
@@ -7901,7 +7901,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7912,7 +7912,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -7978,7 +7978,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -7989,7 +7989,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8051,7 +8051,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8062,7 +8062,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8115,7 +8115,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8126,7 +8126,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8178,12 +8178,12 @@
     },
     "/api/v1/skills/packages": {
       "get": {
-        "description": "当前租户的全部技能包(含各自全部版本与最新版本号)。",
+        "description": "当前账号的全部技能包(含各自全部版本与最新版本号)。",
         "operationId": "list_skill_packages_api_v1_skills_packages_get",
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8194,7 +8194,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8249,7 +8249,7 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8260,7 +8260,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8332,7 +8332,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8343,7 +8343,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8382,7 +8382,7 @@
         "tags": ["skills"]
       },
       "get": {
-        "description": "包详情:跨租户/不存在一律 404(skill.package_not_found)。",
+        "description": "包详情:跨账号/不存在一律 404(skill.package_not_found)。",
         "operationId": "get_skill_package_api_v1_skills_packages__package_id__get",
         "parameters": [
           {
@@ -8396,7 +8396,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8407,7 +8407,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {
@@ -8469,7 +8469,7 @@
           },
           {
             "in": "header",
-            "name": "X-Tenant-Id",
+            "name": "X-Account-Id",
             "required": false,
             "schema": {
               "anyOf": [
@@ -8480,7 +8480,7 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Tenant-Id"
+              "title": "X-Account-Id"
             }
           },
           {

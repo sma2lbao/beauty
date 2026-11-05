@@ -20,14 +20,14 @@ from common.errors import UpstreamError
 from database.session import session_scope
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeSandboxProvider
+from tests.conftest import ACCOUNT, OTHER, FakeSandboxProvider
 from workspace.models.sandbox import SandboxInstance
 
 # --- HTTP 辅助 -------------------------------------------------------------
 
 
 def _create_sandbox(client: TestClient, **payload: Any) -> dict[str, Any]:
-    response = client.post("/v1/sandboxes", json=payload, headers=TENANT)
+    response = client.post("/v1/sandboxes", json=payload, headers=ACCOUNT)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -40,7 +40,7 @@ def _sessions_url(sandbox_id: str, session_id: str | None = None) -> str:
 def _open_session(
     client: TestClient, sandbox_id: str, **payload: Any
 ) -> dict[str, Any]:
-    response = client.post(_sessions_url(sandbox_id), json=payload, headers=TENANT)
+    response = client.post(_sessions_url(sandbox_id), json=payload, headers=ACCOUNT)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -49,7 +49,7 @@ def _input(client: TestClient, sandbox_id: str, session_id: str, data: str):
     return client.post(
         f"{_sessions_url(sandbox_id, session_id)}/input",
         json={"data": data},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -58,7 +58,7 @@ def _read_stream(client: TestClient, sandbox_id: str, session_id: str, **headers
     with client.stream(
         "GET",
         f"{_sessions_url(sandbox_id, session_id)}/stream",
-        headers={**TENANT, **headers},
+        headers={**ACCOUNT, **headers},
     ) as response:
         raw = b"".join(response.iter_raw()).decode("utf-8")
         return response, raw
@@ -107,7 +107,7 @@ def test_open_session_contract_and_provider_call(
     response = client.post(
         _sessions_url(sandbox["id"]),
         json={"cwd": "/workspace/src", "cols": 100, "rows": 40},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
     assert response.status_code == 201, response.text
@@ -159,10 +159,10 @@ def test_close_session_is_idempotent(
     session = _open_session(client, sandbox["id"])
     url = _sessions_url(sandbox["id"], session["session_id"])
 
-    assert client.delete(url, headers=TENANT).status_code == 204
+    assert client.delete(url, headers=ACCOUNT).status_code == 204
     assert sandbox_provider.shells[0].closed is True
     # 重复关闭仍 204(会话还在保留期里,只是已关闭)
-    assert client.delete(url, headers=TENANT).status_code == 204
+    assert client.delete(url, headers=ACCOUNT).status_code == 204
 
 
 def test_input_after_close_conflicts(
@@ -170,7 +170,7 @@ def test_input_after_close_conflicts(
 ) -> None:
     sandbox = _create_sandbox(client)
     session = _open_session(client, sandbox["id"])
-    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=TENANT)
+    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=ACCOUNT)
 
     response = _input(client, sandbox["id"], session["session_id"], "ls\n")
 
@@ -244,7 +244,7 @@ def test_open_session_validates_input(
 ) -> None:
     sandbox = _create_sandbox(client)
 
-    response = client.post(_sessions_url(sandbox["id"]), json=payload, headers=TENANT)
+    response = client.post(_sessions_url(sandbox["id"]), json=payload, headers=ACCOUNT)
 
     assert response.status_code == 422
 
@@ -255,7 +255,7 @@ def test_open_session_provider_failure_is_502(
     sandbox = _create_sandbox(client)
     sandbox_provider.fail_shell = True
 
-    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=TENANT)
+    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=ACCOUNT)
 
     assert response.status_code == 502
     assert response.json()["code"] == "sandbox.provider_error"
@@ -268,16 +268,16 @@ def test_session_limit_per_sandbox(
     for _ in range(8):
         _open_session(client, sandbox["id"])
 
-    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=TENANT)
+    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=ACCOUNT)
 
     assert response.status_code == 409
     assert response.json()["code"] == "sandbox.session_limit"
 
 
-# --- HTTP:租户隔离 / 沙箱状态 --------------------------------------------
+# --- HTTP:账号隔离 / 沙箱状态 --------------------------------------------
 
 
-def test_cross_tenant_everything_is_404(
+def test_cross_account_everything_is_404(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:
     sandbox = _create_sandbox(client)
@@ -317,7 +317,7 @@ async def test_stopped_sandbox_409(client: TestClient) -> None:
     sandbox = _create_sandbox(client)
     await _set_sandbox(client, sandbox["id"], status="stopped")
 
-    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=TENANT)
+    response = client.post(_sessions_url(sandbox["id"]), json={}, headers=ACCOUNT)
 
     assert response.status_code == 409
     assert response.json()["code"] == "sandbox.stopped"
@@ -330,7 +330,7 @@ def test_delete_sandbox_closes_its_sessions(
     session = _open_session(client, sandbox["id"])
 
     assert (
-        client.delete(f"/v1/sandboxes/{sandbox['id']}", headers=TENANT).status_code
+        client.delete(f"/v1/sandboxes/{sandbox['id']}", headers=ACCOUNT).status_code
         == 204
     )
 
@@ -343,9 +343,9 @@ def test_delete_sandbox_closes_its_sessions(
 
 def test_unknown_sandbox_is_404(client: TestClient) -> None:
     assert (
-        client.post(_sessions_url("nope"), json={}, headers=TENANT).status_code == 404
+        client.post(_sessions_url("nope"), json={}, headers=ACCOUNT).status_code == 404
     )
-    assert client.delete(_sessions_url("nope", "s"), headers=TENANT).status_code == 404
+    assert client.delete(_sessions_url("nope", "s"), headers=ACCOUNT).status_code == 404
     assert _input(client, "nope", "s", "ls\n").status_code == 404
 
 
@@ -361,7 +361,7 @@ def test_stream_emits_output_and_exit_with_headers(
     assert client.portal is not None
     client.portal.call(shell.emit, b"hello\r\n")
     client.portal.call(shell.finish, 0)
-    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=TENANT)
+    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=ACCOUNT)
 
     response, raw = _read_stream(client, sandbox["id"], session["session_id"])
 
@@ -385,7 +385,7 @@ def test_stream_last_event_id_resumes(
     assert client.portal is not None
     client.portal.call(shell.emit, b"first")
     client.portal.call(shell.finish, 0)
-    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=TENANT)
+    client.delete(_sessions_url(sandbox["id"], session["session_id"]), headers=ACCOUNT)
 
     _, raw = _read_stream(client, sandbox["id"], session["session_id"])
     first_frames = _parse_sse(raw)
@@ -407,7 +407,7 @@ def test_stream_rejects_bad_last_event_id(client: TestClient) -> None:
     with client.stream(
         "GET",
         f"{_sessions_url(sandbox['id'], session['session_id'])}/stream",
-        headers={**TENANT, "Last-Event-ID": "abc"},
+        headers={**ACCOUNT, "Last-Event-ID": "abc"},
     ) as response:
         payload = b"".join(response.iter_raw())
 
@@ -419,7 +419,7 @@ def test_stream_unknown_session_404(client: TestClient) -> None:
     sandbox = _create_sandbox(client)
 
     with client.stream(
-        "GET", f"{_sessions_url(sandbox['id'], 'nope')}/stream", headers=TENANT
+        "GET", f"{_sessions_url(sandbox['id'], 'nope')}/stream", headers=ACCOUNT
     ) as response:
         payload = b"".join(response.iter_raw())
 

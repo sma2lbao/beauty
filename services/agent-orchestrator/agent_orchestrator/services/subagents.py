@@ -178,11 +178,11 @@ def build_spawn_tool(
             )
         async with session_scope(session_factory) as session:
             parent = await session.get(Run, ctx.run_id)
-            if parent is None or parent.tenant_id != ctx.tenant_id:
+            if parent is None or parent.account_id != ctx.account_id:
                 return _dump(
                     _error(
                         "subagent.invalid_arguments",
-                        "父 run 不存在或不属于当前租户",
+                        "父 run 不存在或不属于当前账号",
                     )
                 )
             result = await spawn_subagent(
@@ -285,7 +285,7 @@ async def spawn_subagent(
 
     started_at = datetime.now(UTC)
     child = Run(
-        tenant_id=parent.tenant_id,
+        account_id=parent.account_id,
         title=request.title,
         goal=request.task,
         status=RunStatus.PENDING.value,
@@ -394,23 +394,23 @@ async def spawn_subagent(
 
 
 async def list_subagents(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[SubagentRead]:
-    """GET /runs/{id}/subagents:先 require_run(跨租户 404),空数组合法。"""
+    """GET /runs/{id}/subagents:先 require_run(跨账号 404),空数组合法。"""
 
-    await require_run(session, tenant_id, run_id)
+    await require_run(session, account_id, run_id)
     children = await RunRepository(session).list_scoped(
-        tenant_id,
+        account_id,
         Run.parent_run_id == run_id,
         Run.parent_kind == PARENT_KIND_SUBAGENT,
         order_by=[Run.created_at, Run.id],
     )
     if not children:
         return []
-    summaries = await _item_summaries(session, tenant_id, run_id)
+    summaries = await _item_summaries(session, account_id, run_id)
     result: list[SubagentRead] = []
     for child in children:
-        usage = await usage_events.usage_totals(session, tenant_id, child.id)
+        usage = await usage_events.usage_totals(session, account_id, child.id)
         result.append(
             SubagentRead(
                 run_id=child.id,

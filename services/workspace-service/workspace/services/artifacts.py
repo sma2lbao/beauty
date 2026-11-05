@@ -107,7 +107,7 @@ def artifact_filename(record: WorkspaceArtifact) -> str:
 
 async def create_artifact(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: ArtifactCreate,
     store: ArtifactStore | None,
     default_workspace_name: str,
@@ -115,11 +115,11 @@ async def create_artifact(
     """登记交付物:字节落对象存储(或 DB 列),行里留元数据与引用。"""
     workspace = (
         await workspaces_service.require_workspace(
-            session, tenant_id, data.workspace_id
+            session, account_id, data.workspace_id
         )
         if data.workspace_id
         else await workspaces_service.require_or_create_default(
-            session, tenant_id, default_workspace_name
+            session, account_id, default_workspace_name
         )
     )
     is_binary = data.content_base64 is not None
@@ -128,7 +128,7 @@ async def create_artifact(
     object_id = uuid4().hex
     record = WorkspaceArtifact(
         id=object_id,
-        tenant_id=tenant_id,
+        account_id=account_id,
         workspace_id=workspace.id,
         run_id=data.run_id,
         kind=data.kind,
@@ -143,7 +143,7 @@ async def create_artifact(
     )
     if store is not None:
         key = build_artifact_key(
-            tenant_id,
+            account_id,
             workspace.id,
             object_id,
             suffix=artifact_suffix(filename, content_type, is_binary=is_binary),
@@ -154,9 +154,11 @@ async def create_artifact(
 
 
 async def require_artifact(
-    session: AsyncSession, tenant_id: str, artifact_id: str
+    session: AsyncSession, account_id: str, artifact_id: str
 ) -> WorkspaceArtifact:
-    return await ArtifactRepository(session).require_for_tenant(tenant_id, artifact_id)
+    return await ArtifactRepository(session).require_for_account(
+        account_id, artifact_id
+    )
 
 
 async def load_bytes(record: WorkspaceArtifact, store: ArtifactStore | None) -> bytes:
@@ -198,11 +200,11 @@ async def load_content(
 
 
 async def list_artifacts(
-    session: AsyncSession, tenant_id: str, workspace_id: str
+    session: AsyncSession, account_id: str, workspace_id: str
 ) -> list[WorkspaceArtifact]:
-    await workspaces_service.require_workspace(session, tenant_id, workspace_id)
+    await workspaces_service.require_workspace(session, account_id, workspace_id)
     return await ArtifactRepository(session).list_scoped(
-        tenant_id,
+        account_id,
         WorkspaceArtifact.workspace_id == workspace_id,
         order_by=[WorkspaceArtifact.created_at.desc(), WorkspaceArtifact.id.desc()],
     )
@@ -210,13 +212,13 @@ async def list_artifacts(
 
 async def delete_artifact(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     artifact_id: str,
     store: ArtifactStore | None,
 ) -> None:
     """删除交付物:先删对象再删元数据(对象缺失不阻塞删除)。"""
     artifacts = ArtifactRepository(session)
-    record = await artifacts.require_for_tenant(tenant_id, artifact_id)
+    record = await artifacts.require_for_account(account_id, artifact_id)
     if record.object_key and store is not None:
         await store.delete(record.object_key)
     await artifacts.delete(record)

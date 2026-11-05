@@ -207,7 +207,7 @@ async def test_delivery_adds_report_alongside_skill_outputs(tmp_path: Path) -> N
     async with make_env(tmp_path) as env:
         first = json.loads(await env.runner.execute("t-1", env.run_id, None))
         async with session_scope(env.factory) as session:
-            run = await RunRepository(session).require_for_tenant("t-1", env.run_id)
+            run = await RunRepository(session).require_for_account("t-1", env.run_id)
             await runs_service._persist_artifact(
                 session,
                 run,

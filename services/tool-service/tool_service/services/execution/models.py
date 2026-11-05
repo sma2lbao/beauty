@@ -14,9 +14,9 @@ from common.tools import ToolDescriptor, ToolExecuteResponse
 
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
-    """一次工具执行的调用方上下文(租户来自 JWT,其余来自请求体)。"""
+    """一次工具执行的调用方上下文(账号来自 JWT,其余来自请求体)。"""
 
-    tenant_id: str
+    account_id: str
     tool_call_id: str
     run_id: str | None = None
     conversation_id: str | None = None

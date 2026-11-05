@@ -1,4 +1,4 @@
-"""通知流端点(P1-9b):按租户推送 run 状态变化。
+"""通知流端点(P1-9b):按账号推送 run 状态变化。
 
 设计:
 - **服务端只做"变化探测"**,不引入新表:每轮扫描 updated_at 落在活跃窗口内的
@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from agent_orchestrator.api.deps import get_container, get_tenant_id
+from agent_orchestrator.api.deps import get_account_id, get_container
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.core.sse import comment_frame, event_id_frame
 from agent_orchestrator.services.notifications import scan_changed
@@ -81,15 +81,15 @@ def diff_notifications(
 async def notification_stream(
     factory: async_sessionmaker[AsyncSession],
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
 ) -> AsyncIterator[str]:
-    """租户级通知流:首帧建立基线,之后只推状态变化。"""
+    """账号级通知流:首帧建立基线,之后只推状态变化。"""
     snapshot: dict[str, str] = {}
     seq = 0
     idle_polls = 0
     first = True
     while True:
-        runs = await scan_changed(factory, tenant_id, settings)
+        runs = await scan_changed(factory, account_id, settings)
         if first:
             snapshot = {run.id: run.status for run in runs}
             first = False
@@ -110,10 +110,10 @@ async def notification_stream(
 @router.get("/stream")
 async def stream_notifications(
     request: Request,
-    tenant_id: Annotated[str, Depends(get_tenant_id)],
+    account_id: Annotated[str, Depends(get_account_id)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
-    """订阅租户内 run 状态变化(SSE)。
+    """订阅账号内 run 状态变化(SSE)。
 
     Last-Event-ID 当前只用于兼容重连语义(服务端不做回放:通知是提醒投影,
     漏掉一条事件等价于多一次轮询,客户端会从 /runs 列表补齐真实状态)。
@@ -123,7 +123,7 @@ async def stream_notifications(
     assert container.session_factory is not None
     settings: Settings = container.settings
     return StreamingResponse(
-        notification_stream(container.session_factory, settings, tenant_id),
+        notification_stream(container.session_factory, settings, account_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

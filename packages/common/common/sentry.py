@@ -3,7 +3,7 @@
 - `sentry_dsn` 为空即完全关闭:内网/本地形态默认不初始化,不产生任何网络请求;
 - 只上报 5xx 与未捕获异常:`AppError` 的 4xx 是业务分支,不占用错误配额;
 - 事件里的请求体、cookie、敏感头一律脱敏(`send_default_pii=False` 兜底);
-- `request_id`/`trace_id`/`tenant_id`/`user_id` 以 tag 带过去,排查时
+- `request_id`/`trace_id`/`account_id`/`user_id` 以 tag 带过去,排查时
   Sentry → 日志按同一个 id 串(字段来源是请求上下文,见 §5)。
 """
 
@@ -52,7 +52,7 @@ _SENSITIVE_FIELDS = frozenset(
 )
 
 #: 进 Sentry tag 的请求上下文字段(都不是高基数值)。
-_TAG_FIELDS = ("request_id", "trace_id", "tenant_id", "user_id", "route", "error_code")
+_TAG_FIELDS = ("request_id", "trace_id", "account_id", "user_id", "route", "error_code")
 
 
 def _scrub_headers(headers: Any) -> Any:

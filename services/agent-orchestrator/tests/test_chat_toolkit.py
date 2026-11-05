@@ -83,7 +83,7 @@ async def test_chat_keeps_write_builtin_tools() -> None:
     """WRITE 不再被裁掉:模型要能看到它,才能发起"待确认"的调用。"""
 
     toolkit = await _toolkit_for(
-        lambda tenant: FakeToolkit(_registry()), None, "t-1", chat=True
+        lambda account: FakeToolkit(_registry()), None, "t-1", chat=True
     )
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
@@ -101,7 +101,7 @@ async def test_chat_drops_danger_tools() -> None:
             _spec("publish", ToolRisk.DANGER),
         ]
     )
-    toolkit = await _toolkit_for(lambda tenant: registry, None, "t-1", chat=True)
+    toolkit = await _toolkit_for(lambda account: registry, None, "t-1", chat=True)
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
 
@@ -120,7 +120,7 @@ def _interaction_registry() -> ToolRegistry:
 
 
 async def test_chat_without_flag_keeps_everything() -> None:
-    toolkit = await _toolkit_for(lambda tenant: _registry(), None, "t-1")
+    toolkit = await _toolkit_for(lambda account: _registry(), None, "t-1")
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
 
@@ -129,10 +129,10 @@ async def test_chat_filters_interaction_tools() -> None:
     """对话没有人工应答通道:交互工具即便在目录里也要过滤掉(§10.9)。"""
 
     fake = FakeInteractionToolkit(_interaction_registry())
-    full = await _toolkit_for(lambda tenant: fake, None, "t-1")
+    full = await _toolkit_for(lambda account: fake, None, "t-1")
     assert full is not None
     assert full.names == ["read", "ask_question"]
-    chat = await _toolkit_for(lambda tenant: fake, None, "t-1", chat=True)
+    chat = await _toolkit_for(lambda account: fake, None, "t-1", chat=True)
     assert chat is not None
     assert chat.names == ["read"]
     assert [item["function"]["name"] for item in chat.schemas()] == ["read"]
@@ -140,7 +140,7 @@ async def test_chat_filters_interaction_tools() -> None:
 
 async def test_chat_ensures_catalog_before_filtering() -> None:
     fake = FakeToolkit(_registry())
-    toolkit = await _toolkit_for(lambda tenant: fake, None, "t-1", chat=True)
+    toolkit = await _toolkit_for(lambda account: fake, None, "t-1", chat=True)
     assert fake.ensured == 1
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
@@ -150,7 +150,7 @@ async def test_chat_ensure_failure_degrades_without_tools() -> None:
     """目录拉取失败只降级(对话照常回答),不抛给调用方。"""
 
     fake = FakeToolkit(_registry(), fail_ready=True)
-    toolkit = await _toolkit_for(lambda tenant: fake, None, "t-1", chat=True)
+    toolkit = await _toolkit_for(lambda account: fake, None, "t-1", chat=True)
     assert fake.ensured == 1
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
@@ -159,29 +159,29 @@ async def test_chat_ensure_failure_degrades_without_tools() -> None:
 async def test_chat_mcp_extras_are_kept() -> None:
     """MCP 工具按 auto_approve 映射成 WRITE;对话里保留(确认后执行)。"""
 
-    async def extras_factory(tenant_id: str) -> list[ToolSpec]:
+    async def extras_factory(account_id: str) -> list[ToolSpec]:
         return [_spec("mcp__mock__echo", ToolRisk.WRITE)]
 
     toolkit = await _toolkit_for(
-        lambda tenant: _registry(), extras_factory, "t-1", chat=True
+        lambda account: _registry(), extras_factory, "t-1", chat=True
     )
     assert toolkit is not None
     assert toolkit.names == ["read", "write", "mcp__mock__echo"]
 
 
 async def test_chat_extras_failure_degrades() -> None:
-    async def broken_extras(tenant_id: str) -> list[ToolSpec]:
+    async def broken_extras(account_id: str) -> list[ToolSpec]:
         raise RuntimeError("mcp down")
 
     toolkit = await _toolkit_for(
-        lambda tenant: _registry(), broken_extras, "t-1", chat=True
+        lambda account: _registry(), broken_extras, "t-1", chat=True
     )
     assert toolkit is not None
     assert toolkit.names == ["read", "write"]
 
 
 async def test_chat_without_builtin_tools_uses_extras_only() -> None:
-    async def extras_factory(tenant_id: str) -> list[ToolSpec]:
+    async def extras_factory(account_id: str) -> list[ToolSpec]:
         return [_spec("mcp__mock__echo", ToolRisk.READ)]
 
     toolkit = await _toolkit_for(None, extras_factory, "t-1", chat=True)

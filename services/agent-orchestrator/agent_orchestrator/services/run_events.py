@@ -37,11 +37,11 @@ async def append_event(
     ``record_outbox=False`` 用于纯展示的瞬时事件(正文增量):它们只走
     DB 回放,不必再进 outbox 投递给外部消费方。
     """
-    env = EventEnvelope.create(type_, payload)
+    env = EventEnvelope.create(type_, payload, account_id=run.account_id)
     events = RunEventRepository(session)
     event = RunEvent(
         id=env.id,
-        tenant_id=run.tenant_id,
+        account_id=run.account_id,
         run_id=run.id,
         seq=await events.next_seq(run.id),
         type=env.type,
@@ -190,7 +190,7 @@ async def _step_rounds(session: AsyncSession, run: Run) -> dict[str, int]:
     """本次 attempt 内各节点已落库的步骤数:StepProjector 据此续编号。"""
 
     rounds: dict[str, int] = {}
-    for event in await RunEventRepository(session).list_for_run(run.tenant_id, run.id):
+    for event in await RunEventRepository(session).list_for_run(run.account_id, run.id):
         if event.type != steps.EVENT_TYPE:
             continue
         payload = event.payload or {}
@@ -265,7 +265,7 @@ async def _flush_items(session: AsyncSession, run: Run, sink: _RunItemSink) -> N
     if not sink.records:
         return
     numbers: dict[str, set[int]] = {}
-    for event in await RunEventRepository(session).list_for_run(run.tenant_id, run.id):
+    for event in await RunEventRepository(session).list_for_run(run.account_id, run.id):
         if event.type != items.EVENT_TYPE:
             continue
         payload = event.payload or {}
@@ -354,7 +354,7 @@ async def _append_assistant_message(
         return
     await MessageRepository(session).add(
         ChatMessage(
-            tenant_id=run.tenant_id,
+            account_id=run.account_id,
             conversation_id=run.conversation_id,
             run_id=run.id,
             role="assistant",
@@ -388,7 +388,7 @@ async def _fail_run(
 
 
 async def list_events(
-    session: AsyncSession, tenant_id: str, run_id: str, after: int = 0
+    session: AsyncSession, account_id: str, run_id: str, after: int = 0
 ) -> list[RunEvent]:
     """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。
 
@@ -396,6 +396,6 @@ async def list_events(
     统一走 GET /runs/{id}/steps,避免事件流被每节点一条的噪声淹没。
     """
     events = await RunEventRepository(session).list_for_run(
-        tenant_id, run_id, after=after
+        account_id, run_id, after=after
     )
     return [event for event in events if event.type != steps.EVENT_TYPE]

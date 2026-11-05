@@ -5,15 +5,15 @@
 §7 数据模型要点把 `artifacts` 归属到本服务(实体文件在对象存储,COS/R2 阶段 B)。
 
 - `POST /v1/workspaces`、`GET /v1/workspaces`、`GET /v1/workspaces/{id}`:
-  工作区(团队资料空间;返回体带 `is_default` 标记);
-- `GET /v1/workspaces/default`:当前租户的默认工作区(**幂等建档**),
+  工作区(账号资料空间;返回体带 `is_default` 标记);
+- `GET /v1/workspaces/default`:当前账号的默认工作区(**幂等建档**),
   agent-orchestrator 交付时往这里推;
 - `PATCH /v1/workspaces/{id}`:改名/改描述(部分更新):未传字段不改,
-  `description` 显式传 `null` 清空;同租户重名 409 `workspace.exists`,
-  未知/跨租户 404 `workspace.not_found`;默认工作区**可以改名**;
+  `description` 显式传 `null` 清空;同账号重名 409 `workspace.exists`,
+  未知/跨账号 404 `workspace.not_found`;默认工作区**可以改名**;
 - `DELETE /v1/workspaces/{id}`(204):删除工作区并**级联清理其交付物**
   (对象存储里的对象 + `workspace_artifacts` 行);默认工作区不可删,
-  返回 409 `workspace.default_protected`;未知/跨租户 404;
+  返回 409 `workspace.default_protected`;未知/跨账号 404;
 - `POST /v1/artifacts`(标题/类型 + 正文或二进制,可带 `run_id`):body 里
   `content`(文本)与 `content_base64`(二进制)**恰好给一个**(都给/都不给 422),
   可带 `filename`/`content_type`;
@@ -25,10 +25,10 @@
 
 ### 默认工作区与删除语义
 
-- `is_default`:每个租户有且只有一个系统维护的默认工作区。解析顺序是
+- `is_default`:每个账号有且只有一个系统维护的默认工作区。解析顺序是
   `is_default` 标记 → 历史名称兜底(老数据命中后补标记)→ 新建;因此
   **默认工作区被改名后仍然认得出**,不会在下一次交付时重复建档
-  (迁移 `b9d4e6f1a2c3` 把既有的「自动创建:租户默认工作区」行置为默认);
+  (迁移 `b9d4e6f1a2c3` 把既有的「自动创建:账号默认工作区」行置为默认);
 - 默认工作区**只可改名、不可删除**:编排/会话默认往它落交付物,删掉会让
   大量弱引用悬空;要换落点请另建工作区;
 - 删除非默认工作区是**本服务内的级联**:先删对象存储中的对象(单个失败只记
@@ -39,9 +39,9 @@
 
 | 场景                           | 错误码                        | HTTP |
 | ------------------------------ | ----------------------------- | ---- |
-| 同租户工作区重名(创建/改名)    | `workspace.exists`            | 409  |
+| 同账号工作区重名(创建/改名)    | `workspace.exists`            | 409  |
 | 删除默认工作区                 | `workspace.default_protected` | 409  |
-| 工作区不存在或跨租户(读/改/删) | `workspace.not_found`         | 404  |
+| 工作区不存在或跨账号(读/改/删) | `workspace.not_found`         | 404  |
 
 交付物内容通过 `common.artifacts.ArtifactStore` 落盘:
 
@@ -49,7 +49,7 @@
   列(下载端点按 MIME 取原始字节,不再假设"交付物一定是 Markdown");
 - `ARTIFACT_STORE=database`:上述两列即正文;
 - `ARTIFACT_STORE=filesystem`(默认):字节直接写 `ARTIFACT_ROOT`
-  (键 `<租户>/<工作区>/<交付物><安全后缀>`,后缀由 MIME 推导、bin 兜底),
+  (键 `<账号>/<工作区>/<交付物><安全后缀>`,后缀由 MIME 推导、bin 兜底),
   行里只留 `object_key`/`size_bytes`/`filename`/`content_type`;
 - 换 S3/COS 只需实现该协议,读端契约不变。
 
@@ -62,7 +62,7 @@
 - `POST /v1/objects`(201):body `{filename?, content_type?, content_base64}`
   (默认 `application/octet-stream`),返回 `{key, size_bytes, sha256}`。
   `filename` **只用于安全后缀**(`.zip`/`.skill` 等,默认空),不参与路径;
-  key 形如 `<租户>/objects/<uuid4hex><后缀>`;
+  key 形如 `<账号>/objects/<uuid4hex><后缀>`;
 - `GET /v1/objects?key=`:返回 `{key, content_base64, size_bytes, sha256}`;
 - `DELETE /v1/objects?key=`(204):幂等,只删对象,不删任何 DB 行。
 
@@ -72,10 +72,10 @@
 | --------------------------------------------- | ------------------------ | ---- |
 | Base64 非法                                   | `object.content_invalid` | 400  |
 | 超过 `OBJECT_MAX_BYTES`                       | `object.too_large`       | 400  |
-| key 不存在或不属于当前租户                    | `object.not_found`       | 404  |
+| key 不存在或不属于当前账号                    | `object.not_found`       | 404  |
 | 对象存储后端未配置(`ARTIFACT_STORE=database`) | `object.store_missing`   | 503  |
 
-跨租户读取/删除一律 404(与不存在不可区分);`size_bytes`/`sha256` 均对解码后的
+跨账号读取/删除一律 404(与不存在不可区分);`size_bytes`/`sha256` 均对解码后的
 原始字节计算。配置:`WORKSPACE__OBJECT_MAX_BYTES`(默认 `20971520`,即 20MB)。
 
 ## 沙箱(§7 阶段 B / P1)
@@ -84,8 +84,8 @@
 (microVM 隔离),为后续**用户 skill / stdio MCP** 提供执行环境。**P1 已落地**:provider
 抽象、沙箱实例生命周期、HTTP API 与过期回收;stdio MCP / skill 打包在 P2/P3。
 
-`WORKSPACE__SANDBOX_PROVIDER` 有三个取值:`microsandbox`(**默认**,生产/多租户唯一
-推荐)、`local`(宿主目录 + 宿主子进程,**无隔离**,仅本地开发/单租户可信环境,见下文
+`WORKSPACE__SANDBOX_PROVIDER` 有三个取值:`microsandbox`(**默认**,生产/多账号唯一
+推荐)、`local`(宿主目录 + 宿主子进程,**无隔离**,仅本地开发/单账号可信环境,见下文
 「local provider」)与 `unavailable`(调用即 502,供没有 runtime 的 dev 显式失败)。
 
 接口:
@@ -94,7 +94,7 @@
   `image`、`ttl_seconds`、`cpus`、`memory_mb`、`network`(deny|public)、
   `workspace_id`、`run_id`;不传资源时用服务端默认值。`deny` 完全断网;
   `public` 只放公网(走 microsandbox `NetworkProfile.PUBLIC`),**不包含宿主/私网**;
-- `GET /v1/sandboxes?scope_key=`:沙箱列表(仅本租户,新建在前);`scope_key`
+- `GET /v1/sandboxes?scope_key=`:沙箱列表(仅本账号,新建在前);`scope_key`
   精确过滤到某个会话/run(例如工具调用按 `conv:<id>` 找回执行现场);
 - `GET /v1/sandboxes/{id}`:实例详情;
 - `POST /v1/sandboxes/{id}/exec`:执行命令(`argv` 不经过 shell),
@@ -115,7 +115,7 @@
   「持久 shell 会话」),body `{cwd?, cols?=120, rows?=32}`,返回
   `{session_id, sandbox_id, cwd, created_at}`;
 - `POST /v1/sandboxes/{id}/sessions/{sid}/input`(204):向 shell 的 stdin 写
-  UTF-8 文本(单次上限 8KB,超出 422);会话不存在/跨租户 404,已关闭 409;
+  UTF-8 文本(单次上限 8KB,超出 422);会话不存在/跨账号 404,已关闭 409;
 - `GET /v1/sandboxes/{id}/sessions/{sid}/stream`:`text/event-stream` 输出流
   (先回放环形缓冲,再跟随实时输出;支持 `Last-Event-ID` 续传);
 - `DELETE /v1/sandboxes/{id}/sessions/{sid}`(204):关闭会话(幂等)。
@@ -138,7 +138,7 @@
 | 运行时未安装/未启用            | `sandbox.provider_unavailable`                    | 502  |
 | 运行时操作失败/超时            | `sandbox.provider_error` / `sandbox.exec_timeout` | 502  |
 | 沙箱过期                       | `sandbox.expired`                                 | 409  |
-| 沙箱不存在/跨租户              | `sandbox.not_found`                               | 404  |
+| 沙箱不存在/跨账号              | `sandbox.not_found`                               | 404  |
 | 路径非法(非 /workspace、含 ..) | `sandbox.path_invalid`                            | 400  |
 | 沙箱内文件/目录不存在          | `sandbox.file_not_found`                          | 404  |
 
@@ -146,7 +146,7 @@
 
 | 配置项                                                                  | 说明                                                                                                               |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox`(**默认**,生产/多租户唯一推荐)真 microVM;`local` 宿主执行、**无隔离**(见下);`unavailable` 调用即 502 |
+| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox`(**默认**,生产/多账号唯一推荐)真 microVM;`local` 宿主执行、**无隔离**(见下);`unavailable` 调用即 502 |
 | `SANDBOX_LOCAL_ROOT`(./.sandboxes)                                      | 仅 `provider=local`:宿主根目录,每个沙箱 `<root>/<name>/{workspace,home,tmp}`,相对**服务进程工作目录**              |
 | `SANDBOX_DEFAULT_IMAGE`(python)                                         | microsandbox 镜像别名                                                                                              |
 | `SANDBOX_DEFAULT_TTL_SECONDS`(1800) / `SANDBOX_MAX_TTL_SECONDS`(7200)   | 默认/上限 TTL                                                                                                      |
@@ -179,7 +179,7 @@
 | `DELETE .../{sid}`     | 204,幂等关闭;重复关闭仍 204                                                        |
 
 `cwd` 只接受沙箱内绝对路径(默认 `/workspace`,不能含 `..`);`cols`/`rows` 上限
-500/200。沙箱状态校验与 exec 一致:未知/跨租户 404、过期 409、`stopped/failed` 409。
+500/200。沙箱状态校验与 exec 一致:未知/跨账号 404、过期 409、`stopped/failed` 409。
 
 SSE 事件(JSON data,每帧带 `id` 供 `Last-Event-ID` 续传):
 
@@ -211,7 +211,7 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 
 | 场景                                                | 错误码                                            | HTTP      |
 | --------------------------------------------------- | ------------------------------------------------- | --------- |
-| 会话不存在 / 跨租户 / 沙箱未知                      | `sandbox.not_found` / `sandbox.session_not_found` | 404       |
+| 会话不存在 / 跨账号 / 沙箱未知                      | `sandbox.not_found` / `sandbox.session_not_found` | 404       |
 | 向已关闭的会话写输入                                | `sandbox.session_closed`                          | 409       |
 | 单沙箱活跃会话超限(`SANDBOX_SHELL_MAX_PER_SANDBOX`) | `sandbox.session_limit`                           | 409       |
 | 单会话订阅者超限(`SANDBOX_SHELL_MAX_SUBSCRIBERS`)   | `sandbox.session_busy`                            | 409       |
@@ -232,7 +232,7 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 
 生命周期与资源回收:
 
-- 会话表在**进程内**(键 `tenant_id/sandbox_id/session_id`),不落库;进程重启即丢;
+- 会话表在**进程内**(键 `account_id/sandbox_id/session_id`),不落库;进程重启即丢;
 - 空闲回收:后台 sweeper 每 `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS` 扫一遍,超过
   `SANDBOX_SHELL_IDLE_SECONDS`(30 分钟)无输入/输出/订阅的会话被关闭;
 - 已关闭会话在内存里保留 `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(5 分钟)供回放,
@@ -295,8 +295,8 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 适用场景与禁用:
 
 - **适用**:没有 microVM runtime 的本地开发(零运行时依赖跑通 stdio MCP / skill 执行
-  链路)、单租户可信环境、桌面应用「本地电脑模式」;
-- **禁用**:**多租户 / 生产**。local 下不可信代码等同在宿主机上执行;生产继续用默认的
+  链路)、单账号可信环境、桌面应用「本地电脑模式」;
+- **禁用**:**多账号 / 生产**。local 下不可信代码等同在宿主机上执行;生产继续用默认的
   `microsandbox`(要求可写 `SANDBOX_MSB_HOME`,且 runtime 能访问 OCI registry)。
 
 服务目录 `.env` 示例(`services/*/.sandboxes/` 已在 `.gitignore` 中):

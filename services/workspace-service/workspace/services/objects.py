@@ -1,7 +1,7 @@
-"""通用二进制对象(P3):skill 包按租户前缀落 ArtifactStore,不登记 DB 行。
+"""通用二进制对象(P3):skill 包按账号前缀落 ArtifactStore,不登记 DB 行。
 
-对象键永远是 ``<tenant_id>/objects/<uuid4hex><安全后缀>``;
-读取/删除时强校验租户前缀——越权键与不存在统一 404,不泄漏其他租户
+对象键永远是 ``<account_id>/objects/<uuid4hex><安全后缀>``;
+读取/删除时强校验账号前缀——越权键与不存在统一 404,不泄漏其他账号
 对象是否存在。存储后端为 database(store=None)时明确 503,不静默降级。
 """
 
@@ -23,7 +23,7 @@ from workspace.schemas.object import ObjectCreate
 
 OBJECTS_PART = "objects"
 MAX_SUFFIX_LENGTH = 16
-# 租户标识直接来自 token claim,拼键前仍按安全字符校验(防路径穿越)
+# 账号标识直接来自 token claim,拼键前仍按安全字符校验(防路径穿越)
 _SAFE_PART = re.compile(r"^[A-Za-z0-9._-]+$")
 _SAFE_SUFFIX = re.compile(rf"^\.[A-Za-z0-9]{{1,{MAX_SUFFIX_LENGTH}}}$")
 
@@ -65,16 +65,16 @@ def _require_store(store: ArtifactStore | None) -> ArtifactStore:
     return store
 
 
-def _require_tenant(tenant_id: str) -> str:
-    if not tenant_id or not _SAFE_PART.match(tenant_id):
-        raise AppError("object.invalid_tenant", "租户标识非法,无法定位对象")
-    return tenant_id
+def _require_account(account_id: str) -> str:
+    if not account_id or not _SAFE_PART.match(account_id):
+        raise AppError("object.invalid_account", "账号标识非法,无法定位对象")
+    return account_id
 
 
-def build_object_key(tenant_id: str, filename: str | None) -> str:
-    """生成对象键:租户前缀 + objects/ + uuid4(hex) + 安全后缀。"""
+def build_object_key(account_id: str, filename: str | None) -> str:
+    """生成对象键:账号前缀 + objects/ + uuid4(hex) + 安全后缀。"""
     return (
-        f"{_require_tenant(tenant_id)}/{OBJECTS_PART}/"
+        f"{_require_account(account_id)}/{OBJECTS_PART}/"
         f"{uuid4().hex}{_safe_suffix(filename)}"
     )
 
@@ -88,9 +88,9 @@ def _safe_suffix(filename: str | None) -> str:
     return suffix.lower() if _SAFE_SUFFIX.match(suffix) else ""
 
 
-def _require_owned_key(tenant_id: str, key: str) -> str:
-    """强校验 key 属于当前租户;不满足一律 404(与不存在不可区分)。"""
-    prefix = f"{_require_tenant(tenant_id)}/{OBJECTS_PART}/"
+def _require_owned_key(account_id: str, key: str) -> str:
+    """强校验 key 属于当前账号;不满足一律 404(与不存在不可区分)。"""
+    prefix = f"{_require_account(account_id)}/{OBJECTS_PART}/"
     name = key[len(prefix) :] if key.startswith(prefix) else ""
     if not name or "/" in name or name in {".", ".."} or not _SAFE_PART.match(name):
         raise NotFoundError("object.not_found", "对象不存在", details={"key": key})
@@ -125,15 +125,15 @@ def _decode(content_base64: str, max_bytes: int) -> bytes:
 
 
 async def put_object(
-    tenant_id: str,
+    account_id: str,
     data: ObjectCreate,
     store: ArtifactStore | None,
     settings: Settings,
 ) -> StoredObject:
-    """写入对象:Base64 解码 → 大小校验 → 租户前缀键落存储。"""
+    """写入对象:Base64 解码 → 大小校验 → 账号前缀键落存储。"""
     store = _require_store(store)
     payload = _decode(data.content_base64, settings.object_max_bytes)
-    key = build_object_key(tenant_id, data.filename)
+    key = build_object_key(account_id, data.filename)
     await store.put(key, payload, content_type=data.content_type)
     return StoredObject(
         key=key,
@@ -143,11 +143,11 @@ async def put_object(
 
 
 async def get_object(
-    tenant_id: str, key: str, store: ArtifactStore | None
+    account_id: str, key: str, store: ArtifactStore | None
 ) -> LoadedObject:
-    """读取对象:key 必须属于当前租户,否则 404;不存在同样 404。"""
+    """读取对象:key 必须属于当前账号,否则 404;不存在同样 404。"""
     store = _require_store(store)
-    key = _require_owned_key(tenant_id, key)
+    key = _require_owned_key(account_id, key)
     payload = await store.get(key)
     if payload is None:
         raise NotFoundError("object.not_found", "对象不存在", details={"key": key})
@@ -156,8 +156,8 @@ async def get_object(
     )
 
 
-async def delete_object(tenant_id: str, key: str, store: ArtifactStore | None) -> None:
+async def delete_object(account_id: str, key: str, store: ArtifactStore | None) -> None:
     """删除对象(幂等):只删对象,不动任何 DB 行;越权键 404。"""
     store = _require_store(store)
-    key = _require_owned_key(tenant_id, key)
+    key = _require_owned_key(account_id, key)
     await store.delete(key)

@@ -6,8 +6,8 @@ from agent_orchestrator.services.approval import ApprovalAction, decide
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import (
+    ACCOUNT,
     OTHER,
-    TENANT,
     FakeDangerTool,
     FakeKnowledge,
     FakeLLM,
@@ -64,12 +64,12 @@ def test_unknown_action_falls_back_to_risk_default() -> None:
     )
 
 
-# ---- 端点:整表替换 + 租户隔离 ----
+# ---- 端点:整表替换 + 账号隔离 ----
 
 
 def test_policies_roundtrip_and_validation(tmp_path) -> None:
     with _tool_client(tmp_path, FakeLLM([])) as client:
-        assert client.get("/api/v1/approval-policies", headers=TENANT).json() == []
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []
 
         resp = client.put(
             "/api/v1/approval-policies",
@@ -79,7 +79,7 @@ def test_policies_roundtrip_and_validation(tmp_path) -> None:
                     {"tool": "*", "action": "confirm"},
                 ]
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 200
         assert [row["tool"] for row in resp.json()] == ["*", "external_publish"]
@@ -88,14 +88,14 @@ def test_policies_roundtrip_and_validation(tmp_path) -> None:
         resp = client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "search_knowledge", "action": "deny"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert [row["tool"] for row in resp.json()] == ["search_knowledge"]
 
         bad = client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "x", "action": "explode"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert bad.status_code == 422
         dup = client.put(
@@ -106,17 +106,17 @@ def test_policies_roundtrip_and_validation(tmp_path) -> None:
                     {"tool": "x", "action": "deny"},
                 ]
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert dup.status_code == 422
 
 
-def test_policies_are_tenant_scoped(tmp_path) -> None:
+def test_policies_are_account_scoped(tmp_path) -> None:
     with _tool_client(tmp_path, FakeLLM([])) as client:
         client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "*", "action": "deny"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert client.get("/api/v1/approval-policies", headers=OTHER).json() == []
 
@@ -140,18 +140,18 @@ def test_auto_policy_skips_confirmation_for_dangerous_tool(tmp_path) -> None:
         client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "external_publish", "action": "auto"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
 
     # 策略放行后不再停在确认闸,写操作真的执行了
     assert run["status"] == "completed"
     assert danger.sent == [{"title": "x"}]
     types = [
         e["type"]
-        for e in client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        for e in client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     ]
     assert "run.confirmation.required.v1" not in types
 
@@ -180,13 +180,13 @@ def test_deny_policy_blocks_tool_and_feeds_error_back(tmp_path) -> None:
         client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "search_knowledge", "action": "deny"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
 
     assert run["status"] == "completed"
     called = [e["payload"] for e in events if e["type"] == "run.tool.called.v1"]
@@ -216,15 +216,15 @@ def test_chat_respects_deny_policy(tmp_path) -> None:
         client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "search_knowledge", "action": "deny"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         conv = client.post(
-            "/api/v1/conversations", json={"title": "闲聊"}, headers=TENANT
+            "/api/v1/conversations", json={"title": "闲聊"}, headers=ACCOUNT
         ).json()
         resp = client.post(
             f"/api/v1/conversations/{conv['id']}/messages",
             json={"content": "帮我看看日程", "mode": "chat"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
     assert resp.status_code == 201
     assert resp.json()["reply"]["content"] == "没有检索权限,直接回答"
@@ -241,12 +241,12 @@ def test_load_and_replace_policies(tmp_path) -> None:
                     {"tool": "a_tool", "action": "auto"},
                 ]
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
-        rows = client.get("/api/v1/approval-policies", headers=TENANT).json()
+        rows = client.get("/api/v1/approval-policies", headers=ACCOUNT).json()
         assert rows == [
             {"tool": "a_tool", "action": "auto"},
             {"tool": "b_tool", "action": "deny"},
         ]
-        client.put("/api/v1/approval-policies", json={"policies": []}, headers=TENANT)
-        assert client.get("/api/v1/approval-policies", headers=TENANT).json() == []
+        client.put("/api/v1/approval-policies", json={"policies": []}, headers=ACCOUNT)
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []

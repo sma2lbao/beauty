@@ -26,7 +26,7 @@ def test_scope_key_precedence() -> None:
         scope_key_for("t-1", conversation_id="c-1", run_id="r-1") == "conversation:c-1"
     )
     assert scope_key_for("t-1", run_id="r-1") == "run:r-1"
-    assert scope_key_for("t-1") == "tenant:t-1"
+    assert scope_key_for("t-1") == "account:t-1"
 
 
 class FakeSandbox:
@@ -40,7 +40,7 @@ class FakeSandbox:
 
     async def ensure(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         kind: str = "generic",
@@ -54,7 +54,7 @@ class FakeSandbox:
     ) -> tuple[SandboxInfo, bool]:
         self.ensured.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "scope_key": scope_key,
                 "ttl_seconds": ttl_seconds,
                 "run_id": run_id,
@@ -64,7 +64,7 @@ class FakeSandbox:
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -75,7 +75,7 @@ class FakeSandbox:
     ) -> SandboxExecResult:
         self.execs.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "sandbox_id": sandbox_id,
                 "argv": argv,
                 "stdin": stdin,
@@ -90,7 +90,7 @@ class FakeSandbox:
             truncated=False,
         )
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> None:
+    async def touch(self, account_id: str, sandbox_id: str) -> None:
         self.touched.append(sandbox_id)
 
     async def aclose(self) -> None:
@@ -106,7 +106,7 @@ async def test_http_provider_ensure_returns_id_and_slides_ttl() -> None:
     assert sandbox_id == "sbx-9"
     assert fake.ensured == [
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "scope_key": "run:r-1",
             "ttl_seconds": 99,
             "run_id": "r-1",

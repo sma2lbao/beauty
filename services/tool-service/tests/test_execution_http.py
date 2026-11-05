@@ -46,7 +46,7 @@ async def test_search_knowledge_proxies_to_knowledge_client(tmp_path: Path) -> N
     assert outcome.response.tool_call_id == "call-1"
     assert outcome.response.result == knowledge.result
     assert outcome.sandbox_id is None
-    assert knowledge.calls == [{"tenant_id": "t-1", "query": "部署", "limit": 5}]
+    assert knowledge.calls == [{"account_id": "t-1", "query": "部署", "limit": 5}]
     assert provider.ensured == []
     assert provider.exec_calls == []
     columns = audit_columns(outcome, context, {"query": "部署"}, decision="auto")

@@ -8,7 +8,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
-from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, _create_run, _settings, verifier
 
 VERIFY_PASS = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
 
@@ -19,7 +19,7 @@ def _doc_app(tmp_path: Path, fake: FakeLLM, library: DocumentLibrary) -> TestCli
         create_app(
             settings,
             llm_client=fake,
-            toolkit_factory=lambda tenant: build_tools(tenant, documents=library),
+            toolkit_factory=lambda account: build_tools(account, documents=library),
             token_verifier=verifier(),
         )
     )
@@ -41,8 +41,8 @@ def test_document_tool_flows_through_graph(tmp_path: Path) -> None:
 
     with _doc_app(tmp_path, fake, library) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
         # 只暴露已配置的提供方;且文档正文经 tool 消息回喂模型
@@ -55,7 +55,7 @@ def test_document_tool_flows_through_graph(tmp_path: Path) -> None:
         tool_messages = [m for m in fake.calls[2] if m["role"] == "tool"]
         assert tool_messages and "上周要点" in tool_messages[0]["content"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
         assert tool_event["payload"]["name"] == "read_document"
         assert tool_event["payload"]["ok"] is True

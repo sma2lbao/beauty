@@ -1,6 +1,6 @@
 # knowledge-service
 
-知识库服务(架构 §9):文档 **ingest → 分块 → 嵌入 → 检索**,租户隔离。
+知识库服务(架构 §9):文档 **ingest → 分块 → 嵌入 → 检索**,账号隔离。
 
 - `POST /v1/knowledge/documents`:登记文档(标题 + 正文),服务端分块并向量化,
   返回 chunk 数;`GET /v1/knowledge/documents` 列表、`GET …/{id}` 详情、
@@ -16,8 +16,8 @@
 - `gateway`:经 `llm-gateway` 的 `/v1/embeddings`(litellm 路由,如 bge-m3),
   失败统一 502 `llm.embedding_error`。
 
-`gateway` 模式下,服务调用网关时会带 `X-Tenant-Id`(当前租户)与
-`X-Internal-Secret`(`KNOWLEDGE__INTERNAL_SECRET`),网关据此解析该租户的
+`gateway` 模式下,服务调用网关时会带 `X-Account-Id`(当前账号)与
+`X-Internal-Secret`(`KNOWLEDGE__INTERNAL_SECRET`),网关据此解析该账号的
 BYOK 密钥;该值须与 account-service / llm-gateway 的 `INTERNAL_SECRET` 一致,
 留空则只按平台默认密钥解析(`gateway` 提供方在生产必须配置)。
 

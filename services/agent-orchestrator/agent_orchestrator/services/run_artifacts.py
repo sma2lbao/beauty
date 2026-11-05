@@ -62,7 +62,7 @@ async def _capture_tool_files(
     rows: list[RunArtifact] = []
     errors: list[dict[str, str]] = []
     for ref in _file_refs(records, limit=max_files):
-        if await repo.find_by_source_url(run.tenant_id, run.id, ref.url) is not None:
+        if await repo.find_by_source_url(run.account_id, run.id, ref.url) is not None:
             continue
         try:
             downloaded = await downloader.fetch(ref.url)
@@ -123,7 +123,7 @@ async def _mirror_artifacts(
             content_type = row.content_type or artifacts.CONTENT_TYPE
             if artifacts.is_text_artifact(row):
                 mirrored = await workspace.create_artifact(
-                    run.tenant_id,
+                    run.account_id,
                     title=row.title,
                     kind=row.kind,
                     content=data.decode("utf-8", "replace"),
@@ -134,7 +134,7 @@ async def _mirror_artifacts(
                 )
             else:
                 mirrored = await workspace.create_artifact(
-                    run.tenant_id,
+                    run.account_id,
                     title=row.title,
                     kind=row.kind,
                     data=data,
@@ -224,10 +224,10 @@ async def _persist_artifact(
 
 async def get_artifact(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     store: ArtifactStore | None = None,
 ) -> artifacts.ArtifactView:
     """取件:未交付(未 completed)→ 404;内容按存储后端装载(§7 阶段 B)。"""
-    row = await ArtifactRepository(session).require_for_run(tenant_id, run_id)
+    row = await ArtifactRepository(session).require_for_run(account_id, run_id)
     return await artifacts.read_artifact(row, store)

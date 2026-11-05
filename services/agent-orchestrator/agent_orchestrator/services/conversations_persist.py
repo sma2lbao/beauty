@@ -78,10 +78,10 @@ async def _persist_user_message(
     以便历史回放时仍能看到"这条消息引用了谁"。
     """
     messages = MessageRepository(session)
-    if not await messages.has_any_message(conversation.tenant_id, conversation.id):
+    if not await messages.has_any_message(conversation.account_id, conversation.id):
         conversation.title = title_from_message(content)
     message = ChatMessage(
-        tenant_id=conversation.tenant_id,
+        account_id=conversation.account_id,
         conversation_id=conversation.id,
         role="user",
         content=content,
@@ -98,22 +98,22 @@ async def _persist_assistant_message(
     """落 assistant 回复(直接对话;run 的回复由 runs 服务在终态时投影)。"""
     return await _persist_assistant_content(
         session,
-        tenant_id=message.tenant_id,
+        account_id=message.account_id,
         conversation_id=message.conversation_id,
         content=content,
     )
 
 
 async def _persist_assistant_content(
-    session: AsyncSession, *, tenant_id: str, conversation_id: str, content: str
+    session: AsyncSession, *, account_id: str, conversation_id: str, content: str
 ) -> ChatMessage:
-    """按租户+对话落一条 assistant 消息(确认链路没有源消息可复制时用)。
+    """按账号+对话落一条 assistant 消息(确认链路没有源消息可复制时用)。
 
     确认端点执行写工具后,结果要作为一条 assistant 消息进入对话历史;那里只有
     conversation_id(触发消息已不在事务里),所以单独开这个入口。
     """
     reply = ChatMessage(
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         role="assistant",
         content=content,
@@ -150,16 +150,16 @@ async def _task_path(
     context_pipeline 只在同步规划(未入队 job)时透传给 plan_run:起图那一刻
     按策略快照上下文;入队时由 worker 从容器取同一份策略,口径一致。
     """
-    run = await active_run(session, conversation.tenant_id, conversation.id)
+    run = await active_run(session, conversation.account_id, conversation.id)
     if run is not None:
         await runs_service.queue_instruction(
-            session, conversation.tenant_id, run.id, content + attachment_context
+            session, conversation.account_id, run.id, content + attachment_context
         )
         message.run_id = run.id
         return run, "instruction_queued"
     run = await runs_service.create_run(
         session,
-        conversation.tenant_id,
+        conversation.account_id,
         RunCreate(
             title=title_from_message(content),
             goal=content + attachment_context,
@@ -176,13 +176,13 @@ async def _task_path(
     )
     message.run_id = run.id
     if jobs_enabled:
-        await jobs_service.enqueue(session, conversation.tenant_id, "plan", run.id)
+        await jobs_service.enqueue(session, conversation.account_id, "plan", run.id)
     else:
         # 自动放行(无 DANGER 工具)时 plan 一次跑到终态,交付物同样要落库
         await runs_service.plan_run(
             session,
             graph,
-            conversation.tenant_id,
+            conversation.account_id,
             run.id,
             store=store,
             workspace=workspace,
@@ -197,7 +197,7 @@ async def _task_path(
 async def _toolkit_for(
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ExtrasFactory | None,
-    tenant_id: str,
+    account_id: str,
     *,
     chat: bool = False,
 ) -> ToolkitPort | None:
@@ -210,24 +210,24 @@ async def _toolkit_for(
     interaction 类工具需要用户回答,只在任务图里暴露;DANGER(不可逆)工具在
     对话里不暴露,引导改用「任务」。risk=read/write 都保留——写操作不再一律
     拒绝,而是先生成 pending 确认、由用户就地确认后执行(见 tool_confirmations)。
-    MCP 工具(extras)按租户 auto_approve 映射出的风险等级走同一口径。
+    MCP 工具(extras)按账号 auto_approve 映射出的风险等级走同一口径。
     远端工具箱目录拉取失败也只降级、不报错。
     extras 里还有记忆工具(见 docs/design/memory.md §10.2):同样参与裁剪,
     memory_write/memory_delete 在对话里也需要就地确认。
     """
-    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    toolkit = toolkit_factory(account_id) if toolkit_factory else None
     if toolkit is not None:
-        await _ensure_chat_toolkit(toolkit, tenant_id)
+        await _ensure_chat_toolkit(toolkit, account_id)
     if chat:
         toolkit = _chat_toolkit(toolkit)
     if extras_factory is None:
         return toolkit
     try:
-        extras = await extras_factory(tenant_id)
+        extras = await extras_factory(account_id)
     except Exception as exc:  # noqa: BLE001 - 外部工具故障不阻断对话
         logger.warning(
             "chat tool extras failed",
-            tenant_id=tenant_id,
+            account_id=account_id,
             error=f"{type(exc).__name__}: {exc}",
         )
         return toolkit
@@ -236,7 +236,7 @@ async def _toolkit_for(
     return toolkit.extended(extras) if toolkit is not None else ToolRegistry(extras)
 
 
-async def _ensure_chat_toolkit(toolkit: ToolkitPort, tenant_id: str) -> None:
+async def _ensure_chat_toolkit(toolkit: ToolkitPort, account_id: str) -> None:
     """远端工具箱惰性加载目录;失败只降级(没有工具也能正常对话)。"""
     hook = getattr(toolkit, "ensure_ready", None)
     if hook is None:
@@ -246,7 +246,7 @@ async def _ensure_chat_toolkit(toolkit: ToolkitPort, tenant_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - 工具服务故障不阻断对话
         logger.warning(
             "chat toolkit catalog failed",
-            tenant_id=tenant_id,
+            account_id=account_id,
             error=f"{type(exc).__name__}: {exc}",
         )
 

@@ -1,14 +1,14 @@
-"""认证业务(自建,由 dev 桩转正):注册/登录/刷新/登出。
+"""认证业务(自建,由 dev 桩转正):注册/登录/刷新/登出/内部签发。
 
-职责分工(§10):凭证校验(密码哈希)与签发指引归本模块,令牌签发归
-core/idp.py 的 IdPSigner;组织/成员/会话归 services/account.py。
+职责分工(§10):凭证校验(密码哈希)与签发流程归本模块,令牌签发归
+core/idp.py 的 IdPSigner;账号档案/会话归 services/account.py。
 
-- 注册:email 全局唯一(当前约定,见 repositories.find_active_by_email),
-  新建组织(租户)+ owner 成员;
-- 登录:验证 argon2 密码;用户不存在也执行一次假哈希校验,防时序枚举;
+- 注册:email 全局唯一,新建账号(account_id = users.id);
+- 登录:验证 argon2 密码;账号不存在也执行一次假哈希校验,防时序枚举;
 - 刷新:旋转式——旧 refresh token 一次性,用后即作废并签新对;
-  **已作废令牌被再次使用视为泄露信号,吊销该用户全部刷新令牌**;
-- 登出:吊销指定 refresh token(access 不设黑名单,自然过期)。
+  **已作废令牌被再次使用视为泄露信号,吊销该账号全部刷新令牌**;
+- 登出:吊销指定 refresh token(access 不设黑名单,自然过期);
+- 内部签发:账号必须存在且 active,否则 401 auth.account_missing。
 
 refresh token 本体 = 256 位随机 urlsafe 字符串,库里只存 sha256;
 仓储不提交,事务边界仍由 API 层 session_scope 负责。
@@ -36,12 +36,8 @@ from account.repositories import (
     RefreshTokenRepository,
     UserRepository,
 )
-from account.schemas.account import SessionCreate
 from account.schemas.auth import LoginRequest, RegisterRequest
-from account.services.account import (
-    create_session,
-    require_or_create_organization,
-)
+from account.services.account import create_session
 
 _hasher = PasswordHasher()  # argon2id,默认参数(OWASP 推荐档位)
 # 登录失败路径的"假哈希":用户不存在时也跑一次校验,消掉时序差
@@ -52,16 +48,13 @@ REFRESH_TOKEN_BYTES = 48  # 64 字符 urlsafe
 
 @dataclass(frozen=True)
 class AuthResult:
-    """注册/登录/刷新的统一产出:双令牌 + 身份上下文。"""
+    """注册/登录/刷新的统一产出:双令牌 + 账号身份。"""
 
     access_token: str
     refresh_token: str
     expires_in: int
-    tenant_id: str
-    organization_id: str
-    user_id: str
+    account_id: str
     subject: str
-    role: str
     session_id: str
 
 
@@ -83,6 +76,10 @@ def _verify_password(password: str, stored: str | None) -> bool:
         return False
 
 
+def _default_display_name(email: str) -> str:
+    return email.split("@", 1)[0]
+
+
 async def _issue_tokens(
     session: AsyncSession,
     settings: Settings,
@@ -90,15 +87,13 @@ async def _issue_tokens(
     user: User,
     device: str,
 ) -> AuthResult:
-    """签 access + 登记会话 + 生成并落库 refresh(旋转的另一半在 refresh())。"""
-    record = await create_session(
-        session, user.tenant_id, SessionCreate(user_id=user.id, device=device)
-    )
-    access = signer.sign(subject=user.subject, tenant_id=user.tenant_id)
+    """签 access + 登记会话 + 生成并落库 refresh(旋转的另一半在 refresh_tokens)。"""
+    record = await create_session(session, user.id, device)
+    access = signer.sign(subject=user.subject, account_id=user.id)
     raw_refresh = secrets.token_urlsafe(REFRESH_TOKEN_BYTES)
     await RefreshTokenRepository(session).add(
         RefreshToken(
-            tenant_id=user.tenant_id,
+            account_id=user.id,
             user_id=user.id,
             token_hash=_hash_refresh(raw_refresh),
             expires_at=datetime.now(UTC)
@@ -109,11 +104,8 @@ async def _issue_tokens(
         access_token=access,
         refresh_token=raw_refresh,
         expires_in=signer.ttl_seconds,
-        tenant_id=user.tenant_id,
-        organization_id=user.tenant_id,
-        user_id=user.id,
+        account_id=user.id,
         subject=user.subject,
-        role=user.role,
         session_id=record.id,
     )
 
@@ -124,9 +116,9 @@ async def register(
     signer: IdPSigner,
     data: RegisterRequest,
 ) -> AuthResult:
-    """注册:email 全局查重(409)→ 新组织 + owner 成员 → 签发。"""
+    """注册:email 全局查重(409)→ 新建账号 → 签发。"""
     users = UserRepository(session)
-    existing = await users.find_active_by_email(data.email)
+    existing = await users.find_by_email(data.email)
     if existing is not None:
         raise ConflictError(
             "account.email_taken",
@@ -134,17 +126,14 @@ async def register(
             details={"email": data.email},
         )
 
-    tenant_id = secrets.token_hex(16)
-    await require_or_create_organization(session, tenant_id, settings.default_plan)
     user = await users.add(
         User(
-            tenant_id=tenant_id,
             subject=data.email,
             email=data.email,
-            display_name=data.display_name,
-            role="owner",
+            display_name=data.display_name or _default_display_name(data.email),
             status="active",
             password_hash=_hasher.hash(data.password),
+            quota={},
         )
     )
     return await _issue_tokens(session, settings, signer, user, device="register")
@@ -169,19 +158,19 @@ async def refresh_tokens(
     signer: IdPSigner,
     raw_refresh: str,
 ) -> AuthResult:
-    """旋转刷新:旧令牌一次性;重用已吊销令牌 → 吊销该用户全部(泄露防御)。"""
+    """旋转刷新:旧令牌一次性;重用已吊销令牌 → 吊销该账号全部(泄露防御)。"""
     repo = RefreshTokenRepository(session)
     record = await repo.find_by_hash(_hash_refresh(raw_refresh))
     if record is None:
         raise UnauthorizedError("auth.refresh_invalid", "刷新令牌无效")
     if record.revoked_at is not None:
-        # 已作废的令牌又出现:视为泄露,切断该用户所有会话的续期通道。
+        # 已作废的令牌又出现:视为泄露,切断该账号所有会话的续期通道。
         # 这是全模块唯一一次业务层显式提交:安全动作必须在抛 401 之前落盘,
         # 否则会随 session_scope 的"异常即回滚"一起被冲掉(之后的空提交无害)
         await session.execute(
             update(RefreshToken)
             .where(
-                RefreshToken.user_id == record.user_id,
+                RefreshToken.account_id == record.account_id,
                 RefreshToken.revoked_at.is_(None),
             )
             .values(revoked_at=datetime.now(UTC))
@@ -193,11 +182,9 @@ async def refresh_tokens(
     if _aware(record.expires_at) <= now:
         raise UnauthorizedError("auth.refresh_expired", "刷新令牌已过期,请重新登录")
 
-    user = await UserRepository(session).require_for_tenant(
-        record.tenant_id, record.user_id
-    )
+    user = await UserRepository(session).require(record.account_id)
     if user.status != "active":
-        raise UnauthorizedError("auth.user_disabled", "成员已停用")
+        raise UnauthorizedError("auth.user_disabled", "账号已停用")
 
     record.revoked_at = now  # 旋转:旧令牌即刻作废
     return await _issue_tokens(session, settings, signer, user, device="refresh")
@@ -209,40 +196,37 @@ async def oauth_login(
     signer: IdPSigner,
     profile: OAuthProfile,
 ) -> AuthResult:
-    """社交登录:已有身份直接签发;首次登录按 email 复用成员或新建组织。"""
+    """社交登录:已有身份直接签发;首次登录按 email 复用账号或新建。"""
     identities = OAuthIdentityRepository(session)
     identity = await identities.find_by_provider_subject(
         profile.provider, profile.subject
     )
     if identity is not None:
-        user = await UserRepository(session).require_for_tenant(
-            identity.tenant_id, identity.user_id
-        )
+        user = await UserRepository(session).require(identity.account_id)
         if user.status != "active":
-            raise UnauthorizedError("auth.user_disabled", "成员已停用")
+            raise UnauthorizedError("auth.user_disabled", "账号已停用")
         return await _issue_tokens(
             session, settings, signer, user, device=f"oauth-{profile.provider}"
         )
 
     users = UserRepository(session)
-    user = await users.find_active_by_email(profile.email)
+    user = await users.find_by_email(profile.email)
     if user is None:
-        tenant_id = secrets.token_hex(16)
-        await require_or_create_organization(session, tenant_id, settings.default_plan)
         user = await users.add(
             User(
-                tenant_id=tenant_id,
                 subject=profile.email,
                 email=profile.email,
-                display_name=profile.name,
-                role="owner",
+                display_name=profile.name or _default_display_name(profile.email),
                 status="active",
                 password_hash=None,
+                quota={},
             )
         )
+    elif user.status != "active":
+        raise UnauthorizedError("auth.user_disabled", "账号已停用")
     await identities.add(
         OAuthIdentity(
-            tenant_id=user.tenant_id,
+            account_id=user.id,
             provider=profile.provider,
             subject=profile.subject,
             user_id=user.id,
@@ -252,6 +236,19 @@ async def oauth_login(
     return await _issue_tokens(
         session, settings, signer, user, device=f"oauth-{profile.provider}"
     )
+
+
+async def issue_token(
+    session: AsyncSession,
+    signer: IdPSigner,
+    account_id: str,
+    subject: str,
+) -> str:
+    """内部签发:账号不存在或非 active 一律 401 auth.account_missing。"""
+    user = await UserRepository(session).get(account_id)
+    if user is None or user.status != "active":
+        raise UnauthorizedError("auth.account_missing", "账号不存在或未启用")
+    return signer.sign(subject=subject, account_id=account_id)
 
 
 async def logout(session: AsyncSession, raw_refresh: str) -> None:

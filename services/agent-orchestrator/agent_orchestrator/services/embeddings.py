@@ -17,7 +17,7 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 from common.logging import current_context, get_logger
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 from agent_orchestrator.core.config import Settings
 
@@ -114,11 +114,11 @@ class GatewayEmbeddingProvider:
         self.internal_secret = internal_secret
 
     def _identity_headers(self) -> dict[str, str]:
-        """BYOK 身份头:租户 + 内部密钥(密钥留空只带租户)。"""
+        """BYOK 身份头:账号 + 内部密钥(密钥留空只带账号)。"""
         headers: dict[str, str] = {}
-        tenant_id = current_context().get("tenant_id")
-        if tenant_id:
-            headers[TENANT_HEADER] = str(tenant_id)
+        account_id = current_context().get("account_id")
+        if account_id:
+            headers[ACCOUNT_HEADER] = str(account_id)
         if self.internal_secret:
             headers[SECRET_HEADER] = self.internal_secret
         return headers

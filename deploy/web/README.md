@@ -2,11 +2,11 @@
 
 本目录是**容器部署入口**。三条默认路径：
 
-| 场景                        | 入口                                         | 说明                                            |
-| --------------------------- | -------------------------------------------- | ----------------------------------------------- |
+| 场景                        | 入口                                         | 说明                                                 |
+| --------------------------- | -------------------------------------------- | ---------------------------------------------------- |
 | 本地开发（裸机，热更新）    | [docs/local-dev.md](../../docs/local-dev.md) | `npm run dev`，八服务 + API 网关 + Vite 都跑在宿主机 |
-| 容器演示 / 自托管（本文件） | `deploy/docker-compose.yml`                  | 一条 `up` 起全栈，访问 <http://localhost:8080>  |
-| 生产                        | 本文件 + 你自己的编排                        | 必须开鉴权、换密钥、终止 TLS、备份数据库        |
+| 容器演示 / 自托管（本文件） | `deploy/docker-compose.yml`                  | 一条 `up` 起全栈，访问 <http://localhost:8080>       |
+| 生产                        | 本文件 + 你自己的编排                        | 必须开鉴权、换密钥、终止 TLS、备份数据库             |
 
 ## 1. 组成
 
@@ -91,21 +91,21 @@ docker compose -f deploy/docker-compose.yml run --rm --entrypoint sh migrate -c 
 
 compose 里所有可覆盖项都写成 `${VAR:-演示默认值}`，可用环境变量或 `deploy/.env` 覆盖。**演示默认值仅供 `compose up` 开箱可用，不是生产值**：
 
-| 变量                                                                         | 用途                                                                            | 生产要求                                                                                 |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `INTERNAL_SECRET`                                                            | API 网关/account/AO/gateway/knowledge 内部调用共享密钥（**同时是 BYOK 解析总开关**） | 随机长串，六处必须一致（compose 已共享同一变量）；留空则 BYOK 静默停用                   |
-| `API_GATEWAY_SESSION_SECRET`                                                         | API 网关 Cookie 会话签名                                                             | 随机长串；**不能等于**默认值 `dev-api-gateway-session-secret-change-me`，否则 `/readyz` 返回 503 |
-| `MCP_SECRET`                                                                 | MCP 相关签名                                                                    | 随机长串                                                                                 |
-| `CONNECTOR_CREDENTIAL_SECRET`                                                | 连接器凭证加密                                                                  | 随机长串；换值后旧凭证无法解密                                                           |
-| `LLM_GATEWAY_API_KEY` / `LLM_GATEWAY_API_BASE` / `LLM_GATEWAY_DEFAULT_MODEL` | 模型网关                                                                        | 真实 key；`LLM_ENABLED=true` 才真正调用模型                                              |
-| `LLM_GATEWAY__ACCOUNT_BASE_URL`                                              | 网关向 account 解析 BYOK 的地址                                                 | 容器内必须为 `http://account-service:8001`（默认 `127.0.0.1:8001` 在容器里指向网关自身） |
-| `ACCOUNT__BYOK_KMS`                                                          | BYOK 密钥托管方式                                                               | `local`（默认）或 `vault`；生产建议 `vault` + `ACCOUNT__BYOK_VAULT_URL/TOKEN`            |
-| `ACCOUNT__BYOK_SECRET`                                                       | local 模式 KEK 密钥材料                                                         | 随机长串；**不能等于** `dev-byok-secret-change-me`；换值前先按 BYOK 设计的轮换步骤做     |
-| `LLM_GATEWAY__BYOK_ENABLED`                                                  | 网关是否启用租户 key 解析                                                       | `true`（默认）；出问题置 `false` 即可一键回退平台 key                                    |
-| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                                                              | 默认 `session`（同源 API 网关 Cookie）；见 §4.2                                               |
-| `READY_PROBE_UPSTREAMS`                                                      | API 网关 `/readyz` 是否探上游                                                        | 编排层想用就绪探针时设 `true`                                                            |
+| 变量                                                                         | 用途                                                                                 | 生产要求                                                                                         |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `INTERNAL_SECRET`                                                            | API 网关/account/AO/gateway/knowledge 内部调用共享密钥（**同时是 BYOK 解析总开关**） | 随机长串，六处必须一致（compose 已共享同一变量）；留空则 BYOK 静默停用                           |
+| `API_GATEWAY_SESSION_SECRET`                                                 | API 网关 Cookie 会话签名                                                             | 随机长串；**不能等于**默认值 `dev-api-gateway-session-secret-change-me`，否则 `/readyz` 返回 503 |
+| `MCP_SECRET`                                                                 | MCP 相关签名                                                                         | 随机长串                                                                                         |
+| `CONNECTOR_CREDENTIAL_SECRET`                                                | 连接器凭证加密                                                                       | 随机长串；换值后旧凭证无法解密                                                                   |
+| `LLM_GATEWAY_API_KEY` / `LLM_GATEWAY_API_BASE` / `LLM_GATEWAY_DEFAULT_MODEL` | 模型网关                                                                             | 真实 key；`LLM_ENABLED=true` 才真正调用模型                                                      |
+| `LLM_GATEWAY__ACCOUNT_BASE_URL`                                              | 网关向 account 解析 BYOK 的地址                                                      | 容器内必须为 `http://account-service:8001`（默认 `127.0.0.1:8001` 在容器里指向网关自身）         |
+| `ACCOUNT__BYOK_KMS`                                                          | BYOK 密钥托管方式                                                                    | `local`（默认）或 `vault`；生产建议 `vault` + `ACCOUNT__BYOK_VAULT_URL/TOKEN`                    |
+| `ACCOUNT__BYOK_SECRET`                                                       | local 模式 KEK 密钥材料                                                              | 随机长串；**不能等于** `dev-byok-secret-change-me`；换值前先按 BYOK 设计的轮换步骤做             |
+| `LLM_GATEWAY__BYOK_ENABLED`                                                  | 网关是否启用账号 key 解析                                                            | `true`（默认）；出问题置 `false` 即可一键回退平台 key                                            |
+| `VITE_AUTH_MODE`                                                             | web 构建期鉴权模式                                                                   | 默认 `session`（同源 API 网关 Cookie）；见 §4.2                                                  |
+| `READY_PROBE_UPSTREAMS`                                                      | API 网关 `/readyz` 是否探上游                                                        | 编排层想用就绪探针时设 `true`                                                                    |
 
-**BYOK（租户自带模型密钥）部署要点**：契约见 [docs/design/byok.md](../../docs/design/byok.md)，服务侧操作见 [account-service README](../../services/account-service/README.md) 与 [llm-gateway README](../../services/llm-gateway/README.md)。容器里有两处**必须显式配**：
+**BYOK（账号自带模型密钥）部署要点**：契约见 [docs/design/byok.md](../../docs/design/byok.md)，服务侧操作见 [account-service README](../../services/account-service/README.md) 与 [llm-gateway README](../../services/llm-gateway/README.md)。容器里有两处**必须显式配**：
 
 - `LLM_GATEWAY__INTERNAL_SECRET`——compose 已从 `INTERNAL_SECRET` 同源注入；留空等于关闭 BYOK（同时模型端点也不鉴权，仅本地 dev 可接受）；
 - `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`——compose 已提供该覆盖（2026-10-26 补齐）；自建编排必须显式补，否则网关解析全部失败、静默回退平台 key（表现就是「BYOK 保存了但不生效」）。
@@ -151,15 +151,15 @@ services:
 
 ## 5. 裸机 vs 容器
 
-| 项             | 裸机（[docs/local-dev.md](../../docs/local-dev.md)） | 容器                                            |
-| -------------- | ---------------------------------------------------- | ----------------------------------------------- |
-| 启动           | `npm run dev`（`scripts/dev.sh`）                    | `docker compose ... up -d --build`              |
-| 数据库         | 各服务目录下 SQLite（`*.db`）                        | postgres:16，6 个库                             |
-| 迁移           | 服务启动内置表或手动 alembic                         | `migrate` 一次性作业                            |
+| 项             | 裸机（[docs/local-dev.md](../../docs/local-dev.md)） | 容器                                                    |
+| -------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| 启动           | `npm run dev`（`scripts/dev.sh`）                    | `docker compose ... up -d --build`                      |
+| 数据库         | 各服务目录下 SQLite（`*.db`）                        | postgres:16，6 个库                                     |
+| 迁移           | 服务启动内置表或手动 alembic                         | `migrate` 一次性作业                                    |
 | Nginx upstream | `127.0.0.1:8007`                                     | `api-gateway:8007`（[nginx.conf](./nginx.conf) 默认值） |
-| 端口           | 8001–8008 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）             |
-| 数据重置       | `npm run dev:reset`                                  | `down -v`                                       |
-| 热更新         | 有（Vite/Nx）                                        | 无，重建镜像                                    |
+| 端口           | 8001–8008 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）                     |
+| 数据重置       | `npm run dev:reset`                                  | `down -v`                                               |
+| 热更新         | 有（Vite/Nx）                                        | 无，重建镜像                                            |
 
 若在容器里只跑 API 网关而 web 用裸机 Nginx，把 [nginx.conf](./nginx.conf) 的 `upstream api_gateway_upstream` 改成宿主机地址（容器网络之外）。
 
@@ -214,8 +214,8 @@ cat backup.sql | docker compose -f deploy/docker-compose.yml exec -T postgres ps
 | `up` 卡在 migrate             | `docker compose -f deploy/docker-compose.yml logs migrate`；常见是数据库连接串/库不存在（要 `down -v` 重新 initdb）                                                                     |
 | 服务 unhealthy                | `docker compose ... logs <service>`；`/healthz` 只证明进程活着，业务错看日志/500                                                                                                        |
 | web 打开白屏                  | 镜像是否重建（`VITE_*` 是构建期的）；`logs web` 看 nginx                                                                                                                                |
-| `/api` 502                    | API 网关未健康；先 `logs api-gateway`，再看它依赖的七服务                                                                                                                                           |
-| `/readyz` 503                 | 多半是 `API_GATEWAY_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d api-gateway`                                                                                        |
+| `/api` 502                    | API 网关未健康；先 `logs api-gateway`，再看它依赖的七服务                                                                                                                               |
+| `/readyz` 503                 | 多半是 `API_GATEWAY_SESSION_SECRET` 用了默认值或 `INTERNAL_SECRET` 为空，改 `deploy/.env` 后 `up -d api-gateway`                                                                        |
 | BYOK 保存了但一直用平台 key   | 看网关日志有无 `byok_resolved`；确认 `LLM_GATEWAY__ACCOUNT_BASE_URL=http://account-service:8001`、内部密钥与 account 一致；指标 `llm_byok_lookups_total{status="error"}` 抬头即解析失败 |
 | 迁移报 `alembic_version` 冲突 | 说明复用了同一个库；确认 `*__DATABASE_URL` 六个各自指向 `beauty_<服务>`                                                                                                                 |
 | 构建很慢/上下文巨大           | 仓库根缺 `.dockerignore`（见下节建议）                                                                                                                                                  |

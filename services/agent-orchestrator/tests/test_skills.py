@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.services.skills import load_skills
 from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 
 
 def test_load_builtin_skills() -> None:
@@ -32,16 +32,16 @@ def test_skill_without_tools_is_unrestricted(tmp_path: Path) -> None:
 
 
 def test_skills_api(client: TestClient) -> None:
-    listing = client.get("/api/v1/skills", headers=TENANT)
+    listing = client.get("/api/v1/skills", headers=ACCOUNT)
     assert listing.status_code == 200
     ids = [item["id"] for item in listing.json()]
     assert "coding.repo-readonly-review" in ids
 
-    detail = client.get("/api/v1/skills/coding.repo-readonly-review", headers=TENANT)
+    detail = client.get("/api/v1/skills/coding.repo-readonly-review", headers=ACCOUNT)
     assert detail.status_code == 200
     assert detail.json()["title"] == "只读代码审查"
 
-    missing = client.get("/api/v1/skills/no.such-skill", headers=TENANT)
+    missing = client.get("/api/v1/skills/no.such-skill", headers=ACCOUNT)
     assert missing.status_code == 404
     assert missing.json()["code"] == "skill.not_found"
 
@@ -55,7 +55,7 @@ def test_create_run_binds_skill_snapshot(client: TestClient) -> None:
             "acceptance_criteria": [],
             "skill_id": "coding.repo-readonly-review",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201
     body = response.json()
@@ -69,7 +69,7 @@ def test_create_run_binds_skill_snapshot(client: TestClient) -> None:
             "acceptance_criteria": [],
             "skill_id": "no.such-skill",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert unknown.status_code == 404
 
@@ -91,7 +91,7 @@ def test_restricted_tool_registry() -> None:
 
 
 def test_message_can_bind_skill(client: TestClient) -> None:
-    conversation = client.post("/api/v1/conversations", json={}, headers=TENANT).json()
+    conversation = client.post("/api/v1/conversations", json={}, headers=ACCOUNT).json()
     response = client.post(
         f"/api/v1/conversations/{conversation['id']}/messages",
         json={
@@ -99,7 +99,7 @@ def test_message_can_bind_skill(client: TestClient) -> None:
             "mode": "task",
             "skill_id": "coding.repo-readonly-review",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201
     body = response.json()
@@ -108,6 +108,6 @@ def test_message_can_bind_skill(client: TestClient) -> None:
     missing = client.post(
         f"/api/v1/conversations/{conversation['id']}/messages",
         json={"content": "x", "mode": "task", "skill_id": "no.such-skill"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert missing.status_code == 404

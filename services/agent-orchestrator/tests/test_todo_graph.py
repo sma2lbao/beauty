@@ -33,7 +33,7 @@ WRITE_CALL = ToolCall(
 def _state(**overrides: Any) -> RunGraphState:
     state: dict[str, Any] = {
         "run_id": "run-1",
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "title": "周报",
         "goal": "整理本周日程",
         "acceptance_criteria": ["输出周报"],
@@ -102,7 +102,7 @@ def _envelope(*, ok: bool = True) -> str:
 async def test_execute_node_writes_todos_back_to_state() -> None:
     toolkit = _TodoToolkit(_envelope())
     fake = FakeLLM([LLMReply(content="", tool_calls=(WRITE_CALL,)), "已整理"])
-    node = make_execute_node(fake, lambda tenant: toolkit)
+    node = make_execute_node(fake, lambda account: toolkit)
     update = await node(_state(), _config())
 
     assert toolkit.executed == ["todo_write"]
@@ -117,7 +117,7 @@ async def test_execute_node_writes_todos_back_to_state() -> None:
 async def test_execute_node_skips_write_back_for_error_envelope() -> None:
     toolkit = _TodoToolkit(json.dumps({"error": "清单不能为空"}))
     fake = FakeLLM([LLMReply(content="", tool_calls=(WRITE_CALL,)), "已整理"])
-    node = make_execute_node(fake, lambda tenant: toolkit)
+    node = make_execute_node(fake, lambda account: toolkit)
     update = await node(_state(todos=ITEMS), _config())
 
     # 失败结果不动 state:清单仍是上一份,不会因为一次坏参数被清空
@@ -129,7 +129,7 @@ async def test_tool_exec_node_writes_todos_back_to_state() -> None:
     pending = [
         {"id": "call-1", "name": "todo_write", "arguments": WRITE_CALL.arguments}
     ]
-    node = make_tool_exec_node(lambda tenant: toolkit)
+    node = make_tool_exec_node(lambda account: toolkit)
     update = await node(_state(pending_writes=pending), _config())
 
     assert toolkit.executed == ["todo_write"]
@@ -144,7 +144,7 @@ async def test_execute_prompt_includes_latest_list_from_state() -> None:
             seen.append(messages)
             return LLMReply(content="结果小结")
 
-    node = make_execute_node(_RecordingLLM([]), lambda tenant: _TodoToolkit(""))
+    node = make_execute_node(_RecordingLLM([]), lambda account: _TodoToolkit(""))
     await node(_state(todos=ITEMS), _config())
 
     system = seen[0][0]["content"]

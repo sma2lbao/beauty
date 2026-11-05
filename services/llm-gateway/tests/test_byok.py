@@ -1,6 +1,6 @@
-"""BYOK 解析与按租户注入:account-service 全走 httpx.MockTransport,零网络。
+"""BYOK 解析与按账号注入:account-service 全走 httpx.MockTransport,零网络。
 
-覆盖:未启用/无租户直接回退、成功解析与请求头、正/负缓存与 TTL、
+覆盖:未启用/无账号直接回退、成功解析与请求头、正/负缓存与 TTL、
 错误不缓存、缓存上限 LRU 淘汰、并发只穿透一次、响应坏形状、
 审计日志不含密钥,以及 API 层"BYOK 覆盖平台 key / 无命中回退平台 key"。
 """
@@ -24,10 +24,10 @@ from llm_gateway.metrics import llm_byok_lookups_total
 from llm_gateway.services.byok import ByokResolver, ResolvedKey
 from llm_gateway.services.byok_catalog import ByokCatalog
 
-KEY = "sk-tenant-secret"
+KEY = "sk-account-secret"
 HINT = "sk-…-tail"
 SECRET = "internal-secret"
-HEADERS = {"X-Internal-Secret": SECRET, "X-Tenant-Id": "t1"}
+HEADERS = {"X-Internal-Secret": SECRET, "X-Account-Id": "t1"}
 
 BODY = {
     "model": "deepseek/deepseek-chat",
@@ -48,8 +48,8 @@ def _settings(**overrides) -> Settings:
     return build_settings(Settings, **values)
 
 
-def _key_payload(tenant: str = "t1") -> dict:
-    return {"api_key": f"{KEY}-{tenant}", "key_hint": HINT, "key_id": "key_1"}
+def _key_payload(account: str = "t1") -> dict:
+    return {"api_key": f"{KEY}-{account}", "key_hint": HINT, "key_id": "key_1"}
 
 
 class AccountStub:
@@ -72,7 +72,7 @@ def _resolver(stub: AccountStub, **overrides) -> ByokResolver:
 
 def _resolve(
     resolver: ByokResolver,
-    tenant: str | None = "t1",
+    account: str | None = "t1",
     provider: str = "deepseek",
     *,
     count: int = 1,
@@ -81,7 +81,7 @@ def _resolve(
 
     async def scenario() -> list[ResolvedKey | None]:
         try:
-            return [await resolver.resolve(tenant, provider) for _ in range(count)]
+            return [await resolver.resolve(account, provider) for _ in range(count)]
         finally:
             await resolver.aclose()
 
@@ -95,18 +95,18 @@ def _status_count(status: str) -> float:
 
 
 @pytest.mark.parametrize(
-    ("overrides", "tenant"),
+    ("overrides", "account"),
     [
         ({"internal_secret": ""}, "t1"),  # 未配共享密钥 = BYOK 停用
         ({"byok_enabled": False}, "t1"),  # 显式关闭
-        ({}, None),  # 无租户(不是 BYOK 调用)
-        ({}, ""),  # 空租户
+        ({}, None),  # 无账号(不是 BYOK 调用)
+        ({}, ""),  # 空账号
     ],
 )
-def test_disabled_paths_skip_account(overrides, tenant) -> None:
+def test_disabled_paths_skip_account(overrides, account) -> None:
     stub = AccountStub()
     before = _status_count("disabled")
-    assert _resolve(_resolver(stub, **overrides), tenant=tenant) == [None]
+    assert _resolve(_resolver(stub, **overrides), account=account) == [None]
     assert stub.requests == []  # 完全没发请求
     assert _status_count("disabled") - before == 1
 
@@ -130,7 +130,7 @@ def test_resolve_returns_key_and_sends_internal_headers() -> None:
     assert request.url.host == "account.test"
     assert request.url.path == "/v1/byok/deepseek/secret"
     assert request.headers["X-Internal-Secret"] == SECRET
-    assert request.headers["X-Tenant-Id"] == "t1"
+    assert request.headers["X-Account-Id"] == "t1"
 
 
 def test_cache_hit_does_not_hit_account_again() -> None:
@@ -200,7 +200,7 @@ def test_bad_json_is_error() -> None:
 def test_cache_max_entries_evicts_least_recently_used() -> None:
     stub = AccountStub(
         lambda request: httpx.Response(
-            200, json={"api_key": f"key-{request.headers['X-Tenant-Id']}"}
+            200, json={"api_key": f"key-{request.headers['X-Account-Id']}"}
         )
     )
     resolver = _resolver(stub, byok_cache_max_entries=1)
@@ -224,8 +224,8 @@ def test_concurrent_resolve_penetrates_account_once() -> None:
     calls: list[tuple[str, str]] = []
     resolver = _resolver(AccountStub())
 
-    async def fake_fetch(tenant_id: str, provider: str):
-        calls.append((tenant_id, provider))
+    async def fake_fetch(account_id: str, provider: str):
+        calls.append((account_id, provider))
         await asyncio.sleep(0)  # 让出事件循环,制造并发窗口
         return ResolvedKey(api_key=KEY, provider=provider), "byok"
 
@@ -253,7 +253,7 @@ def test_audit_log_omits_api_key() -> None:
     events = [entry for entry in logs if entry.get("event") == "byok_resolved"]
     assert len(events) == 1
     entry = events[0]
-    assert entry["tenant"] == "t1"
+    assert entry["account"] == "t1"
     assert entry["provider"] == "deepseek"
     assert entry["key_hint"] == HINT
     assert entry["source"] == "byok"
@@ -264,7 +264,7 @@ def test_byok_metric_is_registered() -> None:
     assert b"# TYPE llm_byok_lookups_total counter" in metrics_payload()
 
 
-# ── API 层:按租户注入 key / 回退平台 key ─────────────────────────────────────────
+# ── API 层:按账号注入 key / 回退平台 key ─────────────────────────────────────────
 
 
 def _fake_completion(captured: dict):
@@ -287,7 +287,7 @@ def _fake_completion(captured: dict):
 def _client_with_stub(stub: AccountStub, **overrides) -> TestClient:
     settings = _settings(api_key="sk-platform", **overrides)
     resolver = ByokResolver(settings, transport=httpx.MockTransport(stub))
-    # 目录端点也打桩(404 -> 空目录):请求带租户头时不会真连 account-service
+    # 目录端点也打桩(404 -> 空目录):请求带账号头时不会真连 account-service
     catalog = ByokCatalog(
         settings,
         transport=httpx.MockTransport(lambda request: httpx.Response(404)),
@@ -308,10 +308,10 @@ def test_api_completion_uses_byok_key(monkeypatch) -> None:
     assert resp.status_code == 200
     assert captured["api_key"] == f"{KEY}-t1"  # BYOK 覆盖平台 key
     assert "api_base" not in captured  # 平台没配 api_base 时不传
-    assert stub.requests[0].headers["X-Tenant-Id"] == "t1"
+    assert stub.requests[0].headers["X-Account-Id"] == "t1"
 
 
-def test_api_completion_without_tenant_uses_platform_key(monkeypatch) -> None:
+def test_api_completion_without_account_uses_platform_key(monkeypatch) -> None:
     stub = AccountStub()
     captured: dict = {}
     monkeypatch.setattr(litellm, "acompletion", _fake_completion(captured))
@@ -323,7 +323,7 @@ def test_api_completion_without_tenant_uses_platform_key(monkeypatch) -> None:
 
     assert resp.status_code == 200
     assert captured["api_key"] == "sk-platform"
-    assert stub.requests == []  # 无租户头 = 不查 account
+    assert stub.requests == []  # 无账号头 = 不查 account
 
 
 def test_api_completion_missing_byok_falls_back(monkeypatch) -> None:
@@ -427,7 +427,7 @@ def test_api_embeddings_without_provider_prefix_uses_platform(monkeypatch) -> No
     assert stub.requests == []
 
 
-# ── 租户自定义模型 + BYOK key:completions 与 stream 都放行 ─────────────────────
+# ── 账号自定义模型 + BYOK key:completions 与 stream 都放行 ─────────────────────
 
 CATALOG_MODEL = "openai/gpt-4o-mini"
 PLATFORM_MODEL = "deepseek/deepseek-chat"
@@ -469,7 +469,7 @@ def test_api_completion_custom_model_uses_byok_key(monkeypatch) -> None:
             headers=HEADERS,
         )
 
-    assert resp.status_code == 200  # 白名单外但属于租户自定义模型:放行
+    assert resp.status_code == 200  # 白名单外但属于账号自定义模型:放行
     assert captured["model"] == CATALOG_MODEL
     assert captured["api_key"] == f"{KEY}-t1"  # 用该模型的 provider 解析 BYOK key
     paths = [request.url.path for request in stub.requests]

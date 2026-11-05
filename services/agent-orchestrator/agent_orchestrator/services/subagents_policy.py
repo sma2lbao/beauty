@@ -182,7 +182,7 @@ async def _check_limits(session: AsyncSession, parent: Run, settings: Settings) 
             f"子代理最多嵌套 {settings.subagent_max_depth} 层",
         )
     used = await RunRepository(session).count(
-        Run.tenant_id == parent.tenant_id,
+        Run.account_id == parent.account_id,
         Run.parent_run_id == parent.id,
         Run.parent_kind == PARENT_KIND_SUBAGENT,
     )

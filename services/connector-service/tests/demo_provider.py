@@ -150,7 +150,7 @@ class DemoProvider(BaseProvider):
             app_secret if app_secret is not None else cls.DEFAULT_APP_SECRET
         )
 
-    def with_tenant_app(self, app_id: str, app_secret: str) -> DemoProvider:
+    def with_account_app(self, app_id: str, app_secret: str) -> DemoProvider:
         return DemoProvider(self.settings, app_id=app_id, app_secret=app_secret)
 
     @property

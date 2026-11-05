@@ -11,11 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.core.byok_kms import BYOKKms
 from account.models.account import BYOKKey, UsageEvent
-from account.repositories import (
-    BYOKRepository,
-    OrganizationRepository,
-    UsageEventRepository,
-)
+from account.repositories import BYOKRepository, UsageEventRepository, UserRepository
 from account.schemas.insights import (
     BYOKCatalogRead,
     BYOKRead,
@@ -53,11 +49,11 @@ def _start_of_month() -> datetime:
 
 
 async def record_usage(
-    session: AsyncSession, tenant_id: str, data: UsageEventCreate
+    session: AsyncSession, account_id: str, data: UsageEventCreate
 ) -> UsageEvent:
     total = data.prompt_tokens + data.completion_tokens
     event = UsageEvent(
-        tenant_id=tenant_id,
+        account_id=account_id,
         run_id=data.run_id,
         model=data.model or "unknown",
         prompt_tokens=data.prompt_tokens,
@@ -67,9 +63,9 @@ async def record_usage(
     return await UsageEventRepository(session).add(event)
 
 
-async def usage_summary(session: AsyncSession, tenant_id: str) -> UsageSummary:
+async def usage_summary(session: AsyncSession, account_id: str) -> UsageSummary:
     events = await UsageEventRepository(session).list_since(
-        tenant_id, _start_of_month()
+        account_id, _start_of_month()
     )
     today = _start_of_today()
     today_events = [event for event in events if _aware(event.created_at) >= today]
@@ -102,17 +98,17 @@ def _positive_int(value: object) -> int | None:
     return None
 
 
-async def usage_quota(session: AsyncSession, tenant_id: str) -> UsageQuota:
-    """租户配额快照:organizations.quota + 本月已用 token。
+async def usage_quota(session: AsyncSession, account_id: str) -> UsageQuota:
+    """账号配额快照:users.quota + 本月已用 token。
 
-    quota JSON 结构(宽松,缺省即不限制):
+    quota JSON 结构(宽松,缺省即不限制,fail-open):
     ``{"monthly_tokens": 500000, "max_concurrent_runs": 3}``。
-    组织档案不存在时按未配置处理(不拦创建)。
+    新账号 quota 为空字典 → 两个维度均为 None(不限);账号缺失也按未配置处理。
     """
-    organization = await OrganizationRepository(session).get(tenant_id)
-    quota = (organization.quota if organization is not None else None) or {}
+    account = await UserRepository(session).get(account_id)
+    quota = (account.quota if account is not None else None) or {}
     events = await UsageEventRepository(session).list_since(
-        tenant_id, _start_of_month()
+        account_id, _start_of_month()
     )
     return UsageQuota(
         monthly_tokens=_positive_int(quota.get("monthly_tokens")),
@@ -167,16 +163,16 @@ def _to_read(record: BYOKKey) -> BYOKRead:
     )
 
 
-async def list_byok(session: AsyncSession, tenant_id: str) -> list[BYOKRead]:
+async def list_byok(session: AsyncSession, account_id: str) -> list[BYOKRead]:
     records = await BYOKRepository(session).list_scoped(
-        tenant_id, order_by=[BYOKKey.provider]
+        account_id, order_by=[BYOKKey.provider]
     )
     return [_to_read(record) for record in records]
 
 
 async def upsert_byok(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     provider: str,
     data: BYOKUpsert,
     *,
@@ -185,7 +181,7 @@ async def upsert_byok(
     normalized = _normalize_provider(provider)
     models = _normalize_models(normalized, data.models)
     repo = BYOKRepository(session)
-    record = await repo.find_for_provider(tenant_id, normalized)
+    record = await repo.find_for_provider(account_id, normalized)
     api_key = (data.api_key or "").strip()
     if api_key:
         encrypted = await kms.encrypt(api_key)
@@ -199,7 +195,7 @@ async def upsert_byok(
         hint = record.key_hint
     if record is None:
         record = BYOKKey(
-            tenant_id=tenant_id,
+            account_id=account_id,
             provider=normalized,
             encrypted_key=encrypted,
             key_hint=hint,
@@ -213,14 +209,14 @@ async def upsert_byok(
     return _to_read(record)
 
 
-async def custom_models(session: AsyncSession, tenant_id: str) -> BYOKCatalogRead:
-    """租户 BYOK 自定义模型并集:按 provider 排序展开,全局去重保序。
+async def custom_models(session: AsyncSession, account_id: str) -> BYOKCatalogRead:
+    """账号 BYOK 自定义模型并集:按 provider 排序展开,全局去重保序。
 
-    内部端点(llm-gateway)用它把「租户自定义模型」并入模型目录与白名单;
-    只读,跨租户隔离由仓储保证。
+    内部端点(llm-gateway)用它把「账号自定义模型」并入模型目录与白名单;
+    只读,跨账号隔离由仓储保证。
     """
     records = await BYOKRepository(session).list_scoped(
-        tenant_id, order_by=[BYOKKey.provider]
+        account_id, order_by=[BYOKKey.provider]
     )
     seen: set[str] = set()
     models: list[str] = []
@@ -235,18 +231,18 @@ async def custom_models(session: AsyncSession, tenant_id: str) -> BYOKCatalogRea
 
 async def get_byok_secret(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     provider: str,
     *,
     kms: BYOKKms,
 ) -> BYOKSecretRead:
-    """内部解析明文 key(llm-gateway 按租户取用)。
+    """内部解析明文 key(llm-gateway 按账号取用)。
 
     历史密文(kid 不是当前 kid / v2 之前的裸 Fernet token)在读取时懒轮换为
     当前信封;轮换失败只记 warning,仍返回明文(下次读再试,不阻断调用面)。
     """
     record = await BYOKRepository(session).find_for_provider(
-        tenant_id, provider.strip().lower()
+        account_id, provider.strip().lower()
     )
     if record is None:
         raise NotFoundError("byok.not_found", "BYOK 密钥不存在")
@@ -257,7 +253,7 @@ async def get_byok_secret(
         except AppError as exc:
             log.warning(
                 "byok.rotate_failed",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 provider=record.provider,
                 key_id=kms.key_id,
                 code=exc.code,
@@ -271,11 +267,11 @@ async def get_byok_secret(
 
 
 async def rotate_byok(
-    session: AsyncSession, tenant_id: str, *, kms: BYOKKms
+    session: AsyncSession, account_id: str, *, kms: BYOKKms
 ) -> BYOKRotateResult:
-    """把租户全部 BYOK 密文重加密到当前 KMS key;逐条容错、不抛。"""
+    """把账号全部 BYOK 密文重加密到当前 KMS key;逐条容错、不抛。"""
     records = await BYOKRepository(session).list_scoped(
-        tenant_id, order_by=[BYOKKey.provider]
+        account_id, order_by=[BYOKKey.provider]
     )
     rotated = 0
     failed = 0
@@ -287,18 +283,18 @@ async def rotate_byok(
             failed += 1
             log.warning(
                 "byok.rotate_failed",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 provider=record.provider,
                 key_id=kms.key_id,
                 code=exc.code,
             )
-    log.info("byok.rotated", tenant_id=tenant_id, key_id=kms.key_id, rotated=rotated)
+    log.info("byok.rotated", account_id=account_id, key_id=kms.key_id, rotated=rotated)
     return BYOKRotateResult(rotated=rotated, failed=failed)
 
 
-async def delete_byok(session: AsyncSession, tenant_id: str, provider: str) -> None:
+async def delete_byok(session: AsyncSession, account_id: str, provider: str) -> None:
     repo = BYOKRepository(session)
-    record = await repo.find_for_provider(tenant_id, provider.strip().lower())
+    record = await repo.find_for_provider(account_id, provider.strip().lower())
     if record is None:
         raise AppError("byok.not_found", "BYOK 密钥不存在")
     await repo.delete(record)

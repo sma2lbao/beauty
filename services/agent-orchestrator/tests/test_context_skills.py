@@ -1,7 +1,7 @@
 """SKILL.md 渐进加载单测(§6.5):卡片提取、分页边界、provider 开关与工具。
 
 工具 handler 直接调用(绕过 registry),临时 sqlite 文件库 + 真实 Run 行,
-覆盖成功分页/审计事件/无上下文/无正文/租户不匹配分支;零网络。
+覆盖成功分页/审计事件/无上下文/无正文/账号不匹配分支;零网络。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import _settings
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 SKILL_ID = "weekly-report"
@@ -196,7 +196,7 @@ def test_page_empty_markdown() -> None:
 
 def _request(markdown: str | None = SKILL_MD, skill_id: str | None = SKILL_ID):
     return ContextRequest(
-        tenant_id=TENANT,
+        account_id=ACCOUNT,
         run_id="run-1",
         skill_id=skill_id,
         skill_markdown=markdown,
@@ -254,13 +254,13 @@ def _tool(
 async def _create_run(
     factory: async_sessionmaker[AsyncSession],
     *,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
     skill_id: str | None = SKILL_ID,
     markdown: str | None = SKILL_MD,
 ) -> str:
     async with session_scope(factory) as session:
         run = Run(
-            tenant_id=tenant_id,
+            account_id=account_id,
             title="周报",
             goal="整理本周日程",
             skill_id=skill_id,
@@ -301,7 +301,7 @@ async def test_tool_reads_first_page_and_records_event(
 ) -> None:
     tool = _tool(factory, page=10)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         raw = await tool.handler({"offset": 0, "limit": 10})
         payload = json.loads(raw)
     # 中文不转义(模型与日志都要可读)
@@ -317,7 +317,7 @@ async def test_tool_reads_first_page_and_records_event(
     events = await _events(factory, run_id)
     assert [event.type for event in events] == [SKILL_LOADED_EVENT]
     assert events[0].seq == 1
-    assert events[0].tenant_id == TENANT
+    assert events[0].account_id == ACCOUNT
     assert events[0].payload == {
         "skill_id": SKILL_ID,
         "offset": 0,
@@ -333,7 +333,7 @@ async def test_tool_pages_forward_and_appends_one_event_per_call(
 ) -> None:
     tool = _tool(factory, page=10)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         first = json.loads(await tool.handler({"offset": 0, "limit": 10}))
         second = json.loads(await tool.handler({"offset": 10, "limit": 10}))
     assert first["content"] == SKILL_MD[:10]
@@ -349,7 +349,7 @@ async def test_tool_defaults_and_defensive_arguments(
 ) -> None:
     tool = _tool(factory, page=64)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         defaulted = json.loads(await tool.handler({}))
         clamped = json.loads(await tool.handler({"offset": -5, "limit": "bad"}))
         bool_limit = json.loads(await tool.handler({"offset": "x", "limit": True}))
@@ -371,7 +371,7 @@ async def test_tool_default_page_follows_policy(
 ) -> None:
     tool = build_load_skill_tool(factory, policy=ContextPolicy())
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         payload = json.loads(await tool.handler({}))
     assert payload["limit"] == 4000
     assert payload["content"] == SKILL_MD
@@ -383,7 +383,7 @@ async def test_tool_falls_back_to_skill_id_as_title(
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory, markdown="没有标题的正文\n")
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
         payload = json.loads(await tool.handler({}))
     assert payload["title"] == SKILL_ID
 
@@ -396,21 +396,21 @@ async def test_tool_requires_run_context(
     # 完全没有工具上下文
     payload = json.loads(await tool.handler({}))
     assert "缺少工具上下文" in payload["error"]
-    # 有租户但没有 run(对话/只读路径)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    # 有账号但没有 run(对话/只读路径)
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         payload = json.loads(await tool.handler({}))
     assert "缺少工具上下文" in payload["error"]
     assert await _events(factory, run_id) == []
 
 
-async def test_tool_rejects_other_tenant(
+async def test_tool_rejects_other_account(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tool = _tool(factory)
     run_id = await _create_run(factory)
-    with bind_tool_context(ToolContext(tenant_id=OTHER, run_id=run_id)):
+    with bind_tool_context(ToolContext(account_id=OTHER, run_id=run_id)):
         payload = json.loads(await tool.handler({}))
-    assert "run 不存在或不属于当前租户" in payload["error"]
+    assert "run 不存在或不属于当前账号" in payload["error"]
     assert await _events(factory, run_id) == []
 
 
@@ -418,9 +418,9 @@ async def test_tool_reports_missing_run(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tool = _tool(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=uuid4().hex)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=uuid4().hex)):
         payload = json.loads(await tool.handler({}))
-    assert "run 不存在或不属于当前租户" in payload["error"]
+    assert "run 不存在或不属于当前账号" in payload["error"]
 
 
 async def test_tool_reports_run_without_skill_body(
@@ -430,7 +430,7 @@ async def test_tool_reports_run_without_skill_body(
     absent = await _create_run(factory, markdown=None)
     blank = await _create_run(factory, markdown="   \n  ")
     for run_id in (absent, blank):
-        with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=run_id)):
+        with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=run_id)):
             payload = json.loads(await tool.handler({}))
         assert "本 run 未绑定技能正文" in payload["error"]
         assert await _events(factory, run_id) == []

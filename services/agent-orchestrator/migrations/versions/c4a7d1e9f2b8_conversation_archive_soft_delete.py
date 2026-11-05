@@ -18,8 +18,12 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("conversations") as batch:
-        batch.add_column(sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
-        batch.add_column(sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
+        batch.add_column(
+            sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch.add_column(
+            sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)
+        )
 
 
 def downgrade() -> None:

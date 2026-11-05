@@ -34,11 +34,11 @@ def _step_from_payload(seq: int, payload: dict[str, Any]) -> StepRead:
 
 
 async def list_steps(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[StepRead]:
     """该 run 的步骤时间线,按 seq 升序(与事件回放同序,可直接定位"第几步")。"""
-    await require_run(session, tenant_id, run_id)
-    events = await RunEventRepository(session).list_for_run(tenant_id, run_id)
+    await require_run(session, account_id, run_id)
+    events = await RunEventRepository(session).list_for_run(account_id, run_id)
     return [
         _step_from_payload(event.seq, event.payload)
         for event in events

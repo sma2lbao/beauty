@@ -1,10 +1,13 @@
-"""服务配置(env 前缀 ACCOUNT__,约定见 common.config)。"""
+"""服务配置(env 前缀 ACCOUNT__,约定见 common.config / common.service_kit)。
 
-from common.config import BaseAppSettings
+数据库/鉴权共享字段来自 ServiceSettings,这里只补 account-service 自己的差异项。
+"""
+
+from common.service_kit.settings import ServiceSettings
 from pydantic_settings import SettingsConfigDict
 
 
-class Settings(BaseAppSettings):
+class Settings(ServiceSettings):
     model_config = SettingsConfigDict(
         env_prefix="ACCOUNT__",
         env_file=".env",
@@ -13,17 +16,10 @@ class Settings(BaseAppSettings):
     )
 
     service_name: str = "account-service"
+    # 本服务即自建 IdP:进程内开发库默认值,生产用 ACCOUNT__DATABASE_URL 覆盖
     database_url: str = "sqlite+aiosqlite:///./account.db"
-    auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
-    default_plan: str = "free"
-    # 鉴权(架构 §10):本服务即自建 IdP(issuer 指向自身),这里只解析"当前租户";
-    # audience 与下方 token_audience 保持一致
-    auth_enabled: bool = True
-    auth_issuer: str = "http://127.0.0.1:8001"
-    auth_audience: str | None = "beauty-api"
-    auth_jwks_url: str | None = None
-    auth_tenant_claim: str = "tenant_id"
-    # 自建认证(自 IdP 桩转正):注册/登录/刷新/内部签发 + OIDC 发现/JWKS
+    # 自建认证:注册/登录/刷新/内部签发 + OIDC 发现/JWKS。
+    # access token 的账号 claim 由共享库 auth_account_claim(默认 account_id)决定。
     token_ttl_seconds: int = 3600
     token_audience: str = "beauty-api"
     refresh_ttl_seconds: int = 2_592_000  # 刷新令牌 30 天,旋转式

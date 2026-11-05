@@ -16,7 +16,7 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.todos import TODO_TOOL_NAME, build_todo_tool
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
-from tests.conftest import OTHER, TENANT, _create_run, _settings, verifier
+from tests.conftest import ACCOUNT, OTHER, _create_run, _settings, verifier
 
 ITEMS: list[dict[str, str]] = [
     {"content": "收集本周进展", "status": "completed"},
@@ -32,7 +32,7 @@ def _write_todos(client: TestClient, run_id: str, todos: list[dict[str, str]]) -
 
     async def _run() -> None:
         tool = build_todo_tool(factory)
-        with bind_tool_context(ToolContext(tenant_id="t-1", run_id=run_id)):
+        with bind_tool_context(ToolContext(account_id="t-1", run_id=run_id)):
             await tool.handler({"todos": todos})
 
     asyncio.run(_run())
@@ -40,7 +40,7 @@ def _write_todos(client: TestClient, run_id: str, todos: list[dict[str, str]]) -
 
 def test_read_end_returns_empty_list_before_first_write(client: TestClient) -> None:
     run_id = _create_run(client)
-    resp = client.get(f"/api/v1/runs/{run_id}/todos", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/todos", headers=ACCOUNT)
 
     assert resp.status_code == 200
     assert resp.json() == {
@@ -55,23 +55,23 @@ def test_read_end_reflects_written_snapshot(client: TestClient) -> None:
     run_id = _create_run(client)
     _write_todos(client, run_id, ITEMS)
 
-    body = client.get(f"/api/v1/runs/{run_id}/todos", headers=TENANT).json()
+    body = client.get(f"/api/v1/runs/{run_id}/todos", headers=ACCOUNT).json()
     assert body["todos"] == ITEMS
     assert body["counts"] == {"pending": 0, "in_progress": 1, "completed": 1}
     assert body["revision"] == 1
 
 
-def test_read_end_is_tenant_isolated(client: TestClient) -> None:
+def test_read_end_is_account_isolated(client: TestClient) -> None:
     run_id = _create_run(client)
     _write_todos(client, run_id, ITEMS)
 
-    # 其它租户看不到别人的 run:统一 404,不泄漏存在性
+    # 其它账号看不到别人的 run:统一 404,不泄漏存在性
     assert client.get(f"/api/v1/runs/{run_id}/todos", headers=OTHER).status_code == 404
 
 
 def test_read_end_404_for_unknown_run(client: TestClient) -> None:
     resp = client.get(
-        "/api/v1/runs/00000000000000000000000000000000/todos", headers=TENANT
+        "/api/v1/runs/00000000000000000000000000000000/todos", headers=ACCOUNT
     )
     assert resp.status_code == 404
 
@@ -80,13 +80,13 @@ def _extras(client: TestClient, context: ToolContext) -> list[Any]:
     factory = client.app.state.tool_extras_factory
     assert factory is not None
     with bind_tool_context(context):
-        return asyncio.run(factory(context.tenant_id))
+        return asyncio.run(factory(context.account_id))
 
 
 def test_extras_expose_todo_write_only_with_run_context(client: TestClient) -> None:
-    run_ctx = ToolContext(tenant_id="t-1", run_id="r-1")
+    run_ctx = ToolContext(account_id="t-1", run_id="r-1")
     run_names = [spec.name for spec in _extras(client, run_ctx)]
-    chat_names = [spec.name for spec in _extras(client, ToolContext(tenant_id="t-1"))]
+    chat_names = [spec.name for spec in _extras(client, ToolContext(account_id="t-1"))]
 
     assert TODO_TOOL_NAME in run_names
     # 对话路径没有 run,清单无处存:不该暴露一个永远不可用的工具
@@ -100,6 +100,6 @@ def _client_without_todo(tmp_path: Path) -> TestClient:
 
 def test_extras_hide_todo_write_when_disabled(tmp_path: Path) -> None:
     with _client_without_todo(tmp_path) as client:
-        run_ctx = ToolContext(tenant_id="t-1", run_id="r-1")
+        run_ctx = ToolContext(account_id="t-1", run_id="r-1")
         names = [spec.name for spec in _extras(client, run_ctx)]
     assert TODO_TOOL_NAME not in names

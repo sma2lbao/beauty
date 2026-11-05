@@ -2,7 +2,7 @@
 
 各服务测试装配"开鉴权 + 真签 token"(架构 §10)时共用这一份密钥材料:
 签名私钥留在进程内,JWKS 经 MockTransport 喂给 JwtVerifier,零网络——
-不再复制 30 行密钥/JWKS 样板,也不再依赖"关鉴权 + X-Tenant-Id 临时头"。
+不再复制 30 行密钥/JWKS 样板,也不再依赖"关鉴权 + X-Account-Id 临时头"。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def jwks_document(private_key: rsa.RSAPrivateKey, kid: str = KID) -> dict:
 
 def sign_token(
     private_key: rsa.RSAPrivateKey,
-    tenant_id: str,
+    account_id: str,
     *,
     subject: str = "u1",
     issuer: str = ISSUER,
@@ -42,18 +42,16 @@ def sign_token(
     expires_in: int = 3600,
     kid: str = KID,
 ) -> str:
-    """签发以 tenant_id 为 claim 的测试 access token。"""
+    """签发以 account_id 为 claim 的测试 access token。"""
     claims: dict = {
         "sub": subject,
         "iss": issuer,
         "exp": datetime.now(UTC) + timedelta(seconds=expires_in),
-        "tenant_id": tenant_id,
+        "account_id": account_id,
     }
     if audience is not None:
         claims["aud"] = audience
-    return jwt.encode(
-        claims, private_key, algorithm="RS256", headers={"kid": kid}
-    )
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
 
 
 def jwks_transport(document: dict) -> httpx.MockTransport:
@@ -70,7 +68,7 @@ def jwks_transport(document: dict) -> httpx.MockTransport:
 class TestIdP:
     """测试 IdP:一把密钥 + JWKS stub + 签发函数,conftest 持有单例。
 
-    verifier() 注入服务的 create_app(token_verifier=...),bearer(tenant)
+    verifier() 注入服务的 create_app(token_verifier=...),bearer(account)
     生成请求头——两者必须来自同一实例(同一把私钥)。
     """
 
@@ -86,7 +84,7 @@ class TestIdP:
             transport=jwks_transport(self.jwks),
         )
 
-    def bearer(self, tenant_id: str, **claims) -> dict[str, str]:
-        """以 tenant_id 签 token 并包成请求头(多租户隔离测试各签各的)。"""
-        token = sign_token(self.private_key, tenant_id, **claims)
+    def bearer(self, account_id: str, **claims) -> dict[str, str]:
+        """以 account_id 签 token 并包成请求头(账号隔离测试各签各的)。"""
+        token = sign_token(self.private_key, account_id, **claims)
         return {"Authorization": f"Bearer {token}"}

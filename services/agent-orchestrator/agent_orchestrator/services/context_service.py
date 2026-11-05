@@ -44,7 +44,7 @@ class RunContext:
 def _request_for(run: Run, memory_block: str) -> ContextRequest:
     """从 run 行与召回记忆拼装配请求:管线不认识 ORM,入参一律是快照值。"""
     return ContextRequest(
-        tenant_id=run.tenant_id,
+        account_id=run.account_id,
         run_id=run.id,
         conversation_id=run.conversation_id,
         workspace_id=run.workspace_id,

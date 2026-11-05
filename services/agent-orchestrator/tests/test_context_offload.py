@@ -25,7 +25,7 @@ from agent_orchestrator.context.offload import (
 from agent_orchestrator.context.policy import ContextPolicy
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
 from agent_orchestrator.services.tools import ToolRisk
-from tests.test_context_agents import TENANT, FakeWorkspaceFiles
+from tests.test_context_agents import ACCOUNT, FakeWorkspaceFiles
 
 PREFIX = "/workspace/.agent/offload"
 
@@ -40,7 +40,7 @@ def _policy(**overrides: object) -> ContextPolicy:
 
 
 def _bound_context(**overrides: object) -> object:
-    data: dict[str, object] = {"tenant_id": TENANT, "run_id": "run-1"}
+    data: dict[str, object] = {"account_id": ACCOUNT, "run_id": "run-1"}
     data.update(overrides)
     return bind_tool_context(ToolContext(**data))  # type: ignore[arg-type]
 
@@ -91,10 +91,10 @@ async def test_missing_context_returns_output() -> None:
     assert files.writes == []
 
 
-async def test_empty_tenant_returns_output() -> None:
+async def test_empty_account_returns_output() -> None:
     files = FakeWorkspaceFiles()
     offloader = ToolOutputOffloader(files, _policy())
-    with bind_tool_context(ToolContext(tenant_id="", run_id="run-1")):
+    with bind_tool_context(ToolContext(account_id="", run_id="run-1")):
         result = await offloader.maybe_offload("read", "x" * 50)
     assert result.content == "x" * 50
     assert result.record is None
@@ -122,7 +122,7 @@ async def test_offload_writes_file_and_builds_envelope() -> None:
     expected_sha = hashlib.sha256(output.encode("utf-8")).hexdigest()
     path = f"{PREFIX}/run-1/report_read-{expected_sha[:8]}.txt"
     assert files.writes == [
-        (TENANT, "conversation:conv-1", path, output.encode("utf-8"))
+        (ACCOUNT, "conversation:conv-1", path, output.encode("utf-8"))
     ]
     envelope = json.loads(result.content)
     assert envelope == {
@@ -320,7 +320,7 @@ async def test_read_offloaded_tool_error_branches() -> None:
 
     # 无工具上下文
     payload = json.loads(await tool.handler({"path": path}))
-    assert payload["error"] == "缺少工具上下文(租户),无法读取 offload 文件"
+    assert payload["error"] == "缺少工具上下文(账号),无法读取 offload 文件"
 
     with _bound_context():
         # 缺 path / 空 path / 非字符串 path

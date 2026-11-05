@@ -2,7 +2,7 @@
 
 - dev:ConsoleRenderer(人读友好);staging/prod:JSON(机器采集);
 - service/env 通过 contextvars 绑定,服务内所有日志自动带身份;
-- 请求级字段(request_id/tenant_id/user_id…)由 `common.middleware` 在
+- 请求级字段(request_id/account_id/user_id…)由 `common.middleware` 在
   请求边界绑定,业务代码只读不写(见 docs/observability.md §5)。
 """
 
@@ -54,7 +54,7 @@ def setup_logging(settings: BaseAppSettings) -> None:
 
 
 def bind_request_context(**fields: Any) -> None:
-    """绑定请求级字段(request_id/tenant_id/error_code…),随日志自动输出。
+    """绑定请求级字段(request_id/account_id/error_code…),随日志自动输出。
 
     进程级身份(service/env)一并绑定:`setup_logging` 里的 contextvars 绑定发生在
     lifespan 任务里,uvicorn 的请求任务不一定继承得到,所以每次绑定都补一遍。

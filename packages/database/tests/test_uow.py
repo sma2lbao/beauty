@@ -29,10 +29,10 @@ async def factory(tmp_path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 async def test_commit_on_success(factory) -> None:
     async with UnitOfWork(factory, repositories=(WidgetRepository,)) as uow:
-        await uow.repo(WidgetRepository).add(Widget(tenant_id="t-1", name="甲"))
+        await uow.repo(WidgetRepository).add(Widget(account_id="t-1", name="甲"))
 
     async with session_scope(factory) as session:
-        assert await WidgetRepository(session).count_for_tenant("t-1") == 1
+        assert await WidgetRepository(session).count_for_account("t-1") == 1
 
 
 async def test_rollback_on_error_and_exception_propagates(factory) -> None:
@@ -41,11 +41,11 @@ async def test_rollback_on_error_and_exception_propagates(factory) -> None:
 
     with pytest.raises(Boom):
         async with UnitOfWork(factory) as uow:
-            await uow.repo(WidgetRepository).add(Widget(tenant_id="t-1", name="甲"))
+            await uow.repo(WidgetRepository).add(Widget(account_id="t-1", name="甲"))
             raise Boom("中途失败")
 
     async with session_scope(factory) as session:
-        assert await WidgetRepository(session).count_for_tenant("t-1") == 0
+        assert await WidgetRepository(session).count_for_account("t-1") == 0
 
 
 async def test_cross_repository_share_one_transaction(factory) -> None:
@@ -58,14 +58,14 @@ async def test_cross_repository_share_one_transaction(factory) -> None:
 
     with pytest.raises(Fail):
         async with UnitOfWork(factory) as uow:
-            await uow.repo(WidgetRepository).add(Widget(tenant_id="t-1", name="甲"))
+            await uow.repo(WidgetRepository).add(Widget(account_id="t-1", name="甲"))
             thing = await uow.repo(ThingRepository).add(GlobalThing(name="乙"))
             assert thing.id
             raise Fail(f"后续步骤失败(已有 {existing.name})")
 
     async with session_scope(factory) as session:
         # 两个仓储的写入一起回滚
-        assert await WidgetRepository(session).count_for_tenant("t-1") == 0
+        assert await WidgetRepository(session).count_for_account("t-1") == 0
         assert await ThingRepository(session).count() == 1
 
 

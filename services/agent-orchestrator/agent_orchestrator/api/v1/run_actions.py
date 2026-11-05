@@ -13,13 +13,13 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
+    get_account_id,
     get_artifact_store,
     get_context_pipeline,
     get_file_downloader,
     get_run_graph,
     get_session,
     get_settings,
-    get_tenant_id,
     get_workspace_client,
 )
 from agent_orchestrator.context.pipeline import ContextPipeline
@@ -42,7 +42,7 @@ from agent_orchestrator.services.workspace import Workspace
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
@@ -59,7 +59,7 @@ def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
 async def plan_run(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -74,7 +74,7 @@ async def plan_run(
     run = await runs_service.plan_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         jobs_enabled=settings.jobs_enabled,
         store=store,
@@ -92,12 +92,12 @@ async def update_run_plan(
     body: PlanUpdate,
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
 ) -> PlanRead:
     """审批前编辑计划(§6.1 可编辑工件)。"""
     run = await runs_service.update_plan(
-        session, graph, tenant_id, run_id, body.plan_markdown
+        session, graph, account_id, run_id, body.plan_markdown
     )
     return _plan_read(run.id, run.status, run.plan_markdown or "")
 
@@ -106,7 +106,7 @@ async def update_run_plan(
 async def approve_run(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -117,7 +117,7 @@ async def approve_run(
     run = await runs_service.approve_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         store,
         workspace,
@@ -133,11 +133,11 @@ async def reject_run(
     body: RejectRequest,
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
 ) -> RunRead:
     """拒绝计划,run 进入 blocked(§6.2;可 resume 重新进闸)。"""
-    run = await runs_service.reject_run(session, graph, tenant_id, run_id, body.reason)
+    run = await runs_service.reject_run(session, graph, account_id, run_id, body.reason)
     return RunRead.model_validate(run)
 
 
@@ -145,7 +145,7 @@ async def reject_run(
 async def resume_run(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -157,7 +157,7 @@ async def resume_run(
     run = await runs_service.resume_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         jobs_enabled=settings.jobs_enabled,
         store=store,
@@ -174,7 +174,7 @@ async def resume_run(
 async def retry_run(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -186,7 +186,7 @@ async def retry_run(
     run = await runs_service.retry_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         jobs_enabled=settings.jobs_enabled,
         store=store,
@@ -204,7 +204,7 @@ async def confirm_run(
     body: ConfirmRequest,
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -215,7 +215,7 @@ async def confirm_run(
     run = await runs_service.confirm_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         body.action,
         body.reason,
@@ -233,7 +233,7 @@ async def answer_run(
     body: RunAnswerRequest,
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     graph: RunGraph,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
@@ -244,7 +244,7 @@ async def answer_run(
     run = await runs_service.answer_run(
         session,
         graph,
-        tenant_id,
+        account_id,
         run_id,
         question_id=body.question_id,
         action=body.action,
@@ -262,11 +262,11 @@ async def answer_run(
 async def cancel_run(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     body: CancelRequest | None = None,
 ) -> RunRead:
     """取消 run(P0-2):非终态 → cancelled,该 run 排队中的 job 一并作废。"""
     run = await runs_service.cancel_run(
-        session, tenant_id, run_id, body.reason if body else None
+        session, account_id, run_id, body.reason if body else None
     )
     return RunRead.model_validate(run)

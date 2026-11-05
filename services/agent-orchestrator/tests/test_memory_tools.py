@@ -1,7 +1,7 @@
-"""记忆工具单测:handler 从 ToolContext 取租户/工作区/来源,自建事务。
+"""记忆工具单测:handler 从 ToolContext 取账号/工作区/来源,自建事务。
 
 直接调用 ToolSpec.handler(绕过 ToolRegistry),覆盖参数校验、上下文缺失、
-来源落库与租户隔离;临时 sqlite 文件库,建表走 Base.metadata.create_all。
+来源落库与账号隔离;临时 sqlite 文件库,建表走 Base.metadata.create_all。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 from tests.conftest import _settings
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 
@@ -52,7 +52,7 @@ async def test_memory_write_and_search_roundtrip(
 ) -> None:
     tools = _tools(factory)
     context = ToolContext(
-        tenant_id=TENANT,
+        account_id=ACCOUNT,
         run_id="run-1",
         conversation_id="conv-1",
         workspace_id="ws-1",
@@ -85,7 +85,7 @@ async def test_memory_write_falls_back_to_chat_source(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, conversation_id="conv-1")):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, conversation_id="conv-1")):
         written = json.loads(
             await tools["memory_write"].handler({"content": "对话里记住的事实"})
         )
@@ -113,7 +113,7 @@ async def test_handlers_validate_arguments(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         cases: list[tuple[str, dict[str, Any], str]] = [
             ("memory_search", {"query": "   "}, "query 不能为空"),
             ("memory_write", {}, "content 不能为空"),
@@ -135,7 +135,7 @@ async def test_memory_delete_soft_deletes_and_reports_missing(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         written = json.loads(
             await tools["memory_write"].handler({"content": "要删除的记忆"})
         )
@@ -153,16 +153,16 @@ async def test_memory_delete_soft_deletes_and_reports_missing(
     assert row.deleted_at is not None
 
 
-async def test_tools_are_tenant_isolated(
+async def test_tools_are_account_isolated(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         written = json.loads(
-            await tools["memory_write"].handler({"content": "租户一的记忆"})
+            await tools["memory_write"].handler({"content": "账号一的记忆"})
         )
-    with bind_tool_context(ToolContext(tenant_id=OTHER)):
-        hits = json.loads(await tools["memory_search"].handler({"query": "租户一"}))
+    with bind_tool_context(ToolContext(account_id=OTHER)):
+        hits = json.loads(await tools["memory_search"].handler({"query": "账号一"}))
         missing = json.loads(
             await tools["memory_delete"].handler({"memory_id": written["id"]})
         )
@@ -174,7 +174,7 @@ async def test_memory_search_without_hits_returns_empty_list(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         payload = json.loads(
             await tools["memory_search"].handler({"query": "完全不相关的查询"})
         )

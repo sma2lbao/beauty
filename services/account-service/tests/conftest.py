@@ -1,5 +1,6 @@
 """测试装配:每用例独立 sqlite 库;鉴权开,TestIdP 真签 token(架构 §10)。
 
+账号即隔离边界:token 的 account claim 就是 account_id(= users.id)。
 库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
 """
 
@@ -13,8 +14,11 @@ from account.core.config import Settings
 from account.main import create_app
 
 _IDP = TestIdP()
-TENANT = _IDP.bearer("org-1")
-OTHER = _IDP.bearer("org-2")
+# 以 account_id 直接签 token:不关心账号行的用例无需先注册
+ACCOUNT_ID = "a" * 32
+OTHER_ACCOUNT_ID = "b" * 32
+ACCOUNT = _IDP.bearer(ACCOUNT_ID)
+OTHER_ACCOUNT = _IDP.bearer(OTHER_ACCOUNT_ID)
 
 
 def verifier():
@@ -30,11 +34,12 @@ client = client_fixture(
 )
 
 
-def _create_user(
-    client: TestClient, subject: str = "idp|u1", tenant: dict | None = None
-):
-    return client.post(
-        "/v1/users",
-        json={"subject": subject, "email": f"{subject}@example.com", "role": "owner"},
-        headers=tenant or TENANT,
+def _register_account(
+    client: TestClient, email: str = "alice@example.com", password: str = "hunter2ok"
+) -> dict:
+    """注册一个账号,返回 TokenResponse(account_id = users.id)。"""
+    response = client.post(
+        "/v1/auth/register", json={"email": email, "password": password}
     )
+    assert response.status_code == 201, response.text
+    return response.json()

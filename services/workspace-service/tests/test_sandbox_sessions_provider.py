@@ -158,7 +158,7 @@ def _local_provider(tmp_path: Path) -> LocalSandboxProvider:
 async def _local_sandbox(provider: LocalSandboxProvider) -> None:
     await provider.create(
         SandboxSpec(
-            tenant_id="t-1",
+            account_id="t-1",
             name="bm-local",
             kind="generic",
             image="python",

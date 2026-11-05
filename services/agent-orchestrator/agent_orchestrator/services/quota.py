@@ -1,6 +1,6 @@
-"""配额快照(P0-2 前置闸):建 run 前向 account-service 取租户配额。
+"""配额快照(P0-2 前置闸):建 run 前向 account-service 取账号配额。
 
-契约:``GET /v1/usage/quota``(``X-Internal-Secret`` + ``X-Tenant-Id``)返回
+契约:``GET /v1/usage/quota``(``X-Internal-Secret`` + ``X-Account-Id``)返回
 ``{monthly_tokens, max_concurrent_runs, used_tokens}``,``None`` 表示该维度不限制。
 
 任何失败(未配置密钥/网络/非 200/坏 JSON)都按「未配置」处理并打 warning:
@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 from common.logging import get_logger
 from common.middleware import inject_request_headers
-from common.security import SECRET_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 log = get_logger(__name__)
 
@@ -26,7 +26,7 @@ DEFAULT_TTL_SECONDS = 30.0
 
 @dataclass(frozen=True)
 class QuotaSnapshot:
-    """租户配额 + 本月已用量;None 维度表示不限制。"""
+    """账号配额 + 本月已用量;None 维度表示不限制。"""
 
     monthly_tokens: int | None
     max_concurrent_runs: int | None
@@ -79,9 +79,9 @@ class QuotaClient:
         self._ttl = ttl_seconds
         self._cache: dict[str, tuple[float, QuotaSnapshot]] = {}
 
-    async def fetch(self, tenant_id: str) -> QuotaSnapshot | None:
+    async def fetch(self, account_id: str) -> QuotaSnapshot | None:
         now = time.monotonic()
-        cached = self._cache.get(tenant_id)
+        cached = self._cache.get(account_id)
         if cached is not None and now - cached[0] < self._ttl:
             return cached[1]
         try:
@@ -89,28 +89,28 @@ class QuotaClient:
                 "/v1/usage/quota",
                 headers={
                     SECRET_HEADER: self._secret,
-                    "X-Tenant-Id": tenant_id,
+                    ACCOUNT_HEADER: account_id,
                 },
             )
         except httpx.HTTPError as exc:
-            log.warning("quota_fetch_failed", tenant_id=tenant_id, detail=str(exc))
+            log.warning("quota_fetch_failed", account_id=account_id, detail=str(exc))
             return None
         except Exception as exc:  # noqa: BLE001 - 限流取数任何异常都 fail-open
-            log.warning("quota_fetch_failed", tenant_id=tenant_id, detail=str(exc))
+            log.warning("quota_fetch_failed", account_id=account_id, detail=str(exc))
             return None
         if response.status_code != 200:
             log.warning(
-                "quota_fetch_failed", tenant_id=tenant_id, status=response.status_code
+                "quota_fetch_failed", account_id=account_id, status=response.status_code
             )
             return None
         try:
             snapshot = _parse(response.json())
         except (ValueError, TypeError) as exc:
             log.warning(
-                "quota_fetch_failed", tenant_id=tenant_id, detail=f"bad payload:{exc}"
+                "quota_fetch_failed", account_id=account_id, detail=f"bad payload:{exc}"
             )
             return None
-        self._cache[tenant_id] = (now, snapshot)
+        self._cache[account_id] = (now, snapshot)
         return snapshot
 
     async def aclose(self) -> None:
@@ -156,8 +156,8 @@ async def close_client() -> None:
         await client.aclose()
 
 
-async def fetch(tenant_id: str) -> QuotaSnapshot | None:
+async def fetch(account_id: str) -> QuotaSnapshot | None:
     """未装配客户端时返回 None(=不限制),调用方据此跳过准入判断。"""
     if _client is None:
         return None
-    return await _client.fetch(tenant_id)
+    return await _client.fetch(account_id)

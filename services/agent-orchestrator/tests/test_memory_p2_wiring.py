@@ -39,11 +39,11 @@ from agent_orchestrator.services.post_commit import (
     drain_after_commit,
     register_after_commit,
 )
-from tests.conftest import TENANT, FakeLLM, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, _settings, verifier
 from tests.support.conversations import _create_conversation, _post_message
 
 PREFIX = "/api/v1/memories"
-TENANT_ID = "t-1"
+ACCOUNT_ID = "t-1"
 DELIVERED_EVENT = "run.delivered.v1"
 OCCURRED_AT = "2026-10-25T00:00:00+00:00"
 
@@ -122,7 +122,7 @@ async def _deliver_run_event(
     try:
         async with session_scope(factory) as session:
             run = Run(
-                tenant_id=TENANT_ID,
+                account_id=ACCOUNT_ID,
                 title="周报",
                 goal="整理本周日程",
                 conversation_id=conversation_id,
@@ -130,13 +130,13 @@ async def _deliver_run_event(
             session.add_all(
                 [
                     ChatMessage(
-                        tenant_id=TENANT_ID,
+                        account_id=ACCOUNT_ID,
                         conversation_id=conversation_id,
                         role="user",
                         content="以后周报都用中文写",
                     ),
                     ChatMessage(
-                        tenant_id=TENANT_ID,
+                        account_id=ACCOUNT_ID,
                         conversation_id=conversation_id,
                         role="assistant",
                         content="好的,记住了",
@@ -152,7 +152,7 @@ async def _deliver_run_event(
             type=DELIVERED_EVENT,
             occurred_at=OCCURRED_AT,
             payload={"run_id": run_id},
-            tenant_id=TENANT_ID,
+            account_id=ACCOUNT_ID,
         )
         await consumer(envelope)
         await consumer(envelope)
@@ -174,7 +174,7 @@ def test_memory_consumer_extracts_from_run_conversation(tmp_path: Path) -> None:
     with _client_for(settings, fake) as client:
         conversation_id = _create_conversation(client)
         run_id = asyncio.run(_deliver_run_event(settings, conversation_id, fake))
-        rows = client.get(PREFIX, headers=TENANT).json()
+        rows = client.get(PREFIX, headers=ACCOUNT).json()
     assert run_id
     assert len(rows) == 1
     assert rows[0]["source_type"] == "run"
@@ -202,7 +202,7 @@ def test_memory_consumer_tolerates_bad_event(tmp_path: Path) -> None:
                 type=DELIVERED_EVENT,
                 occurred_at=OCCURRED_AT,
                 payload={},
-                tenant_id=TENANT_ID,
+                account_id=ACCOUNT_ID,
             )
         )
     )
@@ -214,7 +214,7 @@ def test_memory_consumer_tolerates_bad_event(tmp_path: Path) -> None:
                 type="run.created.v1",
                 occurred_at=OCCURRED_AT,
                 payload={"run_id": "whatever"},
-                tenant_id=TENANT_ID,
+                account_id=ACCOUNT_ID,
             )
         )
     )
@@ -272,7 +272,7 @@ def test_chat_reply_triggers_auto_extraction(tmp_path: Path) -> None:
     with _client_for(settings, fake) as client:
         conversation_id = _create_conversation(client)
         _post_message(client, conversation_id, "以后周报用中文写", mode="chat")
-        rows = client.get(PREFIX, headers=TENANT).json()
+        rows = client.get(PREFIX, headers=ACCOUNT).json()
     # 第 1 次调模型出答复,第 2 次是抽取
     assert len(fake.calls) == 2
     assert len(rows) == 1
@@ -294,7 +294,7 @@ def test_chat_skips_extraction_below_threshold(tmp_path: Path) -> None:
     with _client_for(settings, fake) as client:
         conversation_id = _create_conversation(client)
         _post_message(client, conversation_id, "你好", mode="chat")
-        rows = client.get(PREFIX, headers=TENANT).json()
+        rows = client.get(PREFIX, headers=ACCOUNT).json()
     assert len(fake.calls) == 1
     assert rows == []
 
@@ -313,7 +313,7 @@ async def _run_completion_with_callback(
     try:
         async with session_scope(factory) as session:
             run = Run(
-                tenant_id=TENANT_ID,
+                account_id=ACCOUNT_ID,
                 title="周报",
                 goal="整理本周日程",
                 conversation_id="conv-run-1",
@@ -321,13 +321,13 @@ async def _run_completion_with_callback(
             session.add_all(
                 [
                     ChatMessage(
-                        tenant_id=TENANT_ID,
+                        account_id=ACCOUNT_ID,
                         conversation_id="conv-run-1",
                         role="user",
                         content="以后周报都用中文写",
                     ),
                     ChatMessage(
-                        tenant_id=TENANT_ID,
+                        account_id=ACCOUNT_ID,
                         conversation_id="conv-run-1",
                         role="assistant",
                         content="好的,记住了",
@@ -349,7 +349,7 @@ async def _active_memories(settings: Settings) -> list:
     factory = create_session_factory(settings.database_url)
     try:
         async with session_scope(factory) as session:
-            return list(await MemoryRepository(session).list_active(TENANT_ID))
+            return list(await MemoryRepository(session).list_active(ACCOUNT_ID))
     finally:
         await factory.engine.dispose()
 
@@ -419,7 +419,7 @@ def test_run_extraction_defers_to_outbox_when_enabled(tmp_path: Path) -> None:
                 memory_extraction.schedule_run_extraction(
                     session,
                     Run(
-                        tenant_id=TENANT_ID,
+                        account_id=ACCOUNT_ID,
                         title="周报",
                         goal="整理本周日程",
                         conversation_id="conv-run-1",

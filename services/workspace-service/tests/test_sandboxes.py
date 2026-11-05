@@ -1,4 +1,4 @@
-"""沙箱 P1:生命周期、租户隔离、路径校验、过期回收、provider 故障收口。"""
+"""沙箱 P1:生命周期、账号隔离、路径校验、过期回收、provider 故障收口。"""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from tests.conftest import (
+    ACCOUNT,
     OTHER,
-    TENANT,
     FakeSandboxProvider,
     _settings,
     verifier,
@@ -25,7 +25,7 @@ from workspace.services.sandbox import reap_expired
 
 
 def _create(client: TestClient, **payload: Any) -> dict[str, Any]:
-    response = client.post("/v1/sandboxes", json=payload, headers=TENANT)
+    response = client.post("/v1/sandboxes", json=payload, headers=ACCOUNT)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -64,11 +64,11 @@ def test_sandbox_lifecycle(
 
     spec = sandbox_provider.created[0]
     assert spec.name == created["name"]
-    assert spec.tenant_id == "t-1"
+    assert spec.account_id == "t-1"
     assert spec.ttl_seconds == 600
     assert spec.network == "deny"
 
-    fetched = client.get(f"/v1/sandboxes/{created['id']}", headers=TENANT)
+    fetched = client.get(f"/v1/sandboxes/{created['id']}", headers=ACCOUNT)
     assert fetched.status_code == 200
     assert fetched.json()["id"] == created["id"]
 
@@ -79,7 +79,7 @@ def test_sandbox_lifecycle(
             "env": {"A": "B"},
             "timeout_seconds": 5,
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert exec_response.status_code == 200
     assert exec_response.json() == {
@@ -100,27 +100,27 @@ def test_sandbox_lifecycle(
             "path": "/workspace/main.py",
             "content_base64": base64.b64encode(payload).decode("ascii"),
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert write.status_code == 204
     read = client.get(
         f"/v1/sandboxes/{created['id']}/files",
         params={"path": "/workspace/main.py"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert read.status_code == 200
     body = read.json()
     assert base64.b64decode(body["content_base64"]) == payload
     assert body["size_bytes"] == len(payload)
 
-    touched = client.post(f"/v1/sandboxes/{created['id']}/touch", headers=TENANT)
+    touched = client.post(f"/v1/sandboxes/{created['id']}/touch", headers=ACCOUNT)
     assert touched.status_code == 200
     assert _parse_utc(touched.json()["expires_at"]) > _parse_utc(created["expires_at"])
 
-    deleted = client.delete(f"/v1/sandboxes/{created['id']}", headers=TENANT)
+    deleted = client.delete(f"/v1/sandboxes/{created['id']}", headers=ACCOUNT)
     assert deleted.status_code == 204
     assert (
-        client.get(f"/v1/sandboxes/{created['id']}", headers=TENANT).status_code == 404
+        client.get(f"/v1/sandboxes/{created['id']}", headers=ACCOUNT).status_code == 404
     )
     assert sandbox_provider.destroyed == [created["name"]]
 
@@ -163,16 +163,18 @@ def test_create_uses_settings_defaults(
 def test_create_rejects_invalid_payload(
     client: TestClient, payload: dict[str, Any]
 ) -> None:
-    assert client.post("/v1/sandboxes", json=payload, headers=TENANT).status_code == 422
+    assert (
+        client.post("/v1/sandboxes", json=payload, headers=ACCOUNT).status_code == 422
+    )
 
 
 def test_exec_rejects_invalid_payload(client: TestClient) -> None:
     sandbox = _create(client)
     url = f"/v1/sandboxes/{sandbox['id']}/exec"
-    assert client.post(url, json={"argv": []}, headers=TENANT).status_code == 422
+    assert client.post(url, json={"argv": []}, headers=ACCOUNT).status_code == 422
     assert (
         client.post(
-            url, json={"argv": ["true"], "cwd": "../etc"}, headers=TENANT
+            url, json={"argv": ["true"], "cwd": "../etc"}, headers=ACCOUNT
         ).status_code
         == 422
     )
@@ -193,9 +195,9 @@ def test_sandbox_isolation(client: TestClient) -> None:
     assert (
         client.delete(f"/v1/sandboxes/{sandbox_id}", headers=OTHER).status_code == 404
     )
-    assert client.get(f"/v1/sandboxes/{sandbox_id}", headers=TENANT).status_code == 200
+    assert client.get(f"/v1/sandboxes/{sandbox_id}", headers=ACCOUNT).status_code == 200
     assert (
-        client.get("/v1/sandboxes/missing", headers=TENANT).json()["code"]
+        client.get("/v1/sandboxes/missing", headers=ACCOUNT).json()["code"]
         == "sandbox.not_found"
     )
 
@@ -208,12 +210,12 @@ def test_file_path_traversal_rejected(client: TestClient) -> None:
         write = client.put(
             base,
             json={"path": path, "content_base64": ""},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert write.status_code == 400, path
         assert write.json()["code"] == "sandbox.path_invalid"
 
-        read = client.get(base, params={"path": path}, headers=TENANT)
+        read = client.get(base, params={"path": path}, headers=ACCOUNT)
         assert read.status_code == 400, path
         assert read.json()["code"] == "sandbox.path_invalid"
 
@@ -223,7 +225,7 @@ def test_missing_file_is_404(client: TestClient) -> None:
     response = client.get(
         f"/v1/sandboxes/{sandbox['id']}/files",
         params={"path": "/workspace/nope.txt"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 404
     assert response.json()["code"] == "sandbox.file_not_found"
@@ -238,13 +240,13 @@ async def test_expired_sandbox_exec_conflict(
     response = client.post(
         f"/v1/sandboxes/{sandbox['id']}/exec",
         json={"argv": ["true"]},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 409
     assert response.json()["code"] == "sandbox.expired"
     # 过期即回收:provider 收到 destroy,DB 状态持久化为 stopped
     assert sandbox_provider.destroyed == [sandbox["name"]]
-    fetched = client.get(f"/v1/sandboxes/{sandbox['id']}", headers=TENANT).json()
+    fetched = client.get(f"/v1/sandboxes/{sandbox['id']}", headers=ACCOUNT).json()
     assert fetched["status"] == "stopped"
 
 
@@ -259,11 +261,11 @@ async def test_reap_expired_destroys_only_expired(
     assert reaped == 1
     assert sandbox_provider.destroyed == [expired["name"]]
     assert (
-        client.get(f"/v1/sandboxes/{expired['id']}", headers=TENANT).json()["status"]
+        client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()["status"]
         == "stopped"
     )
     assert (
-        client.get(f"/v1/sandboxes/{alive['id']}", headers=TENANT).json()["status"]
+        client.get(f"/v1/sandboxes/{alive['id']}", headers=ACCOUNT).json()["status"]
         == "running"
     )
 
@@ -277,7 +279,7 @@ async def test_reap_failure_keeps_last_error(
 
     reaped = await reap_expired(client.app.state.session_factory, sandbox_provider)
     assert reaped == 0
-    fetched = client.get(f"/v1/sandboxes/{expired['id']}", headers=TENANT).json()
+    fetched = client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()
     assert fetched["status"] == "running"
     assert fetched["last_error"]
 
@@ -286,7 +288,7 @@ async def test_provider_create_failure_is_502(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:
     sandbox_provider.fail_create = True
-    response = client.post("/v1/sandboxes", json={}, headers=TENANT)
+    response = client.post("/v1/sandboxes", json={}, headers=ACCOUNT)
     assert response.status_code == 502
     assert response.json()["code"] == "sandbox.provider_error"
 
@@ -306,7 +308,7 @@ async def test_provider_exec_failure_is_502(
     response = client.post(
         f"/v1/sandboxes/{sandbox['id']}/exec",
         json={"argv": ["true"]},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 502
     assert response.json()["code"] == "sandbox.provider_error"
@@ -317,7 +319,7 @@ def test_unavailable_provider_returns_explicit_error(tmp_path: Path) -> None:
     settings = _settings(tmp_path, "unavailable.db", sandbox_provider="unavailable")
     app = create_app(settings, token_verifier=verifier())
     with TestClient(app) as test_client:
-        response = test_client.post("/v1/sandboxes", json={}, headers=TENANT)
+        response = test_client.post("/v1/sandboxes", json={}, headers=ACCOUNT)
         assert response.status_code == 502
         assert response.json()["code"] == "sandbox.provider_unavailable"
 

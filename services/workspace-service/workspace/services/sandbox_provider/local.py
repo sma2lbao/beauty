@@ -1,6 +1,6 @@
 """宿主本地实现:每个沙箱就是一个目录 + 直接起子进程,**无隔离**。
 
-只适用于单租户可信环境(本地开发、桌面"本地电脑模式");多租户/生产禁止
+只适用于单账号可信环境(本地开发、桌面"本地电脑模式");多账号/生产禁止
 切到 local。默认 provider 仍是 microsandbox。
 """
 
@@ -87,8 +87,8 @@ class LocalSandboxProvider:
     """宿主本地实现:每个沙箱就是一个目录 + 直接起子进程。
 
     **没有隔离**:命令以 workspace-service 进程身份运行、能读写宿主文件。
-    只适用于单租户可信环境(本地开发、桌面"本地电脑模式");默认 provider
-    仍是 microsandbox,多租户/生产禁止切到 local。
+    只适用于单账号可信环境(本地开发、桌面"本地电脑模式");默认 provider
+    仍是 microsandbox,多账号/生产禁止切到 local。
 
     - 沙箱目录 = `<root>/<name>`,`/workspace` 映射到其中的 `workspace/`
       子目录,`HOME`/`TMPDIR` 分别指向 `home`/`tmp`;

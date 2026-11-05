@@ -26,7 +26,7 @@ from agent_orchestrator.services.artifacts import (
     read_artifact_bytes,
     read_artifact_text,
 )
-from tests.conftest import TENANT, FakeLLM, _create_run, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, _create_run, _settings, verifier
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
 DELIVERY = "# 本周周报\n\n日程已整理。\n"
@@ -50,8 +50,8 @@ def _filesystem_app(tmp_path: Path, fake: FakeLLM, root: Path):
 
 def _complete_run(client: TestClient) -> str:
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"
     return run_id
 
@@ -128,12 +128,12 @@ def test_filesystem_store_writes_object_and_serves_content(tmp_path: Path) -> No
     with TestClient(app) as client:
         run_id = _complete_run(client)
 
-        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert artifact["content"] == DELIVERY
         assert artifact["storage"] == "filesystem"
         assert artifact["size_bytes"] == len(DELIVERY.encode("utf-8"))
 
-        # 对象真的落盘,且键按 租户/run/交付物 分层
+        # 对象真的落盘,且键按 账号/run/交付物 分层
         files = [path for path in root.rglob("*") if path.is_file()]
         assert len(files) == 1
         assert files[0].read_text() == DELIVERY
@@ -141,7 +141,7 @@ def test_filesystem_store_writes_object_and_serves_content(tmp_path: Path) -> No
         assert files[0].relative_to(root).parts[1] == run_id
 
         # 事件流记录存储后端
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         delivered = next(e for e in events if e["type"] == "run.delivered.v1")
         assert delivered["payload"]["storage"] == "filesystem"
 
@@ -170,7 +170,7 @@ async def test_database_store_is_default_and_keeps_content(tmp_path: Path) -> No
     )
     with TestClient(app) as client:
         run_id = _complete_run(client)
-        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert artifact["storage"] == "database"
         assert artifact["content"] == DELIVERY
 
@@ -191,7 +191,7 @@ def test_missing_object_maps_to_500(tmp_path: Path) -> None:
             if path.is_file():
                 path.unlink()
 
-        response = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT)
+        response = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT)
         assert response.status_code == 500
         assert response.json()["code"] == "artifact.object_missing"
 
@@ -245,14 +245,14 @@ def test_database_store_keeps_binary_bytes_and_masks_content(
 
         # 下载端点直接吐原始字节(二进制件的唯一入口)
         download = client.get(
-            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=ACCOUNT
         )
         assert download.status_code == 200
         assert download.content == PNG
         assert download.headers["content-type"] == "image/png"
 
         # 二进制件不进旧文本取件的正文
-        main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert main["content"] == ""
         assert main["content_type"] == "image/png"
 
@@ -280,7 +280,7 @@ def test_database_store_text_file_artifact_uses_content(tmp_path: Path) -> None:
         assert asyncio.run(read_artifact_text(row, None)) == notes
 
         downloaded = client.get(
-            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=ACCOUNT
         )
         assert downloaded.content == notes.encode()
         assert downloaded.headers["content-type"].startswith("text/markdown")
@@ -291,7 +291,7 @@ def test_database_store_text_file_artifact_uses_content(tmp_path: Path) -> None:
 
 
 def test_filesystem_store_writes_file_artifact_object(tmp_path: Path) -> None:
-    """filesystem 后端:文件件落盘(按租户/run/交付物分层),DB 只留引用。"""
+    """filesystem 后端:文件件落盘(按账号/run/交付物分层),DB 只留引用。"""
     root = tmp_path / "artifacts"
     app, settings = _filesystem_app(tmp_path, _fake_llm(), root)
     store = build_store(settings)
@@ -325,7 +325,7 @@ def test_filesystem_store_writes_file_artifact_object(tmp_path: Path) -> None:
         # 通过配置的 store 读回字节;API 下载走 app.state 的同一后端
         assert asyncio.run(read_artifact_bytes(row, store)) == PNG
         download = client.get(
-            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts/{artifact_id}/download", headers=ACCOUNT
         )
         assert download.status_code == 200
         assert download.content == PNG
@@ -372,7 +372,7 @@ def test_list_for_run_orders_by_created_at_then_id(tmp_path: Path) -> None:
         assert [row.id for row in asyncio.run(_list_for_run(settings, run_id))] == (
             expected
         )
-        listed = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+        listed = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
         assert [item["id"] for item in listed.json()] == expected
 
 
@@ -455,7 +455,7 @@ async def _insert_bare_binary(settings, run_id: str) -> str:
     try:
         async with session_scope(factory) as session:
             row = RunArtifact(
-                tenant_id="t-1",
+                account_id="t-1",
                 run_id=run_id,
                 kind="image",
                 title="截图",

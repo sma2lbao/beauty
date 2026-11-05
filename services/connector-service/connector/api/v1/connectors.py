@@ -5,9 +5,9 @@
 - POST /v1/connectors/{provider}/authorize 发起用户授权(返回授权页 URL)
 - GET  /v1/oauth/{provider}/callback        provider 回调,302 回前端
 
-内部面(tool-service 调,X-Internal-Secret + X-Tenant-Id):
-- GET  /v1/internal/connectors/tools       该租户可用工具 descriptor
-- POST /v1/connectors/{provider}/execute   按租户解析连接并执行工具
+内部面(tool-service 调,X-Internal-Secret + X-Account-Id):
+- GET  /v1/internal/connectors/tools       该账号可用工具 descriptor
+- POST /v1/connectors/{provider}/execute   按账号解析连接并执行工具
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from connector.api.deps import (
-    get_internal_tenant_id,
+    get_account_id,
+    get_internal_account_id,
     get_owner_subject,
     get_session,
-    get_tenant_id,
 )
 from connector.core.config import Settings
 from connector.core.http import get_http_transport
@@ -38,13 +38,13 @@ from connector.services import oauth as oauth_service
 router = APIRouter(tags=["connectors"])
 
 DBSession = Depends(get_session)
-TenantId = Depends(get_tenant_id)
+AccountId = Depends(get_account_id)
 OwnerSubject = Depends(get_owner_subject)
 InternalAuth = auth_dependencies(
     error_code="connector.internal_forbidden",
     error_message="内部调用未开放",
 )
-InternalTenant = Depends(get_internal_tenant_id)
+InternalAccount = Depends(get_internal_account_id)
 
 
 def _settings(request: Request) -> Settings:
@@ -59,9 +59,9 @@ def _transport(request: Request) -> httpx.AsyncBaseTransport | None:
 async def list_connectors(
     request: Request,
     session: AsyncSession = DBSession,
-    tenant_id: str = TenantId,
+    account_id: str = AccountId,
 ) -> ConnectorsRead:
-    return await catalog_service.list_providers(session, _settings(request), tenant_id)
+    return await catalog_service.list_providers(session, _settings(request), account_id)
 
 
 @router.post("/connectors/{provider}/authorize", response_model=AuthorizeResponse)
@@ -69,13 +69,13 @@ async def authorize(
     provider: str,
     request: Request,
     session: AsyncSession = DBSession,
-    tenant_id: str = TenantId,
+    account_id: str = AccountId,
     owner_subject: str | None = OwnerSubject,
 ) -> AuthorizeResponse:
     start = await oauth_service.start_authorize(
         session,
         _settings(request),
-        tenant_id=tenant_id,
+        account_id=account_id,
         provider_name=provider,
         owner_subject=owner_subject,
     )
@@ -116,12 +116,12 @@ async def execute(
     request: Request,
     _internal: InternalAuth,
     session: AsyncSession = DBSession,
-    tenant_id: str = InternalTenant,
+    account_id: str = InternalAccount,
 ) -> dict[str, object]:
     return await execute_service.execute_tool(
         session,
         _settings(request),
-        tenant_id=tenant_id,
+        account_id=account_id,
         provider_name=provider,
         tool_name=payload.tool,
         arguments=payload.arguments,
@@ -135,8 +135,8 @@ async def internal_tools(
     request: Request,
     _internal: InternalAuth,
     session: AsyncSession = DBSession,
-    tenant_id: str = InternalTenant,
+    account_id: str = InternalAccount,
 ) -> dict[str, object]:
     return await catalog_service.tool_descriptor_payloads(
-        session, _settings(request), tenant_id
+        session, _settings(request), account_id
     )

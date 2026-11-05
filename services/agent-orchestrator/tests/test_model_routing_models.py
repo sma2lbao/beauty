@@ -27,7 +27,7 @@ from agent_orchestrator.services.llm import (
     notify_fallbacks,
 )
 from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
-from tests.conftest import _IDP, TENANT, FakeLLM, _client, _settings
+from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _settings
 
 #: 1x1 PNG(内容本身不重要,只验证 base64 往返与 parts 形状)
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
@@ -70,7 +70,7 @@ def _gateway(handler) -> GatewayClient:
 
 def _create_run(client: TestClient, **extra: Any) -> dict[str, Any]:
     body = {"title": "周报", "goal": "整理本周日程", **extra}
-    resp = client.post("/api/v1/runs", json=body, headers=TENANT)
+    resp = client.post("/api/v1/runs", json=body, headers=ACCOUNT)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -123,7 +123,7 @@ def test_models_endpoint_projects_gateway(tmp_path: Path) -> None:
         token_verifier=_IDP.verifier(),
     )
     with TestClient(app) as client:
-        resp = client.get("/api/v1/models", headers=TENANT)
+        resp = client.get("/api/v1/models", headers=ACCOUNT)
 
     assert resp.status_code == 200
     assert resp.json() == {
@@ -147,7 +147,7 @@ def test_models_endpoint_falls_back_to_settings(tmp_path: Path) -> None:
         token_verifier=_IDP.verifier(),
     )
     with TestClient(app) as client:
-        resp = client.get("/api/v1/models", headers=TENANT)
+        resp = client.get("/api/v1/models", headers=ACCOUNT)
 
     assert resp.status_code == 200
     assert resp.json() == {
@@ -192,19 +192,19 @@ def test_model_not_allowed_is_400(client: TestClient, tmp_path: Path) -> None:
         run = guarded.post(
             "/api/v1/runs",
             json={"title": "t", "goal": "g", "model": "other"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert run.status_code == 400
         assert run.json()["code"] == "llm.model_not_allowed"
 
         conversation = guarded.post(
-            "/api/v1/conversations", json={"model": "other"}, headers=TENANT
+            "/api/v1/conversations", json={"model": "other"}, headers=ACCOUNT
         )
         assert conversation.status_code == 400
         assert conversation.json()["code"] == "llm.model_not_allowed"
 
         allowed = guarded.post(
-            "/api/v1/conversations", json={"model": "allowed"}, headers=TENANT
+            "/api/v1/conversations", json={"model": "allowed"}, headers=ACCOUNT
         )
         assert allowed.status_code == 201
         assert allowed.json()["model"] == "allowed"
@@ -212,14 +212,14 @@ def test_model_not_allowed_is_400(client: TestClient, tmp_path: Path) -> None:
         updated = guarded.patch(
             f"/api/v1/conversations/{allowed.json()['id']}",
             json={"model": "other"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert updated.status_code == 400
 
         message = guarded.post(
             f"/api/v1/conversations/{allowed.json()['id']}/messages",
             json={"content": "你好", "mode": "chat", "model": "other"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert message.status_code == 400
         assert message.json()["code"] == "llm.model_not_allowed"
@@ -232,12 +232,12 @@ def test_triage_uses_json_schema_response_format(tmp_path: Path) -> None:
     fake = FakeLLM(['{"mode": "chat"}', "你好!有什么可以帮你的?"])
     with _client(tmp_path, fake) as client:
         conversation_id = client.post(
-            "/api/v1/conversations", json={}, headers=TENANT
+            "/api/v1/conversations", json={}, headers=ACCOUNT
         ).json()["id"]
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "你好"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
     assert resp.status_code == 201
@@ -285,7 +285,7 @@ def _upload_image(client: TestClient, conversation_id: str, name: str) -> str:
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/attachments",
         files={"file": (name, PNG, "image/png")},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
@@ -295,7 +295,7 @@ def test_chat_prompt_carries_image_parts(tmp_path: Path) -> None:
     fake = FakeLLM(["看到了"])
     with _client(tmp_path, fake) as client:
         conversation_id = client.post(
-            "/api/v1/conversations", json={}, headers=TENANT
+            "/api/v1/conversations", json={}, headers=ACCOUNT
         ).json()["id"]
         image_id = _upload_image(client, conversation_id, "pic.png")
         resp = client.post(
@@ -305,7 +305,7 @@ def test_chat_prompt_carries_image_parts(tmp_path: Path) -> None:
                 "mode": "chat",
                 "attachment_ids": [image_id],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
     assert resp.status_code == 201
@@ -328,7 +328,7 @@ def test_image_budget_limits_parts(tmp_path: Path) -> None:
     )
     with TestClient(app) as client:
         conversation_id = client.post(
-            "/api/v1/conversations", json={}, headers=TENANT
+            "/api/v1/conversations", json={}, headers=ACCOUNT
         ).json()["id"]
         first = _upload_image(client, conversation_id, "a.png")
         second = _upload_image(client, conversation_id, "b.png")
@@ -339,7 +339,7 @@ def test_image_budget_limits_parts(tmp_path: Path) -> None:
                 "mode": "chat",
                 "attachment_ids": [first, second],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
     assert resp.status_code == 201

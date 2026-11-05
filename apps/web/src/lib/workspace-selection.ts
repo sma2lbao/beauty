@@ -2,7 +2,7 @@
  * 工作区选择:URL 的 ?workspace=<id> 是唯一真源。
  *
  * 控制台的侧栏、会话页、工作区页共用这一份状态:
- * - 缺省(URL 没有 workspace)时回落到租户默认工作区,并把 id 写回 URL(replace,不产生历史);
+ * - 缺省(URL 没有 workspace)时回落到账号默认工作区,并把 id 写回 URL(replace,不产生历史);
  * - 切换工作区只是改 URL,页面通过 useSearchParams 自然重渲染,刷新/分享都还原同一视图;
  * - 切换工作区默认丢弃当前会话参数(conversation/new),避免把 A 工作区的会话挂到 B 工作区;
  *   按会话归属对齐 URL 的场景(旧链接/详情返回)用 keepConversation。
@@ -62,7 +62,7 @@ export type WorkspaceSelection = {
 
 /**
  * 当前工作区选择。activeWorkspaceId 的来源优先级:
- * URL ?workspace > 租户默认工作区 > 清单第一个。
+ * URL ?workspace > 账号默认工作区 > 清单第一个。
  */
 export function useWorkspaceSelection(): WorkspaceSelection {
   const listQuery = useWorkspaceList();

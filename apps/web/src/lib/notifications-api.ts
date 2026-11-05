@@ -32,7 +32,7 @@ function parseData(frame: string): RunStatusNotification | null {
   return null;
 }
 
-/** 订阅租户级通知;连接失败抛 ApiError,由调用方决定降级。 */
+/** 订阅账号级通知;连接失败抛 ApiError,由调用方决定降级。 */
 export async function streamNotifications(handlers: {
   onOpen?: () => void;
   onNotification: (notification: RunStatusNotification) => void;

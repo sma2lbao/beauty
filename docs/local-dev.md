@@ -102,7 +102,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 - 连接器页「我的 MCP 服务」区（`/connectors#mcp-servers`，左列标题「我的 MCP」+ 添加按钮）：注册 MCP server、测试/刷新工具、启用/停用、删除；`/mcp` 只是兼容直链页（旧书签与 OAuth `state` 验签失败兜底回跳），内容相同。交互是左侧列表 + 右侧定义详情（传输方式、地址/命令、参数、环境变量键名、超时、工具清单）。
 - 传输二选一：`http` 是远程 Streamable HTTP（Server URL + 可选 Token）；`stdio` 由 orchestrator 沙箱拉起本地进程（命令/参数/环境变量/运行时/镜像都在页面里定义，命令须命中 allowlist）。沙箱不可用时测试会如实报错。
-- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图。风险按**工具粒度**分级：`annotations.destructiveHint=true` → DANGER、`annotations.readOnlyHint=true` 或命中内置预设(Notion)的只读前缀 → READ、租户开「免确认执行」→ WRITE、其余 → DANGER(见 [design/connector.md](./design/connector.md) §7)。
+- 工具命名空间：`mcp__<server>__<tool>`；统一注入执行图。风险按**工具粒度**分级：`annotations.destructiveHint=true` → DANGER、`annotations.readOnlyHint=true` 或命中内置预设(Notion)的只读前缀 → READ、账号开启「免确认执行」→ WRITE、其余 → DANGER(见 [design/connector.md](./design/connector.md) §7)。
 - 「免确认执行」（`auto_approve`，默认关）是每个 server 的信任开关：开了它，
   未被 `annotations` 判为只读、也未命中预设只读前缀的工具按 `WRITE` 处理（对话里出确认卡后执行，
   任务里也不再逐次确认）；关着时这类工具是 `DANGER`，对话里只会回喂「请改用任务」。
@@ -144,7 +144,7 @@ curl -s http://127.0.0.1:8002/mcp \
 - 授权服务器元数据:`http://127.0.0.1:8001/.well-known/oauth-authorization-server`
 - MCP 受保护资源元数据:`http://127.0.0.1:8002/.well-known/oauth-protected-resource`
 - 流程:动态注册 `POST /v1/oauth/register` → 浏览器打开 `http://localhost:5173/oauth/authorize?...` 登录并确认 → 以 `code + PKCE S256` 换 `POST /v1/oauth/token` → 用 access token 调 `/mcp`。
-- access/refresh token 都是不透明串,DB 只存 SHA-256;MCP Server 通过内部 `/v1/oauth/introspect` 换取租户/scopes。
+- access/refresh token 都是不透明串,DB 只存 SHA-256;MCP Server 通过内部 `/v1/oauth/introspect` 换取账号/scopes。
 - refresh token 旋转:旧 refresh 使用一次即失效。
 - 撤销:标准 `POST /v1/oauth/revoke`;设置页「已授权应用」可查看/按客户端整体撤销。
 - 动态注册限流:`ACCOUNT__OAUTH21_REGISTER_LIMIT_PER_HOUR`(进程内滑动窗口,默认 10/小时/IP)。
@@ -167,7 +167,7 @@ curl -s http://127.0.0.1:8002/mcp \
   `TOOL__WORKSPACE_SERVICE_URL` 指向 workspace-service；关掉即回到进程内工具（只剩文档/知识库与 MCP/skill，见下方「旧进程内路径」）。
 - **工具面（P2 收口后）**：`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`search_knowledge`/`ask_question`；P3 起可选 `fetch`（只读抓公网文本，`TOOL__FETCH_ENABLED=true` 时出现在目录里，chat 与任务模式都可用）；对话只挂只读工具
   （`read`/`glob`/`grep`/`list_dir`/`search_knowledge`，开着 fetch 时再含 `fetch`），写工具与 `ask_question` 只在任务模式装配。
-- **受控写（P1）**：`write`/`edit` 风险等级为 `write`；租户策略为 confirm 时先落 `pending_writes` 等人工确认，确认后
+- **受控写（P1）**：`write`/`edit` 风险等级为 `write`；账号策略为 confirm 时先落 `pending_writes` 等人工确认，确认后
   `POST /runs/{id}/confirm` 再带 `approved=true` 执行；tool-service 侧未带 approved 的写请求一律 403 `tool.confirmation_required`。
 - **读前置与限额**：同 run 内必须先 `read` 过目标路径（tool-service 的 `file_reads` 表），否则 `tool.read_required`；
   读后文件变化 → `tool.stale_read`；单 run 上限见 tool-service README（`TOOL__MAX_WRITES_PER_RUN` /
@@ -210,7 +210,7 @@ orchestrator 默认开启本地 worker(`AGENT_ORCHESTRATOR__JOBS_ENABLED=true`):
 
 - `/usage`：今日/本月 tokens、请求次数、按模型分布；没有数据时显示空态。
 - 顶栏模型 chip 读取 llm-gateway 的 `/v1/models`（当前默认 `deepseek/deepseek-chat`）。
-- 设置页 BYOK：**已参与模型调用**——保存后 llm-gateway 按租户向 account 解析密钥，命中即用租户 key、否则回退平台 `LLM_GATEWAY__API_KEY`；列表只回掩码与末 4 位。契约见 [design/byok.md](./design/byok.md)。
+- 设置页 BYOK：**已参与模型调用**——保存后 llm-gateway 按账号向 account 解析密钥，命中即用账号 key、否则回退平台 `LLM_GATEWAY__API_KEY`；列表只回掩码与末 4 位。契约见 [design/byok.md](./design/byok.md)。
 - 本地没有模型 key 时用量页为空是正常现象；可用 account-service 的内部上报接口造数：
 
 ```sh
@@ -229,7 +229,7 @@ BYOK 本地联调要点（契约见 [design/byok.md](./design/byok.md)）：
 1. 三个服务配**同一个**内部密钥再重启：`ACCOUNT__INTERNAL_SECRET`、`LLM_GATEWAY__INTERNAL_SECRET`、`KNOWLEDGE__INTERNAL_SECRET`。任一处留空都等于 BYOK 静默停用（account 内部端点关闭 / 网关不解析）。
 2. 设置页保存一把 key（等价 `PUT /v1/byok/deepseek`），列表只显示 `••••` + 末 4 位。
 3. 发一条对话，llm-gateway 日志出现 `byok_resolved` 且 `key_hint` 与录入一致即生效；只有 `llm_byok_lookups_total{status="negative"}` 抬头，说明该 provider 没配上（provider 名要与 `model` 前缀一致）。
-4. 回退验证：`LLM_GATEWAY__BYOK_ENABLED=false` 重启网关，所有租户立即回平台 key，account 数据不动。
+4. 回退验证：`LLM_GATEWAY__BYOK_ENABLED=false` 重启网关，所有账号立即回平台 key，account 数据不动。
 
 ```sh
 # 写入(access token 来自登录;provider 取模型前缀)
@@ -241,7 +241,7 @@ curl -X PUT http://127.0.0.1:8001/v1/byok/deepseek \
 # 验证明文解析(仅服务间;两个头都要,internal-secret 与 account/gateway 同值)
 curl http://127.0.0.1:8001/v1/byok/deepseek/secret \
  -H "X-Internal-Secret: <internal-secret>" \
- -H "X-Tenant-Id: <tenant-id>"
+ -H "X-Account-Id: <account-id>"
 ```
 
 ## 5. 演示数据

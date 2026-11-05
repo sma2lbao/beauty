@@ -15,7 +15,7 @@ from database.session import session_scope
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from tests.conftest import OTHER, TENANT, FakeSandboxProvider
+from tests.conftest import ACCOUNT, OTHER, FakeSandboxProvider
 from workspace.core.config import Settings
 from workspace.models.sandbox import SandboxInstance
 from workspace.schemas.sandbox import SandboxCreate
@@ -34,7 +34,7 @@ def _post_ensure(
     response = client.post(
         ENSURE_URL,
         json={"scope_key": scope_key, **payload},
-        headers=TENANT if headers is None else headers,
+        headers=ACCOUNT if headers is None else headers,
     )
     assert response.status_code in (200, 201), response.text
     return response.json(), response.status_code
@@ -60,7 +60,7 @@ async def _ensure_in_session(
     client: TestClient,
     provider: FakeSandboxProvider,
     *,
-    tenant_id: str,
+    account_id: str,
     scope_key: str,
 ) -> tuple[SandboxInstance, bool]:
     """绕过 HTTP 直接走服务层,便于在事件循环里并发调用。"""
@@ -69,7 +69,7 @@ async def _ensure_in_session(
     async with session_scope(factory) as session:
         return await sandbox_service.ensure_sandbox(
             session,
-            tenant_id,
+            account_id,
             scope_key=scope_key,
             spec=SandboxCreate(),
             provider=provider,
@@ -118,11 +118,11 @@ def test_ensure_detail_and_list_expose_scope_key(
     created, _ = _post_ensure(client, "run:r-1")
     sandbox_id = created["sandbox"]["id"]
 
-    detail = client.get(f"/v1/sandboxes/{sandbox_id}", headers=TENANT)
+    detail = client.get(f"/v1/sandboxes/{sandbox_id}", headers=ACCOUNT)
     assert detail.status_code == 200
     assert detail.json()["scope_key"] == "run:r-1"
 
-    listed = client.get("/v1/sandboxes", headers=TENANT)
+    listed = client.get("/v1/sandboxes", headers=ACCOUNT)
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == [sandbox_id]
     assert listed.json()[0]["scope_key"] == "run:r-1"
@@ -134,21 +134,21 @@ def test_list_filters_by_scope_key(
     """执行现场按会话定位:GET /v1/sandboxes?scope_key=... 精确命中。"""
     first, _ = _post_ensure(client, "conv:c-1")
     second, _ = _post_ensure(client, "run:r-1")
-    plain = client.post("/v1/sandboxes", json={}, headers=TENANT).json()
+    plain = client.post("/v1/sandboxes", json={}, headers=ACCOUNT).json()
 
-    hit = client.get("/v1/sandboxes", params={"scope_key": "conv:c-1"}, headers=TENANT)
+    hit = client.get("/v1/sandboxes", params={"scope_key": "conv:c-1"}, headers=ACCOUNT)
     assert hit.status_code == 200
     assert [item["id"] for item in hit.json()] == [first["sandbox"]["id"]]
 
     miss = client.get(
-        "/v1/sandboxes", params={"scope_key": "conv:none"}, headers=TENANT
+        "/v1/sandboxes", params={"scope_key": "conv:none"}, headers=ACCOUNT
     )
     assert miss.status_code == 200
     assert miss.json() == []
 
-    # 过滤只收窄、不改既有排序与租户范围
+    # 过滤只收窄、不改既有排序与账号范围
     all_ids = {
-        item["id"] for item in client.get("/v1/sandboxes", headers=TENANT).json()
+        item["id"] for item in client.get("/v1/sandboxes", headers=ACCOUNT).json()
     }
     assert all_ids == {
         first["sandbox"]["id"],
@@ -166,28 +166,28 @@ def test_list_filters_by_scope_key(
 def test_plain_create_keeps_scope_key_empty(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:
-    created = client.post("/v1/sandboxes", json={}, headers=TENANT)
+    created = client.post("/v1/sandboxes", json={}, headers=ACCOUNT)
     assert created.status_code == 201
     assert created.json()["scope_key"] is None
-    listed = client.get("/v1/sandboxes", headers=TENANT).json()
+    listed = client.get("/v1/sandboxes", headers=ACCOUNT).json()
     assert [item["scope_key"] for item in listed] == [None]
 
 
-def test_ensure_tenant_isolation(
+def test_ensure_account_isolation(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:
-    """同一 scope_key 在不同租户下互不影响,也互不可见。"""
-    tenant_record, tenant_status = _post_ensure(client, "conv:same", headers=TENANT)
+    """同一 scope_key 在不同账号下互不影响,也互不可见。"""
+    account_record, account_status = _post_ensure(client, "conv:same", headers=ACCOUNT)
     other_record, other_status = _post_ensure(client, "conv:same", headers=OTHER)
-    assert tenant_status == 201
+    assert account_status == 201
     assert other_status == 201
-    assert tenant_record["sandbox"]["id"] != other_record["sandbox"]["id"]
-    assert tenant_record["sandbox"]["scope_key"] == "conv:same"
+    assert account_record["sandbox"]["id"] != other_record["sandbox"]["id"]
+    assert account_record["sandbox"]["scope_key"] == "conv:same"
     assert other_record["sandbox"]["scope_key"] == "conv:same"
     assert len(sandbox_provider.created) == 2
 
     other_id = other_record["sandbox"]["id"]
-    assert client.get(f"/v1/sandboxes/{other_id}", headers=TENANT).status_code == 404
+    assert client.get(f"/v1/sandboxes/{other_id}", headers=ACCOUNT).status_code == 404
 
 
 async def test_ensure_rebuilds_expired_sandbox(
@@ -217,7 +217,7 @@ async def test_ensure_retries_after_provider_failure(
 ) -> None:
     """provider 失败留下 failed 行(占用 scope_key),下次 ensure 原地重建。"""
     sandbox_provider.fail_create = True
-    failed = client.post(ENSURE_URL, json={"scope_key": "conv:c-3"}, headers=TENANT)
+    failed = client.post(ENSURE_URL, json={"scope_key": "conv:c-3"}, headers=ACCOUNT)
     assert failed.status_code == 502
     assert failed.json()["code"] == "sandbox.provider_error"
     assert await _count_scope_rows(client, "conv:c-3") == 1
@@ -237,7 +237,7 @@ async def test_ensure_concurrent_single_row(
     results = await asyncio.gather(
         *(
             _ensure_in_session(
-                client, sandbox_provider, tenant_id="t-1", scope_key="conv:race"
+                client, sandbox_provider, account_id="t-1", scope_key="conv:race"
             )
             for _ in range(2)
         )
@@ -262,5 +262,5 @@ async def test_ensure_concurrent_single_row(
 def test_ensure_rejects_invalid_scope_key(
     client: TestClient, payload: dict[str, Any]
 ) -> None:
-    response = client.post(ENSURE_URL, json=payload, headers=TENANT)
+    response = client.post(ENSURE_URL, json=payload, headers=ACCOUNT)
     assert response.status_code == 422

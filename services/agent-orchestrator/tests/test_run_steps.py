@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeLLM, _client
+from tests.conftest import ACCOUNT, OTHER, FakeLLM, _client
 
 
 def _create(client: TestClient) -> str:
@@ -18,13 +18,13 @@ def _create(client: TestClient) -> str:
         "goal": "整理本周日程",
         "acceptance_criteria": ["日程已整理"],
     }
-    resp = client.post("/api/v1/runs", json=body, headers=TENANT)
+    resp = client.post("/api/v1/runs", json=body, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
 
 def _steps(
-    client: TestClient, run_id: str, headers: dict[str, str] = TENANT
+    client: TestClient, run_id: str, headers: dict[str, str] = ACCOUNT
 ) -> list[dict]:
     resp = client.get(f"/api/v1/runs/{run_id}/steps", headers=headers)
     assert resp.status_code == 200
@@ -32,7 +32,7 @@ def _steps(
 
 
 def _event_types(client: TestClient, run_id: str) -> list[str]:
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return [event["type"] for event in resp.json()]
 
@@ -56,13 +56,13 @@ def test_steps_projection_full_lifecycle(client: TestClient) -> None:
     # 尚未执行:空列表(不是 404)
     assert _steps(client, run_id) == []
 
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     planned = _steps(client, run_id)
     assert [step["node"] for step in planned] == ["plan"]
     _assert_shape(planned[0])
     assert planned[0]["status"] == "completed"
 
-    client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     steps = _steps(client, run_id)
     assert [step["node"] for step in steps] == ["plan", "execute", "verify", "deliver"]
     assert [step["phase"] for step in steps] == [
@@ -86,13 +86,13 @@ def test_steps_projection_full_lifecycle(client: TestClient) -> None:
 
 def test_steps_survive_reject_and_retry_with_new_attempt(client: TestClient) -> None:
     run_id = _create(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     client.post(
-        f"/api/v1/runs/{run_id}/reject", json={"reason": "再改改"}, headers=TENANT
+        f"/api/v1/runs/{run_id}/reject", json={"reason": "再改改"}, headers=ACCOUNT
     )
-    resp = client.post(f"/api/v1/runs/{run_id}/resume", headers=TENANT)
+    resp = client.post(f"/api/v1/runs/{run_id}/resume", headers=ACCOUNT)
     assert resp.status_code == 200
-    resp = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    resp = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert resp.json()["status"] == "completed"
 
     steps = _steps(client, run_id)
@@ -118,7 +118,7 @@ def test_failed_node_is_recorded_before_run_failed(tmp_path) -> None:
     """异常路径:失败 span 也落库,且排在 run.failed.v1 之前(排障要看得到失败步)。"""
     with _client(tmp_path, FakeLLM(["# 计划"], fail_on_call=1)) as client:
         run_id = _create(client)
-        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.json()["status"] == "failed"
 
         steps = _steps(client, run_id)
@@ -126,7 +126,7 @@ def test_failed_node_is_recorded_before_run_failed(tmp_path) -> None:
         assert steps[0]["status"] == "failed"
         assert steps[0]["finished_at"] is not None
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         types = [event["type"] for event in events]
         assert "run.failed.v1" in types
         assert "run.step.v1" not in types
@@ -134,13 +134,13 @@ def test_failed_node_is_recorded_before_run_failed(tmp_path) -> None:
         assert steps[0]["seq"] < failed_seq  # 步骤先于终态落库
 
 
-def test_steps_are_tenant_isolated(client: TestClient) -> None:
+def test_steps_are_account_isolated(client: TestClient) -> None:
     run_id = _create(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
 
     resp = client.get(f"/api/v1/runs/{run_id}/steps", headers=OTHER)
     assert resp.status_code == 404
     assert resp.json()["code"] == "run.not_found"
     assert (
-        client.get("/api/v1/runs/nonexistent/steps", headers=TENANT).status_code == 404
+        client.get("/api/v1/runs/nonexistent/steps", headers=ACCOUNT).status_code == 404
     )

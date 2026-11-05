@@ -32,10 +32,10 @@ from tests.demo_provider import DemoProvider
 _REGISTRY[DemoProvider.name] = DemoProvider
 
 _IDP = TestIdP()
-TENANT = _IDP.bearer("t-1")
+ACCOUNT = _IDP.bearer("t-1")
 OTHER = _IDP.bearer("t-2")
 INTERNAL_SECRET = "internal-test-secret"
-INTERNAL_HEADERS = {"X-Internal-Secret": INTERNAL_SECRET, "X-Tenant-Id": "t-1"}
+INTERNAL_HEADERS = {"X-Internal-Secret": INTERNAL_SECRET, "X-Account-Id": "t-1"}
 
 # 与 Settings.credential_secret 默认值保持一致,便于测试解密直落库的凭证
 CREDENTIAL_SECRET = "dev-connector-secret-change-me"
@@ -246,7 +246,7 @@ def _sqlite_dt(value: datetime | None) -> str | None:
 def insert_connection(
     db_path: Path,
     *,
-    tenant_id: str = "t-1",
+    account_id: str = "t-1",
     provider: str = "demo",
     account: str = "u-1",
     status: str = "active",
@@ -265,14 +265,14 @@ def insert_connection(
     with sqlite3.connect(db_path) as raw:
         raw.execute(
             "INSERT INTO connections "
-            "(id, tenant_id, provider, account, display_name, status, credentials, "
+            "(id, account_id, provider, account, display_name, status, credentials, "
             " enabled, owner_subject, auth_kind, expires_at, scopes, metadata, "
             " last_refreshed_at, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (
                 connection_id,
-                tenant_id,
+                account_id,
                 provider,
                 account,
                 "张三",
@@ -289,51 +289,51 @@ def insert_connection(
         )
     return {
         "id": connection_id,
-        "tenant_id": tenant_id,
+        "account_id": account_id,
         "provider": provider,
         "account": account,
         "status": status,
     }
 
 
-def insert_tenant_app(
+def insert_account_app(
     db_path: Path,
     *,
-    tenant_id: str = "t-1",
+    account_id: str = "t-1",
     provider: str = "demo",
-    app_id: str = "demo-tenant",
-    app_secret: str = "tenant-secret",
+    app_id: str = "demo-account",
+    app_secret: str = "account-secret",
     encrypted: bool = True,
 ) -> str:
-    """直落一行租户应用凭证;默认按与其他凭证相同的信封加密存 secret。"""
-    tenant_app_id = uuid.uuid4().hex
+    """直落一行账号应用凭证;默认按与其他凭证相同的信封加密存 secret。"""
+    account_app_id = uuid.uuid4().hex
     if encrypted:
         stored = encrypt_credentials(CREDENTIAL_SECRET, {"app_secret": app_secret})
     else:
         stored = {"app_secret": app_secret}
     with sqlite3.connect(db_path) as raw:
         raw.execute(
-            "INSERT INTO tenant_apps "
-            "(id, tenant_id, provider, app_id, app_secret_encrypted, config, "
+            "INSERT INTO account_apps "
+            "(id, account_id, provider, app_id, app_secret_encrypted, config, "
             " created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (
-                tenant_app_id,
-                tenant_id,
+                account_app_id,
+                account_id,
                 provider,
                 app_id,
                 json.dumps(stored),
                 json.dumps({}),
             ),
         )
-    return tenant_app_id
+    return account_app_id
 
 
 def insert_oauth_session(
     db_path: Path,
     *,
     state: str = "state-1",
-    tenant_id: str = "t-1",
+    account_id: str = "t-1",
     provider: str = "demo",
     status: str = "pending",
     expires_at: datetime | None = None,
@@ -343,13 +343,13 @@ def insert_oauth_session(
     with sqlite3.connect(db_path) as raw:
         raw.execute(
             "INSERT INTO oauth_sessions "
-            "(id, tenant_id, provider, state_nonce, code_verifier, redirect_uri, "
+            "(id, account_id, provider, state_nonce, code_verifier, redirect_uri, "
             " scopes, status, expires_at, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (
                 session_id,
-                tenant_id,
+                account_id,
                 provider,
                 state,
                 "verifier-1",

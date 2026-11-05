@@ -33,15 +33,15 @@ class EventEnvelope:
     type:形如 ``email.received.v1``,含版本;
     occurred_at:ISO 8601 时间戳(UTC);
     payload:事件数据,与信封解耦;
-    tenant_id:租户标识——跨服务消费者要按租户写自己的库,必须能从事件本身拿到
-    (None 表示平台级/无租户事件)。
+    account_id:账号标识——跨服务消费者要按账号写自己的库,必须能从事件本身拿到
+    (None 表示平台级、无账号归属的事件)。
     """
 
     id: str
     type: str
     occurred_at: str
     payload: dict[str, Any]
-    tenant_id: str | None = None
+    account_id: str | None = None
 
     def __post_init__(self) -> None:
         if not _TYPE_PATTERN.match(self.type):
@@ -55,7 +55,7 @@ class EventEnvelope:
         type_: str,
         payload: dict[str, Any],
         *,
-        tenant_id: str | None = None,
+        account_id: str | None = None,
     ) -> EventEnvelope:
         """创建新事件信封。"""
         return cls(
@@ -63,7 +63,7 @@ class EventEnvelope:
             type=type_,
             occurred_at=datetime.now(UTC).isoformat(),
             payload=payload,
-            tenant_id=tenant_id,
+            account_id=account_id,
         )
 
     def to_json(self) -> str:

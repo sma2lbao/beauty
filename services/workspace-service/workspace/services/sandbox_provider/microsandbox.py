@@ -166,7 +166,7 @@ class MicrosandboxProvider:
     async def create(self, spec: SandboxSpec) -> None:
         sdk = _import_sdk()
         # public 只放公网:不能用 allow_all()——它会连宿主/私网一起放行,
-        # 多租户下等于把用户 MCP/脚本接到平台内网。
+        # 多账号下等于把用户 MCP/脚本接到平台内网。
         network = (
             sdk.Network.from_profiles(sdk.NetworkProfile.PUBLIC)
             if spec.network == "public"

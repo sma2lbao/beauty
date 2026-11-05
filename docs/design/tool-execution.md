@@ -13,7 +13,7 @@
 
 五条关键决策:
 
-1. **exec 是目录一等公民**,不是 orchestrator 的私有能力:执行、限额、审计、幂等、租户隔离继续由 `tool-service` 统一承担,orchestrator 无需改代码。
+1. **exec 是目录一等公民**,不是 orchestrator 的私有能力:执行、限额、审计、幂等、账号隔离继续由 `tool-service` 统一承担,orchestrator 无需改代码。
 2. **默认关闭(`TOOL__EXEC_ENABLED=false`)**:`destructive` 工具一旦出现在启用目录里,orchestrator 的 plan 闸会对**所有** run 触发人工确认(`_has_dangerous_tools`)。默认关闭保证既有部署行为零变化。
 3. **执行协议与文件工具分家**:`read`/`write` 等走沙箱内 helper 脚本(stdin 传 JSON 请求、返回 JSON 信封、路径 jail 在 helper 内);`exec` 需要真实 argv、cwd 与退出码,直接调 `SandboxProvider.exec`,不经 helper。
 4. **结果不撞 25K 上限**:exec 自行截断 stdout(16,000 字符)/stderr(8,000 字符),再按整包 JSON 体积回缩到 `MAX_TOOL_CHARS`(25,000)以内,并提示「重定向到文件后用 read 读」。
@@ -46,7 +46,7 @@ D13 原文(需修订的决策)在 `docs/design/tool-service.md` §决策表:「�
 - 不开沙箱网络(`network=deny` 不变):`pip install` / `npm install` 之类需要 egress 的命令会失败,这是有意的边界。
 - 不做后台任务 / 持久 shell 会话 / PTY(二期,见 §11)。
 - 不做命令前缀白名单/自动放行(依赖 P1-A policy 引擎);本册所有 exec 调用都要确认。
-- 不在宿主机执行任何命令;`LocalSandboxProvider`(无隔离)只允许本地单租户开发。
+- 不在宿主机执行任何命令;`LocalSandboxProvider`(无隔离)只允许本地单账号开发。
 - 不替换文件工具:读文件优先 `read`(有 sha/行号/读前置),exec 只用于「必须有进程」的场景。
 
 ## 4. 与主流对照
@@ -151,7 +151,7 @@ shell 能绕过文件工具的路径 jail(直接 `cat /workspace/../etc/passwd` 
 
 ### 7.3 打开 exec 的部署前提
 
-- 沙箱必须用 `sandbox_provider=microsandbox`(microVM);`local` provider 无隔离,只允许本地单租户开发。
+- 沙箱必须用 `sandbox_provider=microsandbox`(microVM);`local` provider 无隔离,只允许本地单账号开发。
 - `sandbox_network=deny` 保持默认;**不要**为了 `pip install` 打开网络。
 - 单 run 配额(`TOOL__MAX_TOOL_CALLS_PER_RUN`)与沙箱 TTL 是唯一的时间/次数兜底,生产建议调低。
 - 需要人工确认 UI(orchestrator 的 confirmation 闸);无人值守的自动化 run 不应开启 exec。
@@ -161,7 +161,7 @@ shell 能绕过文件工具的路径 jail(直接 `cat /workspace/../etc/passwd` 
 | 风险                        | 缓解                                                                       |
 | --------------------------- | -------------------------------------------------------------------------- |
 | 资源耗尽(CPU/内存/长跑进程) | 沙箱 cpus/memory 上限 + exec 超时 + microVM 硬隔离(二期加 run 级 CPU 预算) |
-| 沙箱内删掉交付物/改坏仓库   | 确认闸 + `git` 可回滚(工作区是租户文件真源,不在容器外)                     |
+| 沙箱内删掉交付物/改坏仓库   | 确认闸 + `git` 可回滚(工作区是账号文件真源,不在容器外)                     |
 | 输出洪水                    | 16K/8K 截断 + 25K 硬上限 + note 提示回读                                   |
 | 沙箱内 exfil(网络)          | `network=deny`;不开放 egress,`fetch` 与 exec 互不替代                      |
 | 供应链(沙箱内装依赖)        | 默认失败;需要预装依赖应在镜像/工作区准备阶段完成                           |
@@ -179,10 +179,10 @@ P1-A policy 引擎落地后,exec 可以按「命令前缀 allowlist」(如 `pyte
 1. **对话可见工具**:orchestrator 裁剪为 `kind=function && risk!=danger`——READ/WRITE 都可见,DANGER(含 `exec`)不进对话,回喂提示改用「任务」。
 2. **发起即挂起**:模型发起 `risk=write` 调用时**不执行**,落 `chat_tool_confirmations`(`status=pending`,TTL 10 分钟);SSE `tool` 帧带 `decision="confirm"`、`error_code="tool.confirmation_required"`、`ok=false`、`confirmation_id`、`expires_at`(ISO8601),并把「需要用户确认,不要重复调用」回喂模型。
 3. **确认/取消**:`POST /v1/conversations/{cid}/tool-confirmations/{confirmation_id}/confirm` 以 `approved=true` 重放同一 `tool_call`(arguments 原样),结果落 assistant 消息并回填卡片;`.../cancel` 只改状态、不执行。
-4. **幂等与错误码**:确认时对确认行加 `FOR UPDATE` 并校验状态,重复确认不重复执行;不存在/跨租户 404 `tool_confirmation.not_found`、过期 409 `tool_confirmation.expired`、已确认/已取消 409 `tool_confirmation.not_pending`、确认时工具已不可用 409 `tool_confirmation.tool_unavailable`。
+4. **幂等与错误码**:确认时对确认行加 `FOR UPDATE` 并校验状态,重复确认不重复执行;不存在/跨账号 404 `tool_confirmation.not_found`、过期 409 `tool_confirmation.expired`、已确认/已取消 409 `tool_confirmation.not_pending`、确认时工具已不可用 409 `tool_confirmation.tool_unavailable`。
 5. **边界不变**:对话确认只是「取得 approved 的一条通道」,不替代 tool-service 的写闸门(§7.2 第 3 条)与任务图的审批链;确认时用与发消息相同一套工具箱装配(允许 write、排除 danger),不会出现「看到的工具」与「确认时执行的工具」漂移;前端确认卡片按会话粘性列表展示,SSE 重连不重复出卡。
 
-**MCP 工具的风险从哪来**:orchestrator 按工具 `annotations` 与内置预设的只读前缀分档(详见 [connector.md](./connector.md) §7)——`annotations.destructiveHint=true` → DANGER;`annotations.readOnlyHint=true` 或命中预设只读前缀 → READ;租户开「免确认执行」→ WRITE(对话内出确认卡);其余 → DANGER(不进对话)。
+**MCP 工具的风险从哪来**:orchestrator 按工具 `annotations` 与内置预设的只读前缀分档(详见 [connector.md](./connector.md) §7)——`annotations.destructiveHint=true` → DANGER;`annotations.readOnlyHint=true` 或命中预设只读前缀 → READ;账号开「免确认执行」→ WRITE(对话内出确认卡);其余 → DANGER(不进对话)。
 
 ## 8. 审计与事件
 
@@ -285,7 +285,7 @@ M1 验收:
 | 写语义   | 覆盖写全量(没有 add/done/remove 之类的增量工具)                                   |
 | 幂等     | 与当前清单逐字相同 -> `updated=false`,不写库、不落事件                            |
 | 成功信封 | `{ok, updated, todos, counts:{pending,in_progress,completed}, revision, summary}` |
-| 失败     | `{"error": ...}`(参数/上下文/租户错误,`tool.invalid_args` 口径)                   |
+| 失败     | `{"error": ...}`(参数/上下文/账号错误,`tool.invalid_args` 口径)                   |
 
 为什么覆盖写:模型每轮都能看到整份清单(§13.4),增量动作会让「当前清单」依赖一串历史动作,回放与幂等成本更高;20 项上限让整包写的代价可控。
 
@@ -313,7 +313,7 @@ M1 验收:
 
 ### 13.5 API 与前端
 
-- `GET /api/v1/runs/{run_id}/todos` -> `{run_id, todos, counts, revision}`;租户隔离走 `require_run`(跨租户 404)。不内联进 `RunRead`,避免 run 列表每次带清单。
+- `GET /api/v1/runs/{run_id}/todos` -> `{run_id, todos, counts, revision}`;账号隔离走 `require_run`(跨账号 404)。不内联进 `RunRead`,避免 run 列表每次带清单。
 - 前端:`apps/web/src/lib/runs-api.ts` 的 `runsApi.todos`;`apps/web/src/components/console/run-todo-list.tsx` 渲染「任务清单」块;run 详情执行中 1.5s 轮询、终态停止;会话右栏只在有 `activeRunId` 时请求;空清单整块不渲染。
 
 ### 13.6 文件清单
@@ -339,7 +339,7 @@ M1 验收:
 ### 13.7 验证
 
 - `npx nx test agent-orchestrator`:**858 passed**,覆盖率 **87.1%**(本次 87.11%,门禁 82)。
-- 定向新增:`tests/test_todos.py` 26 例(纯逻辑/工具/读端/图注入)+ `tests/test_todo_graph.py` 4 例(节点回写 state、失败信封不覆盖、提示词带清单)+ `tests/test_todo_api.py` 6 例(API/租户隔离/开关/挂载 gate),共 36 例,全部零网络。
+- 定向新增:`tests/test_todos.py` 26 例(纯逻辑/工具/读端/图注入)+ `tests/test_todo_graph.py` 4 例(节点回写 state、失败信封不覆盖、提示词带清单)+ `tests/test_todo_api.py` 6 例(API/账号隔离/开关/挂载 gate),共 36 例,全部零网络。
 - 迁移:临时 sqlite 上 `alembic upgrade head` 到 `b9e4d1f7c2a8`,`alembic check` 输出 `No new upgrade operations detected.`。
 - OpenAPI 契约快照 `tests/snapshots/openapi.json` 已更新(新增 `GET /runs/{run_id}/todos`,`TodoItem`/`TodoCounts`/`TodoRead` schema)。
 - 既有 6 个断言工具面的测试补上 `todo_write`(`test_container_context`/`test_skill_runner_extras`/`test_knowledge_tools`/`test_tools_providers`/`test_mcp_references`);前端 `npx nx test @beauty/web -- --run` 67 files / 462 tests 通过,`typecheck` 与 `lint` 干净。

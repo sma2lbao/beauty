@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import JSON, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class OAuthSession(UUIDMixin, TimestampMixin, TenantMixin, Base):
+class OAuthSession(UUIDMixin, TimestampMixin, AccountMixin, Base):
     __tablename__ = "oauth_sessions"
     __table_args__ = {"comment": "一次性 OAuth 授权会话(nonce 换身份)"}
 

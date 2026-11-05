@@ -48,9 +48,6 @@ export function authKindLabel(authKind?: string | null): string {
   switch ((authKind ?? '').toLowerCase()) {
     case 'oauth_user':
       return '用户授权(OAuth)';
-    case 'oauth_tenant':
-    case 'tenant':
-      return '组织身份(OAuth)';
     case 'token':
     case 'api_key':
       return '访问令牌';

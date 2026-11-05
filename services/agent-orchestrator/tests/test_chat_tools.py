@@ -14,7 +14,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolSpec, build_tools
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeDangerTool,
     FakeKnowledge,
     FakeLLM,
@@ -34,8 +34,8 @@ def _tool_client(
     app = create_app(
         _settings(tmp_path, "chat-tools.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(
-            tenant, knowledge=knowledge
+        toolkit_factory=lambda account: build_tools(
+            account, knowledge=knowledge
         ).extended(list(extras)),
         token_verifier=verifier(),
     )
@@ -44,7 +44,7 @@ def _tool_client(
 
 
 def _create_conversation(client: TestClient) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert resp.status_code == 201
     return resp.json()["id"]
 
@@ -53,7 +53,7 @@ def _stream(client: TestClient, conversation_id: str, content: str, mode="chat")
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages/stream",
         json={"content": content, "mode": mode},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     events = []
     for frame in resp.text.split("\n\n"):
@@ -159,7 +159,7 @@ def test_chat_without_toolkit_is_plain_answer(tmp_path) -> None:
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
             json={"content": "你好", "mode": "chat"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
 
         assert resp.status_code == 201

@@ -49,10 +49,10 @@ class SandboxCreate(BaseModel):
 
 
 class SandboxEnsure(SandboxCreate):
-    """幂等 ensure 请求:scope_key 是租户内幂等键(P0-05)。
+    """幂等 ensure 请求:scope_key 是账号内幂等键(P0-05)。
 
     tool-service 每次工具调用都带同一个 scope_key(conv:<id> / run:<id>),
-    服务端按 (tenant_id, scope_key) get-or-create,多副本并发也只保留一行。
+    服务端按 (account_id, scope_key) get-or-create,多副本并发也只保留一行。
     """
 
     scope_key: str = Field(

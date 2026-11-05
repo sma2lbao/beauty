@@ -51,7 +51,7 @@ class Settings(ServiceSettings):
     outbox_max_attempts: int = 5
 
     # ── 24h 刷新巡检(§5.5)───────────────────────────────────────────────
-    # 生产默认开启;测试/单进程部署可关。巡检跨租户扫 active+enabled 且
+    # 生产默认开启;测试/单进程部署可关。巡检跨账号扫 active+enabled 且
     # 「从未成功刷新」或「上次刷新早于 refresh_stale_seconds」的连接。
     refresh_patrol_enabled: bool = True
     refresh_patrol_interval_seconds: int = 3600

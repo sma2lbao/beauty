@@ -35,7 +35,7 @@
 
 - 形态：Nx 23.2.1 polyglot monorepo，15 个 Nx 项目。JS/TS 走 npm workspaces（apps/_、packages/_、tools/\*）；Python 走 uv workspace，共 10 个成员（packages/common、database、events + services/ 下 7 个 FastAPI 服务）。
 - 规模：Python 源码约 2.82 万行（其中 agent-orchestrator 约 1.59 万行、70 个源文件）、pytest 用例 697 个（103 个测试文件，uv run pytest --collect-only 实测）；TS/TSX 源码 33319 行（236 文件，另有 2226 行 CSS）、vitest 用例 446 个（74 文件）。
-- 已有工程质量：仓储层租户隔离、事务性 outbox、事件溯源 + SSE 断线续传、测试零网络、全仓 TODO 仅 5 处。这些是重构必须保住的资产，也是回归测试的基线。
+- 已有工程质量：仓储层账号隔离、事务性 outbox、事件溯源 + SSE 断线续传、测试零网络、全仓 TODO 仅 5 处。这些是重构必须保住的资产，也是回归测试的基线。
 - 结构性风险：apps/web/src/pages/chat.tsx 1313 行、mcp.tsx 941 行、components/console/sidebar.tsx 663 行；agent-orchestrator 单服务 70 个源文件、分层契约不完整；七个服务骨架重复；apps/web 与 apps/desktop 存在代码分叉；文档存在 architecture.md 与 architecture-v2.md 双版本、gap 报告与 feature-gap.md 重叠；无 CI（无 .github）；仅根 AGENTS.md 一份，无子树级约定。
 
 ### 1.2 为什么现在做
@@ -186,7 +186,7 @@
 动作：
 
 1. **指标基线**：结构指标（文件行数 Top-N、目录文件数、循环依赖、跨层 import）、质量指标（lint/typecheck 错误数、测试数、覆盖率）、行为指标（pytest/vitest 全绿、黄金路径）、性能指标（构建时长、bundle 体积、测试时长）。
-2. **characterization tests**：对将被改动的关键路径，先补"锁行为"的测试（不追求覆盖率数字，追求关键分支）。本仓优先补：SSE 事件序列、审批决策、outbox 重试、租户隔离 404、chat 发送/流式渲染。
+2. **characterization tests**：对将被改动的关键路径，先补"锁行为"的测试（不追求覆盖率数字，追求关键分支）。本仓优先补：SSE 事件序列、审批决策、outbox 重试、账号隔离 404、chat 发送/流式渲染。
 3. **门禁脚本**：新增 scripts/refactor-gate.sh，输入项目名，执行该项目的 lint + typecheck + test（零网络），输出 PASS/FAIL 与耗时；CI 落地前它就是唯一可信门禁。
 4. **稳定基线快照**：契约快照（OpenAPI/pydantic schema/事件信封字段）与前端关键页面的 DOM 快照/截图基线。
 
@@ -419,7 +419,7 @@ CI 结论类证据必须附 run 链接 + 逐 job 结论表，不得只写「CI �
 | alembic 迁移 | 线上缺列/数据回填失败、模型与迁移漂移 | expand-contract；每个 PR 一个迁移；alembic check       | 向前兼容（不回滚 DB），代码回滚保留新列 |
 | outbox 语义  | 事件重复/丢失、事务边界被挪动         | 保持"状态变更与事件同事务"；消费方 mark_processed 幂等 | revert PR；重放 outbox                  |
 | SSE 协议     | 前端断流、事件顺序变化                | 契约快照 + 断线续传测试                                | 前端向后兼容解析，服务端 flag           |
-| 认证/租户    | 越权、404 存在性泄漏                  | 仓储层租户隔离测试；不改 404 契约                      | revert；安全审计                        |
+| 认证/账号    | 越权、404 存在性泄漏                  | 仓储层账号隔离测试；不改 404 契约                      | revert；安全审计                        |
 | 依赖升级     | 传递依赖破坏（npm/uv）                | 单独 PR、锁文件 diff 审查                              | 恢复锁文件                              |
 | 共享库抽取   | 服务启动顺序/配置差异被抹平           | 先试点 2 个服务；差异显式配置化                        | 试点服务回退到旧骨架                    |
 | 并发写冲突   | 多 agent 改同一文件                   | write scopes + 串行合并                                | 以最后合并者为准，重跑门禁              |
@@ -509,7 +509,7 @@ CI 结论类证据必须附 run 链接 + 逐 job 结论表，不得只写「CI �
 ### 9.5 必须保住的资产
 
 1. 697 个 pytest + 446 个 vitest 用例全部零网络；
-2. 仓储层租户隔离与统一 404 契约；
+2. 仓储层账号隔离与统一 404 契约；
 3. 事务性 outbox（状态改了事件一定发、回滚一定不发）+ 消费幂等；
 4. 事件溯源 + SSE 断线续传（meta/delta/done）；
 5. 服务自建认证（旋转刷新令牌、JWKS/OIDC 发现）；
@@ -593,7 +593,7 @@ gap-2026-10/00-summary.md 已给出 P0/P1/P2 的**能力缺口**；本文件补�
 | R-19 | apps/web + desktop | 抽取 @beauty/console-ui：消息渲染、原语组件、布局外壳共享；desktop 保留 IPC 数据层                                                                     | desktop renderer 与 web 纯拷贝分叉（约 1300 行会话 UI + 311 行原语）                                                                                                                                                                                                                                                                          | L    | 中            |
 | R-20 | apps/web + site    | 清理重复：web 站点壳与 About 页、site/web 字节级重复工具（button-class.ts、lib/utils.ts）、重复 logo                                                   | 审计：md5 一致；两份 logo 已分叉                                                                                                                                                                                                                                                                                                              | S    | 低            |
 | R-21 | 全仓 TS            | tsconfig/vitest 收敛：3 份 tsconfig 改为 extends 根 base；vitest 配置收敛；补 site 与 console 组件盲区测试                                             | 审计：tsconfig 全量重写；vitest 4 份；site 零测试；console 21 src 仅 5 test                                                                                                                                                                                                                                                                   | M    | 中            |
-| R-22 | Python 服务        | service-kit：create*service_app + lifespan 钩子 + auth deps 工厂 + health 工厂 + BaseAppSettings.auth*\* + secret_box + 限流；先迁 connector/knowledge | connector 与 knowledge main.py 归一化后 82/88 行相同；health.py 共 7 份、5 种 md5（最大同组仅 2 份）；get_tenant_id/get_session 各 5 份                                                                                                                                                                                                       | L    | 中            |
+| R-22 | Python 服务        | service-kit：create*service_app + lifespan 钩子 + auth deps 工厂 + health 工厂 + BaseAppSettings.auth*\* + secret_box + 限流；先迁 connector/knowledge | connector 与 knowledge main.py 归一化后 82/88 行相同；health.py 共 7 份、5 种 md5（最大同组仅 2 份）；get_account_id/get_session 各 5 份                                                                                                                                                                                                      | L    | 中            |
 | R-23 | Python 测试        | service_testkit：统一 conftest、make_settings/make_client 默认钉死零网络                                                                               | conftest 重复 5 份；零网络 pin 仅 AO 完整                                                                                                                                                                                                                                                                                                     | M    | 中            |
 | R-24 | Python 迁移        | alembic 共享 env 模板 + 迁移 smoke test（真实 head + create_all 对齐检查）                                                                             | 五服务迁移链完整但测试零 alembic 引用                                                                                                                                                                                                                                                                                                         | M    | 中            |
 | R-25 | Python 安全        | 收编重复原语：Fernet ×4、SlidingWindowLimiter ×2、X-Internal-Secret 校验散落                                                                           | Fernet：account/core/byok.py:9、agent-orchestrator/services/mcp_crypto.py:9、api_gateway/core/security.py:16、connector/core/crypto.py:11；SlidingWindowLimiter：account/core/ratelimit.py:9、api_gateway/core/rate_limit.py:10；X-Internal-Secret：account/api/deps.py:33、account/api/v1/auth.py:125、agent-orchestrator/api/internal.py:43 | S    | 低（随 R-22） |

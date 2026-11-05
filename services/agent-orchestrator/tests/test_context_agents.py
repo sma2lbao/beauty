@@ -2,7 +2,7 @@
 
 覆盖:
 
-- `scope_key_for` 优先级(对话 > run > 租户)与 run_id 反推;
+- `scope_key_for` 优先级(对话 > run > 账号)与 run_id 反推;
 - `SandboxWorkspaceFiles` 的 ensure 缓存/参数、读写降级、find 的 argv/过滤/降级;
 - `discover_agents_documents` 的排序/深度/数量预算/单文件截断/缺失跳过/开关;
 - `AgentsMdProvider` 的 scope_key、渲染格式、总预算截断与无文档降级。
@@ -23,15 +23,15 @@ from agent_orchestrator.context.agents import (
 from agent_orchestrator.context.pipeline import ContextRequest
 from agent_orchestrator.context.policy import ContextPolicy
 from agent_orchestrator.context.sandbox_files import (
+    SCOPE_ACCOUNT_PREFIX,
     SCOPE_CONVERSATION_PREFIX,
     SCOPE_RUN_PREFIX,
-    SCOPE_TENANT_PREFIX,
     SandboxWorkspaceFiles,
     run_id_from_scope_key,
     scope_key_for,
 )
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 PREFIX = "/workspace/.agent/offload"
 
 
@@ -61,7 +61,7 @@ class FakeSandbox:
 
     async def ensure(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         kind: str = "generic",
@@ -75,7 +75,7 @@ class FakeSandbox:
     ) -> tuple[SandboxInfo, bool]:
         self.ensure_calls.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "scope_key": scope_key,
                 "ttl_seconds": ttl_seconds,
                 "run_id": run_id,
@@ -86,23 +86,23 @@ class FakeSandbox:
         )
         return info, True
 
-    async def read_file(self, tenant_id: str, sandbox_id: str, path: str) -> bytes:
-        self.reads.append((tenant_id, sandbox_id, path))
+    async def read_file(self, account_id: str, sandbox_id: str, path: str) -> bytes:
+        self.reads.append((account_id, sandbox_id, path))
         if self.fail_read or path not in self.files:
             raise RuntimeError(f"读取失败: {path}")
         return self.files[path]
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None:
-        self.writes.append((tenant_id, sandbox_id, path, data))
+        self.writes.append((account_id, sandbox_id, path, data))
         if self.fail_write:
             raise RuntimeError("写入失败")
         self.files[path] = data
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -111,7 +111,7 @@ class FakeSandbox:
         stdin: str | None = None,
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:
-        self.execs.append((tenant_id, sandbox_id, list(argv)))
+        self.execs.append((account_id, sandbox_id, list(argv)))
         if self.fail_exec:
             raise RuntimeError("执行失败")
         return SandboxExecResult(
@@ -146,8 +146,8 @@ class FakeWorkspaceFiles:
         self.writes: list[tuple[str, str, str, bytes]] = []
         self.finds: list[tuple[str, str, tuple[str, ...], int]] = []
 
-    async def read_text(self, tenant_id: str, scope_key: str, path: str) -> str | None:
-        self.reads.append((tenant_id, scope_key, path))
+    async def read_text(self, account_id: str, scope_key: str, path: str) -> str | None:
+        self.reads.append((account_id, scope_key, path))
         if self.raise_read:
             raise RuntimeError("读取炸了")
         if path in self.fail_read_paths:
@@ -155,27 +155,27 @@ class FakeWorkspaceFiles:
         return self.contents.get(path)
 
     async def write_bytes(
-        self, tenant_id: str, scope_key: str, path: str, data: bytes
+        self, account_id: str, scope_key: str, path: str, data: bytes
     ) -> None:
-        self.writes.append((tenant_id, scope_key, path, data))
+        self.writes.append((account_id, scope_key, path, data))
         if self.fail_write:
             raise RuntimeError("写入失败")
         self.contents[path] = data.decode("utf-8")
 
     async def find(
         self,
-        tenant_id: str,
+        account_id: str,
         scope_key: str,
         names: tuple[str, ...] | list[str],
         *,
         max_depth: int,
     ) -> list[str]:
-        self.finds.append((tenant_id, scope_key, tuple(names), max_depth))
+        self.finds.append((account_id, scope_key, tuple(names), max_depth))
         return list(self.contents)
 
 
 def _request(**overrides: object) -> ContextRequest:
-    data: dict[str, object] = {"tenant_id": TENANT, "run_id": "run-1"}
+    data: dict[str, object] = {"account_id": ACCOUNT, "run_id": "run-1"}
     data.update(overrides)
     return ContextRequest(**data)  # type: ignore[arg-type]
 
@@ -186,11 +186,12 @@ def _request(**overrides: object) -> ContextRequest:
 def test_scope_key_priority() -> None:
     assert SCOPE_CONVERSATION_PREFIX == "conversation:"
     assert SCOPE_RUN_PREFIX == "run:"
-    assert SCOPE_TENANT_PREFIX == "tenant:"
-    assert scope_key_for(TENANT) == f"tenant:{TENANT}"
-    assert scope_key_for(TENANT, run_id="r-1") == "run:r-1"
+    assert SCOPE_ACCOUNT_PREFIX == "account:"
+    assert scope_key_for(ACCOUNT) == f"account:{ACCOUNT}"
+    assert scope_key_for(ACCOUNT, run_id="r-1") == "run:r-1"
     assert (
-        scope_key_for(TENANT, conversation_id="c-1", run_id="r-1") == "conversation:c-1"
+        scope_key_for(ACCOUNT, conversation_id="c-1", run_id="r-1")
+        == "conversation:c-1"
     )
 
 
@@ -198,7 +199,7 @@ def test_run_id_from_scope_key() -> None:
     assert run_id_from_scope_key("run:r-9") == "r-9"
     assert run_id_from_scope_key("run:") is None
     assert run_id_from_scope_key("conversation:c-1") is None
-    assert run_id_from_scope_key("tenant:t-1") is None
+    assert run_id_from_scope_key("account:t-1") is None
 
 
 # ---- sandbox_files: SandboxWorkspaceFiles ----
@@ -207,13 +208,13 @@ def test_run_id_from_scope_key() -> None:
 async def test_sandbox_files_ensure_cached_per_scope() -> None:
     sandbox = FakeSandbox({"/workspace/AGENTS.md": b"root"})
     files = SandboxWorkspaceFiles(sandbox, ttl_seconds=120)
-    first = await files.read_text(TENANT, "conversation:c-1", "/workspace/AGENTS.md")
-    second = await files.read_text(TENANT, "conversation:c-1", "/workspace/AGENTS.md")
+    first = await files.read_text(ACCOUNT, "conversation:c-1", "/workspace/AGENTS.md")
+    second = await files.read_text(ACCOUNT, "conversation:c-1", "/workspace/AGENTS.md")
     assert first == "root"
     assert second == "root"
     assert len(sandbox.ensure_calls) == 1
     call = sandbox.ensure_calls[0]
-    assert call["tenant_id"] == TENANT
+    assert call["account_id"] == ACCOUNT
     assert call["scope_key"] == "conversation:c-1"
     assert call["ttl_seconds"] == 120
     assert call["run_id"] is None
@@ -222,31 +223,33 @@ async def test_sandbox_files_ensure_cached_per_scope() -> None:
 async def test_sandbox_files_run_scope_passes_run_id() -> None:
     sandbox = FakeSandbox()
     files = SandboxWorkspaceFiles(sandbox)
-    await files.read_text(TENANT, "run:r-9", "/workspace/missing.md")
+    await files.read_text(ACCOUNT, "run:r-9", "/workspace/missing.md")
     assert sandbox.ensure_calls[0]["run_id"] == "r-9"
 
 
 async def test_read_text_missing_or_failing_returns_none() -> None:
     files = SandboxWorkspaceFiles(FakeSandbox())
-    assert await files.read_text(TENANT, "tenant:t-1", "/workspace/none.md") is None
+    assert await files.read_text(ACCOUNT, "account:t-1", "/workspace/none.md") is None
     failing = SandboxWorkspaceFiles(FakeSandbox(fail_read=True))
-    assert await failing.read_text(TENANT, "tenant:t-1", "/workspace/AGENTS.md") is None
+    assert (
+        await failing.read_text(ACCOUNT, "account:t-1", "/workspace/AGENTS.md") is None
+    )
 
 
 async def test_write_bytes_creates_parent_directory_then_writes() -> None:
     sandbox = FakeSandbox()
     files = SandboxWorkspaceFiles(sandbox)
     path = f"{PREFIX}/r-1/read-abcd1234.txt"
-    await files.write_bytes(TENANT, "run:r-1", path, b"hi")
-    assert sandbox.execs == [(TENANT, "sbx-1", ["mkdir", "-p", f"{PREFIX}/r-1"])]
-    assert sandbox.writes == [(TENANT, "sbx-1", path, b"hi")]
+    await files.write_bytes(ACCOUNT, "run:r-1", path, b"hi")
+    assert sandbox.execs == [(ACCOUNT, "sbx-1", ["mkdir", "-p", f"{PREFIX}/r-1"])]
+    assert sandbox.writes == [(ACCOUNT, "sbx-1", path, b"hi")]
     assert sandbox.files[path] == b"hi"
 
 
 async def test_write_bytes_skips_mkdir_at_workspace_root() -> None:
     sandbox = FakeSandbox()
     files = SandboxWorkspaceFiles(sandbox)
-    await files.write_bytes(TENANT, "tenant:t-1", "/workspace/AGENTS.md", b"x")
+    await files.write_bytes(ACCOUNT, "account:t-1", "/workspace/AGENTS.md", b"x")
     assert sandbox.execs == []
     assert sandbox.files["/workspace/AGENTS.md"] == b"x"
 
@@ -254,7 +257,7 @@ async def test_write_bytes_skips_mkdir_at_workspace_root() -> None:
 async def test_write_bytes_raises_when_mkdir_fails() -> None:
     files = SandboxWorkspaceFiles(FakeSandbox(exec_exit_code=1))
     with pytest.raises(RuntimeError, match="创建沙箱目录失败"):
-        await files.write_bytes(TENANT, "run:r-1", f"{PREFIX}/r-1/a.txt", b"x")
+        await files.write_bytes(ACCOUNT, "run:r-1", f"{PREFIX}/r-1/a.txt", b"x")
 
 
 async def test_find_builds_argv_and_filters_workspace_paths() -> None:
@@ -269,7 +272,9 @@ async def test_find_builds_argv_and_filters_workspace_paths() -> None:
     )
     sandbox = FakeSandbox(exec_stdout=stdout)
     files = SandboxWorkspaceFiles(sandbox)
-    paths = await files.find(TENANT, "run:r-1", ["AGENTS.md", "CLAUDE.md"], max_depth=1)
+    paths = await files.find(
+        ACCOUNT, "run:r-1", ["AGENTS.md", "CLAUDE.md"], max_depth=1
+    )
     assert paths == ["/workspace/AGENTS.md", "/workspace/sub/AGENTS.md"]
     argv = sandbox.execs[0][2]
     assert argv[:6] == ["find", "/workspace", "-maxdepth", "2", "-type", "f"]
@@ -281,13 +286,13 @@ async def test_find_builds_argv_and_filters_workspace_paths() -> None:
 
 async def test_find_degrades_on_failure_or_empty_names() -> None:
     failing = SandboxWorkspaceFiles(FakeSandbox(fail_exec=True))
-    assert await failing.find(TENANT, "tenant:t-1", ["AGENTS.md"], max_depth=2) == []
+    assert await failing.find(ACCOUNT, "account:t-1", ["AGENTS.md"], max_depth=2) == []
     nonzero = SandboxWorkspaceFiles(
         FakeSandbox(exec_stdout="/workspace/AGENTS.md", exec_exit_code=2)
     )
-    assert await nonzero.find(TENANT, "tenant:t-1", ["AGENTS.md"], max_depth=2) == []
+    assert await nonzero.find(ACCOUNT, "account:t-1", ["AGENTS.md"], max_depth=2) == []
     blank = SandboxWorkspaceFiles(FakeSandbox(exec_stdout="/workspace/AGENTS.md"))
-    assert await blank.find(TENANT, "tenant:t-1", ["  "], max_depth=2) == []
+    assert await blank.find(ACCOUNT, "account:t-1", ["  "], max_depth=2) == []
     assert blank.sandbox.ensure_calls == []
 
 
@@ -308,7 +313,7 @@ async def test_discover_orders_shallow_first_and_filters_scope_of_workspace() ->
     documents = await discover_agents_documents(
         files,
         ContextPolicy(agents_md_max_depth=1),
-        tenant_id=TENANT,
+        account_id=ACCOUNT,
         scope_key="conversation:c-1",
     )
     assert [document.path for document in documents] == [
@@ -316,7 +321,7 @@ async def test_discover_orders_shallow_first_and_filters_scope_of_workspace() ->
         "/workspace/aaa/AGENTS.md",
         "/workspace/sub/AGENTS.md",
     ]
-    assert files.finds == [(TENANT, "conversation:c-1", ("AGENTS.md",), 1)]
+    assert files.finds == [(ACCOUNT, "conversation:c-1", ("AGENTS.md",), 1)]
 
 
 async def test_discover_depth_zero_keeps_only_root_files() -> None:
@@ -329,8 +334,8 @@ async def test_discover_depth_zero_keeps_only_root_files() -> None:
     documents = await discover_agents_documents(
         files,
         ContextPolicy(agents_md_max_depth=0),
-        tenant_id=TENANT,
-        scope_key="tenant:t-1",
+        account_id=ACCOUNT,
+        scope_key="account:t-1",
     )
     assert [document.path for document in documents] == ["/workspace/AGENTS.md"]
 
@@ -345,8 +350,8 @@ async def test_discover_applies_max_files_and_per_file_budget() -> None:
     documents = await discover_agents_documents(
         files,
         ContextPolicy(agents_md_max_files=1, agents_md_file_max_chars=4),
-        tenant_id=TENANT,
-        scope_key="tenant:t-1",
+        account_id=ACCOUNT,
+        scope_key="account:t-1",
     )
     assert len(documents) == 1
     assert documents[0].path == "/workspace/AGENTS.md"
@@ -364,14 +369,14 @@ async def test_discover_skips_missing_or_unreadable_documents() -> None:
         fail_read_paths=("/workspace/AGENTS.md",),
     )
     documents = await discover_agents_documents(
-        files, ContextPolicy(), tenant_id=TENANT, scope_key="tenant:t-1"
+        files, ContextPolicy(), account_id=ACCOUNT, scope_key="account:t-1"
     )
     assert [document.path for document in documents] == ["/workspace/sub/AGENTS.md"]
 
     broken = FakeWorkspaceFiles({"/workspace/AGENTS.md": "root"}, raise_read=True)
     assert (
         await discover_agents_documents(
-            broken, ContextPolicy(), tenant_id=TENANT, scope_key="tenant:t-1"
+            broken, ContextPolicy(), account_id=ACCOUNT, scope_key="account:t-1"
         )
         == []
     )
@@ -383,8 +388,8 @@ async def test_discover_disabled_returns_empty_without_io() -> None:
         await discover_agents_documents(
             files,
             ContextPolicy(agents_md_enabled=False),
-            tenant_id=TENANT,
-            scope_key="tenant:t-1",
+            account_id=ACCOUNT,
+            scope_key="account:t-1",
         )
         == []
     )
@@ -392,8 +397,8 @@ async def test_discover_disabled_returns_empty_without_io() -> None:
         await discover_agents_documents(
             files,
             ContextPolicy(agents_md_names=()),
-            tenant_id=TENANT,
-            scope_key="tenant:t-1",
+            account_id=ACCOUNT,
+            scope_key="account:t-1",
         )
         == []
     )
@@ -419,7 +424,7 @@ async def test_provider_renders_documents_and_source() -> None:
     assert "### /workspace/sub/AGENTS.md\n子规则" in section.content
     assert section.source == "AGENTS.md,sub/AGENTS.md"
     assert section.truncated is False
-    assert files.finds == [(TENANT, "conversation:conv-1", ("AGENTS.md",), 2)]
+    assert files.finds == [(ACCOUNT, "conversation:conv-1", ("AGENTS.md",), 2)]
 
 
 async def test_provider_returns_none_without_documents_or_when_disabled() -> None:

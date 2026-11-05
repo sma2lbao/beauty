@@ -7,8 +7,8 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
+    ACCOUNT,
     OTHER,
-    TENANT,
     FakeSandboxProvider,
 )
 
@@ -21,7 +21,7 @@ def _execute(
     headers: dict[str, str] | None = None,
 ) -> Any:
     return client.post(
-        f"/v1/tools/{tool}:execute", json=payload, headers=headers or TENANT
+        f"/v1/tools/{tool}:execute", json=payload, headers=headers or ACCOUNT
     )
 
 
@@ -105,7 +105,7 @@ def test_invalid_arguments_return_200_error_envelope(client: TestClient) -> None
     assert body["ok"] is False
     assert body["error"]["code"] == "tool.invalid_args"
 
-    audit = client.get("/v1/tool-calls", params={"tool_name": "read"}, headers=TENANT)
+    audit = client.get("/v1/tool-calls", params={"tool_name": "read"}, headers=ACCOUNT)
     assert audit.json()["items"][0]["ok"] is False
     assert audit.json()["items"][0]["error_code"] == "tool.invalid_args"
 
@@ -143,7 +143,7 @@ def test_execute_records_approved_decision(client: TestClient) -> None:
     )
 
     assert resp.status_code == 200
-    audit = client.get("/v1/tool-calls", headers=TENANT)
+    audit = client.get("/v1/tool-calls", headers=ACCOUNT)
     item = audit.json()["items"][0]
     assert item["decision"] == "approved"
     assert item["run_id"] == "run-1"
@@ -163,7 +163,7 @@ def test_execute_uses_conversation_scope(client: TestClient) -> None:
     assert resp.status_code == 200
 
 
-def test_tool_calls_are_tenant_scoped(client: TestClient) -> None:
+def test_tool_calls_are_account_scoped(client: TestClient) -> None:
     _execute(client, {"tool_call_id": "call-1", "arguments": {"path": "a.txt"}})
 
     other = client.get("/v1/tool-calls", headers=OTHER)

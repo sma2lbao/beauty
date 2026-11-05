@@ -51,9 +51,9 @@ def test_sandbox_scope_partial_unique_index(tmp_path: Path) -> None:
     with sqlite3.connect(tmp_path / "migrations.db") as connection:
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'index' "
-            "AND name = 'uq_sandboxes_tenant_scope'"
+            "AND name = 'uq_sandboxes_account_scope'"
         ).fetchone()
     assert row is not None
     sql = row[0] or ""
-    assert "UNIQUE INDEX uq_sandboxes_tenant_scope" in sql
+    assert "UNIQUE INDEX uq_sandboxes_account_scope" in sql
     assert "WHERE scope_key IS NOT NULL" in sql

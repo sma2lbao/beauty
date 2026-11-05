@@ -55,29 +55,31 @@ def _merge(totals: RunUsageTotals, payload: dict[str, Any]) -> None:
 
 
 async def _usage_events(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[RunEvent]:
     """该 run 的用量事件(按 seq 升序;其它类型事件不参与聚合)。"""
-    events = await RunEventRepository(session).list_for_run(tenant_id, run_id)
+    events = await RunEventRepository(session).list_for_run(account_id, run_id)
     return [event for event in events if event.type == USAGE_EVENT]
 
 
 async def usage_totals(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> RunUsageTotals:
     """聚合某 run 的全部用量事件(无事件时全零,不抛 404)。"""
     totals = RunUsageTotals()
-    for event in await _usage_events(session, tenant_id, run_id):
+    for event in await _usage_events(session, account_id, run_id):
         _merge(totals, event.payload or {})
     return totals
 
 
-async def run_usage(session: AsyncSession, tenant_id: str, run_id: str) -> RunUsageRead:
+async def run_usage(
+    session: AsyncSession, account_id: str, run_id: str
+) -> RunUsageRead:
     """GET /runs/{id}/usage:先校验 run 归属(不存在 404),再汇总用量。"""
-    await RunRepository(session).require_for_tenant(tenant_id, run_id)
+    await RunRepository(session).require_for_account(account_id, run_id)
     totals = RunUsageTotals()
     by_model: dict[str, RunUsageModelRead] = {}
-    for event in await _usage_events(session, tenant_id, run_id):
+    for event in await _usage_events(session, account_id, run_id):
         payload = event.payload or {}
         _merge(totals, payload)
         for model, bucket in (payload.get("models") or {}).items():

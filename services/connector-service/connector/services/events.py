@@ -62,11 +62,11 @@ async def publish_connection_event(
         _log.info(
             "connection_event",
             event_type=event_type,
-            tenant_id=connection.tenant_id,
+            account_id=connection.account_id,
             **payload,
         )
         return
     await OutboxRepository(session).record(
-        connection.tenant_id,
-        EventEnvelope.create(event_type, payload, tenant_id=connection.tenant_id),
+        connection.account_id,
+        EventEnvelope.create(event_type, payload, account_id=connection.account_id),
     )

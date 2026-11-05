@@ -52,7 +52,7 @@ def make_tool_exec_node(
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
         toolkit = await _load_toolkit(
-            state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
+            state.get("account_id", ""), toolkit_factory, extras_factory, runtime
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:

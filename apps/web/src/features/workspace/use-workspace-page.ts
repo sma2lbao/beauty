@@ -22,7 +22,7 @@ import { queryKeys } from '@/lib/query-keys';
 export function useWorkspacePageModel() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  // 当前工作区来自 URL(?workspace=…),缺省回落到租户默认工作区。
+  // 当前工作区来自 URL(?workspace=…),缺省回落到账号默认工作区。
   const {
     workspaces,
     activeWorkspace,

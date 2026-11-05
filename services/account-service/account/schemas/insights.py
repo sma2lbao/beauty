@@ -31,7 +31,7 @@ class UsageEventCreate(BaseModel):
 
 
 class UsageQuota(BaseModel):
-    """租户配额快照(内部读取用):未配置的维度为 None,表示不限制。"""
+    """账号配额快照(内部读取用):未配置的维度为 None,表示不限制。"""
 
     monthly_tokens: int | None = None
     max_concurrent_runs: int | None = None
@@ -64,7 +64,7 @@ class BYOKRead(BaseModel):
 
 
 class BYOKCatalogRead(BaseModel):
-    """内部目录:该租户全部 BYOK 自定义模型并集(去重保序)。"""
+    """内部目录:该账号全部 BYOK 自定义模型并集(去重保序)。"""
 
     models: list[str]
 

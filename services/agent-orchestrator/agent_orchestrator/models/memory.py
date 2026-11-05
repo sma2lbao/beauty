@@ -1,15 +1,15 @@
 """长期记忆与对话摘要 ORM(记忆能力一期)。
 
 对话摘要是压缩的产物:一条对话最多一行,记录摘要覆盖到哪条消息;记忆是跨对话
-的长期事实,检索后拼进 system prompt。两者都按租户隔离;记忆可再按工作区收窄
-(scope=workspace)或在全租户共享(scope=tenant)。
+的长期事实,检索后拼进 system prompt。两者都按账号隔离;记忆可再按工作区收窄
+(scope=workspace)或在全账号共享(scope=account)。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -22,11 +22,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class ConversationSummary(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class ConversationSummary(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """对话摘要(压缩结果):一条对话一行,便于按 conversation_id 直接取用。"""
 
     __tablename__ = "conversation_summaries"
-    __table_args__ = (UniqueConstraint("tenant_id", "conversation_id"),)
+    __table_args__ = (UniqueConstraint("account_id", "conversation_id"),)
 
     conversation_id: Mapped[str] = mapped_column(String(32), index=True)
     summary: Mapped[str] = mapped_column(Text)
@@ -38,16 +38,16 @@ class ConversationSummary(UUIDMixin, TenantMixin, TimestampMixin, Base):
     tokens_after: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class Memory(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class Memory(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """长期记忆:可由手工/对话/run/工具写入的短文,带可插拔语义嵌入。"""
 
     __tablename__ = "memories"
 
-    # scope=tenant 时为空(全租户可见);scope=workspace 时必填。
+    # scope=account 时为空(全账号可见);scope=workspace 时必填。
     workspace_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True
     )
-    scope: Mapped[str] = mapped_column(String(16), default="tenant")
+    scope: Mapped[str] = mapped_column(String(16), default="account")
     kind: Mapped[str] = mapped_column(String(16), default="note")
     content: Mapped[str] = mapped_column(Text)
     # 嵌入向量:默认本地哈希(local-hash-256,零网络),可切 llm-gateway 语义模型;

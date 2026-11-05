@@ -1,4 +1,4 @@
-"""仓储基类:租户隔离、404 语义、逃生口、"不提交"契约。"""
+"""仓储基类:账号隔离、404 语义、逃生口、"不提交"契约。"""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from sqlalchemy import JSON, String
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
-from database.repository import Repository, TenantRepository
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
+from database.repository import AccountRepository, Repository
 from database.session import create_session_factory, session_scope
 
 
-class Widget(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """测试用租户表。"""
+class Widget(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """测试用业务表(混入 AccountMixin)。"""
 
     __tablename__ = "widgets"
 
@@ -25,7 +25,7 @@ class Widget(UUIDMixin, TenantMixin, TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-class WidgetRepository(TenantRepository[Widget]):
+class WidgetRepository(AccountRepository[Widget]):
     model = Widget
     not_found_code = "widget.not_found"
     not_found_message = "组件不存在"
@@ -33,7 +33,7 @@ class WidgetRepository(TenantRepository[Widget]):
 
 
 class GlobalThing(UUIDMixin, TimestampMixin, Base):
-    """测试用全局表(无 tenant_id)。"""
+    """测试用全局表(无 account_id)。"""
 
     __tablename__ = "global_things"
 
@@ -55,14 +55,14 @@ async def factory(tmp_path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     await factory.engine.dispose()
 
 
-async def test_tenant_isolation(factory) -> None:
+async def test_account_isolation(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        await repo.add(Widget(tenant_id="t-1", name="甲的"))
-        await repo.add(Widget(tenant_id="t-2", name="乙的"))
-        await repo.add(Widget(tenant_id="t-1", name="甲的第二个"))
+        await repo.add(Widget(account_id="t-1", name="甲的"))
+        await repo.add(Widget(account_id="t-2", name="乙的"))
+        await repo.add(Widget(account_id="t-1", name="甲的第二个"))
 
-        assert await repo.count_for_tenant("t-1") == 2
+        assert await repo.count_for_account("t-1") == 2
         assert [
             w.name for w in await repo.list_scoped("t-1", order_by=[Widget.name])
         ] == [
@@ -72,17 +72,17 @@ async def test_tenant_isolation(factory) -> None:
         assert [w.name for w in await repo.list_scoped("t-2")] == ["乙的"]
 
 
-async def test_cross_tenant_lookup_is_404_not_403(factory) -> None:
-    """跨租户探测拿到 404:不泄漏"存在但无权"这一信息。"""
+async def test_cross_account_lookup_is_404_not_403(factory) -> None:
+    """跨账号探测拿到 404:不泄漏"存在但无权"这一信息。"""
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        widget = await repo.add(Widget(tenant_id="t-1", name="甲的"))
+        widget = await repo.add(Widget(account_id="t-1", name="甲的"))
 
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        assert await repo.get_for_tenant("t-1", widget.id) is not None
+        assert await repo.get_for_account("t-1", widget.id) is not None
         with pytest.raises(NotFoundError) as exc_info:
-            await repo.require_for_tenant("t-2", widget.id)
+            await repo.require_for_account("t-2", widget.id)
 
     assert exc_info.value.status == 404
     assert exc_info.value.code == "widget.not_found"
@@ -92,7 +92,7 @@ async def test_cross_tenant_lookup_is_404_not_403(factory) -> None:
 async def test_require_missing_and_plain_repository(factory) -> None:
     async with session_scope(factory) as session:
         with pytest.raises(NotFoundError) as widget_exc:
-            await WidgetRepository(session).require_for_tenant("t-1", "nope")
+            await WidgetRepository(session).require_for_account("t-1", "nope")
         assert widget_exc.value.code == "widget.not_found"
 
         thing_repo = ThingRepository(session)
@@ -106,24 +106,24 @@ async def test_require_missing_and_plain_repository(factory) -> None:
 async def test_repository_does_not_commit(factory) -> None:
     """仓储只 flush,不提交:另一个 session 在提交前看不到它。"""
     async with session_scope(factory) as session:
-        await WidgetRepository(session).add(Widget(tenant_id="t-1", name="未提交"))
+        await WidgetRepository(session).add(Widget(account_id="t-1", name="未提交"))
         async with session_scope(factory) as other:
-            assert await WidgetRepository(other).count_for_tenant("t-1") == 0
+            assert await WidgetRepository(other).count_for_account("t-1") == 0
 
     async with session_scope(factory) as session:
-        assert await WidgetRepository(session).count_for_tenant("t-1") == 1
+        assert await WidgetRepository(session).count_for_account("t-1") == 1
 
 
 async def test_escape_hatch_and_json_column(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        await repo.add(Widget(tenant_id="t-1", name="带数据", payload={"n": 1}))
+        await repo.add(Widget(account_id="t-1", name="带数据", payload={"n": 1}))
         statement = repo.scoped("t-1", Widget.name == "带数据")
         found = await session.scalar(statement)
 
         assert found is not None
         assert found.payload == {"n": 1}
-        # 逃生口仍是租户安全的写法:换租户查不到
+        # 逃生口仍是账号安全的写法:换账号查不到
         assert await session.scalar(repo.scoped("t-2", Widget.name == "带数据")) is None
 
 
@@ -131,7 +131,7 @@ async def test_list_limit_offset_and_order(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
         for index in range(3):
-            await repo.add(Widget(tenant_id="t-1", name=f"w{index}"))
+            await repo.add(Widget(account_id="t-1", name=f"w{index}"))
 
         newest = await repo.list_scoped(
             "t-1", order_by=[Widget.created_at.desc(), Widget.id.desc()], limit=2
@@ -145,27 +145,27 @@ async def test_list_limit_offset_and_order(factory) -> None:
 async def test_delete_helpers(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        first = await repo.add(Widget(tenant_id="t-1", name="甲"))
-        await repo.add(Widget(tenant_id="t-1", name="乙"))
-        await repo.add(Widget(tenant_id="t-2", name="丙"))
+        first = await repo.add(Widget(account_id="t-1", name="甲"))
+        await repo.add(Widget(account_id="t-1", name="乙"))
+        await repo.add(Widget(account_id="t-2", name="丙"))
 
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        await repo.delete_for_tenant("t-1", first.id)
-        assert await repo.count_for_tenant("t-1") == 1
+        await repo.delete_for_account("t-1", first.id)
+        assert await repo.count_for_account("t-1") == 1
         with pytest.raises(NotFoundError):
-            await repo.delete_for_tenant("t-1", first.id)  # 再删即 404
+            await repo.delete_for_account("t-1", first.id)  # 再删即 404
 
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        assert await repo.delete_all_for_tenant("t-1") == 1
-        assert await repo.count_for_tenant("t-1") == 0
-        assert await repo.count_for_tenant("t-2") == 1  # 别租户不受影响
+        assert await repo.delete_all_for_account("t-1") == 1
+        assert await repo.count_for_account("t-1") == 0
+        assert await repo.count_for_account("t-2") == 1  # 其他账号不受影响
 
 
-def test_tenant_repository_rejects_model_without_tenant_mixin() -> None:
-    """类定义时就拦住漏了 TenantMixin 的表——这是多租户安全的下限。"""
-    with pytest.raises(TypeError, match="缺少 TenantMixin"):
+def test_account_repository_rejects_model_without_account_mixin() -> None:
+    """类定义时就拦住漏了 AccountMixin 的表——这是账号隔离安全的下限。"""
+    with pytest.raises(TypeError, match="缺少 AccountMixin"):
 
-        class BadRepository(TenantRepository[GlobalThing]):
+        class BadRepository(AccountRepository[GlobalThing]):
             model = GlobalThing

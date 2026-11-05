@@ -1,4 +1,4 @@
-"""记忆 sweeper 单测:过期清理、近重复巩固、租户故障隔离与循环开关。
+"""记忆 sweeper 单测:过期清理、近重复巩固、账号故障隔离与循环开关。
 
 用临时 sqlite 文件库 + 假容器(SimpleNamespace 即可):单轮直接调 sweep_once,
 循环用 monkeypatch 替换 sweep_once 验证参数/重试/取消,零网络、不依赖真实时钟。
@@ -23,8 +23,8 @@ from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services import memory_sweeper
 from tests.conftest import _settings
 
-#: 与 conftest 的 bearer 租户保持一致。
-TENANT = "t-1"
+#: 与 conftest 的 bearer 账号保持一致。
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 
@@ -72,75 +72,75 @@ async def _stop(task: asyncio.Task[None]) -> None:
 async def test_sweep_once_purges_expired_and_consolidates(factory: Any) -> None:
     async with session_scope(factory) as session:
         expired = await memory_service.write_memory(
-            session, TENANT, content="会过期的记忆", ttl_days=1
+            session, ACCOUNT, content="会过期的记忆", ttl_days=1
         )
         expired.expires_at = datetime.now(UTC) - timedelta(days=1)
-        await memory_service.write_memory(session, TENANT, content="用户偏好简洁回答")
+        await memory_service.write_memory(session, ACCOUNT, content="用户偏好简洁回答")
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答,不要长篇大论"
+            session, ACCOUNT, content="用户偏好简洁回答,不要长篇大论"
         )
-        await memory_service.write_memory(session, OTHER, content="另一个租户的记忆")
+        await memory_service.write_memory(session, OTHER, content="另一个账号的记忆")
 
     totals = await memory_sweeper.sweep_once(factory)
-    assert totals == {"tenants": 2, "purged": 1, "consolidated": 1}
+    assert totals == {"accounts": 2, "purged": 1, "consolidated": 1}
 
     async with session_scope(factory) as session:
-        tenant_stats = await memory_service.memory_stats(session, TENANT)
+        account_stats = await memory_service.memory_stats(session, ACCOUNT)
         other_stats = await memory_service.memory_stats(session, OTHER)
     # 过期的一条被清掉,近重复的两条合并成一条,共剩一条生效记忆
-    assert tenant_stats["active"] == 1
+    assert account_stats["active"] == 1
     assert other_stats["active"] == 1
 
 
 async def test_sweep_once_can_skip_consolidation(factory: Any) -> None:
     async with session_scope(factory) as session:
         expired = await memory_service.write_memory(
-            session, TENANT, content="会过期的记忆", ttl_days=1
+            session, ACCOUNT, content="会过期的记忆", ttl_days=1
         )
         expired.expires_at = datetime.now(UTC) - timedelta(days=1)
-        await memory_service.write_memory(session, TENANT, content="用户偏好简洁回答")
+        await memory_service.write_memory(session, ACCOUNT, content="用户偏好简洁回答")
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答,不要长篇大论"
+            session, ACCOUNT, content="用户偏好简洁回答,不要长篇大论"
         )
 
     totals = await memory_sweeper.sweep_once(factory, consolidation_enabled=False)
-    assert totals == {"tenants": 1, "purged": 1, "consolidated": 0}
+    assert totals == {"accounts": 1, "purged": 1, "consolidated": 0}
 
     async with session_scope(factory) as session:
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert stats["active"] == 2
 
 
-async def test_sweep_once_isolates_tenant_failures(
+async def test_sweep_once_isolates_account_failures(
     factory: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with session_scope(factory) as session:
-        await memory_service.write_memory(session, TENANT, content="用户偏好简洁回答")
+        await memory_service.write_memory(session, ACCOUNT, content="用户偏好简洁回答")
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答,不要长篇大论"
+            session, ACCOUNT, content="用户偏好简洁回答,不要长篇大论"
         )
-        await memory_service.write_memory(session, OTHER, content="另一个租户的记忆")
+        await memory_service.write_memory(session, OTHER, content="另一个账号的记忆")
 
     async def failing_consolidate(
         session: AsyncSession,
-        tenant_id: str,
+        account_id: str,
         *,
         threshold: float = 0.92,
     ) -> int:
-        if tenant_id == TENANT:
+        if account_id == ACCOUNT:
             raise RuntimeError("巩固失败")
         return 0
 
     monkeypatch.setattr(memory_sweeper, "consolidate", failing_consolidate)
     totals = await memory_sweeper.sweep_once(factory)
-    assert totals["tenants"] == 2
+    assert totals["accounts"] == 2
     assert totals["consolidated"] == 0
 
     async with session_scope(factory) as session:
-        tenant_stats = await memory_service.memory_stats(session, TENANT)
+        account_stats = await memory_service.memory_stats(session, ACCOUNT)
         other_stats = await memory_service.memory_stats(session, OTHER)
-    # 失败租户的事务已回滚(两条都还在),其他租户继续被处理
-    assert tenant_stats["active"] == 2
+    # 失败账号的事务已回滚(两条都还在),其他账号继续被处理
+    assert account_stats["active"] == 2
     assert other_stats["active"] == 1
 
 
@@ -175,7 +175,7 @@ async def test_sweeper_loop_survives_iteration_failure(
         if attempts == 1:
             raise RuntimeError("本轮失败")
         recovered.set()
-        return {"tenants": 0, "purged": 0, "consolidated": 0}
+        return {"accounts": 0, "purged": 0, "consolidated": 0}
 
     monkeypatch.setattr(memory_sweeper, "sweep_once", flaky_sweep_once)
     task = memory_sweeper.start_sweeper(_container(factory))
@@ -207,7 +207,7 @@ async def test_start_sweeper_uses_settings_and_is_cancellable(
             }
         )
         started.set()
-        return {"tenants": 0, "purged": 0, "consolidated": 0}
+        return {"accounts": 0, "purged": 0, "consolidated": 0}
 
     monkeypatch.setattr(memory_sweeper, "sweep_once", fake_sweep_once)
     container = _container(factory, consolidation_enabled=True, threshold=0.8)

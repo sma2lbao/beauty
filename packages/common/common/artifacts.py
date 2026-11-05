@@ -25,7 +25,7 @@ _SAFE_PART = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def build_artifact_key(*parts: str, suffix: str = ".md") -> str:
-    """拼对象键(如 ``<tenant>/<run>/<artifact>.md``)。
+    """拼对象键(如 ``<account>/<run>/<artifact>.md``)。
 
     各段只允许 ``[A-Za-z0-9._-]``,拒绝空段与 ``.``/``..``——
     对象键永远不直接采用外部输入原文。

@@ -6,7 +6,7 @@ import httpx
 import pytest
 from common.errors import UpstreamError
 from common.logging import bind_request_context, clear_request_context
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 from agent_orchestrator.services.llm import GatewayClient, ToolCall
 
@@ -331,19 +331,19 @@ async def test_gateway_client_stream_events_delta_then_tool_calls() -> None:
     )
 
 
-# ---- BYOK 头注入:租户来自 contextvars,内部密钥来自配置 ----
+# ---- BYOK 头注入:账号来自 contextvars,内部密钥来自配置 ----
 
 
-async def test_gateway_client_injects_tenant_and_secret_headers() -> None:
-    """绑定租户上下文且配置了密钥:两个头都随请求发出。"""
+async def test_gateway_client_injects_account_and_secret_headers() -> None:
+    """绑定账号上下文且配置了密钥:两个头都随请求发出。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(200, json={"model": "m", "content": "ok"})
 
-    bind_request_context(tenant_id="t-1")
+    bind_request_context(account_id="t-1")
     client = GatewayClient(
         "http://test",
         transport=httpx.MockTransport(handler),
@@ -355,15 +355,15 @@ async def test_gateway_client_injects_tenant_and_secret_headers() -> None:
         await client.aclose()
         clear_request_context()
 
-    assert captured == {"tenant": "t-1", "secret": "s3cret"}
+    assert captured == {"account": "t-1", "secret": "s3cret"}
 
 
-async def test_gateway_client_without_context_omits_tenant_header() -> None:
-    """无租户上下文:不发租户头(密钥头仍按配置发)。"""
+async def test_gateway_client_without_context_omits_account_header() -> None:
+    """无账号上下文:不发账号头(密钥头仍按配置发)。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(200, json={"model": "m", "content": "ok"})
 
@@ -378,19 +378,19 @@ async def test_gateway_client_without_context_omits_tenant_header() -> None:
     finally:
         await client.aclose()
 
-    assert captured == {"tenant": None, "secret": "s3cret"}
+    assert captured == {"account": None, "secret": "s3cret"}
 
 
 async def test_gateway_client_without_secret_omits_secret_header() -> None:
-    """未配置密钥:只发租户头,不发内部密钥头。"""
+    """未配置密钥:只发账号头,不发内部密钥头。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(200, json={"model": "m", "content": "ok"})
 
-    bind_request_context(tenant_id="t-2")
+    bind_request_context(account_id="t-2")
     client = GatewayClient("http://test", transport=httpx.MockTransport(handler))
     try:
         await client.complete([{"role": "user", "content": "hi"}])
@@ -398,22 +398,22 @@ async def test_gateway_client_without_secret_omits_secret_header() -> None:
         await client.aclose()
         clear_request_context()
 
-    assert captured == {"tenant": "t-2", "secret": None}
+    assert captured == {"account": "t-2", "secret": None}
 
 
 async def test_gateway_client_stream_also_injects_headers() -> None:
-    """流式请求走同一个出站钩子:租户头与密钥头同样生效。"""
+    """流式请求走同一个出站钩子:账号头与密钥头同样生效。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["tenant"] = request.headers.get(TENANT_HEADER)
+        captured["account"] = request.headers.get(ACCOUNT_HEADER)
         captured["secret"] = request.headers.get(SECRET_HEADER)
         return httpx.Response(
             200,
             text=('data: {"delta": "你"}\n\ndata: {"done": true}\n\n'),
         )
 
-    bind_request_context(tenant_id="t-3")
+    bind_request_context(account_id="t-3")
     client = GatewayClient(
         "http://test",
         transport=httpx.MockTransport(handler),
@@ -428,4 +428,4 @@ async def test_gateway_client_stream_also_injects_headers() -> None:
         clear_request_context()
 
     assert chunks == ["你"]
-    assert captured == {"tenant": "t-3", "secret": "s3cret"}
+    assert captured == {"account": "t-3", "secret": "s3cret"}

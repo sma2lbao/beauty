@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from account.main import create_app
-from tests.conftest import _IDP, TENANT, _settings
+from tests.conftest import _IDP, ACCOUNT, ACCOUNT_ID, _settings
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -54,7 +54,7 @@ def _authorize(client: TestClient, registered: dict, challenge: str):
             "code_challenge": challenge,
             "code_challenge_method": "S256",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -120,6 +120,7 @@ def test_pkce_code_exchange_introspect_and_rotation(tmp_path: Path) -> None:
         assert introspected.status_code == 200
         assert introspected.json()["active"] is True
         assert introspected.json()["scope"] == "mcp:tools:read"
+        assert introspected.json()["account_id"] == ACCOUNT_ID
 
         refreshed = client.post(
             "/v1/oauth/token",
@@ -153,7 +154,7 @@ def test_pkce_and_redirect_validation(tmp_path: Path) -> None:
                 "scope": "mcp:tools:read",
                 "code_challenge": challenge,
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert bad_redirect.status_code == 400
 
@@ -195,7 +196,7 @@ def test_revoke_token_and_authorized_clients(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         registered = _register(client)
         tokens = _access_token(client, registered)
-        authorized = client.get("/v1/oauth/authorizations", headers=TENANT)
+        authorized = client.get("/v1/oauth/authorizations", headers=ACCOUNT)
         assert authorized.status_code == 200
         items = authorized.json()
         assert items[0]["client_id"] == registered["client_id"]
@@ -221,7 +222,7 @@ def test_revoke_token_and_authorized_clients(tmp_path: Path) -> None:
         assert (
             client.delete(
                 f"/v1/oauth/authorizations/{registered['client_id']}",
-                headers=TENANT,
+                headers=ACCOUNT,
             ).status_code
             == 204
         )

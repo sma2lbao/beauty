@@ -1,67 +1,28 @@
 /**
- * 侧边栏主导航与更多导航(含官网外链)。
+ * 侧栏主导航:只留「工作组」三项,其余入口收进「更多」弹层(见 more-nav.tsx)。
+ *
+ * 演进路径:
+ * - 最初 9 项主导航 + 3 项次级导航平铺,900px 高的窗口里导航吃掉 44% 高度,
+ *   会话列表只剩 4 行;
+ * - C 步骤按频次分成 工作/资源/管理 三组,管理组默认折叠,已缓解但仍有
+ *   3 个组头和 5 项资源入口常驻;
+ * - A 步骤把「每会话都会碰」的三项直接铺开,其余分组交给「更多」弹层:
+ *   一次点击可达,但不再占版面。分组数据仍来自 nav-data,只是换了渲染器。
  */
-import {
-  BarChart3,
-  BookOpen,
-  Brain,
-  Cable,
-  Columns3,
-  FolderKanban,
-  GitCompareArrows,
-  Globe,
-  Inbox,
-  LayoutGrid,
-  Settings,
-  Sparkles,
-} from 'lucide-react';
-
 import { ConsoleNavLink } from '@/components/console/ui';
-import { siteUrl } from '@/lib/site-links';
 
-const PRIMARY_NAV = [
-  { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
-  { to: '/runs', icon: <Columns3 />, label: '任务编排' },
-  { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
-  // MCP 入口已并入连接器页(页内「我的 MCP 服务」段),不再单列
-  { to: '/connectors', icon: <Cable />, label: '连接器' },
-  { to: '/skills', icon: <Sparkles />, label: 'Skills' },
-  { to: '/usage', icon: <BarChart3 />, label: '用量' },
-  { to: '/knowledge', icon: <BookOpen />, label: '知识库' },
-  { to: '/memory', icon: <Brain />, label: '记忆' },
-  { to: '/settings', icon: <Settings />, label: '设置' },
-];
+import { WORK_GROUP } from './nav-state';
 
-const SECONDARY_NAV = [
-  { to: '/workspace', icon: <FolderKanban />, label: '工作区' },
-  { to: '/outbox', icon: <Inbox />, label: '事件队列' },
-];
-
+/** 高频道具:工作台 / 任务编排 / 变更。 */
 export function PrimaryNav() {
+  if (!WORK_GROUP) {
+    return null;
+  }
   return (
-    <nav aria-label="主导航" className="flex flex-col gap-0.5">
-      {PRIMARY_NAV.map((item) => (
+    <>
+      {WORK_GROUP.items.map((item) => (
         <ConsoleNavLink key={item.to} {...item} />
       ))}
-    </nav>
-  );
-}
-
-export function MoreNav() {
-  return (
-    <nav aria-label="更多" className="flex flex-col gap-0.5">
-      {SECONDARY_NAV.map((item) => (
-        <ConsoleNavLink key={item.to} {...item} />
-      ))}
-      <a
-        href={siteUrl('/')}
-        target="_blank"
-        rel="noreferrer"
-        className="flex h-8 items-center gap-2.5 rounded-md px-2.5 text-ha-text-3 transition-colors hover:bg-ha-panel-2/70 hover:text-ha-text-2"
-      >
-        <Globe aria-hidden="true" className="h-4 w-4 shrink-0" />
-        <span className="text-[13px]">官网</span>
-      </a>
-    </nav>
+    </>
   );
 }

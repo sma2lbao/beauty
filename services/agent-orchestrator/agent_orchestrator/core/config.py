@@ -3,7 +3,7 @@
 from common.config import BaseAppSettings
 from pydantic_settings import SettingsConfigDict
 
-#: stdio MCP 允许拉起的命令(包管理/解释器入口);租户可配置但默认收口在这里
+#: stdio MCP 允许拉起的命令(包管理/解释器入口);账号可配置但默认收口在这里
 DEFAULT_MCP_STDIO_COMMAND_ALLOWLIST: list[str] = [
     "npx",
     "uvx",
@@ -33,7 +33,7 @@ class Settings(BaseAppSettings):
     run_delta_streaming: bool = True
     run_delta_flush_chars: int = 240
     run_delta_flush_seconds: float = 0.25
-    # 通知流(P1-9b):按租户轮询 run 状态变化并推送;扫描间隔与单次查询上限
+    # 通知流(P1-9b):按账号轮询 run 状态变化并推送;扫描间隔与单次查询上限
     notifications_poll_interval_seconds: float = 2.0
     notifications_lookback_seconds: int = 120  # 只看最近 N 秒内有状态变更的 run
     notifications_batch_limit: int = 100
@@ -69,7 +69,7 @@ class Settings(BaseAppSettings):
     interrupt_sweep_interval_seconds: float = 15.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
-    # MCP Client(M1 本地版):允许租户配置第三方 MCP server
+    # MCP Client(M1 本地版):允许账号配置第三方 MCP server
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
     # stdio 型 MCP(P2):在沙箱内拉起 MCP 进程,经 stdio JSON-RPC 调工具。
@@ -155,7 +155,7 @@ class Settings(BaseAppSettings):
     knowledge_timeout_seconds: float = 30.0
     # 长期记忆(§6.7 记忆模块):跨会话保留的用户偏好/事实/项目笔记。
     # 与知识库的分工:知识库是"文档"检索(显式工具),记忆是"对话沉淀"(自动召回)。
-    # 存储走 orchestration 自己的 memories 表(租户隔离 + 工作区归属),
+    # 存储走 orchestration 自己的 memories 表(账号隔离 + 工作区归属),
     # recall 结果按相关性拼进系统提示,不是把整库塞给模型。
     memory_enabled: bool = True
     memory_recall_limit: int = 5
@@ -164,11 +164,11 @@ class Settings(BaseAppSettings):
     # 与召回互补:约定不按相关性过滤(否则模型不知道去查),但仍受预算约束。
     memory_convention_max_chars: int = 2000
     memory_max_content_chars: int = 8000
-    memory_max_entries_per_tenant: int = 2000
+    memory_max_entries_per_account: int = 2000
     # 0 = 不过期(只按容量与手动删除治理);>0 时写入时算 expires_at
     memory_default_ttl_days: int = 0
     # 记忆二期(P2):自动抽取/近重复巩固/周期清理。抽取需要 LLM 且会把对话
-    # 内容写进长期记忆(默认 tenant 级、跨工作区可见),属隐私敏感行为,**默认关**;
+    # 内容写进长期记忆(默认 account 级、跨工作区可见),属隐私敏感行为,**默认关**;
     # 显式开启后受 memory_extraction_min_messages 节流(每累计 N 条会话消息抽一次,
     # 0=关闭该调用方)。巩固按词面相似度合并近重复,pinned 永不删除;sweeper
     # 周期清理过期记忆。run 完成路径不依赖 outbox(提交后回调),见 memory_extraction。
@@ -258,14 +258,14 @@ class Settings(BaseAppSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
-    # 鉴权(架构 §10):默认开启——租户来自签名 claim(自建 IdP 即 account-service);
-    # X-Tenant-Id 临时头仅保留为显式关闭鉴权(AUTH_ENABLED=false)的部署语义
+    # 鉴权(架构 §10):默认开启——账号来自签名 claim(自建 IdP 即 account-service);
+    # X-Account-Id 临时头仅保留为显式关闭鉴权(AUTH_ENABLED=false)的部署语义
     auth_enabled: bool = True
     auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
     auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
-    auth_tenant_claim: str = "tenant_id"
-    # 服务间调用(§5):一律经 account 的内部 issue 端点换租户 token——
-    # 租户来自签名 claim,不再有 X-Tenant-Id 裸调路径;
+    auth_account_claim: str = "account_id"
+    # 服务间调用(§5):一律经 account 的内部 issue 端点换账号 token——
+    # 账号来自签名 claim,不再有 X-Account-Id 裸调路径;
     # 必须与 account 的 ACCOUNT__INTERNAL_SECRET 一致,未配置时调用下游即报错
     internal_auth_secret: str = ""

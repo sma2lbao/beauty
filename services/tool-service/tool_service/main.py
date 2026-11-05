@@ -64,7 +64,7 @@ def create_app(
                 knowledge=knowledge_runtime.client, fetcher=fetcher
             )
         # 连接器网关只在配置了内部密钥时启用;未配置时目录只含内置工具。
-        # 启动期不拉目录(首次 GET /v1/tools 才按租户请求,避免启动依赖)。
+        # 启动期不拉目录(首次 GET /v1/tools 才按账号请求,避免启动依赖)。
         gateway = connector_gateway
         if gateway is None and resolved.connector_internal_secret:
             gateway = ConnectorGateway(

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
+from tests.conftest import ACCOUNT, OTHER, FakeLLM, _client, _create_run
 
 VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
 
@@ -12,8 +12,8 @@ VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}
 def _make_failed_run(client: TestClient) -> str:
     """造一个 failed run:计划成功,execute 阶段模型挂掉。"""
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
     assert run["status"] == "failed"
     return run_id
 
@@ -25,9 +25,9 @@ def _failing_llm() -> FakeLLM:
 def test_retry_creates_child_run_with_inherited_context(tmp_path: Path) -> None:
     with _client(tmp_path, _failing_llm()) as client:
         parent_id = _make_failed_run(client)
-        parent = client.get(f"/api/v1/runs/{parent_id}", headers=TENANT).json()
+        parent = client.get(f"/api/v1/runs/{parent_id}", headers=ACCOUNT).json()
 
-        response = client.post(f"/api/v1/runs/{parent_id}/retry", headers=TENANT)
+        response = client.post(f"/api/v1/runs/{parent_id}/retry", headers=ACCOUNT)
         assert response.status_code == 201
         child = response.json()
 
@@ -43,9 +43,9 @@ def test_retry_creates_child_run_with_inherited_context(tmp_path: Path) -> None:
         assert child["status"] == "awaiting_approval"
         assert child["status_reason"] is None
 
-        plan = client.get(f"/api/v1/runs/{child['id']}/plan", headers=TENANT).json()
+        plan = client.get(f"/api/v1/runs/{child['id']}/plan", headers=ACCOUNT).json()
         parent_plan = client.get(
-            f"/api/v1/runs/{parent_id}/plan", headers=TENANT
+            f"/api/v1/runs/{parent_id}/plan", headers=ACCOUNT
         ).json()
         assert plan["plan_markdown"] == parent_plan["plan_markdown"]
 
@@ -53,22 +53,22 @@ def test_retry_creates_child_run_with_inherited_context(tmp_path: Path) -> None:
 def test_retry_keeps_parent_history_intact(tmp_path: Path) -> None:
     with _client(tmp_path, _failing_llm()) as client:
         parent_id = _make_failed_run(client)
-        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=TENANT).json()
+        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=ACCOUNT).json()
 
-        parent = client.get(f"/api/v1/runs/{parent_id}", headers=TENANT).json()
+        parent = client.get(f"/api/v1/runs/{parent_id}", headers=ACCOUNT).json()
         assert parent["status"] == "failed"  # 旧 run 仍是 failed,不被"重试"改写
         assert parent["status_reason"]  # 失败原因保留
-        runs = client.get("/api/v1/runs", headers=TENANT).json()
+        runs = client.get("/api/v1/runs", headers=ACCOUNT).json()
         assert {run["id"] for run in runs} == {parent_id, child["id"]}
 
 
 def test_retry_events_link_both_directions(tmp_path: Path) -> None:
     with _client(tmp_path, _failing_llm()) as client:
         parent_id = _make_failed_run(client)
-        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=TENANT).json()
+        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=ACCOUNT).json()
 
         parent_events = client.get(
-            f"/api/v1/runs/{parent_id}/events", headers=TENANT
+            f"/api/v1/runs/{parent_id}/events", headers=ACCOUNT
         ).json()
         requested = next(
             e for e in parent_events if e["type"] == "run.retry.requested.v1"
@@ -77,7 +77,7 @@ def test_retry_events_link_both_directions(tmp_path: Path) -> None:
         assert requested["payload"]["reason"]
 
         child_events = client.get(
-            f"/api/v1/runs/{child['id']}/events", headers=TENANT
+            f"/api/v1/runs/{child['id']}/events", headers=ACCOUNT
         ).json()
         created = next(e for e in child_events if e["type"] == "run.created.v1")
         assert created["payload"]["parent_run_id"] == parent_id
@@ -89,17 +89,17 @@ def test_retry_only_allowed_from_failed(tmp_path: Path) -> None:
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
 
-        early = client.post(f"/api/v1/runs/{run_id}/retry", headers=TENANT)
+        early = client.post(f"/api/v1/runs/{run_id}/retry", headers=ACCOUNT)
         assert early.status_code == 409
         assert early.json()["code"] == "run.invalid_state"
 
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
-        late = client.post(f"/api/v1/runs/{run_id}/retry", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
+        late = client.post(f"/api/v1/runs/{run_id}/retry", headers=ACCOUNT)
         assert late.status_code == 409
 
 
-def test_retry_is_tenant_scoped(tmp_path: Path) -> None:
+def test_retry_is_account_scoped(tmp_path: Path) -> None:
     with _client(tmp_path, _failing_llm()) as client:
         parent_id = _make_failed_run(client)
         response = client.post(f"/api/v1/runs/{parent_id}/retry", headers=OTHER)
@@ -112,17 +112,17 @@ def test_retried_run_can_complete(tmp_path: Path) -> None:
     fake = _failing_llm()
     with _client(tmp_path, fake) as client:
         parent_id = _make_failed_run(client)
-        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=TENANT).json()
+        child = client.post(f"/api/v1/runs/{parent_id}/retry", headers=ACCOUNT).json()
 
         # 第 2 次调用(失败的 execute)已消耗 responses[1];后续按序继续
         fake.responses.extend(["执行成功", VERIFY_PASS, "# 重试后的成品"])
 
         approved = client.post(
-            f"/api/v1/runs/{child['id']}/approve", headers=TENANT
+            f"/api/v1/runs/{child['id']}/approve", headers=ACCOUNT
         ).json()
         assert approved["status"] == "completed"
 
         artifact = client.get(
-            f"/api/v1/runs/{child['id']}/artifact", headers=TENANT
+            f"/api/v1/runs/{child['id']}/artifact", headers=ACCOUNT
         ).json()
         assert "重试后的成品" in artifact["content"]

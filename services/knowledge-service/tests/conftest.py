@@ -13,7 +13,7 @@ from knowledge.core.config import Settings
 from knowledge.main import create_app
 
 _IDP = TestIdP()
-TENANT = _IDP.bearer("t-1")
+ACCOUNT = _IDP.bearer("t-1")
 OTHER = _IDP.bearer("t-2")
 
 
@@ -30,9 +30,9 @@ client = client_fixture(
 )
 
 
-def _ingest(client: TestClient, title: str, content: str, tenant: dict | None = None):
+def _ingest(client: TestClient, title: str, content: str, account: dict | None = None):
     return client.post(
         "/v1/knowledge/documents",
         json={"title": title, "content": content},
-        headers=tenant or TENANT,
+        headers=account or ACCOUNT,
     )

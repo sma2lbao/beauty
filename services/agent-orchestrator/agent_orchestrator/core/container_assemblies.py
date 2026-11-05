@@ -31,7 +31,7 @@ class ContainerAssemblyMixin:
     def _extras_factory(self) -> ToolExtrasFactory:
         """外部工具(MCP / skill_run)工厂:调用边界才解析,复用容器里的依赖。"""
 
-        async def _load_extras(tenant_id: str) -> list[ToolSpec]:
+        async def _load_extras(account_id: str) -> list[ToolSpec]:
             """run 绑定了可执行技能包 → skill_run;有 MCP → 追加 MCP 工具。
 
             skill 与 MCP 互不阻断:MCP 故障只降级 MCP 工具;chat 路径没有
@@ -51,7 +51,7 @@ class ContainerAssemblyMixin:
             if ctx is not None and ctx.run_id:
                 async with session_scope(factory) as session:
                     run = await session.get(runs_models.Run, ctx.run_id)
-                    if run is not None and run.tenant_id == tenant_id:
+                    if run is not None and run.account_id == account_id:
                         if runner is not None and run.skill_object_key:
                             specs.append(runner.spec(run))
                         if run.mcp_server_ids:
@@ -62,7 +62,7 @@ class ContainerAssemblyMixin:
                     """调用期 401 落库:/mcp 页不必手动测试也能看到"需要授权"。"""
                     async with session_scope(factory) as session:
                         server = await session.get(mcp_models.MCPServer, server_id)
-                        if server is None or server.tenant_id != tenant_id:
+                        if server is None or server.account_id != account_id:
                             return
                         server.last_status = "auth_required"
                         server.last_error = detail[:500]
@@ -75,7 +75,7 @@ class ContainerAssemblyMixin:
                     async with session_scope(factory) as session:
                         return await mcp_oauth.access_token(
                             session,
-                            tenant_id,
+                            account_id,
                             server_id,
                             settings=settings,
                             secret=settings.mcp_secret,
@@ -87,7 +87,7 @@ class ContainerAssemblyMixin:
                         # stdio MCP 的沙箱池在启动后段才装配,这里按调用时取值
                         specs += await mcp_service.tool_specs(
                             session,
-                            tenant_id,
+                            account_id,
                             secret=settings.mcp_secret,
                             pool=self.mcp_stdio_pool,
                             on_auth_required=_mark_mcp_auth_required,
@@ -97,7 +97,7 @@ class ContainerAssemblyMixin:
                 except Exception as exc:  # noqa: BLE001 - MCP 故障不阻断 skill
                     logger.warning(
                         "mcp tool specs failed",
-                        tenant_id=tenant_id,
+                        account_id=account_id,
                         error=f"{type(exc).__name__}: {exc}",
                     )
             # 长期记忆工具(§6.7):跨会话读写偏好/事实,与知识库检索互补
@@ -138,7 +138,7 @@ class ContainerAssemblyMixin:
                 # 直接掐断,不给模型"试试看"的无效工具面)。
                 if (
                     run is not None
-                    and run.tenant_id == tenant_id
+                    and run.account_id == account_id
                     and settings.subagent_enabled
                     and run.parent_kind != runs_models.PARENT_KIND_SUBAGENT
                 ):

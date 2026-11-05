@@ -89,7 +89,7 @@ async def _finish(
     """按子 run 终态落父 item 并组装回喂父模型的 JSON(§6 状态映射)。"""
 
     status = child.status
-    usage = await usage_events.usage_totals(session, parent.tenant_id, child.id)
+    usage = await usage_events.usage_totals(session, parent.account_id, child.id)
     usage_data = usage.model_dump()
 
     if status in _AWAITING_STATUSES:
@@ -216,13 +216,13 @@ async def _child_summary(
 
     text = ""
     try:
-        view = await get_artifact(session, child.tenant_id, child.id, store)
+        view = await get_artifact(session, child.account_id, child.id, store)
         text = view.content or ""
     except NotFoundError:
         text = ""
     if not text:
         events = await RunEventRepository(session).list_for_run(
-            child.tenant_id, child.id
+            child.account_id, child.id
         )
         for event in reversed(events):
             if event.type != "run.completed.v1":
@@ -236,12 +236,12 @@ async def _child_summary(
 
 
 async def _item_summaries(
-    session: AsyncSession, tenant_id: str, parent_id: str
+    session: AsyncSession, account_id: str, parent_id: str
 ) -> dict[str, str]:
     """父 run 里每个子代理 item 最近一次完成摘要(列表页 summary 列)。"""
 
     summaries: dict[str, str] = {}
-    for item in await list_items(session, tenant_id, parent_id):
+    for item in await list_items(session, account_id, parent_id):
         if item.kind != items.KIND_SUBAGENT:
             continue
         child_id = item.data.get("child_run_id")

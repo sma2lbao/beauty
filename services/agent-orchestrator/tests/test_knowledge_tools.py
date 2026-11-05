@@ -9,7 +9,7 @@ from agent_orchestrator.main import create_app
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledge,
     FakeLLM,
     _create_run,
@@ -82,14 +82,14 @@ def test_knowledge_tool_flows_through_graph(tmp_path: Path) -> None:
     app = create_app(
         _settings(tmp_path, "knowledge.db", llm_enabled=True, tools_enabled=True),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(tenant, knowledge=knowledge),
+        toolkit_factory=lambda account: build_tools(account, knowledge=knowledge),
         token_verifier=verifier(),
     )
 
     with TestClient(app) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
         # 只暴露知识库能力;检索片段经 tool 消息回喂模型
@@ -101,7 +101,7 @@ def test_knowledge_tool_flows_through_graph(tmp_path: Path) -> None:
         tool_messages = [m for m in fake.calls[2] if m["role"] == "tool"]
         assert tool_messages and "报价单" in tool_messages[0]["content"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
         assert tool_event["payload"]["name"] == "search_knowledge"
         assert tool_event["payload"]["ok"] is True

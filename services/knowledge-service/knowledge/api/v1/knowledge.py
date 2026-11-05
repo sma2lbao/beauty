@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowledge.api.deps import (
+    get_account_id,
     get_embedder,
     get_session,
     get_settings,
-    get_tenant_id,
 )
 from knowledge.core.config import Settings
 from knowledge.schemas.knowledge import (
@@ -27,7 +27,7 @@ from knowledge.services.embeddings import EmbeddingProvider
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 Embedder = Annotated[EmbeddingProvider, Depends(get_embedder)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -38,14 +38,14 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 async def create_document(
     body: DocumentCreate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     embedder: Embedder,
     settings: SettingsDep,
 ) -> DocumentRead:
     """登记文档:分块 + 向量化(§9)。"""
     document = await knowledge_service.ingest_document(
         session,
-        tenant_id,
+        account_id,
         body,
         embedder,
         chunk_size=settings.chunk_size,
@@ -55,25 +55,29 @@ async def create_document(
 
 
 @router.get("/documents", response_model=list[DocumentRead])
-async def list_documents(session: DBSession, tenant_id: TenantId) -> list[DocumentRead]:
-    documents = await knowledge_service.list_documents(session, tenant_id)
+async def list_documents(
+    session: DBSession, account_id: AccountId
+) -> list[DocumentRead]:
+    documents = await knowledge_service.list_documents(session, account_id)
     return [DocumentRead.model_validate(document) for document in documents]
 
 
 @router.get("/documents/{document_id}", response_model=DocumentRead)
 async def get_document(
-    document_id: str, session: DBSession, tenant_id: TenantId
+    document_id: str, session: DBSession, account_id: AccountId
 ) -> DocumentRead:
-    document = await knowledge_service.require_document(session, tenant_id, document_id)
+    document = await knowledge_service.require_document(
+        session, account_id, document_id
+    )
     return DocumentRead.model_validate(document)
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
-    document_id: str, session: DBSession, tenant_id: TenantId
+    document_id: str, session: DBSession, account_id: AccountId
 ) -> Response:
-    """删除文档及其分块(租户内)。"""
-    await knowledge_service.delete_document(session, tenant_id, document_id)
+    """删除文档及其分块(账号内)。"""
+    await knowledge_service.delete_document(session, account_id, document_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -81,7 +85,7 @@ async def delete_document(
 async def search(
     body: SearchRequest,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     embedder: Embedder,
     settings: SettingsDep,
 ) -> SearchResponse:
@@ -89,7 +93,7 @@ async def search(
     limit = body.limit or settings.search_default_limit
     limit = max(1, min(limit, settings.search_max_limit))
     hits = await knowledge_service.search(
-        session, tenant_id, body.query, limit, embedder
+        session, account_id, body.query, limit, embedder
     )
     return SearchResponse(
         query=body.query,

@@ -1,8 +1,8 @@
-"""conversation 域:run 联动、assistant 消息持久化、租户隔离与列表语义。"""
+"""conversation 域:run 联动、assistant 消息持久化、账号隔离与列表语义。"""
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeLLM, _client
+from tests.conftest import ACCOUNT, OTHER, FakeLLM, _client
 from tests.support.conversations import (
     _create_conversation,
     _detail,
@@ -61,7 +61,7 @@ def test_message_while_run_in_flight_becomes_instruction(
     assert messages[1]["run_id"] == first["run"]["id"]
 
     instructions = client.get(
-        f"/api/v1/runs/{first['run']['id']}/instructions", headers=TENANT
+        f"/api/v1/runs/{first['run']['id']}/instructions", headers=ACCOUNT
     ).json()
     assert [item["content"] for item in instructions] == ["顺便看看日历"]
     assert all(item["status"] == "queued" for item in instructions)
@@ -73,7 +73,7 @@ def test_approve_persists_assistant_message_with_artifact(
     conversation_id = _create_conversation(client)
     run_id = _post_message(client, conversation_id, "把本周日程整理成周报")["run"]["id"]
 
-    done = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+    done = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
     assert done["status"] == "completed"
 
     messages = _messages(client, conversation_id)
@@ -93,7 +93,7 @@ def test_reject_persists_assistant_message_then_new_run(
     run_id = _post_message(client, conversation_id, "把本周日程整理成周报")["run"]["id"]
 
     blocked = client.post(
-        f"/api/v1/runs/{run_id}/reject", json={"reason": "先别发"}, headers=TENANT
+        f"/api/v1/runs/{run_id}/reject", json={"reason": "先别发"}, headers=ACCOUNT
     ).json()
     assert blocked["status"] == "blocked"
 
@@ -137,7 +137,7 @@ def test_conversation_history_reaches_plan_prompt(tmp_path) -> None:
     with _client(tmp_path, fake) as client:
         conversation_id = _create_conversation(client)
         first = _post_message(client, conversation_id, "把本周日程整理成周报")
-        client.post(f"/api/v1/runs/{first['run']['id']}/approve", headers=TENANT)
+        client.post(f"/api/v1/runs/{first['run']['id']}/approve", headers=ACCOUNT)
 
         second = _post_message(client, conversation_id, "接着把日历也汇总进来")
 
@@ -152,7 +152,7 @@ def test_conversation_history_reaches_plan_prompt(tmp_path) -> None:
         assert "接着把日历也汇总进来" not in history_block
 
 
-def test_tenant_isolation(client: TestClient) -> None:
+def test_account_isolation(client: TestClient) -> None:
     conversation_id = _create_conversation(client)
 
     assert (
@@ -181,11 +181,11 @@ def test_tenant_isolation(client: TestClient) -> None:
 def test_list_conversations_orders_by_recent_activity(client: TestClient) -> None:
     a = _create_conversation(client)
     b = _create_conversation(client)
-    listing = client.get("/api/v1/conversations", headers=TENANT).json()["items"]
+    listing = client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"]
     assert [c["id"] for c in listing] == [b, a]  # 创建新的在前
 
     _post_message(client, a, "旧对话来了一条新消息")
-    listing = client.get("/api/v1/conversations", headers=TENANT).json()["items"]
+    listing = client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"]
     assert [c["id"] for c in listing] == [a, b]  # 消息把 a 顶到最前
 
 
@@ -195,13 +195,13 @@ def test_rename_conversation(client: TestClient) -> None:
     resp = client.patch(
         f"/api/v1/conversations/{conversation_id}",
         json={"title": "  新的标题  "},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
     assert resp.status_code == 200
     assert resp.json()["title"] == "新的标题"
     assert _detail(client, conversation_id)["title"] == "新的标题"
-    # 跨租户不可见
+    # 跨账号不可见
     assert (
         client.patch(
             f"/api/v1/conversations/{conversation_id}",
@@ -218,12 +218,12 @@ def test_archive_and_unarchive_conversation(client: TestClient) -> None:
     archived = client.patch(
         f"/api/v1/conversations/{conversation_id}",
         json={"archived": True},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
-    assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
-    listing = client.get("/api/v1/conversations?archived=true", headers=TENANT).json()[
+    assert client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"] == []
+    listing = client.get("/api/v1/conversations?archived=true", headers=ACCOUNT).json()[
         "items"
     ]
     assert [c["id"] for c in listing] == [conversation_id]
@@ -233,12 +233,12 @@ def test_archive_and_unarchive_conversation(client: TestClient) -> None:
     restored = client.patch(
         f"/api/v1/conversations/{conversation_id}",
         json={"archived": False},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert restored.json()["archived_at"] is None
     assert [
         c["id"]
-        for c in client.get("/api/v1/conversations", headers=TENANT).json()["items"]
+        for c in client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"]
     ] == [conversation_id]
 
 
@@ -248,20 +248,20 @@ def test_soft_delete_conversation(client: TestClient) -> None:
 
     assert (
         client.delete(
-            f"/api/v1/conversations/{conversation_id}", headers=TENANT
+            f"/api/v1/conversations/{conversation_id}", headers=ACCOUNT
         ).status_code
         == 204
     )
-    assert client.get("/api/v1/conversations", headers=TENANT).json()["items"] == []
+    assert client.get("/api/v1/conversations", headers=ACCOUNT).json()["items"] == []
     assert (
         client.get(
-            f"/api/v1/conversations/{conversation_id}", headers=TENANT
+            f"/api/v1/conversations/{conversation_id}", headers=ACCOUNT
         ).status_code
         == 404
     )
     assert (
         client.get(
-            f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+            f"/api/v1/conversations/{conversation_id}/messages", headers=ACCOUNT
         ).status_code
         == 404
     )
@@ -269,12 +269,14 @@ def test_soft_delete_conversation(client: TestClient) -> None:
 
 def test_search_conversations_by_title(client: TestClient) -> None:
     weekly = client.post(
-        "/api/v1/conversations", json={"title": "本周日程周报"}, headers=TENANT
+        "/api/v1/conversations", json={"title": "本周日程周报"}, headers=ACCOUNT
     ).json()["id"]
-    client.post("/api/v1/conversations", json={"title": "合同评审"}, headers=TENANT)
-    client.post("/api/v1/conversations", json={"title": "周报模板"}, headers=TENANT)
+    client.post("/api/v1/conversations", json={"title": "合同评审"}, headers=ACCOUNT)
+    client.post("/api/v1/conversations", json={"title": "周报模板"}, headers=ACCOUNT)
 
-    listing = client.get("/api/v1/conversations?q=周报", headers=TENANT).json()["items"]
+    listing = client.get("/api/v1/conversations?q=周报", headers=ACCOUNT).json()[
+        "items"
+    ]
     assert weekly in [item["id"] for item in listing]
     assert all("周报" in item["title"] for item in listing)
 
@@ -282,17 +284,17 @@ def test_search_conversations_by_title(client: TestClient) -> None:
 def test_conversation_pagination_cursor(client: TestClient) -> None:
     ids = [
         client.post(
-            "/api/v1/conversations", json={"title": f"会话{i}"}, headers=TENANT
+            "/api/v1/conversations", json={"title": f"会话{i}"}, headers=ACCOUNT
         ).json()["id"]
         for i in range(3)
     ]
 
-    first = client.get("/api/v1/conversations?limit=2", headers=TENANT).json()
+    first = client.get("/api/v1/conversations?limit=2", headers=ACCOUNT).json()
     assert len(first["items"]) == 2
     assert first["next_cursor"]
     second = client.get(
         f"/api/v1/conversations?limit=2&cursor={first['next_cursor']}",
-        headers=TENANT,
+        headers=ACCOUNT,
     ).json()
     assert len(second["items"]) == 1
     assert second["next_cursor"] is None
@@ -302,7 +304,7 @@ def test_conversation_pagination_cursor(client: TestClient) -> None:
     # 坏游标给 400
     assert (
         client.get(
-            "/api/v1/conversations?cursor=not-base64", headers=TENANT
+            "/api/v1/conversations?cursor=not-base64", headers=ACCOUNT
         ).status_code
         == 400
     )

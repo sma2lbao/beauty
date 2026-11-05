@@ -23,13 +23,13 @@ export const KIND_COLORS: Record<
 };
 
 export const SCOPE_LABELS: Record<MemoryScope, string> = {
-  tenant: '租户级',
+  account: '账号级',
   workspace: '工作区级',
 };
 
 /** 统计卡定义(后端 GET /memories/stats 的四个字段)。 */
 export const STAT_ITEMS = [
-  { key: 'total', label: '记忆总数', hint: '租户内全部记忆' },
+  { key: 'total', label: '记忆总数', hint: '账号内全部记忆' },
   { key: 'active', label: '有效', hint: '未过期、可被检索' },
   { key: 'pinned', label: '置顶', hint: '始终注入上下文' },
   { key: 'expired', label: '已过期', hint: '可清理' },

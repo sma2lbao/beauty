@@ -15,8 +15,8 @@ from tool_service.services.executors.http import (
 )
 
 
-async def _token(tenant_id: str) -> str:
-    return f"token-{tenant_id}"
+async def _token(account_id: str) -> str:
+    return f"token-{account_id}"
 
 
 def _client(handler: Any, *, token_provider: Any = _token) -> KnowledgeClient:
@@ -198,7 +198,7 @@ async def test_executor_maps_connect_error() -> None:
 async def test_executor_maps_token_broker_errors(
     error: Exception, retryable: bool
 ) -> None:
-    async def failing_token(tenant_id: str) -> str:
+    async def failing_token(account_id: str) -> str:
         raise error
 
     client = _client(

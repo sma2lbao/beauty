@@ -31,7 +31,7 @@ export function useMemoryModel() {
   /* ── 写入表单状态 ─────────────────────────────────────────────────── */
   const [content, setContent] = useState('');
   const [newKind, setNewKind] = useState<MemoryKind>('note');
-  const [newScope, setNewScope] = useState<MemoryScope>('tenant');
+  const [newScope, setNewScope] = useState<MemoryScope>('account');
   const [newWorkspaceId, setNewWorkspaceId] = useState('');
   const [pinned, setPinned] = useState(false);
   const [ttlDays, setTtlDays] = useState('');

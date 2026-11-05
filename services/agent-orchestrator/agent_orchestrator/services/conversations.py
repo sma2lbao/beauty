@@ -229,20 +229,20 @@ logger = get_logger(__name__)
 
 async def create_conversation(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     title: str | None = None,
     *,
     workspace_id: str | None = None,
     model: str | None = None,
     workspace: Workspace | None = None,
 ) -> Conversation:
-    """建对话:标题可空;workspace_id 显式给就校验,不给落租户默认工作区。
+    """建对话:标题可空;workspace_id 显式给就校验,不给落账号默认工作区。
 
     model 是会话级模型偏好(P1-G):为空即"未指定",消息/run 走网关默认。
     """
-    resolved = await resolve_workspace_id(workspace, tenant_id, workspace_id)
+    resolved = await resolve_workspace_id(workspace, account_id, workspace_id)
     conversation = Conversation(
-        tenant_id=tenant_id,
+        account_id=account_id,
         title=title or DEFAULT_TITLE,
         workspace_id=resolved,
         model=model,

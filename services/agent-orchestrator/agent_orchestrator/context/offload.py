@@ -88,10 +88,10 @@ class ToolOutputOffloader:
         ):
             return OffloadedOutput(content=output, record=None)
         context = current_tool_context()
-        if context is None or not context.tenant_id:
+        if context is None or not context.account_id:
             return OffloadedOutput(content=output, record=None)
         scope_key = scope_key_for(
-            context.tenant_id,
+            context.account_id,
             conversation_id=context.conversation_id,
             run_id=context.run_id,
         )
@@ -104,7 +104,7 @@ class ToolOutputOffloader:
         truncated = len(output) > max_chars
         try:
             await self.files.write_bytes(
-                context.tenant_id, scope_key, path, stored.encode("utf-8")
+                context.account_id, scope_key, path, stored.encode("utf-8")
             )
         except Exception:  # noqa: BLE001 - 落盘失败降级为原样回填
             return OffloadedOutput(content=output, record=None)
@@ -143,15 +143,15 @@ class ToolOutputOffloader:
         if not normalized.startswith(self.prefix + "/"):
             raise ValueError(f"路径不在 offload 目录内: {path}")
         context = current_tool_context()
-        if context is None or not context.tenant_id:
-            raise ValueError("缺少工具上下文(租户),无法读取 offload 文件")
+        if context is None or not context.account_id:
+            raise ValueError("缺少工具上下文(账号),无法读取 offload 文件")
         scope_key = scope_key_for(
-            context.tenant_id,
+            context.account_id,
             conversation_id=context.conversation_id,
             run_id=context.run_id,
         )
         try:
-            text = await self.files.read_text(context.tenant_id, scope_key, normalized)
+            text = await self.files.read_text(context.account_id, scope_key, normalized)
         except Exception as exc:  # noqa: BLE001 - 统一翻译成 ValueError 由工具兜
             raise ValueError(f"读取 offload 文件失败: {exc}") from exc
         if text is None:
@@ -168,8 +168,8 @@ def build_read_offloaded_tool(offloader: ToolOutputOffloader) -> ToolSpec:
 
     async def read_offloaded(args: dict[str, Any]) -> str:
         context = current_tool_context()
-        if context is None or not context.tenant_id:
-            return _error("缺少工具上下文(租户),无法读取 offload 文件")
+        if context is None or not context.account_id:
+            return _error("缺少工具上下文(账号),无法读取 offload 文件")
         raw_path = args.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             return _error("参数 path 不能为空")

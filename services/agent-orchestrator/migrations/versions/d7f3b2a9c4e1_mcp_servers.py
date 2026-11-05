@@ -45,9 +45,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_mcp_servers")),
-        sa.UniqueConstraint(
-            "tenant_id", "name", name=op.f("uq_mcp_servers_tenant_id")
-        ),
+        sa.UniqueConstraint("tenant_id", "name", name=op.f("uq_mcp_servers_tenant_id")),
     )
     op.create_index(
         op.f("ix_mcp_servers_tenant_id"), "mcp_servers", ["tenant_id"], unique=False

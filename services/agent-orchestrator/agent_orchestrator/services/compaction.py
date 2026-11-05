@@ -107,11 +107,11 @@ async def summarize(
 
 
 async def summary_for(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> tuple[str, datetime | None]:
     """取已落库的对话摘要(无则空串/None);chat 与 run 建图共用。"""
     record = await ConversationSummaryRepository(session).get_for_conversation(
-        tenant_id, conversation_id
+        account_id, conversation_id
     )
     if record is None:
         return "", None
@@ -120,7 +120,7 @@ async def summary_for(
 
 async def compact_history(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     llm: LLMClient | None,
     *,
@@ -137,7 +137,7 @@ async def compact_history(
     if llm is None or not rows:
         return None
     existing = await ConversationSummaryRepository(session).get_for_conversation(
-        tenant_id, conversation_id
+        account_id, conversation_id
     )
     previous = existing.summary if existing is not None else ""
     covered_until = existing.covered_until if existing is not None else None
@@ -157,7 +157,7 @@ async def compact_history(
     except Exception as exc:  # noqa: BLE001 - 压缩失败只降级,不阻断对话/建 run
         logger.warning(
             "context compaction failed",
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation_id,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -174,7 +174,7 @@ async def compact_history(
         estimate_tokens(row.content or "") for row in fresh[-keep_recent:]
     )
     await ConversationSummaryRepository(session).upsert(
-        tenant_id,
+        account_id,
         conversation_id,
         summary=summary,
         covered_until=new_covered_until,
@@ -193,13 +193,13 @@ async def compact_history(
 
 async def rows_before_current(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     message: ChatMessage,
 ) -> list[ChatMessage]:
     """取当前消息之前的全部对话消息(chat/task 压缩的共同输入)。"""
     return await MessageRepository(session).list_before(
-        tenant_id,
+        account_id,
         conversation_id,
         before=message.created_at,
         exclude_id=message.id,
@@ -208,7 +208,7 @@ async def rows_before_current(
 
 async def compact_conversation(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     llm: LLMClient | None,
     *,
@@ -222,10 +222,10 @@ async def compact_conversation(
     只压缩、不返回摘要文本给提示词——提示词统一走 summary_for 读落库结果,
     保证"压缩历史"与"渲染提示词"看到同一份摘要。
     """
-    rows = await rows_before_current(session, tenant_id, conversation_id, message)
+    rows = await rows_before_current(session, account_id, conversation_id, message)
     return await compact_history(
         session,
-        tenant_id,
+        account_id,
         conversation_id,
         llm,
         rows=rows,

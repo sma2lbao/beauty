@@ -23,11 +23,11 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
+    get_account_id,
     get_artifact_store,
     get_llm_client,
     get_session,
     get_settings,
-    get_tenant_id,
     get_tool_client,
     get_workspace_client,
 )
@@ -55,7 +55,7 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 attachments_router = APIRouter(prefix="/attachments", tags=["attachments"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
 SettingsDep = Annotated[Any, Depends(get_settings)]
@@ -67,7 +67,7 @@ LLMDep = Annotated[LLMClient | None, Depends(get_llm_client)]
 async def create_conversation(
     body: ConversationCreate | None,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     workspace: WorkspaceDep,
     llm: LLMDep,
     settings: SettingsDep,
@@ -75,14 +75,14 @@ async def create_conversation(
     """建对话:标题可空(首条消息自动定题)。
 
     工作区归属:body.workspace_id 显式给就校验(不存在 404 workspace.not_found),
-    不给则落租户默认工作区——"对话必须在工作区中"由服务层兜底。
+    不给则落账号默认工作区——"对话必须在工作区中"由服务层兜底。
     模型偏好(P1-G):不在可用列表时 400,不落库。
     """
     data = body or ConversationCreate()
     await models_service.validate_model(data.model, llm=llm, settings=settings)
     conversation = await conversations_service.create_conversation(
         session,
-        tenant_id,
+        account_id,
         data.title,
         workspace_id=data.workspace_id,
         model=data.model,
@@ -94,7 +94,7 @@ async def create_conversation(
 @router.get("", response_model=ConversationPage)
 async def list_conversations(
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     workspace: WorkspaceDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     q: Annotated[str | None, Query(max_length=100)] = None,
@@ -102,15 +102,15 @@ async def list_conversations(
     cursor: str | None = None,
     workspace_id: Annotated[str | None, Query(max_length=32)] = None,
 ) -> ConversationPage:
-    """租户内对话列表,最近活跃在前(对话页侧栏)。
+    """账号内对话列表,最近活跃在前(对话页侧栏)。
 
     q 按标题搜索;archived=true 只看归档;cursor 为上一页返回的 next_cursor;
-    workspace_id 给出时只看该工作区的会话(不给则全租户,并顺手把历史空归属
+    workspace_id 给出时只看该工作区的会话(不给则全账号,并顺手把历史空归属
     会话回填到默认工作区)。
     """
     conversations, next_cursor = await conversations_service.list_conversations(
         session,
-        tenant_id,
+        account_id,
         limit,
         q=q,
         archived=archived,
@@ -129,7 +129,7 @@ async def update_conversation(
     conversation_id: str,
     body: ConversationUpdate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     llm: LLMDep,
     settings: SettingsDep,
 ) -> ConversationRead:
@@ -141,15 +141,15 @@ async def update_conversation(
         # 先校验再落库:非法模型不留半改状态(P1-G §6.3)
         await models_service.validate_model(body.model, llm=llm, settings=settings)
         conversation = await conversations_service.set_model(
-            session, tenant_id, conversation_id, body.model
+            session, account_id, conversation_id, body.model
         )
     if body.title is not None:
         conversation = await conversations_service.rename_conversation(
-            session, tenant_id, conversation_id, body.title
+            session, account_id, conversation_id, body.title
         )
     if body.archived is not None:
         conversation = await conversations_service.set_archived(
-            session, tenant_id, conversation_id, body.archived
+            session, account_id, conversation_id, body.archived
         )
     if conversation is None:  # pragma: no cover - 上面的空更新已拦截
         raise AppError("conversation.empty_update", "没有可更新的字段")
@@ -158,21 +158,25 @@ async def update_conversation(
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-    conversation_id: str, session: DBSession, tenant_id: TenantId
+    conversation_id: str, session: DBSession, account_id: AccountId
 ) -> None:
     """软删除会话(保留审计数据;列表/详情/消息随即 404)。"""
-    await conversations_service.delete_conversation(session, tenant_id, conversation_id)
+    await conversations_service.delete_conversation(
+        session, account_id, conversation_id
+    )
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
-    conversation_id: str, session: DBSession, tenant_id: TenantId
+    conversation_id: str, session: DBSession, account_id: AccountId
 ) -> ConversationDetail:
     """对话详情:附当前进行中的 run(前端据此接 SSE 事件流)。"""
     conversation = await conversations_service.require_conversation(
-        session, tenant_id, conversation_id
+        session, account_id, conversation_id
     )
-    active = await conversations_service.active_run(session, tenant_id, conversation.id)
+    active = await conversations_service.active_run(
+        session, account_id, conversation.id
+    )
     return ConversationDetail(
         id=conversation.id,
         title=conversation.title,
@@ -186,11 +190,11 @@ async def get_conversation(
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageRead])
 async def list_messages(
-    conversation_id: str, session: DBSession, tenant_id: TenantId
+    conversation_id: str, session: DBSession, account_id: AccountId
 ) -> list[MessageRead]:
     """对话消息回放:按时间升序(user/assistant 混排)。"""
     messages = await conversations_service.list_messages(
-        session, tenant_id, conversation_id
+        session, account_id, conversation_id
     )
     return [MessageRead.model_validate(item) for item in messages]
 
@@ -199,25 +203,25 @@ async def list_messages(
 async def list_conversation_tool_calls(
     conversation_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     tool_client: ToolClientDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> ConversationToolCallPage:
     """会话级工具调用审计:跨 run 聚合,附服务端生成的 unified diff。
 
-    先校验会话归属(跨租户一律 404,不泄漏存在性)。tool-service 未启用或
+    先校验会话归属(跨账号一律 404,不泄漏存在性)。tool-service 未启用或
     不可达时**不炸请求**:返回 200 + degraded=true 的空页,前端据此回退到
     从事件参数本地重建补丁。
     """
     await conversations_service.require_conversation(
-        session, tenant_id, conversation_id
+        session, account_id, conversation_id
     )
     if tool_client is None:
         return ConversationToolCallPage(limit=limit, offset=offset, degraded=True)
     try:
         payload = await tool_client.list_tool_calls(
-            tenant_id, conversation_id=conversation_id, limit=limit, offset=offset
+            account_id, conversation_id=conversation_id, limit=limit, offset=offset
         )
         items = [
             ConversationToolCallRead.model_validate(item)
@@ -242,7 +246,7 @@ async def list_conversation_tool_calls(
 async def upload_attachment(
     conversation_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     file: Annotated[UploadFile, File()],
 ) -> AttachmentRead:
@@ -250,7 +254,7 @@ async def upload_attachment(
     data = await file.read()
     attachment = await attachments_service.create_attachment(
         session,
-        tenant_id,
+        account_id,
         conversation_id,
         filename=file.filename,
         content_type=file.content_type,
@@ -262,21 +266,21 @@ async def upload_attachment(
 
 @router.get("/{conversation_id}/attachments", response_model=list[AttachmentRead])
 async def list_attachments(
-    conversation_id: str, session: DBSession, tenant_id: TenantId
+    conversation_id: str, session: DBSession, account_id: AccountId
 ) -> list[AttachmentRead]:
     attachments = await attachments_service.list_attachments(
-        session, tenant_id, conversation_id
+        session, account_id, conversation_id
     )
     return [AttachmentRead.model_validate(item) for item in attachments]
 
 
 @attachments_router.get("/{attachment_id}")
 async def download_attachment(
-    attachment_id: str, session: DBSession, tenant_id: TenantId
+    attachment_id: str, session: DBSession, account_id: AccountId
 ) -> Response:
     """下载附件:附件接口不内联到消息 JSON,下载单独走这里。"""
     attachment = await attachments_service.require_attachment(
-        session, tenant_id, attachment_id
+        session, account_id, attachment_id
     )
     filename = quote(attachment.filename)
     return Response(
@@ -291,6 +295,6 @@ async def download_attachment(
 
 @attachments_router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_attachment(
-    attachment_id: str, session: DBSession, tenant_id: TenantId
+    attachment_id: str, session: DBSession, account_id: AccountId
 ) -> None:
-    await attachments_service.delete_attachment(session, tenant_id, attachment_id)
+    await attachments_service.delete_attachment(session, account_id, attachment_id)

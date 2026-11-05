@@ -87,7 +87,7 @@ describe('memoryApi', () => {
     const memory = {
       id: 'm1',
       workspace_id: null,
-      scope: 'tenant',
+      scope: 'account',
       kind: 'note',
       content: '默认使用中文回复',
       pinned: true,
@@ -104,7 +104,7 @@ describe('memoryApi', () => {
     await memoryApi.create({
       content: '默认使用中文回复',
       kind: 'note',
-      scope: 'tenant',
+      scope: 'account',
       pinned: true,
       ttl_days: 30,
     });
@@ -115,7 +115,7 @@ describe('memoryApi', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       content: '默认使用中文回复',
       kind: 'note',
-      scope: 'tenant',
+      scope: 'account',
       pinned: true,
       ttl_days: 30,
     });

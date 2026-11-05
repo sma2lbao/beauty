@@ -41,9 +41,9 @@ from agent_orchestrator.context.policy import (
     policy_from_settings,
 )
 from agent_orchestrator.context.sandbox_files import (
+    SCOPE_ACCOUNT_PREFIX,
     SCOPE_CONVERSATION_PREFIX,
     SCOPE_RUN_PREFIX,
-    SCOPE_TENANT_PREFIX,
     SandboxWorkspaceFiles,
     WorkspaceFiles,
     run_id_from_scope_key,
@@ -62,7 +62,7 @@ __all__ = [
     "KNOWN_SECTIONS",
     "SCOPE_CONVERSATION_PREFIX",
     "SCOPE_RUN_PREFIX",
-    "SCOPE_TENANT_PREFIX",
+    "SCOPE_ACCOUNT_PREFIX",
     "SECTION_AGENTS_MD",
     "SECTION_MEMORY",
     "SECTION_SKILLS",

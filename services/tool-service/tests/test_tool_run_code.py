@@ -13,7 +13,7 @@ from common.errors import NotFoundError, UpstreamError
 from common.tools import ExecutorKind, ToolKind, ToolRisk
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FakeSandboxProvider, _settings, verifier
+from tests.conftest import ACCOUNT, FakeSandboxProvider, _settings, verifier
 from tool_service.constants import (
     MAX_EXEC_STDERR_CHARS,
     MAX_EXEC_STDOUT_CHARS,
@@ -32,7 +32,7 @@ from tool_service.services.execution import limits as execution_limits
 
 def _context(**overrides: Any) -> ExecutionContext:
     values: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "tool_call_id": "call-run-code",
         "conversation_id": "c-1",
         # run_code 是 DESTRUCTIVE:runner 层要求调用方已确认(API 层由审批前置)。
@@ -60,7 +60,7 @@ def _run_code_client(
 
 
 def _execute(client: TestClient, payload: dict[str, Any]) -> Any:
-    return client.post("/v1/tools/run_code:execute", json=payload, headers=TENANT)
+    return client.post("/v1/tools/run_code:execute", json=payload, headers=ACCOUNT)
 
 
 # ---- 目录与开关 ---------------------------------------------------------
@@ -197,7 +197,7 @@ def test_run_code_audit_row_is_destructive(tmp_path: Path) -> None:
                 "run_id": "run-code",
             },
         )
-        audit = client.get("/v1/tool-calls", headers=TENANT).json()["items"][0]
+        audit = client.get("/v1/tool-calls", headers=ACCOUNT).json()["items"][0]
 
     assert audit["tool_name"] == "run_code"
     assert audit["risk"] == "destructive"
@@ -280,7 +280,7 @@ async def test_run_code_ensures_sandbox_before_exec(tmp_path: Path) -> None:
     await runner.execute(_context(run_id="run-1"), "run_code", {"code": "print(1)"})
 
     assert len(provider.ensured) == 1
-    assert provider.ensured[0]["tenant_id"] == "t-1"
+    assert provider.ensured[0]["account_id"] == "t-1"
     assert provider.ensured[0]["run_id"] == "run-1"
     assert provider.touched == ["sbx-1"]
 
@@ -490,7 +490,7 @@ class _SlowRunCodeProvider(FakeSandboxProvider):
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,

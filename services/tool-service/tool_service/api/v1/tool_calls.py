@@ -1,4 +1,4 @@
-"""工具调用审计查询(租户内,供运维与对账)。"""
+"""工具调用审计查询(账号内,供运维与对账)。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tool_service.api.deps import get_session, get_tenant_id
+from tool_service.api.deps import get_account_id, get_session
 from tool_service.repositories import ToolCallRepository, to_read
 from tool_service.schemas.tools import (
     LIST_LIMIT_MAX,
@@ -18,13 +18,13 @@ from tool_service.schemas.tools import (
 router = APIRouter(prefix="/tool-calls", tags=["tool-calls"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-TenantDep = Annotated[str, Depends(get_tenant_id)]
+AccountDep = Annotated[str, Depends(get_account_id)]
 
 
 @router.get("", response_model=ToolCallListRead)
 async def list_tool_calls(
     session: SessionDep,
-    tenant_id: TenantDep,
+    account_id: AccountDep,
     run_id: Annotated[str | None, Query(max_length=32)] = None,
     conversation_id: Annotated[str | None, Query(max_length=32)] = None,
     tool_name: Annotated[str | None, Query(max_length=64)] = None,
@@ -41,7 +41,7 @@ async def list_tool_calls(
 
     repository = ToolCallRepository(session)
     rows = await repository.list_page(
-        tenant_id,
+        account_id,
         run_id=run_id,
         conversation_id=conversation_id,
         tool_name=tool_name,
@@ -50,7 +50,7 @@ async def list_tool_calls(
         offset=offset,
     )
     total = await repository.count_page(
-        tenant_id,
+        account_id,
         run_id=run_id,
         conversation_id=conversation_id,
         tool_name=tool_name,
@@ -68,11 +68,11 @@ async def list_tool_calls(
 async def get_tool_call(
     tool_call_id: str,
     session: SessionDep,
-    tenant_id: TenantDep,
+    account_id: AccountDep,
     include_patch: Annotated[bool, Query()] = False,
 ) -> ToolCallRead:
-    """单条审计;跨租户一律 404(仓储统一语义)。"""
+    """单条审计;跨账号一律 404(仓储统一语义)。"""
 
     repository = ToolCallRepository(session)
-    record = await repository.require_by_call_id(tenant_id, tool_call_id)
+    record = await repository.require_by_call_id(account_id, tool_call_id)
     return to_read(record, include_patch=include_patch)

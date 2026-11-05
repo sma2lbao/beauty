@@ -1,1 +1,1 @@
-"""account-service:用户/组织/配额/套餐 + sessions/devices(架构 §3)。"""
+"""account-service:账号/配额 + sessions/devices(架构 §3)。"""

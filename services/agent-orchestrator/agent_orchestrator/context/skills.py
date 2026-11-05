@@ -227,7 +227,7 @@ def build_load_skill_tool(
 ) -> ToolSpec:
     """构造 `load_skill` 工具(READ):按 offset/limit 分页返回本 run 的技能正文。
 
-    handler 从 `current_tool_context()` 拿租户/run,自建事务读取 run 快照;
+    handler 从 `current_tool_context()` 拿账号/run,自建事务读取 run 快照;
     每次调用追加 `run.skill.loaded.v1` 事件(§8 审计口径)。
     """
 
@@ -243,8 +243,8 @@ def build_load_skill_tool(
             limit = default_limit
         async with session_scope(session_factory) as session:
             run = await session.get(Run, context.run_id)
-            if run is None or run.tenant_id != context.tenant_id:
-                return _error("run 不存在或不属于当前租户")
+            if run is None or run.account_id != context.account_id:
+                return _error("run 不存在或不属于当前账号")
             markdown = run.skill_system_prompt or ""
             if not markdown.strip():
                 return _error("本 run 未绑定技能正文")

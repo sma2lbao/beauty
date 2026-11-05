@@ -1,6 +1,6 @@
 """工作区业务逻辑:幂等默认工作区、创建/更新/删除/列表/详情。
 
-数据访问经 `workspace.repositories`;本层只写业务规则,不手写租户过滤。
+数据访问经 `workspace.repositories`;本层只写业务规则,不手写账号过滤。
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ logger = structlog.get_logger(__name__)
 
 
 async def require_or_create_default(
-    session: AsyncSession, tenant_id: str, default_name: str
+    session: AsyncSession, account_id: str, default_name: str
 ) -> Workspace:
-    """取租户的默认工作区;没有就建(幂等,供交付与首屏使用)。
+    """取账号的默认工作区;没有就建(幂等,供交付与首屏使用)。
 
     识别顺序:
 
@@ -32,7 +32,7 @@ async def require_or_create_default(
     """
     workspaces = WorkspaceRepository(session)
     marked = await workspaces.list_scoped(
-        tenant_id,
+        account_id,
         Workspace.is_default.is_(True),
         order_by=[Workspace.created_at, Workspace.id],
         limit=1,
@@ -40,7 +40,7 @@ async def require_or_create_default(
     if marked:
         return marked[0]
     legacy = await workspaces.list_scoped(
-        tenant_id,
+        account_id,
         Workspace.name == default_name,
         order_by=[Workspace.created_at, Workspace.id],
         limit=1,
@@ -50,9 +50,9 @@ async def require_or_create_default(
         await session.flush()
         return legacy[0]
     workspace = Workspace(
-        tenant_id=tenant_id,
+        account_id=account_id,
         name=default_name,
-        description="自动创建:租户默认工作区",
+        description="自动创建:账号默认工作区",
         status="active",
         is_default=True,
     )
@@ -60,10 +60,10 @@ async def require_or_create_default(
 
 
 async def create_workspace(
-    session: AsyncSession, tenant_id: str, data: WorkspaceCreate
+    session: AsyncSession, account_id: str, data: WorkspaceCreate
 ) -> Workspace:
     workspaces = WorkspaceRepository(session)
-    duplicate = await workspaces.list_scoped(tenant_id, Workspace.name == data.name)
+    duplicate = await workspaces.list_scoped(account_id, Workspace.name == data.name)
     if duplicate:
         raise ConflictError(
             "workspace.exists",
@@ -71,7 +71,7 @@ async def create_workspace(
             details={"workspace_id": duplicate[0].id, "name": duplicate[0].name},
         )
     workspace = Workspace(
-        tenant_id=tenant_id,
+        account_id=account_id,
         name=data.name,
         description=data.description,
         status="active",
@@ -81,19 +81,19 @@ async def create_workspace(
 
 async def update_workspace(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     workspace_id: str,
     data: WorkspaceUpdate,
 ) -> Workspace:
-    """改工作区名称/描述:同一租户内名称仍然唯一,重名 409。
+    """改工作区名称/描述:同一账号内名称仍然唯一,重名 409。
 
     未传字段保持不变;description 显式传 `null` 表示清空(见 WorkspaceUpdate)。
     """
     workspaces = WorkspaceRepository(session)
-    workspace = await workspaces.require_for_tenant(tenant_id, workspace_id)
+    workspace = await workspaces.require_for_account(account_id, workspace_id)
     if data.name is not None:
         duplicate = await workspaces.list_scoped(
-            tenant_id,
+            account_id,
             Workspace.name == data.name,
             Workspace.id != workspace.id,
         )
@@ -112,7 +112,7 @@ async def update_workspace(
 
 async def delete_workspace(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     workspace_id: str,
     store: ArtifactStore | None,
 ) -> None:
@@ -130,7 +130,7 @@ async def delete_workspace(
     (行仍会删掉,对象成为孤儿,可后续按对象键排查)。
     """
     workspaces = WorkspaceRepository(session)
-    workspace = await workspaces.require_for_tenant(tenant_id, workspace_id)
+    workspace = await workspaces.require_for_account(account_id, workspace_id)
     if workspace.is_default:
         raise ConflictError(
             "workspace.default_protected",
@@ -139,7 +139,7 @@ async def delete_workspace(
         )
     artifacts = ArtifactRepository(session)
     records = await artifacts.list_scoped(
-        tenant_id, WorkspaceArtifact.workspace_id == workspace_id
+        account_id, WorkspaceArtifact.workspace_id == workspace_id
     )
     for record in records:
         if store is None or not record.object_key:
@@ -154,20 +154,20 @@ async def delete_workspace(
                 error=str(exc),
             )
     await artifacts.delete_where(
-        tenant_id, WorkspaceArtifact.workspace_id == workspace_id
+        account_id, WorkspaceArtifact.workspace_id == workspace_id
     )
     await workspaces.delete(workspace)
 
 
-async def list_workspaces(session: AsyncSession, tenant_id: str) -> list[Workspace]:
+async def list_workspaces(session: AsyncSession, account_id: str) -> list[Workspace]:
     return await WorkspaceRepository(session).list_scoped(
-        tenant_id, order_by=[Workspace.created_at, Workspace.id]
+        account_id, order_by=[Workspace.created_at, Workspace.id]
     )
 
 
 async def require_workspace(
-    session: AsyncSession, tenant_id: str, workspace_id: str
+    session: AsyncSession, account_id: str, workspace_id: str
 ) -> Workspace:
-    return await WorkspaceRepository(session).require_for_tenant(
-        tenant_id, workspace_id
+    return await WorkspaceRepository(session).require_for_account(
+        account_id, workspace_id
     )

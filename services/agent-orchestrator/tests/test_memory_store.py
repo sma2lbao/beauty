@@ -26,8 +26,8 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.services import memory as memory_service
 from tests.conftest import _settings
 
-#: 记忆服务只认 tenant_id 字符串;这里与 conftest 的 bearer 租户保持一致。
-TENANT = "t-1"
+#: 记忆服务只认 account_id 字符串;这里与 conftest 的 bearer 账号保持一致。
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 
@@ -76,7 +76,7 @@ async def test_conversation_summary_upsert_keeps_one_row_per_conversation(
     async with session_scope(factory) as session:
         repository = ConversationSummaryRepository(session)
         first = await repository.upsert(
-            TENANT,
+            ACCOUNT,
             "c-1",
             summary="第一版摘要",
             covered_until=covered,
@@ -85,7 +85,7 @@ async def test_conversation_summary_upsert_keeps_one_row_per_conversation(
             tokens_after=20,
         )
         second = await repository.upsert(
-            TENANT,
+            ACCOUNT,
             "c-1",
             summary="第二版摘要",
             covered_until=covered + timedelta(minutes=5),
@@ -96,12 +96,12 @@ async def test_conversation_summary_upsert_keeps_one_row_per_conversation(
         assert second.id == first.id
     async with session_scope(factory) as session:
         repository = ConversationSummaryRepository(session)
-        stored = await repository.get_for_conversation(TENANT, "c-1")
+        stored = await repository.get_for_conversation(ACCOUNT, "c-1")
         assert stored is not None
         assert stored.summary == "第二版摘要"
         assert stored.covered_messages == 5
         assert stored.tokens_before == 200
-        # 租户隔离:同 conversation_id 在别的租户下不存在(不是 404,是 None)
+        # 账号隔离:同 conversation_id 在别的账号下不存在(不是 404,是 None)
         assert await repository.get_for_conversation(OTHER, "c-1") is None
 
 
@@ -114,13 +114,13 @@ async def test_write_memory_persists_local_embedding(
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答",
             kind="preference",
             workspace_id="ws-1",
         )
-    assert memory.scope == "tenant"
-    # scope=tenant 时 workspace_id 被强制清空,避免出现"租户级却挂工作区"的脏数据
+    assert memory.scope == "account"
+    # scope=account 时 workspace_id 被强制清空,避免出现"账号级却挂工作区"的脏数据
     assert memory.workspace_id is None
     assert memory.embedding_model == memory_service.EMBEDDING_MODEL
     assert memory.embedding is not None
@@ -133,7 +133,7 @@ async def test_write_memory_truncates_content_by_budget(
 ) -> None:
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
-            session, TENANT, content="长" * 20, max_content_chars=10
+            session, ACCOUNT, content="长" * 20, max_content_chars=10
         )
     assert memory.content == "长" * 10
 
@@ -143,10 +143,10 @@ async def test_write_memory_ttl_only_sets_future_expiry(
 ) -> None:
     async with session_scope(factory) as session:
         temporary = await memory_service.write_memory(
-            session, TENANT, content="临时记忆", ttl_days=7
+            session, ACCOUNT, content="临时记忆", ttl_days=7
         )
         permanent = await memory_service.write_memory(
-            session, TENANT, content="永久记忆", ttl_days=0
+            session, ACCOUNT, content="永久记忆", ttl_days=0
         )
     assert temporary.expires_at is not None
     assert permanent.expires_at is None
@@ -165,7 +165,7 @@ async def test_write_memory_rejects_invalid_input(
     for kwargs, code in cases:
         with pytest.raises(AppError) as excinfo:
             async with session_scope(factory) as session:
-                await memory_service.write_memory(session, TENANT, **kwargs)
+                await memory_service.write_memory(session, ACCOUNT, **kwargs)
         assert excinfo.value.code == code
 
 
@@ -174,11 +174,11 @@ async def test_write_memory_enforces_entry_limit(
 ) -> None:
     async with session_scope(factory) as session:
         await memory_service.write_memory(
-            session, TENANT, content="第一条", max_entries=1
+            session, ACCOUNT, content="第一条", max_entries=1
         )
         with pytest.raises(AppError) as excinfo:
             await memory_service.write_memory(
-                session, TENANT, content="第二条", max_entries=1
+                session, ACCOUNT, content="第二条", max_entries=1
             )
     assert excinfo.value.code == "memory.limit_reached"
 
@@ -186,16 +186,16 @@ async def test_write_memory_enforces_entry_limit(
 # ---- 列表过滤 ----
 
 
-async def test_list_memories_merges_tenant_and_current_workspace(
+async def test_list_memories_merges_account_and_current_workspace(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_scope(factory) as session:
-        tenant_memory = await memory_service.write_memory(
-            session, TENANT, content="全租户偏好", kind="preference"
+        account_memory = await memory_service.write_memory(
+            session, ACCOUNT, content="全账号偏好", kind="preference"
         )
         workspace_one = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="工作区一的事实",
             kind="fact",
             scope="workspace",
@@ -203,22 +203,22 @@ async def test_list_memories_merges_tenant_and_current_workspace(
         )
         workspace_two = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="工作区二的事实",
             kind="fact",
             scope="workspace",
             workspace_id="ws-2",
         )
-        tenant_id, one_id, two_id = (
-            tenant_memory.id,
+        account_id, one_id, two_id = (
+            account_memory.id,
             workspace_one.id,
             workspace_two.id,
         )
     async with session_scope(factory) as session:
-        rows = await memory_service.list_memories(session, TENANT, workspace_id="ws-1")
-        assert {row.id for row in rows} == {tenant_id, one_id}
+        rows = await memory_service.list_memories(session, ACCOUNT, workspace_id="ws-1")
+        assert {row.id for row in rows} == {account_id, one_id}
     async with session_scope(factory) as session:
-        rows = await memory_service.list_memories(session, TENANT, kind="fact")
+        rows = await memory_service.list_memories(session, ACCOUNT, kind="fact")
         assert {row.id for row in rows} == {one_id, two_id}
 
 
@@ -227,12 +227,12 @@ async def test_list_memories_q_filters_lexically(
 ) -> None:
     async with session_scope(factory) as session:
         concise = await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答"
+            session, ACCOUNT, content="用户偏好简洁回答"
         )
-        await memory_service.write_memory(session, TENANT, content="项目代号是蓝鲸")
+        await memory_service.write_memory(session, ACCOUNT, content="项目代号是蓝鲸")
         concise_id = concise.id
     async with session_scope(factory) as session:
-        rows = await memory_service.list_memories(session, TENANT, q="简洁")
+        rows = await memory_service.list_memories(session, ACCOUNT, q="简洁")
     assert [row.id for row in rows] == [concise_id]
 
 
@@ -245,17 +245,17 @@ async def test_search_memories_returns_relevant_hit_and_marks_access(
     async with session_scope(factory) as session:
         relevant = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答,不要长篇大论",
             kind="preference",
         )
-        await memory_service.write_memory(session, TENANT, content="项目代号是蓝鲸")
+        await memory_service.write_memory(session, ACCOUNT, content="项目代号是蓝鲸")
         relevant_id = relevant.id
     async with session_scope(factory) as session:
-        hits = await memory_service.search_memories(session, TENANT, "简洁回答")
+        hits = await memory_service.search_memories(session, ACCOUNT, "简洁回答")
         assert [hit.id for hit in hits] == [relevant_id]
     async with session_scope(factory) as session:
-        stored = await MemoryRepository(session).get_active(TENANT, relevant_id)
+        stored = await MemoryRepository(session).get_active(ACCOUNT, relevant_id)
         assert stored is not None
         # 命中要落访问统计,后续可以用新近/频次做加权
         assert stored.access_count == 1
@@ -267,12 +267,12 @@ async def test_search_memories_pinned_ranks_first(
 ) -> None:
     async with session_scope(factory) as session:
         pinned = await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", pinned=True
+            session, ACCOUNT, content="用户偏好简洁回答", pinned=True
         )
-        await memory_service.write_memory(session, TENANT, content="用户偏好简洁回答")
+        await memory_service.write_memory(session, ACCOUNT, content="用户偏好简洁回答")
         pinned_id = pinned.id
     async with session_scope(factory) as session:
-        hits = await memory_service.search_memories(session, TENANT, "简洁回答")
+        hits = await memory_service.search_memories(session, ACCOUNT, "简洁回答")
     assert len(hits) == 2
     assert hits[0].id == pinned_id
 
@@ -281,12 +281,12 @@ async def test_search_memories_ignores_unrelated_content(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_scope(factory) as session:
-        await memory_service.write_memory(session, TENANT, content="项目代号是蓝鲸")
+        await memory_service.write_memory(session, ACCOUNT, content="项目代号是蓝鲸")
     async with session_scope(factory) as session:
-        assert await memory_service.search_memories(session, TENANT, "简洁回答") == []
-        assert await memory_service.search_memories(session, TENANT, "") == []
+        assert await memory_service.search_memories(session, ACCOUNT, "简洁回答") == []
+        assert await memory_service.search_memories(session, ACCOUNT, "") == []
         assert (
-            await memory_service.search_memories(session, TENANT, "简洁回答", limit=0)
+            await memory_service.search_memories(session, ACCOUNT, "简洁回答", limit=0)
             == []
         )
 
@@ -296,16 +296,18 @@ async def test_recall_block_builds_prompt_section_or_empty_string(
 ) -> None:
     async with session_scope(factory) as session:
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="preference"
         )
     async with session_scope(factory) as session:
-        block = await memory_service.recall_block(session, TENANT, "回答风格")
+        block = await memory_service.recall_block(session, ACCOUNT, "回答风格")
         assert block.splitlines()[0] == "相关长期记忆（按相关性，供参考）"
         assert "- [preference] 用户偏好简洁回答" in block
         # 无命中不返回空标题;预算不足时也不返回半截块
-        assert await memory_service.recall_block(session, TENANT, "天气如何") == ""
+        assert await memory_service.recall_block(session, ACCOUNT, "天气如何") == ""
         assert (
-            await memory_service.recall_block(session, TENANT, "回答风格", max_chars=10)
+            await memory_service.recall_block(
+                session, ACCOUNT, "回答风格", max_chars=10
+            )
             == ""
         )
 
@@ -315,18 +317,22 @@ async def test_convention_block_injects_only_procedures_within_budget(
 ) -> None:
     async with session_scope(factory) as session:
         await memory_service.write_memory(
-            session, TENANT, content="周报固定用表格,不要散文", kind="procedure"
+            session, ACCOUNT, content="周报固定用表格,不要散文", kind="procedure"
         )
-        await memory_service.write_memory(session, TENANT, content="项目代号是蓝鲸")
+        await memory_service.write_memory(session, ACCOUNT, content="项目代号是蓝鲸")
     async with session_scope(factory) as session:
-        block = await memory_service.convention_block(session, TENANT)
+        block = await memory_service.convention_block(session, ACCOUNT)
         # 只有程序性记忆常驻;普通 note 仍走相关性召回,不该被无条件注入
         assert block.splitlines()[0] == memory_service.CONVENTION_PREFIX
         assert "周报固定用表格" in block
         assert "蓝鲸" not in block
         # 预算 <=0 / 预算装不下标题+一条:整体关闭,不返回半截块
-        assert await memory_service.convention_block(session, TENANT, max_chars=0) == ""
-        assert await memory_service.convention_block(session, TENANT, max_chars=5) == ""
+        assert (
+            await memory_service.convention_block(session, ACCOUNT, max_chars=0) == ""
+        )
+        assert (
+            await memory_service.convention_block(session, ACCOUNT, max_chars=5) == ""
+        )
 
 
 async def test_convention_block_without_workspace_ignores_workspace_scope(
@@ -335,19 +341,19 @@ async def test_convention_block_without_workspace_ignores_workspace_scope(
     async with session_scope(factory) as session:
         await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="工作区二固定周五发周报",
             kind="procedure",
             scope="workspace",
             workspace_id="ws-2",
         )
-    # 没有工作区上下文:只看租户级约定,不能把别的工作区的流程当成全局约定
+    # 没有工作区上下文:只看账号级约定,不能把别的工作区的流程当成全局约定
     async with session_scope(factory) as session:
-        assert await memory_service.convention_block(session, TENANT) == ""
-    # 指定工作区时:租户级 + 该工作区的约定都可见
+        assert await memory_service.convention_block(session, ACCOUNT) == ""
+    # 指定工作区时:账号级 + 该工作区的约定都可见
     async with session_scope(factory) as session:
         block = await memory_service.convention_block(
-            session, TENANT, workspace_id="ws-2"
+            session, ACCOUNT, workspace_id="ws-2"
         )
     assert "工作区二固定周五发周报" in block
 
@@ -358,20 +364,20 @@ async def test_search_memories_without_workspace_ignores_workspace_scope(
     async with session_scope(factory) as session:
         await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="工作区二的暗号是灯塔",
             scope="workspace",
             workspace_id="ws-2",
         )
     async with session_scope(factory) as session:
         # 无工作区上下文的召回/搜索不跨工作区泄漏;管理面列表仍应看到全部
-        assert await memory_service.search_memories(session, TENANT, "暗号") == []
-        assert await memory_service.recall_block(session, TENANT, "暗号") == ""
-        listed = await memory_service.list_memories(session, TENANT)
+        assert await memory_service.search_memories(session, ACCOUNT, "暗号") == []
+        assert await memory_service.recall_block(session, ACCOUNT, "暗号") == ""
+        listed = await memory_service.list_memories(session, ACCOUNT)
         assert "工作区二的暗号是灯塔" in [row.content for row in listed]
     async with session_scope(factory) as session:
         hits = await memory_service.search_memories(
-            session, TENANT, "暗号", workspace_id="ws-2"
+            session, ACCOUNT, "暗号", workspace_id="ws-2"
         )
     assert [hit.content for hit in hits] == ["工作区二的暗号是灯塔"]
 
@@ -383,13 +389,13 @@ async def test_soft_deleted_memory_hidden_and_counts_updated(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_scope(factory) as session:
-        memory = await memory_service.write_memory(session, TENANT, content="待删除")
+        memory = await memory_service.write_memory(session, ACCOUNT, content="待删除")
         memory_id = memory.id
     async with session_scope(factory) as session:
-        await memory_service.delete_memory(session, TENANT, memory_id)
-        assert await memory_service.list_memories(session, TENANT) == []
-        assert await memory_service.search_memories(session, TENANT, "待删除") == []
-        assert await memory_service.memory_stats(session, TENANT) == {
+        await memory_service.delete_memory(session, ACCOUNT, memory_id)
+        assert await memory_service.list_memories(session, ACCOUNT) == []
+        assert await memory_service.search_memories(session, ACCOUNT, "待删除") == []
+        assert await memory_service.memory_stats(session, ACCOUNT) == {
             "total": 0,
             "active": 0,
             "pinned": 0,
@@ -397,12 +403,12 @@ async def test_soft_deleted_memory_hidden_and_counts_updated(
         }
 
 
-async def test_delete_memory_cross_tenant_is_404(
+async def test_delete_memory_cross_account_is_404(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
-            session, TENANT, content="租户一的记忆"
+            session, ACCOUNT, content="账号一的记忆"
         )
         memory_id = memory.id
     with pytest.raises(NotFoundError) as excinfo:
@@ -410,11 +416,13 @@ async def test_delete_memory_cross_tenant_is_404(
             await memory_service.delete_memory(session, OTHER, memory_id)
     assert excinfo.value.code == "memory.not_found"
     assert excinfo.value.details == {"memory_id": memory_id}
-    # 跨租户删除失败后,原记忆仍在
+    # 跨账号删除失败后,原记忆仍在
     async with session_scope(factory) as session:
-        assert await MemoryRepository(session).get_active(TENANT, memory_id) is not None
+        assert (
+            await MemoryRepository(session).get_active(ACCOUNT, memory_id) is not None
+        )
         with pytest.raises(NotFoundError):
-            await memory_service.delete_memory(session, TENANT, "missing-id")
+            await memory_service.delete_memory(session, ACCOUNT, "missing-id")
 
 
 async def test_expired_memory_hidden_counted_and_purged(
@@ -422,7 +430,7 @@ async def test_expired_memory_hidden_counted_and_purged(
 ) -> None:
     async with session_scope(factory) as session:
         memory = await memory_service.write_memory(
-            session, TENANT, content="会过期的记忆", ttl_days=1
+            session, ACCOUNT, content="会过期的记忆", ttl_days=1
         )
         memory_id = memory.id
     # 直接改库把过期时间拨到过去(避免 sleep,语义由仓储的 now 比较覆盖)
@@ -434,18 +442,20 @@ async def test_expired_memory_hidden_counted_and_purged(
         )
     async with session_scope(factory) as session:
         repository = MemoryRepository(session)
-        assert await repository.get_active(TENANT, memory_id) is None
-        assert memory_id not in [row.id for row in await repository.list_active(TENANT)]
-        assert await repository.counts(TENANT) == {
+        assert await repository.get_active(ACCOUNT, memory_id) is None
+        assert memory_id not in [
+            row.id for row in await repository.list_active(ACCOUNT)
+        ]
+        assert await repository.counts(ACCOUNT) == {
             "total": 1,
             "active": 0,
             "pinned": 0,
             "expired": 1,
         }
-        assert await memory_service.purge_expired(session, TENANT) == 1
+        assert await memory_service.purge_expired(session, ACCOUNT) == 1
         # 幂等:已标记删除的不会再被清理一次
-        assert await memory_service.purge_expired(session, TENANT) == 0
-        assert await memory_service.memory_stats(session, TENANT) == {
+        assert await memory_service.purge_expired(session, ACCOUNT) == 0
+        assert await memory_service.memory_stats(session, ACCOUNT) == {
             "total": 0,
             "active": 0,
             "pinned": 0,
@@ -463,11 +473,11 @@ async def test_local_memory_provider_roundtrip(
     assert isinstance(provider, memory_service.LocalMemoryProvider)
     async with session_scope(factory) as session:
         memory = await provider.remember(
-            session, TENANT, "用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, "用户偏好简洁回答", kind="preference"
         )
         memory_id = memory.id
-        assert "用户偏好简洁回答" in await provider.recall(session, TENANT, "回答风格")
+        assert "用户偏好简洁回答" in await provider.recall(session, ACCOUNT, "回答风格")
     async with session_scope(factory) as session:
-        await provider.forget(session, TENANT, memory_id)
+        await provider.forget(session, ACCOUNT, memory_id)
     async with session_scope(factory) as session:
-        assert await provider.recall(session, TENANT, "回答风格") == ""
+        assert await provider.recall(session, ACCOUNT, "回答风格") == ""

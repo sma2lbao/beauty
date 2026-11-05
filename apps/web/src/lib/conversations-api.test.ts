@@ -287,7 +287,7 @@ describe('conversationsApi', () => {
     expect(error.status).toBe(409);
     expect(error.code).toBe('chat.llm_disabled');
   });
-  it('跨租户探测返回 404 conversation.not_found 映射为 ApiError', async () => {
+  it('跨账号探测返回 404 conversation.not_found 映射为 ApiError', async () => {
     mockFetch(404, { code: 'conversation.not_found', message: '会话不存在' });
 
     const error = (await conversationsApi

@@ -28,7 +28,7 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import _settings
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 PARAMS = {
@@ -113,14 +113,14 @@ def settings(tmp_path: Path):
 async def _create_parent(
     factory: async_sessionmaker[AsyncSession],
     *,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
     parent_kind: str | None = None,
     parent_run_id: str | None = None,
     **kwargs: Any,
 ) -> Run:
     async with session_scope(factory) as session:
         run = Run(
-            tenant_id=tenant_id,
+            account_id=account_id,
             title="主任务",
             goal="把竞品资料整理成表格",
             parent_kind=parent_kind,
@@ -139,7 +139,7 @@ async def _spawn(
     *,
     params: dict[str, Any] | None = None,
     graph: Any = None,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
 ):
     async with session_scope(factory) as session:
         return await subagents.spawn_subagent(
@@ -210,18 +210,18 @@ async def test_tool_requires_run_context(
     factory: async_sessionmaker[AsyncSession], settings: Any
 ) -> None:
     tool = subagents.build_spawn_tool(factory, settings=settings)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         payload = json.loads(await tool.handler(dict(PARAMS)))
     assert payload["ok"] is False
     assert payload["error"] == "subagent.invalid_arguments"
 
 
-async def test_tool_rejects_other_tenant(
+async def test_tool_rejects_other_account(
     factory: async_sessionmaker[AsyncSession], settings: Any
 ) -> None:
     tool = subagents.build_spawn_tool(factory, settings=settings)
     parent = await _create_parent(factory)
-    with bind_tool_context(ToolContext(tenant_id=OTHER, run_id=parent.id)):
+    with bind_tool_context(ToolContext(account_id=OTHER, run_id=parent.id)):
         payload = json.loads(await tool.handler(dict(PARAMS)))
     assert payload["ok"] is False
     assert await _children(factory, parent.id) == []
@@ -244,7 +244,7 @@ class _StubContainer(ContainerAssemblyMixin):
 async def _extra_names(
     factory: async_sessionmaker[AsyncSession], settings: Any
 ) -> set[str]:
-    extras = await _StubContainer(settings, factory)._extras_factory()(TENANT)
+    extras = await _StubContainer(settings, factory)._extras_factory()(ACCOUNT)
     return {spec.name for spec in extras}
 
 
@@ -257,12 +257,12 @@ async def test_spawn_tool_mounted_only_in_top_level_run(
         parent_kind=PARENT_KIND_SUBAGENT,
         parent_run_id=parent.id,
     )
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=parent.id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=parent.id)):
         assert subagents.SPAWN_TOOL_NAME in await _extra_names(factory, settings)
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=child.id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=child.id)):
         # 子代理不能再派生(深度上限 1 在工具面就掐断)
         assert subagents.SPAWN_TOOL_NAME not in await _extra_names(factory, settings)
-    with bind_tool_context(ToolContext(tenant_id=TENANT)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
         assert subagents.SPAWN_TOOL_NAME not in await _extra_names(factory, settings)
 
 
@@ -271,7 +271,7 @@ async def test_spawn_tool_honours_switch(
 ) -> None:
     parent = await _create_parent(factory)
     disabled = settings.model_copy(update={"subagent_enabled": False})
-    with bind_tool_context(ToolContext(tenant_id=TENANT, run_id=parent.id)):
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id=parent.id)):
         assert subagents.SPAWN_TOOL_NAME not in await _extra_names(factory, disabled)
 
 

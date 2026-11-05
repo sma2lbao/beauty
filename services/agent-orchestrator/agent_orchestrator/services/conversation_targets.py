@@ -27,11 +27,11 @@ if TYPE_CHECKING:
 
 
 async def require_conversation(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> Conversation:
-    """取租户内未删除的对话;不存在/跨租户/已删 → NotFoundError(404)。"""
-    return await ConversationRepository(session).require_active_for_tenant(
-        tenant_id, conversation_id
+    """取账号内未删除的对话;不存在/跨账号/已删 → NotFoundError(404)。"""
+    return await ConversationRepository(session).require_active_for_account(
+        account_id, conversation_id
     )
 
 
@@ -50,7 +50,7 @@ class MessageTarget:
 
 async def resolve_message_target(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     skills: SkillRegistry,
     settings: Any,
@@ -60,14 +60,16 @@ async def resolve_message_target(
     """在给定事务内解析技能与 MCP 绑定(未知 404、停用/未启用 409)。"""
     skill: SkillDefinition | None = None
     if skill_id:
-        skill = await skill_packages.resolve_skill(session, tenant_id, skill_id, skills)
+        skill = await skill_packages.resolve_skill(
+            session, account_id, skill_id, skills
+        )
         if skill is None:
             raise NotFoundError("skill.not_found", "Skill 不存在")
     if not mcp_server_ids:
         return MessageTarget(skill=skill)
     if not settings.mcp_enabled:
         raise ConflictError("mcp.disabled", "MCP 能力未启用")
-    servers = await mcp_service.resolve_selected(session, tenant_id, mcp_server_ids)
+    servers = await mcp_service.resolve_selected(session, account_id, mcp_server_ids)
     return MessageTarget(
         skill=skill,
         mcp_server_ids=[server.id for server in servers],
@@ -77,7 +79,7 @@ async def resolve_message_target(
 
 async def resolve_stream_target(
     factory: async_sessionmaker[AsyncSession],
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     *,
     skills: SkillRegistry,
@@ -91,10 +93,10 @@ async def resolve_stream_target(
     必须在这之前校验完——预检事务不能复用长连接的读循环。
     """
     async with session_scope(factory) as session:
-        await require_conversation(session, tenant_id, conversation_id)
+        await require_conversation(session, account_id, conversation_id)
         return await resolve_message_target(
             session,
-            tenant_id,
+            account_id,
             skills=skills,
             settings=settings,
             skill_id=skill_id,

@@ -21,7 +21,7 @@ from tool_service.main import create_app
 from tool_service.services.executors.http import HttpToolExecutor
 
 _IDP = TestIdP()
-TENANT = _IDP.bearer("t-1")
+ACCOUNT = _IDP.bearer("t-1")
 OTHER = _IDP.bearer("t-2")
 
 
@@ -122,18 +122,18 @@ class FakeSandboxProvider:
         self.touch_error: Exception | None = None
 
     async def ensure(
-        self, tenant_id: str, *, scope_key: str, run_id: str | None = None
+        self, account_id: str, *, scope_key: str, run_id: str | None = None
     ) -> str:
         if self.ensure_error is not None:
             raise self.ensure_error
         self.ensured.append(
-            {"tenant_id": tenant_id, "scope_key": scope_key, "run_id": run_id}
+            {"account_id": account_id, "scope_key": scope_key, "run_id": run_id}
         )
         return self.sandbox_id
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -145,7 +145,7 @@ class FakeSandboxProvider:
             raise self.exec_error
         self.exec_calls.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "sandbox_id": sandbox_id,
                 "argv": argv,
                 "cwd": cwd,
@@ -161,7 +161,7 @@ class FakeSandboxProvider:
             truncated=self.truncated,
         )
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> None:
+    async def touch(self, account_id: str, sandbox_id: str) -> None:
         self.touched.append(sandbox_id)
         if self.touch_error is not None:
             raise self.touch_error
@@ -184,8 +184,10 @@ class FakeKnowledgeClient:
         self.error: Exception | None = None
         self.closed = False
 
-    async def search(self, tenant_id: str, *, query: str, limit: int) -> dict[str, Any]:
-        self.calls.append({"tenant_id": tenant_id, "query": query, "limit": limit})
+    async def search(
+        self, account_id: str, *, query: str, limit: int
+    ) -> dict[str, Any]:
+        self.calls.append({"account_id": account_id, "query": query, "limit": limit})
         if self.error is not None:
             raise self.error
         return self.result
@@ -198,14 +200,14 @@ class SlowSandboxProvider(FakeSandboxProvider):
     """exec/ensure 挂住不返回,用于超时分支。"""
 
     async def ensure(
-        self, tenant_id: str, *, scope_key: str, run_id: str | None = None
+        self, account_id: str, *, scope_key: str, run_id: str | None = None
     ) -> str:
         await asyncio.sleep(5)
         raise AssertionError("ensure 超时路径不应执行到这里")
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,

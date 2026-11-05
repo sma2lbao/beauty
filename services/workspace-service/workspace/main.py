@@ -95,7 +95,7 @@ async def _startup(app: FastAPI) -> None:
         # 本地 provider 在宿主上直接执行命令,没有隔离:启动时就明确告警
         logger.warning(
             "sandbox provider=local:命令直接在宿主执行、无隔离,"
-            "仅限本地/单租户可信环境,生产请用 microsandbox"
+            "仅限本地/单账号可信环境,生产请用 microsandbox"
         )
 
     # 持久 shell 会话(#2):进程内管理器

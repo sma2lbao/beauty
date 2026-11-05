@@ -62,12 +62,12 @@ async def sweep_once(container: AppContainer) -> int:
             confirmation_seconds=settings.confirmation_timeout_seconds,
             question_seconds=settings.question_timeout_seconds,
         )
-        targets = [(run.tenant_id, run.id) for run in stale]
+        targets = [(run.account_id, run.id) for run in stale]
     handled = 0
-    for tenant_id, run_id in targets:
+    for account_id, run_id in targets:
         try:
             async with session_scope(factory) as session:
-                if await _timeout_one(session, tenant_id, run_id, settings):
+                if await _timeout_one(session, account_id, run_id, settings):
                     handled += 1
         except Exception as exc:  # noqa: BLE001 - 后台任务不能因单条失败退出
             logger.warning("interrupt sweep failed", run_id=run_id, error=str(exc))
@@ -76,12 +76,12 @@ async def sweep_once(container: AppContainer) -> int:
 
 async def _timeout_one(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     settings: Settings,
 ) -> bool:
     """复核状态并按类型收场;扫描后状态已变(用户刚处理)则返回 False。"""
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     if run.status == RunStatus.AWAITING_APPROVAL.value:
         kind = "approval"
         seconds = settings.approval_timeout_seconds
@@ -153,11 +153,11 @@ async def _timeout_one(
         )
     # 主动推进 updated_at:超时阈值从本轮处理重新起算,避免下一轮重复公告
     run.updated_at = datetime.now(UTC)
-    await enqueue(session, tenant_id, job_kind, run.id, payload=payload)
+    await enqueue(session, account_id, job_kind, run.id, payload=payload)
     logger.info(
         "interrupt timed out",
         run_id=run.id,
-        tenant_id=tenant_id,
+        account_id=account_id,
         kind=kind,
         timeout_seconds=seconds,
     )

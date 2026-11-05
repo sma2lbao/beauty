@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
     Boolean,
     ForeignKey,
@@ -20,8 +20,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class Workspace(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """工作区:团队的资料空间(同租户内名称唯一)。
+class Workspace(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """工作区:账号的资料空间(同账号内名称唯一)。
 
     `is_default` 标记系统维护的默认工作区:重命名后仍靠它识别,避免
     "默认工作区被改名→按名称找不到→又建一个同名默认工作区"。默认工作区
@@ -29,7 +29,7 @@ class Workspace(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "workspaces"
-    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+    __table_args__ = (UniqueConstraint("account_id", "name"),)
 
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str | None] = mapped_column(String(500))
@@ -39,7 +39,7 @@ class Workspace(UUIDMixin, TenantMixin, TimestampMixin, Base):
     )
 
 
-class WorkspaceArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class WorkspaceArtifact(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """交付物元数据(§7);`run_id` 仅作溯源,不建外键(跨服务不共享库表)。
 
     交付物可以是文本也可以是二进制:filename/content_type 是下载用的元数据,

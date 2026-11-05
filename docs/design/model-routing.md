@@ -9,7 +9,7 @@
 现状(2026-10-27)有三个断点:
 
 1. **选择不可控**:`RunCreate` 没有 `model`,orchestrator 的 `LLMClient` 只能吃
-   `LLM_MODEL` 里的一个全局默认;租户/一次任务想换模型只能改服务环境。
+   `LLM_MODEL` 里的一个全局默认;账号/一次任务想换模型只能改服务环境。
 2. **单点故障**:llm-gateway 单次调用,上游 5xx/限流/超时即整次失败,没有主备切换,
    也没有"换过模型"的可见记录。
 3. **能力受限**:网关不支持 `response_format`(结构化输出只能靠提示词 + 正则),
@@ -33,8 +33,8 @@ chain + 事件可见)、能力(JSON Schema 输出、图片输入)。
 
 **非目标**
 
-- 模型按租户的计费/套餐白名单(归 account 套餐,本期白名单=网关 `AVAILABLE_MODELS`
-  平台列表 ∪ 租户 BYOK 自定义模型,见 [byok.md](./byok.md) D11;套餐级白名单留后续);
+- 模型按账号的白名单与配额(归 account 级配额,本期白名单=网关 `AVAILABLE_MODELS`
+  平台列表 ∪ 账号 BYOK 自定义模型,见 [byok.md](./byok.md) D11;账号级配额白名单留后续);
 - 自动模型路由(按任务难度挑模型)、多模型投票、模型评测;
 - 图片**生成**、视频/音频输入;
 - 任务(run)路径把图片送进执行图(本期多模态只覆盖对话路径,见 §8 边界)。
@@ -51,7 +51,7 @@ llm-gateway:白名单校验 → fallback chain(主模型 → fallback_models)→
 - **选择**:显式值(消息/run) > 会话值 > 网关默认(`LLM_GATEWAY__DEFAULT_MODEL`)。
 - **白名单**:网关 `AVAILABLE_MODELS` 非空时,请求的模型必须在其中,
   否则 400 `llm.model_not_allowed`;为空时只校验 `DEFAULT_MODEL` 存在的语义。
-  带租户身份时允许集合额外并入该租户 BYOK 声明并在 account 落库的自定义模型
+  带账号身份时允许集合额外并入该账号 BYOK 声明并在 account 落库的自定义模型
   (`<provider>/<model>`,带 TTL 缓存),否则 BYOK 用户调平台列表外的模型会被拦;
 - **fallback**:网关内部行为,调用方无感;切过模型会在响应里带 `fallbacks`,
   由 orchestrator 落 `llm.fallback.v1`。
@@ -139,10 +139,10 @@ run 创建时确定,后续改会话模型不影响已在跑的 run。
 ### 5.4 `/v1/models`
 
 返回 `default_model` 与平台可用列表;`AVAILABLE_MODELS` 为空时只返回默认模型。
-带合法内部头(`X-Internal-Secret`)+ `X-Tenant-Id` 时额外合并该租户的 BYOK 自定义模型
+带合法内部头(`X-Internal-Secret`)+ `X-Account-Id` 时额外合并该账号的 BYOK 自定义模型
 (`owned_by="byok"`,平台列表在前、去重);匿名调用只回平台列表,避免枚举他人模型。
 orchestrator 的 `/api/v1/models` 是它的投影(带 60s 缓存与网关不可达兜底),因为
-`GatewayClient` 出站自动带租户头,合并后的自定义模型对前端模型选择器自动可见。
+`GatewayClient` 出站自动带账号头,合并后的自定义模型对前端模型选择器自动可见。
 
 ## 6. orchestrator 契约变更
 
@@ -214,7 +214,7 @@ orchestrator 的 `/api/v1/models` 是它的投影(带 60s 缓存与网关不可�
 ## 7. 多模态(图片输入)
 
 - 附件侧已有:`attachments.ALLOWED_TYPES` 含 `image/png|jpeg|webp`,内容存 DB。
-- 新增 `services/attachments.py::image_parts_for_message(session, tenant_id, message_id, *,
+- 新增 `services/attachments.py::image_parts_for_message(session, account_id, message_id, *,
 max_count, max_bytes, max_total_bytes) -> list[dict]`:取该消息绑定的图片附件,
   生成 `{"type":"image_url","image_url":{"url":"data:<mime>;base64,<...>"}}`;
   按 `created_at` 倒序累计,超过张数/单张/总量上限即停止(只带前 N 张)。
@@ -263,7 +263,7 @@ max_count, max_bytes, max_total_bytes) -> list[dict]`:取该消息绑定的图�
 
 ## 11. 后续(不在本期)
 
-- 租户级模型白名单/配额(account 套餐)、自动路由、按 run 成本归因到模型
+- 账号级模型白名单/配额(归 account 配额,无套餐)、自动路由、按 run 成本归因到模型
   (已有 `run.usage.v1` 的 `by_model`,可继续细化);
 - 任务路径多模态(图片进 run state/checkpoint);
 - 结构化输出用于交付物 schema(交付物 JSON 校验)与工具参数纠错回路;

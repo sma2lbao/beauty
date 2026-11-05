@@ -16,7 +16,7 @@
 | 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底   | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                                                                     |
 | 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                                                                 |
 | 可观测            | **Sentry 官方服务** + 结构化日志                    | 同左（本地日志）                             | ✅ 已实施；Langfuse **暂不做**                                                                                       |
-| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按租户注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
+| 支付              | **不做 Stripe**                                     | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
 | 事务邮件          | **暂不做 Resend**                                   | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                                                                |
 | Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）           | 本地 Vite                                    | ✅ 已实施                                                                                                            |
 | API 网关          | **FastAPI 服务**（同域 `/api`，:8007）              | 本地 uvicorn                                 | ✅ 已实施                                                                                                            |
@@ -52,7 +52,7 @@
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                               |
 | 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                                  |
 | 007 | API 网关 httpOnly Cookie + 短时 JWT      | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                              |
-| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按租户解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                         |
+| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                         |
 | 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                    |
 | 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                                                                                           |
 | 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                                  |
@@ -79,7 +79,7 @@ Browser
 ├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(当前无内置 provider)（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
 ├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
-└── account-service         组织/成员/会话/配额/usage/API Key（自建 IdP）               :8001
+└── account-service         账号/会话/配额/usage/API Key（自建 IdP）                 :8001
 
 云托管（只保留 URL 型依赖）
 ├── 云 Postgres             生产库（URL 注入；开发 SQLite）
@@ -98,7 +98,7 @@ Browser
 - 普通 CRUD / 短请求：浏览器 → Nginx → FastAPI 网关 → 容器服务；
 - 长任务事件流：API 网关发短时 token，浏览器直连 runtime SSE（避免 API 网关/代理超时）；
 - 公开 API / MCP：第三方 → api.beautymoon.cn（API Key/OAuth，限流）；
-- 服务间：内部 HTTP + 租户 JWT；禁止跨服务直连数据库。
+- 服务间：内部 HTTP + 账号 JWT；禁止跨服务直连数据库。
 
 ---
 
@@ -112,13 +112,13 @@ Browser
 | services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                       | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                                                                                |
 | agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel);MCP 预设(Notion 一键授权)与工具 annotations 风险分级                                                        | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                                                        |
 | tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                       | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                                                           |
-| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                              | BYOK（按租户注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                      |
-| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按租户连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**当前无内置 provider**（目录为空） | 2026-10 邮箱/日历能力下线；2026-11 平台完成、内置 Notion provider 上线后于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
+| llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                              | BYOK（按账号注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                      |
+| connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按账号连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**当前无内置 provider**（目录为空） | 2026-10 邮箱/日历能力下线；2026-11 平台完成、内置 Notion provider 上线后于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
 | knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                                                                                 | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                             |
 | workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                 | 暂用 DB/本地文件；对象存储后置                                                                                                                                                   |
-| account-service      | 容器 :8001            | 租户/成员/配额/usage/API Key/自建认证                                                                                                                                  | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                                                  |
+| account-service      | 容器 :8001            | 账号/配额/usage/API Key/自建认证                                                                                                                                       | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                                                  |
 | packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                       | Python 共享库                                                                                                                                                                    |
-| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                | 仓储层租户隔离 + 统一 404                                                                                                                                                        |
+| packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                | 仓储层账号隔离 + 统一 404                                                                                                                                                        |
 | packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                                                                                                        | 事务性 outbox + 消费幂等                                                                                                                                                         |
 | packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                                                                                                 | web/site/desktop 共用                                                                                                                                                            |
 
@@ -192,9 +192,9 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 - 登录：account-service 自建 IdP——注册 + 邮箱密码登录（argon2id）+ **旋转式刷新令牌**（旧令牌一次性，重用即吊销该用户全部）+ 内部签发 `POST /v1/auth/issue` + OIDC 发现/JWKS（签名密钥经 `SIGNING_KEY_PATH` 持久化）；**不用 Logto**（前端保留 `VITE_AUTH_MODE=logto` 作为可选模式）；社交 OAuth（Google/GitHub）待补；
 - API 网关回调后建立 **httpOnly, Secure, SameSite=Lax Cookie**；SPA 不接触 refresh token（session 模式）；
-- API 网关调 runtime 时签发短时服务 JWT（tenant/org/sub/scope）；服务间内部调用一律经 TokenBroker（租户来自签名 claim，无 `X-Tenant-Id` 裸调路径）；
+- API 网关调 runtime 时签发短时服务 JWT（account/sub/scope）；服务间内部调用一律经 TokenBroker（账号来自签名 claim，无 `X-Account-Id` 裸调路径）；
 - 开放平台/API Key 请求绕过 API 网关，直连 public API，用 API Key → 短时 JWT；
-- 本地开发保留 token 模式兜底（`VITE_AUTH_MODE=token|session|logto`，默认 token）；`AUTH_ENABLED=false` 时认 `X-Tenant-Id` 仅保留为显式关闭鉴权的部署语义。
+- 本地开发保留 token 模式兜底（`VITE_AUTH_MODE=token|session|logto`，默认 token）；`AUTH_ENABLED=false` 时认 `X-Account-Id` 仅保留为显式关闭鉴权的部署语义。
 
 ### 5.3 流式
 
@@ -214,7 +214,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 | 工作区     | 工作区中心（清单/新建/重命名/删除、会话与交付物归属、一行切换器；/workspace）、文件树（只读）、Git 状态、补丁建议 |
 | 知识库     | 文档入库/清单/检索预览（/knowledge）、引用溯源                                                                    |
 | 开发者     | API Key、MCP（HTTP/stdio 面板）、Skills（上传/版本/删除）、Webhook、调用日志、用量（/outbox 事件队列运维）        |
-| 设置       | 账户、安全、模型/BYOK、权限、组织/成员/会话（/settings）；订阅/发票后置                                           |
+| 设置       | 账号、安全、模型/BYOK、权限、会话（/settings）；订阅/发票后置                                                     |
 | 官网       | 独立部署（apps/site，深链 /landing 跳转过去）                                                                     |
 
 ---
@@ -245,9 +245,9 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 - **身份**：account-service 维持自建 IdP（邮箱密码 + 计划补 Google/GitHub OAuth）；各服务沿用 JWT/JWKS 验签（同一个 `JwtVerifier`，不设后门；换 IdP 时各服务只改 `AUTH_ISSUER`）；
 - **会话**：API 网关 httpOnly Cookie；服务间短时 JWT；API Key 独立通道；
 - **Free 配额**：`usage_ledger` 记录 token 用量（tool call / 存储维度待补，见 06 P0-1）；按月聚合 → 配额检查（402/429）；
-- **BYOK**：租户级 provider key 经**信封 v2 加密**存储，KMS 可切 `local` / Vault Transit；llm-gateway 按 `X-Tenant-Id` + `X-Internal-Secret` 向 account 的内部端点解析并短时缓存（300s / 负缓存 30s），**失败一律回退平台 `settings.api_key`**；租户 key 只覆盖 `api_key`、不覆盖 `api_base`；BYOK 不扣模型 credits（用量来源尚未在 `usage_events` 区分，属 06 P0-1）。契约见 [design/byok.md](./design/byok.md)；
+- **BYOK**：账号级 provider key 经**信封 v2 加密**存储，KMS 可切 `local` / Vault Transit；llm-gateway 按 `X-Account-Id` + `X-Internal-Secret` 向 account 的内部端点解析并短时缓存（300s / 负缓存 30s），**失败一律回退平台 `settings.api_key`**；账号 key 只覆盖 `api_key`、不覆盖 `api_base`；BYOK 不扣模型 credits（用量来源尚未在 `usage_events` 区分，属 06 P0-1）。契约见 [design/byok.md](./design/byok.md)；
 - **订阅/支付**：Stripe 暂不做；先只支持 Free 档 + 手动开通内部档；付费自助后续补；
-- **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；租户/IP/Key 三级；Turnstile 后置；
+- **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；账号/IP/Key 三级；Turnstile 后置；
 - **公开分享**：不可猜测 token、可撤销、可过期（后置）。
 
 ---
@@ -266,8 +266,8 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 8.2 MCP
 
-- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；租户隔离、权限策略已实现；**审计与提示注入过滤未实现**（见 06 §2.3 #9）；
-- **MCP Client**（对内）：租户配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
+- **MCP Server**（对外）：streamable HTTP + OAuth 2.1；暴露 tools（docs/kb；沙箱工具 P2）与 resources（artifacts/files）；账号隔离、权限策略已实现；**审计与提示注入过滤未实现**（见 06 §2.3 #9）；
+- **MCP Client**（对内）：账号配置第三方 MCP server（GitHub、Notion、飞书、Slack…）；工具命名空间、超时、失败降级、审批；
   - **内置预设 + 一键授权**（2026-11-04）：`GET /v1/mcp/presets` 暴露静态预设（当前 `notion` → `https://mcp.notion.com/mcp`），`POST /v1/mcp/presets/{key}` 幂等 ensure server，`POST /v1/mcp/servers/{id}/oauth/start` 接受 `next`（主路径 `/connectors`；`/mcp` 仅兼容直链）决定回调落点；`/connectors` 页是 MCP 唯一入口（预设卡片 +「我的 MCP 服务」区 + 旧 provider 目录区，侧栏不再单列 MCP，旧 provider 区只在存在 provider 时渲染）；
   - **HTTP 型**（M1 已落地）：orchestrator 进程内 httpx（Streamable HTTP），后续补 SSRF/出网代理加固；
   - **stdio 型**（P2 已落地）：命令在 workspace-service 沙箱内拉起，经 stdin/stdout JSON-RPC
@@ -290,9 +290,9 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 ### 8.3 Skill / Plugin 注册表
 
 - manifest：id/version/description/workspaceType/tools/permissions/deliverables/pricing；
-- 发布/审核/灰度/回滚；运行时按租户启用；
+- 发布/审核/灰度/回滚；运行时按账号启用；
 - 开放平台开发者可提交 Skill；与 MCP server 一起构成插件市场。
-- **P3 已落地（上传包）**：租户上传 SKILL.md zip（可选 skill.json entrypoint），
+- **P3 已落地（上传包）**：账号上传 SKILL.md zip（可选 skill.json entrypoint），
   对象存储 + 版本表（slug+version 不可变），run 创建时冻结版本快照；
   有 entrypoint 的包在沙箱内执行（skill_run 工具，WRITE 级受控自动执行），无 entrypoint 的包作为提示词技能；
   Web Skills 页支持上传/版本查看/删除。开放平台的审核/灰度/计费仍在 M4。
@@ -306,7 +306,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 - **观测规范**：字段字典、`request_id` 跨服务贯穿、访问/异常日志规格、Sentry 接入与告警草案见 [observability.md](./observability.md)；
 - **产品分析**：PostHog 后置（可用 Sentry + 自建事件表过渡）；
 - **Evals**：golden dataset + grader；PR 门禁（M4）；
-- **安全**：沙箱 P1/P2 受控使用（stdio MCP 有开关 + 命令白名单 + 沙箱隔离）；用户上传 skill 包执行 P3 已开；凭证加密；租户隔离测试；输入/输出审查后置；
+- **安全**：沙箱 P1/P2 受控使用（stdio MCP 有开关 + 命令白名单 + 沙箱隔离）；用户上传 skill 包执行 P3 已开；凭证加密；账号隔离测试；输入/输出审查后置；
 - **审计**：run_events 即审计流水（append-only、seq 单调、可回放）；导出后置。
 
 ---
@@ -335,7 +335,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
 6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；
 7. ✅ 补 Markdown/会话管理/产物预览（DB/文件版）等体验闭环；
-8. ⏳ 灰度：内部 dogfood → Free 邀请制 → 公开注册。
+8. ⏳ 灰度：内部 dogfood → Free 内测 → 公开注册。
 
 ### 10.3 内网/离线部署（Intranet Profile）——⏸ 暂缓，不纳入 M0
 
@@ -390,6 +390,13 @@ DATABASE_URL=sqlite+aiosqlite:////var/lib/beauty/app/app.db
 REDIS_URL=                      # 留空 = 进程内降级
 ```
 
+### 10.4 部署边界与账号
+
+- **账号即隔离边界**：`account_id = users.id`（32 位 hex）；一个部署可服务多个账号，但账号之间没有共享业务数据；
+- 账号私有表一律混入 `AccountMixin`，查询经 `AccountRepository` 按 `account_id` 过滤，**跨账号一律 404**（不泄漏存在性）；
+- 账号只来自签名 claim（服务 JWT 的 `account_id`）或内部调用头 `X-Account-Id`（仅 `AUTH_ENABLED=false`）；前端从不传账号标识；
+- 部署层面仍是同一套代码的两种形态（SaaS / 内网单机）：**账号是数据边界，部署是运行边界**——不再有组织、成员、邀请、角色、套餐等产品层概念。
+
 ---
 
 ## 11. Agent 执行模型（核心）
@@ -436,7 +443,7 @@ ToolDescriptor {   # v2 契约，真源 packages/common/common/tools.py
 - 按 **Workspace 类型**注册工具集：`repo` / `mailbox` / `docs` / `kb`；
 - 第三方工具（MCP）以 `mcp__<server>__<tool>` 命名空间接入；
 - `ask_question` 是唯一的 `kind=interaction` 工具：目录与参数校验在 tool-service，中断/答案回填在 orchestrator 图内（`ask_gate` + `awaiting_input`）；chat 模式与公开 MCP Server 均不暴露；
-- 权限策略：per-tenant / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm；MCP 工具的档位由工具 annotations + 预设只读前缀计算，见 §8.2）；策略是配置，不是硬编码；
+- 权限策略：per-account / per-connector / per-tool 的 `auto|confirm|deny`（`approval_policies` 表，求值是一层纯函数），默认按风险分级（只读与受控写自动、危险操作 confirm；MCP 工具的档位由工具 annotations + 预设只读前缀计算，见 §8.2）；策略是配置，不是硬编码；
 - 所有工具调用写 `run_events`（可回放/审计/计量）。
 
 ### 11.3 Skill（场景模板）
@@ -457,17 +464,17 @@ Skill {
 P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/）：
 
 - 包在对象存储（workspace-service /v1/objects），DB 只存包/版本 + manifest/SKILL.md 快照；
-- 版本化：租户内 slug + version 不可变；run 创建时冻结版本与执行字段，后传新版本不影响旧 run；
+- 版本化：账号内 slug + version 不可变；run 创建时冻结版本与执行字段，后传新版本不影响旧 run；
 - 有 entrypoint 的包自动获得 skill_run 工具（WRITE 级受控写，在沙箱内自动执行、不打断审批；确认闸只拦 DANGER），产物登记为 run 交付物；
 - 当前仍不开放终端/预览；coding 类内置技能保持只读。
 
 ### 11.4 Sandbox（P1 底座 + P2 stdio MCP + P3 技能包执行已落地）
 
-- **引擎选型（2026-10-20 拍板）**：**microsandbox**（Apache-2.0，microVM，Python SDK）——自建的是 **provider 抽象 + 生命周期 + 租户配额**，不自建隔离内核；备选 E2B / Fly Machines 通过同一 `SandboxProvider` 接口接入；
-- **P1（2026-10-20）**：`workspace-service` 沙箱模块——`SandboxProvider` 抽象、microsandbox 实现、`sandboxes` 实例表（租户/TTL/资源/状态）、生命周期 API（create/exec/files/touch/destroy）、过期回收 job；`agent-orchestrator` 增加沙箱 HTTP 客户端（默认关闭）。测试零网络；真实 microVM 需宿主可写 `MSB_HOME` 且允许 OCI registry 出网；
+- **引擎选型（2026-10-20 拍板）**：**microsandbox**（Apache-2.0，microVM，Python SDK）——自建的是 **provider 抽象 + 生命周期 + 账号配额**，不自建隔离内核；备选 E2B / Fly Machines 通过同一 `SandboxProvider` 接口接入；
+- **P1（2026-10-20）**：`workspace-service` 沙箱模块——`SandboxProvider` 抽象、microsandbox 实现、`sandboxes` 实例表（账号/TTL/资源/状态）、生命周期 API（create/exec/files/touch/destroy）、过期回收 job；`agent-orchestrator` 增加沙箱 HTTP 客户端（默认关闭）。测试零网络；真实 microVM 需宿主可写 `MSB_HOME` 且允许 OCI registry 出网；
 - **P2（2026-10-20）**：stdio MCP 接入——命令在沙箱内拉起，`StdioSandboxPool` 按对话级复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；`env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换；
 - **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
-- **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单租户可信环境（桌面本地模式），启动即打 warning；生产/多租户仍只用 microsandbox；
+- **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单账号可信环境（桌面本地模式），启动即打 warning；生产/多账号仍只用 microsandbox；
 - **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
 

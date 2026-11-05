@@ -2,7 +2,7 @@
 
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeDangerTool,
     FakeKnowledge,
     FakeLLM,
@@ -43,14 +43,14 @@ def test_write_tool_waits_for_confirmation_then_executes(tmp_path) -> None:
     danger = FakeDangerTool()
     with _tool_client(tmp_path, fake, knowledge, extras=(danger.spec(),)) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
 
         # 1) 停在等待确认;写操作绝不能已经执行
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "awaiting_confirmation"
         assert danger.sent == []
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         required = next(
             e for e in events if e["type"] == "run.confirmation.required.v1"
         )
@@ -60,12 +60,12 @@ def test_write_tool_waits_for_confirmation_then_executes(tmp_path) -> None:
         run = client.post(
             f"/api/v1/runs/{run_id}/confirm",
             json={"action": "approve"},
-            headers=TENANT,
+            headers=ACCOUNT,
         ).json()
         assert run["status"] == "completed"
         assert danger.sent == [{"title": "对外发布说明"}]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         types = [e["type"] for e in events]
         assert "run.confirmation.received.v1" in types
         # 工具事件不重复:只读调用一次 + 写操作一次(§6.3 add reducer 增量落库)
@@ -116,19 +116,19 @@ def test_write_tool_rejected_skips_execution(tmp_path) -> None:
     danger = FakeDangerTool()
     with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "awaiting_confirmation"
 
         run = client.post(
             f"/api/v1/runs/{run_id}/confirm",
             json={"action": "reject", "reason": "先别发"},
-            headers=TENANT,
+            headers=ACCOUNT,
         ).json()
         assert run["status"] == "completed"
         assert danger.sent == []  # 关键:拒绝即不执行
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         results = next(e for e in events if e["type"] == "run.completed.v1")["payload"][
             "results"
         ]
@@ -159,12 +159,12 @@ def test_confirm_guard_requires_awaiting_state(tmp_path) -> None:
     )
     with _tool_client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         # 尚未 approve:仍处于 awaiting_approval
         resp = client.post(
             f"/api/v1/runs/{run_id}/confirm",
             json={"action": "approve"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 409
         assert resp.json()["code"] == "run.invalid_state"
@@ -188,14 +188,14 @@ def test_confirmation_cycles_are_capped(tmp_path) -> None:
     danger = FakeDangerTool()
     with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         for _ in range(3):
             assert run["status"] == "awaiting_confirmation"
             run = client.post(
                 f"/api/v1/runs/{run_id}/confirm",
                 json={"action": "approve"},
-                headers=TENANT,
+                headers=ACCOUNT,
             ).json()
         assert run["status"] == "completed"
         assert len(danger.sent) == 3  # 上限 3 次,第 4 次请求被跳过

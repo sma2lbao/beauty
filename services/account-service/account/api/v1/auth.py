@@ -45,44 +45,35 @@ _require_internal_secret = make_internal_secret_dependency(
 RequireInternalSecret = Annotated[None, Depends(_require_internal_secret)]
 
 
+def _token_response(result: auth_service.AuthResult) -> TokenResponse:
+    return TokenResponse(
+        access_token=result.access_token,
+        refresh_token=result.refresh_token,
+        expires_in=result.expires_in,
+        account_id=result.account_id,
+        subject=result.subject,
+        session_id=result.session_id,
+    )
+
+
 @router.post(
     "/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED
 )
 async def register(
     body: RegisterRequest, session: DBSession, settings: SettingsDep, signer: SignerDep
 ) -> TokenResponse:
-    """注册:新组织 + owner 成员(409 = 邮箱已被注册)。"""
+    """注册:新建账号(409 = 邮箱已被注册)。"""
     result = await auth_service.register(session, settings, signer, body)
-    return TokenResponse(
-        access_token=result.access_token,
-        refresh_token=result.refresh_token,
-        expires_in=result.expires_in,
-        tenant_id=result.tenant_id,
-        organization_id=result.organization_id,
-        user_id=result.user_id,
-        subject=result.subject,
-        role=result.role,
-        session_id=result.session_id,
-    )
+    return _token_response(result)
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest, session: DBSession, settings: SettingsDep, signer: SignerDep
 ) -> TokenResponse:
-    """登录:邮箱 + 密码换双令牌(失败统一 401,不区分用户不存在与密码错)。"""
+    """登录:邮箱 + 密码换双令牌(失败统一 401,不区分账号不存在与密码错)。"""
     result = await auth_service.login(session, settings, signer, body)
-    return TokenResponse(
-        access_token=result.access_token,
-        refresh_token=result.refresh_token,
-        expires_in=result.expires_in,
-        tenant_id=result.tenant_id,
-        organization_id=result.organization_id,
-        user_id=result.user_id,
-        subject=result.subject,
-        role=result.role,
-        session_id=result.session_id,
-    )
+    return _token_response(result)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -96,17 +87,7 @@ async def refresh(
     result = await auth_service.refresh_tokens(
         session, settings, signer, body.refresh_token
     )
-    return TokenResponse(
-        access_token=result.access_token,
-        refresh_token=result.refresh_token,
-        expires_in=result.expires_in,
-        tenant_id=result.tenant_id,
-        organization_id=result.organization_id,
-        user_id=result.user_id,
-        subject=result.subject,
-        role=result.role,
-        session_id=result.session_id,
-    )
+    return _token_response(result)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -119,19 +100,22 @@ async def logout(body: LogoutRequest, session: DBSession) -> Response:
 @router.post("/issue", response_model=IssueResponse)
 async def issue(
     body: IssueRequest,
-    settings: SettingsDep,
+    session: DBSession,
     signer: SignerDep,
     _internal: RequireInternalSecret,
 ) -> IssueResponse:
-    """内部服务签发:共享密钥换"以目标租户为 claim"的 access token。
+    """内部服务签发:共享密钥换"以目标账号为 claim"的 access token。
 
     下游服务开了鉴权后,服务间调用与用户面走**同一套** JwtVerifier——
     不设后门;密钥由 common.security 统一依赖校验(常量时间,不泄漏配置状态)。
+    账号不存在或非 active 一律 401 auth.account_missing(不泄漏存在性细节)。
     """
-    token = signer.sign(subject=body.subject, tenant_id=body.tenant_id)
+    token = await auth_service.issue_token(
+        session, signer, body.account_id, body.subject
+    )
     return IssueResponse(
         access_token=token,
         expires_in=signer.ttl_seconds,
-        tenant_id=body.tenant_id,
+        account_id=body.account_id,
         subject=body.subject,
     )

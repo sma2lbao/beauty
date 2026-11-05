@@ -2,7 +2,7 @@
  * 登录页(架构 §10):`token`/`logto` 模式下整站的登录门,守卫(auth-guard)
  * 拦下的访问都回到这里,登录成功后送回来路。
  *
- * - `token`:自建认证(account-service)——邮箱 + 密码登录、注册新组织,
+ * - `token`:自建认证(account-service)——邮箱 + 密码登录、创建账号,
  *   或粘贴现成 access token(联调/运维,无续期);登录拿双令牌,
  *   access 过期由 http 层用 refresh 自动续;
  * - `logto`:跳 IdP 授权码 + PKCE 登录,回调在 `/callback`。
@@ -205,8 +205,8 @@ export function LoginPage() {
               <>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {tab === 'login'
-                    ? '用邮箱和密码登录;还没有账号就注册一个,首次注册会建立你的组织。'
-                    : '注册即创建你的组织,你就是组织所有者(owner)。'}
+                    ? '用邮箱和密码登录;还没有账号就创建一个。'
+                    : '创建账号即可开始使用,账号就是你的数据边界。'}
                 </p>
 
                 <Tabs

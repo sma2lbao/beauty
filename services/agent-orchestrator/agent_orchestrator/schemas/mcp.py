@@ -10,7 +10,7 @@
 
 读端**永不返回** token/env 值:只回 has_token/token_hint 与 has_env/env_keys。
 
-`auto_approve`(免确认执行,默认 False)是租户对该 server 的信任声明:对话路径
+`auto_approve`(免确认执行,默认 False)是账号对该 server 的信任声明:对话路径
 (chat)不产生审批流,只有置 True 的工具才会被真正执行(§6.4 策略配置化)。
 """
 

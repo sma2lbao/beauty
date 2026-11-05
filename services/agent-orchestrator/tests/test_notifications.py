@@ -12,8 +12,8 @@ from agent_orchestrator.api.v1.notifications import (
     notification_stream,
 )
 
-#: conftest 里 TENANT = _IDP.bearer("t-1")
-TENANT_ID = "t-1"
+#: conftest 里 ACCOUNT = _IDP.bearer("t-1")
+ACCOUNT_ID = "t-1"
 
 
 def _run(run_id: str, status: str, conversation_id: str | None = None):
@@ -62,7 +62,7 @@ def test_stream_首帧就绪(client: TestClient) -> None:
     settings = client.app.state.settings
 
     async def first_frame() -> str:
-        gen = notification_stream(factory, settings, TENANT_ID)
+        gen = notification_stream(factory, settings, ACCOUNT_ID)
         try:
             return await gen.__anext__()
         finally:
@@ -71,7 +71,7 @@ def test_stream_首帧就绪(client: TestClient) -> None:
     assert asyncio.run(first_frame()) == ": ready\n\n"
 
 
-def test_stream_未带租户令牌被拒(client: TestClient) -> None:
+def test_stream_未带账号令牌被拒(client: TestClient) -> None:
     resp = client.get("/api/v1/notifications/stream")
     assert resp.status_code == 401
 
@@ -94,7 +94,7 @@ def test_notification_stream_推送状态变化(client: TestClient) -> None:
     async def scenario() -> tuple[list[str], str]:
         async with session_scope(factory) as session:
             run = Run(
-                tenant_id=TENANT_ID,
+                account_id=ACCOUNT_ID,
                 title="推送",
                 goal="看通知",
                 status="pending",
@@ -103,7 +103,7 @@ def test_notification_stream_推送状态变化(client: TestClient) -> None:
             await session.flush()
             run_id = run.id
 
-        gen = notification_stream(factory, settings, TENANT_ID)
+        gen = notification_stream(factory, settings, ACCOUNT_ID)
         frames: list[str] = []
         try:
             frames.append(await gen.__anext__())  # : ready —— 基线已建立

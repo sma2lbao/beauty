@@ -45,7 +45,7 @@ vi.mock('@/features/auth/auth-bar', () => ({
 const workspace: Workspace = {
   id: 'ws-1',
   name: '默认工作区',
-  description: '自动创建:租户默认工作区',
+  description: '自动创建:账号默认工作区',
   status: 'active',
   is_default: true,
   created_at: '2026-10-13T00:00:00+00:00',
@@ -120,7 +120,7 @@ describe('WorkspacePage', () => {
     // 清单项与右列头部都展示同一个工作区名/描述
     expect(screen.getAllByText('默认工作区').length).toBeGreaterThan(1);
     expect(
-      screen.getAllByText('自动创建:租户默认工作区').length,
+      screen.getAllByText('自动创建:账号默认工作区').length,
     ).toBeGreaterThan(0);
     expect(screen.getAllByText(/创建于 2026\/10\/13/).length).toBeGreaterThan(
       0,

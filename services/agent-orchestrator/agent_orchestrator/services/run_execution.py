@@ -85,7 +85,7 @@ from agent_orchestrator.services.workspace import Workspace
 async def plan_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     *,
     jobs_enabled: bool = False,
@@ -96,10 +96,10 @@ async def plan_run(
     settings: Settings | None = None,
     context: ContextPipeline | None = None,
 ) -> Run:
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     require_transition(run, "plan")
     if jobs_enabled:
-        await jobs_service.enqueue(session, tenant_id, "plan", run.id)
+        await jobs_service.enqueue(session, account_id, "plan", run.id)
         return run
     await _invoke_plan(
         session,
@@ -118,11 +118,11 @@ async def plan_run(
 async def update_plan(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     markdown: str,
 ) -> Run:
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     require_transition(run, "update_plan")
     await graph.aupdate_state(_config(run), {"plan_markdown": markdown}, as_node="plan")
     run.plan_markdown = markdown
@@ -156,7 +156,7 @@ async def update_plan(
 async def retry_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     *,
     jobs_enabled: bool = False,
@@ -176,10 +176,10 @@ async def retry_run(
     继承的东西:目标/验收标准/**已批准的计划**(计划节点检测到已有计划会短路,
     所以只重走审批闸,不重复调用模型);不继承:轮次、失败原因、终止状态。
     """
-    parent = await require_run(session, tenant_id, run_id)
+    parent = await require_run(session, account_id, run_id)
     require_transition(parent, "retry")
     child = Run(
-        tenant_id=tenant_id,
+        account_id=account_id,
         title=_retry_title(parent.title),
         goal=parent.goal,
         status=RunStatus.PENDING.value,
@@ -212,7 +212,7 @@ async def retry_run(
     # 继承计划 → 直接进审批闸:按同一判据放行(无危险工具自动、有危险工具人工;
     # 已产生的外部副作用不会被自动撤销)
     if jobs_enabled:
-        await jobs_service.enqueue(session, tenant_id, "plan", child.id)
+        await jobs_service.enqueue(session, account_id, "plan", child.id)
     else:
         await _invoke_plan(
             session,
@@ -231,7 +231,7 @@ async def retry_run(
 async def resume_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     *,
     jobs_enabled: bool = False,
@@ -243,14 +243,14 @@ async def resume_run(
     context: ContextPipeline | None = None,
 ) -> Run:
     """blocked → 新 attempt 重新进审批闸,计划保留(§6.2 goal 语义)。"""
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     require_transition(run, "resume")
     run.attempts += 1
     run.status = RunStatus.PENDING.value
     run.status_reason = None
     await append_event(session, run, "run.resumed.v1", {"attempt": run.attempts})
     if jobs_enabled:
-        await jobs_service.enqueue(session, tenant_id, "plan", run.id)
+        await jobs_service.enqueue(session, account_id, "plan", run.id)
         return run
     await _invoke_plan(
         session,

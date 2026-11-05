@@ -44,9 +44,9 @@ INACTIVE_STATUSES = frozenset(
 
 
 async def _default_workspace_id(
-    workspace: Workspace | None, tenant_id: str, *, warn: bool = True
+    workspace: Workspace | None, account_id: str, *, warn: bool = True
 ) -> str | None:
-    """租户默认工作区 id;客户端未启用/取不到/上游故障 → None(不阻断对话)。
+    """账号默认工作区 id;客户端未启用/取不到/上游故障 → None(不阻断对话)。
 
     warn=False 用于列表接口的懒回填:未启用工作区是合法部署形态,不必每次
     拉列表都刷警告;建对话时(WARN)则要留下"归属缺失"的唯一线索。
@@ -55,16 +55,16 @@ async def _default_workspace_id(
         if warn:
             logger.warning(
                 "workspace client disabled, conversation has no workspace",
-                tenant_id=tenant_id,
+                account_id=account_id,
             )
         return None
     try:
-        default = await workspace.default_workspace(tenant_id)
+        default = await workspace.default_workspace(account_id)
     except Exception as exc:  # noqa: BLE001 - 工作区故障只降级,不阻断建对话
         if warn:
             logger.warning(
                 "default workspace resolution failed",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 error=f"{type(exc).__name__}: {exc}",
             )
         return None
@@ -72,7 +72,7 @@ async def _default_workspace_id(
         if warn:
             logger.warning(
                 "workspace service returned no default workspace",
-                tenant_id=tenant_id,
+                account_id=account_id,
             )
         return None
     resolved = default.get("id")
@@ -81,31 +81,31 @@ async def _default_workspace_id(
 
 async def resolve_workspace_id(
     workspace: Workspace | None,
-    tenant_id: str,
+    account_id: str,
     workspace_id: str | None = None,
 ) -> str | None:
-    """确定对话所属工作区:显式 id 先校验,未给则取租户默认工作区。
+    """确定对话所属工作区:显式 id 先校验,未给则取账号默认工作区。
 
     - 显式 id:经 workspace 客户端校验存在性,不存在 → 404 workspace.not_found;
       客户端不可达 → 502 workspace.upstream_error(显式指定就不静默改归属);
     - 显式 id + 客户端未启用:无法校验存在性,按原样接受并记 warning——
       "工作区集成没开"不应该让建对话失败;
-    - 未给 id:落租户默认工作区;客户端未启用/上游故障 → None + warning 降级,
+    - 未给 id:落账号默认工作区;客户端未启用/上游故障 → None + warning 降级,
       对话照常建(归属缺失由列表接口的懒回填兜底)。
     """
     if workspace_id:
         if workspace is None:
             logger.warning(
                 "workspace client disabled, workspace_id accepted unverified",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 workspace_id=workspace_id,
             )
             return workspace_id
-        found = await workspace.get_workspace(tenant_id, workspace_id)
+        found = await workspace.get_workspace(account_id, workspace_id)
         if found is None:
             raise NotFoundError("workspace.not_found", "工作区不存在")
         return workspace_id
-    return await _default_workspace_id(workspace, tenant_id)
+    return await _default_workspace_id(workspace, account_id)
 
 
 def encode_cursor(conversation_id: str) -> str:
@@ -124,15 +124,15 @@ def decode_cursor(cursor: str) -> str:
 
 
 async def _backfill_legacy_workspace(
-    repo: ConversationRepository, tenant_id: str, workspace_id: str
+    repo: ConversationRepository, account_id: str, workspace_id: str
 ) -> None:
     """把归属为空的存量会话补到该工作区;失败只记 warning(兼容性补丁)。"""
     try:
-        filled = await repo.backfill_workspace_id(tenant_id, workspace_id)
+        filled = await repo.backfill_workspace_id(account_id, workspace_id)
     except Exception as exc:  # noqa: BLE001 - 回填失败不影响列表
         logger.warning(
             "conversation workspace backfill failed",
-            tenant_id=tenant_id,
+            account_id=account_id,
             workspace_id=workspace_id,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -140,7 +140,7 @@ async def _backfill_legacy_workspace(
     if filled:
         logger.info(
             "conversations backfilled with default workspace",
-            tenant_id=tenant_id,
+            account_id=account_id,
             workspace_id=workspace_id,
             count=filled,
         )
@@ -148,7 +148,7 @@ async def _backfill_legacy_workspace(
 
 async def list_conversations(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     limit: int = 50,
     *,
     q: str | None = None,
@@ -157,12 +157,12 @@ async def list_conversations(
     workspace_id: str | None = None,
     workspace: Workspace | None = None,
 ) -> tuple[list[Conversation], str | None]:
-    """租户内最近活跃在前的对话列表(消息会顶 updated_at)。
+    """账号内最近活跃在前的对话列表(消息会顶 updated_at)。
 
     keyset 分页:多取一条判断 has_more,用最后一条 id 作下一页游标。
 
     存量空归属的回填(一次 UPDATE,失败只记 warning,不拖挂列表):旧会话按
-    "属于租户默认工作区"处理。未给 workspace_id 时总是回填;给了过滤时只在
+    "属于账号默认工作区"处理。未给 workspace_id 时总是回填;给了过滤时只在
     过滤的就是默认工作区时回填——默认工作区首屏因此能看到历史会话,而按其他
     工作区过滤时既不动归属、也不会把会话泄漏到别的过滤结果里。
     """
@@ -170,12 +170,12 @@ async def list_conversations(
     # 空串按“未给”处理:?workspace_id= 不应变成“过滤一个空工作区”
     workspace_id = workspace_id or None
     # 尽力解析默认工作区:失败只是 None(仅影响回填,不影响过滤结果)
-    default_id = await _default_workspace_id(workspace, tenant_id, warn=False)
+    default_id = await _default_workspace_id(workspace, account_id, warn=False)
     if default_id is not None and (workspace_id is None or workspace_id == default_id):
-        await _backfill_legacy_workspace(repo, tenant_id, default_id)
+        await _backfill_legacy_workspace(repo, account_id, default_id)
     before_id = decode_cursor(cursor) if cursor else None
     rows = await repo.list_recent(
-        tenant_id,
+        account_id,
         limit + 1,
         q=q,
         archived=archived,
@@ -189,10 +189,10 @@ async def list_conversations(
 
 
 async def rename_conversation(
-    session: AsyncSession, tenant_id: str, conversation_id: str, title: str
+    session: AsyncSession, account_id: str, conversation_id: str, title: str
 ) -> Conversation:
     """重命名会话(标题来自用户编辑,保留首尾空白清理)。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     cleaned = title.strip()
     if not cleaned:
         raise AppError("conversation.invalid_title", "会话标题不能为空")
@@ -202,10 +202,10 @@ async def rename_conversation(
 
 
 async def set_model(
-    session: AsyncSession, tenant_id: str, conversation_id: str, model: str | None
+    session: AsyncSession, account_id: str, conversation_id: str, model: str | None
 ) -> Conversation:
     """设置会话级模型偏好(P1-G);None 保留原值(局部更新语义)。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     if model is not None:
         conversation.model = model
         conversation.updated_at = datetime.now(UTC)
@@ -213,26 +213,26 @@ async def set_model(
 
 
 async def set_archived(
-    session: AsyncSession, tenant_id: str, conversation_id: str, archived: bool
+    session: AsyncSession, account_id: str, conversation_id: str, archived: bool
 ) -> Conversation:
     """归档 / 取消归档。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     conversation.archived_at = datetime.now(UTC) if archived else None
     conversation.updated_at = datetime.now(UTC)
     return conversation
 
 
 async def delete_conversation(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> None:
     """软删除:保留审计数据,列表/详情/消息随即按 404 处理。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     conversation.deleted_at = datetime.now(UTC)
     conversation.updated_at = datetime.now(UTC)
 
 
 async def active_run(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> Run | None:
     """会话当前进行中的 run:最新一跑仍在进行 → 它;否则 None。
 
@@ -240,7 +240,7 @@ async def active_run(
     所以"最新且进行中"即"当前对话正在执行的任务"。
     """
     runs = await RunRepository(session).list_for_conversation(
-        tenant_id, conversation_id, limit=1
+        account_id, conversation_id, limit=1
     )
     if not runs:
         return None
@@ -248,10 +248,10 @@ async def active_run(
 
 
 async def list_messages(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> list[ChatMessage]:
     """对话消息回放:按时间升序(user/assistant 混排)。"""
-    await require_conversation(session, tenant_id, conversation_id)
+    await require_conversation(session, account_id, conversation_id)
     return await MessageRepository(session).list_for_conversation(
-        tenant_id, conversation_id
+        account_id, conversation_id
     )

@@ -1,4 +1,4 @@
-"""MCP Client 注册表(M1 本地版):租户配置第三方 MCP server。
+"""MCP Client 注册表(M1 本地版):账号配置第三方 MCP server。
 
 P2 增加 **stdio** 传输:命令在沙箱(workspace-service /v1/sandboxes)里拉起,
 经 stdin/stdout JSON-RPC 调用。两种传输共用一张表:
@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class MCPServer(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class MCPServer(UUIDMixin, AccountMixin, TimestampMixin, Base):
     __tablename__ = "mcp_servers"
-    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+    __table_args__ = (UniqueConstraint("account_id", "name"),)
 
     name: Mapped[str] = mapped_column(String(80))
     # http 时是 MCP 端点;stdio 时存空字符串(见模块 docstring)
@@ -54,7 +54,7 @@ class MCPServer(UUIDMixin, TenantMixin, TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class MCPServerAuth(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class MCPServerAuth(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """远程 MCP server 的浏览器 OAuth 授权(P1,与 mcp_servers 一对一)。
 
     云端 agent 不能自己开浏览器:用户在浏览器里完成授权码流程,服务端只保存
@@ -64,7 +64,7 @@ class MCPServerAuth(UUIDMixin, TenantMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "mcp_server_auth"
-    __table_args__ = (UniqueConstraint("tenant_id", "server_id"),)
+    __table_args__ = (UniqueConstraint("account_id", "server_id"),)
 
     #: 关联 mcp_servers.id(不建 FK:删除 server 时由服务层同事务清理)
     server_id: Mapped[str] = mapped_column(String(32))

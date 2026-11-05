@@ -20,21 +20,21 @@ class ServiceSettings(BaseAppSettings):
     # 数据库:不提供默认值,强制每个服务显式声明自己的库,避免误连。
     database_url: str
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
-    # 鉴权(架构 §10):默认开启,与全平台同一套 token→租户约定(自建 IdP)
+    # 鉴权(架构 §10):默认开启,与全平台同一套 token→账号约定(自建 IdP)
     auth_enabled: bool = True
     auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service
     auth_audience: str | None = "beauty-api"  # 与 account 的 TOKEN_AUDIENCE 一致
     auth_jwks_url: str | None = None  # 不填走 OIDC 发现文档
-    auth_tenant_claim: str = "tenant_id"
+    auth_account_claim: str = "account_id"
 
     @model_validator(mode="after")
     def _validate_service_settings(self) -> Self:
-        """启动期快速失败:库地址必填;开鉴权时 issuer/tenant claim 不能为空。"""
+        """启动期快速失败:库地址必填;开鉴权时 issuer/account claim 不能为空。"""
         if not self.database_url.strip():
             raise ValueError("database_url 不能为空")
         if self.auth_enabled:
             if not self.auth_issuer.strip():
                 raise ValueError("auth_enabled=true 时 auth_issuer 不能为空")
-            if not self.auth_tenant_claim.strip():
-                raise ValueError("auth_enabled=true 时 auth_tenant_claim 不能为空")
+            if not self.auth_account_claim.strip():
+                raise ValueError("auth_enabled=true 时 auth_account_claim 不能为空")
         return self

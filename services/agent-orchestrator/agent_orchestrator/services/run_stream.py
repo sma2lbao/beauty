@@ -35,7 +35,7 @@ TERMINAL_STATUSES = (
 
 
 async def ensure_stream_target(
-    factory: async_sessionmaker[AsyncSession], tenant_id: str, run_id: str
+    factory: async_sessionmaker[AsyncSession], account_id: str, run_id: str
 ) -> None:
     """开流前的 404 预检。
 
@@ -43,7 +43,7 @@ async def ensure_stream_target(
     游标非法(400)与 run 不存在(404)都在建流之前返回,不产生半开流。
     """
     async with session_scope(factory) as session:
-        await require_run(session, tenant_id, run_id)
+        await require_run(session, account_id, run_id)
 
 
 def parse_last_event_id(last_event_id: str | None) -> int:
@@ -59,7 +59,7 @@ def parse_last_event_id(last_event_id: str | None) -> int:
 async def event_stream(
     factory: async_sessionmaker[AsyncSession],
     settings: Settings,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     after: int,
 ) -> AsyncIterator[str]:
@@ -68,8 +68,8 @@ async def event_stream(
     idle_polls = 0
     while True:
         async with session_scope(factory) as session:
-            events = await list_events(session, tenant_id, run_id, after=last_seq)
-            run = await require_run(session, tenant_id, run_id)
+            events = await list_events(session, account_id, run_id, after=last_seq)
+            run = await require_run(session, account_id, run_id)
         for event in events:
             last_seq = event.seq
             yield run_event_frame(event)

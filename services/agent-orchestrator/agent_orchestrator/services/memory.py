@@ -28,8 +28,8 @@ from agent_orchestrator.services.embeddings import (
     tokenize as _tokenize,
 )
 
-#: 记忆作用域:tenant = 全租户可见(workspace_id 必须为空),workspace = 工作区内。
-MEMORY_SCOPES = frozenset({"tenant", "workspace"})
+#: 记忆作用域:account = 全账号可见(workspace_id 必须为空),workspace = 工作区内。
+MEMORY_SCOPES = frozenset({"account", "workspace"})
 #: 记忆类型:note 随手记 / preference 偏好 / fact 事实 / procedure 流程。
 MEMORY_KINDS = frozenset({"note", "preference", "fact", "procedure"})
 #: 记忆来源:手工、对话、run、工具。
@@ -133,11 +133,11 @@ def _snippet(content: str) -> str:
 
 async def write_memory(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     content: str,
     kind: str = "note",
-    scope: str = "tenant",
+    scope: str = "account",
     workspace_id: str | None = None,
     source_type: str = "manual",
     source_id: str | None = None,
@@ -146,7 +146,7 @@ async def write_memory(
     max_content_chars: int = 8000,
     max_entries: int = 2000,
 ) -> Memory:
-    """写入一条长期记忆;参数非法或超租户上限抛 AppError(不静默截断语义)。
+    """写入一条长期记忆;参数非法或超账号上限抛 AppError(不静默截断语义)。
 
     内容按 max_content_chars 截断(用户长文笔记不至于写失败),其余校验直接报错;
     条数上限只统计"仍然有效"的记忆,过期/软删的不占额度。
@@ -162,14 +162,14 @@ async def write_memory(
         raise AppError("memory.invalid_source", f"未知记忆来源: {source_type}")
     if scope == "workspace" and not workspace_id:
         raise AppError("memory.workspace_required", "工作区级记忆缺少 workspace_id")
-    if scope == "tenant":
+    if scope == "account":
         workspace_id = None
     if max_content_chars > 0 and len(text) > max_content_chars:
         text = text[:max_content_chars]
 
     repository = MemoryRepository(session)
     if max_entries > 0:
-        stats = await repository.counts(tenant_id)
+        stats = await repository.counts(account_id)
         if stats["active"] >= max_entries:
             raise AppError(
                 "memory.limit_reached",
@@ -182,7 +182,7 @@ async def write_memory(
     # 检索侧遇到维度不一致会忽略向量分量而不是算出错误余弦。
     embedding, embedding_model = await embed_one(text)
     memory = Memory(
-        tenant_id=tenant_id,
+        account_id=account_id,
         workspace_id=workspace_id,
         scope=scope,
         kind=kind,
@@ -199,7 +199,7 @@ async def write_memory(
 
 async def list_memories(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     workspace_id: str | None = None,
     kind: str | None = None,
@@ -211,10 +211,10 @@ async def list_memories(
     text = (q or "").strip()
     if not text:
         return await repository.list_active(
-            tenant_id, workspace_id=workspace_id, kind=kind, limit=limit
+            account_id, workspace_id=workspace_id, kind=kind, limit=limit
         )
     candidates = await repository.list_active(
-        tenant_id,
+        account_id,
         workspace_id=workspace_id,
         kind=kind,
         limit=max(limit, _CANDIDATE_LIMIT),
@@ -230,7 +230,7 @@ async def list_memories(
 
 async def search_memories(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     query: str,
     *,
     workspace_id: str | None = None,
@@ -248,11 +248,11 @@ async def search_memories(
         return []
     repository = MemoryRepository(session)
     candidates = await repository.list_active(
-        tenant_id,
+        account_id,
         workspace_id=workspace_id,
         kind=kind,
-        # 没有工作区上下文时只看租户级记忆,不跨工作区泄漏 workspace 级内容
-        scope=None if workspace_id else "tenant",
+        # 没有工作区上下文时只看账号级记忆,不跨工作区泄漏 workspace 级内容
+        scope=None if workspace_id else "account",
         limit=_CANDIDATE_LIMIT,
     )
     if not candidates:
@@ -292,7 +292,7 @@ async def search_memories(
 
 async def recall_block(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     query: str,
     *,
     workspace_id: str | None = None,
@@ -302,7 +302,7 @@ async def recall_block(
     """把相关记忆拼成可注入 system prompt 的中文块;无命中返回空串。"""
     hits = await search_memories(
         session,
-        tenant_id,
+        account_id,
         query,
         workspace_id=workspace_id,
         limit=limit,
@@ -325,7 +325,7 @@ async def recall_block(
 
 async def convention_block(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     workspace_id: str | None = None,
     max_chars: int = 2000,
@@ -340,11 +340,11 @@ async def convention_block(
     if max_chars <= 0:
         return ""
     rows = await MemoryRepository(session).list_active(
-        tenant_id,
+        account_id,
         workspace_id=workspace_id,
         kind=_PROCEDURE_KIND,
-        # 没有工作区上下文时只看租户级约定,不注入别的工作区的 workspace 级流程
-        scope=None if workspace_id else "tenant",
+        # 没有工作区上下文时只看账号级约定,不注入别的工作区的 workspace 级流程
+        scope=None if workspace_id else "account",
         limit=_CONVENTION_LIMIT,
     )
     if not rows:
@@ -362,9 +362,9 @@ async def convention_block(
     return "\n".join(lines)
 
 
-async def delete_memory(session: AsyncSession, tenant_id: str, memory_id: str) -> None:
-    """软删除一条记忆;不存在或跨租户一律 404,不泄漏存在性。"""
-    deleted = await MemoryRepository(session).soft_delete(tenant_id, memory_id)
+async def delete_memory(session: AsyncSession, account_id: str, memory_id: str) -> None:
+    """软删除一条记忆;不存在或跨账号一律 404,不泄漏存在性。"""
+    deleted = await MemoryRepository(session).soft_delete(account_id, memory_id)
     if not deleted:
         raise NotFoundError(
             "memory.not_found",
@@ -373,14 +373,14 @@ async def delete_memory(session: AsyncSession, tenant_id: str, memory_id: str) -
         )
 
 
-async def purge_expired(session: AsyncSession, tenant_id: str) -> int:
-    """清理当前租户已过期的记忆,返回标记条数。"""
-    return await MemoryRepository(session).purge_expired(tenant_id)
+async def purge_expired(session: AsyncSession, account_id: str) -> int:
+    """清理当前账号已过期的记忆,返回标记条数。"""
+    return await MemoryRepository(session).purge_expired(account_id)
 
 
-async def memory_stats(session: AsyncSession, tenant_id: str) -> dict[str, int]:
-    """租户记忆计数(total/active/pinned/expired)。"""
-    return await MemoryRepository(session).counts(tenant_id)
+async def memory_stats(session: AsyncSession, account_id: str) -> dict[str, int]:
+    """账号记忆计数(total/active/pinned/expired)。"""
+    return await MemoryRepository(session).counts(account_id)
 
 
 class MemoryProvider(Protocol):
@@ -393,7 +393,7 @@ class MemoryProvider(Protocol):
     async def recall(
         self,
         session: AsyncSession,
-        tenant_id: str,
+        account_id: str,
         query: str,
         *,
         workspace_id: str | None = None,
@@ -404,11 +404,11 @@ class MemoryProvider(Protocol):
     async def remember(
         self,
         session: AsyncSession,
-        tenant_id: str,
+        account_id: str,
         content: str,
         *,
         kind: str = "note",
-        scope: str = "tenant",
+        scope: str = "account",
         workspace_id: str | None = None,
         source_type: str = "manual",
         source_id: str | None = None,
@@ -417,7 +417,7 @@ class MemoryProvider(Protocol):
     ) -> Memory: ...
 
     async def forget(
-        self, session: AsyncSession, tenant_id: str, memory_id: str
+        self, session: AsyncSession, account_id: str, memory_id: str
     ) -> None: ...
 
 
@@ -427,7 +427,7 @@ class LocalMemoryProvider:
     async def recall(
         self,
         session: AsyncSession,
-        tenant_id: str,
+        account_id: str,
         query: str,
         *,
         workspace_id: str | None = None,
@@ -436,7 +436,7 @@ class LocalMemoryProvider:
     ) -> str:
         return await recall_block(
             session,
-            tenant_id,
+            account_id,
             query,
             workspace_id=workspace_id,
             limit=limit,
@@ -446,11 +446,11 @@ class LocalMemoryProvider:
     async def remember(
         self,
         session: AsyncSession,
-        tenant_id: str,
+        account_id: str,
         content: str,
         *,
         kind: str = "note",
-        scope: str = "tenant",
+        scope: str = "account",
         workspace_id: str | None = None,
         source_type: str = "manual",
         source_id: str | None = None,
@@ -459,7 +459,7 @@ class LocalMemoryProvider:
     ) -> Memory:
         return await write_memory(
             session,
-            tenant_id,
+            account_id,
             content=content,
             kind=kind,
             scope=scope,
@@ -471,9 +471,9 @@ class LocalMemoryProvider:
         )
 
     async def forget(
-        self, session: AsyncSession, tenant_id: str, memory_id: str
+        self, session: AsyncSession, account_id: str, memory_id: str
     ) -> None:
-        await delete_memory(session, tenant_id, memory_id)
+        await delete_memory(session, account_id, memory_id)
 
 
 def build_memory_provider() -> MemoryProvider:

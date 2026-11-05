@@ -40,13 +40,13 @@ def _empty_toolkit(runtime: GraphRuntime) -> ToolkitPort:
 
 
 async def _load_toolkit(
-    tenant_id: str,
+    account_id: str,
     toolkit_factory: ToolkitFactory | None,
     extras_factory: ToolExtrasFactory | None,
     runtime: GraphRuntime,
 ) -> ToolkitPort | None:
     """基础工具 + 外部工具(MCP)。外部工具加载失败不阻断 run。"""
-    toolkit = toolkit_factory(tenant_id) if toolkit_factory else None
+    toolkit = toolkit_factory(account_id) if toolkit_factory else None
     if toolkit is not None:
         # 远端工具箱(RemoteToolkit)惰性加载目录;失败向上抛——工具服务开启
         # 时它是必需依赖,本进程没有本机直读兜底(设计 §16.1 R1)。
@@ -55,7 +55,7 @@ async def _load_toolkit(
             await ensure()
     if extras_factory is not None:
         try:
-            extras = await extras_factory(tenant_id)
+            extras = await extras_factory(account_id)
         except Exception:  # noqa: BLE001 - MCP 故障降级为基础工具
             extras = []
         if extras:
@@ -77,7 +77,7 @@ async def _has_dangerous_tools(
     执行阶段也就不可能产生未经确认的对外副作用。
     """
     toolkit = await _load_toolkit(
-        state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
+        state.get("account_id", ""), toolkit_factory, extras_factory, runtime
     )
     scoped = _scoped_toolkit(toolkit, state.get("allowed_tools"))
     return scoped is not None and scoped.has_dangerous

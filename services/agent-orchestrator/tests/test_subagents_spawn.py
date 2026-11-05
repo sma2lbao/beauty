@@ -24,7 +24,7 @@ from agent_orchestrator.models.runs import PARENT_KIND_SUBAGENT, Run, RunEvent
 from agent_orchestrator.services import subagents
 from tests.conftest import _settings
 
-TENANT = "t-1"
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 PARAMS = {
@@ -109,14 +109,14 @@ def settings(tmp_path: Path):
 async def _create_parent(
     factory: async_sessionmaker[AsyncSession],
     *,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
     parent_kind: str | None = None,
     parent_run_id: str | None = None,
     **kwargs: Any,
 ) -> Run:
     async with session_scope(factory) as session:
         run = Run(
-            tenant_id=tenant_id,
+            account_id=account_id,
             title="主任务",
             goal="把竞品资料整理成表格",
             parent_kind=parent_kind,
@@ -135,7 +135,7 @@ async def _spawn(
     *,
     params: dict[str, Any] | None = None,
     graph: Any = None,
-    tenant_id: str = TENANT,
+    account_id: str = ACCOUNT,
 ):
     async with session_scope(factory) as session:
         return await subagents.spawn_subagent(

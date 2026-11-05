@@ -110,8 +110,8 @@ async def _ready(
     return toolkit, catalog, client
 
 
-async def _token(tenant_id: str) -> str:
-    return f"tok-{tenant_id}"
+async def _token(account_id: str) -> str:
+    return f"tok-{account_id}"
 
 
 # ------------------------------------------------------ 会话级工具调用审计

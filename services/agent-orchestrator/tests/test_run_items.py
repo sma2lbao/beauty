@@ -44,7 +44,7 @@ from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.todos import build_todo_tool
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec, build_tools
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledge,
     FakeLLM,
     _create_run,
@@ -205,7 +205,7 @@ def _item_payload(item_id: str, phase: str, **extra: Any) -> dict[str, Any]:
 def test_items_endpoint_returns_empty_list(client: TestClient) -> None:
     run_id = _create_run(client)
 
-    resp = client.get(f"/api/v1/runs/{run_id}/items", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/items", headers=ACCOUNT)
 
     assert resp.status_code == 200
     assert resp.json() == []
@@ -231,7 +231,7 @@ def test_items_projection_merges_phases(client: TestClient) -> None:
         ],
     )
 
-    items_body = client.get(f"/api/v1/runs/{run_id}/items", headers=TENANT).json()
+    items_body = client.get(f"/api/v1/runs/{run_id}/items", headers=ACCOUNT).json()
     assert len(items_body) == 1
     projected = items_body[0]
     assert projected["item_id"] == item_id
@@ -241,7 +241,7 @@ def test_items_projection_merges_phases(client: TestClient) -> None:
     assert projected["duration_ms"] == 1000
     assert projected["started_at"].startswith("2026-10-27T00:00:00")
 
-    events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     types = [event["type"] for event in events]
     assert types.count("run.item.v1") == 2
     # 回放可见 item 事件(step 事件仍然不回放)
@@ -341,12 +341,12 @@ def _item_run_client(tmp_path: Path) -> tuple[TestClient, Any]:
     )
     holder: dict[str, Any] = {}
 
-    def _factory(tenant: str):
+    def _factory(account: str):
         extras: list[ToolSpec] = [WRITE_TOOL, READ_TOOL]
         session_factory = holder.get("session_factory")
         if session_factory is not None:
             extras.append(build_todo_tool(session_factory))
-        return build_tools(tenant, knowledge=FakeKnowledge()).extended(extras)
+        return build_tools(account, knowledge=FakeKnowledge()).extended(extras)
 
     app = create_app(
         _settings(tmp_path, "items.db", llm_enabled=True, tools_enabled=True),
@@ -365,15 +365,15 @@ def test_full_run_emits_plan_todo_file_change_and_tool_items(
         holder["session_factory"] = client.app.state.session_factory
         run_id = _create_run(client)
 
-        planned = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        planned = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert planned.status_code == 200
         assert planned.json()["status"] == "awaiting_approval"
 
-        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
         assert approved.status_code == 200
         assert approved.json()["status"] == "completed"
 
-        body = client.get(f"/api/v1/runs/{run_id}/items", headers=TENANT).json()
+        body = client.get(f"/api/v1/runs/{run_id}/items", headers=ACCOUNT).json()
 
     kinds = [item["kind"] for item in body]
     assert kinds == [KIND_PLAN, KIND_TODO, KIND_FILE_CHANGE, KIND_TOOL]
@@ -424,7 +424,7 @@ def test_full_run_emits_plan_todo_file_change_and_tool_items(
     assert tool["data"]["ok"] is True
 
     # 回放事件里能看到过程项(step 事件仍隐藏)
-    events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     types = [event["type"] for event in events]
     assert "run.item.v1" in types
     assert "run.step.v1" not in types
@@ -440,17 +440,19 @@ def test_full_run_emits_plan_todo_file_change_and_tool_items(
 def test_plan_version_supersedes_previous(client: TestClient) -> None:
     run_id = _create_run(client)
 
-    assert client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code == 200
+    assert (
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code == 200
+    )
     assert (
         client.patch(
             f"/api/v1/runs/{run_id}/plan",
             json={"plan_markdown": "# 第二版计划"},
-            headers=TENANT,
+            headers=ACCOUNT,
         ).status_code
         == 200
     )
 
-    body = client.get(f"/api/v1/runs/{run_id}/items", headers=TENANT).json()
+    body = client.get(f"/api/v1/runs/{run_id}/items", headers=ACCOUNT).json()
     plans = [item for item in body if item["kind"] == KIND_PLAN]
     assert len(plans) == 2
 

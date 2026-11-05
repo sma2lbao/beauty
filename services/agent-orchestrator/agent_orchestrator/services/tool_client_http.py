@@ -1,7 +1,7 @@
 """tool-service 的 HTTP 客户端(自 tool_client.py 拆出)。
 
-目录、执行与审计端点都带租户 JWT(经装配方注入的 token_provider 现取,不在
-进程内长期保存明文 token):连接器工具属于租户私有能力,目录必须按租户取。
+目录、执行与审计端点都带账号 JWT(经装配方注入的 token_provider 现取,不在
+进程内长期保存明文 token):连接器工具属于账号私有能力,目录必须按账号取。
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from agent_orchestrator.services.tool_client_support import (
 class ToolClient:
     """tool-service 的 HTTP 客户端(仅服务间内部调用)。
 
-    GET /v1/tools 带租户 JWT(目录含该租户的连接器工具);执行端点同样
-    带租户 JWT,经装配方注入的 token_provider 现取,不长期保存明文 token。
+    GET /v1/tools 带账号 JWT(目录含该账号的连接器工具);执行端点同样
+    带账号 JWT,经装配方注入的 token_provider 现取,不长期保存明文 token。
     """
 
     def __init__(
@@ -56,13 +56,13 @@ class ToolClient:
         await self._client.aclose()
 
     async def list_tools(
-        self, tenant_id: str
+        self, account_id: str
     ) -> tuple[tuple[ToolDescriptor, ...], str]:
-        """拉取该租户的工具目录;响应非法一律按上游契约错误处理。"""
+        """拉取该账号的工具目录;响应非法一律按上游契约错误处理。"""
 
         try:
             response = await self._client.get(
-                "/v1/tools", headers=await self._auth_headers(tenant_id)
+                "/v1/tools", headers=await self._auth_headers(account_id)
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
@@ -82,7 +82,7 @@ class ToolClient:
         return tools, str(version or "")
 
     async def execute(
-        self, tenant_id: str, tool_name: str, request: ToolExecuteRequest
+        self, account_id: str, tool_name: str, request: ToolExecuteRequest
     ) -> ToolExecuteResponse:
         """执行一次工具调用。
 
@@ -93,7 +93,7 @@ class ToolClient:
         """
 
         headers: dict[str, str] = {"content-type": "application/json"}
-        headers.update(await self._auth_headers(tenant_id))
+        headers.update(await self._auth_headers(account_id))
         url = f"/v1/tools/{quote(tool_name, safe='')}:execute"
         try:
             response = await self._client.post(
@@ -138,7 +138,7 @@ class ToolClient:
 
     async def list_tool_calls(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         conversation_id: str,
         limit: int = 50,
@@ -162,7 +162,7 @@ class ToolClient:
             response = await self._client.get(
                 "/v1/tool-calls",
                 params=params,
-                headers=await self._auth_headers(tenant_id),
+                headers=await self._auth_headers(account_id),
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(
@@ -175,16 +175,16 @@ class ToolClient:
             raise UpstreamError(UPSTREAM_ERROR_CODE, "tool-service 审计响应 total 非法")
         return payload
 
-    async def _auth_headers(self, tenant_id: str) -> dict[str, str]:
+    async def _auth_headers(self, account_id: str) -> dict[str, str]:
         """现取服务间 token 并拼 Bearer 头;换发失败按上游故障处理。
 
-        不缓存明文 token:租户来自签名 claim,每次调用现取。
+        不缓存明文 token:账号来自签名 claim,每次调用现取。
         """
 
         if self._token_provider is None:
             return {}
         try:
-            token = await self._token_provider(tenant_id)
+            token = await self._token_provider(account_id)
         except Exception as exc:  # noqa: BLE001 - 换发失败按上游故障回喂
             raise UpstreamError(
                 UNREACHABLE_CODE, f"获取服务间 token 失败: {type(exc).__name__}"

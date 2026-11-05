@@ -26,7 +26,7 @@ class FakeVerifier:
 
     async def verify(self, key: str) -> MCPPrincipal:
         return MCPPrincipal(
-            tenant_id="t-1",
+            account_id="t-1",
             api_key_id="k-1",
             scopes=frozenset(self.scopes),
         )
@@ -68,7 +68,7 @@ def _client(
         ),
         token_verifier=_IDP.verifier(),
         api_key_verifier=FakeVerifier(scopes),
-        toolkit_factory=None if toolkit is None else lambda tenant: toolkit,
+        toolkit_factory=None if toolkit is None else lambda account: toolkit,
     )
     return TestClient(app)
 
@@ -250,7 +250,7 @@ class FakeIntrospector:
         if token != "bm_oauth_valid":
             return None
         return MCPPrincipal(
-            tenant_id="t-1",
+            account_id="t-1",
             api_key_id="oauth-client",
             scopes=frozenset({"mcp:tools:read", "mcp:tools:call", "artifacts:read"}),
         )

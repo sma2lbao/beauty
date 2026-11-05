@@ -1,4 +1,4 @@
-"""连接器仓储:租户过滤与 404 语义在此声明一次(§8)。
+"""连接器仓储:账号过滤与 404 语义在此声明一次(§8)。
 
 凭证字段只进不出——仓储层面同样不做任何"顺手返回凭证明文"的便捷方法。
 """
@@ -7,15 +7,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 from sqlalchemy import Select, or_, select
 
+from connector.models.account_apps import AccountApp
 from connector.models.connections import Connection
 from connector.models.oauth import OAuthSession
-from connector.models.tenant_apps import TenantApp
 
 
-class ConnectionRepository(TenantRepository[Connection]):
+class ConnectionRepository(AccountRepository[Connection]):
     model = Connection
     not_found_code = "connector.connection_not_found"
     not_found_message = "连接不存在"
@@ -23,7 +23,7 @@ class ConnectionRepository(TenantRepository[Connection]):
 
     async def list_filtered(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         provider: str | None = None,
         status: str | None = None,
@@ -37,16 +37,16 @@ class ConnectionRepository(TenantRepository[Connection]):
         if enabled is not None:
             criteria.append(Connection.enabled.is_(enabled))
         return await self.list_scoped(
-            tenant_id,
+            account_id,
             *criteria,
             order_by=[Connection.created_at],
         )
 
-    async def latest_active(self, tenant_id: str, provider: str) -> Connection | None:
-        """执行面按租户解析连接:active + enabled,多条取最近创建的一条。"""
+    async def latest_active(self, account_id: str, provider: str) -> Connection | None:
+        """执行面按账号解析连接:active + enabled,多条取最近创建的一条。"""
         statement = (
             self.scoped(
-                tenant_id,
+                account_id,
                 Connection.provider == provider,
                 Connection.status == "active",
                 Connection.enabled.is_(True),
@@ -57,10 +57,10 @@ class ConnectionRepository(TenantRepository[Connection]):
         return await self.session.scalar(statement)
 
     async def list_stale_active(self, stale_before: datetime) -> list[Connection]:
-        """巡检用(跨租户):active + enabled 且「从未成功刷新」或上次刷新早于阈值。
+        """巡检用(跨账号):active + enabled 且「从未成功刷新」或上次刷新早于阈值。
 
-        跨租户是刻意为之:巡检是系统任务,不归属任何请求租户;逐条刷新时再按
-        行上的 tenant_id 回到租户作用域(§5.5 的每 24h 巡检)。
+        跨账号是刻意为之:巡检是系统任务,不归属任何请求账号;逐条刷新时再按
+        行上的 account_id 回到账号作用域(§5.5 的每 24h 巡检)。
         """
         statement = (
             select(Connection)
@@ -77,22 +77,22 @@ class ConnectionRepository(TenantRepository[Connection]):
         return list((await self.session.scalars(statement)).all())
 
     async def find_by_account(
-        self, tenant_id: str, provider: str, account: str
+        self, account_id: str, provider: str, account: str
     ) -> Connection | None:
         return await self.session.scalar(
             self.scoped(
-                tenant_id,
+                account_id,
                 Connection.provider == provider,
                 Connection.account == account,
             )
         )
 
     async def require_for_update(
-        self, tenant_id: str, connection_id: str
+        self, account_id: str, connection_id: str
     ) -> Connection:
         """行锁读取:刷新单飞靠它把「检查过期 -> 换 token -> 写回」串成一次。"""
         statement: Select[tuple[Connection]] = self.scoped(
-            tenant_id, Connection.id == connection_id
+            account_id, Connection.id == connection_id
         ).with_for_update()
         conn = await self.session.scalar(statement)
         if conn is None:
@@ -100,7 +100,7 @@ class ConnectionRepository(TenantRepository[Connection]):
         return conn
 
 
-class OAuthSessionRepository(TenantRepository[OAuthSession]):
+class OAuthSessionRepository(AccountRepository[OAuthSession]):
     model = OAuthSession
     not_found_code = "connector.oauth_session_not_found"
     not_found_message = "授权会话不存在"
@@ -113,13 +113,15 @@ class OAuthSessionRepository(TenantRepository[OAuthSession]):
         )
 
 
-class TenantAppRepository(TenantRepository[TenantApp]):
-    model = TenantApp
-    not_found_code = "connector.tenant_app_not_found"
-    not_found_message = "租户应用凭证不存在"
+class AccountAppRepository(AccountRepository[AccountApp]):
+    model = AccountApp
+    not_found_code = "connector.account_app_not_found"
+    not_found_message = "账号应用凭证不存在"
     id_detail_key = "app_id"
 
-    async def get_for_provider(self, tenant_id: str, provider: str) -> TenantApp | None:
+    async def get_for_provider(
+        self, account_id: str, provider: str
+    ) -> AccountApp | None:
         return await self.session.scalar(
-            self.scoped(tenant_id, TenantApp.provider == provider)
+            self.scoped(account_id, AccountApp.provider == provider)
         )

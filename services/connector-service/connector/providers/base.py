@@ -1,6 +1,6 @@
 """provider 抽象:授权、换 token、刷新、身份与工具调用(设计 §4)。
 
-provider 只碰网络与 provider 语义;凭证加密/落库/租户隔离全部留在 service 层,
+provider 只碰网络与 provider 语义;凭证加密/落库/账号隔离全部留在 service 层,
 所以这里的方法都接收/返回明文凭证 payload,但绝不写库、不读库。
 """
 
@@ -113,10 +113,10 @@ class BaseProvider(ABC):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    # ---- 租户应用凭证 ----
+    # ---- 账号应用凭证 ----
 
-    def with_tenant_app(self, app_id: str, app_secret: str) -> BaseProvider:
-        """返回使用租户自带应用凭证的 provider;默认无租户概念,原样返回。"""
+    def with_account_app(self, app_id: str, app_secret: str) -> BaseProvider:
+        """返回使用账号自带应用凭证的 provider;默认不需要账号级凭证,原样返回。"""
         return self
 
     # ---- 静态描述 ----

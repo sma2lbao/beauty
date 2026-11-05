@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import TENANT, FakeLLM, _settings, verifier
+from tests.conftest import ACCOUNT, FakeLLM, _settings, verifier
 
 PLAN = "# 执行计划\n\n## 步骤\n1. 整理日程"
 EXECUTE = "已整理本周日程"
@@ -47,14 +47,14 @@ def _create_run(client: TestClient) -> str:
             "goal": "整理本周日程",
             "acceptance_criteria": ["日程已整理"],
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert resp.status_code == 201
     return resp.json()["id"]
 
 
 def _events(client: TestClient, run_id: str) -> list[dict]:
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -73,7 +73,7 @@ def test_run_streams_each_phase_as_token_deltas(tmp_path: Path) -> None:
     fake = FakeLLM([PLAN, EXECUTE, VERIFY, DELIVER])
     with _delta_client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"
 
@@ -104,12 +104,12 @@ def test_run_streams_each_phase_as_token_deltas(tmp_path: Path) -> None:
         assert all(d["payload"]["text"] for d in deltas)
 
         # 终态与落库交付物不受影响(下载回来的正文就是模型输出的原文)
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
         assert artifacts.status_code == 200
         artifact = artifacts.json()[0]
         download = client.get(
             f"/api/v1/runs/{run_id}/artifacts/{artifact['id']}/download",
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert download.status_code == 200
         assert download.text == DELIVER
@@ -119,7 +119,7 @@ def test_deltas_are_batched_by_chars(tmp_path: Path) -> None:
     fake = FakeLLM([PLAN, EXECUTE, VERIFY, DELIVER])
     with _delta_client(tmp_path, fake, "batch.db", run_delta_flush_chars=5) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
 
         deltas = _deltas(_events(client, run_id))
         # 阈值调小后同一段正文会拆成多批——但仍能拼回原文
@@ -139,7 +139,7 @@ def test_delta_streaming_off_keeps_event_sequence(tmp_path: Path) -> None:
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
 
         types = [event["type"] for event in _events(client, run_id)]
         assert DELTA not in types
@@ -158,14 +158,14 @@ def test_task_conversation_streams_run_deltas_and_projects_reply(
     # triage → plan → execute → deliver
     fake = FakeLLM(['{"mode": "task"}', PLAN, EXECUTE, DELIVER])
     with _delta_client(tmp_path, fake, "conversation.db") as client:
-        created = client.post("/api/v1/conversations", json={}, headers=TENANT)
+        created = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
         assert created.status_code == 201
         conversation_id = created.json()["id"]
 
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages/stream",
             json={"content": "把本周日程整理成周报"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 200
         # 流式端点本身仍是 meta + done(正文走 run 事件流,不重复推送)
@@ -189,7 +189,7 @@ def test_task_conversation_streams_run_deltas_and_projects_reply(
 
         # assistant 回复仍按统一路径投影进对话(不因流式而重复或缺失)
         messages = client.get(
-            f"/api/v1/conversations/{conversation_id}/messages", headers=TENANT
+            f"/api/v1/conversations/{conversation_id}/messages", headers=ACCOUNT
         ).json()
         assert [m["role"] for m in messages] == ["user", "assistant"]
         assert messages[-1]["content"] == DELIVER

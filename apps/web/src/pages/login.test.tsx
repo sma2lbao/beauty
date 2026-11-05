@@ -19,7 +19,6 @@ import { LoginPage } from './login';
 
 vi.mock('@/lib/auth', () => ({
   authMode: vi.fn(() => 'token'),
-  tenantId: vi.fn(() => 'demo-tenant'),
   accessToken: vi.fn(async () => null),
   authHeaders: vi.fn(async () => ({})),
   accountLabel: vi.fn(async () => null),
@@ -38,7 +37,9 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/account-api', async () => {
   const actual =
-    await vi.importActual<typeof import('@/lib/account-api')>('@/lib/account-api');
+    await vi.importActual<typeof import('@/lib/account-api')>(
+      '@/lib/account-api',
+    );
   return {
     ...actual,
     accountApi: {
@@ -53,11 +54,8 @@ const authResult: AuthResult = {
   refresh_token: 'refresh-jwt',
   token_type: 'Bearer',
   expires_in: 3600,
-  tenant_id: 't-1',
-  organization_id: 't-1',
-  user_id: 'u-1',
+  account_id: 'a'.repeat(32),
   subject: 'a@b.c',
-  role: 'owner',
   session_id: 's-1',
 };
 

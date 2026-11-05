@@ -11,8 +11,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
+    ACCOUNT,
     INTERNAL_HEADERS,
-    TENANT,
     DemoMock,
     insert_connection,
 )
@@ -35,7 +35,7 @@ def _execute(
 
 
 def test_execute_requires_internal_secret(client: TestClient) -> None:
-    resp = _execute(client, "Demo__get_me", headers={"X-Tenant-Id": "t-1"})
+    resp = _execute(client, "Demo__get_me", headers={"X-Account-Id": "t-1"})
     assert resp.status_code == 401
     assert resp.json()["code"] == "connector.internal_forbidden"
 
@@ -108,7 +108,7 @@ def test_execute_auth_failure_marks_connection_expired(
     payload = _execute(client, "Demo__read_document", {"document_id": "d1"}).json()
     assert payload["ok"] is False
     assert payload["error"]["code"] == "connector.auth_expired"
-    conn = client.get("/v1/connections", headers=TENANT).json()[0]
+    conn = client.get("/v1/connections", headers=ACCOUNT).json()[0]
     assert conn["status"] == "expired"
     assert conn["last_error_code"] == "connector.auth_expired"
 
@@ -129,7 +129,7 @@ def test_execute_scope_and_rate_limit_errors(
     demo.fail["/files"] = httpx.Response(403, json={"code": 20027})
     scoped = _execute(client, "Demo__list_files").json()
     assert scoped["error"]["code"] == "connector.scope_missing"
-    conn = client.get("/v1/connections", headers=TENANT).json()[0]
+    conn = client.get("/v1/connections", headers=ACCOUNT).json()[0]
     assert conn["status"] == "expired"
     assert conn["last_error_code"] == "connector.scope_missing"
 
@@ -187,11 +187,11 @@ def test_execute_refresh_failure_is_reported(
     payload = _execute(client, "Demo__get_me").json()
     assert payload["ok"] is False
     assert payload["error"]["code"] == "connector.auth_expired"
-    conn = client.get("/v1/connections", headers=TENANT).json()[0]
+    conn = client.get("/v1/connections", headers=ACCOUNT).json()[0]
     assert conn["status"] == "expired"
     assert payload["ok"] is False
     assert payload["error"]["code"] == "connector.auth_expired"
-    conn = client.get("/v1/connections", headers=TENANT).json()[0]
+    conn = client.get("/v1/connections", headers=ACCOUNT).json()[0]
     assert conn["status"] == "expired"
 
 

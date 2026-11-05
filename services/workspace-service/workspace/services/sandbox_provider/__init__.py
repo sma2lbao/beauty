@@ -4,7 +4,7 @@
 
 - `MicrosandboxProvider`:microsandbox microVM(默认,隔离);
 - `LocalSandboxProvider`:宿主本地目录 + 子进程,**无隔离**,仅用于
-  没有 microVM runtime 的本地开发/单租户可信环境。
+  没有 microVM runtime 的本地开发/单账号可信环境。
 
 microsandbox SDK 只在真正创建/执行时**惰性导入**——测试与没有 runtime 的
 dev 启动不依赖它。所有 SDK 异常在这里统一收口为 `UpstreamError`,

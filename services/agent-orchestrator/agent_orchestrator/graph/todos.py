@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-#: 工具名:发布后即权限键(审批策略按名字匹配),改名等于破坏租户配置。
+#: 工具名:发布后即权限键(审批策略按名字匹配),改名等于破坏账号配置。
 #: 定义在 graph 层:节点要按名字认出工具结果并回写 state,services 层
 #: 从这一处取用(单一来源,避免两层各写一遍字符串)。
 TODO_TOOL_NAME = "todo_write"

@@ -118,7 +118,7 @@ def test_internal_callback_error_redirect_keeps_state_next(tmp_path: Path) -> No
     state = sign_state(
         settings,
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "server_id": "deleted-server",
             "ts": int(time.time()),
             "next": "/connectors",

@@ -7,7 +7,7 @@
  *
  * 环境变量(见 apps/web/.env.example):
  * - `VITE_RUNS_API_URL`:后端基址;留空走同源(Vite dev 由 vite.config.ts 代理到 :8002);
- * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer)。
+ * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时账号头 / `token` / `logto` Bearer)。
  */
 import { ApiError, createHttpClient, isUnauthorized } from '@/lib/http';
 import { connectSse } from '@/lib/sse';

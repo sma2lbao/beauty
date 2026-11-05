@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成一组本地演示数据(组织/用户、会话、产物、run)。
+# 生成一组本地演示数据(账号、会话、产物、run)。
 # 需要 account-service(:8001)、agent-orchestrator(:8002)、workspace-service(:8005) 已启动。
 # 用法: scripts/seed-local.sh
 set -euo pipefail

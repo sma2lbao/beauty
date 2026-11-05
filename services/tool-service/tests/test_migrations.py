@@ -58,7 +58,7 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
             ).fetchall()
         }
         # SQLite 把表级 UNIQUE 落成 autoindex,名字由引擎生成;
-        # 这里按「唯一 + 列组合」断言,PG 上则沿用命名约束 uq_tool_calls_tenant_call。
+        # 这里按「唯一 + 列组合」断言,PG 上则沿用命名约束 uq_tool_calls_account_call。
         unique_columns = []
         for row in connection.execute("PRAGMA index_list(tool_calls)").fetchall():
             if not row[2]:
@@ -69,16 +69,16 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
                     f"PRAGMA index_info({row[1]})"
                 ).fetchall()
             ]
-            if columns_in_index == ["tenant_id", "tool_call_id"]:
+            if columns_in_index == ["account_id", "tool_call_id"]:
                 unique_columns = columns_in_index
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(tool_calls)").fetchall()
         }
-    assert unique_columns == ["tenant_id", "tool_call_id"]
+    assert unique_columns == ["account_id", "tool_call_id"]
     assert "ix_tool_calls_run" in indexes
     assert "ix_tool_calls_tool" in indexes
-    assert {"tool_call_id", "tenant_id", "tool_name", "arguments_sha256"} <= columns
+    assert {"tool_call_id", "account_id", "tool_name", "arguments_sha256"} <= columns
     assert {"patch", "lines_added", "lines_removed", "patch_truncated"} <= columns
     # C2.4:连接器审计列必须随迁移落到真实库(create_all 测不出来)。
     assert "connection_id" in columns

@@ -13,13 +13,13 @@ from common.errors import NotFoundError, UpstreamError
 from database.session import session_scope
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, FakeSandboxProvider
+from tests.conftest import ACCOUNT, OTHER, FakeSandboxProvider
 from workspace.models.sandbox import SandboxInstance
 from workspace.schemas.sandbox import MAX_TREE_ENTRIES
 
 
 def _create(client: TestClient, **payload: Any) -> dict[str, Any]:
-    response = client.post("/v1/sandboxes", json=payload, headers=TENANT)
+    response = client.post("/v1/sandboxes", json=payload, headers=ACCOUNT)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -34,7 +34,7 @@ def _tree(
     return client.get(
         f"/v1/sandboxes/{sandbox_id}/tree",
         params=params,
-        headers=TENANT if headers is None else headers,
+        headers=ACCOUNT if headers is None else headers,
     )
 
 
@@ -140,7 +140,7 @@ def test_tree_empty_dir(
     }
 
 
-def test_tree_is_tenant_isolated(client: TestClient) -> None:
+def test_tree_is_account_isolated(client: TestClient) -> None:
     sandbox = _create(client)
 
     response = _tree(client, sandbox["id"], headers=OTHER)

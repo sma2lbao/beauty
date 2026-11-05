@@ -7,11 +7,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from tests.conftest import _IDP, OTHER, TENANT, _settings
+from tests.conftest import _IDP, ACCOUNT, OTHER, _settings
 
 
 def _conversation(client: TestClient) -> str:
-    response = client.post("/api/v1/conversations", json={}, headers=TENANT)
+    response = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
     assert response.status_code == 201
     return response.json()["id"]
 
@@ -26,7 +26,7 @@ def _upload(
     return client.post(
         f"/api/v1/conversations/{conversation_id}/attachments",
         files={"file": (filename, content, content_type)},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -42,20 +42,20 @@ def test_upload_list_download_delete(client: TestClient) -> None:
     assert attachment["message_id"] is None
 
     listing = client.get(
-        f"/api/v1/conversations/{conversation_id}/attachments", headers=TENANT
+        f"/api/v1/conversations/{conversation_id}/attachments", headers=ACCOUNT
     )
     assert listing.status_code == 200
     assert [item["id"] for item in listing.json()] == [attachment["id"]]
 
-    downloaded = client.get(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
+    downloaded = client.get(f"/api/v1/attachments/{attachment['id']}", headers=ACCOUNT)
     assert downloaded.status_code == 200
     assert downloaded.content == b"# hello"
     assert downloaded.headers["content-type"].startswith("text/markdown")
     assert "attachment" in downloaded.headers["content-disposition"]
 
-    deleted = client.delete(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
+    deleted = client.delete(f"/api/v1/attachments/{attachment['id']}", headers=ACCOUNT)
     assert deleted.status_code == 204
-    missing = client.get(f"/api/v1/attachments/{attachment['id']}", headers=TENANT)
+    missing = client.get(f"/api/v1/attachments/{attachment['id']}", headers=ACCOUNT)
     assert missing.status_code == 404
 
 
@@ -91,24 +91,24 @@ def test_message_binds_attachment_and_cannot_reuse(client: TestClient) -> None:
     posted = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "整理这个附件", "attachment_ids": [attachment_id]},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert posted.status_code == 201
     listing = client.get(
-        f"/api/v1/conversations/{conversation_id}/attachments", headers=TENANT
+        f"/api/v1/conversations/{conversation_id}/attachments", headers=ACCOUNT
     ).json()
     assert listing[0]["message_id"] == posted.json()["message"]["id"]
 
     reused = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "再发一次", "attachment_ids": [attachment_id]},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert reused.status_code == 400
     assert reused.json()["code"] == "attachment.already_bound"
 
 
-def test_attachment_tenant_isolation(client: TestClient) -> None:
+def test_attachment_account_isolation(client: TestClient) -> None:
     conversation_id = _conversation(client)
     attachment_id = _upload(client, conversation_id).json()["id"]
 
@@ -166,7 +166,7 @@ def test_docx_attachment_extracted_and_injected(tmp_path: Path) -> None:
                 "mode": "task",
                 "attachment_ids": [attachment_id],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert posted.status_code == 201
         assert "附件内容" in posted.json()["run"]["goal"]

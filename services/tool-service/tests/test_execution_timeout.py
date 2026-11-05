@@ -20,7 +20,7 @@ class SlowExecProvider(FakeSandboxProvider):
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -59,7 +59,7 @@ async def test_exec_timeout_returns_retryable_error_and_touches(
 
 class SlowEnsureProvider(FakeSandboxProvider):
     async def ensure(
-        self, tenant_id: str, *, scope_key: str, run_id: str | None = None
+        self, account_id: str, *, scope_key: str, run_id: str | None = None
     ) -> str:
         await asyncio.sleep(5)
         raise AssertionError("超时路径不应执行到这里")

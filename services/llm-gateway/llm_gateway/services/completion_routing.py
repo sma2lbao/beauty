@@ -54,7 +54,7 @@ def resolve_model(
 
     显式模型 > 网关默认;``AVAILABLE_MODELS`` 非空时白名单外的模型返回 400,
     留空则不限制(只按默认模型语义校验)。``extra_models`` 是本次调用所属
-    租户的 BYOK 自定义模型(来自 account-service 目录),与平台列表并集放行。
+    账号的 BYOK 自定义模型(来自 account-service 目录),与平台列表并集放行。
     """
     model = requested or settings.default_model
     allowed_extra = tuple(extra_models)

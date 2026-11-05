@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 from common.logging import get_logger
 from common.middleware import inject_request_headers
-from common.security import SECRET_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 from agent_orchestrator.metrics import observe_job_failure
 
@@ -98,7 +98,7 @@ class UsageReporter:
     async def report(
         self,
         *,
-        tenant_id: str,
+        account_id: str,
         run_id: str | None,
         samples: list[UsageSample],
     ) -> None:
@@ -117,21 +117,21 @@ class UsageReporter:
                     json=body,
                     headers={
                         SECRET_HEADER: self._secret,
-                        # account 的内部租户解析 = 共享密钥 + 显式 X-Tenant-Id;
-                        # 缺这个头会 401 auth.tenant_missing,用量永远落库失败。
-                        "X-Tenant-Id": tenant_id,
+                        # account 的内部账号解析 = 共享密钥 + 显式 X-Account-Id;
+                        # 缺这个头会 401 auth.account_missing,用量永远落库失败。
+                        ACCOUNT_HEADER: account_id,
                     },
                 )
             except Exception as exc:  # noqa: BLE001 - 上报是观测数据,任何异常都不能连带打死 run
                 # 不只是 httpx.HTTPError:异步传输层异常(事件循环关闭、
                 # 任务组包装的 ExceptionGroup)同样会在这里冒出,一旦上抛就会
                 # 把 run 判成 failed(契约见 run_quota._usage_boundary)。
-                self._failed(log, tenant_id, run_id, sample, str(exc))
+                self._failed(log, account_id, run_id, sample, str(exc))
                 return
             if resp.status_code >= 400:
                 self._failed(
                     log,
-                    tenant_id,
+                    account_id,
                     run_id,
                     sample,
                     f"http {resp.status_code}: {resp.text[:200]}",
@@ -141,7 +141,7 @@ class UsageReporter:
     @staticmethod
     def _failed(
         log: Any,
-        tenant_id: str,
+        account_id: str,
         run_id: str | None,
         sample: UsageSample,
         detail: str,
@@ -149,7 +149,7 @@ class UsageReporter:
         observe_job_failure(kind="usage_report")
         log.warning(
             "usage_report_failed",
-            tenant_id=tenant_id,
+            account_id=account_id,
             run_id=run_id,
             model=sample.model,
             detail=detail,
@@ -234,9 +234,9 @@ async def close_reporter() -> None:
 
 
 async def report(
-    *, tenant_id: str, run_id: str | None, samples: list[UsageSample]
+    *, account_id: str, run_id: str | None, samples: list[UsageSample]
 ) -> None:
     """在图调用边界调用:没有上报器或没有样本时直接返回。"""
     if _reporter is None or not samples:
         return
-    await _reporter.report(tenant_id=tenant_id, run_id=run_id, samples=samples)
+    await _reporter.report(account_id=account_id, run_id=run_id, samples=samples)

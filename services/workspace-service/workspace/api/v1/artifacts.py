@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workspace.api.deps import (
+    get_account_id,
     get_artifact_store,
     get_session,
     get_settings,
-    get_tenant_id,
 )
 from workspace.core.config import Settings
 from workspace.models.workspace import WorkspaceArtifact
@@ -27,7 +27,7 @@ from workspace.services import artifacts as artifacts_service
 router = APIRouter(tags=["artifacts"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 StoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 
@@ -38,13 +38,13 @@ StoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 async def create_artifact(
     body: ArtifactCreate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     store: StoreDep,
 ) -> ArtifactRead:
     """登记交付物:文本走 content,二进制走 content_base64;缺省落默认工作区。"""
     record = await artifacts_service.create_artifact(
-        session, tenant_id, body, store, settings.default_workspace_name
+        session, account_id, body, store, settings.default_workspace_name
     )
     content = await artifacts_service.load_content(record, store)
     return _to_read(record, content)
@@ -52,29 +52,29 @@ async def create_artifact(
 
 @router.get("/workspaces/{workspace_id}/artifacts", response_model=list[ArtifactMeta])
 async def list_artifacts(
-    workspace_id: str, session: DBSession, tenant_id: TenantId
+    workspace_id: str, session: DBSession, account_id: AccountId
 ) -> list[ArtifactMeta]:
     """工作区内的交付物元数据(倒序,不含正文;含 filename/content_type)。"""
-    records = await artifacts_service.list_artifacts(session, tenant_id, workspace_id)
+    records = await artifacts_service.list_artifacts(session, account_id, workspace_id)
     return [ArtifactMeta.model_validate(record) for record in records]
 
 
 @router.get("/artifacts/{artifact_id}", response_model=ArtifactRead)
 async def get_artifact(
-    artifact_id: str, session: DBSession, tenant_id: TenantId, store: StoreDep
+    artifact_id: str, session: DBSession, account_id: AccountId, store: StoreDep
 ) -> ArtifactRead:
     """读交付物:元数据 + 正文(按存储后端装载);二进制交付物 content 为 null。"""
-    record = await artifacts_service.require_artifact(session, tenant_id, artifact_id)
+    record = await artifacts_service.require_artifact(session, account_id, artifact_id)
     content = await artifacts_service.load_content(record, store)
     return _to_read(record, content)
 
 
 @router.get("/artifacts/{artifact_id}/download")
 async def download_artifact(
-    artifact_id: str, session: DBSession, tenant_id: TenantId, store: StoreDep
+    artifact_id: str, session: DBSession, account_id: AccountId, store: StoreDep
 ) -> Response:
     """下载交付物原始字节(二进制原样,文本按 UTF-8),带附件文件名与私有缓存头。"""
-    record = await artifacts_service.require_artifact(session, tenant_id, artifact_id)
+    record = await artifacts_service.require_artifact(session, account_id, artifact_id)
     data = await artifacts_service.load_bytes(record, store)
     filename = artifacts_service.artifact_filename(record)
     media_type = record.content_type or artifacts_service.BINARY_CONTENT_TYPE
@@ -91,10 +91,10 @@ async def download_artifact(
 
 @router.delete("/artifacts/{artifact_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_artifact(
-    artifact_id: str, session: DBSession, tenant_id: TenantId, store: StoreDep
+    artifact_id: str, session: DBSession, account_id: AccountId, store: StoreDep
 ) -> Response:
     """删除交付物:对象与元数据一起清理。"""
-    await artifacts_service.delete_artifact(session, tenant_id, artifact_id, store)
+    await artifacts_service.delete_artifact(session, account_id, artifact_id, store)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

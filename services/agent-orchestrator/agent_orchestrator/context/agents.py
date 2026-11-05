@@ -2,7 +2,7 @@
 
 设计见 `docs/design/context-engineering.md` §6.4。要点:
 
-- 文件真源是**沙箱 /workspace**(租户/对话由 scope_key 隔离),不读宿主文件系统;
+- 文件真源是**沙箱 /workspace**(账号/对话由 scope_key 隔离),不读宿主文件系统;
 - 根 → 深、同层路径字典序;最多 `agents_md_max_files` 个;单文件按
   `agents_md_file_max_chars` 截断,合计按 `agents_md_max_chars` 截断;
 - 读取失败/文件缺失跳过(不阻断 run);没有文档时 provider 返回 None,
@@ -53,7 +53,7 @@ async def discover_agents_documents(
     files: WorkspaceFiles,
     policy: ContextPolicy,
     *,
-    tenant_id: str,
+    account_id: str,
     scope_key: str,
 ) -> list[AgentsDocument]:
     """发现并读取 AGENTS.md:浅→深、同层字典序,应用数量与单文件预算。"""
@@ -66,7 +66,7 @@ async def discover_agents_documents(
     if not names:
         return []
     paths = await files.find(
-        tenant_id,
+        account_id,
         scope_key,
         names,
         max_depth=policy.agents_md_max_depth,
@@ -92,7 +92,7 @@ async def discover_agents_documents(
     documents: list[AgentsDocument] = []
     for _depth, _relative, path in found[:max_files]:
         try:
-            text = await files.read_text(tenant_id, scope_key, path)
+            text = await files.read_text(account_id, scope_key, path)
         except Exception:  # noqa: BLE001 - 单个文件读取失败只跳过它
             continue
         if text is None:
@@ -142,19 +142,19 @@ class AgentsMdProvider:
         self.policy = policy
 
     async def build(self, request: ContextRequest) -> ContextSection | None:
-        """按请求的租户/对话/run 算 scope_key,发现文档并渲染成一段。"""
+        """按请求的账号/对话/run 算 scope_key,发现文档并渲染成一段。"""
 
         if not self.policy.agents_md_enabled:
             return None
         scope_key = scope_key_for(
-            request.tenant_id,
+            request.account_id,
             conversation_id=request.conversation_id,
             run_id=request.run_id,
         )
         documents = await discover_agents_documents(
             self.files,
             self.policy,
-            tenant_id=request.tenant_id,
+            account_id=request.account_id,
             scope_key=scope_key,
         )
         if not documents:

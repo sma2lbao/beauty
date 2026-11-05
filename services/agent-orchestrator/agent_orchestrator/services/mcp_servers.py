@@ -132,31 +132,31 @@ def _require_command_allowed(
 
 
 async def list_servers(
-    session: AsyncSession, tenant_id: str, *, secret: str
+    session: AsyncSession, account_id: str, *, secret: str
 ) -> list[MCPServerRead]:
     servers = await MCPServerRepository(session).list_scoped(
-        tenant_id, order_by=[MCPServer.created_at]
+        account_id, order_by=[MCPServer.created_at]
     )
     auths = await MCPServerAuthRepository(session).list_for_servers(
-        tenant_id, [server.id for server in servers]
+        account_id, [server.id for server in servers]
     )
     return [_to_read(server, secret, auths.get(server.id)) for server in servers]
 
 
-async def _require(session: AsyncSession, tenant_id: str, server_id: str) -> MCPServer:
-    return await MCPServerRepository(session).require_for_tenant(tenant_id, server_id)
+async def _require(session: AsyncSession, account_id: str, server_id: str) -> MCPServer:
+    return await MCPServerRepository(session).require_for_account(account_id, server_id)
 
 
 async def create_server(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: MCPServerCreate,
     *,
     secret: str,
     allowlist: Sequence[str] | None = None,
 ) -> MCPServerRead:
     repo = MCPServerRepository(session)
-    if await repo.find_by_name(tenant_id, data.name) is not None:
+    if await repo.find_by_name(account_id, data.name) is not None:
         raise ConflictError("mcp.server_exists", "同名 MCP server 已存在")
     stdio = data.transport == TRANSPORT_STDIO
     token = "" if stdio else (data.token or "").strip()
@@ -164,7 +164,7 @@ async def create_server(
         _require_command_allowed(data.command, allowlist)
     env = dict(data.env) if stdio else {}
     server = MCPServer(
-        tenant_id=tenant_id,
+        account_id=account_id,
         name=data.name,
         transport=data.transport,
         # url 列非空:stdio 存空字符串(见 models/mcp.py)
@@ -198,7 +198,7 @@ def _preset_server_name(base: str, taken: set[str]) -> str:
 
 async def ensure_preset_server(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     key: str,
     *,
     secret: str,
@@ -211,13 +211,13 @@ async def ensure_preset_server(
     """
     preset = preset_for_key(key)
     servers = await MCPServerRepository(session).list_scoped(
-        tenant_id, order_by=[MCPServer.created_at]
+        account_id, order_by=[MCPServer.created_at]
     )
     for server in servers:
         matched = preset_for_url(server.url)
         if matched is not None and matched.key == preset.key:
             auth = await MCPServerAuthRepository(session).get_for_server(
-                tenant_id, server.id
+                account_id, server.id
             )
             return _to_read(server, secret, auth)
     data = MCPServerCreate(
@@ -228,7 +228,7 @@ async def ensure_preset_server(
         tools_allowlist=[],
     )
     return await create_server(
-        session, tenant_id, data, secret=secret, allowlist=allowlist
+        session, account_id, data, secret=secret, allowlist=allowlist
     )
 
 
@@ -300,21 +300,21 @@ def _validation_message(exc: ValidationError) -> str:
 
 async def update_server(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     server_id: str,
     data: MCPServerUpdate,
     *,
     secret: str,
     allowlist: Sequence[str] | None = None,
 ) -> MCPServerRead:
-    server = await _require(session, tenant_id, server_id)
+    server = await _require(session, account_id, server_id)
     try:
         merged = MCPServerCreate.model_validate(_merged_payload(server, data, secret))
     except ValidationError as exc:
         raise AppError("mcp.invalid_config", _validation_message(exc)) from exc
     if data.name is not None:
         duplicate = await MCPServerRepository(session).find_by_name(
-            tenant_id, data.name
+            account_id, data.name
         )
         if duplicate is not None and duplicate.id != server.id:
             raise ConflictError("mcp.server_exists", "同名 MCP server 已存在")
@@ -351,14 +351,14 @@ async def update_server(
         server.tools_allowlist = list(data.tools_allowlist)
     if data.timeout_seconds is not None:
         server.timeout_seconds = data.timeout_seconds
-    auth = await MCPServerAuthRepository(session).get_for_server(tenant_id, server_id)
+    auth = await MCPServerAuthRepository(session).get_for_server(account_id, server_id)
     return _to_read(server, secret, auth)
 
 
-async def delete_server(session: AsyncSession, tenant_id: str, server_id: str) -> None:
-    server = await _require(session, tenant_id, server_id)
+async def delete_server(session: AsyncSession, account_id: str, server_id: str) -> None:
+    server = await _require(session, account_id, server_id)
     # 授权行与 server 同事务清理:留着孤儿 token 既不安全也没人再用
-    auth = await MCPServerAuthRepository(session).get_for_server(tenant_id, server_id)
+    auth = await MCPServerAuthRepository(session).get_for_server(account_id, server_id)
     if auth is not None:
         await MCPServerAuthRepository(session).delete(auth)
     await MCPServerRepository(session).delete(server)
@@ -366,7 +366,7 @@ async def delete_server(session: AsyncSession, tenant_id: str, server_id: str) -
 
 async def test_server(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     server_id: str,
     *,
     secret: str,
@@ -374,16 +374,16 @@ async def test_server(
     settings: Settings | None = None,
     transport=None,
 ) -> MCPTestRead:
-    server = await _require(session, tenant_id, server_id)
+    server = await _require(session, account_id, server_id)
     now = datetime.now(UTC)
     if (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO:
-        return await _test_stdio_server(tenant_id, server, secret, pool, now)
+        return await _test_stdio_server(account_id, server, secret, pool, now)
     token: str | None = None
     if settings is not None:
         try:
             token = await mcp_oauth.access_token(
                 session,
-                tenant_id,
+                account_id,
                 server_id,
                 settings=settings,
                 secret=secret,

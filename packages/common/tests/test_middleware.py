@@ -228,7 +228,7 @@ def test_request_context_is_cleared_after_response() -> None:
     client.get("/items/1")
     context = current_context()
     assert "request_id" not in context
-    assert "tenant_id" not in context
+    assert "account_id" not in context
 
 
 def test_inject_request_headers_propagates_request_id() -> None:

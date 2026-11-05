@@ -1,4 +1,4 @@
-"""JwtVerifier:签名/iss/aud/exp 校验、JWKS 缓存与轮换、租户 claim 提取。"""
+"""JwtVerifier:签名/iss/aud/exp 校验、JWKS 缓存与轮换、账号 claim 提取。"""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -39,7 +39,7 @@ def _token(
     kid: str = KID,
     issuer: str = ISSUER,
     audience: str = AUDIENCE,
-    tenant: str | None = "t-1",
+    account: str | None = "t-1",
     expires_in: int = 300,
 ) -> str:
     now = datetime.now(UTC)
@@ -51,8 +51,8 @@ def _token(
         "exp": now + timedelta(seconds=expires_in),
         "scope": "runs:write runs:read",
     }
-    if tenant is not None:
-        claims["tenant_id"] = tenant
+    if account is not None:
+        claims["account_id"] = account
     return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
 
 
@@ -90,7 +90,7 @@ async def test_valid_token_yields_principal(private_key) -> None:
     finally:
         await verifier.aclose()
 
-    assert principal.tenant_id == "t-1"
+    assert principal.account_id == "t-1"
     assert principal.subject == "user-1"
     assert principal.scopes == ("runs:write", "runs:read")
     # 首次校验:发现文档 + JWKS 各一次
@@ -138,7 +138,7 @@ async def test_unknown_kid_triggers_refresh_key_rotation(private_key) -> None:
     finally:
         await verifier.aclose()
 
-    assert principal.tenant_id == "t-1"
+    assert principal.account_id == "t-1"
 
 
 async def test_token_without_kid_works_with_single_key(private_key) -> None:
@@ -148,7 +148,7 @@ async def test_token_without_kid_works_with_single_key(private_key) -> None:
     finally:
         await verifier.aclose()
 
-    assert principal.tenant_id == "t-1"
+    assert principal.account_id == "t-1"
 
 
 async def test_expired_token_rejected(private_key) -> None:
@@ -186,19 +186,19 @@ async def test_signature_from_other_key_rejected(private_key, other_key) -> None
     assert exc_info.value.code == "auth.token_invalid"
 
 
-async def test_missing_tenant_claim_rejected(private_key) -> None:
-    """租户 claim 缺失即拒绝——绝不回退到请求头或其他猜测。"""
+async def test_missing_account_claim_rejected(private_key) -> None:
+    """账号 claim 缺失即拒绝——绝不回退到请求头或其他猜测。"""
     verifier = _verifier([_jwk(private_key, KID)])
     try:
         with pytest.raises(UnauthorizedError) as exc_info:
-            await verifier.verify(_token(private_key, tenant=None))
+            await verifier.verify(_token(private_key, account=None))
     finally:
         await verifier.aclose()
 
-    assert exc_info.value.code == "auth.tenant_missing"
+    assert exc_info.value.code == "auth.account_missing"
 
 
-async def test_custom_tenant_claim(private_key) -> None:
+async def test_custom_account_claim(private_key) -> None:
     token = jwt.encode(
         {
             "sub": "u",
@@ -211,13 +211,13 @@ async def test_custom_tenant_claim(private_key) -> None:
         algorithm="RS256",
         headers={"kid": KID},
     )
-    verifier = _verifier([_jwk(private_key, KID)], tenant_claim="org_id")
+    verifier = _verifier([_jwk(private_key, KID)], account_claim="org_id")
     try:
         principal = await verifier.verify(token)
     finally:
         await verifier.aclose()
 
-    assert principal.tenant_id == "org-9"
+    assert principal.account_id == "org-9"
 
 
 async def test_jwks_unreachable_is_502(private_key) -> None:

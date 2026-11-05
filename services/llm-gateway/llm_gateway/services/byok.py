@@ -1,18 +1,18 @@
-"""BYOK 密钥解析:按租户向 account-service 换提供商密钥(缓存 + 回退平台 key)。
+"""BYOK 密钥解析:按账号向 account-service 换提供商密钥(缓存 + 回退平台 key)。
 
-网关仍是全平台唯一模型出口,但密钥归属下放到租户:调用方带 X-Tenant-Id,
+网关仍是全平台唯一模型出口,但密钥归属下放到账号:调用方带 X-Account-Id,
 这里向 account-service 的内部端点 GET /v1/byok/{provider}/secret 换 api_key
 (共享密钥 X-Internal-Secret 保护)。解析失败绝不阻塞调用——统一返回 None,
 由服务层回退平台 key(LLM_GATEWAY__API_KEY),保证"BYOK 不可用 ≠ 全平台不可用"。
 
 缓存:
-- 正缓存 byok_cache_ttl_seconds(默认 300s),负缓存(404=租户没配)用更短的
+- 正缓存 byok_cache_ttl_seconds(默认 300s),负缓存(404=账号没配)用更短的
   byok_negative_cache_ttl_seconds(默认 30s);
 - 非 200/超时/网络错误不缓存——下一请求立即重试,避免短故障被放大;
 - 单把 asyncio.Lock 串行化未命中解析(防并发击穿),缓存按
   byok_cache_max_entries 上限做最近使用淘汰(LRU)。
 
-日志 byok_resolved 只落 tenant/provider/key_hint/source——api_key 永不进日志;
+日志 byok_resolved 只落 account/provider/key_hint/source——api_key 永不进日志;
 指标 llm_byok_lookups_total{status} 记 disabled/negative/error/byok/cache_hit。
 """
 
@@ -27,7 +27,7 @@ from urllib.parse import quote
 import httpx
 from common.logging import get_logger
 from common.middleware import inject_request_headers
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 from llm_gateway import metrics
 from llm_gateway.core.config import Settings
@@ -38,7 +38,7 @@ _MISS = object()
 
 @dataclass
 class ResolvedKey:
-    """一次成功解析的租户密钥;api_key 不参与 repr(避免误打进日志)。"""
+    """一次成功解析的账号密钥;api_key 不参与 repr(避免误打进日志)。"""
 
     api_key: str = field(repr=False)
     source: str = "byok"
@@ -48,7 +48,7 @@ class ResolvedKey:
 
 
 class ByokResolver:
-    """租户级密钥解析器(TTL 正/负缓存 + 并发防击穿 + 失败回退 None)。"""
+    """账号级密钥解析器(TTL 正/负缓存 + 并发防击穿 + 失败回退 None)。"""
 
     def __init__(
         self,
@@ -61,7 +61,7 @@ class ByokResolver:
         # 懒建:AsyncClient 绑定事件循环,延后到首次解析(应用 lifespan 内)
         self._client: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
-        # (tenant, provider) -> (密钥或 None, 到期时刻 monotonic)
+        # (account, provider) -> (密钥或 None, 到期时刻 monotonic)
         self._cache: OrderedDict[tuple[str, str], tuple[ResolvedKey | None, float]] = (
             OrderedDict()
         )
@@ -70,17 +70,19 @@ class ByokResolver:
     def _enabled(self) -> bool:
         return bool(self._settings.byok_enabled and self._settings.internal_secret)
 
-    async def resolve(self, tenant_id: str | None, provider: str) -> ResolvedKey | None:
-        """按租户解析密钥;未启用/无租户/未配置都回 None,由调用方回退平台 key。"""
-        if not self._enabled() or not tenant_id or not provider:
+    async def resolve(
+        self, account_id: str | None, provider: str
+    ) -> ResolvedKey | None:
+        """按账号解析密钥;未启用/无账号/未配置都回 None,由调用方回退平台 key。"""
+        if not self._enabled() or not account_id or not provider:
             metrics.observe_byok_lookup(status="disabled")
             return None
-        cache_key = (tenant_id, provider)
+        cache_key = (account_id, provider)
         cached = self._cache_get(cache_key)
         if cached is not _MISS:
             metrics.observe_byok_lookup(status="cache_hit")
             if cached is not None:
-                self._log_resolved(tenant_id, cached)
+                self._log_resolved(account_id, cached)
             return cached
         # 未命中:同一时刻只允许一个请求穿透(其余在锁上等,醒来先看缓存)
         async with self._lock:
@@ -88,15 +90,15 @@ class ByokResolver:
             if cached is not _MISS:
                 metrics.observe_byok_lookup(status="cache_hit")
                 if cached is not None:
-                    self._log_resolved(tenant_id, cached)
+                    self._log_resolved(account_id, cached)
                 return cached
-            key, status = await self._fetch(tenant_id, provider)
+            key, status = await self._fetch(account_id, provider)
             metrics.observe_byok_lookup(status=status)
             if status == "byok" and key is not None:
                 self._store(cache_key, key, self._settings.byok_cache_ttl_seconds)
-                self._log_resolved(tenant_id, key)
+                self._log_resolved(account_id, key)
             elif status == "negative":
-                # 租户没配这个 provider:短缓存,避免每请求都打 account
+                # 账号没配这个 provider:短缓存,避免每请求都打 account
                 self._store(
                     cache_key, None, self._settings.byok_negative_cache_ttl_seconds
                 )
@@ -130,7 +132,7 @@ class ByokResolver:
             self._cache.popitem(last=False)
 
     async def _fetch(
-        self, tenant_id: str, provider: str
+        self, account_id: str, provider: str
     ) -> tuple[ResolvedKey | None, str]:
         """一次 account 解析,返回 (key, status);异常一律降级为 (None, error)。"""
         settings = self._settings
@@ -140,25 +142,25 @@ class ByokResolver:
                 url,
                 headers={
                     SECRET_HEADER: settings.internal_secret,
-                    TENANT_HEADER: tenant_id,
+                    ACCOUNT_HEADER: account_id,
                 },
             )
         except httpx.HTTPError as exc:
             self._log.warning(
                 "byok_lookup_failed",
-                tenant=tenant_id,
+                account=account_id,
                 provider=provider,
                 reason=type(exc).__name__,
                 detail=str(exc),
             )
             return None, "error"
         if resp.status_code == 404:
-            # 租户没配该 provider 的 key:正常回退,不告警
+            # 账号没配该 provider 的 key:正常回退,不告警
             return None, "negative"
         if resp.status_code != 200:
             self._log.warning(
                 "byok_lookup_failed",
-                tenant=tenant_id,
+                account=account_id,
                 provider=provider,
                 status=resp.status_code,
                 detail=resp.text[:200],
@@ -169,7 +171,7 @@ class ByokResolver:
         except ValueError:
             self._log.warning(
                 "byok_lookup_failed",
-                tenant=tenant_id,
+                account=account_id,
                 provider=provider,
                 reason="bad_json",
             )
@@ -179,7 +181,7 @@ class ByokResolver:
         if not api_key:
             self._log.warning(
                 "byok_lookup_failed",
-                tenant=tenant_id,
+                account=account_id,
                 provider=provider,
                 reason="missing_api_key",
             )
@@ -205,11 +207,11 @@ class ByokResolver:
             )
         return self._client
 
-    def _log_resolved(self, tenant_id: str, key: ResolvedKey) -> None:
+    def _log_resolved(self, account_id: str, key: ResolvedKey) -> None:
         """成功解析的审计日志:不含 api_key,只留可关联的提示信息。"""
         self._log.info(
             "byok_resolved",
-            tenant=tenant_id,
+            account=account_id,
             provider=key.provider,
             key_hint=key.key_hint,
             source=key.source,

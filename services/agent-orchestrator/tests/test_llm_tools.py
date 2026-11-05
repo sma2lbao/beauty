@@ -2,7 +2,7 @@
 
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledge,
     FakeLLM,
     _create_run,
@@ -30,8 +30,8 @@ def test_execute_tool_loop_feeds_result_back(tmp_path) -> None:
     knowledge = FakeKnowledge()
     with _tool_client(tmp_path, fake, knowledge) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
         # 第 2 个 execute 轮次的消息里带着工具结果(role=tool)
@@ -42,7 +42,7 @@ def test_execute_tool_loop_feeds_result_back(tmp_path) -> None:
         assert fake.tools_seen[1][0]["function"]["name"] == "search_knowledge"
         assert knowledge.queries == [("t-1", "本周日程", 5)]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         types = [e["type"] for e in events]
         assert "run.tool.called.v1" in types
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
@@ -94,13 +94,13 @@ def test_execute_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
     knowledge = FakeKnowledge()
     with _tool_client(tmp_path, fake, knowledge) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
         # 第 6 次调用(index 6)是收束调用:没有下发工具
         assert fake.tools_seen[6] is None
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         tool_events = [e for e in events if e["type"] == "run.tool.called.v1"]
         assert len(tool_events) == 5
         completed = next(e for e in events if e["type"] == "run.completed.v1")
@@ -126,14 +126,14 @@ def test_tool_error_fed_back_to_model(tmp_path) -> None:
     knowledge = FakeKnowledge(fail=True)
     with _tool_client(tmp_path, fake, knowledge) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"  # 工具坏 ≠ run 坏(§6.1)
 
         tool_messages = [m for m in fake.calls[2] if m["role"] == "tool"]
         assert "error" in tool_messages[-1]["content"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         tool_event = next(e for e in events if e["type"] == "run.tool.called.v1")
         assert tool_event["payload"]["ok"] is False
         assert "知识库挂了" in tool_event["payload"]["detail"]

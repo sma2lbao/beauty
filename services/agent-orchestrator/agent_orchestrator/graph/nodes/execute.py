@@ -80,7 +80,7 @@ def make_execute_node(
         base = _execute_messages(state)
         messages = base + list(state.get("tool_history") or [])
         toolkit = await _load_toolkit(
-            state.get("tenant_id", ""), toolkit_factory, extras_factory, runtime
+            state.get("account_id", ""), toolkit_factory, extras_factory, runtime
         )
         allowed = state.get("allowed_tools")
         if toolkit is not None and allowed is not None:
@@ -121,7 +121,7 @@ def make_execute_node(
                     runtime.ports.approval.decide(policies, call.name, risk)
                     is ApprovalDecision.DENY
                 ):
-                    # 租户策略禁用提问:走普通工具的"策略禁止"分支回喂
+                    # 账号策略禁用提问:走普通工具的"策略禁止"分支回喂
                     continue
                 if state.get("ask_cycles", 0) >= MAX_ASK_CYCLES:
                     ask_reason = f"提问次数已达上限({MAX_ASK_CYCLES}),本次未向用户提问"
@@ -198,7 +198,7 @@ def make_execute_node(
                 if decision is ApprovalDecision.DENY:
                     # 策略禁用:不执行,如实回喂模型(它能据此换个做法)
                     output = _tool_error(
-                        f"工具 {call.name} 被租户审批策略禁止使用,本次未执行"
+                        f"工具 {call.name} 被账号审批策略禁止使用,本次未执行"
                     )
                     record = _record(
                         call.name,

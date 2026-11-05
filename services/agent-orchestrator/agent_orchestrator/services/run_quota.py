@@ -33,7 +33,7 @@ async def _usage_boundary(session: AsyncSession, run: Run) -> AsyncIterator[None
     finally:
         usage_service.unbind(token)
         await usage_service.report(
-            tenant_id=run.tenant_id,
+            account_id=run.account_id,
             run_id=run.id,
             samples=collector.samples,
         )
@@ -60,7 +60,7 @@ async def _record_usage(
         logger.warning("写入 run.usage.v1 失败(run_id=%s)", run.id, exc_info=True)
 
 
-async def _enforce_quota(session: AsyncSession, tenant_id: str) -> None:
+async def _enforce_quota(session: AsyncSession, account_id: str) -> None:
     """P0-2 准入闸:月度 token 用尽 / 并发 run 超限 → 429。
 
     快照取不到(=account 未配置或不可用)时不拦:配额是保护性限流,
@@ -68,7 +68,7 @@ async def _enforce_quota(session: AsyncSession, tenant_id: str) -> None:
     - 月度:``used_tokens >= monthly_tokens`` 即拒绝(边界值按用尽算);
     - 并发:未终结 run 数(排除 completed/failed/blocked)``>= max_concurrent_runs``。
     """
-    snapshot = await quota_service.fetch(tenant_id)
+    snapshot = await quota_service.fetch(account_id)
     if snapshot is None:
         return
     if snapshot.monthly_tokens_exceeded:
@@ -82,7 +82,7 @@ async def _enforce_quota(session: AsyncSession, tenant_id: str) -> None:
         )
     limit = snapshot.max_concurrent_runs
     if limit is not None:
-        active = await RunRepository(session).count_active(tenant_id)
+        active = await RunRepository(session).count_active(account_id)
         if active >= limit:
             raise QuotaExceededError(
                 "quota.concurrent_runs_exceeded",

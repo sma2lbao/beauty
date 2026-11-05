@@ -1,4 +1,4 @@
-"""交付物(§7):LLM 合成落库、桩拼装、取件、多件交付物清单/下载、租户隔离。"""
+"""交付物(§7):LLM 合成落库、桩拼装、取件、多件交付物清单/下载、账号隔离。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services.artifacts import persist_file_artifact
-from tests.conftest import OTHER, TENANT, FakeLLM, _client, _create_run
+from tests.conftest import ACCOUNT, OTHER, FakeLLM, _client, _create_run
 
 # 最小 PNG 头 + 填充:只为断言字节往返,不参与解码
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
@@ -38,11 +38,11 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
     fake = FakeLLM(["# 计划", "执行结果:日程已整理", verify_pass, delivery])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
-        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert artifact["content"] == delivery
         assert artifact["kind"] == "markdown"
         assert artifact["title"] == "周报"
@@ -52,7 +52,7 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
         assert artifact["source"] == "report"
         assert artifact["filename"] is None
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         assert [e["type"] for e in events if e["type"] != "run.item.v1"] == [
             "run.created.v1",
             "run.planned.v1",
@@ -68,26 +68,26 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
 def test_stub_delivery_assembles_artifact(client: TestClient) -> None:
     """无 LLM(桩路径):deliver 拼装交付物并标注桩来源,同样可取件。"""
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    status_code = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    status_code = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
     assert status_code["status"] == "completed"
 
-    artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+    artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
     assert artifact["title"] == "周报"
     assert "# 周报" in artifact["content"]
     assert "## 执行结果" in artifact["content"]
     assert "阶段 A 桩" in artifact["content"]
 
 
-def test_artifact_missing_and_tenant_isolation(client: TestClient) -> None:
-    """未交付(仅创建)→ 404 artifact.not_found;跨租户取件不可见。"""
+def test_artifact_missing_and_account_isolation(client: TestClient) -> None:
+    """未交付(仅创建)→ 404 artifact.not_found;跨账号取件不可见。"""
     run_id = _create_run(client)
-    resp = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "artifact.not_found"
 
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     other = OTHER
     assert (
         client.get(f"/api/v1/runs/{run_id}/artifact", headers=other).status_code == 404
@@ -100,21 +100,21 @@ def test_failed_run_has_no_artifact(tmp_path) -> None:
     fake = FakeLLM(["# 计划", "执行", fail_json, "执行", fail_json, "执行", fail_json])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "failed"
         assert (
-            client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).status_code
+            client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).status_code
             == 404
         )
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         assert "run.delivered.v1" not in [e["type"] for e in events]
 
 
 def test_artifact_not_found_details_uses_run_id(client: TestClient) -> None:
     """未交付时取件的 404 details 用 run_id(入口是 run;由仓储声明)。"""
     run_id = _create_run(client)
-    response = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT)
+    response = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT)
     assert response.status_code == 404
     body = response.json()
     assert body["code"] == "artifact.not_found"
@@ -123,7 +123,7 @@ def test_artifact_not_found_details_uses_run_id(client: TestClient) -> None:
 
 def test_run_not_found_details_key(client: TestClient) -> None:
     """run 404 的 details 键名是 run_id(由仓储 id_detail_key 声明,别改名)。"""
-    response = client.get("/api/v1/runs/nope", headers=TENANT)
+    response = client.get("/api/v1/runs/nope", headers=ACCOUNT)
     assert response.status_code == 404
     body = response.json()
     assert body["code"] == "run.not_found"
@@ -133,15 +133,15 @@ def test_run_not_found_details_key(client: TestClient) -> None:
 def test_artifact_list_empty_before_delivery(client: TestClient) -> None:
     """未交付的 run:清单返回空列表(不是 404),旧取件端点仍是 404。"""
     run_id = _create_run(client)
-    resp = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_artifact_list_unknown_run_is_404(client: TestClient) -> None:
     """run 不存在:清单与下载都 404 run.not_found(先校验 run)。"""
-    assert client.get("/api/v1/runs/nope/artifacts", headers=TENANT).status_code == 404
-    resp = client.get("/api/v1/runs/nope/artifacts/whatever/download", headers=TENANT)
+    assert client.get("/api/v1/runs/nope/artifacts", headers=ACCOUNT).status_code == 404
+    resp = client.get("/api/v1/runs/nope/artifacts/whatever/download", headers=ACCOUNT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "run.not_found"
 
@@ -149,8 +149,8 @@ def test_artifact_list_unknown_run_is_404(client: TestClient) -> None:
 def test_multi_artifacts_list_and_main_artifact_unchanged(client: TestClient) -> None:
     """报告之外再登记文本+二进制件:清单齐、旧 /artifact 仍取报告。"""
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     settings = client.app.state.settings
     assert settings is not None
 
@@ -172,9 +172,9 @@ def test_multi_artifacts_list_and_main_artifact_unchanged(client: TestClient) ->
         source="mcp",
     )
 
-    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
 
-    listed = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+    listed = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
     assert listed.status_code == 200
     metas = {item["id"]: item for item in listed.json()}
     assert set(metas) == {main["id"], png_id, notes_id}
@@ -204,8 +204,8 @@ def test_multi_artifacts_list_and_main_artifact_unchanged(client: TestClient) ->
 def test_download_text_and_binary_artifacts(client: TestClient) -> None:
     """下载端点:文本/二进制同一入口,Content-Type 与 Content-Disposition 正确。"""
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     settings = client.app.state.settings
     png_id = _add_file_artifact(
         settings,
@@ -223,9 +223,9 @@ def test_download_text_and_binary_artifacts(client: TestClient) -> None:
         data="# 笔记\n".encode(),
     )
 
-    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
     report = client.get(
-        f"/api/v1/runs/{run_id}/artifacts/{main['id']}/download", headers=TENANT
+        f"/api/v1/runs/{run_id}/artifacts/{main['id']}/download", headers=ACCOUNT
     )
     assert report.status_code == 200
     assert report.content == main["content"].encode("utf-8")
@@ -236,7 +236,7 @@ def test_download_text_and_binary_artifacts(client: TestClient) -> None:
     assert "%E5%91%A8%E6%8A%A5.md" in disposition  # 周报.md(UTF-8 编码)
 
     png = client.get(
-        f"/api/v1/runs/{run_id}/artifacts/{png_id}/download", headers=TENANT
+        f"/api/v1/runs/{run_id}/artifacts/{png_id}/download", headers=ACCOUNT
     )
     assert png.status_code == 200
     assert png.content == PNG
@@ -244,7 +244,7 @@ def test_download_text_and_binary_artifacts(client: TestClient) -> None:
     assert "%E6%88%AA%E5%9B%BE.png" in png.headers["content-disposition"]  # 截图.png
 
     notes = client.get(
-        f"/api/v1/runs/{run_id}/artifacts/{notes_id}/download", headers=TENANT
+        f"/api/v1/runs/{run_id}/artifacts/{notes_id}/download", headers=ACCOUNT
     )
     assert notes.status_code == 200
     assert notes.content == "# 笔记\n".encode()
@@ -265,7 +265,7 @@ def test_binary_only_run_main_artifact_is_meta_only(client: TestClient) -> None:
         source="skill",
     )
 
-    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT)
+    main = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT)
     assert main.status_code == 200
     body = main.json()
     assert body["id"] == png_id
@@ -275,13 +275,13 @@ def test_binary_only_run_main_artifact_is_meta_only(client: TestClient) -> None:
     assert body["size_bytes"] == len(PNG)
 
     download = client.get(
-        f"/api/v1/runs/{run_id}/artifacts/{png_id}/download", headers=TENANT
+        f"/api/v1/runs/{run_id}/artifacts/{png_id}/download", headers=ACCOUNT
     )
     assert download.content == PNG
 
 
-def test_download_artifact_of_other_run_or_tenant_is_404(client: TestClient) -> None:
-    """artifact 不属于该 run / 该租户 → 404 artifact.not_found(不泄漏存在性)。"""
+def test_download_artifact_of_other_run_or_account_is_404(client: TestClient) -> None:
+    """artifact 不属于该 run / 该账号 → 404 artifact.not_found(不泄漏存在性)。"""
     run_a = _create_run(client)
     run_b = _create_run(client)
     settings = client.app.state.settings
@@ -295,17 +295,17 @@ def test_download_artifact_of_other_run_or_tenant_is_404(client: TestClient) -> 
     )
 
     cross_run = client.get(
-        f"/api/v1/runs/{run_b}/artifacts/{png_id}/download", headers=TENANT
+        f"/api/v1/runs/{run_b}/artifacts/{png_id}/download", headers=ACCOUNT
     )
     assert cross_run.status_code == 404
     assert cross_run.json()["code"] == "artifact.not_found"
     assert cross_run.json()["details"] == {"run_id": run_b, "artifact_id": png_id}
 
-    cross_tenant = client.get(
+    cross_account = client.get(
         f"/api/v1/runs/{run_a}/artifacts/{png_id}/download", headers=OTHER
     )
-    assert cross_tenant.status_code == 404
-    assert cross_tenant.json()["code"] == "run.not_found"
+    assert cross_account.status_code == 404
+    assert cross_account.json()["code"] == "run.not_found"
 
     assert (
         client.get(f"/api/v1/runs/{run_a}/artifacts", headers=OTHER).status_code == 404

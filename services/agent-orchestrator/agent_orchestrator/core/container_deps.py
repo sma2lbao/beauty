@@ -32,7 +32,7 @@ class DepsAssemblyMixin:
                 model=settings.llm_model,
                 retry_attempts=settings.llm_retry_attempts,
                 retry_backoff_seconds=settings.llm_retry_backoff_seconds,
-                # 网关 BYOK 解析:租户头随上下文注入,内部密钥取本服务配置
+                # 网关 BYOK 解析:账号头随上下文注入,内部密钥取本服务配置
                 internal_secret=settings.internal_auth_secret,
             )
             self._closers.append(("llm", llm.aclose))
@@ -62,7 +62,7 @@ class DepsAssemblyMixin:
                 issuer=settings.auth_issuer,
                 audience=settings.auth_audience,
                 jwks_url=settings.auth_jwks_url,
-                tenant_claim=settings.auth_tenant_claim,
+                account_claim=settings.auth_account_claim,
             )
             owns_verifier = True
         self._publish("token_verifier", verifier)

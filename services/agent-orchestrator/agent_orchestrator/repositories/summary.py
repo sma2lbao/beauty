@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.repository import TenantRepository
+from database.repository import AccountRepository
 
 from agent_orchestrator.models.memory import ConversationSummary
 
 
-class ConversationSummaryRepository(TenantRepository[ConversationSummary]):
+class ConversationSummaryRepository(AccountRepository[ConversationSummary]):
     """对话摘要仓储:一条对话一份摘要,upsert 供压缩流程幂等写入。"""
 
     model = ConversationSummary
@@ -18,19 +18,19 @@ class ConversationSummaryRepository(TenantRepository[ConversationSummary]):
     id_detail_key = "conversation_id"
 
     async def get_for_conversation(
-        self, tenant_id: str, conversation_id: str
+        self, account_id: str, conversation_id: str
     ) -> ConversationSummary | None:
         """按对话取摘要;没有摘要返回 None(不是 404,调用方据此走全量历史)。"""
         return await self.session.scalar(
             self.scoped(
-                tenant_id,
+                account_id,
                 ConversationSummary.conversation_id == conversation_id,
             )
         )
 
     async def upsert(
         self,
-        tenant_id: str,
+        account_id: str,
         conversation_id: str,
         *,
         summary: str,
@@ -40,10 +40,10 @@ class ConversationSummaryRepository(TenantRepository[ConversationSummary]):
         tokens_after: int,
     ) -> ConversationSummary:
         """写入或覆盖摘要(压缩可重复执行,同一对话只保留最新一份)。"""
-        existing = await self.get_for_conversation(tenant_id, conversation_id)
+        existing = await self.get_for_conversation(account_id, conversation_id)
         if existing is None:
             existing = ConversationSummary(
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 summary=summary,
                 covered_until=covered_until,

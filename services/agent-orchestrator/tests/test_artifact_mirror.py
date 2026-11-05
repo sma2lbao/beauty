@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeLLM,
     FakeWorkspace,
     _create_run,
@@ -20,14 +20,14 @@ DELIVERY = "# 本周周报\n\n- 日程已整理\n"
 
 def _complete(client: TestClient) -> str:
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"
     return run_id
 
 
 def _delivered(client: TestClient, run_id: str) -> dict:
-    events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     return next(e["payload"] for e in events if e["type"] == "run.delivered.v1")
 
 
@@ -49,13 +49,13 @@ def test_artifact_is_mirrored_to_workspace(tmp_path: Path) -> None:
         assert payload["workspace_artifact_ids"] == ["ws-art-1"]
         assert "workspace_errors" not in payload
         mirrored = workspace.created[0]
-        assert mirrored["tenant_id"] == "t-1"
+        assert mirrored["account_id"] == "t-1"
         assert mirrored["run_id"] == run_id
         assert mirrored["content"] == DELIVERY
         assert mirrored["title"] == payload["title"]
 
         # 读契约不变:orchestrator 自己的取件仍然可用
-        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert artifact["content"] == DELIVERY
 
 
@@ -78,13 +78,13 @@ def test_mirror_carries_run_workspace_id(tmp_path: Path) -> None:
                 "acceptance_criteria": ["日程已整理"],
                 "workspace_id": "ws-1",
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 201
         run_id = resp.json()["id"]
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()[
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()[
                 "status"
             ]
             == "completed"
@@ -113,5 +113,5 @@ def test_mirror_failure_keeps_artifact_and_records_reason(tmp_path: Path) -> Non
         assert errors[0]["artifact_id"] == payload["artifact_id"]
         assert "工作区镜像失败" in errors[0]["error"]
         # 交付物本身没丢
-        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=TENANT).json()
+        artifact = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).json()
         assert artifact["content"] == DELIVERY

@@ -2,7 +2,7 @@
  * 连接器授权恢复卡:工具因连接/授权问题失败时,就地给出「去连接器」入口。
  *
  * 覆盖可自助恢复的三类错误码:
- * - connector.connection_missing:本租户还没有可用连接(首次使用/已解绑);
+ * - connector.connection_missing:本账号还没有可用连接(首次使用/已解绑);
  * - connector.auth_expired:refresh_token 失效或被撤销,需重新授权;
  * - connector.scope_missing:授权缺少工具所需 scope。
  *

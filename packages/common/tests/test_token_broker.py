@@ -14,7 +14,7 @@ from common.security.token_broker import (
     TokenBroker,
 )
 
-ISSUE_BODY = {"access_token": "tok-1", "expires_in": 3600, "tenant_id": "t-a"}
+ISSUE_BODY = {"access_token": "tok-1", "expires_in": 3600, "account_id": "t-a"}
 
 
 def _broker(
@@ -32,7 +32,7 @@ def _broker(
 
 
 async def test_token_issued_with_secret_header() -> None:
-    """换发:带内部密钥头与目标租户,返回 token。"""
+    """换发:带内部密钥头与目标账号,返回 token。"""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -43,7 +43,7 @@ async def test_token_issued_with_secret_header() -> None:
     assert await broker.token("t-a") == "tok-1"
     assert seen[0].headers["X-Internal-Secret"] == "s3cret"
     assert json.loads(seen[0].read()) == {
-        "tenant_id": "t-a",
+        "account_id": "t-a",
         "subject": "svc-orchestrator",
     }
     await broker.aclose()
@@ -64,7 +64,7 @@ async def test_subject_is_configurable() -> None:
 
 
 async def test_token_cached_until_expiry() -> None:
-    """缓存:未过期前同租户复用,零重复请求;不同租户各自换发。"""
+    """缓存:未过期前同账号复用,零重复请求;不同账号各自换发。"""
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:

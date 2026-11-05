@@ -15,8 +15,8 @@ export function AboutPage() {
 
       <div className="mt-8 space-y-5 text-[14px] leading-7 text-ha-text-3">
         <p>
-          beauty moon 是一个 AI 办公助手:把知识库、文档、周报这类重复活
-          交给 Agent,你只需要在关键的地方点个头。
+          beauty moon 是一个 AI 办公助手:把知识库、文档、周报这类重复活 交给
+          Agent,你只需要在关键的地方点个头。
         </p>
         <p>
           它的干活方式固定,不靠「许愿」:先给出计划 → 你放行才执行 →
@@ -55,7 +55,7 @@ export function AboutPage() {
           {
             term: '边界清晰',
             detail:
-              '模型只经统一网关调用,账号凭证只进不出;每个租户的数据彼此隔离,区域决定模型路由与数据存放位置。',
+              '模型只经统一网关调用,账号凭证只进不出;每个账号的数据彼此隔离,区域决定模型路由与数据存放位置。',
           },
         ].map((item) => (
           <div

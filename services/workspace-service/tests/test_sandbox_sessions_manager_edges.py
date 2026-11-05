@@ -53,7 +53,7 @@ def test_shell_event_to_sse_fills_defaults() -> None:
 async def test_manager_close_unknown_session_raises() -> None:
     manager = ShellSessionManager()
     with pytest.raises(NotFoundError) as exc:
-        await manager.close(tenant_id="t-1", sandbox_id="sb-1", session_id="nope")
+        await manager.close(account_id="t-1", sandbox_id="sb-1", session_id="nope")
     assert exc.value.code == "sandbox.session_not_found"
 
 
@@ -65,14 +65,14 @@ async def test_manager_close_sandbox_skips_already_closed() -> None:
 
     assert (
         await manager.close(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=first.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=first.session_id
         )
         is True
     )
     # 已关闭的会话再关是幂等 False,close_sandbox 也只数真正被关掉的那个
     assert (
         await manager.close(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=first.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=first.session_id
         )
         is False
     )
@@ -83,7 +83,7 @@ async def test_manager_close_sandbox_skips_already_closed() -> None:
 async def test_manager_unsubscribe_unknown_session_is_silent() -> None:
     manager = ShellSessionManager()
     manager.unsubscribe(
-        tenant_id="t-1",
+        account_id="t-1",
         sandbox_id="sb-1",
         session_id="nope",
         queue=asyncio.Queue(),
@@ -107,7 +107,7 @@ async def test_manager_sweep_keeps_closed_sessions_during_retention() -> None:
     assert manager.count == 0
     with pytest.raises(NotFoundError):
         manager.subscribe(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
         )
 
 
@@ -116,7 +116,7 @@ async def test_manager_ignores_empty_reads() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     _, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
 
     shell.emit(b"")
@@ -133,7 +133,7 @@ async def test_manager_buffers_partial_utf8_and_flushes_tail() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     _, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
 
     shell.emit(b"\xe4")  # 半个汉字:增量解码暂不输出
@@ -153,7 +153,7 @@ async def test_manager_read_app_error_becomes_error_event() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     _, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
 
     shell.emit_error(UpstreamError("sandbox.provider_error", "沙箱没了"))
@@ -172,7 +172,7 @@ async def test_manager_read_unexpected_error_is_logged() -> None:
     manager = ShellSessionManager()
     info, shell = await _open_managed(manager, provider)
     _, queue = manager.subscribe(
-        tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+        account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
     )
 
     shell.emit_error(RuntimeError("boom"))
@@ -192,7 +192,7 @@ async def test_manager_close_tolerates_shell_close_failure() -> None:
 
     assert (
         await manager.close(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
         )
         is True
     )
@@ -209,7 +209,7 @@ async def test_manager_close_cancels_reader_that_ignores_eof(monkeypatch) -> Non
 
     assert (
         await manager.close(
-            tenant_id="t-1", sandbox_id="sb-1", session_id=info.session_id
+            account_id="t-1", sandbox_id="sb-1", session_id=info.session_id
         )
         is True
     )

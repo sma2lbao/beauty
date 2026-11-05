@@ -17,13 +17,13 @@ from agent_orchestrator.repositories import RunRepository
 
 
 async def scan_changed(
-    factory: async_sessionmaker[AsyncSession], tenant_id: str, settings: Settings
+    factory: async_sessionmaker[AsyncSession], account_id: str, settings: Settings
 ) -> list[Any]:
-    """扫描租户内活跃窗口里最近变化的 run(只读,独立短事务)。"""
+    """扫描账号内活跃窗口里最近变化的 run(只读,独立短事务)。"""
     since = datetime.now(UTC) - timedelta(
         seconds=settings.notifications_lookback_seconds
     )
     async with session_scope(factory) as session:
         return await RunRepository(session).list_changed_since(
-            tenant_id, since, limit=settings.notifications_batch_limit
+            account_id, since, limit=settings.notifications_batch_limit
         )

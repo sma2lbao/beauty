@@ -31,8 +31,8 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import _settings, verifier
 
-#: 租户 id(conftest 的 TENANT 是鉴权头,不是 id)
-TENANT_ID = "t-1"
+#: 账号 id(conftest 的 ACCOUNT 是鉴权头,不是 id)
+ACCOUNT_ID = "t-1"
 AGENTS_MD = "# 工作区约定\n- 提交信息用中文"
 
 
@@ -61,7 +61,7 @@ class FakeSandbox:
 
     async def ensure(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         kind: str = "generic",
@@ -75,7 +75,7 @@ class FakeSandbox:
     ) -> tuple[SandboxInfo, bool]:
         self.ensure_calls.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "scope_key": scope_key,
                 "ttl_seconds": ttl_seconds,
                 "run_id": run_id,
@@ -86,20 +86,20 @@ class FakeSandbox:
         )
         return info, True
 
-    async def read_file(self, tenant_id: str, sandbox_id: str, path: str) -> bytes:
+    async def read_file(self, account_id: str, sandbox_id: str, path: str) -> bytes:
         if path not in self.files:
             raise RuntimeError(f"读取失败: {path}")
         return self.files[path]
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None:
-        self.writes.append((tenant_id, sandbox_id, path, data))
+        self.writes.append((account_id, sandbox_id, path, data))
         self.files[path] = data
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -150,7 +150,7 @@ def _extras(state: Any, context: ToolContext) -> list[Any]:
     factory = state.tool_extras_factory
     assert factory is not None
     with bind_tool_context(context):
-        return asyncio.run(factory(context.tenant_id))
+        return asyncio.run(factory(context.account_id))
 
 
 @pytest.fixture()
@@ -178,7 +178,9 @@ def test_publishes_pipeline_with_all_sections_when_sandbox_ready(
         # 同一份 pipeline 端到端可用:AGENTS.md 内容进渲染结果(不碰网络)
         plan = asyncio.run(
             pipeline.build(
-                ContextRequest(tenant_id=TENANT_ID, run_id="r-1", conversation_id="c-1")
+                ContextRequest(
+                    account_id=ACCOUNT_ID, run_id="r-1", conversation_id="c-1"
+                )
             )
         )
         assert "提交信息用中文" in plan.render()
@@ -247,7 +249,7 @@ def test_extras_exposes_load_skill_and_read_offloaded(
 ) -> None:
     with _client(tmp_path, "ctx-extras.db", sandbox=sandbox) as client:
         specs = _extras(
-            client.app.state, ToolContext(tenant_id=TENANT_ID, run_id="r-1")
+            client.app.state, ToolContext(account_id=ACCOUNT_ID, run_id="r-1")
         )
         names = [spec.name for spec in specs]
         # todo_write 是 run 级写工具(M4),排在只读上下文工具之前
@@ -264,7 +266,7 @@ def test_extras_chat_path_has_no_run_only_tools(
     with _client(tmp_path, "ctx-extras-chat.db", sandbox=sandbox) as client:
         specs = _extras(
             client.app.state,
-            ToolContext(tenant_id=TENANT_ID, conversation_id="c-1"),
+            ToolContext(account_id=ACCOUNT_ID, conversation_id="c-1"),
         )
         assert specs == []
 
@@ -272,7 +274,7 @@ def test_extras_chat_path_has_no_run_only_tools(
 def test_extras_without_sandbox_only_has_load_skill(tmp_path: Any) -> None:
     with _client(tmp_path, "ctx-extras-nosandbox.db") as client:
         specs = _extras(
-            client.app.state, ToolContext(tenant_id=TENANT_ID, run_id="r-1")
+            client.app.state, ToolContext(account_id=ACCOUNT_ID, run_id="r-1")
         )
         assert [spec.name for spec in specs] == ["todo_write", "load_skill"]
 

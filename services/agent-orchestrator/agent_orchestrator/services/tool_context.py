@@ -1,4 +1,4 @@
-"""工具执行上下文(ToolContext):把租户/run/会话带进工具 handler。
+"""工具执行上下文(ToolContext):把账号/run/会话带进工具 handler。
 
 工具 handler 是"模型接触外部世界的唯一通道",但注册表只按名字执行,
 拿不到调用来源。stdio MCP 需要按**对话级**复用沙箱(P2):同一个对话里
@@ -26,13 +26,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ToolContext:
-    """一次工具调用所属的租户 / run / 对话(全部可选,租户必有)。"""
+    """一次工具调用所属的账号 / run / 对话(全部可选,账号必有)。"""
 
-    tenant_id: str
+    account_id: str
     run_id: str | None = None
     conversation_id: str | None = None
     # 工具所属工作区(§6.7 记忆按工作区归属):记忆读写用它做归属,
-    # 缺省 None = 未归属(全局/旧数据),跨租户隔离仍只由 tenant_id 把关
+    # 缺省 None = 未归属(全局/旧数据),跨账号隔离仍只由 account_id 把关
     workspace_id: str | None = None
     # 对话消息显式引用的 MCP server:非空时只装配这些 server 的工具
     mcp_server_ids: tuple[str, ...] = ()

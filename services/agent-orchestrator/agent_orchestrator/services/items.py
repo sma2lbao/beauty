@@ -108,7 +108,7 @@ async def append_item_event(
 
 
 async def _events(session: AsyncSession, run: Run) -> list[Any]:
-    return await RunEventRepository(session).list_for_run(run.tenant_id, run.id)
+    return await RunEventRepository(session).list_for_run(run.account_id, run.id)
 
 
 def _item_number(item_id: str) -> int | None:
@@ -201,7 +201,7 @@ def _status_of(phase: str, raw_status: Any) -> str:
 
 
 async def list_items(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[RunItemRead]:
     """把 ``run.item.v1`` 事件投影成「每项一条」的视图(§6)。
 
@@ -210,8 +210,8 @@ async def list_items(
     无 item 的 run 返回空数组(不是 404)。
     """
 
-    await require_run(session, tenant_id, run_id)
-    events = await RunEventRepository(session).list_for_run(tenant_id, run_id)
+    await require_run(session, account_id, run_id)
+    events = await RunEventRepository(session).list_for_run(account_id, run_id)
     order: list[str] = []
     merged: dict[str, dict[str, Any]] = {}
     for event in events:

@@ -33,7 +33,7 @@ async def test_tool_specs_stdio_handler_uses_conversation_scope(
     assert [spec.name for spec in specs] == ["mcp__fs_mcp__read_file"]
     assert specs[0].requires_confirmation is True
 
-    with bind_tool_context(ToolContext(tenant_id="t-1", conversation_id="conv-1")):
+    with bind_tool_context(ToolContext(account_id="t-1", conversation_id="conv-1")):
         output = await specs[0].handler({"text": "hi"})
     assert output == "echo:hi"
     assert pool.calls[0][1] == "conv-1:srv-1"
@@ -41,7 +41,7 @@ async def test_tool_specs_stdio_handler_uses_conversation_scope(
     assert pool.calls[0][2]["tool"] == "read_file"
 
     # 没有对话时退化为 run 作用域
-    with bind_tool_context(ToolContext(tenant_id="t-1", run_id="run-9")):
+    with bind_tool_context(ToolContext(account_id="t-1", run_id="run-9")):
         await specs[0].handler({"text": "hi"})
     assert pool.calls[1][1] == "run:run-9:srv-1"
 

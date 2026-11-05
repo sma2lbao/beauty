@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.services.mcp_client import MCPAuthRequired, MCPClient
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 
 
 def _rpc_client() -> MCPClient:
@@ -255,7 +255,7 @@ def _create_server(client: TestClient) -> dict:
             "token": "secret-token-1234",
             "timeout_seconds": 5,
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201
     return response.json()
@@ -267,7 +267,7 @@ def test_mcp_server_patch_token_updates_static_token(client: TestClient) -> None
     patched = client.patch(
         f"/api/v1/mcp/servers/{created['id']}",
         json={"token": "brand-new-token-9876"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert patched.status_code == 200
     body = patched.json()
@@ -278,7 +278,7 @@ def test_mcp_server_patch_token_updates_static_token(client: TestClient) -> None
     cleared = client.patch(
         f"/api/v1/mcp/servers/{created['id']}",
         json={"token": ""},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert cleared.status_code == 200
     assert cleared.json()["has_token"] is False
@@ -306,11 +306,11 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     patched = client.patch(
         f"/api/v1/mcp/servers/{created['id']}",
         json={"auto_approve": True},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert patched.status_code == 200
     assert patched.json()["auto_approve"] is True
-    listing_after_patch = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+    listing_after_patch = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
     assert listing_after_patch[0]["auto_approve"] is True
 
     # 测试连接:用假 client,不发真实网络
@@ -343,21 +343,21 @@ def test_mcp_server_crud_and_test(client: TestClient) -> None:
     mcp_runtime.build_client = fake_build  # type: ignore[assignment]
     try:
         tested = client.post(
-            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=ACCOUNT
         )
         assert tested.status_code == 200
         assert tested.json()["ok"] is True
         assert tested.json()["tools"][0]["name"] == "echo"
 
-        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
         assert listing[0]["tools"][0]["name"] == "echo"
         assert listing[0]["last_status"] == "ok"
     finally:
         mcp_runtime.build_client = original  # type: ignore[assignment]
 
-    deleted = client.delete(f"/api/v1/mcp/servers/{created['id']}", headers=TENANT)
+    deleted = client.delete(f"/api/v1/mcp/servers/{created['id']}", headers=ACCOUNT)
     assert deleted.status_code == 204
-    assert client.get("/api/v1/mcp/servers", headers=TENANT).json() == []
+    assert client.get("/api/v1/mcp/servers", headers=ACCOUNT).json() == []
 
 
 def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
@@ -368,7 +368,7 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
     from agent_orchestrator.services import mcp_runtime
 
     server = MCPServer(
-        tenant_id="t",
+        account_id="t",
         name="Demo Server",
         url="http://mcp.local/mcp",
         encrypted_token=None,
@@ -440,7 +440,7 @@ def test_test_server_reports_auth_required(client: TestClient) -> None:
     mcp_runtime.build_client = lambda *args, **kwargs: UnauthorizedClient()  # type: ignore[assignment]
     try:
         tested = client.post(
-            f"/api/v1/mcp/servers/{created['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created['id']}/test", headers=ACCOUNT
         )
         assert tested.status_code == 200
         body = tested.json()
@@ -449,7 +449,7 @@ def test_test_server_reports_auth_required(client: TestClient) -> None:
         assert body["tools"] == []
         assert "401" in body["detail"]
 
-        listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
         assert listing[0]["last_status"] == "auth_required"
         assert "MCPAuthRequired" in (listing[0]["last_error"] or "")
     finally:
@@ -466,7 +466,7 @@ def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> Non
 
     server = MCPServer(
         id="srv-1",
-        tenant_id="t",
+        account_id="t",
         name="Demo Server",
         url="http://mcp.local/mcp",
         encrypted_token=None,

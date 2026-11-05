@@ -1,6 +1,6 @@
 /**
  * BYOK 面板(M0-11 本地版):应用层加密存取与掩码展示;密钥已参与模型调用
- * (网关按租户解析,见 docs/design/byok.md)。
+ * (网关按账号解析,见 docs/design/byok.md)。
  *
  * 每个 provider 除密钥外还维护一份自定义模型清单(每行一个以 <provider>/ 开头的
  * 模型 id,整体替换):保存后网关白名单与 GET /api/v1/models 会带上这些模型,
@@ -236,7 +236,7 @@ export function ByokPanel() {
       <CardHeader>
         <CardTitle>BYOK(自带模型密钥)</CardTitle>
         <CardDescription>
-          应用层加密存储,只显示尾号掩码;已参与模型调用(网关按租户解析)。
+          应用层加密存储,只显示尾号掩码;已参与模型调用(网关按账号解析)。
           自定义模型清单会并入 /api/v1/models,保存后即可在模型选择器里选到。
         </CardDescription>
       </CardHeader>

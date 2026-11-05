@@ -1,4 +1,4 @@
-"""FastAPI 依赖:DB session、租户解析(§10)、嵌入提供方与配置。"""
+"""FastAPI 依赖:DB session、账号解析(§10)、嵌入提供方与配置。"""
 
 from __future__ import annotations
 
@@ -30,23 +30,23 @@ def get_embedder(request: Request) -> EmbeddingProvider:
     return request.app.state.embedder
 
 
-async def get_tenant_id(
+async def get_account_id(
     request: Request,
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+    x_account_id: Annotated[str | None, Header(alias="X-Account-Id")] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    """租户解析:IdP token 优先(默认);显式关闭鉴权才认临时头(与兄弟服务同约定)。"""
+    """账号解析:IdP token 优先(默认);显式关闭鉴权才认临时头(与兄弟服务同约定)。"""
     verifier: JwtVerifier | None = request.app.state.token_verifier
     if verifier is None:
-        if not x_tenant_id:
+        if not x_account_id:
             raise UnauthorizedError(
-                "auth.header_missing",
-                "缺少 X-Tenant-Id(鉴权未开启时的临时租户头)",
+                "auth.account_missing",
+                "缺少 X-Account-Id(鉴权未开启时的临时账号头)",
             )
-        bind_request_context(tenant_id=x_tenant_id)
-        return x_tenant_id
+        bind_request_context(account_id=x_account_id)
+        return x_account_id
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthorizedError("auth.token_missing", "缺少 Bearer token")
     principal = await verifier.verify(authorization.split(" ", 1)[1].strip())
-    bind_request_context(tenant_id=principal.tenant_id, user_id=principal.subject)
-    return principal.tenant_id
+    bind_request_context(account_id=principal.account_id, user_id=principal.subject)
+    return principal.account_id

@@ -2,7 +2,7 @@
 
 工具执行分两类:文件类工具经沙箱(workspace-service)执行;知识库检索这类
 跨服务只读能力没有沙箱语义,由本模块用服务间 token(TokenBroker,
-subject=svc-tool)带租户 JWT 调下游 HTTP API。`fetch` 属于第三种:不代理
+subject=svc-tool)带账号 JWT 调下游 HTTP API。`fetch` 属于第三种:不代理
 任何下游服务,由本模块直连公网(SSRF 防护与大小上限见
 tool_service/services/executors/fetch.py)。两类都把响应/失败归一成统一工具
 信封。HTTP 执行器只做只读动作:参数在 journal 层已校验,这里不做写操作、
@@ -90,10 +90,12 @@ class KnowledgeClient:
         )
         self._token_provider = token_provider
 
-    async def search(self, tenant_id: str, *, query: str, limit: int) -> dict[str, Any]:
+    async def search(
+        self, account_id: str, *, query: str, limit: int
+    ) -> dict[str, Any]:
         """检索知识库;传输层错误原样抛出(由执行器映射),非 200 抛状态错误。"""
 
-        token = await self._token_provider(tenant_id)
+        token = await self._token_provider(account_id)
         response = await self._client.post(
             KNOWLEDGE_SEARCH_PATH,
             json={"query": query, "limit": limit},
@@ -177,12 +179,12 @@ class HttpToolExecutor:
         self._fetcher = fetcher
 
     async def execute(
-        self, tenant_id: str, tool_name: str, arguments: dict[str, Any]
+        self, account_id: str, tool_name: str, arguments: dict[str, Any]
     ) -> ToolExecuteResponse:
         """执行一个 HTTP 工具;未知工具明确报不可用(不猜实现)。"""
 
         if tool_name == "search_knowledge":
-            return await self._search_knowledge(tenant_id, arguments)
+            return await self._search_knowledge(account_id, arguments)
         if tool_name == "fetch":
             return await self._fetch(arguments)
         return _error(
@@ -191,7 +193,7 @@ class HttpToolExecutor:
         )
 
     async def _search_knowledge(
-        self, tenant_id: str, arguments: dict[str, Any]
+        self, account_id: str, arguments: dict[str, Any]
     ) -> ToolExecuteResponse:
         if self._knowledge is None:
             return _error("tool.executor_unavailable", "知识库客户端未装配")
@@ -199,7 +201,7 @@ class HttpToolExecutor:
         raw_limit = arguments.get("limit")
         limit = DEFAULT_KNOWLEDGE_LIMIT if raw_limit is None else int(raw_limit)
         try:
-            result = await self._knowledge.search(tenant_id, query=query, limit=limit)
+            result = await self._knowledge.search(account_id, query=query, limit=limit)
         except UpstreamStatusError as exc:
             return _status_error(exc)
         except httpx.TimeoutException:

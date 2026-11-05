@@ -42,10 +42,10 @@ async def _prepare_chat_context(
     记忆召回按工作区隔离,召回失败只降级为空——上下文增强不能阻断对话。
     """
     rows = await compaction.rows_before_current(
-        session, message.tenant_id, message.conversation_id, message
+        session, message.account_id, message.conversation_id, message
     )
     summary, covered_until = await compaction.summary_for(
-        session, message.tenant_id, message.conversation_id
+        session, message.account_id, message.conversation_id
     )
     # 压缩参数统一由 ContextPolicy 投影(P1-F §6.1):策略是唯一真源,
     # 配置项散读容易与执行图/管线里那份口径漂开
@@ -53,7 +53,7 @@ async def _prepare_chat_context(
     if compaction_policy.enabled:
         result = await compaction.compact_conversation(
             session,
-            message.tenant_id,
+            message.account_id,
             message.conversation_id,
             llm,
             message=message,
@@ -67,13 +67,13 @@ async def _prepare_chat_context(
     if settings is not None and settings.memory_enabled:
         convention = await memory_service.convention_block(
             session,
-            message.tenant_id,
+            message.account_id,
             workspace_id=conversation.workspace_id,
             max_chars=settings.memory_convention_max_chars,
         )
         recall = await memory_service.recall_block(
             session,
-            message.tenant_id,
+            message.account_id,
             message.content,
             workspace_id=conversation.workspace_id,
             limit=settings.memory_recall_limit,
@@ -91,7 +91,7 @@ async def _maybe_extract_memories(
     session: AsyncSession,
     llm: LLMClient | None,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     workspace_id: str | None,
     settings: Settings | None,
@@ -111,14 +111,14 @@ async def _maybe_extract_memories(
         return
     try:
         repository = MessageRepository(session)
-        count = await repository.count_for_conversation(tenant_id, conversation_id)
+        count = await repository.count_for_conversation(account_id, conversation_id)
         if count % min_messages != 0:
             return
-        messages = await repository.list_for_conversation(tenant_id, conversation_id)
+        messages = await repository.list_for_conversation(account_id, conversation_id)
         await memory_extraction.extract_from_messages(
             session,
             llm,
-            tenant_id=tenant_id,
+            account_id=account_id,
             messages=messages,
             workspace_id=workspace_id,
             source_type="chat",
@@ -137,7 +137,7 @@ def _schedule_chat_extraction(
     session: AsyncSession,
     llm: LLMClient | None,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     workspace_id: str | None,
     settings: Settings | None,
@@ -158,7 +158,7 @@ def _schedule_chat_extraction(
             await _maybe_extract_memories(
                 extract_session,
                 llm,
-                tenant_id=tenant_id,
+                account_id=account_id,
                 conversation_id=conversation_id,
                 workspace_id=workspace_id,
                 settings=settings,
@@ -183,11 +183,11 @@ async def _task_compaction(
     cfg = policy_from_settings(settings).compaction()
     if not cfg.enabled or llm is None:
         return None
-    if await active_run(session, conversation.tenant_id, conversation.id) is not None:
+    if await active_run(session, conversation.account_id, conversation.id) is not None:
         return None
     return await compaction.compact_conversation(
         session,
-        conversation.tenant_id,
+        conversation.account_id,
         conversation.id,
         llm,
         message=message,

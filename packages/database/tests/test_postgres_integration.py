@@ -65,15 +65,15 @@ async def factory(postgres_url: str) -> AsyncIterator[async_sessionmaker[AsyncSe
     await engine.engine.dispose()
 
 
-async def test_tenant_isolation_on_postgres(factory) -> None:
+async def test_account_isolation_on_postgres(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        await repo.add(Widget(tenant_id="t-1", name="甲的", payload={"n": 1}))
-        await repo.add(Widget(tenant_id="t-2", name="乙的"))
+        await repo.add(Widget(account_id="t-1", name="甲的", payload={"n": 1}))
+        await repo.add(Widget(account_id="t-2", name="乙的"))
 
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
-        assert await repo.count_for_tenant("t-1") == 1
+        assert await repo.count_for_account("t-1") == 1
         found = await repo.list_scoped("t-1")
         assert [w.name for w in found] == ["甲的"]
         assert found[0].payload == {"n": 1}  # JSON 列往返
@@ -83,7 +83,7 @@ async def test_datetime_keeps_timezone_on_postgres(factory) -> None:
     """Postgres 读回的时间戳带时区(sqlite 会丢,服务里靠比较时刻绕开)。"""
     async with session_scope(factory) as session:
         widget = await WidgetRepository(session).add(
-            Widget(tenant_id="t-1", name="带时区")
+            Widget(account_id="t-1", name="带时区")
         )
         assert widget.created_at.tzinfo is not None
 
@@ -93,7 +93,7 @@ async def test_microsecond_ordering_on_postgres(factory) -> None:
     async with session_scope(factory) as session:
         repo = WidgetRepository(session)
         for index in range(5):
-            await repo.add(Widget(tenant_id="t-order", name=f"w{index}"))
+            await repo.add(Widget(account_id="t-order", name=f"w{index}"))
 
     async with session_scope(factory) as session:
         rows = await WidgetRepository(session).list_scoped(
@@ -102,17 +102,17 @@ async def test_microsecond_ordering_on_postgres(factory) -> None:
         assert [row.name for row in rows] == [f"w{i}" for i in range(5)]
 
 
-async def test_require_hides_cross_tenant_on_postgres(factory) -> None:
+async def test_require_hides_cross_account_on_postgres(factory) -> None:
     from common.errors import NotFoundError
 
     async with session_scope(factory) as session:
         widget = await WidgetRepository(session).add(
-            Widget(tenant_id="t-1", name="甲的")
+            Widget(account_id="t-1", name="甲的")
         )
 
     async with session_scope(factory) as session:
         with pytest.raises(NotFoundError) as exc_info:
-            await WidgetRepository(session).require_for_tenant("t-2", widget.id)
+            await WidgetRepository(session).require_for_account("t-2", widget.id)
         assert exc_info.value.code == "widget.not_found"
 
 

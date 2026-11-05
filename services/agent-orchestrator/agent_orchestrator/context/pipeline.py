@@ -88,7 +88,7 @@ class ContextPlan:
 class ContextRequest:
     """一次 run 的装配输入:只带值,不带客户端/会话(IO 由 provider 自己持有)。"""
 
-    tenant_id: str
+    account_id: str
     run_id: str
     conversation_id: str | None = None
     workspace_id: str | None = None

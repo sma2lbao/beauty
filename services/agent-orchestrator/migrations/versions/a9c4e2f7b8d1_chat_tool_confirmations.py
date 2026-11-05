@@ -55,9 +55,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["conversation_id"],
             ["conversations.id"],
-            name=op.f(
-                "fk_chat_tool_confirmations_conversations_conversation_id"
-            ),
+            name=op.f("fk_chat_tool_confirmations_conversations_conversation_id"),
         ),
         sa.ForeignKeyConstraint(
             ["message_id"],

@@ -1,5 +1,5 @@
 /**
- * 前端鉴权接线(与后端 §10 的 token→租户约定配对)。
+ * 前端鉴权接线(与后端 §10 的 token→账号约定配对)。
  *
  * 模式(`VITE_AUTH_MODE`):
  * - `token`(默认):自建认证登录(邮箱 + 密码,注册见登录页),双令牌存
@@ -7,8 +7,8 @@
  *   运维仍可粘贴纯 access token(联调用,无续期能力);
  * - `logto`:Logto 授权码 + PKCE 登录,access token 由 SDK 自动续期。
  *
- * 租户标识只在 token 里(`tenant_id` claim),前端不传、也不需要知道它——
- * 守卫(auth-guard)保证未登录访问送回登录页,请求层不兜底临时租户头。
+ * 账号标识只在 token 里(`account_id` claim),前端不传、也不需要知道它——
+ * 守卫(auth-guard)保证未登录访问送回登录页,请求层不兜底临时账号头。
  *
  * 构建期环境变量:`VITE_AUTH_MODE`、`VITE_LOGTO_ENDPOINT`、`VITE_LOGTO_APP_ID`、
  * `VITE_LOGTO_RESOURCE`、`VITE_ACCOUNT_API_URL`(见 apps/web/.env.example)。
@@ -244,7 +244,7 @@ async function doRefresh(): Promise<boolean> {
 }
 
 /**
- * 请求头:有 token 走 Bearer(租户在 claim 里);没有就空着头发——
+ * 请求头:有 token 走 Bearer(账号在 claim 里);没有就空着头发——
  * 未登录的访问由守卫拦在页面之外,这里不做兜底。
  */
 export async function authHeaders(): Promise<Record<string, string>> {

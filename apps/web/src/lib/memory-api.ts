@@ -6,7 +6,7 @@
  * - 语义检索 `GET /api/v1/memories/search`(query 必填);
  * - 统计 `GET /api/v1/memories/stats`(total/active/pinned/expired);
  * - 新建 `POST /api/v1/memories`(201 返回 MemoryRead);
- * - 删除 `DELETE /api/v1/memories/{id}`(204,跨租户 404 memory.not_found);
+ * - 删除 `DELETE /api/v1/memories/{id}`(204,跨账号 404 memory.not_found);
  * - 清理过期 `POST /api/v1/memories/purge-expired`(返回 purged 条数)。
  *
  * 基址与 runs/outbox 相同(`VITE_RUNS_API_URL`,留空走同源 API 网关代理),
@@ -29,8 +29,8 @@ export const MEMORY_KINDS = [
 ] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
-/** 记忆作用域:tenant 租户级 / workspace 工作区级。 */
-export const MEMORY_SCOPES = ['tenant', 'workspace'] as const;
+/** 记忆作用域:account 账号级 / workspace 工作区级。 */
+export const MEMORY_SCOPES = ['account', 'workspace'] as const;
 export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
 /** 一条记忆(对应后端 MemoryRead,无 embedding 字段)。 */

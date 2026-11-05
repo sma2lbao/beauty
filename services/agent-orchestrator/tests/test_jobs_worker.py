@@ -14,7 +14,7 @@ from agent_orchestrator.repositories import JobRepository
 from agent_orchestrator.schemas.runs import RunCreate
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import runs as runs_service
-from tests.conftest import _IDP, TENANT, _settings
+from tests.conftest import _IDP, ACCOUNT, _settings
 
 
 def _app(tmp_path: Path, **overrides):
@@ -84,7 +84,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
         created = client.post(
             "/api/v1/runs",
             json={"title": "worker 测试", "goal": "跑一下", "acceptance_criteria": []},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 201
         run_id = created.json()["id"]
@@ -92,7 +92,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
         def wait_status(expected: str) -> dict:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+                run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
                 if run["status"] == expected:
                     return run
                 time.sleep(0.02)
@@ -100,7 +100,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
 
         planned = wait_status("awaiting_approval")
         assert planned["status"] == "awaiting_approval"
-        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+        approved = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
         assert approved.status_code == 200
         completed = wait_status("completed")
         assert completed["status"] == "completed"

@@ -17,8 +17,8 @@ from fastapi import Header, Request
 from common.errors import UnauthorizedError
 
 SECRET_HEADER = "X-Internal-Secret"
-#: 内部调用的租户头(服务间按租户取资源,如 llm-gateway 的 BYOK 解析)
-TENANT_HEADER = "X-Tenant-Id"
+#: 内部调用的账号头(服务间按账号取资源,如 llm-gateway 的 BYOK 解析)
+ACCOUNT_HEADER = "X-Account-Id"
 
 
 def make_internal_secret_dependency(
@@ -31,9 +31,7 @@ def make_internal_secret_dependency(
 
     async def require_internal_secret(
         request: Request,
-        x_internal_secret: Annotated[
-            str | None, Header(alias=SECRET_HEADER)
-        ] = None,
+        x_internal_secret: Annotated[str | None, Header(alias=SECRET_HEADER)] = None,
     ) -> None:
         expected = getattr(request.app.state.settings, settings_attr, "")
         if (

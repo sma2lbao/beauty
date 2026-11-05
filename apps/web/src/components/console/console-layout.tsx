@@ -3,20 +3,9 @@
  *
  * 页面自己组合顶栏/页头/状态栏,因为四张设计稿的页头结构不同:
  * 工作台是 52px 顶栏 + 底部状态栏,任务编排/变更与产物是页面大标题 + 操作组。
- * 布局只负责不变的导航与滚动边界。
+ * 布局只负责不变的导航与滚动边界,外加全局的命令面板(⌘K)。
  */
-import {
-  BarChart3,
-  BookOpen,
-  Cable,
-  Columns3,
-  FolderKanban,
-  GitCompareArrows,
-  LayoutGrid,
-  PanelLeft,
-  Settings,
-  Sparkles,
-} from 'lucide-react';
+import { PanelLeft, Search } from 'lucide-react';
 import { Link, Outlet } from 'react-router';
 
 import { BrandLockup } from '@/components/brand/logo';
@@ -24,25 +13,20 @@ import { NotificationCenter } from '@/features/notifications/notification-center
 import { ToastViewport } from '@/features/notifications/toast-viewport';
 import { ConsoleNavLink } from '@/components/console/ui';
 import { ConsoleSidebar } from '@/components/console/sidebar';
+import { CommandPalette } from '@/features/command-palette/command-palette';
+import { useCommandPaletteShortcut } from '@/features/command-palette/use-command-palette-shortcut';
+import { MOBILE_NAV_ITEMS } from '@/features/sidebar/nav-data';
 import { useRunStatusNotifications } from '@/lib/run-status-watcher';
 import { useUiStore } from '@/stores/ui-store';
-
-const MOBILE_NAV = [
-  { to: '/', end: true, icon: <LayoutGrid />, label: '工作台' },
-  { to: '/workspace', icon: <FolderKanban />, label: '工作区' },
-  { to: '/runs', icon: <Columns3 />, label: '任务编排' },
-  { to: '/changes', icon: <GitCompareArrows />, label: '变更' },
-  // MCP 管理并入连接器页,移动端同样只留一个入口
-  { to: '/connectors', icon: <Cable />, label: '连接器' },
-  { to: '/skills', icon: <Sparkles />, label: 'Skills' },
-  { to: '/usage', icon: <BarChart3 />, label: '用量' },
-  { to: '/knowledge', icon: <BookOpen />, label: '知识库' },
-  { to: '/settings', icon: <Settings />, label: '设置' },
-];
 
 export function ConsoleLayout() {
   const sidebarVisible = useUiStore((state) => state.sidebarVisible);
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const setCommandPaletteOpen = useUiStore(
+    (state) => state.setCommandPaletteOpen,
+  );
+  // 命令面板挂在布局层:任何页面、侧栏隐藏时都能用 ⌘K 打开。
+  useCommandPaletteShortcut();
   // 通知(M0 交互面):全局状态探测(runs 轮询 diff)+ toast 视口挂在布局层,
   // 保证侧栏隐藏/页面切换时通知不中断;通知中心入口在侧栏账户区与移动端顶栏。
   useRunStatusNotifications();
@@ -69,10 +53,19 @@ export function ConsoleLayout() {
             aria-label="移动端导航"
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           >
-            {MOBILE_NAV.map((item) => (
+            {MOBILE_NAV_ITEMS.map((item) => (
               <ConsoleNavLink key={item.to} {...item} compact />
             ))}
           </nav>
+          {/* 移动端没有 ⌘K:给命令面板一个可见入口(与桌面侧栏的放大镜一致) */}
+          <button
+            type="button"
+            aria-label="搜索与命令"
+            onClick={() => setCommandPaletteOpen(true)}
+            className="ml-1 grid h-7 w-7 shrink-0 place-items-center rounded-md text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text"
+          >
+            <Search className="h-4 w-4" />
+          </button>
           {/* 通知入口放在顶栏最右:面板向右上展开,贴视口右缘才不会被裁出屏幕 */}
           <div className="ml-1 flex shrink-0 items-center">
             <NotificationCenter />
@@ -83,6 +76,7 @@ export function ConsoleLayout() {
         </main>
       </div>
       <ToastViewport />
+      <CommandPalette />
     </div>
   );
 }

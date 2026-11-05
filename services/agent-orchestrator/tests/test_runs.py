@@ -1,17 +1,17 @@
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, bearer
+from tests.conftest import ACCOUNT, OTHER, bearer
 
-TENANT_HEADERS = TENANT
+ACCOUNT_HEADERS = ACCOUNT
 
 
-def _create_run(client: TestClient, tenant: str = "t-1") -> dict:
+def _create_run(client: TestClient, account: str = "t-1") -> dict:
     body = {
         "title": "整理本周日程成周报",
         "goal": "整理本周日程,生成周报草稿",
         "acceptance_criteria": ["覆盖 5 个工作日", "不超过 300 字"],
     }
-    resp = client.post("/api/v1/runs", json=body, headers=bearer(tenant))
+    resp = client.post("/api/v1/runs", json=body, headers=bearer(account))
     assert resp.status_code == 201
     return resp.json()
 
@@ -23,14 +23,14 @@ def test_create_and_get_run(client: TestClient) -> None:
     assert len(created["id"]) == 32
     assert created["acceptance_criteria"] == ["覆盖 5 个工作日", "不超过 300 字"]
 
-    got = client.get(f"/api/v1/runs/{created['id']}", headers=TENANT_HEADERS)
+    got = client.get(f"/api/v1/runs/{created['id']}", headers=ACCOUNT_HEADERS)
     assert got.status_code == 200
     assert got.json()["goal"] == "整理本周日程,生成周报草稿"
 
 
 def test_events_replay_in_seq_order(client: TestClient) -> None:
     created = _create_run(client)
-    resp = client.get(f"/api/v1/runs/{created['id']}/events", headers=TENANT_HEADERS)
+    resp = client.get(f"/api/v1/runs/{created['id']}/events", headers=ACCOUNT_HEADERS)
     assert resp.status_code == 200
     events = resp.json()
     assert len(events) == 1
@@ -39,14 +39,14 @@ def test_events_replay_in_seq_order(client: TestClient) -> None:
     assert len(events[0]["id"]) == 32  # 事件 ID = 信封 ID(幂等去重键)
 
 
-def test_tenant_isolation(client: TestClient) -> None:
-    created = _create_run(client, tenant="t-1")
+def test_account_isolation(client: TestClient) -> None:
+    created = _create_run(client, account="t-1")
     resp = client.get(f"/api/v1/runs/{created['id']}", headers=OTHER)
     assert resp.status_code == 404
 
 
 def test_missing_bearer_rejected(client: TestClient) -> None:
-    """无 Bearer token 一律 401(租户只在签名 claim 里,没有临时头后门)。"""
+    """无 Bearer token 一律 401(账号只在签名 claim 里,没有临时头后门)。"""
     resp = client.post("/api/v1/runs", json={"title": "t", "goal": "g"})
     assert resp.status_code == 401
     assert resp.json()["code"] == "auth.token_missing"
@@ -54,23 +54,23 @@ def test_missing_bearer_rejected(client: TestClient) -> None:
 
 def test_validation_error_shape(client: TestClient) -> None:
     resp = client.post(
-        "/api/v1/runs", json={"title": "", "goal": "g"}, headers=TENANT_HEADERS
+        "/api/v1/runs", json={"title": "", "goal": "g"}, headers=ACCOUNT_HEADERS
     )
     assert resp.status_code == 422
 
 
-def test_list_runs_newest_first_and_tenant_scoped(client: TestClient) -> None:
-    """控制台首页:最新在前、租户隔离、limit 生效。"""
+def test_list_runs_newest_first_and_account_scoped(client: TestClient) -> None:
+    """控制台首页:最新在前、账号隔离、limit 生效。"""
     first = _create_run(client)
-    second = _create_run(client, tenant="t-2")
+    second = _create_run(client, account="t-2")
     third = _create_run(client)
 
-    listed = client.get("/api/v1/runs", headers=TENANT_HEADERS).json()
+    listed = client.get("/api/v1/runs", headers=ACCOUNT_HEADERS).json()
     ids = [run["id"] for run in listed]
     assert ids == [third["id"], first["id"]]  # 最新在前;t-2 的不可见
     assert second["id"] not in ids
 
-    limited = client.get("/api/v1/runs?limit=1", headers=TENANT_HEADERS).json()
+    limited = client.get("/api/v1/runs?limit=1", headers=ACCOUNT_HEADERS).json()
     assert [run["id"] for run in limited] == [third["id"]]
 
 

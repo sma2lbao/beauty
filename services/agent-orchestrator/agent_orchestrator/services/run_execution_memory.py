@@ -34,7 +34,7 @@ async def _recall_memory_block(
     try:
         convention = await memory_service.convention_block(
             session,
-            run.tenant_id,
+            run.account_id,
             workspace_id=run.workspace_id,
             max_chars=settings.memory_convention_max_chars,
         )
@@ -43,7 +43,7 @@ async def _recall_memory_block(
         if query:
             recall = await memory_service.recall_block(
                 session,
-                run.tenant_id,
+                run.account_id,
                 query,
                 workspace_id=run.workspace_id,
                 limit=settings.memory_recall_limit,
@@ -54,7 +54,7 @@ async def _recall_memory_block(
         logger.warning(
             "memory recall failed",
             run_id=run.id,
-            tenant_id=run.tenant_id,
+            account_id=run.account_id,
             error=f"{type(exc).__name__}: {exc}",
         )
         return ""

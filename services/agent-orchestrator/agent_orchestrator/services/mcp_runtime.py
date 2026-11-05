@@ -163,7 +163,7 @@ def _stdio_request(
 
 
 async def _test_stdio_server(
-    tenant_id: str,
+    account_id: str,
     server: MCPServer,
     secret: str,
     pool: StdioSandboxPool | None,
@@ -179,7 +179,7 @@ async def _test_stdio_server(
     key = f"test:{server.id}:{uuid.uuid4().hex}"
     try:
         result = await pool.run(
-            tenant_id,
+            account_id,
             key,
             server,
             _stdio_request(server, secret, action="tools/list"),
@@ -199,7 +199,7 @@ async def _test_stdio_server(
         server.last_checked_at = now
         return MCPTestRead(ok=False, detail=server.last_error, tools=[])
     finally:
-        await pool.release(tenant_id, key)
+        await pool.release(account_id, key)
 
 
 async def _provider_token(
@@ -341,7 +341,7 @@ async def _report_auth_required(
 
 
 def _make_stdio_handler(
-    tenant_id: str,
+    account_id: str,
     server: MCPServer,
     tool_name: str,
     secret: str,
@@ -357,7 +357,7 @@ def _make_stdio_handler(
         key = f"{scope}:{server.id}"
         try:
             result = await pool.run(
-                tenant_id,
+                account_id,
                 key,
                 server,
                 _stdio_request(

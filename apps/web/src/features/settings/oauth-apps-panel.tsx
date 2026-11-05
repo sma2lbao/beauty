@@ -1,5 +1,5 @@
 /**
- * 已授权 MCP 应用面板:查看/撤销当前租户的 OAuth 授权。
+ * 已授权 MCP 应用面板:查看/撤销当前账号的 OAuth 授权。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldOff } from 'lucide-react';

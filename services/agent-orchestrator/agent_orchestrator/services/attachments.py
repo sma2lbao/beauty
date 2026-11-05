@@ -66,7 +66,7 @@ def _normalize_filename(filename: str | None) -> str:
 
 async def create_attachment(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     *,
     filename: str | None,
@@ -74,8 +74,8 @@ async def create_attachment(
     data: bytes,
     max_bytes: int,
 ) -> Attachment:
-    await ConversationRepository(session).require_active_for_tenant(
-        tenant_id, conversation_id
+    await ConversationRepository(session).require_active_for_account(
+        account_id, conversation_id
     )
     if not data:
         raise AppError("attachment.empty", "附件内容为空")
@@ -94,7 +94,7 @@ async def create_attachment(
     except DocumentParseError as exc:
         extraction_error = str(exc)[:500]
     attachment = Attachment(
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         filename=safe_name,
         content_type=normalized_type,
@@ -108,35 +108,35 @@ async def create_attachment(
 
 
 async def list_attachments(
-    session: AsyncSession, tenant_id: str, conversation_id: str
+    session: AsyncSession, account_id: str, conversation_id: str
 ) -> list[Attachment]:
-    await ConversationRepository(session).require_active_for_tenant(
-        tenant_id, conversation_id
+    await ConversationRepository(session).require_active_for_account(
+        account_id, conversation_id
     )
     return await AttachmentRepository(session).list_for_conversation(
-        tenant_id, conversation_id
+        account_id, conversation_id
     )
 
 
 async def require_attachment(
-    session: AsyncSession, tenant_id: str, attachment_id: str
+    session: AsyncSession, account_id: str, attachment_id: str
 ) -> Attachment:
-    return await AttachmentRepository(session).require_for_tenant(
-        tenant_id, attachment_id
+    return await AttachmentRepository(session).require_for_account(
+        account_id, attachment_id
     )
 
 
 async def delete_attachment(
-    session: AsyncSession, tenant_id: str, attachment_id: str
+    session: AsyncSession, account_id: str, attachment_id: str
 ) -> None:
     repo = AttachmentRepository(session)
-    attachment = await repo.require_for_tenant(tenant_id, attachment_id)
+    attachment = await repo.require_for_account(account_id, attachment_id)
     await repo.delete(attachment)
 
 
 async def link_attachments(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     message: ChatMessage,
     attachment_ids: list[str],
@@ -156,7 +156,7 @@ async def link_attachments(
         raise AppError("attachment.duplicate", "附件不能重复选择")
     repo = AttachmentRepository(session)
     for attachment_id in attachment_ids:
-        attachment = await repo.require_for_tenant(tenant_id, attachment_id)
+        attachment = await repo.require_for_account(account_id, attachment_id)
         if attachment.conversation_id != conversation_id:
             raise AppError("attachment.not_in_conversation", "附件不属于当前会话")
         if attachment.message_id is not None:
@@ -166,14 +166,14 @@ async def link_attachments(
 
 async def context_for_message(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     message_id: str,
     *,
     max_chars: int = 20_000,
 ) -> str:
     """把消息绑定的附件解析文本拼成提示词资料块;无文本返回空串。"""
     repo = AttachmentRepository(session)
-    rows = await repo.list_for_message(tenant_id, message_id)
+    rows = await repo.list_for_message(account_id, message_id)
     blocks: list[str] = []
     used = 0
     for attachment in rows:
@@ -229,7 +229,7 @@ def _image_part(attachment: Attachment) -> dict[str, Any]:
 
 async def image_parts_by_message(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     message_ids: list[str],
     *,
     max_count: int = DEFAULT_IMAGE_MAX_COUNT,
@@ -243,7 +243,9 @@ async def image_parts_by_message(
     """
     if max_count <= 0 or max_bytes <= 0 or max_total_bytes <= 0 or not message_ids:
         return {}
-    rows = await AttachmentRepository(session).list_for_messages(tenant_id, message_ids)
+    rows = await AttachmentRepository(session).list_for_messages(
+        account_id, message_ids
+    )
     grouped: dict[str, list[dict[str, Any]]] = {}
     used = 0
     total = 0
@@ -267,7 +269,7 @@ async def image_parts_by_message(
 
 async def image_parts_for_message(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     message_id: str,
     *,
     max_count: int = DEFAULT_IMAGE_MAX_COUNT,
@@ -277,7 +279,7 @@ async def image_parts_for_message(
     """单条消息的图片 part(对话注入用;无图返回空列表)。"""
     grouped = await image_parts_by_message(
         session,
-        tenant_id,
+        account_id,
         [message_id],
         max_count=max_count,
         max_bytes=max_bytes,

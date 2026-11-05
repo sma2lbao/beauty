@@ -5,7 +5,7 @@
 把结果落成 assistant 消息并回填确认行。
 
 口径:
-- 不存在/跨租户一律 404 tool_confirmation.not_found(不泄漏存在性);
+- 不存在/跨账号一律 404 tool_confirmation.not_found(不泄漏存在性);
 - 过期 409 tool_confirmation.expired、已确认/已取消 409 tool_confirmation.not_pending;
 - 确认时用与 chat 同一套工具箱构建路径(允许 write、排除 danger),
   这样"用户看到的工具"与"确认时执行的工具"不会漂移。
@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
+    get_account_id,
     get_session,
-    get_tenant_id,
     get_tool_extras_factory,
     get_toolkit_factory,
 )
@@ -36,7 +36,7 @@ from agent_orchestrator.services.tool_context import ToolContext, bind_tool_cont
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
 ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
 
@@ -49,15 +49,15 @@ async def confirm_tool_call(
     conversation_id: str,
     confirmation_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     toolkit_factory: ToolkitFactory,
     tool_extras_factory: ToolExtrasFactory,
 ) -> ToolConfirmationConfirmResult:
     """确认并执行待确认的写调用(重复确认 409,不重复执行)。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     with bind_tool_context(
         ToolContext(
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation.id,
             workspace_id=conversation.workspace_id,
         )
@@ -65,11 +65,11 @@ async def confirm_tool_call(
         # 与发消息路径同一套装配(允许 write、排除 danger):用户看到的工具
         # 与确认时执行的工具不会漂移;装配期会读连接器目录与 MCP extras。
         toolkit = await _toolkit_for(
-            toolkit_factory, tool_extras_factory, tenant_id, chat=True
+            toolkit_factory, tool_extras_factory, account_id, chat=True
         )
         outcome = await confirmations_service.confirm(
             session,
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation.id,
             confirmation_id=confirmation_id,
             toolkit=toolkit,
@@ -92,13 +92,13 @@ async def cancel_tool_call(
     conversation_id: str,
     confirmation_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
 ) -> ToolConfirmationCancelResult:
     """取消待确认的写调用(不执行工具、不落 assistant 消息)。"""
-    conversation = await require_conversation(session, tenant_id, conversation_id)
+    conversation = await require_conversation(session, account_id, conversation_id)
     confirmation = await confirmations_service.cancel(
         session,
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation.id,
         confirmation_id=confirmation_id,
     )

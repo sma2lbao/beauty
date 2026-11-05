@@ -46,7 +46,7 @@ _lifespan = build_lifespan(startup=_startup, shutdown=_shutdown)
 
 
 async def _rate_limit(request: Request, call_next: RequestResponseEndpoint) -> Response:
-    """限流中间件:仅作用于 /api/(同源门面),已登录按租户、未登录按客户端 IP。"""
+    """限流中间件:仅作用于 /api/(同源门面),已登录按账号、未登录按客户端 IP。"""
     path = request.url.path
     if not path.startswith("/api/"):
         return await call_next(request)
@@ -54,10 +54,10 @@ async def _rate_limit(request: Request, call_next: RequestResponseEndpoint) -> R
     state = app.state.session_codec.decode(
         request.cookies.get(app.state.settings.cookie_name)
     )
-    tenant = (state or {}).get("user", {}).get("tenant_id")
+    account = (state or {}).get("user", {}).get("account_id")
     client_host = request.client.host if request.client else "unknown"
     group = "/".join(path.split("/")[:4])
-    if not await app.state.rate_limiter.allow(f"{tenant or client_host}:{group}"):
+    if not await app.state.rate_limiter.allow(f"{account or client_host}:{group}"):
         return JSONResponse(
             status_code=429,
             headers={"Retry-After": "60"},

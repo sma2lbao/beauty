@@ -2,10 +2,10 @@
 
 为什么需要:过期记忆(purge_expired)与近重复巩固(consolidate)如果只靠人工
 调接口,生产库会越积越脏。本 sweeper 是后台任务:按固定间隔遍历"有生效记忆的
-租户",先清理过期、再合并近重复;单租户失败只记日志,不影响其他租户。
+账号",先清理过期、再合并近重复;单账号失败只记日志,不影响其他账号。
 
 启动条件:interval <= 0 时循环直接返回(测试与本地默认关闭);容器负责建任务、
-stop 时取消。与 interrupts sweeper 的区别是它按租户遍历而不是扫单条记录。
+stop 时取消。与 interrupts sweeper 的区别是它按账号遍历而不是扫单条记录。
 """
 
 from __future__ import annotations
@@ -33,28 +33,28 @@ async def sweep_once(
     consolidation_enabled: bool = True,
     threshold: float = 0.92,
 ) -> dict[str, int]:
-    """扫一轮:逐租户清理过期 + (可选)合并近重复,返回汇总计数。
+    """扫一轮:逐账号清理过期 + (可选)合并近重复,返回汇总计数。
 
-    先单独取租户清单再逐租户开事务:单租户处理失败不会回滚其他租户,也让每轮
+    先单独取账号清单再逐账号开事务:单账号处理失败不会回滚其他账号,也让每轮
     事务范围尽量小(后台任务与在线请求抢锁的概率更低)。
     """
     async with session_scope(session_factory) as session:
-        tenant_ids = await MemoryRepository(session).tenant_ids_with_active()
+        account_ids = await MemoryRepository(session).account_ids_with_active()
 
-    totals = {"tenants": 0, "purged": 0, "consolidated": 0}
-    for tenant_id in tenant_ids:
-        totals["tenants"] += 1
+    totals = {"accounts": 0, "purged": 0, "consolidated": 0}
+    for account_id in account_ids:
+        totals["accounts"] += 1
         try:
             async with session_scope(session_factory) as session:
                 totals["purged"] += await memory_service.purge_expired(
-                    session, tenant_id
+                    session, account_id
                 )
                 if consolidation_enabled:
                     totals["consolidated"] += await consolidate(
-                        session, tenant_id, threshold=threshold
+                        session, account_id, threshold=threshold
                     )
-        except Exception as exc:  # noqa: BLE001 - 单租户失败不能中断整轮
-            logger.warning("memory sweep failed", tenant_id=tenant_id, error=str(exc))
+        except Exception as exc:  # noqa: BLE001 - 单账号失败不能中断整轮
+            logger.warning("memory sweep failed", account_id=account_id, error=str(exc))
     return totals
 
 

@@ -1,9 +1,9 @@
-"""FastAPI 依赖:容器、DB session 与租户解析。
+"""FastAPI 依赖:容器、DB session 与账号解析。
 
-租户来源(架构 §10):
+账号来源(架构 §10):
 - 鉴权开启(\`\`AUTH_ENABLED=true\`\`):校验 \`\`Authorization: Bearer <access token>\`\`,
-  租户从 token claim 取——**不可信则 401,绝不回退到请求头**;
-- 鉴权显式关闭(\`\`AUTH_ENABLED=false\`\`,不推荐,仅特殊部署):沿用 \`\`X-Tenant-Id\`\`
+  账号从 token claim 取——**不可信则 401,绝不回退到请求头**;
+- 鉴权显式关闭(\`\`AUTH_ENABLED=false\`\`,不推荐,仅特殊部署):沿用 \`\`X-Account-Id\`\`
   临时头,缺失即 401。
 
 接入 IdP 后端点零改动:只换这里的实现。所有外部依赖统一从 AppContainer
@@ -19,6 +19,7 @@ from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.errors import UnauthorizedError
 from common.logging import bind_request_context
+from common.security import ACCOUNT_HEADER
 from database.session import session_scope
 from fastapi import Header, Request
 from langgraph.graph.state import CompiledStateGraph
@@ -148,23 +149,23 @@ def get_mcp_stdio_pool(request: Request) -> StdioSandboxPool | None:
     return get_container(request).mcp_stdio_pool
 
 
-async def get_tenant_id(
+async def get_account_id(
     request: Request,
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-Id")] = None,
+    x_account_id: Annotated[str | None, Header(alias=ACCOUNT_HEADER)] = None,
     authorization: Annotated[str | None, Header()] = None,
 ) -> str:
-    """租户解析:IdP token 优先,鉴权关闭时才认临时头。"""
+    """账号解析:IdP token 优先,鉴权关闭时才认临时头。"""
     verifier: JwtVerifier | None = get_container(request).token_verifier
     if verifier is None:
-        if not x_tenant_id:
+        if not x_account_id:
             raise UnauthorizedError(
-                "auth.header_missing",
-                "缺少 X-Tenant-Id(鉴权未开启时的临时头)",
+                "auth.account_missing",
+                "缺少 X-Account-Id(鉴权未开启时的临时头)",
             )
-        bind_request_context(tenant_id=x_tenant_id)
-        return x_tenant_id
+        bind_request_context(account_id=x_account_id)
+        return x_account_id
     if not authorization or not authorization.lower().startswith("bearer "):
         raise UnauthorizedError("auth.token_missing", "缺少 Bearer token")
     principal = await verifier.verify(authorization.split(" ", 1)[1].strip())
-    bind_request_context(tenant_id=principal.tenant_id, user_id=principal.subject)
-    return principal.tenant_id
+    bind_request_context(account_id=principal.account_id, user_id=principal.subject)
+    return principal.account_id

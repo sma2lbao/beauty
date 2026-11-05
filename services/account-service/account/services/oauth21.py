@@ -1,7 +1,7 @@
 """MCP OAuth 2.1 授权服务器业务(M3-04)。
 
 授权码 + PKCE(S256)+ 公开客户端;access/refresh token 均为不透明串,
-DB 只存 SHA-256 哈希,MCP Server 通过内部 introspect 换租户/scopes。
+DB 只存 SHA-256 哈希,MCP Server 通过内部 introspect 换账号/scopes。
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ async def get_client(session: AsyncSession, client_id: str) -> OAuthClientRead:
 
 async def authorize(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: AuthorizeApprove,
     settings: Settings,
 ) -> AuthorizeResult:
@@ -126,7 +126,7 @@ async def authorize(
     expires_at = _now() + timedelta(seconds=settings.oauth21_code_ttl_seconds)
     await OAuthCodeRepository(session).add(
         OAuthAuthorizationCode(
-            tenant_id=tenant_id,
+            account_id=account_id,
             code_hash=_hash(code),
             client_id=client.client_id,
             user_id=None,
@@ -156,7 +156,7 @@ def _verify_pkce(verifier: str, challenge: str) -> bool:
 
 async def _issue_tokens(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     client_id: str,
     user_id: str | None,
     scopes: list[str],
@@ -167,7 +167,7 @@ async def _issue_tokens(
     now = _now()
     await OAuthTokenRepository(session).add(
         OAuthToken(
-            tenant_id=tenant_id,
+            account_id=account_id,
             access_hash=_hash(access),
             refresh_hash=_hash(refresh),
             client_id=client_id,
@@ -211,7 +211,7 @@ async def exchange_code(
     record.used_at = _now()
     return await _issue_tokens(
         session,
-        record.tenant_id,
+        record.account_id,
         record.client_id,
         record.user_id,
         list(record.scopes or []),
@@ -237,7 +237,7 @@ async def refresh_tokens(
     record.revoked_at = _now()  # refresh rotation:旧 token 一次性
     return await _issue_tokens(
         session,
-        record.tenant_id,
+        record.account_id,
         record.client_id,
         record.user_id,
         list(record.scopes or []),
@@ -254,7 +254,7 @@ async def introspect(session: AsyncSession, token: str) -> OAuthIntrospectRead:
         return OAuthIntrospectRead(active=False)
     return OAuthIntrospectRead(
         active=True,
-        tenant_id=record.tenant_id,
+        account_id=record.account_id,
         client_id=record.client_id,
         scope=" ".join(record.scopes or []),
         exp=int(expires_at.timestamp()),
@@ -279,9 +279,9 @@ async def revoke_token(
 
 
 async def list_authorizations(
-    session: AsyncSession, tenant_id: str
+    session: AsyncSession, account_id: str
 ) -> list[AuthorizedClientRead]:
-    tokens = await OAuthTokenRepository(session).list_active_for_tenant(tenant_id)
+    tokens = await OAuthTokenRepository(session).list_active_for_account(account_id)
     clients = OAuthClientRepository(session)
     grouped: dict[str, AuthorizedClientRead] = {}
     for token in tokens:
@@ -298,9 +298,9 @@ async def list_authorizations(
 
 
 async def revoke_authorization(
-    session: AsyncSession, tenant_id: str, client_id: str
+    session: AsyncSession, account_id: str, client_id: str
 ) -> None:
-    tokens = await OAuthTokenRepository(session).list_active_for_tenant(tenant_id)
+    tokens = await OAuthTokenRepository(session).list_active_for_account(account_id)
     for token in tokens:
         if token.client_id == client_id and token.revoked_at is None:
             token.revoked_at = _now()

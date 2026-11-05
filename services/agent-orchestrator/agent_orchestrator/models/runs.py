@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -26,7 +26,7 @@ PARENT_KIND_RETRY = "retry"
 PARENT_KIND_SUBAGENT = "subagent"
 
 
-class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class Run(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """一次长任务执行。状态机与 goal 语义见架构 §6.2。"""
 
     __tablename__ = "runs"
@@ -88,7 +88,7 @@ class Run(UUIDMixin, TenantMixin, TimestampMixin, Base):
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
 
-class RunEvent(UUIDMixin, TenantMixin, Base):
+class RunEvent(UUIDMixin, AccountMixin, Base):
     """run 事件溯源:append-only、seq 每 run 单调递增(§6.3)。
 
     id 即 events.EventEnvelope 的事件 ID(消费幂等去重键);
@@ -107,7 +107,7 @@ class RunEvent(UUIDMixin, TenantMixin, Base):
     occurred_at: Mapped[str] = mapped_column(String(64))
 
 
-class PendingInstruction(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class PendingInstruction(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """运行中追加的指令,当前 run 完成后依次触发(§6.5)。"""
 
     __tablename__ = "pending_instructions"
@@ -117,7 +117,7 @@ class PendingInstruction(UUIDMixin, TenantMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default="queued")
 
 
-class Job(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class Job(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """run 执行队列(M0-04):SQLite 轮询 / PG 可换 SKIP LOCKED。
 
     plan/approve/confirm/resume/retry 都作为 job 入队;worker 领取后置
@@ -141,7 +141,7 @@ class Job(UUIDMixin, TenantMixin, TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class RunArtifact(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class RunArtifact(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """run 交付物:一个 run 可以有多件(文本报告 + 技能/工具产出的文件)。
 
     内容位置由 storage 决定:`database` 存本表 `content`(文本)或

@@ -1,5 +1,5 @@
 /**
- * 设备会话卡片:登记新会话与吊销既有会话。
+ * 设备会话卡片:登记新会话与吊销既有会话(账号由 token 决定)。
  */
 import {
   Button,
@@ -10,18 +10,15 @@ import {
   CardTitle,
   Field,
   Input,
-  Select,
+  Tag,
 } from '@beauty/design';
 
-import type { Member, Session } from '@/lib/account-api';
+import type { Session } from '@/lib/account-api';
 import { formatDateTime } from '@/lib/presentation';
 
 type Props = {
-  members: Member[];
   sessions: Session[];
-  sessionUserId: string;
   device: string;
-  setSessionUserId: (value: string) => void;
   setDevice: (value: string) => void;
   canAddSession: boolean;
   addSession: () => void;
@@ -32,11 +29,8 @@ type Props = {
 };
 
 export function SessionsCard({
-  members,
   sessions,
-  sessionUserId,
   device,
-  setSessionUserId,
   setDevice,
   canAddSession,
   addSession,
@@ -46,29 +40,13 @@ export function SessionsCard({
   revokePending,
 }: Props) {
   return (
-    <Card className="mt-6">
+    <Card>
       <CardHeader>
         <CardTitle>设备会话</CardTitle>
-        <CardDescription>
-          多端登录登记(app 预留,§7);吊销后该会话立即失效。
-        </CardDescription>
+        <CardDescription>多端登录登记;吊销后该会话立即失效。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-end gap-3">
-          <Field className="min-w-56 flex-1" label="成员" htmlFor="session-user">
-            <Select
-              id="session-user"
-              value={sessionUserId}
-              onChange={(event) => setSessionUserId(event.target.value)}
-            >
-              <option value="">选择成员…</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.display_name ?? member.email}
-                </option>
-              ))}
-            </Select>
-          </Field>
           <Field
             className="min-w-56 flex-1"
             label="设备"
@@ -81,7 +59,10 @@ export function SessionsCard({
               placeholder="MacBook / Chrome"
             />
           </Field>
-          <Button onClick={addSession} disabled={!canAddSession || addSessionPending}>
+          <Button
+            onClick={addSession}
+            disabled={!canAddSession || addSessionPending}
+          >
             {addSessionPending ? '登记中…' : '登记会话'}
           </Button>
         </div>
@@ -100,9 +81,20 @@ export function SessionsCard({
               >
                 <div>
                   <p className="font-medium">{session.device}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {session.status} · 成员 {session.user_id.slice(0, 8)}… ·{' '}
-                    {formatDateTime(session.created_at, '—')}
+                  <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {session.status === 'active' ? (
+                      <Tag color="success">有效</Tag>
+                    ) : (
+                      <Tag color="neutral">已吊销</Tag>
+                    )}
+                    <span>
+                      创建于 {formatDateTime(session.created_at, '—')}
+                    </span>
+                    {session.last_seen_at ? (
+                      <span>
+                        · 最近活跃 {formatDateTime(session.last_seen_at, '—')}
+                      </span>
+                    ) : null}
                   </p>
                 </div>
                 <Button

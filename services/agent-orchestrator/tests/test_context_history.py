@@ -18,7 +18,7 @@ NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 
 def _msg(role: str, content: str, *, created_at: datetime | None = None) -> ChatMessage:
     return ChatMessage(
-        tenant_id="t-1",
+        account_id="t-1",
         conversation_id="c-1",
         role=role,
         content=content,

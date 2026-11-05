@@ -29,8 +29,8 @@ class FakeKnowledge:
         self.ingested: list[dict] = []
         self.documents: list[dict] = []
 
-    async def search(self, tenant_id: str, query: str, limit: int) -> dict:
-        self.queries.append((tenant_id, query, limit))
+    async def search(self, account_id: str, query: str, limit: int) -> dict:
+        self.queries.append((account_id, query, limit))
         if self.fail:
             raise RuntimeError("知识库挂了")
         return {
@@ -44,7 +44,7 @@ class FakeKnowledge:
 
     async def ingest_document(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         title: str,
         content: str,
@@ -54,7 +54,7 @@ class FakeKnowledge:
             raise RuntimeError("知识库挂了")
         self.ingested.append(
             {
-                "tenant_id": tenant_id,
+                "account_id": account_id,
                 "title": title,
                 "content": content,
                 "source": source,
@@ -68,9 +68,9 @@ class FakeKnowledge:
         self.documents.append(document)
         return document
 
-    async def list_documents(self, tenant_id: str, *, limit: int = 50) -> list[dict]:
+    async def list_documents(self, account_id: str, *, limit: int = 50) -> list[dict]:
         if self.fail:
             raise RuntimeError("知识库挂了")
         return [
-            doc for doc in self.documents if doc.get("tenant_id") in (None, tenant_id)
+            doc for doc in self.documents if doc.get("account_id") in (None, account_id)
         ][:limit]

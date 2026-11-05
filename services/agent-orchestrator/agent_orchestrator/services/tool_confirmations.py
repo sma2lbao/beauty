@@ -126,7 +126,7 @@ def pending_tool_output(tool_name: str) -> str:
 async def create_pending(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     tool_call_id: str,
     tool_name: str,
@@ -134,18 +134,18 @@ async def create_pending(
     arguments: str,
     now: datetime | None = None,
 ) -> ChatToolConfirmation:
-    """落一行 pending 确认;同一 (tenant_id, tool_call_id) 幂等返回既有行。
+    """落一行 pending 确认;同一 (account_id, tool_call_id) 幂等返回既有行。
 
     幂等是流式重放/客户端重试的安全网:唯一约束兜底,这里先读一遍避免
     IntegrityError(读不到再插入,并发窗口由唯一约束兜住,不额外处理)。
     """
     repository = ChatToolConfirmationRepository(session)
-    existing = await repository.get_by_tool_call(tenant_id, tool_call_id)
+    existing = await repository.get_by_tool_call(account_id, tool_call_id)
     if existing is not None:
         return existing
     moment = now or datetime.now(UTC)
     confirmation = ChatToolConfirmation(
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         tool_call_id=tool_call_id,
         tool_name=tool_name,
@@ -162,10 +162,10 @@ class ChatConfirmationRecorder:
     """非流式 chat:与当前请求共用事务(assistant 消息与 pending 一起提交)。"""
 
     def __init__(
-        self, session: AsyncSession, *, tenant_id: str, conversation_id: str
+        self, session: AsyncSession, *, account_id: str, conversation_id: str
     ) -> None:
         self._session = session
-        self._tenant_id = tenant_id
+        self._account_id = account_id
         self._conversation_id = conversation_id
 
     async def record(
@@ -178,7 +178,7 @@ class ChatConfirmationRecorder:
     ) -> PendingConfirmation:
         confirmation = await create_pending(
             self._session,
-            tenant_id=self._tenant_id,
+            account_id=self._account_id,
             conversation_id=self._conversation_id,
             tool_call_id=tool_call_id,
             tool_name=tool_name,
@@ -197,11 +197,11 @@ class StreamConfirmationRecorder:
         self,
         factory: async_sessionmaker[AsyncSession],
         *,
-        tenant_id: str,
+        account_id: str,
         conversation_id: str,
     ) -> None:
         self._factory = factory
-        self._tenant_id = tenant_id
+        self._account_id = account_id
         self._conversation_id = conversation_id
 
     async def record(
@@ -215,7 +215,7 @@ class StreamConfirmationRecorder:
         async with session_scope(self._factory) as session:
             confirmation = await create_pending(
                 session,
-                tenant_id=self._tenant_id,
+                account_id=self._account_id,
                 conversation_id=self._conversation_id,
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -230,12 +230,12 @@ class StreamConfirmationRecorder:
 async def require_pending_confirmation(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     confirmation_id: str,
     now: datetime | None = None,
 ) -> ChatToolConfirmation:
-    """取待确认行并校验状态:不存在/跨租户 404,过期或已处理 409。
+    """取待确认行并校验状态:不存在/跨账号 404,过期或已处理 409。
 
     取行即加排他锁(Postgres 有真实语义,sqlite 为 no-op):本函数只被
     confirm / cancel 调用,同一确认被两个请求并发处理时,后到者等锁,
@@ -243,7 +243,7 @@ async def require_pending_confirmation(
     """
     repository = ChatToolConfirmationRepository(session)
     confirmation = await repository.get_for_conversation_for_update(
-        tenant_id, conversation_id, confirmation_id
+        account_id, conversation_id, confirmation_id
     )
     if confirmation is None:
         raise NotFoundError(
@@ -275,7 +275,7 @@ def _has_tool(toolkit: Any, name: str) -> bool:
 async def confirm(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     confirmation_id: str,
     toolkit: Any,
@@ -288,7 +288,7 @@ async def confirm(
     """
     confirmation = await require_pending_confirmation(
         session,
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         confirmation_id=confirmation_id,
         now=now,
@@ -307,7 +307,7 @@ async def confirm(
     )
     message = await _persist_assistant_content(
         session,
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         content=output,
     )
@@ -324,7 +324,7 @@ async def confirm(
 async def cancel(
     session: AsyncSession,
     *,
-    tenant_id: str,
+    account_id: str,
     conversation_id: str,
     confirmation_id: str,
     now: datetime | None = None,
@@ -332,7 +332,7 @@ async def cancel(
     """取消待确认的写调用:只改状态,不执行工具、不落 assistant 消息。"""
     confirmation = await require_pending_confirmation(
         session,
-        tenant_id=tenant_id,
+        account_id=account_id,
         conversation_id=conversation_id,
         confirmation_id=confirmation_id,
         now=now,

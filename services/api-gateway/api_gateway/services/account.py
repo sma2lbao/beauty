@@ -76,13 +76,10 @@ def session_from_tokens(payload: dict[str, Any]) -> dict[str, Any]:
         "refresh_token": payload["refresh_token"],
         "expires_at": (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat(),
         "user": {
-            "user_id": payload["user_id"],
-            "tenant_id": payload["tenant_id"],
-            "organization_id": payload.get("organization_id", payload["tenant_id"]),
+            "account_id": payload["account_id"],
             "subject": payload["subject"],
             "email": payload["subject"],
             "display_name": None,
-            "role": payload.get("role", "member"),
             "session_id": payload.get("session_id", ""),
         },
     }
@@ -194,7 +191,7 @@ async def issue_stream_token(
     client: httpx.AsyncClient,
     settings: Settings,
     *,
-    tenant_id: str,
+    account_id: str,
     subject: str,
     run_id: str,
 ) -> dict[str, Any]:
@@ -208,7 +205,7 @@ async def issue_stream_token(
         settings,
         "POST",
         "/v1/auth/issue",
-        json={"tenant_id": tenant_id, "subject": subject},
+        json={"account_id": account_id, "subject": subject},
         headers={SECRET_HEADER: settings.internal_secret},
     )
     return {

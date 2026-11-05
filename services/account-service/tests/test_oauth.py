@@ -1,4 +1,4 @@
-"""OAuth:授权 URL、state 签名、code 交换与首次登录建租户。"""
+"""OAuth:授权 URL、state 签名、code 交换与首次登录建账号。"""
 
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ def _handler(request: httpx.Request) -> httpx.Response:
 
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
+        _env_file=None,
         env="dev",
         database_url=f"sqlite+aiosqlite:///{tmp_path}/oauth.db",
         auto_create_tables=True,
@@ -77,17 +78,27 @@ def test_google_authorize_and_exchange(oauth_client: TestClient) -> None:
     assert exchanged.status_code == 200
     token = exchanged.json()
     assert token["subject"] == "oauth-user@example.com"
+    assert len(token["account_id"]) == 32
     assert token["access_token"]
     assert token["refresh_token"]
+    # 响应扁平,不再有组织/角色嵌套
+    assert set(token) == {
+        "access_token",
+        "refresh_token",
+        "token_type",
+        "expires_in",
+        "account_id",
+        "subject",
+        "session_id",
+    }
 
-    # 同一身份再次登录复用用户/组织
+    # 同一身份再次登录复用账号(不重复建账号)
     second = oauth_client.post(
         "/v1/auth/oauth/google/exchange",
         json={"code": "provider-code", "state": body["state"]},
     )
     assert second.status_code == 200
-    assert second.json()["user_id"] == token["user_id"]
-    assert second.json()["tenant_id"] == token["tenant_id"]
+    assert second.json()["account_id"] == token["account_id"]
 
 
 def test_github_exchange_uses_primary_email(oauth_client: TestClient) -> None:
@@ -108,6 +119,7 @@ def test_github_exchange_uses_primary_email(oauth_client: TestClient) -> None:
 
 def test_oauth_provider_disabled(tmp_path: Path) -> None:
     settings = Settings(
+        _env_file=None,
         env="dev",
         database_url=f"sqlite+aiosqlite:///{tmp_path}/no-oauth.db",
         auto_create_tables=True,

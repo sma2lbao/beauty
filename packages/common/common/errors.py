@@ -62,7 +62,7 @@ class QuotaExceededError(AppError):
 
 
 class UnauthorizedError(AppError):
-    """未认证或凭证不可信(缺失/过期/签名不符/缺租户 claim)。"""
+    """未认证或凭证不可信(缺失/过期/签名不符/缺账号 claim)。"""
 
     status = 401
 

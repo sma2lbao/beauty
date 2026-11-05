@@ -72,10 +72,10 @@ def _payload(
     }
 
 
-async def list_todos(session: AsyncSession, tenant_id: str, run_id: str) -> TodoRead:
+async def list_todos(session: AsyncSession, account_id: str, run_id: str) -> TodoRead:
     """读端:快照 + 最新 revision(未写过清单时 revision=0,数组为空)。"""
 
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     todos = sanitize_todos(run.todos)
     revision = 0
     latest = await RunEventRepository(session).latest_of_type(
@@ -120,8 +120,8 @@ def build_todo_tool(
             return _error(str(exc))
         async with session_scope(session_factory) as session:
             run = await session.get(Run, context.run_id)
-            if run is None or run.tenant_id != context.tenant_id:
-                return _error("run 不存在或不属于当前租户")
+            if run is None or run.account_id != context.account_id:
+                return _error("run 不存在或不属于当前账号")
             events = RunEventRepository(session)
             revision = await events.count_of_type(run.id, TODO_UPDATED_EVENT) + 1
             if sanitize_todos(run.todos) == todos:

@@ -11,11 +11,11 @@ from common.errors import UpstreamError
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.token_broker import TokenBroker
 
-ISSUE_BODY = {"access_token": "tok-1", "expires_in": 3600, "tenant_id": "t-a"}
+ISSUE_BODY = {"access_token": "tok-1", "expires_in": 3600, "account_id": "t-a"}
 
 
 async def test_token_issued_with_secret_header() -> None:
-    """换发:带 X-Internal-Secret 与目标租户;返回 token。"""
+    """换发:带 X-Internal-Secret 与目标账号;返回 token。"""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -29,12 +29,12 @@ async def test_token_issued_with_secret_header() -> None:
     )
     assert await broker.token("t-a") == "tok-1"
     assert seen[0].headers["X-Internal-Secret"] == "s3cret"
-    assert json.loads(seen[0].read())["tenant_id"] == "t-a"
+    assert json.loads(seen[0].read())["account_id"] == "t-a"
     await broker.aclose()
 
 
 async def test_token_cached_until_expiry() -> None:
-    """缓存:未过期前同租户复用,零重复请求。"""
+    """缓存:未过期前同账号复用,零重复请求。"""
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -78,7 +78,7 @@ async def test_broker_requires_internal_secret() -> None:
 
 
 async def test_downstream_client_injects_bearer_only() -> None:
-    """注入:下游请求只带 Bearer——租户在 token claim 里,不再发租户头。"""
+    """注入:下游请求只带 Bearer——账号在 token claim 里,不再发账号头。"""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -91,10 +91,10 @@ async def test_downstream_client_injects_bearer_only() -> None:
         token_provider=_stub_token,
     )
     await client.search("t-a", "q", 3)
-    assert "X-Tenant-Id" not in seen[0].headers
+    assert "X-Account-Id" not in seen[0].headers
     assert seen[0].headers["Authorization"] == "Bearer tok-for-t-a"
     await client.aclose()
 
 
-async def _stub_token(tenant: str) -> str:
-    return f"tok-for-{tenant}"
+async def _stub_token(account: str) -> str:
+    return f"tok-for-{account}"

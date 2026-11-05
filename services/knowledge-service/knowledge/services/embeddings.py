@@ -17,7 +17,7 @@ import httpx
 from common.errors import UpstreamError
 from common.logging import current_context
 from common.middleware import inject_request_headers
-from common.security import SECRET_HEADER, TENANT_HEADER
+from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
 LOCAL_PROVIDER = "local"
 GATEWAY_PROVIDER = "gateway"
@@ -66,18 +66,18 @@ class LocalHashingEmbeddingProvider:
 def _identity_headers_hook(
     internal_secret: str,
 ) -> Callable[[httpx.Request], Awaitable[None]]:
-    """出站钩子:先透传 request_id/traceparent,再补租户与内部密钥。
+    """出站钩子:先透传 request_id/traceparent,再补账号与内部密钥。
 
-    llm-gateway 按租户解析 BYOK 密钥,依赖 X-Tenant-Id + X-Internal-Secret 两个头;
-    租户取当前 contextvars(请求边界由 common.middleware 绑定),内部密钥取本服务
+    llm-gateway 按账号解析 BYOK 密钥,依赖 X-Account-Id + X-Internal-Secret 两个头;
+    账号取当前 contextvars(请求边界由 common.middleware 绑定),内部密钥取本服务
     配置。两个头都用 setdefault:上游显式给了头时不覆盖。
     """
 
     async def _hook(request: httpx.Request) -> None:
         await inject_request_headers(request)
-        tenant_id = current_context().get("tenant_id")
-        if tenant_id:
-            request.headers.setdefault(TENANT_HEADER, str(tenant_id))
+        account_id = current_context().get("account_id")
+        if account_id:
+            request.headers.setdefault(ACCOUNT_HEADER, str(account_id))
         if internal_secret:
             request.headers.setdefault(SECRET_HEADER, internal_secret)
 
@@ -98,7 +98,7 @@ class GatewayEmbeddingProvider:
         internal_secret: str = "",
     ) -> None:
         self.model = model
-        # 网关 BYOK:租户头 + 内部密钥头(密钥留空时只带租户,走平台默认密钥)
+        # 网关 BYOK:账号头 + 内部密钥头(密钥留空时只带账号,走平台默认密钥)
         self.internal_secret = internal_secret
         self._client = httpx.AsyncClient(
             base_url=base_url,

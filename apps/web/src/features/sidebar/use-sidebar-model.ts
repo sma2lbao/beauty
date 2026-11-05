@@ -13,7 +13,6 @@ import {
 import { useDeferredValue, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { accountApi } from '@/lib/account-api';
 import { accountLabel } from '@/lib/auth';
 import type { Conversation } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
@@ -46,7 +45,7 @@ export function useSidebarModel() {
     title: string;
   } | null>(null);
 
-  // 取租户内全部会话(不传 workspace_id),客户端再按当前工作区过滤;
+  // 取账号内全部会话(不传 workspace_id),客户端再按当前工作区过滤;
   // 搜索与归档视图仍交给服务端分页。
   const conversationsQuery = useInfiniteQuery({
     queryKey: [...queryKeys.conversations, 'all', showArchived, deferredQuery],
@@ -69,11 +68,6 @@ export function useSidebarModel() {
   const accountQuery = useQuery({
     queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
-  });
-  const organizationQuery = useQuery({
-    queryKey: queryKeys.organization,
-    queryFn: accountApi.organization,
-    retry: false,
   });
 
   const conversations =
@@ -191,8 +185,7 @@ export function useSidebarModel() {
   }
 
   const account = accountQuery.data ?? null;
-  const plan = organizationQuery.data?.plan;
-  const planLabel = plan ? plan + ' 版' : '个人工作区';
+  const accountHint = '个人账号';
 
   const confirmDelete = (conversation: Conversation) => {
     setMenuFor(null);
@@ -222,7 +215,7 @@ export function useSidebarModel() {
     latestRunByConversation,
     conversationsQuery,
     account,
-    planLabel,
+    accountHint,
     listLoading,
     listFailed,
     // 视图状态

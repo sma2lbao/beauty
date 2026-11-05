@@ -49,7 +49,7 @@ async def _session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
 
 def _run(**overrides: Any) -> Run:
     values: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "title": "整理本周日程",
         "goal": "把本周日程整理成一份清单",
         "workspace_id": "ws-1",
@@ -117,7 +117,7 @@ async def test_build_run_context_injects_sections(tmp_path: Path) -> None:
     # 请求是 run 行的快照值(管线不认识 ORM)
     request = provider.requests[0]
     assert request.run_id == run.id
-    assert request.tenant_id == "t-1"
+    assert request.account_id == "t-1"
     assert request.workspace_id == "ws-1"
     assert request.goal == "把本周日程整理成一份清单"
     assert request.memory_block == "用户偏好中文回复"

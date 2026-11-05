@@ -2,7 +2,7 @@
 
 tool-service 不在本机读写用户文件:所有文件工具都经 workspace-service 的
 沙箱 exec 执行。同一对话/任务复用同一个沙箱,文件在多次工具调用之间可见;
-多副本一致性由下游 (tenant_id, scope_key) 唯一约束兜底。
+多副本一致性由下游 (account_id, scope_key) 唯一约束兜底。
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from tool_service.constants import SANDBOX_TOOL_TTL_SECONDS
 from tool_service.core.config import Settings
 from tool_service.services.helpers import WORKSPACE_ROOT
 
-#: scope_key 前缀:对话级优先,其次任务级,最后租户级兜底。
+#: scope_key 前缀:对话级优先,其次任务级,最后账号级兜底。
 SCOPE_CONVERSATION_PREFIX = "conversation:"
 SCOPE_RUN_PREFIX = "run:"
-SCOPE_TENANT_PREFIX = "tenant:"
+SCOPE_ACCOUNT_PREFIX = "account:"
 #: 服务身份(写进内部 JWT 的 subject,便于下游审计)。
 SERVICE_SUBJECT = "svc-tool"
 
@@ -29,12 +29,12 @@ class SandboxProvider(Protocol):
     """tool-service 需要的沙箱能力(测试用假实现即可)。"""
 
     async def ensure(
-        self, tenant_id: str, *, scope_key: str, run_id: str | None = None
+        self, account_id: str, *, scope_key: str, run_id: str | None = None
     ) -> str: ...
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -43,19 +43,19 @@ class SandboxProvider(Protocol):
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult: ...
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> None: ...
+    async def touch(self, account_id: str, sandbox_id: str) -> None: ...
 
     async def aclose(self) -> None: ...
 
 
 def scope_key_for(
-    tenant_id: str,
+    account_id: str,
     *,
     sandbox_scope: str | None = None,
     conversation_id: str | None = None,
     run_id: str | None = None,
 ) -> str:
-    """决定沙箱复用粒度:显式 scope > 对话 > 任务 > 租户。"""
+    """决定沙箱复用粒度:显式 scope > 对话 > 任务 > 账号。"""
 
     if sandbox_scope:
         return sandbox_scope
@@ -63,7 +63,7 @@ def scope_key_for(
         return SCOPE_CONVERSATION_PREFIX + conversation_id
     if run_id:
         return SCOPE_RUN_PREFIX + run_id
-    return SCOPE_TENANT_PREFIX + tenant_id
+    return SCOPE_ACCOUNT_PREFIX + account_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,10 +74,10 @@ class HttpSandboxProvider:
     ttl_seconds: int = SANDBOX_TOOL_TTL_SECONDS
 
     async def ensure(
-        self, tenant_id: str, *, scope_key: str, run_id: str | None = None
+        self, account_id: str, *, scope_key: str, run_id: str | None = None
     ) -> str:
         info, _created = await self.sandbox.ensure(
-            tenant_id,
+            account_id,
             scope_key=scope_key,
             ttl_seconds=self.ttl_seconds,
             run_id=run_id,
@@ -86,7 +86,7 @@ class HttpSandboxProvider:
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: list[str],
         *,
@@ -95,7 +95,7 @@ class HttpSandboxProvider:
         timeout_seconds: int | None = None,
     ) -> SandboxExecResult:
         return await self.sandbox.exec(
-            tenant_id,
+            account_id,
             sandbox_id,
             argv,
             cwd=cwd,
@@ -103,8 +103,8 @@ class HttpSandboxProvider:
             timeout_seconds=timeout_seconds,
         )
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> None:
-        await self.sandbox.touch(tenant_id, sandbox_id)
+    async def touch(self, account_id: str, sandbox_id: str) -> None:
+        await self.sandbox.touch(account_id, sandbox_id)
 
     async def aclose(self) -> None:
         await self.sandbox.aclose()

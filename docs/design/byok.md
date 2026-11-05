@@ -1,12 +1,12 @@
-# BYOK（租户自带模型密钥）设计
+# BYOK（账号自带模型密钥）设计
 
 > 状态：已落地（2026-10-26，06 P0-6 收口；2026-11-05 增补「自定义提供商 + 自定义模型清单」，见 D11 与 §3.3/§5） · 单一真源
 > 关联：[architecture.md](../architecture.md) §3 服务职责、§7 认证与计费、§13 风险；[gap-2026-10/06-refresh-2026-10-25.md](../gap-2026-10/06-refresh-2026-10-25.md) P0-6；[local-dev.md](../local-dev.md) §4.1；[observability.md](../observability.md) §5；服务侧操作说明见 [account-service README](../../services/account-service/README.md) 与 [llm-gateway README](../../services/llm-gateway/README.md)
-> 定位：本文是「BYOK（Bring Your Own Key，租户自带模型密钥）」的单一真源——记录信任边界、接口契约、解析与回退语义、KMS/轮换口径与限制；架构层面的服务边界以 [architecture.md](../architecture.md) 为准，未完成事项以 [roadmap.md](../roadmap.md) 与 gap 册为准。
+> 定位：本文是「BYOK（Bring Your Own Key，账号自带模型密钥）」的单一真源——记录信任边界、接口契约、解析与回退语义、KMS/轮换口径与限制；架构层面的服务边界以 [architecture.md](../architecture.md) 为准，未完成事项以 [roadmap.md](../roadmap.md) 与 gap 册为准。
 
 ## 1. 摘要
 
-一句话：租户在设置页填自己的 provider key，account-service 用**信封加密 + 可切换 KMS**（local / Vault Transit）落库；llm-gateway 在每次模型/嵌入请求时，按 `X-Tenant-Id` + `X-Internal-Secret` 向 account 的内部端点换取明文并短时缓存；**拿不到就回退平台 `settings.api_key`**，BYOK 故障不影响出模型。
+一句话：账号在设置页填自己的 provider key，account-service 用**信封加密 + 可切换 KMS**（local / Vault Transit）落库；llm-gateway 在每次模型/嵌入请求时，按 `X-Account-Id` + `X-Internal-Secret` 向 account 的内部端点换取明文并短时缓存；**拿不到就回退平台 `settings.api_key`**，BYOK 故障不影响出模型。
 
 现状（2026-10-26）：P0-6「BYOK 存而不用」已收口——调用链已打通，落点如下。
 
@@ -16,12 +16,12 @@
 | 信封 v2 + KMS 抽象（local / vault）       | `services/account-service/account/core/byok_kms.py`                                   | ✅            |
 | 内部明文解析端点（服务间）                | `GET /v1/byok/{provider}/secret`                                                      | ✅            |
 | 批量重加密端点                            | `POST /v1/byok/rotate`                                                                | ✅            |
-| 网关按租户解析 + 缓存 + 回退              | `services/llm-gateway/llm_gateway/services/byok.py`                                   | ✅            |
+| 网关按账号解析 + 缓存 + 回退              | `services/llm-gateway/llm_gateway/services/byok.py`                                   | ✅            |
 | completion / stream / embeddings 三路接入 | `llm_gateway/api/v1/completions.py`、`embeddings.py`                                  | ✅            |
-| 调用方透传租户与内部密钥                  | orchestrator `services/llm.py`、knowledge `services/embeddings.py`                    | ✅            |
+| 调用方透传账号与内部密钥                  | orchestrator `services/llm.py`、knowledge `services/embeddings.py`                    | ✅            |
 | 日志脱敏与指标                            | `llm_gateway/services/byok.py`、`metrics.py`                                          | ✅            |
 | 自定义模型清单（每 provider 一组模型 id） | `byok_keys.models`、`account/services/insights.py`                                    | ✅ §3.1/§4.1  |
-| 租户自定义模型进入模型目录与白名单        | `llm_gateway/services/byok_catalog.py`、`api/v1/models.py`、`completion_routing.py`   | ✅ §3.3       |
+| 账号自定义模型进入模型目录与白名单        | `llm_gateway/services/byok_catalog.py`、`api/v1/models.py`、`completion_routing.py`   | ✅ §3.3       |
 | 独立审计表（谁在何时用了哪把 key）        | —                                                                                     | ❌ 见 §12     |
 | 成本归因区分 byok / platform 来源         | —                                                                                     | ❌ 属 06 P0-1 |
 
@@ -31,22 +31,22 @@
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | **调用时解析**（lazy resolve），不做「配置下发 / 事件同步 / 进程内密钥表」                                                                                              | 密钥是低频变更、高频读取；下发要处理多实例一致性、失效广播与内存驻留，收益远小于一次内部 GET + TTL 缓存                                                                                                                                                                                                          |
 | D2  | 明文**只在内部 HTTP 上短暂存在**，account 是唯一持有密文的服务；网关不共享数据库                                                                                        | 密文与解密材料同处一地（account + KMS），网关只做消费者；共享库会把加密边界摊到两个服务                                                                                                                                                                                                                          |
-| D3  | 内部端点用 **`X-Internal-Secret` + `X-Tenant-Id`** 双头；用户端点走 JWT                                                                                                 | 密钥必须按租户取、且不能让任意内网进程拿到；`common.security.internal_secret` 统一常量时间比较（`packages/common/common/security/internal_secret.py:19-46`）                                                                                                                                                     |
+| D3  | 内部端点用 **`X-Internal-Secret` + `X-Account-Id`** 双头；用户端点走 JWT                                                                                                | 密钥必须按账号取、且不能让任意内网进程拿到；`common.security.internal_secret` 统一常量时间比较（`packages/common/common/security/internal_secret.py:19-46`）                                                                                                                                                     |
 | D4  | 解析失败（未配置 / 404 / 超时 / 5xx / 坏响应）**一律回退平台 key**，不把 BYOK 故障升级成 5xx                                                                            | BYOK 是增强不是前置条件（`llm-gateway/README.md` §BYOK）；自带 key 的用户配错时仍应能对话                                                                                                                                                                                                                        |
-| D5  | 网关侧 **TTL 缓存 300s + 负缓存 30s + LRU 1024 + 单飞锁**                                                                                                               | 每次调用都打 account 会把内网 RT 叠加到所有模型请求上；负缓存避免「没配 key」的租户每请求都穿透；单飞锁防缓存击穿                                                                                                                                                                                                |
+| D5  | 网关侧 **TTL 缓存 300s + 负缓存 30s + LRU 1024 + 单飞锁**                                                                                                               | 每次调用都打 account 会把内网 RT 叠加到所有模型请求上；负缓存避免「没配 key」的账号每请求都穿透；单飞锁防缓存击穿                                                                                                                                                                                                |
 | D6  | 密文用**信封 v2** `{"v":2,"kms","kid","ct"}`，KMS 通过 `BYOKKms` Protocol 可插拔                                                                                        | 记录「哪把 KEK 加密」才能在轮换期同时解开新旧密文；Protocol 让测试注入内存 KMS、生产换 Vault 不改业务代码                                                                                                                                                                                                        |
 | D7  | 迁移走**懒轮换 + 批量轮换端点**（读取时顺手 rewrap，失败不阻断）                                                                                                        | 存量密文不必停机迁移；批量端点给运维一次收敛机会，逐条容错（`{rotated,failed}`）                                                                                                                                                                                                                                 |
-| D8  | 租户 key **只覆盖 `api_key`，不覆盖 `api_base`**                                                                                                                        | 允许租户改 base URL 等于把平台流量导到任意地址（SSRF/数据外流），且与「唯一模型出口」的架构约束冲突                                                                                                                                                                                                              |
-| D9  | 明文不进日志/事件/前端；观测只落租户、provider、`key_hint`、`source`、`kid`                                                                                             | 与 [observability.md](../observability.md) §5 的禁落清单一致；`key_hint` 只有末 4 位，用于「是不是我这把 key」的排查                                                                                                                                                                                             |
+| D8  | 账号 key **只覆盖 `api_key`，不覆盖 `api_base`**                                                                                                                        | 允许账号改 base URL 等于把平台流量导到任意地址（SSRF/数据外流），且与「唯一模型出口」的架构约束冲突                                                                                                                                                                                                              |
+| D9  | 明文不进日志/事件/前端；观测只落账号、provider、`key_hint`、`source`、`kid`                                                                                             | 与 [observability.md](../observability.md) §5 的禁落清单一致；`key_hint` 只有末 4 位，用于「是不是我这把 key」的排查                                                                                                                                                                                             |
 | D10 | 06 P0-6 选择「**接入**」而不是「明确下线」                                                                                                                              | 存储与 UI 早已存在，下线要删表删端点；接入成本是「一个内部 GET + 一个消费点」，且打通了后续成本归因（P0-1）的按来源记账前提                                                                                                                                                                                      |
-| D11 | 每条 BYOK 记录附带**自定义模型清单**（`models`），provider 名允许**任意合法标识**；网关把「租户自定义模型」并入模型目录与白名单（`平台 AVAILABLE_MODELS ∪ 租户自定义`） | 用自带 key 的租户往往需要平台默认列表之外的模型（如 `openai/gpt-4o-mini`）；若不放行，网关 `AVAILABLE_MODELS` 会 400 `llm.model_not_allowed`，BYOK 形同虚设。清单只**扩大允许集合**，不改变 key 归属与路由终点（`api_base` 仍由 D8 禁止覆盖）；provider 名本就在 account 侧是自由字符串，UI 硬编码三个是无谓限制 |
+| D11 | 每条 BYOK 记录附带**自定义模型清单**（`models`），provider 名允许**任意合法标识**；网关把「账号自定义模型」并入模型目录与白名单（`平台 AVAILABLE_MODELS ∪ 账号自定义`） | 用自带 key 的账号往往需要平台默认列表之外的模型（如 `openai/gpt-4o-mini`）；若不放行，网关 `AVAILABLE_MODELS` 会 400 `llm.model_not_allowed`，BYOK 形同虚设。清单只**扩大允许集合**，不改变 key 归属与路由终点（`api_base` 仍由 D8 禁止覆盖）；provider 名本就在 account 侧是自由字符串，UI 硬编码三个是无谓限制 |
 
 ### 1.2 范围（做了什么 / 没做什么）
 
 | 维度 | 已做                                                                                | 未做（见 §11、§12）                                                                            |
 | ---- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | 存储 | 信封 v2、local/vault KMS、历史裸 token 兼容、懒轮换                                 | 独立审计表、密钥有效性校验（保存时不试打）                                                     |
-| 消费 | completion、stream、embeddings 三路按租户取用                                       | 按租户的速率隔离 / 并发闸（属 06 其他项）                                                      |
+| 消费 | completion、stream、embeddings 三路按账号取用                                       | 按账号的速率隔离 / 并发闸（属 06 其他项）                                                      |
 | 运维 | rotate 端点、指标、结构化日志                                                       | compose 已注入 `ACCOUNT_BASE_URL`（见 §8.3）                                                   |
 | 计费 | —                                                                                   | `usage_events` 不记来源，BYOK 与平台额度暂无法在账单上区分                                     |
 | 模型 | 每 provider 的自定义模型清单、内部 catalog 端点、网关白名单放行与 `/v1/models` 合并 | 自定义 `api_base`（D8 禁止）、模型可用性探测（保存时不试打 provider）、按模型粒度的白名单/配额 |
@@ -63,14 +63,14 @@
                               BYOKKms：LocalByokKms | VaultByokKms
                                          ▲
                                          │ GET /v1/byok/{provider}/secret
-                                         │ X-Internal-Secret + X-Tenant-Id
+                                         │ X-Internal-Secret + X-Account-Id
                                          │ （明文，Cache-Control: no-store）
                                           │ GET /v1/byok/catalog（同一双头，只回模型 id 并集）
 agent-orchestrator :8002 ──┐             │
 knowledge-service :8006 ──┤──> llm-gateway :8003 ──> provider（DeepSeek/…）
-                           │      │ TTL 缓存 (tenant, provider)
+                           │      │ TTL 缓存 (account, provider)
                            │      └─ 取不到 → settings.api_key（平台 key）
-                           └─ 出站钩子注入 X-Tenant-Id + X-Internal-Secret
+                           └─ 出站钩子注入 X-Account-Id + X-Internal-Secret
 ```
 
 **明文生命周期**（这是本设计的核心约束）：
@@ -82,12 +82,12 @@ knowledge-service :8006 ──┤──> llm-gateway :8003 ──> provider（De
 
 **信任边界**：
 
-| 区域                                                     | 谁可信                     | 说明                                                                                                  |
-| -------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 用户端点 `/v1/byok*`（GET/PUT/DELETE）                   | 已登录租户                 | JWT 租户 claim 决定读写哪一行；响应只有掩码                                                           |
-| 内部端点 `/v1/byok/{provider}/secret`、`/v1/byok/rotate` | 持有内部共享密钥的内网服务 | **留空即关闭**（`common.security.internal_secret` 未配置时一律 401）；租户由调用方 `X-Tenant-Id` 指定 |
-| 网关模型端点 `/v1/completions*`、`/v1/embeddings`        | 同上（内部密钥）           | 租户头**可选**：缺失即不做 BYOK 查询，用平台 key                                                      |
-| 平台管理员 / 日志系统                                    | 不可见明文                 | 日志只有 `key_hint`；但平台管理员能读数据库 + KMS 配置，仍可解出明文（见 §9）                         |
+| 区域                                                     | 谁可信                     | 说明                                                                                                   |
+| -------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 用户端点 `/v1/byok*`（GET/PUT/DELETE）                   | 已登录账号                 | JWT 账号 claim 决定读写哪一行；响应只有掩码                                                            |
+| 内部端点 `/v1/byok/{provider}/secret`、`/v1/byok/rotate` | 持有内部共享密钥的内网服务 | **留空即关闭**（`common.security.internal_secret` 未配置时一律 401）；账号由调用方 `X-Account-Id` 指定 |
+| 网关模型端点 `/v1/completions*`、`/v1/embeddings`        | 同上（内部密钥）           | 账号头**可选**：缺失即不做 BYOK 查询，用平台 key                                                       |
+| 平台管理员 / 日志系统                                    | 不可见明文                 | 日志只有 `key_hint`；但平台管理员能读数据库 + KMS 配置，仍可解出明文（见 §9）                          |
 
 ## 3. 端到端时序
 
@@ -105,9 +105,9 @@ knowledge-service :8006 ──┤──> llm-gateway :8003 ──> provider（De
 ### 3.2 网关解析（缓存未命中）
 
 ```text
-orchestrator/knowledge → llm-gateway POST /v1/completions（X-Tenant-Id, X-Internal-Secret）
+orchestrator/knowledge → llm-gateway POST /v1/completions（X-Account-Id, X-Internal-Secret）
   gateway: provider = model 前缀（无 "/" → "" → 不查 BYOK）
-           resolver.resolve(tenant, provider)
+           resolver.resolve(account, provider)
              命中缓存? 是 → status=cache_hit，直接用（move_to_end）
              否 → 单飞锁内二次检查 → GET account/v1/byok/{provider}/secret
                     200 → ResolvedKey(source="byok") + 正缓存 300s，status=byok
@@ -121,24 +121,24 @@ SSE 流式路径在**返回流之前**完成解析——回退决策一次性生
 ### 3.3 自定义模型目录（网关侧，2026-11-05 增补）
 
 ```text
-orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X-Internal-Secret）
+orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Account-Id + X-Internal-Secret）
   gateway: 平台列表（AVAILABLE_MODELS，空则 [default_model]）在前
-           若租户头存在且内部密钥校验通过 → ByokCatalog.custom_models(tenant)
-             GET account/v1/byok/catalog（双头，no-store）→ 租户自定义模型并集
-             按租户 TTL 缓存（BYOK_CATALOG_CACHE_TTL_SECONDS，默认 60s；失败不缓存）
+           若账号头存在且内部密钥校验通过 → ByokCatalog.custom_models(account)
+             GET account/v1/byok/catalog（双头，no-store）→ 账号自定义模型并集
+             按账号 TTL 缓存（BYOK_CATALOG_CACHE_TTL_SECONDS，默认 60s；失败不缓存）
            合并去重，自定义条目 owned_by="byok"，default_model 不变
-  completions: 请求模型 ∈ 平台列表 ∪ 该租户自定义模型 → 放行；否则 400 llm.model_not_allowed
+  completions: 请求模型 ∈ 平台列表 ∪ 该账号自定义模型 → 放行；否则 400 llm.model_not_allowed
 ```
 
-合并的**准入条件**是「租户头 + 内部密钥校验通过」：`GET /v1/models` 本身仍免鉴权（只读元数据），
-但只有可信调用方（orchestrator 等内网服务）才能看到某租户的自定义模型，避免匿名调用方用
-任意 `X-Tenant-Id` 枚举他人的模型清单。
+合并的**准入条件**是「账号头 + 内部密钥校验通过」：`GET /v1/models` 本身仍免鉴权（只读元数据），
+但只有可信调用方（orchestrator 等内网服务）才能看到某账号的自定义模型，避免匿名调用方用
+任意 `X-Account-Id` 枚举他人的模型清单。
 
 ### 3.4 轮换
 
 ```text
 运维改配置（BYOK_KEK_ID + BYOK_SECRET，旧密钥挪进 BYOK_PREVIOUS_SECRETS）→ 重启 account
-运维逐租户 POST /v1/byok/rotate（内部头）→ 逐条 rewrap 到当前 kid
+运维逐账号 POST /v1/byok/rotate（内部头）→ 逐条 rewrap 到当前 kid
   ← {rotated, failed}；failed>0 时看 byok.rotate_failed 日志定位 provider
 确认 failed=0 → 删除 BYOK_PREVIOUS_SECRETS → 网关缓存在 TTL（≤300s）内自然过期
 ```
@@ -153,48 +153,48 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 | `PUT`    | `/v1/byok/{provider}`        | JWT      | `{api_key?, models?}`：`api_key` 8–4096 字符、**可省略 = 保留原密钥**；`models` 整体替换（省略 = `[]`）→ `BYOKRead` | `400 byok.invalid_provider` / `byok.invalid_model` / `byok.invalid_key`（首次保存缺 key）、`422`（pydantic 长度） |
 | `DELETE` | `/v1/byok/{provider}`        | JWT      | 204                                                                                                                 | `400 byok.not_found`（不存在时）                                                                                  |
 | `GET`    | `/v1/byok/{provider}/secret` | 内部双头 | `BYOKSecretRead{provider,api_key,key_hint,key_id}`，`Cache-Control: no-store`                                       | `404 byok.not_found`、`500 byok.unreadable`、`502 byok.kms_unavailable`                                           |
-| `GET`    | `/v1/byok/catalog`           | 内部双头 | `{"models":[...]}`：该租户全部 BYOK 的 `models` 并集（按 provider 排序展开、去重保序），`Cache-Control: no-store`   | —（鉴权失败 401）                                                                                                 |
+| `GET`    | `/v1/byok/catalog`           | 内部双头 | `{"models":[...]}`：该账号全部 BYOK 的 `models` 并集（按 provider 排序展开、去重保序），`Cache-Control: no-store`   | —（鉴权失败 401）                                                                                                 |
 | `POST`   | `/v1/byok/rotate`            | 内部双头 | `{rotated,failed}`                                                                                                  | 逐条容错不抛错；配置缺失在启动期就失败                                                                            |
 
-`BYOKRead` 含 `provider / masked_key / key_hint / updated_at / models`——**明文永不出现在用户面响应**。`models` 是纯模型 id 清单（如 `openai/gpt-4o-mini`），不含密钥信息；同一 provider 的 `models` 是**整表替换**（省略即清空），避免前端做差量合并。内部端点缺失 `X-Tenant-Id` 时返回 `401 auth.tenant_missing`。
+`BYOKRead` 含 `provider / masked_key / key_hint / updated_at / models`——**明文永不出现在用户面响应**。`models` 是纯模型 id 清单（如 `openai/gpt-4o-mini`），不含密钥信息；同一 provider 的 `models` 是**整表替换**（省略即清空），避免前端做差量合并。内部端点缺失 `X-Account-Id` 时返回 `401 auth.account_missing`。
 
 ### 4.2 网关消费契约
 
 | 维度          | 约定                                                                                                                              | 依据                                                 |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | 内部密钥头    | `X-Internal-Secret`，与 account / orchestrator / knowledge 同源                                                                   | `common.security.SECRET_HEADER`                      |
-| 租户头        | `X-Tenant-Id`，**可选**；缺失 = 不做 BYOK 查询                                                                                    | `TENANT_HEADER`；对话直答等无租户场景也能跑          |
+| 账号头        | `X-Account-Id`，**可选**；缺失 = 不做 BYOK 查询                                                                                   | `ACCOUNT_HEADER`；对话直答等无账号场景也能跑         |
 | provider 来源 | completions: `model` 的 `"<provider>/<model>"` 前缀；无 `/` → 空串（不猜）；embeddings: `model` 或 `default_embedding_model` 前缀 | `llm_gateway/api/v1/completions.py`、`embeddings.py` |
 | 解析时机      | 进入 provider 调用前；流式在返回 SSE 之前                                                                                         | 避免半路换 key                                       |
 | 明文覆盖范围  | 只覆盖 `api_key`；`api_base` / 超时 / 重试仍用平台配置                                                                            | 见 D8                                                |
-| 模型目录      | `GET /v1/models` = 平台列表 + 该租户 BYOK 自定义模型（`owned_by="byok"`）；仅当同时带 `X-Tenant-Id` 且内部密钥校验通过才合并      | §3.3                                                 |
-| 白名单        | `AVAILABLE_MODELS` 非空时，允许集合 = 平台列表 ∪ 该租户自定义模型；无租户/查询失败则只按平台列表                                  | D11                                                  |
+| 模型目录      | `GET /v1/models` = 平台列表 + 该账号 BYOK 自定义模型（`owned_by="byok"`）；仅当同时带 `X-Account-Id` 且内部密钥校验通过才合并     | §3.3                                                 |
+| 白名单        | `AVAILABLE_MODELS` 非空时，允许集合 = 平台列表 ∪ 该账号自定义模型；无账号/查询失败则只按平台列表                                  | D11                                                  |
 | 失败语义      | 返回 `None` → 调用方用 `settings.api_key`，**不是 5xx**                                                                           | D4                                                   |
 
-受内部密钥保护的端点：`POST /v1/completions`、`POST /v1/completions/stream`、`POST /v1/embeddings`；`GET /v1/models` 仍公开（只读元数据）；带合法内部头 + `X-Tenant-Id` 时额外合并该租户自定义模型（见 §3.3），不带则只回平台列表。
+受内部密钥保护的端点：`POST /v1/completions`、`POST /v1/completions/stream`、`POST /v1/embeddings`；`GET /v1/models` 仍公开（只读元数据）；带合法内部头 + `X-Account-Id` 时额外合并该账号自定义模型（见 §3.3），不带则只回平台列表。
 
 ### 4.3 回退矩阵（网关视角）
 
 | 场景                                          | 结果                   | 指标 `status` | 日志                              |
 | --------------------------------------------- | ---------------------- | ------------- | --------------------------------- |
 | `BYOK_ENABLED=false` 或内部密钥为空           | 平台 key               | `disabled`    | 无                                |
-| 无 `X-Tenant-Id` 或无 provider                | 平台 key               | `disabled`    | 无                                |
-| 租户未配置该 provider（404）                  | 平台 key（负缓存 30s） | `negative`    | 无（负缓存是正常态）              |
-| 正缓存命中                                    | 租户 key               | `cache_hit`   | `byok_resolved`（source=byok）    |
-| 解析成功                                      | 租户 key               | `byok`        | `byok_resolved`                   |
+| 无 `X-Account-Id` 或无 provider               | 平台 key               | `disabled`    | 无                                |
+| 账号未配置该 provider（404）                  | 平台 key（负缓存 30s） | `negative`    | 无（负缓存是正常态）              |
+| 正缓存命中                                    | 账号 key               | `cache_hit`   | `byok_resolved`（source=byok）    |
+| 解析成功                                      | 账号 key               | `byok`        | `byok_resolved`                   |
 | account 超时 / 5xx / 坏 JSON / 空 key         | 平台 key（不缓存）     | `error`       | `byok_lookup_failed`（含 reason） |
 | 密文解不开 / KMS 不可用（account 侧 500/502） | 平台 key（不缓存）     | `error`       | 同上（含 status 与响应片段）      |
 
-「不缓存 error」是有意的：account 抖一下不该让租户在 30s 内持续掉回平台额度。
+「不缓存 error」是有意的：account 抖一下不该让账号在 30s 内持续掉回平台额度。
 
 ## 5. 网关侧缓存实现
 
-- 结构：`OrderedDict[(tenant_id, provider)] → (ResolvedKey | None, expires_at)`，用 `_MISS` 哨兵区分「未命中」与「负缓存（值为 None）」；
+- 结构：`OrderedDict[(account_id, provider)] → (ResolvedKey | None, expires_at)`，用 `_MISS` 哨兵区分「未命中」与「负缓存（值为 None）」；
 - 淘汰：超过 `BYOK_CACHE_MAX_ENTRIES`（默认 1024）时 `popitem(last=False)` LRU；
-- 击穿：未命中路径在**单把 `asyncio.Lock`** 内二次检查，同一 (tenant, provider) 并发只穿透一次；
+- 击穿：未命中路径在**单把 `asyncio.Lock`** 内二次检查，同一 (account, provider) 并发只穿透一次；
 - TTL：正缓存 `BYOK_CACHE_TTL_SECONDS`（默认 300s，**也是轮换/删除的生效延迟上限**）；负缓存 `BYOK_NEGATIVE_CACHE_TTL_SECONDS`（默认 30s）；
-- 自定义模型目录另有独立缓存：`ByokCatalog` 按 `tenant_id` 缓存 `BYOK_CATALOG_CACHE_TTL_SECONDS`（默认 60s），失败不缓存（与密钥解析同风格）；该缓存在**网关侧**，改名/删除 `models` 后最多 60s 生效；
-- 语义：缓存键是 (租户, provider)，不含请求，因此不会串租户；删除/更换 key 后最多 300s 才生效——这是可接受的运维窗口，不是缺陷（需要立即生效就重启网关或调小 TTL）。
+- 自定义模型目录另有独立缓存：`ByokCatalog` 按 `account_id` 缓存 `BYOK_CATALOG_CACHE_TTL_SECONDS`（默认 60s），失败不缓存（与密钥解析同风格）；该缓存在**网关侧**，改名/删除 `models` 后最多 60s 生效；
+- 语义：缓存键是 (账号, provider)，不含请求，因此不会串账号；删除/更换 key 后最多 300s 才生效——这是可接受的运维窗口，不是缺陷（需要立即生效就重启网关或调小 TTL）。
 
 ## 6. 密钥存储：信封 v2 与 KMS
 
@@ -240,7 +240,7 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 1. 生成新密钥材料，确定新 `kid`（如 `local-2`）；
 2. 把当前 `BYOK_SECRET` 以旧 kid 为 key 写进 `BYOK_PREVIOUS_SECRETS`；
 3. 设新的 `BYOK_KEK_ID` + `BYOK_SECRET`，重启 account（旧密文仍可解）；
-4. 逐租户调 `POST /v1/byok/rotate`（内部头）→ 确认 `failed=0`；失败条看 `byok.rotate_failed` 的 provider 定位；
+4. 逐账号调 `POST /v1/byok/rotate`（内部头）→ 确认 `failed=0`；失败条看 `byok.rotate_failed` 的 provider 定位；
 5. 观察 `llm_byok_lookups_total{status="error"}` 无抬头后，删除 `BYOK_PREVIOUS_SECRETS` 再重启；
 6. 网关侧无需动作：缓存 TTL 内自然切换。
 
@@ -252,9 +252,9 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 
 | 事件                         | 字段                                                   | 用途                                                         |
 | ---------------------------- | ------------------------------------------------------ | ------------------------------------------------------------ |
-| `byok_resolved`              | `tenant_id` / `provider` / `key_hint` / `source`       | 证明「这次请求用的是谁家的 key」                             |
-| `byok.rotated`               | `tenant_id` / `key_id` / `rotated`                     | 轮换收口证据                                                 |
-| `byok.rotate_failed`         | `tenant_id` / `provider` / `key_id` / `code`           | 定位不可解/不可重加密的条目                                  |
+| `byok_resolved`              | `account_id` / `provider` / `key_hint` / `source`      | 证明「这次请求用的是谁家的 key」                             |
+| `byok.rotated`               | `account_id` / `key_id` / `rotated`                    | 轮换收口证据                                                 |
+| `byok.rotate_failed`         | `account_id` / `provider` / `key_id` / `code`          | 定位不可解/不可重加密的条目                                  |
 | `byok_catalog_lookup_failed` | `reason` / `status`                                    | 排查自定义模型目录不可达（只影响模型目录合并，不影响出模型） |
 | `byok_lookup_failed`         | `reason`（异常类名）/ `status` / 响应片段（≤200 字符） | 排查 account 不可达/契约漂移                                 |
 
@@ -264,9 +264,9 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 
 - `error` 持续抬头 → account 不可达或契约漂移（先看 `byok_lookup_failed`）；
 - `cache_hit` 占比骤降 → 缓存被清/键空间异常；
-- `byok` 占比骤降而 `negative` 抬头 → 租户 key 被删或 provider 名对不上。
+- `byok` 占比骤降而 `negative` 抬头 → 账号 key 被删或 provider 名对不上。
 
-**审计缺口**：当前没有「哪个租户的哪次调用用了 BYOK」的持久审计表，只有日志与指标。若后续要计费/合规，需要在网关落独立审计表（见 §12）。
+**审计缺口**：当前没有「哪个账号的哪次调用用了 BYOK」的持久审计表，只有日志与指标。若后续要计费/合规，需要在网关落独立审计表（见 §12）。
 
 ## 8. 配置
 
@@ -290,19 +290,19 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 | 变量                                           | 默认                    | 说明                                                                              |
 | ---------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
 | `LLM_GATEWAY__INTERNAL_SECRET`                 | 空                      | **同时是内部鉴权与 BYOK 总开关**：留空 → 模型端点不鉴权且 BYOK 停用（仅本地 dev） |
-| `LLM_GATEWAY__BYOK_ENABLED`                    | `true`                  | 显式关掉租户 key 解析（配合内部密钥形成双层开关）                                 |
+| `LLM_GATEWAY__BYOK_ENABLED`                    | `true`                  | 显式关掉账号 key 解析（配合内部密钥形成双层开关）                                 |
 | `LLM_GATEWAY__ACCOUNT_BASE_URL`                | `http://127.0.0.1:8001` | 解析地址；容器内必须覆盖                                                          |
 | `LLM_GATEWAY__ACCOUNT_TIMEOUT_SECONDS`         | `5`                     | 解析超时（超时即回退平台 key）                                                    |
 | `LLM_GATEWAY__BYOK_CACHE_TTL_SECONDS`          | `300`                   | 正缓存 TTL = 轮换生效延迟上限                                                     |
 | `LLM_GATEWAY__BYOK_NEGATIVE_CACHE_TTL_SECONDS` | `30`                    | 404 负缓存                                                                        |
 | `LLM_GATEWAY__BYOK_CACHE_MAX_ENTRIES`          | `1024`                  | LRU 上限                                                                          |
-| `LLM_GATEWAY__BYOK_CATALOG_CACHE_TTL_SECONDS`  | `60`                    | 租户自定义模型目录缓存 TTL（受影响：改 `models` 后 `/v1/models` 的生效延迟）      |
+| `LLM_GATEWAY__BYOK_CATALOG_CACHE_TTL_SECONDS`  | `60`                    | 账号自定义模型目录缓存 TTL（受影响：改 `models` 后 `/v1/models` 的生效延迟）      |
 
 ### 8.3 调用方与编排
 
 | 位置                      | 变量                                       | 说明                                                                       |
 | ------------------------- | ------------------------------------------ | -------------------------------------------------------------------------- |
-| agent-orchestrator        | `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET` | 由 `_identity_headers_hook` 注入 `X-Internal-Secret`；租户头取自请求上下文 |
+| agent-orchestrator        | `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET` | 由 `_identity_headers_hook` 注入 `X-Internal-Secret`；账号头取自请求上下文 |
 | knowledge-service         | `KNOWLEDGE__INTERNAL_SECRET`               | 嵌入走网关时的内部密钥；留空则网关拒绝解析（回退平台 key）                 |
 | deploy/docker-compose.yml | `INTERNAL_SECRET`                          | account / AO / gateway / knowledge / tool / api-gateway 同源注入           |
 
@@ -312,33 +312,33 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 
 ## 9. 威胁模型与限制
 
-| 威胁                              | 缓解                                                                                          | 残余风险                                                                                                                                                                       |
-| --------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 数据库备份/误导出泄漏租户 key     | 信封加密；KEK 不在库里（vault）或至少是独立配置（local）                                      | local 模式下整机失守 = KEK 与密文同时泄漏                                                                                                                                      |
-| 内网任意进程调用 `/secret` 拿明文 | 内部密钥 + 租户头；密钥留空时端点关闭                                                         | 内部密钥是全局共享单值，泄漏面是整个内网；无 per-caller 身份                                                                                                                   |
-| 跨租户越权读 key                  | 租户来自 JWT claim / 上游上下文；内部端点强制 `X-Tenant-Id`；仓储按租户过滤（跨租户一律 404） | 网关信任上游头的租户值——上游若被攻破，可指定任意租户                                                                                                                           |
-| 日志/事件泄漏                     | 只落 `key_hint`、`source`、`kid`；禁落清单见 observability                                    | 调试时手工打开 `LOG_CONTENT` 不会带 key（key 不在请求体里）                                                                                                                    |
-| 明文在内存/内网被抓取             | 内部 HTTP + `no-store`；不做磁盘缓存                                                          | 内网明文 HTTP（compose 默认），生产应叠加 mTLS/服务网格                                                                                                                        |
-| 租户自定义模型名放大允许集合      | 只扩大「允许调用哪些模型」，不改 key 归属与路由终点（D8/D11）；清单属于租户自己的 key         | 租户 key 失效/未配置时仍会回退平台 key（D4），理论上可借自定义模型名调用平台未列出的模型 —— 靠 TTL 60s 缓存与「按租户隔离」收敛，必要时置空该租户 `models` 或关 `BYOK_ENABLED` |
-| 匿名枚举他人自定义模型            | `/v1/models` 只对「合法内部密钥 + 租户头」合并租户目录；匿名调用只回平台列表                  | 内部密钥是全局共享值，泄漏面同其它内部端点                                                                                                                                     |
-| 恶意的 `api_base`                 | 不支持（D8）                                                                                  | —                                                                                                                                                                              |
-| 缓存串租户                        | 缓存键含 `tenant_id`                                                                          | —                                                                                                                                                                              |
-| BYOK 故障放大成整体不可用         | 全部失败路径回退平台 key                                                                      | 用户以为在用自己 key、实际烧平台额度——只能靠指标/日志发现                                                                                                                      |
-| 无限流                            | 无 per-tenant 速率隔离                                                                        | 一个租户的 key 故障不会影响他人，但 BYOK 不提供配额保护（属其他 P0）                                                                                                           |
-| 批量轮换被滥用                    | 内部端点鉴权（与解析共用同一把内部密钥）                                                      | 无分页、无管理员级独立鉴权：持密钥者可一次 rewrap 全部租户条目                                                                                                                 |
+| 威胁                              | 缓解                                                                                           | 残余风险                                                                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 数据库备份/误导出泄漏账号 key     | 信封加密；KEK 不在库里（vault）或至少是独立配置（local）                                       | local 模式下整机失守 = KEK 与密文同时泄漏                                                                                                                                      |
+| 内网任意进程调用 `/secret` 拿明文 | 内部密钥 + 账号头；密钥留空时端点关闭                                                          | 内部密钥是全局共享单值，泄漏面是整个内网；无 per-caller 身份                                                                                                                   |
+| 跨账号越权读 key                  | 账号来自 JWT claim / 上游上下文；内部端点强制 `X-Account-Id`；仓储按账号过滤（跨账号一律 404） | 网关信任上游头的账号值——上游若被攻破，可指定任意账号                                                                                                                           |
+| 日志/事件泄漏                     | 只落 `key_hint`、`source`、`kid`；禁落清单见 observability                                     | 调试时手工打开 `LOG_CONTENT` 不会带 key（key 不在请求体里）                                                                                                                    |
+| 明文在内存/内网被抓取             | 内部 HTTP + `no-store`；不做磁盘缓存                                                           | 内网明文 HTTP（compose 默认），生产应叠加 mTLS/服务网格                                                                                                                        |
+| 账号自定义模型名放大允许集合      | 只扩大「允许调用哪些模型」，不改 key 归属与路由终点（D8/D11）；清单属于账号自己的 key          | 账号 key 失效/未配置时仍会回退平台 key（D4），理论上可借自定义模型名调用平台未列出的模型 —— 靠 TTL 60s 缓存与「按账号隔离」收敛，必要时置空该账号 `models` 或关 `BYOK_ENABLED` |
+| 匿名枚举他人自定义模型            | `/v1/models` 只对「合法内部密钥 + 账号头」合并账号目录；匿名调用只回平台列表                   | 内部密钥是全局共享值，泄漏面同其它内部端点                                                                                                                                     |
+| 恶意的 `api_base`                 | 不支持（D8）                                                                                   | —                                                                                                                                                                              |
+| 缓存串账号                        | 缓存键含 `account_id`                                                                          | —                                                                                                                                                                              |
+| BYOK 故障放大成整体不可用         | 全部失败路径回退平台 key                                                                       | 用户以为在用自己 key、实际烧平台额度——只能靠指标/日志发现                                                                                                                      |
+| 无限流                            | 无 per-account 速率隔离                                                                        | 一个账号的 key 故障不会影响他人，但 BYOK 不提供配额保护（属其他 P0）                                                                                                           |
+| 批量轮换被滥用                    | 内部端点鉴权（与解析共用同一把内部密钥）                                                       | 无分页、无管理员级独立鉴权：持密钥者可一次 rewrap 全部账号条目                                                                                                                 |
 
-**明确不承诺**：不防平台管理员（能读 KMS 配置即可解密）；不做 per-tenant 限流；不做密钥有效性校验（保存时不会去试打，配错 key 只在真正调用时以 provider 错误体现）。
+**明确不承诺**：不防平台管理员（能读 KMS 配置即可解密）；不做 per-account 限流；不做密钥有效性校验（保存时不会去试打，配错 key 只在真正调用时以 provider 错误体现）。
 
 ## 10. 回滚与降级
 
 | 诉求                       | 操作                                                           | 影响                                                                                                     |
 | -------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 立刻关掉 BYOK              | `LLM_GATEWAY__BYOK_ENABLED=false` 重启网关                     | 所有租户回平台 key；account 数据不动，可随时开回                                                         |
-| 网关回滚到旧版本           | 回滚镜像                                                       | 旧版本忽略租户头/不读 `/secret`，静默回退平台 key——可用但账单口径变化，需同步告知                        |
-| 撤销全部租户 key           | 清空 account `INTERNAL_SECRET` 重启                            | 解析端点关闭（401）→ 回退平台 key；该值若与网关共用，清空会连带取消模型端点鉴权，生产不建议这样止血      |
+| 立刻关掉 BYOK              | `LLM_GATEWAY__BYOK_ENABLED=false` 重启网关                     | 所有账号回平台 key；account 数据不动，可随时开回                                                         |
+| 网关回滚到旧版本           | 回滚镜像                                                       | 旧版本忽略账号头/不读 `/secret`，静默回退平台 key——可用但账单口径变化，需同步告知                        |
+| 撤销全部账号 key           | 清空 account `INTERNAL_SECRET` 重启                            | 解析端点关闭（401）→ 回退平台 key；该值若与网关共用，清空会连带取消模型端点鉴权，生产不建议这样止血      |
 | account 回滚到信封 v2 之前 | —                                                              | **会坏**：旧版本把信封当裸 token 解，得到 `500 byok.unreadable`。回滚前需先重录/导出 key，或保留 v2 版本 |
-| vault → local              | —                                                              | **不可逆**：local 解不开 vault 密文；需先用 vault 解密再以 local 重加密（或让租户重录）                  |
-| 关闭某租户的自定义模型     | `PUT /v1/byok/{provider}` 带 `models: []`（或删掉该 provider） | 网关目录缓存 ≤60s 后生效；该租户请求不在平台列表内的模型重新 400 `llm.model_not_allowed`                 |
+| vault → local              | —                                                              | **不可逆**：local 解不开 vault 密文；需先用 vault 解密再以 local 重加密（或让账号重录）                  |
+| 关闭某账号的自定义模型     | `PUT /v1/byok/{provider}` 带 `models: []`（或删掉该 provider） | 网关目录缓存 ≤60s 后生效；该账号请求不在平台列表内的模型重新 400 `llm.model_not_allowed`                 |
 | KMS 不可用                 | `502 byok.kms_unavailable` → 网关回退平台 key                  | 调用面不 5xx；但轮换与 secret 端点不可用                                                                 |
 
 原则：**BYOK 的每个开关都只影响「用谁的 key」，不影响「能不能出模型」**；唯一例外是回滚 account 版本（会破坏密文可读性），因此升级 account 时必须确认回滚路径。
@@ -354,7 +354,7 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 | 网关解析           | `services/llm-gateway/tests/test_byok.py`                           | disabled/negative/error/byok/cache_hit 五态、缓存与 LRU、单飞、回退                                                  |
 | 内部鉴权           | `services/llm-gateway/tests/test_internal_auth.py`                  | `X-Internal-Secret` 比较、缺失/错误密钥                                                                              |
 | account 自定义模型 | `services/account-service/tests/test_insights.py`                   | `models` 归一（去重/前缀/长度/条数上限）、`api_key` 省略=保留原密文、首存缺 key 400、`/byok/catalog` 并集与 no-store |
-| 网关模型目录       | `services/llm-gateway/tests/test_byok_catalog.py`、`test_models.py` | 目录缓存 TTL 与失败不缓存、`/v1/models` 合并条件（租户头 + 内部密钥）、白名单放行自定义模型、流式路径同样放行        |
+| 网关模型目录       | `services/llm-gateway/tests/test_byok_catalog.py`、`test_models.py` | 目录缓存 TTL 与失败不缓存、`/v1/models` 合并条件（账号头 + 内部密钥）、白名单放行自定义模型、流式路径同样放行        |
 
 门禁结果（2026-10-26，本轮改动后）：account-service 62 passed / 78.91%（阈值 77）；llm-gateway 70 passed / 97.58%（阈值 95）；knowledge-service 26 passed；agent-orchestrator 663 passed（阈值 82）。
 
@@ -379,12 +379,12 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Tenant-Id + X
 
 ## 12. 后续工作
 
-1. **审计表**：网关落 `byok_audit(tenant, provider, key_hint, key_id, used_at)`（采样或按请求），支撑「谁在用 BYOK」与合规查询；
+1. **审计表**：网关落 `byok_audit(account, provider, key_hint, key_id, used_at)`（采样或按请求），支撑「谁在用 BYOK」与合规查询；
 2. **成本归因**：`usage_events` 加 `key_source`（byok/platform），让「BYOK 不扣 credits」可被账单验证（06 P0-1）；
-3. **租户级限流**：BYOK 不提供速率保护，per-tenant 并发/速率闸仍在 06 清单里；
+3. **账号级限流**：BYOK 不提供速率保护，per-account 并发/速率闸仍在 06 清单里；
 4. **密钥有效性校验**：保存时可选做一次轻量探活（如 `GET /models`），把「配错 key」从调用期提前到保存期；
 5. **前端状态**：面板显示「已生效 / 上次使用时间 / 最近一次解析失败」；
-6. **Vault 生产化**：HA、令牌轮转、Transit key 轮换与 per-tenant key 隔离；
+6. **Vault 生产化**：HA、令牌轮转、Transit key 轮换与 per-account key 隔离；
 7. **内网加密**：mTLS / 服务网格，消除内部明文 HTTP 的残余风险；
-8. **rotate 运维面**：分页 / 按 provider 过滤与管理员级独立鉴权，避免单次全租户扫描；
-9. **自定义模型目录治理**：`/v1/byok/catalog` 目前一次性返回租户全部模型 id（上限 32 条/provider），若将来放开条数需加分页或按 provider 过滤；模型可用性探测（保存时试打 provider `/models`）也在此列。
+8. **rotate 运维面**：分页 / 按 provider 过滤与管理员级独立鉴权，避免单次全账号扫描；
+9. **自定义模型目录治理**：`/v1/byok/catalog` 目前一次性返回账号全部模型 id（上限 32 条/provider），若将来放开条数需加分页或按 provider 过滤；模型可用性探测（保存时试打 provider `/models`）也在此列。

@@ -96,7 +96,7 @@ def _tool_risk(server: MCPServer, tool: MCPToolRead) -> ToolRisk:
     1. destructiveHint=True → DANGER(服务端自己声明有破坏性,压过一切);
     2. readOnlyHint=True → READ;
     3. 命中内置预设(按 url 匹配)且工具名命中只读前缀 → READ;
-    4. 租户信任该 server(auto_approve) → WRITE(自动执行);
+    4. 账号信任该 server(auto_approve) → WRITE(自动执行);
     5. 其余 → DANGER(对话路径没有审批流,一律不执行)。
     """
     annotations = tool.annotations if isinstance(tool.annotations, dict) else {}
@@ -116,7 +116,7 @@ def _tool_risk(server: MCPServer, tool: MCPToolRead) -> ToolRisk:
 
 async def tool_specs(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     *,
     secret: str,
     pool: StdioSandboxPool | None = None,
@@ -133,7 +133,7 @@ async def tool_specs(
     None / 空序列维持现状(全部已启用的 server)。
     """
     servers = await MCPServerRepository(session).list_scoped(
-        tenant_id, MCPServer.enabled.is_(True), order_by=[MCPServer.created_at]
+        account_id, MCPServer.enabled.is_(True), order_by=[MCPServer.created_at]
     )
     if server_ids:
         wanted = set(server_ids)
@@ -153,7 +153,7 @@ async def tool_specs(
             if not wrapped.name or not _allowed(server, wrapped.name):
                 continue
             handler = (
-                _make_stdio_handler(tenant_id, server, wrapped.name, secret, pool)
+                _make_stdio_handler(account_id, server, wrapped.name, secret, pool)
                 if stdio
                 else _make_http_handler(
                     server,
@@ -178,7 +178,7 @@ async def tool_specs(
 
 
 async def resolve_selected(
-    session: AsyncSession, tenant_id: str, server_ids: Sequence[str]
+    session: AsyncSession, account_id: str, server_ids: Sequence[str]
 ) -> list[MCPServer]:
     """解析用户显式引用的 MCP server:去重保序,未知 404、停用 409。
 
@@ -188,7 +188,7 @@ async def resolve_selected(
     if not unique:
         return []
     servers = await MCPServerRepository(session).list_scoped(
-        tenant_id, MCPServer.id.in_(unique)
+        account_id, MCPServer.id.in_(unique)
     )
     by_id = {server.id: server for server in servers}
     missing = [server_id for server_id in unique if server_id not in by_id]

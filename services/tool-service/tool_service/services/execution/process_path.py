@@ -75,7 +75,7 @@ class ProcessExecutionMixin:
         """
 
         scope_key = scope_key_for(
-            context.tenant_id,
+            context.account_id,
             sandbox_scope=context.sandbox_scope,
             conversation_id=context.conversation_id,
             run_id=context.run_id,
@@ -83,7 +83,7 @@ class ProcessExecutionMixin:
         try:
             sandbox_id = await asyncio.wait_for(
                 self._sandbox.ensure(
-                    context.tenant_id, scope_key=scope_key, run_id=context.run_id
+                    context.account_id, scope_key=scope_key, run_id=context.run_id
                 ),
                 timeout + limits.SANDBOX_CALL_GRACE_SECONDS,
             )
@@ -102,7 +102,7 @@ class ProcessExecutionMixin:
         try:
             result = await asyncio.wait_for(
                 self._sandbox.exec(
-                    context.tenant_id,
+                    context.account_id,
                     sandbox_id,
                     argv,
                     cwd=cwd,

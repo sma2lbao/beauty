@@ -43,7 +43,7 @@ export type ConnectorProvider = {
   provider: string;
   display_name: string;
   description: string;
-  /** 授权方式:oauth_user | oauth_tenant | token | … */
+  /** 授权方式:oauth_user | token | … */
   auth_kind: string;
   /** 期望的 OAuth scope 清单 */
   scopes: string[];
@@ -98,7 +98,7 @@ export type ConnectorConnection = {
   auth_kind?: string | null;
   /** provider 侧稳定账号 ID(各 provider 自己的用户/机器人标识) */
   provider_account_id?: string | null;
-  /** provider 侧工作区/租户 ID(各 provider 自己的组织标识) */
+  /** provider 侧工作区/账号 ID(各 provider 自己的归属标识) */
   external_workspace?: string | null;
   /** 已授予的 scope */
   scopes?: string[] | null;

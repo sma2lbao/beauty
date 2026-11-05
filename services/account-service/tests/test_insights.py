@@ -13,17 +13,23 @@ from fastapi.testclient import TestClient
 
 from account.main import create_app
 from account.services import insights as insights_service
-from tests.conftest import _IDP, OTHER, TENANT, _settings
+from tests.conftest import (
+    _IDP,
+    ACCOUNT,
+    ACCOUNT_ID,
+    OTHER_ACCOUNT,
+    OTHER_ACCOUNT_ID,
+    _settings,
+)
 
+# 内部端点:共享密钥 + 显式 X-Account-Id(不认用户 token)
 INTERNAL = {
-    **TENANT,
     "X-Internal-Secret": "internal-secret",
-    "X-Tenant-Id": "org-1",
+    "X-Account-Id": ACCOUNT_ID,
 }
 INTERNAL_OTHER = {
-    **OTHER,
     "X-Internal-Secret": "internal-secret",
-    "X-Tenant-Id": "org-2",
+    "X-Account-Id": OTHER_ACCOUNT_ID,
 }
 
 
@@ -54,18 +60,18 @@ def _seed_byok(
     encrypted_key: str,
     *,
     key_hint: str = "1234",
-    tenant_id: str = "org-1",
+    account_id: str = ACCOUNT_ID,
     models: list[str] | None = None,
 ) -> None:
     """直接写库:模拟升级前的存量密文(裸 Fernet token 等)。"""
     with sqlite3.connect(tmp_path / "test.db") as conn:
         conn.execute(
             "INSERT INTO byok_keys"
-            " (id, tenant_id, provider, encrypted_key, key_hint, models)"
+            " (id, account_id, provider, encrypted_key, key_hint, models)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 uuid4().hex,
-                tenant_id,
+                account_id,
                 provider,
                 encrypted_key,
                 key_hint,
@@ -75,19 +81,19 @@ def _seed_byok(
 
 
 def _stored_models(
-    tmp_path: Path, provider: str = "openai", tenant_id: str = "org-1"
+    tmp_path: Path, provider: str = "openai", account_id: str = ACCOUNT_ID
 ) -> list[str]:
     with sqlite3.connect(tmp_path / "test.db") as conn:
         row = conn.execute(
-            "SELECT models FROM byok_keys WHERE tenant_id = ? AND provider = ?",
-            (tenant_id, provider),
+            "SELECT models FROM byok_keys WHERE account_id = ? AND provider = ?",
+            (account_id, provider),
         ).fetchone()
     return json.loads(row[0]) if row is not None else []
 
 
 def test_usage_summary_empty_and_recorded(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        empty = client.get("/v1/usage/summary", headers=TENANT)
+        empty = client.get("/v1/usage/summary", headers=ACCOUNT)
         assert empty.status_code == 200
         assert empty.json() == {
             "today_tokens": 0,
@@ -109,7 +115,7 @@ def test_usage_summary_empty_and_recorded(tmp_path: Path) -> None:
         )
         assert recorded.status_code == 201
 
-        summary = client.get("/v1/usage/summary", headers=TENANT).json()
+        summary = client.get("/v1/usage/summary", headers=ACCOUNT).json()
         assert summary["today_tokens"] == 15
         assert summary["month_tokens"] == 15
         assert summary["today_events"] == 1
@@ -124,7 +130,7 @@ def test_usage_internal_secret_required(tmp_path: Path) -> None:
         response = client.post(
             "/v1/usage/events",
             json={"model": "m", "prompt_tokens": 1, "completion_tokens": 1},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
     assert response.status_code == 401
     assert response.json()["code"] == "auth.internal_forbidden"
@@ -135,7 +141,7 @@ def test_byok_upsert_mask_list_delete(tmp_path: Path) -> None:
         created = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 200
         body = created.json()
@@ -143,25 +149,25 @@ def test_byok_upsert_mask_list_delete(tmp_path: Path) -> None:
         assert body["masked_key"] == "••••5678"
         assert "sk-secret" not in str(body)
 
-        listing = client.get("/v1/byok", headers=TENANT).json()
+        listing = client.get("/v1/byok", headers=ACCOUNT).json()
         assert [item["provider"] for item in listing] == ["openai"]
-        # 跨租户不可见
-        assert client.get("/v1/byok", headers=OTHER).json() == []
+        # 跨账号不可见
+        assert client.get("/v1/byok", headers=OTHER_ACCOUNT).json() == []
 
         updated = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-updated-00009999"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert updated.json()["masked_key"] == "••••9999"
 
-        assert client.delete("/v1/byok/openai", headers=TENANT).status_code == 204
-        assert client.get("/v1/byok", headers=TENANT).json() == []
+        assert client.delete("/v1/byok/openai", headers=ACCOUNT).status_code == 204
+        assert client.get("/v1/byok", headers=ACCOUNT).json() == []
 
 
 def test_usage_quota_snapshot(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        # 未配置配额:三个维度都是未限制,已用量 0
+        # 账号不存在 / quota 为空:三个维度都是未限制(fail-open),已用量 0
         empty = client.get(
             "/v1/usage/quota",
             headers=INTERNAL,
@@ -173,12 +179,22 @@ def test_usage_quota_snapshot(tmp_path: Path) -> None:
             "used_tokens": 0,
         }
 
-        updated = client.patch(
-            "/v1/organization",
-            json={"quota": {"monthly_tokens": 100, "max_concurrent_runs": 2}},
-            headers=TENANT,
-        )
-        assert updated.status_code == 200
+        # 配额落在账号行(users.quota),由服务端维护,不再有组织端点可改
+        with sqlite3.connect(tmp_path / "test.db") as conn:
+            conn.execute(
+                "INSERT INTO users (id, subject, email, display_name, status, quota)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    ACCOUNT_ID,
+                    "acc-1@example.com",
+                    "acc-1@example.com",
+                    "acc-1",
+                    "active",
+                    json.dumps({"monthly_tokens": 100, "max_concurrent_runs": 2}),
+                ),
+            )
+            conn.commit()
+
         client.post(
             "/v1/usage/events",
             json={"model": "m", "prompt_tokens": 30, "completion_tokens": 10},
@@ -198,7 +214,7 @@ def test_usage_quota_snapshot(tmp_path: Path) -> None:
 
 def test_usage_quota_requires_internal_secret(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        response = client.get("/v1/usage/quota", headers=TENANT)
+        response = client.get("/v1/usage/quota", headers=ACCOUNT)
     assert response.status_code == 401
     assert response.json()["code"] == "auth.internal_forbidden"
 
@@ -211,7 +227,7 @@ def test_byok_secret_internal_resolve(tmp_path: Path) -> None:
         created = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 200
 
@@ -226,7 +242,7 @@ def test_byok_secret_internal_resolve(tmp_path: Path) -> None:
             "key_id": "local-1",
         }
 
-        # 跨租户内部调用等价于不存在(不泄漏存在性)
+        # 跨账号内部调用等价于不存在(不泄漏存在性)
         cross = client.get("/v1/byok/openai/secret", headers=INTERNAL_OTHER)
         assert cross.status_code == 404
         assert cross.json()["code"] == "byok.not_found"
@@ -237,17 +253,17 @@ def test_byok_secret_requires_internal_auth(tmp_path: Path) -> None:
         client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
-        no_secret = client.get("/v1/byok/openai/secret", headers=TENANT)
-        no_tenant = client.get(
+        no_secret = client.get("/v1/byok/openai/secret", headers=ACCOUNT)
+        no_account = client.get(
             "/v1/byok/openai/secret",
-            headers={**TENANT, "X-Internal-Secret": "internal-secret"},
+            headers={**ACCOUNT, "X-Internal-Secret": "internal-secret"},
         )
     assert no_secret.status_code == 401
     assert no_secret.json()["code"] == "auth.internal_forbidden"
-    assert no_tenant.status_code == 401
-    assert no_tenant.json()["code"] == "auth.tenant_missing"
+    assert no_account.status_code == 401
+    assert no_account.json()["code"] == "auth.account_missing"
 
 
 def test_byok_secret_missing_provider(tmp_path: Path) -> None:
@@ -262,7 +278,7 @@ def test_byok_put_stores_v2_envelope(tmp_path: Path) -> None:
         client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         stored = _stored_keys(tmp_path)["openai"]
     envelope = json.loads(stored)
@@ -301,7 +317,7 @@ def test_byok_rotate_endpoint(tmp_path: Path) -> None:
         result = client.post("/v1/byok/rotate", headers=INTERNAL)
         assert result.status_code == 200
         assert result.json() == {"rotated": 2, "failed": 0}
-        # 租户隔离:别的租户没有 key,统计为 0 而不是报错
+        # 账号隔离:别的账号没有 key,统计为 0 而不是报错
         other = client.post("/v1/byok/rotate", headers=INTERNAL_OTHER)
         assert other.json() == {"rotated": 0, "failed": 0}
 
@@ -324,7 +340,7 @@ def test_byok_rotate_endpoint(tmp_path: Path) -> None:
 
 def test_byok_rotate_requires_internal_secret(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        response = client.post("/v1/byok/rotate", headers=TENANT)
+        response = client.post("/v1/byok/rotate", headers=ACCOUNT)
     assert response.status_code == 401
     assert response.json()["code"] == "auth.internal_forbidden"
 
@@ -409,7 +425,7 @@ def test_byok_logs_never_contain_plaintext(tmp_path: Path, monkeypatch) -> None:
         client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-super-secret-abcdef"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert client.get("/v1/byok/openai/secret", headers=INTERNAL).status_code == 200
         assert client.post("/v1/byok/rotate", headers=INTERNAL).status_code == 200
@@ -417,7 +433,7 @@ def test_byok_logs_never_contain_plaintext(tmp_path: Path, monkeypatch) -> None:
     dumped = json.dumps(log.calls, ensure_ascii=False)
     assert "sk-super-secret-abcdef" not in dumped
     rotated = next(fields for event, fields in log.calls if event == "byok.rotated")
-    assert rotated == {"tenant_id": "org-1", "key_id": "local-1", "rotated": 1}
+    assert rotated == {"account_id": ACCOUNT_ID, "key_id": "local-1", "rotated": 1}
 
 
 # ── BYOK 自定义模型清单(models 列)与内部 catalog 端点 ──────────────────────
@@ -437,12 +453,12 @@ def test_byok_upsert_models_normalized_and_listed(tmp_path: Path) -> None:
                     "openai/gpt-4o-mini",
                 ],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 200
         assert created.json()["models"] == ["openai/gpt-4o-mini", "openai/gpt-4o"]
 
-        listing = client.get("/v1/byok", headers=TENANT).json()
+        listing = client.get("/v1/byok", headers=ACCOUNT).json()
         assert listing[0]["models"] == ["openai/gpt-4o-mini", "openai/gpt-4o"]
         assert _stored_models(tmp_path) == ["openai/gpt-4o-mini", "openai/gpt-4o"]
 
@@ -452,12 +468,12 @@ def test_byok_models_omitted_clears_previous_list(tmp_path: Path) -> None:
         client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678", "models": ["openai/gpt-4o"]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         replaced = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678", "models": ["openai/o3-mini"]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert replaced.json()["models"] == ["openai/o3-mini"]
 
@@ -465,7 +481,7 @@ def test_byok_models_omitted_clears_previous_list(tmp_path: Path) -> None:
         cleared = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
     assert cleared.json()["models"] == []
     assert _stored_models(tmp_path) == []
@@ -476,7 +492,7 @@ def test_byok_models_only_update_keeps_key(tmp_path: Path) -> None:
         created = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.json()["key_hint"] == "5678"
         before = _stored_keys(tmp_path)["openai"]
@@ -488,7 +504,7 @@ def test_byok_models_only_update_keeps_key(tmp_path: Path) -> None:
             {"api_key": "", "models": ["openai/gpt-4o"]},
             {"api_key": "   ", "models": []},
         ):
-            updated = client.put("/v1/byok/openai", json=body, headers=TENANT)
+            updated = client.put("/v1/byok/openai", json=body, headers=ACCOUNT)
             assert updated.status_code == 200
             assert updated.json()["key_hint"] == "5678"
             assert updated.json()["masked_key"] == "••••5678"
@@ -509,11 +525,11 @@ def test_byok_first_save_without_api_key_rejected(tmp_path: Path) -> None:
             {"api_key": ""},
             {"api_key": "   "},
         ):
-            response = client.put("/v1/byok/openai", json=body, headers=TENANT)
+            response = client.put("/v1/byok/openai", json=body, headers=ACCOUNT)
             assert response.status_code == 400
             assert response.json()["code"] == "byok.invalid_key"
         # 没有落库任何记录
-        assert client.get("/v1/byok", headers=TENANT).json() == []
+        assert client.get("/v1/byok", headers=ACCOUNT).json() == []
 
 
 def test_byok_provider_invalid_rejected(tmp_path: Path) -> None:
@@ -522,7 +538,7 @@ def test_byok_provider_invalid_rejected(tmp_path: Path) -> None:
             response = client.put(
                 f"/v1/byok/{provider}",
                 json={"api_key": "sk-secret-12345678"},
-                headers=TENANT,
+                headers=ACCOUNT,
             )
             assert response.status_code == 400, provider
             assert response.json()["code"] == "byok.invalid_provider"
@@ -533,7 +549,7 @@ def test_byok_provider_normalized(tmp_path: Path) -> None:
         created = client.put(
             "/v1/byok/OpenAI",
             json={"api_key": "sk-secret-12345678"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert created.status_code == 200
         assert created.json()["provider"] == "openai"
@@ -541,11 +557,11 @@ def test_byok_provider_normalized(tmp_path: Path) -> None:
         again = client.put(
             "/v1/byok/ openai ",
             json={"api_key": "sk-secret-00009999"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert again.json()["provider"] == "openai"
         assert [
-            item["provider"] for item in client.get("/v1/byok", headers=TENANT).json()
+            item["provider"] for item in client.get("/v1/byok", headers=ACCOUNT).json()
         ] == ["openai"]
 
 
@@ -564,7 +580,7 @@ def test_byok_invalid_model_rejected(tmp_path: Path) -> None:
             response = client.put(
                 "/v1/byok/openai",
                 json={"api_key": "sk-secret-12345678", "models": models},
-                headers=TENANT,
+                headers=ACCOUNT,
             )
             assert response.status_code == 400, models
             assert response.json()["code"] == "byok.invalid_model"
@@ -575,7 +591,7 @@ def test_byok_invalid_model_rejected(tmp_path: Path) -> None:
         ok = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678", "models": [boundary]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
     assert ok.status_code == 200
     assert ok.json()["models"] == [boundary]
@@ -587,7 +603,7 @@ def test_byok_model_count_limit(tmp_path: Path) -> None:
         rejected = client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-secret-12345678", "models": too_many},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert rejected.status_code == 400
         assert rejected.json()["code"] == "byok.invalid_model"
@@ -599,13 +615,13 @@ def test_byok_model_count_limit(tmp_path: Path) -> None:
                 "api_key": "sk-secret-12345678",
                 "models": [*too_many[:32], too_many[0]],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
     assert allowed.status_code == 200
     assert allowed.json()["models"] == too_many[:32]
 
 
-def test_byok_catalog_union_and_tenant_isolation(tmp_path: Path) -> None:
+def test_byok_catalog_union_and_account_isolation(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         client.put(
             "/v1/byok/openai",
@@ -613,7 +629,7 @@ def test_byok_catalog_union_and_tenant_isolation(tmp_path: Path) -> None:
                 "api_key": "sk-openai-12345678",
                 "models": ["openai/gpt-4o-mini", "openai/gpt-4o"],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         client.put(
             "/v1/byok/anthropic",
@@ -621,13 +637,13 @@ def test_byok_catalog_union_and_tenant_isolation(tmp_path: Path) -> None:
                 "api_key": "sk-anthropic-12345678",
                 "models": ["anthropic/claude-3-5-sonnet"],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
-        # 另一个租户的自定义模型不应出现在本租户 catalog 中
+        # 另一个账号的自定义模型不应出现在本账号 catalog 中
         client.put(
             "/v1/byok/openai",
             json={"api_key": "sk-other-12345678", "models": ["openai/o3-mini"]},
-            headers=OTHER,
+            headers=OTHER_ACCOUNT,
         )
 
         catalog = client.get("/v1/byok/catalog", headers=INTERNAL)
@@ -645,10 +661,10 @@ def test_byok_catalog_union_and_tenant_isolation(tmp_path: Path) -> None:
         other = client.get("/v1/byok/catalog", headers=INTERNAL_OTHER)
         assert other.json() == {"models": ["openai/o3-mini"]}
 
-        # 未配置 BYOK 的租户:空并集而不是 404
+        # 未配置 BYOK 的账号:空并集而不是 404
         empty = client.get(
             "/v1/byok/catalog",
-            headers={**INTERNAL, "X-Tenant-Id": "org-999"},
+            headers={**INTERNAL, "X-Account-Id": "acc-999"},
         )
     assert empty.status_code == 200
     assert empty.json() == {"models": []}
@@ -675,12 +691,12 @@ def test_byok_catalog_dedupes_seeded_duplicates(tmp_path: Path) -> None:
 
 def test_byok_catalog_requires_internal_auth(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
-        no_secret = client.get("/v1/byok/catalog", headers=TENANT)
-        no_tenant = client.get(
+        no_secret = client.get("/v1/byok/catalog", headers=ACCOUNT)
+        no_account = client.get(
             "/v1/byok/catalog",
-            headers={**TENANT, "X-Internal-Secret": "internal-secret"},
+            headers={**ACCOUNT, "X-Internal-Secret": "internal-secret"},
         )
     assert no_secret.status_code == 401
     assert no_secret.json()["code"] == "auth.internal_forbidden"
-    assert no_tenant.status_code == 401
-    assert no_tenant.json()["code"] == "auth.tenant_missing"
+    assert no_account.status_code == 401
+    assert no_account.json()["code"] == "auth.account_missing"

@@ -7,7 +7,7 @@ from pydantic_settings import SettingsConfigDict
 class Settings(ServiceSettings):
     """工具服务配置;环境变量前缀为 TOOL__(双下划线)。
 
-    internal_secret 与 account-service 共享,用于换发租户 JWT 后调用
+    internal_secret 与 account-service 共享,用于换发账号 JWT 后调用
     workspace-service 的沙箱 API 与 knowledge-service 的检索 API;
     workspace_service_url / knowledge_service_url 即两者基地址。
     """
@@ -44,7 +44,7 @@ class Settings(ServiceSettings):
     #: 允许抓取的主机(逗号分隔;空 = 任意公网主机)。example.com 含其子域。
     fetch_allowed_hosts: str = ""
     # 连接器(C2.4):tool-service 是连接器工具的唯一执行面。catalog 从
-    # connector-service 的内部端点拉取(按租户 TTL 缓存),执行则 POST 到
+    # connector-service 的内部端点拉取(按账号 TTL 缓存),执行则 POST 到
     # /v1/connectors/{provider}/execute。internal_secret 为空表示未启用连接器,
     # /v1/tools 只返回内置工具(与 fetch/exec 的开关口径一致)。
     connector_base_url: str = "http://127.0.0.1:8004"

@@ -33,8 +33,8 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from tests.conftest import (
     _IDP,
+    ACCOUNT,
     DEFAULT_ASK_QUESTIONS,
-    TENANT,
     FakeInteractionToolkit,
     FakeLLM,
     _create_run,
@@ -60,14 +60,14 @@ def _ask_client(
     app = create_app(
         _settings(tmp_path, name, llm_enabled=True, tools_enabled=True, **overrides),
         llm_client=fake,
-        toolkit_factory=lambda tenant: toolkit,
+        toolkit_factory=lambda account: toolkit,
         token_verifier=_IDP.verifier(),
     )
     return TestClient(app)
 
 
 def _events(client: TestClient, run_id: str) -> list[dict]:
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -103,7 +103,7 @@ def _wait_status(
     end = time.monotonic() + deadline
     run: dict = {}
     while time.monotonic() < end:
-        run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
         if run["status"] == expected:
             return run
         time.sleep(0.02)
@@ -111,8 +111,10 @@ def _wait_status(
 
 
 def _plan_and_approve(client: TestClient, run_id: str) -> Any:
-    assert client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code == 200
-    return client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    assert (
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code == 200
+    )
+    return client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
 
 
 def _start_ask(client: TestClient) -> str:
@@ -139,7 +141,7 @@ def _answer(
             "action": action,
             "answers": answers or [],
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -233,11 +235,11 @@ def test_answer_before_question_is_invalid_state(tmp_path: Path) -> None:
     with _ask_client(tmp_path, fake, toolkit) as client:
         run_id = _create_run(client)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code
             == 200
         )
         assert (
-            client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()["status"]
+            client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()["status"]
             == "awaiting_approval"
         )
         resp = _answer(client, run_id, "whatever")
@@ -255,7 +257,7 @@ def test_answer_with_stale_question_id_conflicts(tmp_path: Path) -> None:
         assert resp.json()["code"] == "run.question_mismatch"
         # 冲突走事务回滚:状态保持 awaiting_input,可以重新回答
         assert (
-            client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()["status"]
+            client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()["status"]
             == "awaiting_input"
         )
 
@@ -271,7 +273,7 @@ def test_answer_after_question_expired_conflicts(tmp_path: Path) -> None:
         assert resp.status_code == 409
         assert resp.json()["code"] == "run.question_expired"
         assert (
-            client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()["status"]
+            client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()["status"]
             == "awaiting_input"
         )
 
@@ -352,7 +354,7 @@ def test_denied_by_policy_does_not_gate(tmp_path: Path) -> None:
         replaced = client.put(
             "/api/v1/approval-policies",
             json={"policies": [{"tool": "ask_question", "action": "deny"}]},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert replaced.status_code == 200, replaced.text
         run_id = _create_run(client)
@@ -361,7 +363,7 @@ def test_denied_by_policy_does_not_gate(tmp_path: Path) -> None:
         assert resp.json()["status"] == "completed"
         assert _of_type(_events(client, run_id), QUESTION_REQUIRED_EVENT) == []
         contents = _tool_contents(fake.calls[2])
-        assert any("被租户审批策略禁止使用" in content for content in contents)
+        assert any("被账号审批策略禁止使用" in content for content in contents)
 
 
 def test_ask_cycle_limit_stops_asking(tmp_path: Path) -> None:
@@ -415,12 +417,12 @@ def test_jobs_mode_answer_resumes_via_worker(tmp_path: Path) -> None:
     ) as client:
         run_id = _create_run(client)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code
             == 200
         )
         _wait_status(client, run_id, "awaiting_approval")
         assert (
-            client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).status_code
             == 200
         )
         _wait_status(client, run_id, "awaiting_input")
@@ -452,7 +454,7 @@ def test_answer_request_validation(tmp_path: Path) -> None:
         empty_id = client.post(
             f"/api/v1/runs/{run_id}/answer",
             json={"question_id": "", "action": "answer"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert empty_id.status_code == 422
         too_many_labels = client.post(
@@ -464,6 +466,6 @@ def test_answer_request_validation(tmp_path: Path) -> None:
                     {"index": 0, "labels": [str(i) for i in range(5)]},
                 ],
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert too_many_labels.status_code == 422

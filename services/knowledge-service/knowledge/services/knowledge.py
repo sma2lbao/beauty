@@ -1,7 +1,7 @@
 """知识库业务逻辑:ingest(分块 + 向量化)、列表/详情/删除、向量检索。
 
-数据访问经 `knowledge.repositories`(租户过滤与 404 语义在仓储声明);
-阶段 A 检索在 Python 侧算余弦(取租户全部块),语料变大后换 pgvector,
+数据访问经 `knowledge.repositories`(账号过滤与 404 语义在仓储声明);
+阶段 A 检索在 Python 侧算余弦(取账号全部块),语料变大后换 pgvector,
 本模块的读端契约不变。
 """
 
@@ -21,7 +21,7 @@ from knowledge.services.embeddings import EmbeddingProvider, cosine_similarity
 
 async def ingest_document(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: DocumentCreate,
     embedder: EmbeddingProvider,
     *,
@@ -35,7 +35,7 @@ async def ingest_document(
     chunks_repo = DocumentChunkRepository(session)
 
     document = KnowledgeDocument(
-        tenant_id=tenant_id,
+        account_id=account_id,
         title=data.title,
         source=data.source,
         size_bytes=len(data.content.encode("utf-8")),
@@ -46,7 +46,7 @@ async def ingest_document(
     for ordinal, (content, vector) in enumerate(zip(chunks, vectors, strict=True)):
         await chunks_repo.add(
             DocumentChunk(
-                tenant_id=tenant_id,
+                account_id=account_id,
                 document_id=document.id,
                 ordinal=ordinal,
                 content=content,
@@ -59,35 +59,35 @@ async def ingest_document(
 
 
 async def list_documents(
-    session: AsyncSession, tenant_id: str
+    session: AsyncSession, account_id: str
 ) -> list[KnowledgeDocument]:
     return await KnowledgeDocumentRepository(session).list_scoped(
-        tenant_id,
+        account_id,
         order_by=[KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc()],
     )
 
 
 async def require_document(
-    session: AsyncSession, tenant_id: str, document_id: str
+    session: AsyncSession, account_id: str, document_id: str
 ) -> KnowledgeDocument:
-    return await KnowledgeDocumentRepository(session).require_for_tenant(
-        tenant_id, document_id
+    return await KnowledgeDocumentRepository(session).require_for_account(
+        account_id, document_id
     )
 
 
 async def delete_document(
-    session: AsyncSession, tenant_id: str, document_id: str
+    session: AsyncSession, account_id: str, document_id: str
 ) -> None:
     """删除文档并连带清理分块(阶段 A 显式删除,不依赖外键级联)。"""
     documents = KnowledgeDocumentRepository(session)
-    document = await documents.require_for_tenant(tenant_id, document_id)
-    await DocumentChunkRepository(session).delete_for_document(tenant_id, document.id)
+    document = await documents.require_for_account(account_id, document_id)
+    await DocumentChunkRepository(session).delete_for_document(account_id, document.id)
     await documents.delete(document)
 
 
 async def search(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     query: str,
     limit: int,
     embedder: EmbeddingProvider,
@@ -95,7 +95,7 @@ async def search(
     """向量检索:返回 (分块, 文档标题, 分数),分数降序、同分按 ordinal 稳定。"""
     query_vectors = await embedder.embed([query])
     query_vector = query_vectors[0] if query_vectors else []
-    rows = await DocumentChunkRepository(session).searchable_rows(tenant_id)
+    rows = await DocumentChunkRepository(session).searchable_rows(account_id)
     scored = [
         (chunk, title, cosine_similarity(query_vector, list(chunk.embedding or [])))
         for chunk, title in rows

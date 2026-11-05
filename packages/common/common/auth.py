@@ -1,12 +1,12 @@
-"""JWT 鉴权基座(架构 §10):IdP(Logto)签发的 access token 校验与租户提取。
+"""JWT 鉴权基座(架构 §10):IdP(Logto)签发的 access token 校验与账号提取。
 
 约定:
 
 - 只信任签名 + `iss`/`aud`/`exp` 全部通过的 token;
 - 签名密钥从 IdP 的 JWKS 拉取并带 TTL 缓存;遇到未知 kid 会强制刷新一次
   (支持密钥轮换);JWKS 不可达是 502(上游问题),token 有问题才是 401;
-- **租户来自 token claim**(默认 `tenant_id`),claim 缺失直接拒绝——不猜测、
-  不回退到请求头(避免伪造租户);
+- **账号来自 token claim**(默认 `account_id`),claim 缺失直接拒绝——不猜测、
+  不回退到请求头(避免伪造账号);
 - `transport` 可注入:测试用 httpx.MockTransport,零网络。
 """
 
@@ -25,10 +25,10 @@ from common.errors import UnauthorizedError, UpstreamError
 
 @dataclass(frozen=True)
 class Principal:
-    """已认证的调用方:身份 + 租户 + 授权范围。"""
+    """已认证的调用方:身份 + 账号 + 授权范围。"""
 
     subject: str
-    tenant_id: str
+    account_id: str
     scopes: tuple[str, ...]
     raw_claims: dict[str, Any]
 
@@ -42,7 +42,7 @@ class JwtVerifier:
         issuer: str,
         audience: str | None = None,
         jwks_url: str | None = None,
-        tenant_claim: str = "tenant_id",
+        account_claim: str = "account_id",
         algorithms: tuple[str, ...] = ("RS256",),
         leeway_seconds: int = 30,
         jwks_ttl_seconds: int = 300,
@@ -52,7 +52,7 @@ class JwtVerifier:
         self._issuer = issuer.rstrip("/")
         self._audience = audience
         self._jwks_url = jwks_url
-        self._tenant_claim = tenant_claim
+        self._account_claim = account_claim
         self._algorithms = list(algorithms)
         self._leeway = leeway_seconds
         self._ttl = jwks_ttl_seconds
@@ -88,16 +88,16 @@ class JwtVerifier:
             raise UnauthorizedError(
                 "auth.token_invalid", f"token 校验失败:{exc}"
             ) from exc
-        tenant = claims.get(self._tenant_claim)
-        if not isinstance(tenant, str) or not tenant:
+        account = claims.get(self._account_claim)
+        if not isinstance(account, str) or not account:
             raise UnauthorizedError(
-                "auth.tenant_missing",
-                f"token 缺少 {self._tenant_claim} claim",
+                "auth.account_missing",
+                f"token 缺少 {self._account_claim} claim",
             )
         scopes = claims.get("scope") or claims.get("scopes") or ""
         return Principal(
             subject=str(claims.get("sub") or ""),
-            tenant_id=tenant,
+            account_id=account,
             scopes=tuple(str(scopes).split()),
             raw_claims=claims,
         )

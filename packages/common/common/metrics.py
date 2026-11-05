@@ -3,7 +3,7 @@
 指标先按"低基数标签"设计:
 
 - 全部指标只带 `service`/`method`/`route`/`status` 这类有限取值;
-  **禁止** `tenant_id`、`run_id`、原始 path(404 扫描会把基数打爆);
+  **禁止** `account_id`、`run_id`、原始 path(404 扫描会把基数打爆);
 - 暴露在 `/internal/metrics`(Prometheus 文本格式),不进 `/api/v1` 公共契约,
   部署侧不要把该路径暴露到公网;
 - 请求级 RED 指标由 `common.middleware` 自动记录;业务指标(run/job/模型)

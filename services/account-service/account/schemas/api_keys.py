@@ -6,9 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ALLOWED_SCOPES = frozenset(
-    {"mcp:tools:read", "mcp:tools:call", "artifacts:read"}
-)
+ALLOWED_SCOPES = frozenset({"mcp:tools:read", "mcp:tools:call", "artifacts:read"})
 DEFAULT_SCOPES = ["mcp:tools:read", "mcp:tools:call", "artifacts:read"]
 
 
@@ -39,6 +37,6 @@ class ApiKeyVerifyRequest(BaseModel):
 
 
 class ApiKeyVerifyRead(BaseModel):
-    tenant_id: str
+    account_id: str
     api_key_id: str
     scopes: list[str]

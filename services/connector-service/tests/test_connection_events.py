@@ -55,7 +55,7 @@ def _authorize(session, settings, *, account: str = "u-new"):
     return connections_service.upsert_authorized_connection(
         session,
         settings=settings,
-        tenant_id="t-1",
+        account_id="t-1",
         provider_name="demo",
         owner_subject="u2",
         credentials=Credentials(
@@ -85,8 +85,8 @@ def test_created_event_written_with_connection_in_same_transaction(
     assert len(rows) == 1
     row = rows[0]
     assert row["event_type"] == _EVENT_TYPE["connection.created"]
-    assert row["tenant_id"] == "t-1"
-    assert row["envelope_tenant_id"] == "t-1"
+    assert row["account_id"] == "t-1"
+    assert row["envelope_account_id"] == "t-1"
     assert row["status"] == "pending"
     assert row["attempts"] == 0
     assert json.loads(row["payload"]) == {
@@ -191,7 +191,7 @@ def test_disabled_outbox_only_logs(
     assert logged[0]["event"] == "connection_event"
     assert logged[0]["event_type"] == _EVENT_TYPE["connection.created"]
     assert logged[0]["connection_id"] == connection_id
-    assert logged[0]["tenant_id"] == "t-1"
+    assert logged[0]["account_id"] == "t-1"
 
 
 def test_dispatcher_delivers_recorded_event(client: TestClient, tmp_path: Path) -> None:
@@ -223,5 +223,5 @@ def test_dispatcher_delivers_recorded_event(client: TestClient, tmp_path: Path) 
     envelope = received[0]
     assert envelope.type == _EVENT_TYPE["connection.created"]
     assert envelope.payload["connection_id"] == connection_id
-    assert envelope.tenant_id == "t-1"
+    assert envelope.account_id == "t-1"
     assert _outbox_rows(_db(tmp_path))[0]["status"] == DISPATCHED

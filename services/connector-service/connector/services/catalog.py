@@ -51,9 +51,9 @@ def _brief(conn: Connection) -> ConnectionBrief:
 
 
 async def list_providers(
-    session: AsyncSession, settings: Settings, tenant_id: str
+    session: AsyncSession, settings: Settings, account_id: str
 ) -> ConnectorsRead:
-    connections = await ConnectionRepository(session).list_filtered(tenant_id)
+    connections = await ConnectionRepository(session).list_filtered(account_id)
     latest = _latest_by_provider(connections)
     providers: list[ProviderInfo] = []
     for name in enabled_provider_names(settings):
@@ -86,11 +86,11 @@ async def list_providers(
 
 
 async def tool_descriptors(
-    session: AsyncSession, settings: Settings, tenant_id: str
+    session: AsyncSession, settings: Settings, account_id: str
 ) -> list[ToolDescriptor]:
-    """只返回「有 active+enabled 连接」的 provider 的工具(租户隔离)。"""
+    """只返回「有 active+enabled 连接」的 provider 的工具(账号隔离)。"""
     connections = await ConnectionRepository(session).list_filtered(
-        tenant_id, status=_ACTIVE, enabled=True
+        account_id, status=_ACTIVE, enabled=True
     )
     connected = {conn.provider for conn in connections}
     descriptors: list[ToolDescriptor] = []
@@ -119,7 +119,7 @@ async def tool_descriptors(
 
 
 async def tool_descriptor_payloads(
-    session: AsyncSession, settings: Settings, tenant_id: str
+    session: AsyncSession, settings: Settings, account_id: str
 ) -> dict[str, Any]:
-    tools = await tool_descriptors(session, settings, tenant_id)
+    tools = await tool_descriptors(session, settings, account_id)
     return {"tools": [descriptor.to_payload() for descriptor in tools]}

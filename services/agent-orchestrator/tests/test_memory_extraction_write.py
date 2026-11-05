@@ -33,8 +33,8 @@ from agent_orchestrator.services.memory_extraction import (
 )
 from tests.conftest import _settings
 
-#: 记忆服务只认 tenant_id 字符串;与 conftest 的 bearer 租户保持一致。
-TENANT = "t-1"
+#: 记忆服务只认 account_id 字符串;与 conftest 的 bearer 账号保持一致。
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 
@@ -82,7 +82,7 @@ def _extraction_settings(**overrides: Any) -> SimpleNamespace:
         "memory_extraction_max_chars": 1200,
         "memory_extraction_max_items": 5,
         "memory_max_content_chars": 8000,
-        "memory_max_entries_per_tenant": 2000,
+        "memory_max_entries_per_account": 2000,
         "memory_dedupe_threshold": 0.9,
     }
     values.update(overrides)
@@ -91,7 +91,7 @@ def _extraction_settings(**overrides: Any) -> SimpleNamespace:
 
 def _chat_message(role: str, content: str) -> ChatMessage:
     return ChatMessage(
-        tenant_id=TENANT,
+        account_id=ACCOUNT,
         conversation_id="c-1",
         role=role,
         content=content,
@@ -105,7 +105,7 @@ async def test_remember_candidates_writes_and_dedupes(factory: Any) -> None:
     async with session_scope(factory) as session:
         first = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[ExtractedMemory(kind="preference", content="用户偏好简洁回答")],
             source_type="chat",
             source_id="c-1",
@@ -117,7 +117,7 @@ async def test_remember_candidates_writes_and_dedupes(factory: Any) -> None:
     async with session_scope(factory) as session:
         again = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[
                 ExtractedMemory(
                     kind="preference",
@@ -126,7 +126,7 @@ async def test_remember_candidates_writes_and_dedupes(factory: Any) -> None:
             ],
         )
         assert again == []
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert stats["active"] == 1
 
 
@@ -134,7 +134,7 @@ async def test_remember_candidates_keeps_pinned_memory(factory: Any) -> None:
     async with session_scope(factory) as session:
         pinned = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答",
             kind="preference",
             pinned=True,
@@ -143,12 +143,12 @@ async def test_remember_candidates_keeps_pinned_memory(factory: Any) -> None:
     async with session_scope(factory) as session:
         written = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[ExtractedMemory(kind="preference", content="用户偏好简洁回答")],
         )
         assert written == []
         kept = await session.get(Memory, pinned.id)
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert kept is not None
     assert kept.pinned is True
     assert kept.deleted_at is None
@@ -161,7 +161,7 @@ async def test_remember_candidates_separates_kind_and_workspace(
     async with session_scope(factory) as session:
         written = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[
                 ExtractedMemory(kind="preference", content="用户偏好简洁回答"),
                 ExtractedMemory(kind="fact", content="用户偏好简洁回答"),
@@ -173,7 +173,7 @@ async def test_remember_candidates_separates_kind_and_workspace(
             ],
             workspace_id="ws-1",
         )
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     # 同内容但 kind/工作区不同:语义角色不同,不能互相去重
     assert len(written) == 3
     assert stats["active"] == 3
@@ -183,12 +183,12 @@ async def test_remember_candidates_skips_workspace_without_id(factory: Any) -> N
     async with session_scope(factory) as session:
         written = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[
                 ExtractedMemory(kind="fact", content="工作区事实", scope="workspace")
             ],
         )
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert written == []
     assert stats["active"] == 0
 
@@ -197,20 +197,20 @@ async def test_remember_candidates_stops_at_entry_limit(factory: Any) -> None:
     async with session_scope(factory) as session:
         first = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[ExtractedMemory(kind="note", content="已有记忆")],
             max_entries=1,
         )
         second = await remember_candidates(
             session,
-            TENANT,
+            ACCOUNT,
             candidates=[
                 ExtractedMemory(kind="note", content="第二条"),
                 ExtractedMemory(kind="note", content="第三条"),
             ],
             max_entries=1,
         )
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert len(first) == 1
     assert second == []
     assert stats["active"] == 1
@@ -218,7 +218,7 @@ async def test_remember_candidates_stops_at_entry_limit(factory: Any) -> None:
 
 async def test_remember_candidates_empty_returns_empty(factory: Any) -> None:
     async with session_scope(factory) as session:
-        assert await remember_candidates(session, TENANT, candidates=[]) == []
+        assert await remember_candidates(session, ACCOUNT, candidates=[]) == []
 
 
 # ---- 对话 → 抽取 → 落库 ----
@@ -234,7 +234,7 @@ async def test_extract_from_messages_writes_memories(factory: Any) -> None:
         written = await extract_from_messages(
             session,
             llm,
-            tenant_id=TENANT,
+            account_id=ACCOUNT,
             messages=[
                 _chat_message("user", "记住:回答简洁点"),
                 _chat_message("assistant", "好的,以后简洁回答"),
@@ -242,7 +242,7 @@ async def test_extract_from_messages_writes_memories(factory: Any) -> None:
             source_id="c-1",
             settings=_extraction_settings(),
         )
-        stats = await memory_service.memory_stats(session, TENANT)
+        stats = await memory_service.memory_stats(session, ACCOUNT)
     assert len(written) == 1
     assert written[0].source_type == "chat"
     assert written[0].source_id == "c-1"
@@ -264,7 +264,7 @@ async def test_extract_from_messages_respects_switches(factory: Any) -> None:
                 await extract_from_messages(
                     session,
                     llm,
-                    tenant_id=TENANT,
+                    account_id=ACCOUNT,
                     messages=messages,
                     settings=settings,
                 )
@@ -280,7 +280,7 @@ async def test_extract_from_messages_truncates_transcript(factory: Any) -> None:
         await extract_from_messages(
             session,
             llm,
-            tenant_id=TENANT,
+            account_id=ACCOUNT,
             messages=[
                 _chat_message("user", "很长的老消息" * 10),
                 _chat_message("assistant", "最新回复"),
@@ -302,7 +302,7 @@ async def test_extract_from_messages_applies_max_items(factory: Any) -> None:
         written = await extract_from_messages(
             session,
             llm,
-            tenant_id=TENANT,
+            account_id=ACCOUNT,
             messages=[_chat_message("user", "记住几个事实")],
             settings=_extraction_settings(memory_extraction_max_items=2),
         )
@@ -316,21 +316,21 @@ async def test_consolidate_prefers_pinned_memory(factory: Any) -> None:
     async with session_scope(factory) as session:
         pinned = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答",
             kind="preference",
             pinned=True,
         )
         plain = await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答,不要长篇大论",
             kind="preference",
         )
         # 哪怕普通记忆访问更多,pinned 也不能被合并掉
         plain.access_count = 9
         await session.flush()
-        removed = await consolidate(session, TENANT)
+        removed = await consolidate(session, ACCOUNT)
         refreshed_pinned = await session.get(Memory, pinned.id)
         refreshed_plain = await session.get(Memory, plain.id)
     assert removed == 1
@@ -343,14 +343,14 @@ async def test_consolidate_prefers_pinned_memory(factory: Any) -> None:
 async def test_consolidate_keeps_most_accessed_memory(factory: Any) -> None:
     async with session_scope(factory) as session:
         hot = await memory_service.write_memory(
-            session, TENANT, content="项目代号是蓝鲸"
+            session, ACCOUNT, content="项目代号是蓝鲸"
         )
         cold = await memory_service.write_memory(
-            session, TENANT, content="项目代号是蓝鲸"
+            session, ACCOUNT, content="项目代号是蓝鲸"
         )
         hot.access_count = 5
         await session.flush()
-        removed = await consolidate(session, TENANT)
+        removed = await consolidate(session, ACCOUNT)
         refreshed_hot = await session.get(Memory, hot.id)
         refreshed_cold = await session.get(Memory, cold.id)
     assert removed == 1
@@ -362,11 +362,15 @@ async def test_consolidate_keeps_most_accessed_memory(factory: Any) -> None:
 
 async def test_consolidate_keeps_earliest_memory(factory: Any) -> None:
     async with session_scope(factory) as session:
-        older = await memory_service.write_memory(session, TENANT, content="回答要简洁")
-        newer = await memory_service.write_memory(session, TENANT, content="回答要简洁")
+        older = await memory_service.write_memory(
+            session, ACCOUNT, content="回答要简洁"
+        )
+        newer = await memory_service.write_memory(
+            session, ACCOUNT, content="回答要简洁"
+        )
         older.created_at = datetime.now(UTC) - timedelta(days=1)
         await session.flush()
-        removed = await consolidate(session, TENANT)
+        removed = await consolidate(session, ACCOUNT)
         refreshed_older = await session.get(Memory, older.id)
         refreshed_newer = await session.get(Memory, newer.id)
     assert removed == 1
@@ -381,38 +385,38 @@ async def test_consolidate_only_merges_same_kind_and_workspace(
 ) -> None:
     async with session_scope(factory) as session:
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="preference"
         )
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="fact"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="fact"
         )
         await memory_service.write_memory(
-            session, TENANT, content="用户偏好简洁回答", kind="preference"
+            session, ACCOUNT, content="用户偏好简洁回答", kind="preference"
         )
         await memory_service.write_memory(
             session,
-            TENANT,
+            ACCOUNT,
             content="用户偏好简洁回答",
             kind="preference",
             scope="workspace",
             workspace_id="ws-1",
         )
-        # 只有 tenant 级的两条 preference 互为近重复;fact 与 workspace 各算一组
-        assert await consolidate(session, TENANT) == 1
+        # 只有 account 级的两条 preference 互为近重复;fact 与 workspace 各算一组
+        assert await consolidate(session, ACCOUNT) == 1
 
 
 async def test_consolidate_does_not_merge_distinct_memories(factory: Any) -> None:
     async with session_scope(factory) as session:
-        await memory_service.write_memory(session, TENANT, content="项目代号是蓝鲸")
-        await memory_service.write_memory(session, TENANT, content="回答要简洁")
-        assert await consolidate(session, TENANT) == 0
+        await memory_service.write_memory(session, ACCOUNT, content="项目代号是蓝鲸")
+        await memory_service.write_memory(session, ACCOUNT, content="回答要简洁")
+        assert await consolidate(session, ACCOUNT) == 0
 
 
 async def test_consolidate_zero_for_single_or_empty(factory: Any) -> None:
     async with session_scope(factory) as session:
-        assert await consolidate(session, TENANT) == 0
-        await memory_service.write_memory(session, TENANT, content="唯一记忆")
-        assert await consolidate(session, TENANT) == 0
+        assert await consolidate(session, ACCOUNT) == 0
+        await memory_service.write_memory(session, ACCOUNT, content="唯一记忆")
+        assert await consolidate(session, ACCOUNT) == 0
 
 
 # ---- 仓储新增方法 ----
@@ -420,13 +424,13 @@ async def test_consolidate_zero_for_single_or_empty(factory: Any) -> None:
 
 async def test_message_repository_counts_messages(factory: Any) -> None:
     async with session_scope(factory) as session:
-        conversation = Conversation(tenant_id=TENANT, title="测试对话")
+        conversation = Conversation(account_id=ACCOUNT, title="测试对话")
         session.add(conversation)
         await session.flush()
         for index in range(2):
             session.add(
                 ChatMessage(
-                    tenant_id=TENANT,
+                    account_id=ACCOUNT,
                     conversation_id=conversation.id,
                     role="user",
                     content=f"消息{index}",
@@ -434,15 +438,15 @@ async def test_message_repository_counts_messages(factory: Any) -> None:
             )
         await session.flush()
         repository = MessageRepository(session)
-        assert await repository.count_for_conversation(TENANT, conversation.id) == 2
+        assert await repository.count_for_conversation(ACCOUNT, conversation.id) == 2
         assert await repository.count_for_conversation(OTHER, conversation.id) == 0
-        assert await repository.count_for_conversation(TENANT, "missing") == 0
+        assert await repository.count_for_conversation(ACCOUNT, "missing") == 0
 
 
-async def test_memory_repository_tenant_ids_with_active(factory: Any) -> None:
+async def test_memory_repository_account_ids_with_active(factory: Any) -> None:
     async with session_scope(factory) as session:
-        await memory_service.write_memory(session, TENANT, content="租户一的记忆")
-        await memory_service.write_memory(session, OTHER, content="租户二的记忆")
+        await memory_service.write_memory(session, ACCOUNT, content="账号一的记忆")
+        await memory_service.write_memory(session, OTHER, content="账号二的记忆")
         deleted = await memory_service.write_memory(session, "t-3", content="将被删除")
         await memory_service.delete_memory(session, "t-3", deleted.id)
         expired = await memory_service.write_memory(
@@ -450,6 +454,6 @@ async def test_memory_repository_tenant_ids_with_active(factory: Any) -> None:
         )
         expired.expires_at = datetime.now(UTC) - timedelta(days=1)
         await session.flush()
-        tenant_ids = await MemoryRepository(session).tenant_ids_with_active()
-    # 软删/过期的租户没有"生效中"记忆,不该进扫描清单
-    assert tenant_ids == [TENANT, OTHER]
+        account_ids = await MemoryRepository(session).account_ids_with_active()
+    # 软删/过期的账号没有"生效中"记忆,不该进扫描清单
+    assert account_ids == [ACCOUNT, OTHER]

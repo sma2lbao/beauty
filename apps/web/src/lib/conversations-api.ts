@@ -148,7 +148,7 @@ export const conversationsApi = {
       method: 'DELETE',
     }),
   /**
-   * 建会话:workspace_id 决定会话归属(不传由服务端落租户默认工作区);
+   * 建会话:workspace_id 决定会话归属(不传由服务端落账号默认工作区);
    * title 留空则等首条消息自动定题。空调用仍发 `{}`,保持旧契约。
    * 新会话在输入区选的模型随建会话一并落库(§6.3 `ConversationCreate.model`)。
    */

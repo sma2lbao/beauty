@@ -12,7 +12,7 @@ from tool_service.services.executors.http import HttpToolExecutor
 
 def execution_context(**overrides: Any) -> ExecutionContext:
     values: dict[str, Any] = {
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "tool_call_id": "call-1",
         "conversation_id": "c-1",
     }

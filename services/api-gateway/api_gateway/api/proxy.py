@@ -148,7 +148,7 @@ async def stream_token(
     result = await account_service.issue_stream_token(
         client,
         settings,
-        tenant_id=str(state["user"]["tenant_id"]),
+        account_id=str(state["user"]["account_id"]),
         subject=str(state["user"]["subject"]),
         run_id=body.run_id,
     )

@@ -1,6 +1,6 @@
 """LLM 接入:计划/执行/验收全生命周期、失败终态与返工语义。"""
 
-from tests.conftest import TENANT, FakeLLM, _client, _create_run
+from tests.conftest import ACCOUNT, FakeLLM, _client, _create_run
 
 
 def test_llm_plan_and_execute_flow(tmp_path) -> None:
@@ -15,15 +15,15 @@ def test_llm_plan_and_execute_flow(tmp_path) -> None:
     )
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        plan = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
+        plan = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).json()
         assert plan["status"] == "awaiting_approval"
         assert plan["plan_markdown"] == "# 执行计划(LLM)\n- [x] 由模型生成"
 
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
         assert run["rounds"] == 1
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         completed = next(e for e in events if e["type"] == "run.completed.v1")
         assert completed["payload"]["results"] == [
             "执行结果:日程已整理",
@@ -39,23 +39,23 @@ def test_plan_llm_failure_marks_run_failed(tmp_path) -> None:
     fake = FakeLLM([], fail_on_call=1)
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        plan = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
+        plan = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).json()
         assert plan["status"] == "failed"
 
-        run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
         assert "模型挂了" in run["status_reason"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
         assert failed["payload"]["stage"] == "plan"
 
         # failed 是终态:plan/approve 都被状态守卫拦下(409)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).status_code
             == 409
         )
         assert (
-            client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).status_code
             == 409
         )
 
@@ -65,14 +65,14 @@ def test_execute_llm_failure_marks_run_failed(tmp_path) -> None:
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
         assert (
-            client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()["status"]
+            client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).json()["status"]
             == "awaiting_approval"
         )
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "failed"
         assert "模型挂了" in run["status_reason"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
         assert failed["payload"]["stage"] == "execute"
         types = [e["type"] for e in events]
@@ -100,12 +100,12 @@ def test_rework_loop_passes_on_second_round(tmp_path) -> None:
     )
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
         assert run["rounds"] == 2
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         completed = next(e for e in events if e["type"] == "run.completed.v1")
         assert "验收小结:已达标" in completed["payload"]["results"]
         assert len(fake.calls) == 6  # plan + (execute, verify) × 2 + deliver
@@ -117,15 +117,15 @@ def test_rework_exhausted_marks_run_failed(tmp_path) -> None:
     fake = FakeLLM(["# 计划", "执行", fail_json, "执行", fail_json, "执行", fail_json])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "failed"
         assert run["rounds"] == 3
         assert "验收未通过" in run["status_reason"]
         assert "已返工 3 轮" in run["status_reason"]
         assert "日程已整理" in run["status_reason"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
         assert failed["payload"]["stage"] == "verify"
         assert failed["payload"]["rounds"] == 3
@@ -137,11 +137,11 @@ def test_verify_parse_error_marks_run_failed(tmp_path) -> None:
     fake = FakeLLM(["# 计划", "执行", "我觉得都完成了!"])
     with _client(tmp_path, fake) as client:
         run_id = _create_run(client)
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "failed"
         assert "验收输出无法解析" in run["status_reason"]
 
-        events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         failed = next(e for e in events if e["type"] == "run.failed.v1")
         assert failed["payload"]["stage"] == "execute"  # 图调用边界兜底

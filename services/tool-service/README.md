@@ -1,6 +1,6 @@
 # tool-service(工具服务, :8008)
 
-内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),P1-L 起新增沙箱内命令执行 `exec`(默认关闭,risk=destructive),P5 起新增沙箱内 Python 代码执行 `run_code`(默认关闭,risk=destructive,代码经 stdin 直传 `python3 -`),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与租户隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
+内置工具的统一执行入口:模型侧只看到裸名工具(`read`/`write`/`edit`/`glob`/`grep`/`list_dir`/`ask_question`),P2 起新增只读知识库工具 `search_knowledge`,P3 起新增只读联网抓取工具 `fetch`(默认关闭),P1-L 起新增沙箱内命令执行 `exec`(默认关闭,risk=destructive),P5 起新增沙箱内 Python 代码执行 `run_code`(默认关闭,risk=destructive,代码经 stdin 直传 `python3 -`),并启用交互工具 `ask_question`(本服务只校验参数并归一返回,挂起/恢复由 orchestrator 负责)。执行、限额、审计、幂等与账号隔离都由本服务负责,orchestrator 通过 HTTP 客户端调用(设计见 `docs/design/tool-service.md`)。
 
 ## 职责边界
 
@@ -22,14 +22,14 @@
 
 | 方法 | 路径                            | 说明                                                                              |
 | ---- | ------------------------------- | --------------------------------------------------------------------------------- |
-| GET  | `/v1/tools`                     | 工具清单(默认只返回已启用;kind/executor 过滤;带租户 JWT 时并入该租户的连接器工具) |
+| GET  | `/v1/tools`                     | 工具清单(默认只返回已启用;kind/executor 过滤;带账号 JWT 时并入该账号的连接器工具) |
 | GET  | `/v1/tools/{name}`              | 单个工具描述;未知或未启用 → 404 `tool.not_found`                                  |
 | POST | `/v1/tools/{name}:execute`      | 执行;业务错误一律 HTTP 200 + 失败信封                                             |
 | GET  | `/v1/tool-calls`                | 调用审计分页(run_id/tool_name/ok 过滤)                                            |
-| GET  | `/v1/tool-calls/{tool_call_id}` | 单条审计(跨租户 404)                                                              |
+| GET  | `/v1/tool-calls/{tool_call_id}` | 单条审计(跨账号 404)                                                              |
 | GET  | `/healthz` `/readyz`            | 存活/就绪(就绪探针查 DB)                                                          |
 
-幂等:`tool_call_id` 在租户内唯一;同 id 同参数重复调用返回 `idempotent_replay=true` 的重放结果,参数不同 → 409 `tool.idempotency_conflict`。
+幂等:`tool_call_id` 在账号内唯一;同 id 同参数重复调用返回 `idempotent_replay=true` 的重放结果,参数不同 → 409 `tool.idempotency_conflict`。
 
 ## 配置(`TOOL__` 前缀)
 
@@ -37,9 +37,9 @@
 | ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
 | `TOOL__DATABASE_URL`                  | `sqlite+aiosqlite:///./tool.db` | 审计库(生产 postgresql+asyncpg)                                                             |
 | `TOOL__AUTO_CREATE_TABLES`            | `false`                         | 生产 false,迁移走 alembic                                                                   |
-| `TOOL__AUTH_ENABLED`                  | `true`                          | 校验租户 JWT(内部签发走 account-service)                                                    |
+| `TOOL__AUTH_ENABLED`                  | `true`                          | 校验账号 JWT(内部签发走 account-service)                                                    |
 | `TOOL__AUTH_ISSUER`                   | `http://127.0.0.1:8001`         | 签发方/JWKS 来源                                                                            |
-| `TOOL__INTERNAL_SECRET`               | 空                              | 服务间换取租户 token 的 internal secret                                                     |
+| `TOOL__INTERNAL_SECRET`               | 空                              | 服务间换取账号 token 的 internal secret                                                     |
 | `TOOL__WORKSPACE_SERVICE_URL`         | `http://127.0.0.1:8005`         | 沙箱来源                                                                                    |
 | `TOOL__WORKSPACE_TIMEOUT_SECONDS`     | `60`                            | 沙箱 HTTP 超时                                                                              |
 | `TOOL__KNOWLEDGE_SERVICE_URL`         | `http://127.0.0.1:8006`         | 知识库检索来源(`search_knowledge` 代理目标)                                                 |
@@ -59,12 +59,12 @@
 | `TOOL__RUN_CODE_ENABLED`              | `false`                         | 开启沙箱内 Python 代码执行 `run_code`(risk=destructive);关闭时目录不暴露、执行 404(P5)      |
 | `TOOL__CONNECTOR_INTERNAL_SECRET`     | 空                              | 调用 connector-service 内部端点;空 = 关闭连接器工具(须与 `CONNECTOR__INTERNAL_SECRET` 一致) |
 | `TOOL__CONNECTOR_BASE_URL`            | `http://127.0.0.1:8004`         | connector-service 基地址                                                                    |
-| `TOOL__CONNECTOR_CATALOG_TTL_SECONDS` | `30`                            | 连接器目录按租户缓存 TTL(新建/撤销连接最长延迟一个 TTL 生效)                                |
+| `TOOL__CONNECTOR_CATALOG_TTL_SECONDS` | `30`                            | 连接器目录按账号缓存 TTL(新建/撤销连接最长延迟一个 TTL 生效)                                |
 
 ## 连接器工具(C2.4)
 
 连接器工具不实现在本服务:目录来自 connector-service 的 `GET /v1/internal/connectors/tools`
-(带 `X-Internal-Secret` + `X-Tenant-Id`,按租户 TTL 30s 缓存),执行 POST 到
+(带 `X-Internal-Secret` + `X-Account-Id`,按账号 TTL 30s 缓存),执行 POST 到
 `/v1/connectors/{provider}/execute`。descriptor 用 `executor=connector` 与
 `connector={"provider": "<name>"}` 声明路由;工具名形如 `Demo__read_document`。
 
@@ -82,7 +82,7 @@
 ## 知识库检索代理(P2)
 
 - `search_knowledge` 是 `risk=read`、`executor=http` 的函数工具:参数在 journal 层校验(`query` 必填 ≤2000,`limit` 1..10 默认 5),不进沙箱、不写文件。
-- 本服务用 `TokenBroker`(subject `svc-tool`,与沙箱调用同一 internal secret)换租户 JWT,携带 `Authorization: Bearer` 调 `knowledge-service` 的 `POST /v1/knowledge/search`。
+- 本服务用 `TokenBroker`(subject `svc-tool`,与沙箱调用同一 internal secret)换账号 JWT,携带 `Authorization: Bearer` 调 `knowledge-service` 的 `POST /v1/knowledge/search`。
 - 返回形状沿用旧 orchestrator 工具:`{"query","provider","model","hits":[{"title","score","content"}]}`, `chunk_id/document_id` 等内部字段不喂给模型。
 - 错误映射:下游 404 → `tool.not_found`;其余 4xx → `tool.invalid_args`;5xx/连接失败 → `tool.upstream_unavailable`(retryable);`httpx` 超时 → `tool.timeout`(retryable);internal secret 缺失属于配置问题,`tool.upstream_unavailable` 但 `retryable=false`。
 - 只读代理:不建表、不发事件、不产生副作用;未知 HTTP 工具名一律 `tool.executor_unavailable`。

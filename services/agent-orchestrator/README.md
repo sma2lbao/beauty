@@ -59,7 +59,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
     `tools`(≤`SUBAGENT_MAX_TOOLS` 12,必须是父级有效白名单的子集)、
     `timeout_seconds`(30..1800,默认 `SUBAGENT_TIMEOUT_SECONDS` 600);
   - 子 run 落 `runs.parent_kind="subagent"` + `agent_name`/`agent_prompt`/`agent_tools`
-    (`retry` 派生的 run 记 `parent_kind="retry"`);继承租户/workspace/`mcp_server_ids`/
+    (`retry` 派生的 run 记 `parent_kind="retry"`);继承账号/workspace/`mcp_server_ids`/
     审批策略/LLM 路由,**不**继承父会话、技能快照与 pending 指令,`conversation_id`
     留空;`agent_tools` 为 `null` 时按父级白名单(`agent_tools ?? skill_tools ?? 不限`)
     归一化后落库,子 run 执行时即按它裁剪工具;
@@ -98,8 +98,8 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   发消息**先分流**(`services/triage.py`):`mode=auto|chat|task`,auto 由模型判别,chat 直接答一条
   不建 run(`services/chat.py`),task 才建 run 并立即规划或并入当前 run 的追加指令;
   判别失败或无模型时退回 task(确定性桩仍产出计划),显式 chat 而无模型返回 409 `chat.llm_disabled`;
-- **配额与预算**(P0-2/P0-3):建 run 前先读 account 的租户配额快照
-  (`GET /v1/usage/quota`,`X-Internal-Secret` + `X-Tenant-Id`),月度 token 用尽或并发
+- **配额与预算**(P0-2/P0-3):建 run 前先读 account 的账号配额快照
+  (`GET /v1/usage/quota`,`X-Internal-Secret` + `X-Account-Id`),月度 token 用尽或并发
   run 超限直接 429(`quota.monthly_tokens_exceeded` / `quota.concurrent_runs_exceeded`,
   details 带 limit/used);account 不可用时**fail-open**(配额是保护性限流,不是鉴权)。
   **已知缺口**:对话直答路径(`services/chat.py`)不走配额闸,见 `docs/gap-2026-10/06-refresh-2026-10-25.md` P0-4。
@@ -107,7 +107,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   缺省即不限制。token 预算用 `AGENT_ORCHESTRATOR__RUN_TOKEN_BUDGET` 控制单次执行的
   模型用量上限(0=不限制),节点边界检查,用尽则该次执行 failed(错误里写明
   `TokenBudgetExceeded`);
-- **审批策略**(P0-4):`approval_policies` 表按租户覆盖"要不要人工确认"的默认值,
+- **审批策略**(P0-4):`approval_policies` 表按账号覆盖"要不要人工确认"的默认值,
   `GET/PUT /api/v1/approval-policies` 读/整表替换,规则是
   `{"tool": "<工具名>"|"*", "action": "auto"|"confirm"|"deny"}`。求值顺序:
   精确工具 > `*` > **风险等级默认值**(DANGER 需确认、READ/WRITE 自动),
@@ -140,10 +140,10 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - LLM 接入(架构 §5 唯一出口):`LLM_ENABLED=true` 时 plan/execute/verify 经
   `llm-gateway` 生成计划、执行结果与逐条验收判定(节点工厂注入,见 `graph/nodes.py`);
   false 或网关未起时回退确定性桩。测试注入 FakeLLM,零网络零 token。
-  调用网关时随上下文注入 `X-Tenant-Id` 与 `X-Internal-Secret`(取
+  调用网关时随上下文注入 `X-Account-Id` 与 `X-Internal-Secret`(取
   `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,与 account/llm-gateway 的
-  `INTERNAL_SECRET` 一致),网关据此解析该租户的 BYOK 密钥;密钥留空时只带
-  租户头,按平台默认密钥解析。
+  `INTERNAL_SECRET` 一致),网关据此解析该账号的 BYOK 密钥;密钥留空时只带
+  账号头,按平台默认密钥解析。
 - 模型路由(P1-G,契约见 `docs/design/model-routing.md`):run/会话/消息都能指定
   `model`,解析顺序是「消息 > 会话 > 网关默认」;run 在创建时把模型固化成快照
   (`runs.model`),之后的 plan/审批/回答恢复都用同一快照(上下文绑定见
@@ -180,7 +180,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - 交互提问(§10):任务图工具箱 `with_interaction()` 才暴露 `ask_question`
   (`kind=interaction`;对话/只读 MCP 面一律过滤),execute 命中该调用时本回合
   **只处理提问**——同轮其余工具回 `tool_error` 不执行(中断前零副作用);参数
-  非法、被租户策略禁用或达轮次上限(`MAX_ASK_CYCLES=3`)则回喂模型、不挂起。
+  非法、被账号策略禁用或达轮次上限(`MAX_ASK_CYCLES=3`)则回喂模型、不挂起。
   `ask_gate` 是唯一新增 interrupt 点:run 转 `awaiting_input` 并落
   `run.question.required.v1{question_id, questions, allow_custom, expires_at}`,
   回答写回对应 tool-role 消息后继续执行;`decline`/超时用固定文案继续。
@@ -191,16 +191,16 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   执行期危险操作确认闸(`awaiting_confirmation`)不受影响,危险动作永远人工确认。
 
 - 鉴权(架构 §10):默认开启——校验 `Authorization: Bearer <IdP access token>`
-  (OIDC 发现 + JWKS,RS256;自建 IdP 即 account-service :8001),租户取自
-  token claim(默认 `tenant_id`)——**开启时伪造 `X-Tenant-Id` 无效**;显式
-  关闭鉴权(仅特殊部署)才沿用临时头,缺失即 401 `auth.header_missing`;
+  (OIDC 发现 + JWKS,RS256;自建 IdP 即 account-service :8001),账号取自
+  token claim(默认 `account_id`)——**开启时伪造 `X-Account-Id` 无效**;显式
+  关闭鉴权(仅特殊部署)才沿用临时头,缺失即 401 `auth.account_missing`;
 - 服务间调用 token(§5):本服务对下游(knowledge/workspace)的内部
   调用**一律**经 `TokenBroker`(`services/token_broker.py`)用共享内部密钥
   (`INTERNAL_AUTH_SECRET`,配置 `AGENT_ORCHESTRATOR__INTERNAL_AUTH_SECRET`,
   与 account 的 `ACCOUNT__INTERNAL_SECRET` 一致)向 account 的
-  `POST /v1/auth/issue` 换"以目标租户为 claim"的标准 token,进程内按租户
+  `POST /v1/auth/issue` 换"以目标账号为 claim"的标准 token,进程内按账号
   缓存到过期前 60s——**与用户面走同一个 JwtVerifier,不设后门**;不再有
-  `X-Tenant-Id` 裸调路径,密钥未配置时在换发处即报错;阶段 B 换 mTLS/OBO 时
+  `X-Account-Id` 裸调路径,密钥未配置时在换发处即报错;阶段 B 换 mTLS/OBO 时
   只换 TokenBroker 实现,三个下游客户端的注入点不变;
 
 - 追加指令(§6.5):`POST /runs/{id}/instructions` 排队(终态 run 追加 409),
@@ -219,7 +219,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - 交付物内容:文本类(`text/*`、JSON/YAML/XML 等)进 `content` 列,二进制进
   `content_bytes`;存储后端 `ARTIFACT_STORE=database`(默认)或 `filesystem`
   (正文落 `ARTIFACT_ROOT`,行里只留 `object_key`/`size_bytes`;键按
-  `<租户>/<run>/<交付物>` 分层,后缀取 MIME 对应扩展名,拒绝目录穿越);对象丢失
+  `<账号>/<run>/<交付物>` 分层,后缀取 MIME 对应扩展名,拒绝目录穿越);对象丢失
   → 500 `artifact.object_missing`。换 S3 兼容存储只需实现
   `common.artifacts.ArtifactStore`;
 - 工具产物落成文件(§7,MCP 外链):工具返回的记录里出现白名单扩展名的 http(s)
@@ -233,7 +233,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 - outbox 运维面:`GET /outbox/events`(可按 `status` 过滤)、`GET /outbox/stats`、
   `POST /outbox/events/{id}/retry`、`POST /outbox/retry-failed`——失败事件可见、
   可人工重放(重放回 pending 并清零尝试数;下次投递成功才清 `last_error`);
-  端点**租户隔离**(平台级运维需要 admin scope,阶段 A 不做);未启用 outbox 时
+  端点**账号隔离**(平台级运维需要 admin scope,阶段 A 不做);未启用 outbox 时
   返回 409 `outbox.disabled`,而不是空列表(免得把"没开"误读成"没事件");控制台页 `/outbox`;
 - 事务性 outbox(`OUTBOX_ENABLED=true`):run 事件与业务状态**同一事务**写入
   `outbox_events`,再由后台 dispatcher 至少一次投递(失败退避、超限落 `failed`
@@ -281,7 +281,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   skill.json 非法、缺 SKILL.md 一律 400;zip 存进 workspace-service 通用对象 API
   (`WORKSPACE_ENABLED=true` 时装配 WorkspaceClient;未装配时上传 503
   `skill.storage_unavailable`,不静默降级),DB 只存对象引用 + manifest/skill_md
-  快照。按"租户内 slug + version"版本化:
+  快照。按"账号内 slug + version"版本化:
   - `POST /skills/packages`(multipart 字段 file)→ 201 包详情(含全部 versions);
   - `GET /skills/packages` / `GET /skills/packages/{id}` / `DELETE /skills/packages/{id}`
     (删除 DB 包/版本 + best-effort 删对象,对象删除失败不阻塞);

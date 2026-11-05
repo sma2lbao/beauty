@@ -96,7 +96,7 @@ def _provider_kwargs(settings: Settings, api_key: str | None = None) -> dict[str
     """把模型凭据显式传给 litellm(空值不覆盖 litellm 默认)。
 
     api_key 是请求级密钥(BYOK 解析结果):优先于平台 key,但 api_base 仍用
-    平台配置(租户只带密钥,不接管路由终点)。
+    平台配置(账号只带密钥,不接管路由终点)。
     """
     extra: dict[str, Any] = {}
     effective_key = api_key or settings.api_key

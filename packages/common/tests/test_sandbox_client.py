@@ -51,11 +51,11 @@ def _client(
     tokens: list[str],
     timeout_seconds: float = 60.0,
 ) -> SandboxClient:
-    """按租户换发可预测 token,并把换发次数记进 tokens(零网络)。"""
+    """按账号换发可预测 token,并把换发次数记进 tokens(零网络)。"""
 
-    async def token_provider(tenant_id: str) -> str:
-        tokens.append(tenant_id)
-        return f"tok-{tenant_id}"
+    async def token_provider(account_id: str) -> str:
+        tokens.append(account_id)
+        return f"tok-{account_id}"
 
     return SandboxClient(
         BASE_URL,

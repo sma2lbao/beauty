@@ -22,7 +22,7 @@ context,结果是父上下文被细节淹没、长任务无法分治、成本无
 **目标**
 
 - 工具 `spawn_subagent`:run 内模型把子任务委派给一个**独立 context 的子 run**;
-- 子 run 继承租户/工作区/MCP/审批策略,**不继承父对话上下文**;
+- 子 run 继承账号/工作区/MCP/审批策略,**不继承父对话上下文**;
 - 可指定角色提示(`instructions`)与工具子集(只能收窄,不能放大);
 - 父级只收「摘要 + 子 run 引用」,上下文只增摘要;
 - 子 run 可取消、可超时;每个父 run 的并发/累计数量有上限;
@@ -71,7 +71,7 @@ extras 工厂)
 3. `settings.subagent_enabled`(默认 True)。
 
 **风险等级**:`WRITE`(自动执行,不进人工确认闸)。子 run 内部遇到危险工具时仍走
-**租户级审批策略**——子 run 会停在 `awaiting_*`,由人工在其运行详情继续。
+**账号级审批策略**——子 run 会停在 `awaiting_*`,由人工在其运行详情继续。
 
 **参数**
 
@@ -106,7 +106,7 @@ extras 工厂)
 
 ```
 校验参数/上限
-  → 建子 run(继承 tenant/workspace/mcp;conversation=None;agent_* 落列)
+  → 建子 run(继承 account/workspace/mcp;conversation=None;agent_* 落列)
   → 落 run.created.v1(含 parent_run_id/parent_kind/agent_name)
   → 父级 item kind=subagent started(thread/turn 同父;item_id `<parent>:<attempt>:subagent:<n>`)
   → 内联执行子 run(同级 plan_run 语义,jobs_enabled=False;不排队)
@@ -155,7 +155,7 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
 
 | 端点                              | 返回                          | 说明                                                           |
 | --------------------------------- | ----------------------------- | -------------------------------------------------------------- |
-| `GET /api/v1/runs/{id}/subagents` | `list[SubagentRead]`          | 子代理列表(按创建时间);先 `require_run`(跨租户 404);空数组合法 |
+| `GET /api/v1/runs/{id}/subagents` | `list[SubagentRead]`          | 子代理列表(按创建时间);先 `require_run`(跨账号 404);空数组合法 |
 | `GET /api/v1/runs/{id}/usage`     | `RunUsageRead`                | run 用量汇总(含 `by_model`);无用量返回零值                     |
 | `RunRead`                         | 增 `parent_kind`/`agent_name` | 看板徽标与子 run 头部                                          |
 
@@ -191,7 +191,7 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
 
 ## 11. 隔离 / 权限 / 安全
 
-- **继承**:tenant、`workspace_id`、`mcp_server_ids`、租户级审批策略、LLM 路由;
+- **继承**:account、`workspace_id`、`mcp_server_ids`、账号级审批策略、LLM 路由;
 - **不继承**:父对话(`conversation_id=None`)、父技能快照、父 pending 指令;
 - **工具面**:只能收窄;`spawn_subagent` 不出现在子 run 的工具面
   (`subagent_max_depth` 默认 1,再叠加工具剔除);

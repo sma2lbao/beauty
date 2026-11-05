@@ -4,7 +4,7 @@
 二次检查),所以巡检和执行面并发时不会重复换 token(某些 provider 的 refresh_token
 只能使用一次)。
 
-巡检是跨租户的系统任务:先一次性取出候选(只快照 tenant_id/id),再逐条在**独立
+巡检是跨账号的系统任务:先一次性取出候选(只快照 account_id/id),再逐条在**独立
 session_scope** 里刷新——单条失败只留痕(错误码/状态)并记日志,不影响整轮。
 """
 
@@ -42,31 +42,31 @@ async def run_patrol_once(
     cutoff = utcnow() - timedelta(seconds=settings.refresh_stale_seconds)
     async with session_scope(session_factory) as session:
         stale = await ConnectionRepository(session).list_stale_active(cutoff)
-        targets = [(conn.tenant_id, conn.id) for conn in stale]
+        targets = [(conn.account_id, conn.id) for conn in stale]
     if not targets:
         return 0
 
     processed = 0
-    for tenant_id, connection_id in targets:
+    for account_id, connection_id in targets:
         processed += 1
         try:
             async with session_scope(session_factory) as session:
                 try:
                     await refresh_connection(
-                        session, settings, tenant_id, connection_id, transport
+                        session, settings, account_id, connection_id, transport
                     )
                 except ProviderError as exc:
                     await session.commit()  # 失败留痕要落库
                     _log.warning(
                         "patrol_refresh_failed",
-                        tenant_id=tenant_id,
+                        account_id=account_id,
                         connection_id=connection_id,
                         error_code=exc.code,
                     )
         except Exception as exc:  # 单条异常不能杀死整轮(含锁冲突/DB 抖动)
             _log.warning(
                 "patrol_connection_failed",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 connection_id=connection_id,
                 error=f"{type(exc).__name__}: {exc}",
             )

@@ -104,7 +104,7 @@ _TERMINAL_OR_CANCELLED = frozenset(
 
 
 class _ApprovalAdapter:
-    """graph.ports.ApprovalPort 的 services 实现:包装租户审批策略引擎。
+    """graph.ports.ApprovalPort 的 services 实现:包装账号审批策略引擎。
 
     依赖方向是 services → graph:节点只认 graph 侧的值域,策略表求值仍留在
     services.approval(纯函数),适配层只做类型/枚举对齐。
@@ -136,7 +136,7 @@ def _tool_context(run: Run):
     """工具 handler 的来源上下文:stdio MCP 据此按对话/run 复用沙箱(P2)。"""
     return bind_tool_context(
         ToolContext(
-            tenant_id=run.tenant_id,
+            account_id=run.account_id,
             run_id=run.id,
             conversation_id=run.conversation_id,
             # 记忆工具按工作区归属读写(与 run 的工作区一致,§6.7)
@@ -307,7 +307,7 @@ async def _apply_graph_result(
 async def approve_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
@@ -318,7 +318,7 @@ async def approve_run(
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
 ) -> Run:
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     if from_job:
         # worker 回来执行:API 侧已把状态推到 running,无法再过状态守卫;
         # 期间被取消或已终态(例如取消后 job 才被领到)则直接收手。
@@ -332,7 +332,7 @@ async def approve_run(
         # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
         await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
     if jobs_enabled:
-        await jobs_service.enqueue(session, tenant_id, "approve", run.id)
+        await jobs_service.enqueue(session, account_id, "approve", run.id)
         return run
     # §6.5:放行边界消费排队指令,经 resume 载荷由审批闸并入状态
     instructions = await _consume_instructions(session, run)
@@ -365,7 +365,7 @@ async def approve_run(
 async def confirm_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     action: str,
     reason: str | None,
@@ -379,7 +379,7 @@ async def confirm_run(
     max_download_files: int = 10,
 ) -> Run:
     """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     if from_job:
         # 同 approve_run:worker 路径状态已由 API 侧推进,守卫在此不重复校验。
         if run.status in _TERMINAL_OR_CANCELLED:
@@ -398,7 +398,7 @@ async def confirm_run(
     if jobs_enabled:
         await jobs_service.enqueue(
             session,
-            tenant_id,
+            account_id,
             "confirm",
             run.id,
             payload={"action": action, "reason": reason},
@@ -441,11 +441,11 @@ async def confirm_run(
 async def reject_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
-    tenant_id: str,
+    account_id: str,
     run_id: str,
     reason: str,
 ) -> Run:
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     require_transition(run, "reject")
     with bind_run_llm(session, run), _tool_context(run):
         await graph.ainvoke(

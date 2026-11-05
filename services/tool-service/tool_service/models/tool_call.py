@@ -1,6 +1,6 @@
 """工具调用审计表。
 
-每次工具执行(成功或失败)落一行:租户 + tool_call_id 唯一,支撑幂等重放与
+每次工具执行(成功或失败)落一行:账号 + tool_call_id 唯一,支撑幂等重放与
 运维查询;它不替代 orchestrator 的 run 事件流(run.tool.called.v1 仍是唯一
 真源,见设计 8.4 / 12.3)。
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from database.base import Base, TenantMixin, UUIDMixin
+from database.base import AccountMixin, Base, UUIDMixin
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -25,14 +25,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 DEFAULT_ARGUMENTS_CHARS = 2000
 
 
-class ToolCall(UUIDMixin, TenantMixin, Base):
-    """一次工具调用的审计记录(行级租户隔离)。"""
+class ToolCall(UUIDMixin, AccountMixin, Base):
+    """一次工具调用的审计记录(行级账号隔离)。"""
 
     __tablename__ = "tool_calls"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "tool_call_id", name="uq_tool_calls_tenant_call"),
-        Index("ix_tool_calls_run", "tenant_id", "run_id", "created_at"),
-        Index("ix_tool_calls_tool", "tenant_id", "tool_name", "created_at"),
+        UniqueConstraint(
+            "account_id", "tool_call_id", name="uq_tool_calls_account_call"
+        ),
+        Index("ix_tool_calls_run", "account_id", "run_id", "created_at"),
+        Index("ix_tool_calls_tool", "account_id", "tool_name", "created_at"),
     )
 
     tool_call_id: Mapped[str] = mapped_column(String(128), nullable=False)

@@ -6,7 +6,7 @@ title/description/entrypoint/runtime/network/timeout_seconds/tools。解析只�
 标准库(zipfile/json),zip 字节交给 workspace-service 的通用对象 API(Workspace
 协议),DB 只存引用、manifest 快照与 SKILL.md 全文。
 
-run 创建时通过 resolve_skill 拿 SkillDefinition:内置技能优先,其次租户上传包的
+run 创建时通过 resolve_skill 拿 SkillDefinition:内置技能优先,其次账号上传包的
 最新版本;执行字段(entrypoint/runtime/network/timeout)与对象 key/sha 一并冻结进
 runs 行,P3-C 的 skill_run 工具据此取包执行。
 """
@@ -379,7 +379,7 @@ def parse_package(data: bytes, filename: str | None = None) -> ParsedPackage:
 
 async def create_package(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: bytes,
     filename: str | None,
     *,
@@ -402,9 +402,9 @@ async def create_package(
 
     packages = SkillPackageRepository(session)
     versions = SkillVersionRepository(session)
-    package = await packages.find_by_slug(tenant_id, parsed.slug)
+    package = await packages.find_by_slug(account_id, parsed.slug)
     if package is not None and (
-        await versions.find_version(tenant_id, package.id, parsed.version)
+        await versions.find_version(account_id, package.id, parsed.version)
     ):
         raise ConflictError(
             "skill.version_exists",
@@ -418,14 +418,14 @@ async def create_package(
         )
 
     stored = await workspace.put_object(
-        tenant_id,
+        account_id,
         data,
         filename=filename,
         content_type="application/zip",
     )
     if package is None:
         package = SkillPackage(
-            tenant_id=tenant_id,
+            account_id=account_id,
             slug=parsed.slug,
             title=parsed.title,
             description=parsed.description,
@@ -440,7 +440,7 @@ async def create_package(
         await session.flush()
 
     version = SkillVersion(
-        tenant_id=tenant_id,
+        account_id=account_id,
         package_id=package.id,
         version=parsed.version,
         object_key=str(stored["key"]),
@@ -456,11 +456,11 @@ async def create_package(
     await versions.add(version)
     logger.info(
         "skill package uploaded",
-        tenant_id=tenant_id,
+        account_id=account_id,
         slug=parsed.slug,
         version=parsed.version,
         file_count=parsed.file_count,
         has_scripts=bool(parsed.entrypoint),
     )
-    all_versions = await versions.list_for_package(tenant_id, package.id)
+    all_versions = await versions.list_for_package(account_id, package.id)
     return _package_read(package, all_versions)

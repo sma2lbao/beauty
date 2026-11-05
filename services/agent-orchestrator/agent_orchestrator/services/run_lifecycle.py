@@ -51,9 +51,9 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
 }
 
 
-async def require_run(session: AsyncSession, tenant_id: str, run_id: str) -> Run:
-    """取租户内 run;不存在 → NotFoundError(404)。"""
-    return await RunRepository(session).require_for_tenant(tenant_id, run_id)
+async def require_run(session: AsyncSession, account_id: str, run_id: str) -> Run:
+    """取账号内 run;不存在 → NotFoundError(404)。"""
+    return await RunRepository(session).require_for_account(account_id, run_id)
 
 
 def _require_status(run: Run, *allowed: RunStatus) -> None:
@@ -72,7 +72,7 @@ def require_transition(run: Run, action: str) -> None:
 
 async def create_run(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     data: RunCreate,
     *,
     skill: SkillDefinition | None = None,
@@ -88,15 +88,15 @@ async def create_run(
     只读摘要),这里补一条 run.compacted.v1 事件,让事件流/前端能看到
     "这轮上下文被折叠过"——压缩必须可观测,否则排查上下文丢失时没有依据。
     """
-    await _enforce_quota(session, tenant_id)
+    await _enforce_quota(session, account_id)
     manifest = skill.manifest if skill else None
     workspace_id = data.workspace_id
     # P1-G 模型快照:显式指定优先,否则继承所属会话的模型偏好;
     # 二者都为空即"未指定"(执行走网关默认路由)。
     model = data.model
     if data.conversation_id and (workspace_id is None or model is None):
-        conversation = await ConversationRepository(session).get_for_tenant(
-            tenant_id, data.conversation_id
+        conversation = await ConversationRepository(session).get_for_account(
+            account_id, data.conversation_id
         )
         if conversation is not None:
             if workspace_id is None:
@@ -104,7 +104,7 @@ async def create_run(
             if model is None:
                 model = model_for_conversation(conversation)
     run = Run(
-        tenant_id=tenant_id,
+        account_id=account_id,
         title=data.title,
         goal=data.goal,
         status=RunStatus.PENDING.value,
@@ -154,17 +154,17 @@ async def create_run(
 
 
 async def list_runs(
-    session: AsyncSession, tenant_id: str, limit: int = 50
+    session: AsyncSession, account_id: str, limit: int = 50
 ) -> list[Run]:
-    """租户内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。"""
-    return await RunRepository(session).list_recent(tenant_id, limit)
+    """账号内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。"""
+    return await RunRepository(session).list_recent(account_id, limit)
 
 
 async def queue_instruction(
-    session: AsyncSession, tenant_id: str, run_id: str, content: str
+    session: AsyncSession, account_id: str, run_id: str, content: str
 ) -> PendingInstruction:
     """追加指令(§6.5):排队等下一个图边界消费;终态 run 拒绝。"""
-    run = await require_run(session, tenant_id, run_id)
+    run = await require_run(session, account_id, run_id)
     if run.status in (
         RunStatus.COMPLETED.value,
         RunStatus.FAILED.value,
@@ -176,7 +176,7 @@ async def queue_instruction(
             details={"run_id": run.id, "status": run.status},
         )
     instruction = PendingInstruction(
-        tenant_id=tenant_id, run_id=run.id, content=content, status="queued"
+        account_id=account_id, run_id=run.id, content=content, status="queued"
     )
     await InstructionRepository(session).add(instruction)
     await append_event(
@@ -189,16 +189,16 @@ async def queue_instruction(
 
 
 async def list_instructions(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[PendingInstruction]:
     """该 run 的指令队列(queued/consumed 都返回,控制台据此展示)。"""
-    await require_run(session, tenant_id, run_id)  # 404 校验 + 租户隔离
-    return await InstructionRepository(session).list_for_run(tenant_id, run_id)
+    await require_run(session, account_id, run_id)  # 404 校验 + 账号隔离
+    return await InstructionRepository(session).list_for_run(account_id, run_id)
 
 
 async def _consume_instructions(session: AsyncSession, run: Run) -> list[str]:
     """消费排队指令(§6.5):标记 consumed + 落事件,返回内容供并入图状态。"""
-    queued = await InstructionRepository(session).list_queued(run.tenant_id, run.id)
+    queued = await InstructionRepository(session).list_queued(run.account_id, run.id)
     contents: list[str] = []
     for instruction in queued:
         instruction.status = "consumed"
@@ -227,10 +227,10 @@ async def _conversation_history(
     覆盖点之后的原文(压缩在发消息/建 run 之前完成,执行图这里不调模型)。
     """
     summary, covered_until = await compaction.summary_for(
-        session, run.tenant_id, run.conversation_id
+        session, run.account_id, run.conversation_id
     )
     rows = await MessageRepository(session).list_history(
-        run.tenant_id,
+        run.account_id,
         run.conversation_id,
         before=run.created_at,
         exclude_run_id=run.id,

@@ -3,7 +3,7 @@
 from common.errors import UpstreamError
 from fastapi.testclient import TestClient
 
-from tests.conftest import TENANT, FakeLLM, _client
+from tests.conftest import ACCOUNT, FakeLLM, _client
 from tests.support.conversations import (
     _create_conversation,
     _detail,
@@ -31,7 +31,7 @@ def test_simple_chat_answers_without_run(tmp_path) -> None:
             "assistant",
         ]
         # 整个会话没有产生任何 run
-        assert client.get("/api/v1/runs?limit=50", headers=TENANT).json() == []
+        assert client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json() == []
         assert _detail(client, conversation_id)["active_run_id"] is None
 
 
@@ -81,7 +81,7 @@ def test_chat_during_inflight_run_does_not_queue_instruction(tmp_path) -> None:
         assert second["run"] is None
         # 没有变成追加指令,run 也不受影响
         assert (
-            client.get(f"/api/v1/runs/{run_id}/instructions", headers=TENANT).json()
+            client.get(f"/api/v1/runs/{run_id}/instructions", headers=ACCOUNT).json()
             == []
         )
         assert _detail(client, conversation_id)["active_run_id"] == run_id
@@ -133,7 +133,7 @@ def test_forced_chat_without_llm_is_conflict(client: TestClient) -> None:
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "你好", "mode": "chat"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
     # 没有模型就没有"直接对话"能力:如实报错,不悄悄改成任务
@@ -147,7 +147,7 @@ def test_invalid_send_mode_rejected(client: TestClient) -> None:
     resp = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "你好", "mode": "whatever"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
     assert resp.status_code == 422
@@ -177,7 +177,7 @@ def test_stream_chat_streams_deltas_and_persists_reply(tmp_path) -> None:
             "user",
             "assistant",
         ]
-        assert client.get("/api/v1/runs?limit=50", headers=TENANT).json() == []
+        assert client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json() == []
 
 
 def test_stream_task_sends_meta_without_deltas(tmp_path) -> None:
@@ -236,7 +236,7 @@ def test_stream_unknown_conversation_is_404(client: TestClient) -> None:
     resp = client.post(
         "/api/v1/conversations/nope/messages/stream",
         json={"content": "你好"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
     assert resp.status_code == 404

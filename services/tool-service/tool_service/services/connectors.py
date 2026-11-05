@@ -2,7 +2,7 @@
 
 目录从 connector-service 的内部端点拉取(仅「有 active+enabled 连接」的
 provider,见设计 §5.3/§5.6),执行则 POST /v1/connectors/{provider}/execute。
-所有调用都带 X-Internal-Secret + X-Tenant-Id;目录拉取失败一律降级为空,
+所有调用都带 X-Internal-Secret + X-Account-Id;目录拉取失败一律降级为空,
 不阻塞内置工具。审计唯一落点仍是 tool_calls(设计 D12:connector-service
 不建第二张审计表)。
 """
@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import httpx
 from common.logging import get_logger
-from common.security.internal_secret import SECRET_HEADER, TENANT_HEADER
+from common.security.internal_secret import ACCOUNT_HEADER, SECRET_HEADER
 from common.tools import (
     ExecutorKind,
     ToolDescriptor,
@@ -139,7 +139,7 @@ def _status_error(provider: str, response: httpx.Response) -> ToolExecuteRespons
 class ConnectorGateway:
     """连接器目录与执行的统一入口;一个实例可被并发请求复用。
 
-    目录按租户做 TTL 缓存(默认 30 秒):连接状态变更最多延迟一个 TTL 生效;
+    目录按账号做 TTL 缓存(默认 30 秒):连接状态变更最多延迟一个 TTL 生效;
     拉取失败不缓存,下次请求立即重试。
     """
 
@@ -176,61 +176,63 @@ class ConnectorGateway:
 
     # ---- 目录 -----------------------------------------------------------
 
-    async def tools(self, tenant_id: str) -> tuple[ToolDescriptor, ...]:
-        """按租户返回连接器工具;未启用或拉取失败一律返回空(降级)。"""
+    async def tools(self, account_id: str) -> tuple[ToolDescriptor, ...]:
+        """按账号返回连接器工具;未启用或拉取失败一律返回空(降级)。"""
 
         if not self.enabled:
             return EMPTY_TOOLS
-        cached = self._cache.get(tenant_id)
+        cached = self._cache.get(account_id)
         if cached is not None and time.monotonic() - cached[0] < self._ttl:
             return cached[1]
         async with self._lock:
-            cached = self._cache.get(tenant_id)
+            cached = self._cache.get(account_id)
             if cached is not None and time.monotonic() - cached[0] < self._ttl:
                 return cached[1]
-            tools = await self._fetch_catalog(tenant_id)
+            tools = await self._fetch_catalog(account_id)
             if tools is None:
                 return EMPTY_TOOLS
-            self._cache[tenant_id] = (time.monotonic(), tools)
+            self._cache[account_id] = (time.monotonic(), tools)
             return tools
 
-    async def find(self, tenant_id: str, name: str) -> ToolDescriptor | None:
+    async def find(self, account_id: str, name: str) -> ToolDescriptor | None:
         """按正式名在连接器目录里查 descriptor(未知返回 None)。"""
 
-        for tool in await self.tools(tenant_id):
+        for tool in await self.tools(account_id):
             if tool.name == name:
                 return tool
         return None
 
-    async def _fetch_catalog(self, tenant_id: str) -> tuple[ToolDescriptor, ...] | None:
+    async def _fetch_catalog(
+        self, account_id: str
+    ) -> tuple[ToolDescriptor, ...] | None:
         """拉一次内部目录;任何失败返回 None(调用方降级为空)。"""
 
         try:
             response = await self._client.get(
-                CATALOG_PATH, headers=self._headers(tenant_id)
+                CATALOG_PATH, headers=self._headers(account_id)
             )
         except httpx.HTTPError as exc:
             log.warning(
                 "connector_catalog_unreachable",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 error=type(exc).__name__,
             )
             return None
         if response.status_code != 200:
             log.warning(
                 "connector_catalog_rejected",
-                tenant_id=tenant_id,
+                account_id=account_id,
                 status_code=response.status_code,
             )
             return None
         try:
             payload: Any = response.json()
         except ValueError:
-            log.warning("connector_catalog_bad_json", tenant_id=tenant_id)
+            log.warning("connector_catalog_bad_json", account_id=account_id)
             return None
         raw_tools = payload.get("tools") if isinstance(payload, dict) else None
         if not isinstance(raw_tools, list):
-            log.warning("connector_catalog_missing_tools", tenant_id=tenant_id)
+            log.warning("connector_catalog_missing_tools", account_id=account_id)
             return None
         tools: list[ToolDescriptor] = []
         for item in raw_tools:
@@ -239,14 +241,14 @@ class ConnectorGateway:
             except (TypeError, ValueError) as exc:
                 log.warning(
                     "connector_catalog_bad_descriptor",
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     error=str(exc),
                 )
                 continue
             if descriptor.executor is not ExecutorKind.CONNECTOR:
                 log.warning(
                     "connector_catalog_wrong_executor",
-                    tenant_id=tenant_id,
+                    account_id=account_id,
                     tool=descriptor.name,
                     executor=str(descriptor.executor),
                 )
@@ -258,7 +260,7 @@ class ConnectorGateway:
 
     async def execute(
         self,
-        tenant_id: str,
+        account_id: str,
         descriptor: ToolDescriptor,
         arguments: dict[str, Any],
         *,
@@ -288,7 +290,7 @@ class ConnectorGateway:
         url = EXECUTE_PATH.format(provider=quote(provider, safe=""))
         try:
             response = await self._client.post(
-                url, json=payload, headers=self._headers(tenant_id)
+                url, json=payload, headers=self._headers(account_id)
             )
         except httpx.TimeoutException:
             return ConnectorExecution(
@@ -344,9 +346,9 @@ class ConnectorGateway:
                 )
             )
 
-    def _headers(self, tenant_id: str) -> dict[str, str]:
+    def _headers(self, account_id: str) -> dict[str, str]:
         return {
             SECRET_HEADER: self._secret,
-            TENANT_HEADER: tenant_id,
+            ACCOUNT_HEADER: account_id,
             "content-type": "application/json",
         }

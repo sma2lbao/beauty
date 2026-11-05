@@ -28,8 +28,8 @@ from agent_orchestrator.services.memory_extraction import (
 )
 from tests.conftest import _settings
 
-#: 记忆服务只认 tenant_id 字符串;与 conftest 的 bearer 租户保持一致。
-TENANT = "t-1"
+#: 记忆服务只认 account_id 字符串;与 conftest 的 bearer 账号保持一致。
+ACCOUNT = "t-1"
 OTHER = "t-2"
 
 
@@ -77,7 +77,7 @@ def _extraction_settings(**overrides: Any) -> SimpleNamespace:
         "memory_extraction_max_chars": 1200,
         "memory_extraction_max_items": 5,
         "memory_max_content_chars": 8000,
-        "memory_max_entries_per_tenant": 2000,
+        "memory_max_entries_per_account": 2000,
         "memory_dedupe_threshold": 0.9,
     }
     values.update(overrides)
@@ -86,7 +86,7 @@ def _extraction_settings(**overrides: Any) -> SimpleNamespace:
 
 def _chat_message(role: str, content: str) -> ChatMessage:
     return ChatMessage(
-        tenant_id=TENANT,
+        account_id=ACCOUNT,
         conversation_id="c-1",
         role=role,
         content=content,
@@ -126,8 +126,8 @@ def test_parse_candidates_normalizes_and_drops_invalid() -> None:
     )
     candidates = parse_candidates(raw_reply)
     assert [(item.kind, item.content, item.scope) for item in candidates] == [
-        ("note", "项目代号是蓝鲸", "tenant"),
-        ("fact", "回答要简洁", "tenant"),
+        ("note", "项目代号是蓝鲸", "account"),
+        ("fact", "回答要简洁", "account"),
     ]
 
 

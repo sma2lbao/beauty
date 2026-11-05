@@ -4,7 +4,7 @@
  * 环境变量(见 apps/web/.env.example):
  * - `VITE_KNOWLEDGE_API_URL`:后端基址;留空走同源(Vite dev 把
  *   `/knowledge-api` 代理到 :8006,见 vite.config.ts);
- * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时租户头 / `token` / `logto` Bearer),
+ * - 鉴权头由 `@/lib/auth` 决定(`dev` 临时账号头 / `token` / `logto` Bearer),
  *   与运行控制台共用同一套。
  */
 

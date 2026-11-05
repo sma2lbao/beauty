@@ -12,7 +12,7 @@
 **目标**
 
 - 线上任意一个请求/任务，能用 `request_id` 把 7 个服务的日志串成一条时间线；
-- 每个 HTTP 请求有且只有一行结构化访问日志（状态、耗时、路由、租户）；
+- 每个 HTTP 请求有且只有一行结构化访问日志（状态、耗时、路由、账号）；
 - 未捕获异常、上游失败、慢请求、后台 job 失败都能被日志与 Sentry 捕获，且不带 PII；
 - 内网/离线形态（`architecture.md` §0.1 部署形态 B）可以整层关掉，服务照常运行。
 
@@ -33,7 +33,7 @@
 | 结构化日志装配          | ✅ structlog；dev 彩色、staging/prod JSON；`service`/`env` 绑进 contextvars | `packages/common/common/logging.py:16`、`:46`                                                                                                                                                                          | 没有请求级上下文，日志之间无法关联                                                             |
 | 日志级别配置            | ✅ `log_level`                                                              | `packages/common/common/config.py:26`                                                                                                                                                                                  | —                                                                                              |
 | 请求上下文 / request_id | ❌                                                                          | —                                                                                                                                                                                                                      | 无 `X-Request-ID` 生成与回写，跨服务不可串                                                     |
-| 访问日志                | ❌                                                                          | —                                                                                                                                                                                                                      | 只有 uvicorn 默认 access log（格式不结构化、无租户、无法采集）                                 |
+| 访问日志                | ❌                                                                          | —                                                                                                                                                                                                                      | 只有 uvicorn 默认 access log（格式不结构化、无账号、无法采集）                                 |
 | 异常日志                | ⚠️ 仅 `AppError` → JSON 响应，不打日志                                      | 各服务 `main.py` 的 `app.exception_handler(AppError)`（如 `services/agent-orchestrator/agent_orchestrator/main.py:469`）                                                                                               | 5xx 无日志、未捕获异常只有 uvicorn 崩溃栈                                                      |
 | 健康/就绪探针           | ✅ 7 服务（含 api-gateway）均实现 `/healthz`、`/readyz`                     | 如 `services/account-service/account/api/health.py:12`、`services/llm-gateway/llm_gateway/api/health.py:12`、`services/api-gateway/api_gateway/api/health.py`（工厂见 `packages/common/common/service_kit/health.py`） | 访问日志需要给探针降噪；api-gateway 就绪=配置完整（session/internal 密钥），可选上游探测默认关 |
 | 业务日志                | ⚠️ 零散、无统一字段                                                         | 如 `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`                                                                                 | 无事件名约定、无耗时/用量字段                                                                  |
@@ -79,7 +79,7 @@
 | `logger`                    | string | 模块名，替代 structlog 默认的 `logger` 字段                                                                   |
 | `request_id`                | string | 每个请求一个，跨服务透传（§5.1）                                                                              |
 | `trace_id`                  | string | W3C traceparent 的 trace-id；P0 只有透传时存在，P2 由 OTel 补齐                                               |
-| `tenant_id`                 | string | 鉴权后绑定（§5.3）；内部调用以 token claim 为准                                                               |
+| `account_id`                | string | 鉴权后绑定（§5.3）；内部调用以 token claim 为准                                                               |
 | `user_id`                   | string | 可选，鉴权后绑定                                                                                              |
 | `method` / `route` / `path` | string | 访问日志用；`route` 是模板（`/api/v1/runs/{run_id}`），`path` 是原始路径（仅 `route` 为空时兜底，防基数爆炸） |
 | `status`                    | int    | HTTP 状态码                                                                                                   |
@@ -107,8 +107,8 @@
 
 ### 4.4 脱敏（硬约束）
 
-- **禁止落日志**：`Authorization`/`Cookie`/`Set-Cookie`、access/refresh token、`X-Tenant-Id` 外的凭证头、密码与验证码、BYOK 密钥、MCP OAuth code/state、请求与响应体全文（默认不记）。
-- 允许记：用户 id、租户 id、邮箱（按需，且只记脱敏后 `a***@example.com`）、路径与文件名（交付物路径需截断）。
+- **禁止落日志**：`Authorization`/`Cookie`/`Set-Cookie`、access/refresh token、`X-Account-Id` 外的凭证头、密码与验证码、BYOK 密钥、MCP OAuth code/state、请求与响应体全文（默认不记）。
+- 允许记：用户 id、账号 id、邮箱（按需，且只记脱敏后 `a***@example.com`）、路径与文件名（交付物路径需截断）。
 - 文件内容、prompt/response 正文一律不进日志字段——要回放走 P2 之后的 LLM 观测（见架构 §10），不进结构化日志。
 - 实现约定：日志只接受白名单字段；`common.logging` 提供 `redact(value)` 供需要时使用（P0 加入），Sentry 侧用 `before_send` 再兜一层（§8）。
 
@@ -140,7 +140,7 @@
 ### 5.3 绑定与清理
 
 - 用 structlog `contextvars`：中间件入口 `bind_contextvars(request_id, method, path)`，响应后 `clear_contextvars()`（避免请求间串味——async 任务复用线程时这是必踩的坑）。
-- 租户/用户在鉴权依赖解析后绑定：各服务 `get_tenant_id`（如 `services/workspace-service/workspace/api/deps.py:44`、`services/account-service/account/api/deps.py:27`、`services/agent-orchestrator/agent_orchestrator/api/deps.py:109`、`services/connector-service/connector/api/deps.py:26`、`services/knowledge-service/knowledge/api/deps.py:32`）里 `bind_contextvars(tenant_id=...)`；鉴权失败也记一条（`auth_failed`，带原因码，不带 token）。
+- 账号/用户在鉴权依赖解析后绑定：各服务 `get_account_id`（如 `services/workspace-service/workspace/api/deps.py:44`、`services/account-service/account/api/deps.py:27`、`services/agent-orchestrator/agent_orchestrator/api/deps.py:109`、`services/connector-service/connector/api/deps.py:26`、`services/knowledge-service/knowledge/api/deps.py:32`）里 `bind_contextvars(account_id=...)`；鉴权失败也记一条（`auth_failed`，带原因码，不带 token）。
 - SSE 长连接：上下文在连接生命周期内保持；关闭时清理。注意 FastAPI 流式响应的生成器在响应返回后仍执行，清理必须放 `finally`。
 - 后台 asyncio 任务（jobs worker、outbox dispatcher）：`contextvars` 不跨任务自动传播，worker 每轮自行 `clear_contextvars()` 再按 job 绑定。
 
@@ -162,7 +162,7 @@
 
 ```
 timestamp, level, event, service, env, logger,
-request_id, trace_id?, tenant_id?, user_id?,
+request_id, trace_id?, account_id?, user_id?,
 method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ```
 
@@ -170,7 +170,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 - 分级：`status >= 500` → `error`；`status in (401,403,409,429)` → `warning`；其余 2xx/3xx → `info`；探针路径 → `debug`。
 - 慢请求：`duration_ms > <SERVICE>__SLOW_REQUEST_MS`（默认 1500，SSE 除外）额外打 `event=http_request_slow`（`warning`），带 route 与耗时，便于直接 grep 慢接口。
 - SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/api-gateway/api_gateway/api/proxy.py:123`。
-- 限流命中（API 网关 `services/api-gateway/api_gateway/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`tenant_id`、`group`），访问日志本身仍是 429。
+- 限流命中（API 网关 `services/api-gateway/api_gateway/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`account_id`、`group`），访问日志本身仍是 429。
 
 ---
 
@@ -196,7 +196,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 - 依赖：`sentry-sdk[fastapi]` 收在 `packages/common`（7 个服务共用），**默认关闭**——`<SERVICE>__SENTRY_DSN` 为空直接 `return False`，不 `init`、不发任何网络请求，内网形态零副作用。
 - 初始化参数：`environment=env`、`release=sentry_release`（部署侧注入镜像 tag 或 git sha）、`server_name=service_name`、`traces_sample_rate=sentry_traces_sample_rate`（默认 0）、FastAPI/Starlette 集成（`transaction_style="endpoint"`，路由模板而非原始路径）。
 - 数据采集用 SDK 2.7x 的 `data_collection` 显式收紧（替代已弃用的 `send_default_pii`）：`user_info=False`、`cookies=off`、`http_bodies=[]`、`url_query_params=off`、`stack_frame_variables=False`。
-- `before_send` 三道处理：① `AppError` 且 `status < 500` 直接丢弃（业务分支不占错误配额）；② 请求体/cookie 删除、敏感头（Authorization/Cookie/X-Api-Key…）值替换为 `***`、敏感 query 参数（token/code/password…）抹值；③ 把 `request_id`/`trace_id`/`tenant_id`/`user_id`/`route`/`error_code` 写进 `tags`——Sentry → 日志按同一个 id 串。
+- `before_send` 三道处理：① `AppError` 且 `status < 500` 直接丢弃（业务分支不占错误配额）；② 请求体/cookie 删除、敏感头（Authorization/Cookie/X-Api-Key…）值替换为 `***`、敏感 query 参数（token/code/password…）抹值；③ 把 `request_id`/`trace_id`/`account_id`/`user_id`/`route`/`error_code` 写进 `tags`——Sentry → 日志按同一个 id 串。
 - 忽略：`/healthz`、`/readyz`（探针不产生异常事件；无需额外过滤）。
 - 测试：`packages/common/tests/test_sentry.py`——无 DSN 时 no-op、4xx 丢弃、5xx 保留且脱敏、自定义 transport 实收事件验证 tag 与脱敏。
 - 环境变量（`BaseAppSettings` 字段，按服务前缀生效，如 `WORKSPACE__SENTRY_DSN`）：`SENTRY_DSN`、`SENTRY_RELEASE`、`SENTRY_TRACES_SAMPLE_RATE`。
@@ -212,7 +212,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 
 - 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，API 网关不代理它。
 - 公网入口（API 网关）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
-- 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `tenant_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
+- 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `account_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
 - 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total` 记失败，provider 取模型前缀；`llm_tokens_total`/`llm_request_duration_seconds` 记用量与耗时）。
 - 业务代码调用 `metrics.observe_*` 时不必传 service：默认从日志上下文（启动时绑定的 `service`）取。
 - 若暂时不部署 Prometheus，也可用 `metrics_payload()` 定时落 `event=metrics_snapshot` 的 info 日志，效果等价。
@@ -269,7 +269,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 
 - `RequestContextMiddleware`（纯 ASGI，不吃 SSE 流）+ 三个导出：`install_app_error_handler(app)`（替掉 7 份同构 handler）、`inject_request_headers`（httpx 出站钩子）、`current_traceparent()`。
 - 7 个服务 `create_app` 注册中间件（API 网关放最后注册当最外层，限流 429 也有访问日志）；`project.json` serve 命令加 `--no-access-log`。
-- 5 个服务 `get_tenant_id` 绑定 `tenant_id`/`user_id`；API 网关 `proxy._headers` 与 orchestrator/knowledge 的 7 个内部 httpx 客户端透传 `X-Request-ID`/`traceparent`。
+- 5 个服务 `get_account_id` 绑定 `account_id`/`user_id`；API 网关 `proxy._headers` 与 orchestrator/knowledge 的 7 个内部 httpx 客户端透传 `X-Request-ID`/`traceparent`。
 - 测试 14 例覆盖：id 透传/生成/畸形替换、trace_id、route 模板与 unmatched、探针降级、慢请求、500 补访问行 + 带栈异常、AppError 分级、SSE open/close 帧数、上下文清理、出站头注入、`redact`。
 
 改动面（原始计划）：
@@ -278,7 +278,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 2. 新 `packages/common/common/middleware.py`：`RequestContextMiddleware`（request_id/traceparent 解析与回写、contextvars 绑定/清理、访问日志、慢请求、未捕获异常日志）+ `AccessLogSettings` 字段（`access_log_enabled`、`slow_request_ms`）。
 3. `packages/common/common/config.py`：`BaseAppSettings` 增 `access_log_enabled: bool = True`、`slow_request_ms: int = 1500`、`log_json: bool | None = None`。
 4. 7 个服务 `create_app` 各接一行中间件（`services/*/*/main.py`），并给 `project.json` 的 serve 命令加 `--no-access-log`。
-5. 各服务 `get_tenant_id` 里 `bind_contextvars(tenant_id=...)`；API 网关/httpx 客户端透传 `X-Request-ID`。
+5. 各服务 `get_account_id` 里 `bind_contextvars(account_id=...)`；API 网关/httpx 客户端透传 `X-Request-ID`。
 6. 测试：`packages/common/tests/test_middleware.py`（生成/透传/回写 id、上下文清理、访问日志字段与级别、异常日志、探针降噪——用 `structlog.testing.capture_logs`）；各服务补一条 `/healthz` 降噪断言。
 7. 文档：本节完成情况回填，`docs/local-dev.md` 补一句“排障时按 request_id 串日志”。
 

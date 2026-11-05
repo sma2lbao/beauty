@@ -58,7 +58,7 @@ def _state(**overrides: Any) -> RunGraphState:
     """最小 state:只放节点会读的字段,其余靠 .get 缺省。"""
     state: dict[str, Any] = {
         "run_id": "run-1",
-        "tenant_id": "t-1",
+        "account_id": "t-1",
         "title": "整理本周日程",
         "goal": "把本周日程整理成表格",
         "acceptance_criteria": ["输出表格"],
@@ -284,7 +284,7 @@ async def test_execute_node_offloads_tool_output() -> None:
     toolkit = _FakeToolkit()
     offloader = _FakeOffloader()
     fake = FakeLLM([LLMReply(content="", tool_calls=(READ_CALL,)), "已读完"])
-    node = make_execute_node(fake, lambda tenant: toolkit, offloader=offloader)
+    node = make_execute_node(fake, lambda account: toolkit, offloader=offloader)
     update = await node(_state(), _config(_runtime()))
 
     assert toolkit.executed == ["read"]
@@ -301,7 +301,7 @@ async def test_execute_node_offloads_tool_output() -> None:
 async def test_execute_node_without_offloader_keeps_raw_output() -> None:
     toolkit = _FakeToolkit()
     fake = FakeLLM([LLMReply(content="", tool_calls=(READ_CALL,)), "已读完"])
-    update = await make_execute_node(fake, lambda tenant: toolkit)(_state())
+    update = await make_execute_node(fake, lambda account: toolkit)(_state())
 
     assert _tool_messages(update["tool_history"]) == [toolkit.output]
     record = update["tool_calls"][0]
@@ -314,7 +314,7 @@ async def test_execute_node_passthrough_offloader_keeps_raw_output() -> None:
     toolkit = _FakeToolkit(output="短结果")
     offloader = _PassThroughOffloader()
     fake = FakeLLM([LLMReply(content="", tool_calls=(READ_CALL,)), "已读完"])
-    node = make_execute_node(fake, lambda tenant: toolkit, offloader=offloader)
+    node = make_execute_node(fake, lambda account: toolkit, offloader=offloader)
     update = await node(_state(), _config(_runtime()))
 
     assert offloader.calls == [("read", "短结果")]
@@ -329,7 +329,7 @@ async def test_execute_node_deny_branch_does_not_offload() -> None:
     toolkit = _FakeToolkit()
     offloader = _FakeOffloader()
     fake = FakeLLM([LLMReply(content="", tool_calls=(READ_CALL,)), "已结束"])
-    node = make_execute_node(fake, lambda tenant: toolkit, offloader=offloader)
+    node = make_execute_node(fake, lambda account: toolkit, offloader=offloader)
     approval = _FixedApproval(ApprovalDecision.DENY)
     update = await node(_state(), _config(_runtime(approval)))
 
@@ -343,7 +343,7 @@ async def test_execute_node_confirm_branch_does_not_offload() -> None:
     toolkit = _FakeToolkit()
     offloader = _FakeOffloader()
     fake = FakeLLM([LLMReply(content="", tool_calls=(READ_CALL,))])
-    node = make_execute_node(fake, lambda tenant: toolkit, offloader=offloader)
+    node = make_execute_node(fake, lambda account: toolkit, offloader=offloader)
     approval = _FixedApproval(ApprovalDecision.CONFIRM)
     update = await node(_state(), _config(_runtime(approval)))
 
@@ -356,7 +356,7 @@ async def test_tool_exec_node_offloads_output() -> None:
     toolkit = _FakeToolkit()
     offloader = _FakeOffloader()
     pending = [{"id": "call-1", "name": "read", "arguments": "{}"}]
-    node = make_tool_exec_node(lambda tenant: toolkit, offloader=offloader)
+    node = make_tool_exec_node(lambda account: toolkit, offloader=offloader)
     update = await node(_state(pending_writes=pending), _config(_runtime()))
 
     assert toolkit.executed == ["read"]

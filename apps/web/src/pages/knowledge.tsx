@@ -15,7 +15,7 @@ export function KnowledgePage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="知识库"
-        subtitle="团队资料入库(分块 + 向量化),Agent 执行时先查资料再作答"
+        subtitle="资料入库(分块 + 向量化),Agent 执行时先查资料再作答"
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
         <AuthBar onChange={() => void model.refresh()} />

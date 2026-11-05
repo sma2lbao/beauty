@@ -14,9 +14,9 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
+    get_account_id,
     get_artifact_store,
     get_session,
-    get_tenant_id,
 )
 from agent_orchestrator.models.runs import RunArtifact
 from agent_orchestrator.schemas.runs import ArtifactMetaRead, ArtifactRead
@@ -26,7 +26,7 @@ from agent_orchestrator.services import runs as runs_service
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 
 
@@ -49,15 +49,15 @@ def _artifact_meta(row: RunArtifact) -> ArtifactMetaRead:
 async def get_run_artifact(
     run_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     store: ArtifactStoreDep,
 ) -> ArtifactRead:
     """取主交付物(§7,旧契约):completed 后取件;未交付 → 404 artifact.not_found。
 
     主交付物优先文本报告;二进制件的 content 为空串,按 `content_type` 走下载端点。
     """
-    await runs_service.require_run(session, tenant_id, run_id)
-    view = await runs_service.get_artifact(session, tenant_id, run_id, store)
+    await runs_service.require_run(session, account_id, run_id)
+    view = await runs_service.get_artifact(session, account_id, run_id, store)
     return ArtifactRead(
         id=view.id,
         run_id=view.run_id,
@@ -75,11 +75,11 @@ async def get_run_artifact(
 
 @router.get("/{run_id}/artifacts", response_model=list[ArtifactMetaRead])
 async def list_run_artifacts(
-    run_id: str, session: DBSession, tenant_id: TenantId
+    run_id: str, session: DBSession, account_id: AccountId
 ) -> list[ArtifactMetaRead]:
     """该 run 的全部交付物(元数据,不含正文):run 不存在 → 404,未交付 → []。"""
-    await runs_service.require_run(session, tenant_id, run_id)
-    rows = await artifacts_service.list_artifacts(session, tenant_id, run_id)
+    await runs_service.require_run(session, account_id, run_id)
+    rows = await artifacts_service.list_artifacts(session, account_id, run_id)
     return [_artifact_meta(row) for row in rows]
 
 
@@ -88,17 +88,17 @@ async def download_run_artifact(
     run_id: str,
     artifact_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     store: ArtifactStoreDep,
 ) -> Response:
     """下载交付物原始字节(文本/二进制同一入口)。
 
-    不属于该 run/租户的 artifact 一律 404 `artifact.not_found`;
+    不属于该 run/账号的 artifact 一律 404 `artifact.not_found`;
     缺失对象由 service 抛 `artifact.object_missing`(500,存储配置问题)。
     """
-    await runs_service.require_run(session, tenant_id, run_id)
+    await runs_service.require_run(session, account_id, run_id)
     row = await artifacts_service.require_artifact(
-        session, tenant_id, run_id, artifact_id
+        session, account_id, run_id, artifact_id
     )
     data = await artifacts_service.read_artifact_bytes(row, store)
     filename = quote(artifacts_service.artifact_download_name(row), safe="")

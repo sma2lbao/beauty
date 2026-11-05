@@ -251,7 +251,7 @@
 | api-gateway             | 容器 :8007           | Cloud Run **service**                       | 同源 API 门面、Cookie 会话、SSE 代理                 | 公网（仅经 LB `/api`）                  | 0..N                                     | 限流需外置（§5.8）                               |
 | agent-orchestrator HTTP | 容器 :8002           | Cloud Run **service**（内部 ingress）       | run 编排 API、SSE、审批/回答                         | 仅 API 网关与浏览器直连（stream token） | 0..N                                     | LangGraph checkpointer = PG                      |
 | agent-orchestrator 循环 | 同进程               | Cloud Run **worker pool**                   | outbox dispatcher / jobs worker / interrupts sweeper | 无                                      | **max-instances=1**（先单实例，见 §4.6） | 需要能读 PG、调 llm-gateway                      |
-| account-service         | 容器 :8001           | Cloud Run service（内部）                   | 用户/组织/配额/JWT 签发                              | 仅 API 网关与服务间                     | 0..N                                     | 签名密钥必须持久（GCS KMS/Secret Manager 挂载）  |
+| account-service         | 容器 :8001           | Cloud Run service（内部）                   | 账号/配额/usage/JWT 签发                             | 仅 API 网关与服务间                     | 0..N                                     | 签名密钥必须持久（GCS KMS/Secret Manager 挂载）  |
 | llm-gateway             | 容器 :8003           | Cloud Run service（内部）                   | 唯一模型出口                                         | 仅内部                                  | 0..N                                     | 上游超时 60s，注意 Cloud Run 超时配置            |
 | connector-service       | 容器 :8004           | Cloud Run service（内部）                   | 连接器框架                                           | 仅内部                                  | 0..N                                     | 当前无内置连接器                                 |
 | knowledge-service       | 容器 :8006           | Cloud Run service（内部）                   | 文档知识库                                           | 仅内部                                  | 0..N                                     | 本地 embedding 模型随镜像                        |
@@ -264,7 +264,7 @@
 
 ### 4.3 请求路径与 SSE 续流
 
-普通请求：浏览器 → LB（`/api/*`）→ API 网关（Cookie/CSRF 校验、租户解析）→ 目标服务（内部 JWT）→ 返回。
+普通请求：浏览器 → LB（`/api/*`）→ API 网关（Cookie/CSRF 校验、账号解析）→ 目标服务（内部 JWT）→ 返回。
 
 长任务与事件流：
 
@@ -429,7 +429,7 @@ class ArtifactStore(Protocol):
 - `build_artifact_store` 增加 `s3` 分支；orchestrator/workspace 的 `ARTIFACT_STORE=s3`；
 - 本地 compose 仍默认 `database|filesystem`（保持零云依赖的本地开发）。
 
-**验收**：上传交付物后 bucket 有对象；下载走预签名 URL（不带租户 JWT 也能在有效期内下载，过期 403）；单测用 `moto`（dev 依赖）+ botocore Stubber 的 fake S3（零网络）；切后端前对象已回填，历史交付物可读。
+**验收**：上传交付物后 bucket 有对象；下载走预签名 URL（不带账号 JWT 也能在有效期内下载，过期 403）；单测用 `moto`（dev 依赖）+ botocore Stubber 的 fake S3（零网络）；切后端前对象已回填，历史交付物可读。
 
 ### 5.6 沙箱：替换 SandboxProvider（不改工具协议）
 
@@ -478,7 +478,7 @@ destroy(name)        -> sandbox.kill()
 | 内部签发密钥     | `INTERNAL_SECRET`（compose 明文 env，`docker-compose.yml:228` 等）                            | Secret Manager + `--set-secrets` 注入；轮换用双密钥过渡（`internal_secret` 支持列表后需要改造，先单密钥 + 变更窗口）                                                                     |
 | API 网关会话     | `session_secret` 默认 dev、`cookie_secure=False`、`app_origin=http://localhost:5173`          | 生产 `COOKIE_SECURE=true`、`APP_ORIGIN=https://app.example.com`（与 LB 同源）、`SESSION_SECRET` 走 Secret Manager                                                                        |
 | CSRF             | 双提交 Cookie + header（现状已实现）                                                          | 不变；同源约束由 LB 路由 `/api/*` 保证                                                                                                                                                   |
-| 限流             | `api_gateway/main.py:67-89` 进程内滑动窗口                                                    | ① Cloud Armor 按 IP/路径限流（边缘）；② 需要按租户限流时用 Memorystore Redis 或 account-service 的配额（已有 usage ledger）；进程内限流保留为兜底（多实例时放大 N 倍，不可作为唯一手段） |
+| 限流             | `api_gateway/main.py:67-89` 进程内滑动窗口                                                    | ① Cloud Armor 按 IP/路径限流（边缘）；② 需要按账号限流时用 Memorystore Redis 或 account-service 的配额（已有 usage ledger）；进程内限流保留为兜底（多实例时放大 N 倍，不可作为唯一手段） |
 | CORS             | 当前同源，无 CORS 配置                                                                        | 保持同源；若前端与 API 分域，必须补 CORS + `SameSite=None; Secure`，不推荐                                                                                                               |
 
 **验收**：两个实例重启后旧 access token 仍可校验（密钥持久）；`Set-Cookie` 带 `Secure; HttpOnly; SameSite=Lax`；连续请求超过限流阈值返回 429（边缘或服务端一致）。
@@ -586,7 +586,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `api-gateway:8007
 2. workspace 改 `ARTIFACT_STORE=database`（短期）或接入对象存储（§5.5）；沙箱 reaper 交 provider TTL 或 worker 单实例。
 3. tool-service 上云（内部 URL），`AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`；文件工具/搜索/写工具在沙箱内 E2E。
 4. ask_question E2E：提问挂起 → 前端卡片 → answer API → 图恢复（跨实例）。
-5. 沙箱隔离回归：路径逃逸/symlink/硬链/双租户用例在真实 provider 上跑一遍（不能只跑 fake）。
+5. 沙箱隔离回归：路径逃逸/symlink/硬链/双账号用例在真实 provider 上跑一遍（不能只跑 fake）。
 
 **验收**：staging 上 read/write/edit/grep/glob 全部可用；写工具审批后落盘；沙箱销毁后文件不可访问；工具审计表有记录。
 

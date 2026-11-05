@@ -74,13 +74,13 @@ def run_fallback_events(session: AsyncSession, run: Run) -> FallbackObserver:
     return _record
 
 
-def log_fallback_events(*, tenant_id: str, conversation_id: str) -> FallbackObserver:
+def log_fallback_events(*, account_id: str, conversation_id: str) -> FallbackObserver:
     """对话路径的回退观察者:没有 run,只留一条可检索的日志。"""
 
     async def _log(hops: tuple[FallbackHop, ...]) -> None:
         logger.warning(
             "llm_fallback",
-            tenant_id=tenant_id,
+            account_id=account_id,
             conversation_id=conversation_id,
             hops=[asdict(hop) for hop in hops],
         )
@@ -102,12 +102,12 @@ def bind_run_llm(session: AsyncSession, run: Run) -> Iterator[None]:
 
 @contextmanager
 def bind_dialogue_llm(
-    *, tenant_id: str, conversation_id: str, model: str | None
+    *, account_id: str, conversation_id: str, model: str | None
 ) -> Iterator[None]:
     """对话边界:绑定模型(消息/会话解析结果)+ 回退日志观察者。"""
     model_token = bind_model(model)
     observer_token = bind_fallback_observer(
-        log_fallback_events(tenant_id=tenant_id, conversation_id=conversation_id)
+        log_fallback_events(account_id=account_id, conversation_id=conversation_id)
     )
     try:
         yield

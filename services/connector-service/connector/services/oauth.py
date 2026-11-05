@@ -26,7 +26,7 @@ from connector.providers import build_provider
 from connector.providers.errors import ProviderError
 from connector.repositories import OAuthSessionRepository
 from connector.services import connections as connections_service
-from connector.services.apps import provider_for_tenant
+from connector.services.apps import provider_for_account
 
 _STATUS_PENDING = "pending"
 _STATUS_COMPLETED = "completed"
@@ -64,12 +64,12 @@ async def start_authorize(
     session: AsyncSession,
     settings: Settings,
     *,
-    tenant_id: str,
+    account_id: str,
     provider_name: str,
     owner_subject: str | None,
 ) -> AuthorizeStart:
-    # 租户自带应用(tenant_apps)优先:授权页 client_id 与实际换 token 的应用一致
-    provider = await provider_for_tenant(session, settings, tenant_id, provider_name)
+    # 账号自带应用(account_apps)优先:授权页 client_id 与实际换 token 的应用一致
+    provider = await provider_for_account(session, settings, account_id, provider_name)
     if not provider.configured:
         raise ConflictError(
             "connector.provider_not_configured",
@@ -83,7 +83,7 @@ async def start_authorize(
     repo = OAuthSessionRepository(session)
     row = await repo.add(
         repo.model(
-            tenant_id=tenant_id,
+            account_id=account_id,
             owner_subject=owner_subject,
             provider=provider.name,
             state_nonce=state_nonce,
@@ -117,10 +117,10 @@ async def handle_callback(
     row = await repo.get_by_state(state or "")
     if row is None or row.provider != provider.name:
         return CallbackResult(provider.name, "error", "connector.invalid_state")
-    # 回调本身没有用户身份,但会话行带 tenant_id:按该租户解析应用凭证,
+    # 回调本身没有用户身份,但会话行带 account_id:按该账号解析应用凭证,
     # 保证换 token 用的 client_id/secret 与发起授权时是同一套(§5.2 解析顺序)。
-    provider = await provider_for_tenant(
-        session, settings, row.tenant_id, provider.name
+    provider = await provider_for_account(
+        session, settings, row.account_id, provider.name
     )
     if row.status != _STATUS_PENDING:
         return CallbackResult(provider.name, "error", "connector.state_used")
@@ -150,7 +150,7 @@ async def handle_callback(
     conn = await connections_service.upsert_authorized_connection(
         session,
         settings=settings,
-        tenant_id=row.tenant_id,
+        account_id=row.account_id,
         provider_name=provider.name,
         owner_subject=row.owner_subject,
         credentials=credentials,

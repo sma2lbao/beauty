@@ -18,11 +18,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workspace.api.deps import (
+    get_account_id,
     get_sandbox_provider,
     get_session,
     get_settings,
     get_shell_sessions,
-    get_tenant_id,
 )
 from workspace.core.config import Settings
 from workspace.models.sandbox import SandboxInstance
@@ -54,7 +54,7 @@ from workspace.services.shell_sessions import ShellSessionManager, iter_sse_fram
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
-TenantId = Annotated[str, Depends(get_tenant_id)]
+AccountId = Annotated[str, Depends(get_account_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ProviderDep = Annotated[SandboxProvider, Depends(get_sandbox_provider)]
 ShellSessionsDep = Annotated[ShellSessionManager, Depends(get_shell_sessions)]
@@ -85,7 +85,7 @@ def _entry_of(
 
 async def _usable_sandbox(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     sandbox_id: str,
     provider: SandboxProvider,
     settings: Settings,
@@ -94,12 +94,12 @@ async def _usable_sandbox(
     """取可用沙箱并续期;不可用时先关掉它残留的 shell 会话,再抛原错误。"""
     try:
         record = await sandbox_service.require_usable_sandbox(
-            session, tenant_id, sandbox_id, provider
+            session, account_id, sandbox_id, provider
         )
     except AppError as exc:
         if exc.code in _UNUSABLE_CODES:
             # 过期/停止/失败:运行时已经没了,内存里的会话只会等不到 EOF
-            await shell_sessions.close_sandbox(tenant_id, sandbox_id)
+            await shell_sessions.close_sandbox(account_id, sandbox_id)
         raise
     sandbox_service.renew_sandbox(record, settings)
     return record
@@ -138,13 +138,13 @@ _SSE_HEADERS = {
 async def create_sandbox(
     body: SandboxCreate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
 ) -> SandboxRead:
     """创建沙箱:先落库(creating),再拉起运行时;失败保留 failed 记录。"""
     record = await sandbox_service.create_sandbox(
-        session, tenant_id, body, provider, settings
+        session, account_id, body, provider, settings
     )
     return SandboxRead.model_validate(record)
 
@@ -153,18 +153,18 @@ async def create_sandbox(
 async def ensure_sandbox(
     body: SandboxEnsure,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
     response: Response,
 ) -> SandboxEnsureRead:
-    """幂等 get-or-create:同 (tenant_id, scope_key) 只有一个沙箱。
+    """幂等 get-or-create:同 (account_id, scope_key) 只有一个沙箱。
 
     新建运行时返回 201,复用现有沙箱返回 200(响应体结构一致)。
     """
     record, created = await sandbox_service.ensure_sandbox(
         session,
-        tenant_id,
+        account_id,
         scope_key=body.scope_key,
         spec=body,
         provider=provider,
@@ -179,24 +179,24 @@ async def ensure_sandbox(
 @router.get("", response_model=list[SandboxRead])
 async def list_sandboxes(
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     scope_key: Annotated[
         str | None, Query(min_length=1, max_length=MAX_SCOPE_KEY_LENGTH)
     ] = None,
 ) -> list[SandboxRead]:
-    """沙箱列表(仅本租户,新建在前);scope_key 精确过滤到某个会话/run。"""
+    """沙箱列表(仅本账号,新建在前);scope_key 精确过滤到某个会话/run。"""
     records = await sandbox_service.list_sandboxes(
-        session, tenant_id, scope_key=scope_key
+        session, account_id, scope_key=scope_key
     )
     return [SandboxRead.model_validate(record) for record in records]
 
 
 @router.get("/{sandbox_id}", response_model=SandboxRead)
 async def get_sandbox(
-    sandbox_id: str, session: DBSession, tenant_id: TenantId
+    sandbox_id: str, session: DBSession, account_id: AccountId
 ) -> SandboxRead:
-    """沙箱详情(仅本租户可见,跨租户一律 404)。"""
-    record = await sandbox_service.require_sandbox(session, tenant_id, sandbox_id)
+    """沙箱详情(仅本账号可见,跨账号一律 404)。"""
+    record = await sandbox_service.require_sandbox(session, account_id, sandbox_id)
     return SandboxRead.model_validate(record)
 
 
@@ -205,13 +205,13 @@ async def exec_sandbox(
     sandbox_id: str,
     body: SandboxExecRequest,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
 ) -> SandboxExecRead:
     """在沙箱内执行命令;成功后滑动续期。"""
     result = await sandbox_service.exec_sandbox(
-        session, tenant_id, sandbox_id, body, provider, settings
+        session, account_id, sandbox_id, body, provider, settings
     )
     return SandboxExecRead(
         exit_code=result.exit_code,
@@ -227,11 +227,11 @@ async def write_sandbox_file(
     sandbox_id: str,
     body: SandboxFileWrite,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     provider: ProviderDep,
 ) -> Response:
     """写文件:路径必须落在 /workspace 下,内容用 Base64。"""
-    await sandbox_service.write_file(session, tenant_id, sandbox_id, body, provider)
+    await sandbox_service.write_file(session, account_id, sandbox_id, body, provider)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -240,12 +240,12 @@ async def read_sandbox_file(
     sandbox_id: str,
     path: Annotated[str, Query(min_length=1, max_length=MAX_PATH_LENGTH)],
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     provider: ProviderDep,
 ) -> SandboxFileRead:
     """读文件:返回 Base64 内容与解码后的字节数。"""
     data = await sandbox_service.read_file(
-        session, tenant_id, sandbox_id, path, provider
+        session, account_id, sandbox_id, path, provider
     )
     return SandboxFileRead(
         path=path,
@@ -258,7 +258,7 @@ async def read_sandbox_file(
 async def list_sandbox_tree(
     sandbox_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     provider: ProviderDep,
     path: Annotated[
         str, Query(min_length=1, max_length=MAX_PATH_LENGTH)
@@ -267,7 +267,7 @@ async def list_sandbox_tree(
 ) -> SandboxTreeRead:
     """列沙箱目录树:/workspace 下的扁平条目列表,超上限时 truncated=true。"""
     entries, truncated = await sandbox_service.list_tree(
-        session, tenant_id, sandbox_id, path, depth, provider
+        session, account_id, sandbox_id, path, depth, provider
     )
     return SandboxTreeRead(
         path=path,
@@ -283,13 +283,13 @@ async def list_sandbox_tree(
 async def touch_sandbox(
     sandbox_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
 ) -> SandboxRead:
     """显式续期(滑动 TTL,上限 sandbox_max_ttl_seconds)。"""
     record = await sandbox_service.touch_sandbox(
-        session, tenant_id, sandbox_id, provider, settings
+        session, account_id, sandbox_id, provider, settings
     )
     return SandboxRead.model_validate(record)
 
@@ -298,17 +298,17 @@ async def touch_sandbox(
 async def delete_sandbox(
     sandbox_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     provider: ProviderDep,
     shell_sessions: ShellSessionsDep,
 ) -> Response:
     """删除沙箱:先销毁运行时,再删记录,并关闭其全部 shell 会话。"""
     try:
-        await sandbox_service.destroy_sandbox(session, tenant_id, sandbox_id, provider)
+        await sandbox_service.destroy_sandbox(session, account_id, sandbox_id, provider)
     except NotFoundError:
-        await shell_sessions.close_sandbox(tenant_id, sandbox_id)
+        await shell_sessions.close_sandbox(account_id, sandbox_id)
         raise
-    await shell_sessions.close_sandbox(tenant_id, sandbox_id)
+    await shell_sessions.close_sandbox(account_id, sandbox_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -321,7 +321,7 @@ async def create_sandbox_session(
     sandbox_id: str,
     body: SandboxSessionCreate,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
     shell_sessions: ShellSessionsDep,
@@ -331,10 +331,10 @@ async def create_sandbox_session(
     会话活到显式 DELETE / 空闲超时 / 沙箱被销毁——不随 HTTP 请求结束而结束。
     """
     record = await _usable_sandbox(
-        session, tenant_id, sandbox_id, provider, settings, shell_sessions
+        session, account_id, sandbox_id, provider, settings, shell_sessions
     )
     info = await shell_sessions.open(
-        tenant_id=tenant_id,
+        account_id=account_id,
         sandbox_id=sandbox_id,
         runtime_name=record.external_name,
         provider=provider,
@@ -359,17 +359,17 @@ async def write_sandbox_session_input(
     session_id: str,
     body: SandboxSessionInput,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
     shell_sessions: ShellSessionsDep,
 ) -> Response:
     """向会话 stdin 写文本(UTF-8 编码,单次上限 8KB)。"""
     await _usable_sandbox(
-        session, tenant_id, sandbox_id, provider, settings, shell_sessions
+        session, account_id, sandbox_id, provider, settings, shell_sessions
     )
     await shell_sessions.write(
-        tenant_id=tenant_id,
+        account_id=account_id,
         sandbox_id=sandbox_id,
         session_id=session_id,
         data=body.data.encode("utf-8"),
@@ -382,7 +382,7 @@ async def stream_sandbox_session(
     request: Request,
     sandbox_id: str,
     session_id: str,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
     shell_sessions: ShellSessionsDep,
@@ -398,10 +398,10 @@ async def stream_sandbox_session(
     factory = request.app.state.session_factory
     async with session_scope(factory) as db:
         await _usable_sandbox(
-            db, tenant_id, sandbox_id, provider, settings, shell_sessions
+            db, account_id, sandbox_id, provider, settings, shell_sessions
         )
     backlog, queue = shell_sessions.subscribe(
-        tenant_id=tenant_id,
+        account_id=account_id,
         sandbox_id=sandbox_id,
         session_id=session_id,
         after=cursor,
@@ -411,7 +411,7 @@ async def stream_sandbox_session(
         queue,
         heartbeat_seconds=settings.sandbox_shell_heartbeat_seconds,
         on_close=lambda: shell_sessions.unsubscribe(
-            tenant_id=tenant_id,
+            account_id=account_id,
             sandbox_id=sandbox_id,
             session_id=session_id,
             queue=queue,
@@ -430,16 +430,16 @@ async def delete_sandbox_session(
     sandbox_id: str,
     session_id: str,
     session: DBSession,
-    tenant_id: TenantId,
+    account_id: AccountId,
     settings: SettingsDep,
     provider: ProviderDep,
     shell_sessions: ShellSessionsDep,
 ) -> Response:
     """关闭会话(幂等):未知会话 404,重复关闭仍 204。"""
     await _usable_sandbox(
-        session, tenant_id, sandbox_id, provider, settings, shell_sessions
+        session, account_id, sandbox_id, provider, settings, shell_sessions
     )
     await shell_sessions.close(
-        tenant_id=tenant_id, sandbox_id=sandbox_id, session_id=session_id
+        account_id=account_id, sandbox_id=sandbox_id, session_id=session_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

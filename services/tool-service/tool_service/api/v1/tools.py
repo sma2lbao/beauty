@@ -17,11 +17,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tool_service.api.deps import (
+    get_account_id,
     get_connector_gateway,
-    get_optional_tenant_id,
+    get_optional_account_id,
     get_session,
     get_settings,
-    get_tenant_id,
     get_tool_runner,
 )
 from tool_service.core.config import Settings
@@ -53,8 +53,8 @@ from tool_service.services.sandbox import scope_key_for
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-TenantDep = Annotated[str, Depends(get_tenant_id)]
-OptionalTenantDep = Annotated[str | None, Depends(get_optional_tenant_id)]
+AccountDep = Annotated[str, Depends(get_account_id)]
+OptionalAccountDep = Annotated[str | None, Depends(get_optional_account_id)]
 RunnerDep = Annotated[ToolRunner, Depends(get_tool_runner)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ConnectorDep = Annotated[ConnectorGateway | None, Depends(get_connector_gateway)]
@@ -64,20 +64,20 @@ ConnectorDep = Annotated[ConnectorGateway | None, Depends(get_connector_gateway)
 async def list_tools(
     settings: SettingsDep,
     connector: ConnectorDep,
-    tenant_id: OptionalTenantDep,
+    account_id: OptionalAccountDep,
     kind: Annotated[str | None, Query()] = None,
     scope: Annotated[str | None, Query()] = None,
 ) -> ToolListRead:
     """列出启用的工具;kind=function|interaction、scope 可过滤。
 
-    带租户凭据(Bearer,或鉴权关闭时的 X-Tenant-Id)时并入该租户的连接器
-    工具;不带凭据只返回内置目录(orchestrator 按租户带 Bearer 拉取,运维
+    带账号凭据(Bearer,或鉴权关闭时的 X-Account-Id)时并入该账号的连接器
+    工具;不带凭据只返回内置目录(orchestrator 按账号带 Bearer 拉取,运维
     与健康检查仍可匿名读内置目录)。
     """
 
     tools = list(descriptors())
-    if connector is not None and tenant_id is not None:
-        tools.extend(await connector.tools(tenant_id))
+    if connector is not None and account_id is not None:
+        tools.extend(await connector.tools(account_id))
     items = [
         tool
         for tool in tools
@@ -97,13 +97,13 @@ async def get_tool(
     name: str,
     settings: SettingsDep,
     connector: ConnectorDep,
-    tenant_id: OptionalTenantDep,
+    account_id: OptionalAccountDep,
 ) -> ToolDescriptorRead:
-    """按正式名或别名取单个工具描述(带租户凭据时可查连接器工具)。"""
+    """按正式名或别名取单个工具描述(带账号凭据时可查连接器工具)。"""
 
     descriptor = find_descriptor(name)
-    if descriptor is None and connector is not None and tenant_id is not None:
-        descriptor = await connector.find(tenant_id, name)
+    if descriptor is None and connector is not None and account_id is not None:
+        descriptor = await connector.find(account_id, name)
     if (
         descriptor is None
         or not descriptor.enabled
@@ -119,7 +119,7 @@ async def execute_tool(
     name: str,
     body: ToolExecuteBody,
     session: SessionDep,
-    tenant_id: TenantDep,
+    account_id: AccountDep,
     runner: RunnerDep,
     settings: SettingsDep,
     connector: ConnectorDep,
@@ -132,8 +132,8 @@ async def execute_tool(
 
     descriptor = find_descriptor(name)
     if descriptor is None and connector is not None:
-        # 连接器工具不在静态目录里,按租户现查(TTL 缓存)。
-        descriptor = await connector.find(tenant_id, name)
+        # 连接器工具不在静态目录里,按账号现查(TTL 缓存)。
+        descriptor = await connector.find(account_id, name)
     if descriptor is None or not descriptor.enabled:
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     # 能力开关与目录一致:关闭的工具(exec/fetch/连接器)连执行入口都不存在。
@@ -141,7 +141,7 @@ async def execute_tool(
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     repository = ToolCallRepository(session)
     digest = arguments_digest(body.arguments)
-    existing = await repository.find_by_call_id(tenant_id, body.tool_call_id)
+    existing = await repository.find_by_call_id(account_id, body.tool_call_id)
     if existing is not None:
         return _replay_response(existing, digest)
     # 防御性风险下限:WRITE/DESTRUCTIVE 没有 approved=true 一律 403。
@@ -152,7 +152,7 @@ async def execute_tool(
             f"工具 {descriptor.name} 需要人工确认后才能执行",
         )
     context = ExecutionContext(
-        tenant_id=tenant_id,
+        account_id=account_id,
         tool_call_id=body.tool_call_id,
         run_id=body.run_id,
         conversation_id=body.conversation_id,
@@ -175,7 +175,7 @@ async def execute_tool(
     decision = "approved" if body.approved else "auto"
     columns = audit_columns(outcome, context, body.arguments, decision=decision)
     record = ToolCall(
-        tenant_id=tenant_id,
+        account_id=account_id,
         tool_call_id=body.tool_call_id,
         run_id=body.run_id,
         conversation_id=body.conversation_id,
@@ -187,7 +187,7 @@ async def execute_tool(
     except IntegrityError:
         # 并发同 tool_call_id:后到者回滚并按已存在记录重放
         await session.rollback()
-        existing = await repository.find_by_call_id(tenant_id, body.tool_call_id)
+        existing = await repository.find_by_call_id(account_id, body.tool_call_id)
         if existing is None:
             raise
         return _replay_response(existing, digest)
@@ -206,7 +206,7 @@ async def _preflight(
     repository = ToolCallRepository(session)
     if context.run_id:
         used_calls = await repository.count_page(
-            context.tenant_id, run_id=context.run_id
+            context.account_id, run_id=context.run_id
         )
         error = check_total_calls(
             used_calls=used_calls, limit=settings.max_tool_calls_per_run
@@ -217,7 +217,7 @@ async def _preflight(
     if descriptor.risk is ToolRisk.WRITE:
         if context.run_id:
             used_writes, used_bytes = await repository.write_usage_for_run(
-                context.tenant_id, context.run_id
+                context.account_id, context.run_id
             )
             error = check_write_quota(
                 used_writes=used_writes,
@@ -275,13 +275,13 @@ async def _read_gate(
     if path is None:
         return None  # 参数不合法:交给 validate_arguments 报 tool.invalid_args
     scope_key = scope_key_for(
-        context.tenant_id,
+        context.account_id,
         sandbox_scope=context.sandbox_scope,
         conversation_id=context.conversation_id,
         run_id=context.run_id,
     )
     record = await FileReadRepository(session).find_read(
-        context.tenant_id, scope_key=scope_key, path=path
+        context.account_id, scope_key=scope_key, path=path
     )
     if record is not None:
         return {"_expected_read_sha256": record.sha256}
@@ -309,13 +309,13 @@ async def _remember_read(
     if path is None or not isinstance(sha256, str):
         return
     scope_key = scope_key_for(
-        context.tenant_id,
+        context.account_id,
         sandbox_scope=context.sandbox_scope,
         conversation_id=context.conversation_id,
         run_id=context.run_id,
     )
     await FileReadRepository(session).upsert_read(
-        context.tenant_id,
+        context.account_id,
         scope_key=scope_key,
         path=path,
         sha256=sha256,

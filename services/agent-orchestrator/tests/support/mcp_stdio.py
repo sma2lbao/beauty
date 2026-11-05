@@ -11,7 +11,7 @@ from agent_orchestrator.models.mcp import MCPServer
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services.mcp_stdio import MARKER
 from agent_orchestrator.services.sandbox import SandboxExecResult, SandboxInfo
-from tests.conftest import TENANT, _settings, verifier
+from tests.conftest import ACCOUNT, _settings, verifier
 
 HTTP_SERVER = {
     "name": "demo",
@@ -38,7 +38,7 @@ def _app(tmp_path: Path, name: str = "stdio.db", **overrides: Any) -> TestClient
 
 def _create_stdio(client: TestClient, **overrides: Any) -> dict:
     body = {**STDIO_SERVER, **overrides}
-    response = client.post("/api/v1/mcp/servers", json=body, headers=TENANT)
+    response = client.post("/api/v1/mcp/servers", json=body, headers=ACCOUNT)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -53,9 +53,9 @@ class FakePool:
         self.forgotten: list[str] = []
 
     async def run(
-        self, tenant_id: str, key: str, server: MCPServer, request: dict[str, Any]
+        self, account_id: str, key: str, server: MCPServer, request: dict[str, Any]
     ) -> dict[str, Any]:
-        self.calls.append((tenant_id, key, request))
+        self.calls.append((account_id, key, request))
         if self.error is not None:
             raise self.error
         if request.get("action") == "tools/call":
@@ -65,8 +65,8 @@ class FakePool:
             }
         return {"tools": [{"name": "echo", "description": "回显", "inputSchema": {}}]}
 
-    async def release(self, tenant_id: str, key: str) -> None:
-        self.released.append((tenant_id, key))
+    async def release(self, account_id: str, key: str) -> None:
+        self.released.append((account_id, key))
 
     def forget(self, key: str) -> None:
         self.forgotten.append(key)
@@ -80,7 +80,7 @@ def _app_with_pool(tmp_path: Path, pool: FakePool) -> TestClient:
 
 def _stdio_model() -> MCPServer:
     server = MCPServer(
-        tenant_id="t-1",
+        account_id="t-1",
         name="fs mcp",
         url="",
         transport="stdio",
@@ -128,8 +128,8 @@ class FakeSandbox:
         self.destroyed: list[str] = []
         self.files: dict[str, bytes] = {}
 
-    async def create(self, tenant_id: str, **kwargs: Any) -> SandboxInfo:
-        self.created.append({"tenant_id": tenant_id, **kwargs})
+    async def create(self, account_id: str, **kwargs: Any) -> SandboxInfo:
+        self.created.append({"account_id": account_id, **kwargs})
         index = len(self.created)
         return SandboxInfo(
             id=f"sb-{index}",
@@ -140,7 +140,7 @@ class FakeSandbox:
             network=str(kwargs.get("network") or "deny"),
         )
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> SandboxInfo:
+    async def touch(self, account_id: str, sandbox_id: str) -> SandboxInfo:
         self.touched.append(sandbox_id)
         if self.touch_error is not None:
             raise self.touch_error
@@ -148,7 +148,7 @@ class FakeSandbox:
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv,
         *,
@@ -176,11 +176,11 @@ class FakeSandbox:
         )
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None:
         self.files[f"{sandbox_id}:{path}"] = data
 
-    async def destroy(self, tenant_id: str, sandbox_id: str) -> None:
+    async def destroy(self, account_id: str, sandbox_id: str) -> None:
         self.destroyed.append(sandbox_id)
 
     async def aclose(self) -> None:

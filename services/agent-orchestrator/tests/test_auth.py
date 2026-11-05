@@ -1,4 +1,4 @@
-"""鉴权(架构 §10):Bearer token 换租户;伪造请求头无效。"""
+"""鉴权(架构 §10):Bearer token 换账号;伪造请求头无效。"""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -29,14 +29,14 @@ def jwks(private_key) -> dict:
     return {"keys": [document]}
 
 
-def _token(private_key, tenant: str | None = "t-1", expires_in: int = 300) -> str:
+def _token(private_key, account: str | None = "t-1", expires_in: int = 300) -> str:
     claims = {
         "sub": "u1",
         "iss": ISSUER,
         "exp": datetime.now(UTC) + timedelta(seconds=expires_in),
     }
-    if tenant is not None:
-        claims["tenant_id"] = tenant
+    if account is not None:
+        claims["account_id"] = account
     return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": KID})
 
 
@@ -75,41 +75,43 @@ def test_invalid_token_rejected(tmp_path, jwks) -> None:
         assert resp.json()["code"] == "auth.token_invalid"
 
 
-def test_tenant_from_token_and_isolation(tmp_path, jwks, private_key) -> None:
+def test_account_from_token_and_isolation(tmp_path, jwks, private_key) -> None:
     with _auth_client(tmp_path, jwks) as client:
         created = client.post(
             "/api/v1/runs",
             json={"title": "周报", "goal": "整理日程"},
-            headers=_bearer(_token(private_key, tenant="t-1")),
+            headers=_bearer(_token(private_key, account="t-1")),
         )
         assert created.status_code == 201
         run_id = created.json()["id"]
 
         same = client.get(
-            f"/api/v1/runs/{run_id}", headers=_bearer(_token(private_key, tenant="t-1"))
+            f"/api/v1/runs/{run_id}",
+            headers=_bearer(_token(private_key, account="t-1")),
         )
         assert same.status_code == 200
 
         other = client.get(
-            f"/api/v1/runs/{run_id}", headers=_bearer(_token(private_key, tenant="t-2"))
+            f"/api/v1/runs/{run_id}",
+            headers=_bearer(_token(private_key, account="t-2")),
         )
         assert other.status_code == 404
 
-        # 关键:鉴权开启时伪造 X-Tenant-Id 不生效
+        # 关键:鉴权开启时伪造 X-Account-Id 不生效
         spoofed = client.get(
             f"/api/v1/runs/{run_id}",
             headers={
-                **_bearer(_token(private_key, tenant="t-2")),
-                "X-Tenant-Id": "t-1",
+                **_bearer(_token(private_key, account="t-2")),
+                "X-Account-Id": "t-1",
             },
         )
         assert spoofed.status_code == 404
 
 
-def test_token_without_tenant_claim_rejected(tmp_path, jwks, private_key) -> None:
+def test_token_without_account_claim_rejected(tmp_path, jwks, private_key) -> None:
     with _auth_client(tmp_path, jwks) as client:
         resp = client.get(
-            "/api/v1/runs", headers=_bearer(_token(private_key, tenant=None))
+            "/api/v1/runs", headers=_bearer(_token(private_key, account=None))
         )
         assert resp.status_code == 401
-        assert resp.json()["code"] == "auth.tenant_missing"
+        assert resp.json()["code"] == "auth.account_missing"

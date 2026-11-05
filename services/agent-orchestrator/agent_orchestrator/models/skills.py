@@ -2,7 +2,7 @@
 
 内置技能仍随代码版本化(仓库 skills/*.json);上传包进 DB:
 
-- skill_packages 是逻辑技能(租户内 slug 唯一),标题/描述随最近一次上传更新;
+- skill_packages 是逻辑技能(账号内 slug 唯一),标题/描述随最近一次上传更新;
 - skill_versions 是不可变版本:zip 本体在对象存储,行内只留
   object_key/sha256/size_bytes + manifest 快照 + SKILL.md 全文 + 执行字段;
 - run 创建时把版本 ID 与执行字段冻结进 runs(见 models/runs.py),
@@ -13,16 +13,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from database.base import Base, TenantMixin, TimestampMixin, UUIDMixin
+from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import JSON, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class SkillPackage(UUIDMixin, TenantMixin, TimestampMixin, Base):
-    """租户内一个逻辑技能(以 slug 标识,版本由 SkillVersion 承载)。"""
+class SkillPackage(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """账号内一个逻辑技能(以 slug 标识,版本由 SkillVersion 承载)。"""
 
     __tablename__ = "skill_packages"
-    __table_args__ = (UniqueConstraint("tenant_id", "slug"),)
+    __table_args__ = (UniqueConstraint("account_id", "slug"),)
 
     slug: Mapped[str] = mapped_column(String(80))
     title: Mapped[str] = mapped_column(String(120))
@@ -30,7 +30,7 @@ class SkillPackage(UUIDMixin, TenantMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default="active")
 
 
-class SkillVersion(UUIDMixin, TenantMixin, TimestampMixin, Base):
+class SkillVersion(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """一次上传产生的不可变版本(对象存储引用 + manifest/SKILL.md 快照)。
 
     manifest 是归一化后的 skill.json 快照(id/version/title/description/

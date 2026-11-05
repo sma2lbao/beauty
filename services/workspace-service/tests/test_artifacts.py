@@ -10,7 +10,7 @@ from common.artifacts import build_artifact_store
 from common.errors import StorageError
 from fastapi.testclient import TestClient
 
-from tests.conftest import OTHER, TENANT, _create_artifact, _settings, verifier
+from tests.conftest import ACCOUNT, OTHER, _create_artifact, _settings, verifier
 from workspace.main import create_app
 
 CONTENT = "# 周报\n\n- 本周要点\n"
@@ -25,7 +25,7 @@ def test_artifact_content_goes_to_object_store(client: TestClient, tmp_path) -> 
     assert body["size_bytes"] == len(CONTENT.encode())
     assert body["workspace_id"]  # 落默认工作区
 
-    # 对象真的落盘(<租户>/<工作区>/<交付物>.md)
+    # 对象真的落盘(<账号>/<工作区>/<交付物>.md)
     root = tmp_path / "objects"
     files = [path for path in root.rglob("*") if path.is_file()]
     assert len(files) == 1
@@ -39,12 +39,12 @@ def test_list_and_read_artifact(client: TestClient) -> None:
     artifact = _create_artifact(client).json()
 
     listed = client.get(
-        f"/v1/workspaces/{artifact['workspace_id']}/artifacts", headers=TENANT
+        f"/v1/workspaces/{artifact['workspace_id']}/artifacts", headers=ACCOUNT
     ).json()
     assert [item["id"] for item in listed] == [artifact["id"]]
     assert "content" not in listed[0]  # 列表只给元数据
 
-    fetched = client.get(f"/v1/artifacts/{artifact['id']}", headers=TENANT).json()
+    fetched = client.get(f"/v1/artifacts/{artifact['id']}", headers=ACCOUNT).json()
     assert fetched["title"] == "周报"
     assert fetched["content"] == "# 周报\n要点"
 
@@ -53,11 +53,12 @@ def test_delete_removes_object_and_metadata(client: TestClient, tmp_path) -> Non
     artifact = _create_artifact(client).json()
 
     assert (
-        client.delete(f"/v1/artifacts/{artifact['id']}", headers=TENANT).status_code
+        client.delete(f"/v1/artifacts/{artifact['id']}", headers=ACCOUNT).status_code
         == 204
     )
     assert (
-        client.get(f"/v1/artifacts/{artifact['id']}", headers=TENANT).status_code == 404
+        client.get(f"/v1/artifacts/{artifact['id']}", headers=ACCOUNT).status_code
+        == 404
     )
     root = tmp_path / "objects"
     assert [path for path in root.rglob("*") if path.is_file()] == []
@@ -93,7 +94,7 @@ def test_missing_object_is_500(client: TestClient, tmp_path) -> None:
         if path.is_file():
             path.unlink()
 
-    response = client.get(f"/v1/artifacts/{artifact['id']}", headers=TENANT)
+    response = client.get(f"/v1/artifacts/{artifact['id']}", headers=ACCOUNT)
     assert response.status_code == 500
     assert response.json()["code"] == "artifact.object_missing"
 
@@ -116,7 +117,7 @@ def _create_binary(
         payload["filename"] = filename
     if content_type is not None:
         payload["content_type"] = content_type
-    return client.post("/v1/artifacts", json=payload, headers=TENANT)
+    return client.post("/v1/artifacts", json=payload, headers=ACCOUNT)
 
 
 def test_binary_artifact_metadata_and_download(client: TestClient, tmp_path) -> None:
@@ -137,19 +138,19 @@ def test_binary_artifact_metadata_and_download(client: TestClient, tmp_path) -> 
 
     # 列表/详情带元数据且不含二进制正文
     listed = client.get(
-        f"/v1/workspaces/{body['workspace_id']}/artifacts", headers=TENANT
+        f"/v1/workspaces/{body['workspace_id']}/artifacts", headers=ACCOUNT
     ).json()
     assert listed[0]["filename"] == "screenshot.png"
     assert listed[0]["content_type"] == "image/png"
     assert "content" not in listed[0]
 
-    fetched = client.get(f"/v1/artifacts/{body['id']}", headers=TENANT).json()
+    fetched = client.get(f"/v1/artifacts/{body['id']}", headers=ACCOUNT).json()
     assert fetched["filename"] == "screenshot.png"
     assert fetched["content_type"] == "image/png"
     assert fetched["content"] is None
 
     # 下载:原始字节 + Content-Type + RFC 5987 文件名 + 私有缓存
-    download = client.get(f"/v1/artifacts/{body['id']}/download", headers=TENANT)
+    download = client.get(f"/v1/artifacts/{body['id']}/download", headers=ACCOUNT)
     assert download.status_code == 200
     assert download.headers["content-type"] == "image/png"
     assert download.content == BINARY
@@ -168,7 +169,7 @@ def test_download_defaults_and_utf8_filename(client: TestClient) -> None:
     assert body["filename"] == "图表.bin"
     assert body["content_type"] == "application/octet-stream"
 
-    download = client.get(f"/v1/artifacts/{body['id']}/download", headers=TENANT)
+    download = client.get(f"/v1/artifacts/{body['id']}/download", headers=ACCOUNT)
     assert download.status_code == 200
     assert download.headers["content-type"] == "application/octet-stream"
     assert quote("图表.bin") in download.headers["content-disposition"]
@@ -177,7 +178,7 @@ def test_download_defaults_and_utf8_filename(client: TestClient) -> None:
     text = _create_artifact(client, title="说明").json()
     assert text["filename"] == "说明.md"
     assert text["content_type"] == "text/markdown"
-    text_download = client.get(f"/v1/artifacts/{text['id']}/download", headers=TENANT)
+    text_download = client.get(f"/v1/artifacts/{text['id']}/download", headers=ACCOUNT)
     assert text_download.status_code == 200
     # Starlette 对 text/* 自动补 charset,断言前缀即可
     assert text_download.headers["content-type"].startswith("text/markdown")
@@ -196,7 +197,7 @@ def test_binary_artifact_on_database_backend(tmp_path) -> None:
             path for path in (tmp_path / "objects").rglob("*") if path.is_file()
         ]
 
-        download = client.get(f"/v1/artifacts/{body['id']}/download", headers=TENANT)
+        download = client.get(f"/v1/artifacts/{body['id']}/download", headers=ACCOUNT)
         assert download.status_code == 200
         assert download.content == BINARY
         # 文本与二进制在同后端各自落列,互不回归
@@ -207,10 +208,10 @@ def test_content_and_base64_are_mutually_exclusive(client: TestClient) -> None:
     both = client.post(
         "/v1/artifacts",
         json={"title": "两边都给", "content": "文本", "content_base64": BINARY_B64},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert both.status_code == 422
-    neither = client.post("/v1/artifacts", json={"title": "都不给"}, headers=TENANT)
+    neither = client.post("/v1/artifacts", json={"title": "都不给"}, headers=ACCOUNT)
     assert neither.status_code == 422
 
 
@@ -218,18 +219,18 @@ def test_invalid_base64_rejected(client: TestClient) -> None:
     broken = client.post(
         "/v1/artifacts",
         json={"title": "坏 base64", "content_base64": "%%%not-base64%%%"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert broken.status_code == 422
     empty = client.post(
         "/v1/artifacts",
         json={"title": "空 base64", "content_base64": ""},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert empty.status_code == 422
 
 
-def test_download_is_tenant_isolated(client: TestClient) -> None:
+def test_download_is_account_isolated(client: TestClient) -> None:
     artifact = _create_binary(client).json()
     response = client.get(f"/v1/artifacts/{artifact['id']}/download", headers=OTHER)
     assert response.status_code == 404

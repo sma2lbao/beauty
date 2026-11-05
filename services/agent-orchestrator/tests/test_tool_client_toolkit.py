@@ -113,8 +113,8 @@ async def _ready(
     return toolkit, catalog, client
 
 
-async def _token(tenant_id: str) -> str:
-    return f"tok-{tenant_id}"
+async def _token(account_id: str) -> str:
+    return f"tok-{account_id}"
 
 
 # -------------------------------------------------------------- RemoteToolkit
@@ -341,7 +341,7 @@ async def test_toolkit_execute_passes_tool_context() -> None:
     toolkit, _, client = await _ready(
         _server(_catalog(read), exec_handler=exec_handler), read
     )
-    context = ToolContext(tenant_id="t-1", run_id="r-1", conversation_id="c-1")
+    context = ToolContext(account_id="t-1", run_id="r-1", conversation_id="c-1")
     with bind_tool_context(context):
         await toolkit.execute("read", '{"path": "a.txt"}')
     assert bodies[-1]["run_id"] == "r-1"

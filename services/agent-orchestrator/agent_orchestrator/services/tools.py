@@ -60,7 +60,7 @@ class ToolSpec:
         return self.risk is ToolRisk.DANGER
 
 
-#: 外部工具工厂:按租户在调用边界现取(MCP 注册表 / skill_run)。
+#: 外部工具工厂:按账号在调用边界现取(MCP 注册表 / skill_run)。
 #: run 执行图与 chat 直接对话共用同一份——对话里能不能执行由 spec 的风险
 #: 等级决定(DANGER 不执行,chat 没有审批流,§6.7)。
 ToolExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
@@ -258,7 +258,7 @@ def document_specs(documents: DocumentLibrary) -> list[ToolSpec]:
     ]
 
 
-def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
+def knowledge_specs(account_id: str, knowledge: Knowledge) -> list[ToolSpec]:
     """企业知识库检索(只读):让模型先查资料再回答。"""
 
     async def search_knowledge(args: dict[str, Any]) -> str:
@@ -266,7 +266,7 @@ def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
         if not query:
             return _error("缺少 query")
         result = await knowledge.search(
-            tenant_id, query, _int_arg(args, "limit", 5, maximum=MAX_KNOWLEDGE_LIMIT)
+            account_id, query, _int_arg(args, "limit", 5, maximum=MAX_KNOWLEDGE_LIMIT)
         )
         hits = [
             {
@@ -310,7 +310,7 @@ def knowledge_specs(tenant_id: str, knowledge: Knowledge) -> list[ToolSpec]:
 
 
 def build_tools(
-    tenant_id: str,
+    account_id: str,
     *,
     documents: DocumentLibrary | None = None,
     knowledge: Knowledge | None = None,
@@ -323,5 +323,5 @@ def build_tools(
     if documents is not None:
         specs += document_specs(documents)
     if knowledge is not None:
-        specs += knowledge_specs(tenant_id, knowledge)
+        specs += knowledge_specs(account_id, knowledge)
     return ToolRegistry(specs)

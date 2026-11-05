@@ -16,7 +16,7 @@ from agent_orchestrator.graph.nodes import make_approval_gate_node
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services.tools import ToolRegistry
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeDangerTool,
     FakeLLM,
     FakeWorkspace,
@@ -32,13 +32,13 @@ DELIVER = "# 本周周报\n\n正文"
 
 
 def _event_types(client: TestClient, run_id: str) -> list[str]:
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return [event["type"] for event in resp.json()]
 
 
 def _events(client: TestClient, run_id: str) -> list[dict]:
-    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT)
+    resp = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT)
     assert resp.status_code == 200
     return resp.json()
 
@@ -52,7 +52,7 @@ def test_plan_auto_approves_without_dangerous_tools(tmp_path: Path) -> None:
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         body = resp.json()
         # 一次跑到终态,不再停在 awaiting_approval
@@ -74,7 +74,7 @@ def test_plan_auto_approves_without_dangerous_tools(tmp_path: Path) -> None:
         assert approved["payload"] == {"attempt": 1, "auto": True}
 
         # 交付物仍按统一路径落库(自动放行不影响交付)
-        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=TENANT)
+        artifacts = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
         assert artifacts.status_code == 200
         rows = artifacts.json()
         assert len(rows) == 1
@@ -82,7 +82,7 @@ def test_plan_auto_approves_without_dangerous_tools(tmp_path: Path) -> None:
 
         # 已终态:不能再人工放行
         assert (
-            client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).status_code
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).status_code
             == 409
         )
 
@@ -100,16 +100,16 @@ def test_plan_still_waits_when_dangerous_tool_available(tmp_path: Path) -> None:
         ),
         llm_client=fake,
         token_verifier=verifier(),
-        toolkit_factory=lambda tenant: ToolRegistry([danger.spec()]),
+        toolkit_factory=lambda account: ToolRegistry([danger.spec()]),
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        body = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
+        body = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).json()
         assert body["status"] == "awaiting_approval"
         types = _event_types(client, run_id)
         assert "run.approved.v1" not in types
 
-        done = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT).json()
+        done = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert done["status"] == "completed"
         assert "run.approved.v1" in _event_types(client, run_id)
         # 危险工具没有被调用(模型没请求它;放行只针对计划)
@@ -125,7 +125,7 @@ def test_plan_auto_approve_switch_off_keeps_manual_gate(tmp_path: Path) -> None:
     )
     with TestClient(app) as client:
         run_id = _create_run(client)
-        body = client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT).json()
+        body = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT).json()
         assert body["status"] == "awaiting_approval"
         assert [t for t in _event_types(client, run_id) if t != "run.item.v1"] == [
             "run.created.v1",
@@ -136,11 +136,11 @@ def test_plan_auto_approve_switch_off_keeps_manual_gate(tmp_path: Path) -> None:
 async def test_skill_whitelist_narrows_away_dangerous_tools() -> None:
     """白名单裁掉危险工具后,该 run 的工具面没有 DANGER → 自动放行。"""
     node = make_approval_gate_node(
-        lambda tenant: ToolRegistry([FakeDangerTool().spec()]), None
+        lambda account: ToolRegistry([FakeDangerTool().spec()]), None
     )
     result = await node(
         {
-            "tenant_id": "t-1",
+            "account_id": "t-1",
             "allowed_tools": ["search_knowledge"],
             "plan_markdown": PLAN,
         }
@@ -151,10 +151,10 @@ async def test_skill_whitelist_narrows_away_dangerous_tools() -> None:
 async def test_empty_whitelist_exposes_no_tools_and_auto_approves() -> None:
     """技能 tools=[] 表示不用任何工具:与 execute 同口径,没有 DANGER 可做 → 放行。"""
     node = make_approval_gate_node(
-        lambda tenant: ToolRegistry([FakeDangerTool().spec()]), None
+        lambda account: ToolRegistry([FakeDangerTool().spec()]), None
     )
     result = await node(
-        {"tenant_id": "t-1", "allowed_tools": [], "plan_markdown": PLAN}
+        {"account_id": "t-1", "allowed_tools": [], "plan_markdown": PLAN}
     )
     assert result == {"auto_approved": True}
 
@@ -177,16 +177,16 @@ def test_stream_task_auto_approves_and_mirrors_artifacts(tmp_path: Path) -> None
     )
     with TestClient(app) as client:
         conversation_id = client.post(
-            "/api/v1/conversations", json={}, headers=TENANT
+            "/api/v1/conversations", json={}, headers=ACCOUNT
         ).json()["id"]
         resp = client.post(
             f"/api/v1/conversations/{conversation_id}/messages/stream",
             json={"content": "把本周日程整理成周报", "mode": "task"},
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert resp.status_code == 200
 
-        runs = client.get("/api/v1/runs?limit=5", headers=TENANT).json()
+        runs = client.get("/api/v1/runs?limit=5", headers=ACCOUNT).json()
         assert len(runs) == 1
         run = runs[0]
         assert run["status"] == "completed"
@@ -197,7 +197,7 @@ def test_stream_task_auto_approves_and_mirrors_artifacts(tmp_path: Path) -> None
         assert "run.approved.v1" in types
 
         # 交付物照常落库 + 镜像到工作区:两处依赖都最终到了 delivery
-        artifacts = client.get(f"/api/v1/runs/{run['id']}/artifacts", headers=TENANT)
+        artifacts = client.get(f"/api/v1/runs/{run['id']}/artifacts", headers=ACCOUNT)
         assert [row["source"] for row in artifacts.json()] == ["report"]
         assert len(workspace.created) == 1
         assert workspace.created[0]["content"] == DELIVER

@@ -327,17 +327,21 @@ export function ConsoleNavLink({
   icon,
   label,
   compact = false,
+  onClick,
 }: {
   to: string;
   end?: boolean;
   icon: ReactNode;
   label: string;
   compact?: boolean;
+  /** 收起承载它的弹层等副作用:点击即触发,导航仍由 NavLink 负责。 */
+  onClick?: () => void;
 }) {
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onClick}
       className={({ isActive }) =>
         cn(
           'flex items-center rounded-md transition-colors',

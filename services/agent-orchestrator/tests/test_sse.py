@@ -10,16 +10,16 @@ from agent_orchestrator.api.v1.runs import _event_stream
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import RunCreate
 from agent_orchestrator.services import runs as runs_service
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 
 
 def _completed_run(client: TestClient) -> str:
     resp = client.post(
-        "/api/v1/runs", json={"title": "流式", "goal": "看事件流"}, headers=TENANT
+        "/api/v1/runs", json={"title": "流式", "goal": "看事件流"}, headers=ACCOUNT
     )
     run_id = resp.json()["id"]
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     return run_id
 
 
@@ -27,7 +27,7 @@ def _read_stream(client: TestClient, run_id: str, extra: dict | None = None) -> 
     with client.stream(
         "GET",
         f"/api/v1/runs/{run_id}/events/stream",
-        headers={**TENANT, **(extra or {})},
+        headers={**ACCOUNT, **(extra or {})},
     ) as response:
         assert response.status_code == 200
         return b"".join(response.iter_raw()).decode()
@@ -93,7 +93,7 @@ def test_stream_resumes_from_last_event_id(client: TestClient) -> None:
 
 
 def test_stream_unknown_run_404(client: TestClient) -> None:
-    resp = client.get("/api/v1/runs/nope/events/stream", headers=TENANT)
+    resp = client.get("/api/v1/runs/nope/events/stream", headers=ACCOUNT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "run.not_found"
 
@@ -102,7 +102,7 @@ def test_stream_bad_cursor_rejected(client: TestClient) -> None:
     run_id = _completed_run(client)
     resp = client.get(
         f"/api/v1/runs/{run_id}/events/stream",
-        headers={**TENANT, "Last-Event-ID": "abc"},
+        headers={**ACCOUNT, "Last-Event-ID": "abc"},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "sse.bad_cursor"

@@ -79,7 +79,7 @@ def test_service_settings_defaults_and_overrides() -> None:
     assert ServiceSettings.model_fields["auth_issuer"].default == (
         "http://127.0.0.1:8001"
     )
-    assert ServiceSettings.model_fields["auth_tenant_claim"].default == "tenant_id"
+    assert ServiceSettings.model_fields["auth_account_claim"].default == "account_id"
 
 
 def test_service_settings_requires_database_url() -> None:
@@ -93,7 +93,7 @@ def test_service_settings_validates_auth_fields() -> None:
     with pytest.raises(ValidationError):
         _settings(auth_enabled=True, auth_issuer="")
     with pytest.raises(ValidationError):
-        _settings(auth_enabled=True, auth_tenant_claim="")
+        _settings(auth_enabled=True, auth_account_claim="")
 
 
 def test_health_router_keeps_response_contract() -> None:

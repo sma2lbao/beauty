@@ -4,8 +4,8 @@
 tool-service)只依赖本模块的 Sandbox 协议;阶段 B 换 mTLS 或常驻连接时
 注入点(token_provider)不变。
 
-服务间调用沿用 TokenBroker 签发的内部 JWT:租户在 claim 里,请求只带
-Authorization: Bearer,不发租户头。失败统一映射 UpstreamError(不可达 =
+服务间调用沿用 TokenBroker 签发的内部 JWT:账号在 claim 里,请求只带
+Authorization: Bearer,不发账号头。失败统一映射 UpstreamError(不可达 =
 sandbox.unreachable,下游非 2xx / 响应非法 = sandbox.upstream_error)。
 测试用 httpx.MockTransport 打桩,零网络。
 """
@@ -137,7 +137,7 @@ class Sandbox(Protocol):
 
     async def create(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         kind: str = "generic",
         image: str | None = None,
@@ -151,7 +151,7 @@ class Sandbox(Protocol):
 
     async def ensure(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         kind: str = "generic",
@@ -164,11 +164,11 @@ class Sandbox(Protocol):
         run_id: str | None = None,
     ) -> tuple[SandboxInfo, bool]: ...
 
-    async def get(self, tenant_id: str, sandbox_id: str) -> SandboxInfo: ...
+    async def get(self, account_id: str, sandbox_id: str) -> SandboxInfo: ...
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: Sequence[str],
         *,
@@ -179,20 +179,20 @@ class Sandbox(Protocol):
     ) -> SandboxExecResult: ...
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None: ...
 
-    async def read_file(self, tenant_id: str, sandbox_id: str, path: str) -> bytes: ...
+    async def read_file(self, account_id: str, sandbox_id: str, path: str) -> bytes: ...
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> SandboxInfo: ...
+    async def touch(self, account_id: str, sandbox_id: str) -> SandboxInfo: ...
 
-    async def destroy(self, tenant_id: str, sandbox_id: str) -> None: ...
+    async def destroy(self, account_id: str, sandbox_id: str) -> None: ...
 
     async def aclose(self) -> None: ...
 
 
 class SandboxClient:
-    """workspace-service 沙箱 HTTP 客户端:服务间 Bearer,租户在 token claim 里。"""
+    """workspace-service 沙箱 HTTP 客户端:服务间 Bearer,账号在 token claim 里。"""
 
     def __init__(
         self,
@@ -212,7 +212,7 @@ class SandboxClient:
 
     async def create(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         kind: str = "generic",
         image: str | None = None,
@@ -240,13 +240,13 @@ class SandboxClient:
         if run_id is not None:
             payload["run_id"] = run_id
         response = await self._request(
-            "POST", "/v1/sandboxes", tenant_id, json=payload, expected=201
+            "POST", "/v1/sandboxes", account_id, json=payload, expected=201
         )
         return SandboxInfo.from_payload(self._decode(response))
 
     async def ensure(
         self,
-        tenant_id: str,
+        account_id: str,
         *,
         scope_key: str,
         kind: str = "generic",
@@ -258,10 +258,10 @@ class SandboxClient:
         workspace_id: str | None = None,
         run_id: str | None = None,
     ) -> tuple[SandboxInfo, bool]:
-        """幂等 get-or-create:同一 (tenant_id, scope_key) 只有一个沙箱。
+        """幂等 get-or-create:同一 (account_id, scope_key) 只有一个沙箱。
 
         下游新建返回 201、复用返回 200,调用方不感知差异;created 只用于
-        日志/指标。多副本并发由下游 (tenant_id, scope_key) 唯一约束兜底。
+        日志/指标。多副本并发由下游 (account_id, scope_key) 唯一约束兜底。
         """
         payload: dict[str, Any] = {"kind": kind, "scope_key": scope_key}
         if image is not None:
@@ -281,7 +281,7 @@ class SandboxClient:
         response = await self._request(
             "POST",
             "/v1/sandboxes:ensure",
-            tenant_id,
+            account_id,
             json=payload,
             expected=(200, 201),
         )
@@ -303,16 +303,16 @@ class SandboxClient:
             ) from exc
         return SandboxInfo.from_payload(dict(sandbox_payload)), created
 
-    async def get(self, tenant_id: str, sandbox_id: str) -> SandboxInfo:
-        """按 id 读沙箱(租户由 token claim 决定,越权一律 404)。"""
+    async def get(self, account_id: str, sandbox_id: str) -> SandboxInfo:
+        """按 id 读沙箱(账号由 token claim 决定,越权一律 404)。"""
         response = await self._request(
-            "GET", f"/v1/sandboxes/{sandbox_id}", tenant_id, expected=200
+            "GET", f"/v1/sandboxes/{sandbox_id}", account_id, expected=200
         )
         return SandboxInfo.from_payload(self._decode(response))
 
     async def exec(
         self,
-        tenant_id: str,
+        account_id: str,
         sandbox_id: str,
         argv: Sequence[str],
         *,
@@ -332,14 +332,14 @@ class SandboxClient:
         response = await self._request(
             "POST",
             f"/v1/sandboxes/{sandbox_id}/exec",
-            tenant_id,
+            account_id,
             json=payload,
             expected=200,
         )
         return SandboxExecResult.from_payload(self._decode(response))
 
     async def write_file(
-        self, tenant_id: str, sandbox_id: str, path: str, data: bytes
+        self, account_id: str, sandbox_id: str, path: str, data: bytes
     ) -> None:
         """写文件:正文 base64 编码后走 JSON(204 即成功)。"""
         payload = {
@@ -349,17 +349,17 @@ class SandboxClient:
         await self._request(
             "PUT",
             f"/v1/sandboxes/{sandbox_id}/files",
-            tenant_id,
+            account_id,
             json=payload,
             expected=204,
         )
 
-    async def read_file(self, tenant_id: str, sandbox_id: str, path: str) -> bytes:
+    async def read_file(self, account_id: str, sandbox_id: str, path: str) -> bytes:
         """读文件:base64 解码回原始字节。"""
         response = await self._request(
             "GET",
             f"/v1/sandboxes/{sandbox_id}/files",
-            tenant_id,
+            account_id,
             params={"path": path},
             expected=200,
         )
@@ -373,31 +373,31 @@ class SandboxClient:
                 details={"path": path},
             ) from exc
 
-    async def touch(self, tenant_id: str, sandbox_id: str) -> SandboxInfo:
+    async def touch(self, account_id: str, sandbox_id: str) -> SandboxInfo:
         """续期(滑动 TTL):返回更新后的沙箱描述。"""
         response = await self._request(
-            "POST", f"/v1/sandboxes/{sandbox_id}/touch", tenant_id, expected=200
+            "POST", f"/v1/sandboxes/{sandbox_id}/touch", account_id, expected=200
         )
         return SandboxInfo.from_payload(self._decode(response))
 
-    async def destroy(self, tenant_id: str, sandbox_id: str) -> None:
+    async def destroy(self, account_id: str, sandbox_id: str) -> None:
         """销毁沙箱:204 视为成功(下游幂等)。"""
         await self._request(
-            "DELETE", f"/v1/sandboxes/{sandbox_id}", tenant_id, expected=204
+            "DELETE", f"/v1/sandboxes/{sandbox_id}", account_id, expected=204
         )
 
     async def _request(
         self,
         method: str,
         path: str,
-        tenant_id: str,
+        account_id: str,
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, str] | None = None,
         expected: int | tuple[int, ...],
     ) -> httpx.Response:
         """发一次内部请求:带 Bearer,统一映射传输层/非 2xx 失败。"""
-        token = await self._token_provider(tenant_id)
+        token = await self._token_provider(account_id)
         headers = {"Authorization": f"Bearer {token}"}
         try:
             response = await self._client.request(

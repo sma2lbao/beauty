@@ -121,7 +121,7 @@ def next_path_from_state(settings: Settings, state: str) -> str:
 
 async def start_authorization(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     server_id: str,
     *,
     settings: Settings,
@@ -132,7 +132,9 @@ async def start_authorization(
     """发现 + 注册 + 签发 state,返回浏览器应跳转的授权地址。"""
     if not settings.mcp_oauth_enabled:
         raise ConflictError("mcp.oauth_disabled", "浏览器 OAuth 授权未启用")
-    server = await MCPServerRepository(session).require_for_tenant(tenant_id, server_id)
+    server = await MCPServerRepository(session).require_for_account(
+        account_id, server_id
+    )
     if (server.transport or "http") != "http":
         raise ConflictError("mcp.oauth_stdio_unsupported", "stdio MCP 不需要浏览器授权")
     timeout = settings.mcp_oauth_timeout_seconds
@@ -151,7 +153,7 @@ async def start_authorization(
     redirect_uri = settings.mcp_oauth_redirect_uri
 
     repo = MCPServerAuthRepository(session)
-    row = await repo.get_for_server(tenant_id, server_id)
+    row = await repo.get_for_server(account_id, server_id)
     reuse = (
         row is not None
         and bool(row.client_id)
@@ -183,7 +185,7 @@ async def start_authorization(
     scope_list = [str(scope) for scope in scopes or [] if isinstance(scope, str)]
 
     if row is None:
-        row = MCPServerAuth(tenant_id=tenant_id, server_id=server_id)
+        row = MCPServerAuth(account_id=account_id, server_id=server_id)
         await repo.add(row)
     row.authorization_server = issuer
     row.token_endpoint = token_endpoint
@@ -202,7 +204,7 @@ async def start_authorization(
 
     verifier = _new_verifier()
     payload = {
-        "tenant_id": tenant_id,
+        "account_id": account_id,
         "server_id": server_id,
         "ts": int(time.time()),
         "nonce": secrets.token_urlsafe(8),
@@ -299,18 +301,18 @@ async def complete_authorization(
 ) -> MCPOAuthCallbackRead:
     """校验 state → 换 token → 加密落库;失败也返回可跳转的 redirect_path。"""
     payload = verify_state(settings, state)
-    tenant_id = str(payload.get("tenant_id") or "")
+    account_id = str(payload.get("account_id") or "")
     server_id = str(payload.get("server_id") or "")
-    if not tenant_id or not server_id:
-        raise AppError("mcp.oauth_state_invalid", "授权 state 缺少租户或 server 信息")
-    server = await MCPServerRepository(session).get_for_tenant(tenant_id, server_id)
+    if not account_id or not server_id:
+        raise AppError("mcp.oauth_state_invalid", "授权 state 缺少账号或 server 信息")
+    server = await MCPServerRepository(session).get_for_account(account_id, server_id)
     if server is None:
         raise AppError(
             "mcp.server_not_found",
             "MCP server 已被删除，请重新注册后再授权",
             details={"mcp_server_id": server_id},
         )
-    row = await MCPServerAuthRepository(session).get_for_server(tenant_id, server_id)
+    row = await MCPServerAuthRepository(session).get_for_server(account_id, server_id)
     if row is None or not row.client_id:
         raise AppError(
             "mcp.oauth_state_invalid", "授权记录不存在或已被删除，请重新发起授权"
@@ -430,7 +432,7 @@ async def _refresh(
 
 async def access_token(
     session: AsyncSession,
-    tenant_id: str,
+    account_id: str,
     server_id: str,
     *,
     settings: Settings,
@@ -442,7 +444,7 @@ async def access_token(
     if not settings.mcp_oauth_enabled:
         return None
     repo = MCPServerAuthRepository(session)
-    row = await repo.get_for_server(tenant_id, server_id)
+    row = await repo.get_for_server(account_id, server_id)
     if row is None:
         return None
     token = _maybe_decrypt(secret, row.encrypted_access_token)
@@ -450,10 +452,10 @@ async def access_token(
         return token
     if not row.encrypted_refresh_token:
         return None
-    server = await MCPServerRepository(session).get_for_tenant(tenant_id, server_id)
+    server = await MCPServerRepository(session).get_for_account(account_id, server_id)
     if server is None:
         return None
-    async with _lock_for(f"{tenant_id}:{server_id}"):
+    async with _lock_for(f"{account_id}:{server_id}"):
         # 等锁期间别的调用可能已经刷新过:非强制刷新时重新判断
         if not force_refresh:
             token = _maybe_decrypt(secret, row.encrypted_access_token)
@@ -469,9 +471,9 @@ async def access_token(
         )
 
 
-async def disconnect(session: AsyncSession, tenant_id: str, server_id: str) -> None:
+async def disconnect(session: AsyncSession, account_id: str, server_id: str) -> None:
     """解除授权:删掉授权行(不调远端 revoke;token 随行一起消失)。"""
     repo = MCPServerAuthRepository(session)
-    row = await repo.get_for_server(tenant_id, server_id)
+    row = await repo.get_for_server(account_id, server_id)
     if row is not None:
         await repo.delete(row)

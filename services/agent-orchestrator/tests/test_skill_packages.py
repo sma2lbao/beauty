@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import skill_packages
-from tests.conftest import OTHER, TENANT, FakeWorkspace, _settings, verifier
+from tests.conftest import ACCOUNT, OTHER, FakeWorkspace, _settings, verifier
 
 SKILL_MD = "# 周报生成\n\n按模板整理本周日程。\n"
 BASE_MANIFEST: dict[str, Any] = {
@@ -71,7 +71,7 @@ def upload(
     client: TestClient,
     data: bytes,
     filename: str = "weekly-report.zip",
-    headers: dict[str, str] = TENANT,
+    headers: dict[str, str] = ACCOUNT,
 ):
     return client.post(
         "/api/v1/skills/packages",
@@ -116,17 +116,17 @@ def test_upload_new_package(pkg_client: TestClient, workspace: FakeWorkspace) ->
     assert version["sha256"] == workspace.sha256
 
     put = workspace.puts[0]
-    assert put["tenant_id"] == "t-1"
+    assert put["account_id"] == "t-1"
     assert put["filename"] == "weekly-report.zip"
     assert put["content_type"] == "application/zip"
     assert put["data"] == data
 
-    listing = pkg_client.get("/api/v1/skills/packages", headers=TENANT).json()
+    listing = pkg_client.get("/api/v1/skills/packages", headers=ACCOUNT).json()
     assert [item["id"] for item in listing] == [body["id"]]
-    detail = pkg_client.get(f"/api/v1/skills/packages/{body['id']}", headers=TENANT)
+    detail = pkg_client.get(f"/api/v1/skills/packages/{body['id']}", headers=ACCOUNT)
     assert detail.status_code == 200
     assert detail.json()["slug"] == "team.weekly-report"
-    missing = pkg_client.get("/api/v1/skills/packages/deadbeef", headers=TENANT)
+    missing = pkg_client.get("/api/v1/skills/packages/deadbeef", headers=ACCOUNT)
     assert missing.status_code == 404
 
 
@@ -135,7 +135,7 @@ def test_skills_list_merges_builtin_and_uploaded(
 ) -> None:
     package = upload(pkg_client, plain_zip()).json()
     version_id = package["versions"][0]["id"]
-    listing = pkg_client.get("/api/v1/skills", headers=TENANT).json()
+    listing = pkg_client.get("/api/v1/skills", headers=ACCOUNT).json()
     by_id = {item["id"]: item for item in listing}
     uploaded = by_id["team.weekly-report"]
     assert uploaded["source"] == "uploaded"
@@ -149,10 +149,10 @@ def test_skills_list_merges_builtin_and_uploaded(
     assert builtin["source"] == "builtin"
     assert builtin["has_scripts"] is False
 
-    detail = pkg_client.get("/api/v1/skills/team.weekly-report", headers=TENANT)
+    detail = pkg_client.get("/api/v1/skills/team.weekly-report", headers=ACCOUNT)
     assert detail.status_code == 200
     assert detail.json()["source"] == "uploaded"
-    missing = pkg_client.get("/api/v1/skills/no.such-skill", headers=TENANT)
+    missing = pkg_client.get("/api/v1/skills/no.such-skill", headers=ACCOUNT)
     assert missing.status_code == 404
     assert missing.json()["code"] == "skill.not_found"
 
@@ -335,7 +335,7 @@ def test_run_freezes_uploaded_skill_snapshot(
                 "goal": "生成周报",
                 "skill_id": "team.weekly-report",
             },
-            headers=TENANT,
+            headers=ACCOUNT,
         )
         assert response.status_code == 201, response.text
         run = response.json()
@@ -391,7 +391,7 @@ def test_undeclared_tools_is_unrestricted(
 
         skills = {
             item["id"]: item
-            for item in client.get("/api/v1/skills", headers=TENANT).json()
+            for item in client.get("/api/v1/skills", headers=ACCOUNT).json()
         }
         assert skills["team.weekly-report"]["tools"] is None
         assert skills["team.no-tools"]["tools"] == []
@@ -401,7 +401,7 @@ def test_undeclared_tools_is_unrestricted(
             response = client.post(
                 "/api/v1/runs",
                 json={"title": skill_id, "goal": "g", "skill_id": skill_id},
-                headers=TENANT,
+                headers=ACCOUNT,
             )
             assert response.status_code == 201, response.text
             run_ids[skill_id] = response.json()["id"]
@@ -425,7 +425,7 @@ def test_run_with_unknown_skill_not_found(pkg_client: TestClient) -> None:
     response = pkg_client.post(
         "/api/v1/runs",
         json={"title": "x", "goal": "g", "skill_id": "team.nope"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 404
     assert response.json()["code"] == "skill.not_found"
@@ -438,11 +438,11 @@ def test_delete_package_removes_versions_and_objects(
     upload(pkg_client, plain_zip({**BASE_MANIFEST, "version": "2.0.0"}))
     object_keys = {put["key"] for put in workspace.puts}
     response = pkg_client.delete(
-        f"/api/v1/skills/packages/{package['id']}", headers=TENANT
+        f"/api/v1/skills/packages/{package['id']}", headers=ACCOUNT
     )
     assert response.status_code == 204
-    assert pkg_client.get("/api/v1/skills/packages", headers=TENANT).json() == []
-    detail = pkg_client.get(f"/api/v1/skills/packages/{package['id']}", headers=TENANT)
+    assert pkg_client.get("/api/v1/skills/packages", headers=ACCOUNT).json() == []
+    detail = pkg_client.get(f"/api/v1/skills/packages/{package['id']}", headers=ACCOUNT)
     assert detail.status_code == 404
     assert {key for _, key in workspace.deleted} == object_keys
 
@@ -454,13 +454,13 @@ def test_delete_package_ignores_object_delete_failure(
     package = upload(pkg_client, plain_zip()).json()
     workspace.fail = True
     response = pkg_client.delete(
-        f"/api/v1/skills/packages/{package['id']}", headers=TENANT
+        f"/api/v1/skills/packages/{package['id']}", headers=ACCOUNT
     )
     assert response.status_code == 204
-    assert pkg_client.get("/api/v1/skills/packages", headers=TENANT).json() == []
+    assert pkg_client.get("/api/v1/skills/packages", headers=ACCOUNT).json() == []
 
 
-def test_packages_are_tenant_scoped(
+def test_packages_are_account_scoped(
     pkg_client: TestClient, workspace: FakeWorkspace
 ) -> None:
     package = upload(pkg_client, plain_zip()).json()
@@ -485,7 +485,7 @@ def test_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
     """对话任务路径与 run 创建共用 resolve_skill(上传包也可绑定)。"""
     upload(pkg_client, plain_zip())
     conversation = pkg_client.post(
-        "/api/v1/conversations", json={}, headers=TENANT
+        "/api/v1/conversations", json={}, headers=ACCOUNT
     ).json()
     response = pkg_client.post(
         f"/api/v1/conversations/{conversation['id']}/messages",
@@ -494,7 +494,7 @@ def test_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
             "mode": "task",
             "skill_id": "team.weekly-report",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert response.status_code == 201, response.text
     assert response.json()["run"]["skill_id"] == "team.weekly-report"
@@ -502,7 +502,7 @@ def test_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
     missing = pkg_client.post(
         f"/api/v1/conversations/{conversation['id']}/messages",
         json={"content": "x", "mode": "task", "skill_id": "team.nope"},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert missing.status_code == 404
     assert missing.json()["code"] == "skill.not_found"
@@ -512,7 +512,7 @@ def test_stream_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
     """SSE 路径在开流前解析技能(未知 id 直接 404,不进流)。"""
     upload(pkg_client, plain_zip())
     conversation = pkg_client.post(
-        "/api/v1/conversations", json={}, headers=TENANT
+        "/api/v1/conversations", json={}, headers=ACCOUNT
     ).json()
     with pkg_client.stream(
         "POST",
@@ -522,7 +522,7 @@ def test_stream_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
             "mode": "task",
             "skill_id": "team.weekly-report",
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     ) as response:
         assert response.status_code == 200
         text = response.read().decode()
@@ -532,6 +532,6 @@ def test_stream_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
         "POST",
         f"/api/v1/conversations/{conversation['id']}/messages/stream",
         json={"content": "x", "mode": "task", "skill_id": "team.nope"},
-        headers=TENANT,
+        headers=ACCOUNT,
     ) as response:
         assert response.status_code == 404

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import quota
-from tests.conftest import _IDP, TENANT, FakeLLM, _client, _settings
+from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _settings
 
 
 def _quota_client(payload: dict[str, Any] | None, *, error: bool = False):
@@ -42,7 +42,7 @@ def _create(client) -> Any:
             "goal": "把本周日程整理成周报",
             "acceptance_criteria": ["日程已整理"],
         },
-        headers=TENANT,
+        headers=ACCOUNT,
     )
 
 
@@ -121,21 +121,21 @@ def test_token_budget_stops_run(tmp_path) -> None:
     """每次模型调用记 15 token、预算 20 → deliver 前中止,run failed。"""
     with _budget_client(tmp_path, 20) as client:
         run_id = _create(client).json()["id"]
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         # 放行后 execute→verify→deliver 在同一段图调用里继续,预算在节点边界拦下
-        client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT, json={})
-        run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT, json={})
+        run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
 
     assert run["status"] == "failed"
     assert "TokenBudgetExceeded" in (run["status_reason"] or "")
-    events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     assert any(event["type"] == "run.failed.v1" for event in events)
 
 
 def test_budget_zero_does_not_limit(tmp_path) -> None:
     with _budget_client(tmp_path, 0) as client:
         run_id = _create(client).json()["id"]
-        client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-        client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT, json={})
-        run = client.get(f"/api/v1/runs/{run_id}", headers=TENANT).json()
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT, json={})
+        run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
     assert run["status"] == "completed"

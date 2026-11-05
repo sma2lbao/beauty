@@ -11,7 +11,7 @@ LLM 注入:builder 用 make_*_node(llm) 工厂装配;llm 为 None 时回退
 确定性桩(dev/测试零外部依赖)。节点内 LLM 异常不捕获,由 services 层的
 图调用边界统一转 failed 终态(§6.2)。
 
-工具注入:execute 拿 toolkit_factory(租户 → 工具注册表);工具执行失败
+工具注入:execute 拿 toolkit_factory(账号 → 工具注册表);工具执行失败
 不抛错,以错误文本回喂模型(§6.1),每次调用记入 state["tool_calls"]。
 
 本模块是门面:实现按职责拆到同包子模块(toolkit/audit/messages/gates/ask/

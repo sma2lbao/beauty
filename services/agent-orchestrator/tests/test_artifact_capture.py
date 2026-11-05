@@ -13,7 +13,7 @@ from agent_orchestrator.services.file_capture import DownloadedFile, FakeDownloa
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import build_tools
 from tests.conftest import (
-    TENANT,
+    ACCOUNT,
     FakeKnowledge,
     FakeLLM,
     _create_run,
@@ -70,7 +70,7 @@ def _app(
     app = create_app(
         _settings(tmp_path, name, llm_enabled=True, tools_enabled=True, **overrides),
         llm_client=fake,
-        toolkit_factory=lambda tenant: build_tools(tenant, knowledge=_knowledge()),
+        toolkit_factory=lambda account: build_tools(account, knowledge=_knowledge()),
         token_verifier=verifier(),
     )
     if downloader is not None:
@@ -81,14 +81,14 @@ def _app(
 
 def _deliver(client: TestClient) -> str:
     run_id = _create_run(client)
-    client.post(f"/api/v1/runs/{run_id}/plan", headers=TENANT)
-    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=TENANT)
+    client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+    response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"
     return run_id
 
 
 def _delivered(client: TestClient, run_id: str) -> dict:
-    events = client.get(f"/api/v1/runs/{run_id}/events", headers=TENANT).json()
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
     return next(e["payload"] for e in events if e["type"] == "run.delivered.v1")
 
 
@@ -99,7 +99,7 @@ def test_tool_file_url_is_captured_as_artifact(tmp_path: Path) -> None:
 
         assert downloader.calls == [FILE_URL]
         artifacts = client.get(
-            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT
         ).json()
         assert [row["source"] for row in artifacts] == ["report", "mcp"]
         pdf = artifacts[1]
@@ -113,7 +113,7 @@ def test_tool_file_url_is_captured_as_artifact(tmp_path: Path) -> None:
 
         # 二进制件从下载端点取原始字节(不是被当文本塞进 content)
         response = client.get(
-            f"/api/v1/runs/{run_id}/artifacts/{pdf['id']}/download", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts/{pdf['id']}/download", headers=ACCOUNT
         )
         assert response.content == b"%PDF-1.4 report"
         assert response.headers["content-type"] == "application/pdf"
@@ -127,7 +127,7 @@ def test_download_failure_is_recorded_not_fatal(tmp_path: Path) -> None:
 
         # 抓取失败不拖垮交付:run 仍 completed,报告件照常有,失败如实记账
         artifacts = client.get(
-            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT
         ).json()
         assert [row["source"] for row in artifacts] == ["report"]
         payload = _delivered(client, run_id)
@@ -145,7 +145,7 @@ def test_download_disabled_skips_capture(tmp_path: Path) -> None:
         run_id = _deliver(client)
 
         artifacts = client.get(
-            f"/api/v1/runs/{run_id}/artifacts", headers=TENANT
+            f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT
         ).json()
         assert [row["source"] for row in artifacts] == ["report"]
         assert _delivered(client, run_id)["download_errors"] == []

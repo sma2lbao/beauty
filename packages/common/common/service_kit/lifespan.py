@@ -77,7 +77,7 @@ def build_lifespan(
                     issuer=settings.auth_issuer,
                     audience=settings.auth_audience,
                     jwks_url=settings.auth_jwks_url,
-                    tenant_claim=settings.auth_tenant_claim,
+                    account_claim=settings.auth_account_claim,
                 )
                 owns_verifier = True
             app.state.token_verifier = verifier

@@ -198,7 +198,7 @@ async def persist_artifact(
         existing.content_bytes = None
         if store is not None:
             key = existing.object_key or build_artifact_key(
-                run.tenant_id, run.id, existing.id, suffix=SUFFIX
+                run.account_id, run.id, existing.id, suffix=SUFFIX
             )
             await store.put(key, data, content_type=CONTENT_TYPE)
             existing.storage = FILESYSTEM_STORE
@@ -213,7 +213,7 @@ async def persist_artifact(
     object_id = uuid4().hex
     row = RunArtifact(
         id=object_id,
-        tenant_id=run.tenant_id,
+        account_id=run.account_id,
         run_id=run.id,
         kind=str(artifact.get("kind") or "markdown"),
         title=str(artifact.get("title") or run.title),
@@ -225,7 +225,7 @@ async def persist_artifact(
         content=None if store is not None else text,
     )
     if store is not None:
-        key = build_artifact_key(run.tenant_id, run.id, object_id, suffix=SUFFIX)
+        key = build_artifact_key(run.account_id, run.id, object_id, suffix=SUFFIX)
         await store.put(key, data, content_type=CONTENT_TYPE)
         row.object_key = key
     session.add(row)
@@ -250,7 +250,7 @@ async def persist_file_artifact(
 
     - kind 不传时按 content_type 推导(image/markdown/text/file);
     - database 模式:文本类写 `content`,二进制写 `content_bytes`;
-    - filesystem 模式:对象键按 `<tenant>/<run>/<artifact><安全扩展名>` 落盘;
+    - filesystem 模式:对象键按 `<account>/<run>/<artifact><安全扩展名>` 落盘;
     - filename 会被净化(只留 basename),source 标记产出来源(默认 mcp)。
     """
     safe_name = _sanitize_filename(filename)
@@ -264,7 +264,7 @@ async def persist_file_artifact(
     object_id = uuid4().hex
     row = RunArtifact(
         id=object_id,
-        tenant_id=run.tenant_id,
+        account_id=run.account_id,
         run_id=run.id,
         kind=resolved_kind,
         title=resolved_title,
@@ -277,7 +277,7 @@ async def persist_file_artifact(
     )
     if store is not None:
         suffix = _safe_extension(safe_name, resolved_content_type)
-        key = build_artifact_key(run.tenant_id, run.id, object_id, suffix=suffix)
+        key = build_artifact_key(run.account_id, run.id, object_id, suffix=suffix)
         await store.put(key, data, content_type=resolved_content_type)
         row.object_key = key
     elif is_text_content_type(resolved_content_type):
@@ -347,18 +347,18 @@ async def read_artifact(row: RunArtifact, store: ArtifactStore | None) -> Artifa
 
 
 async def list_artifacts(
-    session: AsyncSession, tenant_id: str, run_id: str
+    session: AsyncSession, account_id: str, run_id: str
 ) -> list[RunArtifact]:
     """该 run 的全部交付物(created_at, id 升序;未交付返回空列表)。"""
-    return await ArtifactRepository(session).list_for_run(tenant_id, run_id)
+    return await ArtifactRepository(session).list_for_run(account_id, run_id)
 
 
 async def require_artifact(
-    session: AsyncSession, tenant_id: str, run_id: str, artifact_id: str
+    session: AsyncSession, account_id: str, run_id: str, artifact_id: str
 ) -> RunArtifact:
-    """取指定交付物;不属于该 run/租户一律 404(不泄漏存在性)。"""
+    """取指定交付物;不属于该 run/账号一律 404(不泄漏存在性)。"""
     row = await ArtifactRepository(session).find_artifact(
-        tenant_id, run_id, artifact_id
+        account_id, run_id, artifact_id
     )
     if row is None:
         raise NotFoundError(

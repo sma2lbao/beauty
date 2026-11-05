@@ -19,14 +19,14 @@ from agent_orchestrator.services.mcp_presets import (
     preset_for_url,
 )
 from agent_orchestrator.services.tools import ToolRisk
-from tests.conftest import TENANT
+from tests.conftest import ACCOUNT
 
 OTHER_MCP_URL = "http://mcp.example.com/mcp"
 
 
 def _server(url: str = OTHER_MCP_URL, *, auto_approve: bool = False) -> MCPServer:
     return MCPServer(
-        tenant_id="t",
+        account_id="t",
         name="Demo",
         url=url,
         enabled=True,
@@ -83,7 +83,7 @@ def test_preset_for_unknown_key_raises_not_found() -> None:
 
 
 def test_list_presets_endpoint(client: TestClient) -> None:
-    response = client.get("/api/v1/mcp/presets", headers=TENANT)
+    response = client.get("/api/v1/mcp/presets", headers=ACCOUNT)
     assert response.status_code == 200
     body = response.json()
     assert list(body) == ["presets"]
@@ -98,7 +98,7 @@ def test_list_presets_endpoint(client: TestClient) -> None:
 
 
 def test_ensure_preset_server_is_idempotent(client: TestClient) -> None:
-    first = client.post("/api/v1/mcp/presets/notion", headers=TENANT)
+    first = client.post("/api/v1/mcp/presets/notion", headers=ACCOUNT)
     assert first.status_code == 200
     created = first.json()
     assert created["name"] == "Notion"
@@ -108,10 +108,10 @@ def test_ensure_preset_server_is_idempotent(client: TestClient) -> None:
     assert created["tools_allowlist"] == []
     assert created["tools"] == []
 
-    second = client.post("/api/v1/mcp/presets/notion", headers=TENANT)
+    second = client.post("/api/v1/mcp/presets/notion", headers=ACCOUNT)
     assert second.status_code == 200
     assert second.json()["id"] == created["id"]
-    listing = client.get("/api/v1/mcp/servers", headers=TENANT).json()
+    listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
     assert len(listing) == 1
 
 
@@ -119,10 +119,10 @@ def test_ensure_preset_reuses_server_with_same_url(client: TestClient) -> None:
     existing = client.post(
         "/api/v1/mcp/servers",
         json={"name": "MyNotion", "url": NOTION_MCP_URL},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert existing.status_code == 201
-    ensured = client.post("/api/v1/mcp/presets/notion", headers=TENANT)
+    ensured = client.post("/api/v1/mcp/presets/notion", headers=ACCOUNT)
     assert ensured.status_code == 200
     assert ensured.json()["id"] == existing.json()["id"]
     assert ensured.json()["name"] == "MyNotion"
@@ -132,17 +132,17 @@ def test_ensure_preset_server_name_falls_back(client: TestClient) -> None:
     taken = client.post(
         "/api/v1/mcp/servers",
         json={"name": "Notion", "url": OTHER_MCP_URL},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert taken.status_code == 201
-    ensured = client.post("/api/v1/mcp/presets/notion", headers=TENANT)
+    ensured = client.post("/api/v1/mcp/presets/notion", headers=ACCOUNT)
     assert ensured.status_code == 200
     # name 只允许 [A-Za-z0-9._-],所以回退成 Notion-2 而不是 "Notion (2)"
     assert ensured.json()["name"] == "Notion-2"
 
 
 def test_ensure_preset_unknown_key_404(client: TestClient) -> None:
-    response = client.post("/api/v1/mcp/presets/slack", headers=TENANT)
+    response = client.post("/api/v1/mcp/presets/slack", headers=ACCOUNT)
     assert response.status_code == 404
     assert response.json()["code"] == "mcp.preset_not_found"
 
@@ -168,7 +168,7 @@ def test_ensure_preset_unknown_key_404(client: TestClient) -> None:
         ),
         # 3. 预设 url + 只读前缀 → READ(server 没声明 annotations 时的兜底)
         (NOTION_MCP_URL, "notion-search", {}, False, ToolRisk.READ),
-        # 4. 预设 url 的写工具 + 租户信任 → WRITE
+        # 4. 预设 url 的写工具 + 账号信任 → WRITE
         (NOTION_MCP_URL, "notion-create-pages", {}, True, ToolRisk.WRITE),
         # 5. 非预设 server + 信任 → WRITE
         (OTHER_MCP_URL, "echo", {}, True, ToolRisk.WRITE),
@@ -247,14 +247,14 @@ def test_test_endpoint_persists_annotations(client: TestClient) -> None:
     created = client.post(
         "/api/v1/mcp/servers",
         json={"name": "annotated", "url": OTHER_MCP_URL},
-        headers=TENANT,
+        headers=ACCOUNT,
     )
     assert created.status_code == 201
     original = mcp_runtime.build_client
     mcp_runtime.build_client = lambda *args, **kwargs: AnnotatedClient()  # type: ignore[assignment]
     try:
         tested = client.post(
-            f"/api/v1/mcp/servers/{created.json()['id']}/test", headers=TENANT
+            f"/api/v1/mcp/servers/{created.json()['id']}/test", headers=ACCOUNT
         )
         assert tested.status_code == 200
         tools = tested.json()["tools"]
@@ -262,7 +262,7 @@ def test_test_endpoint_persists_annotations(client: TestClient) -> None:
         # 非 dict 的 annotations 按空对象处理,不让脏数据进缓存
         assert tools[1]["annotations"] == {}
 
-        cached = client.get("/api/v1/mcp/servers", headers=TENANT).json()[0]["tools"]
+        cached = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()[0]["tools"]
         assert cached[0]["annotations"] == {"readOnlyHint": True, "title": "Echo"}
     finally:
         mcp_runtime.build_client = original  # type: ignore[assignment]
