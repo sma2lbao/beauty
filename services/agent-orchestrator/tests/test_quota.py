@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import quota
 from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _settings
+from tests.support.conversations import _create_conversation, _post_message
 
 
 def _quota_client(payload: dict[str, Any] | None, *, error: bool = False):
@@ -139,3 +140,57 @@ def test_budget_zero_does_not_limit(tmp_path) -> None:
         client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT, json={})
         run = client.get(f"/api/v1/runs/{run_id}", headers=ACCOUNT).json()
     assert run["status"] == "completed"
+
+
+def test_monthly_quota_blocks_chat_message(tmp_path) -> None:
+    """P0-2:对话直答不建 run,但同样烧 token,配额用尽必须在调模型前拒绝。"""
+    _quota_client(
+        {"monthly_tokens": 1000, "max_concurrent_runs": None, "used_tokens": 1000}
+    )
+    fake = FakeLLM(["直接答一句"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = _create_conversation(client)
+        response = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={"content": "你好", "mode": "chat"},
+            headers=ACCOUNT,
+        )
+
+    assert response.status_code == 429
+    body = response.json()
+    assert body["code"] == "quota.monthly_tokens_exceeded"
+    assert body["details"] == {"limit": 1000, "used": 1000}
+    assert fake.calls == []  # 闸在模型调用之前生效
+
+
+def test_monthly_quota_blocks_chat_stream_before_opening(tmp_path) -> None:
+    """流式入口同理:必须在开流前 429(SSE 已 200 就改不了状态码)。"""
+    _quota_client(
+        {"monthly_tokens": 1000, "max_concurrent_runs": None, "used_tokens": 1200}
+    )
+    fake = FakeLLM(["直接答一句"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = _create_conversation(client)
+        response = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages/stream",
+            json={"content": "你好", "mode": "chat"},
+            headers=ACCOUNT,
+        )
+
+    assert response.status_code == 429
+    assert response.json()["code"] == "quota.monthly_tokens_exceeded"
+    assert fake.calls == []
+
+
+def test_chat_allowed_below_monthly_quota(tmp_path) -> None:
+    """未超限时直答照常(配额闸不能误伤正常对话)。"""
+    _quota_client(
+        {"monthly_tokens": 1000, "max_concurrent_runs": None, "used_tokens": 999}
+    )
+    fake = FakeLLM(["直接答一句"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = _create_conversation(client)
+        result = _post_message(client, conversation_id, "你好", mode="chat")
+
+    assert result["mode"] == "chat"
+    assert result["reply"]["content"] == "直接答一句"

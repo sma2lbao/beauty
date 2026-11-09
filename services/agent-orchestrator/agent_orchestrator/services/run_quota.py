@@ -60,18 +60,20 @@ async def _record_usage(
         logger.warning("写入 run.usage.v1 失败(run_id=%s)", run.id, exc_info=True)
 
 
-async def _enforce_quota(session: AsyncSession, account_id: str) -> None:
-    """P0-2 准入闸:月度 token 用尽 / 并发 run 超限 → 429。
+async def enforce_monthly_quota(
+    account_id: str,
+) -> quota_service.QuotaSnapshot | None:
+    """P0-2 对话准入闸:月度 token 用尽即 429(建 run 与对话直答共用)。
 
-    快照取不到(=account 未配置或不可用)时不拦:配额是保护性限流,
-    不能被观测依赖的抖动连带打死。判定语义:
-    - 月度:``used_tokens >= monthly_tokens`` 即拒绝(边界值按用尽算);
-    - 并发:未终结 run 数(排除 completed/failed/blocked)``>= max_concurrent_runs``。
+    任何会调模型的入口(建 run、对话发消息)都必须在模型调用之前过这一关:
+    直答虽然不建 run,同样烧 token,不能绕过配额。快照取不到(=account 未配置
+    或不可用)时不拦:配额是保护性限流,不能被观测依赖的抖动连带打死。
+
+    返回快照(未拦截时)供调用方继续判并发;used_tokens >= monthly_tokens
+    (边界值按用尽算)直接抛 429。
     """
     snapshot = await quota_service.fetch(account_id)
-    if snapshot is None:
-        return
-    if snapshot.monthly_tokens_exceeded:
+    if snapshot is not None and snapshot.monthly_tokens_exceeded:
         raise QuotaExceededError(
             "quota.monthly_tokens_exceeded",
             "本月模型用量已超出配额,请升级或等待下月重置",
@@ -80,6 +82,19 @@ async def _enforce_quota(session: AsyncSession, account_id: str) -> None:
                 "used": snapshot.used_tokens,
             },
         )
+    return snapshot
+
+
+async def _enforce_quota(session: AsyncSession, account_id: str) -> None:
+    """P0-2 建 run 准入闸:月度 token 用尽 / 并发 run 超限 → 429。
+
+    月度语义见 enforce_monthly_quota;并发语义:未终结 run 数(排除
+    completed/failed/blocked)>= max_concurrent_runs。对话直答只判月度,
+    不占并发名额(它没有 run 生命周期)。
+    """
+    snapshot = await enforce_monthly_quota(account_id)
+    if snapshot is None:
+        return
     limit = snapshot.max_concurrent_runs
     if limit is not None:
         active = await RunRepository(session).count_active(account_id)

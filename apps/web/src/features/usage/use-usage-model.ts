@@ -17,9 +17,16 @@ export function useUsageModel() {
     queryFn: insightsApi.models,
     retry: false,
   });
+  // 配额是增强信息:读不到(未配置/端点不可用)只影响配额条,不拖垮整页
+  const quotaQuery = useQuery({
+    queryKey: queryKeys.usageQuota,
+    queryFn: insightsApi.quota,
+    retry: false,
+  });
 
   return {
     summary: summaryQuery.data,
+    quota: quotaQuery.data,
     models: modelsQuery.data?.data ?? [],
     defaultModel: modelsQuery.data?.default_model,
     error: summaryQuery.error,

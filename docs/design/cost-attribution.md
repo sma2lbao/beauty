@@ -39,6 +39,8 @@
 - `lib/presentation/format.ts` 的 `formatUsd()`：1 美元以下保留 4 位小数（单次调用常为 $0.000x），否则 2 位。
 - `/usage`：六张统计卡（今日/本月 tokens、请求、成本），模型用量行显示成本与「N 未计价」徽标，页面底部提示未计价调用。
 - `/runs` 运行详情：用量汇总行追加成本（老 run 无字段按 0 显示）。
+- `/usage` 配额条（`features/usage/quota-panel.tsx`）：本月已用 / 上限 / 剩余与百分比进度条，超限转红并说明新消息会被 429；上限为空显示「未配置配额 · 不限制」。数据源是会话鉴权的 `GET /api/usage/quota/me`（`insightsApi.quota`），读取失败不阻断页面。
+- 输入区：发送被 429 `quota.*` 拒后，`features/chat/composer.tsx` 就地提示「本月模型用量已达配额，发送会被拒绝；可在「用量」页查看配额明细」。
 
 ## 6. 边界与已知口径
 
@@ -46,6 +48,7 @@
 - 缓存写入价仅在价目表提供时使用，否则回退输入价，属于偏保守估算。
 - 不做币种换算（统一 USD）、不做预算告警、不落供应商账单对账。
 - `unpriced_events` 只统计窗口内 `cost_usd IS NULL` 的事件数，不代表金额为 0。
+- 对话直答也计入当月用量（`run_id` 为空）；配额用尽时对话与建 run 都返回 429 `quota.monthly_tokens_exceeded`，口径见 §8。
 
 ## 7. 未做 / 后续
 
@@ -54,7 +57,16 @@
 - 「哪次调用用了 BYOK」审计表未做；BYOK 目前只在 usage 行上标来源。
 - 平台成本看板、预算告警、eval 成本归集属 P1-K。
 
-## 8. 验证
+## 8. 对话直答与配额（P0-2 补充）
+
+- 对话直答（triage 判为简单对话、不建 run）同样计入当月用量：流式路径一直在回包里带 `usage` 后上报，非流式路径现在也包 `UsageCollector` 边界，答案落库后经 `post_commit.register_after_commit` 在事务提交后上报，`run_id` 为空。
+- 为什么不在请求事务里直接上报：`UsageReporter` 走 outbox 会另开写事务，与未提交的请求事务抢 SQLite 单写锁；post-commit 回调自建 session，语义是「消息落库成功才记账」。没有 post-commit runtime 的直调（脚本/测试路径）退回同步上报。
+- 准入闸：`run_quota.enforce_monthly_quota(account_id)` 只判月度 token（`used_tokens >= monthly_tokens` 即用尽，边界按用尽算），抛 429 `quota.monthly_tokens_exceeded`；配额快照取不到时 fail-open（与 run 准入一致），不因 account-service 抖动拦死对话。
+- 对话不占 `max_concurrent_runs`：并发维度只对 run 有意义（`_enforce_quota` 保留该判定给 run 生命周期）。
+- 流式路径必须在 `StreamingResponse` 之前拦：SSE 一旦返回 200 就无法再改状态码。
+- 残余：请求已烧 token 但因配额/校验失败而未落消息时不补记；配额由服务端维护 `users.quota`，无自助修改与预算阈值通知。
+
+## 9. 验证
 
 - 网关：`npx nx test llm-gateway`（含缓存价与 byok 来源用例）。
 - 编排器：`npx nx test agent-orchestrator`（`_parse_usage`、上报 body、`run.usage.v1` 聚合、OpenAPI 快照）。

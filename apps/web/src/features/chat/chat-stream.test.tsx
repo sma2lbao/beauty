@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatPage } from '@/pages/chat';
 
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
+import { ApiError } from '@/lib/http';
 import { runsApi } from '@/lib/runs-api';
 
 import {
@@ -284,5 +285,22 @@ describe('ChatPage 发送与流式', () => {
 
     expect(await screen.findByText('网络断了')).toBeTruthy();
     expect(screen.getByLabelText('描述下一步任务')).toHaveValue('你好');
+  });
+
+  it('配额用尽:输入区给出可行动提示(429 quota.*)', async () => {
+    // P0-2 起对话直答也过配额闸:错误码可识别时,输入区直接说明原因与去处
+    vi.mocked(streamMessage).mockRejectedValue(
+      new ApiError(
+        429,
+        'quota.monthly_tokens_exceeded',
+        '本月模型用量已超出配额',
+      ),
+    );
+    renderPage();
+
+    typeAndSend('你好');
+
+    expect(await screen.findByText(/本月模型用量已达配额/)).toBeTruthy();
+    expect(screen.getByText(/可在「用量」页查看配额明细/)).toBeTruthy();
   });
 });

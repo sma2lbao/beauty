@@ -92,6 +92,7 @@ export const queryKeys = {
    */
   chatModels: ['chat-models'] as const,
   usageSummary: ['usage-summary'] as const,
+  usageQuota: ['usage-quota'] as const,
   apiKeys: ['api-keys'] as const,
 
   /** 知识库域。 */

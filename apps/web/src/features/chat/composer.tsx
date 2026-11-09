@@ -1,6 +1,7 @@
 import { ArrowUp, Paperclip, X } from 'lucide-react';
 
 import type { SendMode } from '@/lib/conversations-api';
+import { ApiError } from '@/lib/http';
 
 import type { ChatQueries } from './use-chat-queries';
 import type { ChatStream } from './use-chat-stream';
@@ -59,6 +60,11 @@ export function ChatComposer({
     mcpServerName,
     inFlight,
   } = queries;
+  // 配额拦截(429 quota.*)就地提示:P0-2 起对话直答也过配额闸,
+  // 错误详情里的月用量/上限在「用量」页能看,这里只给一条可行动提示。
+  const quotaBlocked =
+    stream.visibleError instanceof ApiError &&
+    stream.visibleError.code.startsWith('quota.');
   return (
     <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
       <form
@@ -92,6 +98,11 @@ export function ChatComposer({
         {attachmentError ? (
           <p className="mb-2 text-[12px] text-ha-danger" role="alert">
             {attachmentError}
+          </p>
+        ) : null}
+        {quotaBlocked ? (
+          <p className="mb-2 text-[12px] text-ha-danger" role="alert">
+            本月模型用量已达配额，发送会被拒绝；可在「用量」页查看配额明细。
           </p>
         ) : null}
         <label className="sr-only" htmlFor="chat-input">

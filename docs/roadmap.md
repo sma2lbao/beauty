@@ -11,7 +11,8 @@
 - **~~CI 上线后~~ ✅ 已完成**：覆盖率阈值（R-31）、零网络硬门禁（R-32）、文档链接检查（`scripts/check-docs.sh`，CI `docs-check` job）。
 - **~~P0-1 成本归因~~ ✅ 已完成（2026-11-09）**：网关按 litellm 本地价目表（含缓存价）算 `cost_usd` → 编排器透传 → `usage_events` 落库（新迁移）→ `/usage/summary` 出金额 → 用量页展示，并区分 platform/BYOK、单独统计未计价调用；契约见 [design/cost-attribution.md](./design/cost-attribution.md)。残余 step/phase 拆分与 BYOK 审计随后续批次。
 - **~~P0-3 用量可靠投递~~ ✅ 已完成（2026-11-09）**：`UsageReporter` 先写编排器 outbox（`usage.report.v1`，独立短事务）→ dispatcher 至少一次投递 → account 按 `(account_id, event_id)` 幂等落库（迁移 `a9d4f2c8b6e1`）；入队失败回退直连、未装配 `session_factory` 行为不变，开关 `USAGE_OUTBOX_ENABLED`；契约见 [design/usage-delivery.md](./design/usage-delivery.md)。多副本跨实例投递仍待 P0-4。
-- **agent 服务能力补齐（待决策）**：2026-11-09 复核出的 P0/P1 差距与建议排期见 [gap-2026-11/00-refresh-2026-11-09.md](./gap-2026-11/00-refresh-2026-11-09.md) §4/§7（上一版见 gap-2026-10/06）；其中 P0 项（多实例正确性、对话配额闸、MCP SSRF、管理面）决策后并入本表；P0-1 成本归因与 P0-3 用量可靠投递已于 2026-11-09、P0-2（run 生命周期）已于 2026-10-25、P0-6（BYOK 接入，契约见 [design/byok.md](./design/byok.md)）已于 2026-10-26 落地，不再待决。
+- **~~P0-2 对话配额闸~~ ✅ 已完成（2026-11-09）**：对话直答（不建 run）现在同样受月度配额约束——`run_quota.enforce_monthly_quota` 在非流式与流式两个入口、调模型之前拦截（流的必须开流前，SSE 一旦 200 不能改状态码），非流式路径包 `UsageCollector` 并在事务提交后经 post-commit 上报 `run_id=None`；account 新增会话鉴权的 `GET /v1/usage/quota/me`，Web 用量页有配额进度条、composer 在 429 `quota.*` 时就地提示。残余：失败请求不补记、对话不占并发名额、无预算阈值通知，见 [gap-2026-11/00-refresh-2026-11-09.md](./gap-2026-11/00-refresh-2026-11-09.md) §4.2。
+- **agent 服务能力补齐（待决策）**：2026-11-09 复核出的 P0/P1 差距与建议排期见 [gap-2026-11/00-refresh-2026-11-09.md](./gap-2026-11/00-refresh-2026-11-09.md) §4/§7（上一版见 gap-2026-10/06）；其中 P0 项（多实例正确性、对话配额闸、MCP SSRF、管理面）决策后并入本表；P0-1 成本归因、P0-2 对话配额闸、P0-3 用量可靠投递已于 2026-11-09 落地，不再待决；多实例正确性（P0-4）、限流 Redis 化（P0-5）、MCP SSRF（P0-6）、管理面 RBAC/审计（P0-7）仍待决策。
 
 ## 暂缓（写明恢复条件）
 

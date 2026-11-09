@@ -50,11 +50,22 @@ export type BYOKKey = {
   models: string[];
 };
 
+export type UsageQuota = {
+  /** 本月 token 上限;null = 未配置配额(不限制) */
+  monthly_tokens: number | null;
+  /** 同时进行的任务上限;null = 不限制(对话直答不占并发名额) */
+  max_concurrent_runs: number | null;
+  /** 本月已用 token(与 summary.month_tokens 同口径) */
+  used_tokens: number;
+};
+
 const http = createHttpClient('');
 
 export const insightsApi = {
   models: () => http.request<ModelList>('/api/models'),
   usage: () => http.request<UsageSummary>('/api/usage/summary'),
+  /** 当前账号的配额快照(会话鉴权;前端配额条/发送前提示用)。 */
+  quota: () => http.request<UsageQuota>('/api/usage/quota/me'),
   byok: () => http.request<BYOKKey[]>('/api/byok'),
   /**
    * 保存/更新某个 provider 的 BYOK 配置。

@@ -828,3 +828,56 @@ def test_byok_catalog_requires_internal_auth(tmp_path: Path) -> None:
     assert no_secret.json()["code"] == "auth.internal_forbidden"
     assert no_account.status_code == 401
     assert no_account.json()["code"] == "auth.account_missing"
+
+
+def test_usage_quota_self_read_with_session_auth(tmp_path: Path) -> None:
+    """P0-2:前端配额条走会话鉴权读自己的快照,内部端点仍是共享密钥。"""
+    with _client(tmp_path) as client:
+        empty = client.get("/v1/usage/quota/me", headers=ACCOUNT)
+        assert empty.status_code == 200
+        assert empty.json() == {
+            "monthly_tokens": None,
+            "max_concurrent_runs": None,
+            "used_tokens": 0,
+        }
+
+        with sqlite3.connect(tmp_path / "test.db") as conn:
+            conn.execute(
+                "INSERT INTO users (id, subject, email, display_name, status, quota)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    ACCOUNT_ID,
+                    "acc-1@example.com",
+                    "acc-1@example.com",
+                    "acc-1",
+                    "active",
+                    json.dumps({"monthly_tokens": 100, "max_concurrent_runs": 2}),
+                ),
+            )
+            conn.commit()
+
+        client.post(
+            "/v1/usage/events",
+            json={"model": "m", "prompt_tokens": 30, "completion_tokens": 10},
+            headers=INTERNAL,
+        )
+
+        snapshot = client.get("/v1/usage/quota/me", headers=ACCOUNT)
+        internal = client.get("/v1/usage/quota", headers=INTERNAL)
+
+    assert snapshot.status_code == 200
+    assert snapshot.json() == internal.json()
+    assert snapshot.json() == {
+        "monthly_tokens": 100,
+        "max_concurrent_runs": 2,
+        "used_tokens": 40,
+    }
+
+
+def test_usage_quota_self_read_requires_session(tmp_path: Path) -> None:
+    """没有会话/内部密钥就不给读配额(两端点都拒绝)。"""
+    with _client(tmp_path) as client:
+        anonymous = client.get("/v1/usage/quota/me")
+        internal_only = client.get("/v1/usage/quota/me", headers=INTERNAL)
+    assert anonymous.status_code == 401
+    assert internal_only.status_code == 401

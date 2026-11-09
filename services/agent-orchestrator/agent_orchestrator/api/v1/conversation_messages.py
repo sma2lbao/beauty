@@ -40,6 +40,7 @@ from agent_orchestrator.schemas.conversations import (
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import conversations as conversations_service
 from agent_orchestrator.services import models as models_service
+from agent_orchestrator.services import run_quota
 from agent_orchestrator.services import triage
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm import LLMClient
@@ -88,6 +89,8 @@ async def post_message(
 ) -> MessagePostResult:
     """发消息:先分流(§6.7)——简单对话直接答;复杂任务建 run 或并入当前 run。"""
     await models_service.validate_model(body.model, llm=llm, settings=settings)
+    # P0-2 配额闸:直答不建 run 但同样烧 token,必须在调模型之前拦(429)。
+    await run_quota.enforce_monthly_quota(account_id)
     target = await conversations_service.resolve_message_target(
         session,
         account_id,
@@ -212,6 +215,8 @@ async def stream_message(
     triage.require_available(body.mode, llm)
     # 非法模型在开流前 400(与 require_available 同理:开流后只能发错误帧)
     await models_service.validate_model(body.model, llm=llm, settings=settings)
+    # P0-2 配额闸必须在开流前:SSE 一旦 200 就不能再改状态码,只能发错误帧。
+    await run_quota.enforce_monthly_quota(account_id)
     container = get_container(request)
     assert container.session_factory is not None
     factory = container.session_factory

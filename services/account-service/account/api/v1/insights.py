@@ -56,6 +56,16 @@ async def usage_quota(session: DBSession, account_id: InternalAccountId) -> Usag
     return await insights_service.usage_quota(session, account_id)
 
 
+@router.get("/usage/quota/me", response_model=UsageQuota)
+async def usage_quota_me(session: DBSession, account_id: AccountId) -> UsageQuota:
+    """当前账号自读配额快照(前端配额条/输入框提示用)。
+
+    与内部 /usage/quota 的区别只在鉴权:这里是会话登录的账号读自己,
+    内部端点仍是共享密钥 + 显式 X-Account-Id(orchestrator 建 run 前检查)。
+    """
+    return await insights_service.usage_quota(session, account_id)
+
+
 @router.get("/byok", response_model=list[BYOKRead])
 async def list_byok(session: DBSession, account_id: AccountId) -> list[BYOKRead]:
     return await insights_service.list_byok(session, account_id)

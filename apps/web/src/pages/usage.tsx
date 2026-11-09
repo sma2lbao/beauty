@@ -5,6 +5,7 @@
 import { ConsolePanel, PageHeader } from '@/components/console/ui';
 import { AvailableModelsPanel } from '@/features/usage/available-models-panel';
 import { ModelUsagePanel } from '@/features/usage/model-usage-panel';
+import { QuotaPanel } from '@/features/usage/quota-panel';
 import { UsageStatCards } from '@/features/usage/usage-stat-cards';
 import { useUsageModel } from '@/features/usage/use-usage-model';
 
@@ -25,6 +26,8 @@ export function UsagePage() {
         ) : null}
 
         <UsageStatCards summary={model.summary} />
+
+        <QuotaPanel quota={model.quota} />
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[2fr_1fr]">
           <ModelUsagePanel byModel={model.summary?.by_model ?? []} />

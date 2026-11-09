@@ -14,10 +14,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from agent_orchestrator.services import usage
+from agent_orchestrator.services import quota, usage
 from agent_orchestrator.services.llm import LLMReply
 from agent_orchestrator.services.llm_gateway import _parse_usage
 from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _create_run, _settings
+from tests.support.conversations import _create_conversation, _post_message
 
 
 class UsageLLM:
@@ -353,3 +354,54 @@ def test_stream_chat_reports_usage_without_run(tmp_path, reporter) -> None:
     assert body["run_id"] is None
     assert body["model"] == "deepseek-chat"
     assert body["prompt_tokens"] == 10
+
+
+def test_chat_message_reports_usage_after_commit(tmp_path, reporter) -> None:
+    """P0-2:非流式直答也记用量(run_id 为空),口径与流式路径一致。"""
+    fake = FakeLLM(["直接答一句"])  # 显式 chat 跳过分流:只 1 次模型调用
+    with _client(tmp_path, UsageLLM(fake)) as client:
+        conversation_id = _create_conversation(client)
+        result = _post_message(client, conversation_id, "你好", mode="chat")
+        assert result["mode"] == "chat"
+        assert result["reply"]["content"] == "直接答一句"
+
+    assert [item["path"] for item in reporter] == ["/v1/usage/events"]
+    body = reporter[0]["body"]
+    assert body["run_id"] is None  # 直答不挂 run
+    assert body["model"] == "deepseek-chat"
+    assert body["prompt_tokens"] == 10
+    assert body["completion_tokens"] == 5
+    assert body["cost_usd"] is None
+    assert body["billing_source"] == "platform"
+
+
+def test_chat_usage_not_reported_when_quota_blocks(tmp_path, reporter) -> None:
+    """被配额拦下的请求没有模型调用,自然也不该产生用量记录。"""
+    quota.configure_client(
+        base_url="http://account.test",
+        internal_secret="s3cret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "monthly_tokens": 1000,
+                    "max_concurrent_runs": None,
+                    "used_tokens": 1000,
+                },
+            )
+        ),
+    )
+    try:
+        fake = FakeLLM(["直接答一句"])
+        with _client(tmp_path, UsageLLM(fake)) as client:
+            conversation_id = _create_conversation(client)
+            response = client.post(
+                f"/api/v1/conversations/{conversation_id}/messages",
+                json={"content": "你好", "mode": "chat"},
+                headers=ACCOUNT,
+            )
+            assert response.status_code == 429
+    finally:
+        quota.configure_client(base_url="", internal_secret="")
+
+    assert reporter == []

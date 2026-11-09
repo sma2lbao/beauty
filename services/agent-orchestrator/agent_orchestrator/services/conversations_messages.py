@@ -21,7 +21,7 @@ from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
-from agent_orchestrator.services import chat, tool_confirmations, triage
+from agent_orchestrator.services import chat, post_commit, tool_confirmations, triage
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.conversation_targets import require_conversation
 from agent_orchestrator.services.conversations_context import (
@@ -59,6 +59,26 @@ if TYPE_CHECKING:
     ToolkitFactory = Callable[[str], ToolRegistry]
     #: 外部工具(MCP/skill_run)工厂:按账号现取,与 run 执行图共用
     ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
+
+
+def _schedule_usage_report(
+    session: AsyncSession, account_id: str, samples: list[usage_service.UsageSample]
+) -> bool:
+    """非流式对话的用量记账(P0-2):优先推迟到事务提交之后。
+
+    为什么不在请求事务里直接 report:用量走 outbox 时会另开一个写事务
+    (SQLite 单写锁),与未提交的请求事务抢锁;提交后再报也能保证"已经烧掉的
+    token"随响应成功一起记账。没有提交后回调能力(服务层直调/单测)时返回
+    False,由调用方退回同步 report 保持旧语义。
+    """
+    if not samples or post_commit.runtime_of(session) is None:
+        return False
+
+    async def _report() -> None:
+        await usage_service.report(account_id=account_id, run_id=None, samples=samples)
+
+    post_commit.register_after_commit(session, _report)
+    return True
 
 
 async def post_message(
@@ -155,18 +175,29 @@ async def post_message(
             context = await _prepare_chat_context(
                 session, llm, message, conversation, settings
             )
-            answer = await chat.answer(
-                session,
-                llm,
-                message,
-                toolkit,
-                reference_note=mcp_reference_note,
-                policies=policies,
-                context=context,
-                settings=settings,
-                confirmations=confirmations,
-            )
+            # P0-2 直答也计入用量(口径与流式路径一致:只记正式回复,
+            # run_id 为空;triage/上下文准备不重复计)
+            collector = usage_service.UsageCollector()
+            usage_token = usage_service.bind(collector)
+            try:
+                answer = await chat.answer(
+                    session,
+                    llm,
+                    message,
+                    toolkit,
+                    reference_note=mcp_reference_note,
+                    policies=policies,
+                    context=context,
+                    settings=settings,
+                    confirmations=confirmations,
+                )
+            finally:
+                usage_service.unbind(usage_token)
         reply = await _persist_assistant_message(session, message, answer)
+        if not _schedule_usage_report(session, account_id, collector.samples):
+            await usage_service.report(
+                account_id=account_id, run_id=None, samples=collector.samples
+            )
         # 有会话边界时推迟到提交后抽取(响应不等二次模型调用);服务层直调
         # (无 runtime 绑定)保持同步语义,行为与之前一致
         if not _schedule_chat_extraction(
