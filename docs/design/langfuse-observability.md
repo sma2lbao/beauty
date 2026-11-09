@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：导出前脱敏、留存策略、缓存 token 成本口径（Phase 3）待排期；eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
+> 剩余：留存策略、缓存 token 成本口径（Phase 3）待排期；导出前脱敏已完成（§9）。eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -218,7 +218,11 @@ docker compose -f deploy/docker-compose.yml up -d agent-orchestrator llm-gateway
 - `LOG_CONTENT` 默认 false：不记 prompt/补全正文；打开时只在 input/output 记截断预览，且该 trace 视为含敏感内容。
 - Baggage 会跨服务与第三方 HTTP 头传播，**只放标识符**（run_id/account_id/session），绝不放 prompt、token、路径。
 - `langfuse_secret_key`、`Authorization`、Cookie、BYOK 密钥一律不进 span 属性。
-- 仅 OTel 接入时没有 SDK 的 `mask_otel_spans`：导出前脱敏需自定义 SpanProcessor/Exporter（Phase 3）。
+- **导出前脱敏已实现**（`packages/common/common/redaction.py` 的 `AttributeRedactionSpanProcessor`）：`common.tracing._build_provider` 在**任何导出处理器之前**注册它，直连 Langfuse 与经 Collector 两条路都在离开进程前清洗——
+  - 删除敏感键：Authorization/cookie/api_key/secret/password/credential、单数 token（复数 `*_tokens` 是计数，保留）、全部 `http.request.header.*` / `http.response.header.*`；
+  - LLM 正文闸门：`langfuse.observation.input|output`、`gen_ai.input.*`、`gen_ai.output.*`、`gen_ai.system_instructions`、`gen_ai.tool.call.arguments|result` 等只在 `LOG_CONTENT=true` 时保留；HTTP body、`db.statement`、`url.query` 永远删除；
+  - URL 属性（`url.full`/`http.url`/`http.target`）去 query/fragment 与 userinfo；字符串 > 2000 字符、序列 > 64 项截断。
+  - `LOG_CONTENT` 仍是"业务侧是否主动记正文"的开关；处理器是**导出口径的强制兜底**，第三方 instrumentation（httpx/FastAPI/GenAI 库）顺手带上的正文与请求头也会被拦下。
 
 **留存与成本**
 
@@ -281,7 +285,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 
 1. ~~run 根 span~~ **已完成**：`services/run_trace.py` 的 `run_trace(run)` 包住 5 个 `graph.ainvoke` 边界（首次执行、approve、confirm、reject、answer），trace 名 = `run {run_id}`，session = conversation_id，user = account_id，observation 类型 `agent`；已有父 span（HTTP 同步触发）时挂在其下，不另起 trace。
 2. ~~tool-service 工具 span~~ **已完成**：`execution/tool_span.py` 在 `POST /v1/tools/{name}/execute` 里按一次 tool_call 建 `execute_tool {name}`，元数据与 `tool_calls` 审计列对齐（risk/decision/duration_ms/result_chars/bytes_written/paths/sandbox_id/patch 行数）；默认不记参数原文，`TOOL__LOG_CONTENT=true` 才写截断后的 input。
-3. 导出前脱敏：自定义 SpanProcessor 白名单化属性，替代 `LOG_CONTENT` 粗粒度开关。
+3. ~~导出前脱敏~~ **已完成**：`common/redaction.py` 的 `AttributeRedactionSpanProcessor` 在导出前统一删敏感键、按 `LOG_CONTENT` 闸门保留正文、URL 去参与值截断；`_build_provider` 在导出处理器之前注册，见 §9。
 4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；剩余口径缺口是缓存 token 未区分。
 5. ~~eval/scores~~ **已完成**：规则基线 `outcome`（completed=1 / failed=0）+ 人工点赞/点踩，落 `run.score.v1` 事件并经 after-commit best-effort 写 `POST /api/public/scores`；控制台 run 详情可评分、`GET /runs/{id}/scores` 回放（见 §6.1）。
 6. 留存与容量：ClickHouse TTL、MinIO 生命周期、成本告警。

@@ -1,7 +1,7 @@
 # 服务可观测方案（监控日志）
 
 > 状态：**P0 日志与请求上下文、P1 Sentry（服务端）、P2 指标与 OTel 追踪均已实施**（2026-10-22）；**P3 Langfuse** 的 Phase 1/2 已实施，**当前接 Langfuse Cloud（EU），8 个服务本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
-> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending` 派生指标、GenAI semconv 的 run 根 span/工具 span 与 eval 闭环。
+> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending` 派生指标；Langfuse 侧留存策略与缓存 token 成本口径。
 > 对齐 `docs/architecture.md`（现行唯一架构真源）§9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
 
@@ -293,7 +293,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。
+P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。导出前属性脱敏由 `common/redaction.py` 的 `AttributeRedactionSpanProcessor` 统一处理（敏感键删除、`LOG_CONTENT` 正文闸门、URL 去参、值截断，注册在导出处理器之前）。
 待办：`apps/web` 前端追踪；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
 
 ---

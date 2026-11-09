@@ -36,7 +36,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased, TraceIdRatioBased
 from opentelemetry.trace import SpanContext
 
-from common import langfuse
+from common import langfuse, redaction
 from common.config import BaseAppSettings
 from common.logging import get_logger
 from common.metrics import METRICS_PATH
@@ -122,6 +122,15 @@ def _build_provider(
 
             endpoint, headers = resolved
             target = OTLPSpanExporter(endpoint=endpoint, headers=headers)
+    if target is not None:
+        # 导出前统一脱敏:必须排在所有导出处理器之前(on_end 顺序即注册顺序),
+        # 这样直连 Langfuse 与走 Collector 两条路都在离开进程前清洗。内容开关
+        # 仍由各服务的 LOG_CONTENT 控制,这里是导出口径的兜底。
+        provider.add_span_processor(
+            redaction.AttributeRedactionSpanProcessor(
+                allow_content=bool(getattr(settings, "log_content", False))
+            )
+        )
     if langfuse.is_enabled(settings):
         # trace 级属性(session/user/tags)经 baggage 复制到每个 span,否则
         # Langfuse 上按这些维度过滤会漏 span(官方要求)。走 Collector 时也
