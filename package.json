@@ -25,7 +25,7 @@
     "@nxlv/python": "^23.1.0",
     "@swc/helpers": "~0.5.18",
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "~4.1.0",
+    "@vitest/coverage-v8": "~5.0.5",
     "eslint": "^9.0.0",
     "nx": "23.2.1",
     "prettier": "~3.6.2",
