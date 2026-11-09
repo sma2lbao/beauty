@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from collections.abc import AsyncIterator
+from contextlib import closing
 from typing import Any
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from agent_orchestrator.main import create_app
 from agent_orchestrator.services import usage
 from agent_orchestrator.services.llm import LLMReply
 from agent_orchestrator.services.llm_gateway import _parse_usage
-from tests.conftest import ACCOUNT, FakeLLM, _client, _create_run
+from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _create_run, _settings
 
 
 class UsageLLM:
@@ -237,6 +242,91 @@ async def test_reporter_swallows_non_http_errors() -> None:
         )
     finally:
         await reporter.aclose()
+
+
+def test_usage_report_is_durable_through_outbox(tmp_path, reporter) -> None:
+    """P0-3:用量先落 outbox,再由消费者至少一次投递;重投按 event_id 幂等。
+
+    dispatcher 起在 app 的 lifespan 里,所以这里用真实 TestClient + sqlite 库:
+    先把 outbox 行改回 pending 模拟"投递完但崩在 mark 之前",再断言不会二次 POST。
+    reporter 夹具在用例体之前就已配置好,早于 create_app——容器 _assemble_budget
+    只在 reporter() 为空时才自建,_assemble_outbox 靠它判断是否启用持久化投递。
+    """
+    fake = FakeLLM(
+        [
+            "# 计划",
+            "执行结果",
+            '{"summary": "通过", "verdicts": {"日程已整理": true}}',
+            "# 交付物",
+        ]
+    )
+    app = create_app(
+        _settings(
+            tmp_path,
+            "durable.db",
+            llm_enabled=True,
+            usage_outbox_enabled=True,
+            outbox_dispatch_interval_seconds=0.02,
+        ),
+        llm_client=UsageLLM(fake),
+        token_verifier=_IDP.verifier(),
+    )
+    with TestClient(app) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
+        assert run["status"] == "completed"
+
+        # 投递在后台任务里排队执行:轮询到 4 条(plan + execute/verify/deliver)
+        deadline = time.monotonic() + 5
+        while len(reporter) < 4 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert [item["path"] for item in reporter] == ["/v1/usage/events"] * 4
+        # event_id = <outbox 事件 id>:<样本序号>;plan 一次调用一条事件,
+        # approve 的整张图(execute/verify/deliver)同属一个边界,共三个样本。
+        event_ids = [item["body"]["event_id"] for item in reporter]
+        prefixes = [event_id.split(":")[0] for event_id in event_ids]
+        assert len(set(prefixes)) == 2
+        assert all(len(prefix) == 32 for prefix in prefixes)
+        assert sorted(int(event_id.split(":")[1]) for event_id in event_ids) == [
+            0,
+            0,
+            1,
+            2,
+        ]
+        for item in reporter:
+            body = item["body"]
+            assert body["run_id"] == run_id
+            assert "cost_usd" in body and "billing_source" in body
+
+        # 等 mark_dispatched / mark_processed 落库,再模拟重复投递
+        time.sleep(0.2)
+        with closing(sqlite3.connect(tmp_path / "durable.db")) as conn:
+            assert (
+                conn.execute(
+                    "SELECT status FROM outbox_events WHERE event_type = ?",
+                    (usage.USAGE_REPORT_EVENT,),
+                ).fetchall()
+                == [("dispatched",)] * 2
+            )
+            assert conn.execute(
+                "SELECT COUNT(*) FROM processed_events WHERE consumer = ?",
+                (usage.USAGE_DELIVERY_CONSUMER,),
+            ).fetchone() == (2,)
+            conn.execute(
+                "UPDATE outbox_events SET status = 'pending', attempts = 0,"
+                " dispatched_at = NULL WHERE event_type = ?",
+                (usage.USAGE_REPORT_EVENT,),
+            )
+            conn.commit()
+
+        # 重投命中 processed_events → 直接跳过,不产生重复 POST
+        time.sleep(0.3)
+        assert len(reporter) == 4
+        with closing(sqlite3.connect(tmp_path / "durable.db")) as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM outbox_events WHERE status = 'dispatched'"
+            ).fetchone() == (2,)
 
 
 def _create_conversation(client) -> str:

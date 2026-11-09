@@ -10,6 +10,7 @@ from contextlib import suppress
 from events.bus import EventBus, InMemoryEventBus
 from events.outbox import OutboxDispatcher
 
+from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.outbox import record_run_event, register_consumers
 
@@ -24,16 +25,26 @@ class OutboxAssemblyMixin:
         recorder = None
         dispatcher: OutboxDispatcher | None = None
         self._outbox_stop: asyncio.Event | None = None
-        if settings.outbox_enabled:
-            recorder = record_run_event
+        # 用量上报的可靠性(P0-3):reporter 在 budget 阶段就建好了,session 工厂
+        # 到这里才就绪——装配后 report 改走 outbox,由 dispatcher 至少一次投递,
+        # 不再"POST 失败就丢账"。未启用时保持直连(单机/测试路径不变)。
+        usage_reporter = usage_service.reporter()
+        durable_usage = bool(
+            settings.usage_outbox_enabled and usage_reporter is not None
+        )
+        if durable_usage and usage_reporter is not None:
+            usage_reporter.attach_session_factory(self.session_factory)
+        if settings.outbox_enabled or durable_usage:
             ingest_knowledge: KnowledgeClient | None = None
-            if settings.knowledge_ingest_enabled:
-                ingest_knowledge = KnowledgeClient(
-                    settings.knowledge_service_url,
-                    settings.knowledge_timeout_seconds,
-                    token_provider=self._token_provider,
-                )
-                self._closers.append(("ingest knowledge", ingest_knowledge.aclose))
+            if settings.outbox_enabled:
+                recorder = record_run_event
+                if settings.knowledge_ingest_enabled:
+                    ingest_knowledge = KnowledgeClient(
+                        settings.knowledge_service_url,
+                        settings.knowledge_timeout_seconds,
+                        token_provider=self._token_provider,
+                    )
+                    self._closers.append(("ingest knowledge", ingest_knowledge.aclose))
             # 消费者按各自开关在 register_consumers 内筛选(知识入库 / 记忆抽取),
             # 同一份总线、同一套 outbox 去重语义;返回名字只用于启动日志
             consumers = register_consumers(
@@ -43,6 +54,7 @@ class OutboxAssemblyMixin:
                 store=self.artifact_store,
                 llm=self.llm_client,
                 settings=settings,
+                usage=usage_reporter if durable_usage else None,
             )
             self._publish("outbox_consumers", consumers)
             dispatcher = OutboxDispatcher(

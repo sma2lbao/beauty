@@ -77,7 +77,12 @@ class UsageEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "usage_events"
+    # 可靠投递(P0-3):event_id 由「outbox 信封 id:样本序号」组成,
+    # 同一账号内唯一——重复投递直接命中已有行,不会重复计费。
+    __table_args__ = (UniqueConstraint("account_id", "event_id"),)
 
+    #: 投递幂等键(旧调用/直连路径可为空,空值不参与唯一约束)
+    event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     run_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     model: Mapped[str] = mapped_column(String(128), default="unknown")
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)

@@ -232,6 +232,10 @@ class Settings(BaseAppSettings):
     outbox_dispatch_interval_seconds: float = 1.0
     outbox_batch_size: int = 50
     outbox_max_attempts: int = 5
+    # 用量上报的可靠投递(P0-3):配置了 account 上报器时,用量先写 outbox
+    # 再由 dispatcher 至少一次投递(event_id 幂等);关掉则退回直连 POST。
+    # 与 outbox_enabled 独立:只跑用量投递也需要 dispatcher。
+    usage_outbox_enabled: bool = True
     # 交付物自动入库(§8 摄取):消费者把 run.delivered.v1 推进 knowledge-service
     knowledge_ingest_enabled: bool = False
     # 交付物镜像到 workspace-service(§7:artifacts 归属 workspace)

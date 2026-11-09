@@ -202,6 +202,57 @@ def test_usage_summary_aggregates_cost_and_billing_source(tmp_path: Path) -> Non
     }
 
 
+def test_usage_event_id_is_idempotent(tmp_path: Path) -> None:
+    """P0-3:outbox 至少一次投递 → 同一 event_id 只落一条、只计费一次。"""
+    body = {
+        "event_id": "b" * 32 + ":0",
+        "run_id": "r1",
+        "model": "deepseek/chat",
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "cost_usd": 0.0012,
+    }
+    with _client(tmp_path) as client:
+        first = client.post("/v1/usage/events", json=body, headers=INTERNAL)
+        second = client.post("/v1/usage/events", json=body, headers=INTERNAL)
+        assert first.status_code == 201
+        assert second.status_code == 201
+        # 幂等命中返回已落库那条的 id,不新增行
+        assert second.json()["id"] == first.json()["id"]
+        # 账号隔离:另一个账号可以有自己的同 event_id
+        other = client.post("/v1/usage/events", json=body, headers=INTERNAL_OTHER)
+        assert other.status_code == 201
+        assert other.json()["id"] != first.json()["id"]
+
+        summary = client.get("/v1/usage/summary", headers=ACCOUNT).json()
+    assert summary["month_events"] == 1
+    assert summary["month_tokens"] == 15
+    assert summary["month_cost_usd"] == pytest.approx(0.0012)
+
+
+def test_usage_event_id_optional_and_bounded(tmp_path: Path) -> None:
+    """旧直连调用不传 event_id 仍然能落库(空值不参与唯一约束)。"""
+    with _client(tmp_path) as client:
+        body = {"model": "m", "prompt_tokens": 1, "completion_tokens": 1}
+        assert (
+            client.post("/v1/usage/events", json=body, headers=INTERNAL).status_code
+            == 201
+        )
+        assert (
+            client.post("/v1/usage/events", json=body, headers=INTERNAL).status_code
+            == 201
+        )
+        summary = client.get("/v1/usage/summary", headers=ACCOUNT).json()
+        assert summary["month_events"] == 2
+
+        too_long = client.post(
+            "/v1/usage/events",
+            json={**body, "event_id": "x" * 65},
+            headers=INTERNAL,
+        )
+        assert too_long.status_code == 422
+
+
 def test_usage_internal_secret_required(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         response = client.post(

@@ -9,8 +9,9 @@
 - **~~M0-02 七服务容器化~~ ✅ 已完成**：`deploy/docker/python-service.Dockerfile`（7 个 Python 服务复用，`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile` + `deploy/docker-compose.yml` 全量编排（pg/redis/migrate/7 服务/web，:8080）；CI 增 `docker-build` job（= 重构 R-36 关闭）。
 - **M0-03 云 PG/云 Redis 接入**：生产 URL 注入即用；开发保持 SQLite/本地 Redis；CI 对云 PG 跑迁移与集成测试；顺带把限流从进程内切到 Redis（R-P1-8 缺口：compose 已起 Redis、业务未接）。
 - **~~CI 上线后~~ ✅ 已完成**：覆盖率阈值（R-31）、零网络硬门禁（R-32）、文档链接检查（`scripts/check-docs.sh`，CI `docs-check` job）。
-- **~~P0-1 成本归因~~ ✅ 已完成（2026-11-09）**：网关按 litellm 本地价目表（含缓存价）算 `cost_usd` → 编排器透传 → `usage_events` 落库（新迁移）→ `/usage/summary` 出金额 → 用量页展示，并区分 platform/BYOK、单独统计未计价调用；契约见 [design/cost-attribution.md](./design/cost-attribution.md)。残余 step/phase 拆分与 BYOK 审计随 P0-3/后续批次。
-- **agent 服务能力补齐（待决策）**：2026-11-09 复核出的 P0/P1 差距与建议排期见 [gap-2026-11/00-refresh-2026-11-09.md](./gap-2026-11/00-refresh-2026-11-09.md) §4/§7（上一版见 gap-2026-10/06）；其中 P0 项（多实例正确性、对话配额闸、usage 可靠投递、MCP SSRF、管理面）决策后并入本表；P0-1 成本归因已于 2026-11-09、P0-2（run 生命周期）已于 2026-10-25、P0-6（BYOK 接入，契约见 [design/byok.md](./design/byok.md)）已于 2026-10-26 落地，不再待决。
+- **~~P0-1 成本归因~~ ✅ 已完成（2026-11-09）**：网关按 litellm 本地价目表（含缓存价）算 `cost_usd` → 编排器透传 → `usage_events` 落库（新迁移）→ `/usage/summary` 出金额 → 用量页展示，并区分 platform/BYOK、单独统计未计价调用；契约见 [design/cost-attribution.md](./design/cost-attribution.md)。残余 step/phase 拆分与 BYOK 审计随后续批次。
+- **~~P0-3 用量可靠投递~~ ✅ 已完成（2026-11-09）**：`UsageReporter` 先写编排器 outbox（`usage.report.v1`，独立短事务）→ dispatcher 至少一次投递 → account 按 `(account_id, event_id)` 幂等落库（迁移 `a9d4f2c8b6e1`）；入队失败回退直连、未装配 `session_factory` 行为不变，开关 `USAGE_OUTBOX_ENABLED`；契约见 [design/usage-delivery.md](./design/usage-delivery.md)。多副本跨实例投递仍待 P0-4。
+- **agent 服务能力补齐（待决策）**：2026-11-09 复核出的 P0/P1 差距与建议排期见 [gap-2026-11/00-refresh-2026-11-09.md](./gap-2026-11/00-refresh-2026-11-09.md) §4/§7（上一版见 gap-2026-10/06）；其中 P0 项（多实例正确性、对话配额闸、MCP SSRF、管理面）决策后并入本表；P0-1 成本归因与 P0-3 用量可靠投递已于 2026-11-09、P0-2（run 生命周期）已于 2026-10-25、P0-6（BYOK 接入，契约见 [design/byok.md](./design/byok.md)）已于 2026-10-26 落地，不再待决。
 
 ## 暂缓（写明恢复条件）
 

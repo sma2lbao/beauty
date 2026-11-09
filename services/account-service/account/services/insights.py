@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from common.errors import AppError, NotFoundError
 from common.logging import get_logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from account.core.byok_kms import BYOKKms
@@ -52,9 +53,15 @@ def _start_of_month() -> datetime:
 async def record_usage(
     session: AsyncSession, account_id: str, data: UsageEventCreate
 ) -> UsageEvent:
+    """落一条用量事件;带 event_id 时幂等(P0-3 可靠投递)。
+
+    outbox 至少一次投递意味着同一事件会被重投:先查重,插入撞上并发窗口
+    时再查一次(唯一约束兜底),保证同一 event_id 只计费一次。
+    """
     total = data.prompt_tokens + data.completion_tokens
     event = UsageEvent(
         account_id=account_id,
+        event_id=data.event_id,
         run_id=data.run_id,
         model=data.model or "unknown",
         prompt_tokens=data.prompt_tokens,
@@ -63,7 +70,22 @@ async def record_usage(
         cost_usd=data.cost_usd,
         billing_source=data.billing_source,
     )
-    return await UsageEventRepository(session).add(event)
+    repo = UsageEventRepository(session)
+    if data.event_id is None:
+        return await repo.add(event)
+    existing = await repo.find_by_event_id(account_id, data.event_id)
+    if existing is not None:
+        return existing
+    try:
+        async with session.begin_nested():
+            await repo.add(event)
+    except IntegrityError:
+        # 并发重投同一 event_id:唯一约束赢了,返回已落库的那条。
+        existing = await repo.find_by_event_id(account_id, data.event_id)
+        if existing is None:  # 不是 event_id 冲突(别的约束),不能吞
+            raise
+        return existing
+    return event
 
 
 def _cost(event: UsageEvent) -> Decimal | None:

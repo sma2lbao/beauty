@@ -6,6 +6,12 @@ services 层图调用边界(runs.py)统一做——节点保持纯函数,出口�
 
 失败语义:用量是观测数据,不是执行路径——上报失败只打 warning + 计数,
 **绝不阻塞 run**(宁可少一条用量,也不能让用户的 run 因为这个挂掉)。
+
+可靠性(P0-3):装配了 session_factory 时,用量先写 **orchestrator 自己的
+outbox**(`usage.report.v1`,独立短事务,不与 run 业务事务耦合——token 已经
+花掉了,业务回滚也得记账),再由 dispatcher 至少一次投递;UsageDeliveryConsumer
+逐条 POST account,用 `event_id=<信封 id>:<序号>` 做幂等,重投不会重复计费。
+没装配 session_factory 时保持直连 POST(单机/测试路径不变)。
 """
 
 from __future__ import annotations
@@ -18,8 +24,17 @@ import httpx
 from common.logging import get_logger
 from common.middleware import inject_request_headers
 from common.security import ACCOUNT_HEADER, SECRET_HEADER
+from database.session import session_scope
+from events.envelope import EventEnvelope
+from events.outbox import OutboxRepository, is_processed, mark_processed
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.metrics import observe_job_failure
+
+#: usage 上报事件(消费方按 event_id 幂等;payload 见 usage_report_payload)
+USAGE_REPORT_EVENT = "usage.report.v1"
+#: usage 投递消费者名(processed_events 的去重维度)
+USAGE_DELIVERY_CONSUMER = "usage-delivery"
 
 
 @dataclass(frozen=True)
@@ -81,8 +96,34 @@ def record(sample: UsageSample | None) -> None:
         collector.record(sample)
 
 
+def _sample_payload(sample: UsageSample) -> dict[str, Any]:
+    """一条样本在 HTTP body / outbox payload 里的统一形状。"""
+    return {
+        "model": sample.model,
+        "prompt_tokens": sample.prompt_tokens,
+        "completion_tokens": sample.completion_tokens,
+        "cost_usd": sample.cost_usd,
+        "billing_source": sample.billing_source,
+    }
+
+
+def usage_report_payload(
+    run_id: str | None, samples: list[UsageSample]
+) -> dict[str, Any]:
+    """outbox 事件 payload:逐条保留样本(不聚合,成本/来源不能被抹平)。"""
+    return {"run_id": run_id, "samples": [_sample_payload(s) for s in samples]}
+
+
+class UsageDeliveryError(RuntimeError):
+    """用量投递失败:dispatcher 据此退避重试,不能吞掉异常把它标成成功。"""
+
+
 class UsageReporter:
-    """经 account 内部端点写 usage_events(X-Internal-Secret 保护)。"""
+    """经 account 内部端点写 usage_events(X-Internal-Secret 保护)。
+
+    装配 session_factory 后改走 outbox(至少一次投递 + event_id 幂等);
+    未装配时保持直连 POST。
+    """
 
     def __init__(
         self,
@@ -99,6 +140,18 @@ class UsageReporter:
             event_hooks={"request": [inject_request_headers]},
         )
         self._secret = internal_secret
+        self._session_factory: async_sessionmaker[AsyncSession] | None = None
+
+    @property
+    def durable(self) -> bool:
+        """是否已装配 session 工厂(report 走 outbox 而不是直连)。"""
+        return self._session_factory is not None
+
+    def attach_session_factory(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """由 container 在 session 工厂就绪后装配;此后 report 改走 outbox。"""
+        self._session_factory = factory
 
     async def report(
         self,
@@ -107,27 +160,62 @@ class UsageReporter:
         run_id: str | None,
         samples: list[UsageSample],
     ) -> None:
-        """逐条上报;任何一条失败就停(避免失败时刷屏),只留 warning。"""
+        """先写 outbox(已装配 session 工厂),否则直连;都不阻塞 run。"""
+        if not samples:
+            return
+        factory = self._session_factory
+        if factory is not None:
+            try:
+                await self._enqueue(
+                    factory,
+                    account_id=account_id,
+                    run_id=run_id,
+                    samples=samples,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - 入队失败回退直连,同样不能打死 run
+                observe_job_failure(kind="usage_report")
+                get_logger("agent_orchestrator.usage").warning(
+                    "usage_enqueue_failed",
+                    account_id=account_id,
+                    run_id=run_id,
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+        await self._post_each(account_id=account_id, run_id=run_id, samples=samples)
+
+    async def _enqueue(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        *,
+        account_id: str,
+        run_id: str | None,
+        samples: list[UsageSample],
+    ) -> None:
+        """独立短事务写发件箱:token 已花掉,不跟 run 业务事务一起回滚。"""
+        envelope = EventEnvelope.create(
+            USAGE_REPORT_EVENT,
+            usage_report_payload(run_id, samples),
+            account_id=account_id,
+        )
+        async with session_scope(factory) as session:
+            await OutboxRepository(session).record(account_id, envelope)
+
+    async def _post_each(
+        self,
+        *,
+        account_id: str,
+        run_id: str | None,
+        samples: list[UsageSample],
+    ) -> None:
+        """直连兜底:逐条上报;任何一条失败就停(避免失败时刷屏),只留 warning。"""
         log = get_logger("agent_orchestrator.usage")
         for sample in samples:
-            body = {
-                "run_id": run_id,
-                "model": sample.model,
-                "prompt_tokens": sample.prompt_tokens,
-                "completion_tokens": sample.completion_tokens,
-                "cost_usd": sample.cost_usd,
-                "billing_source": sample.billing_source,
-            }
+            body = {"run_id": run_id, **_sample_payload(sample)}
             try:
                 resp = await self._client.post(
                     "/v1/usage/events",
                     json=body,
-                    headers={
-                        SECRET_HEADER: self._secret,
-                        # account 的内部账号解析 = 共享密钥 + 显式 X-Account-Id;
-                        # 缺这个头会 401 auth.account_missing,用量永远落库失败。
-                        ACCOUNT_HEADER: account_id,
-                    },
+                    headers=self._headers(account_id),
                 )
             except Exception as exc:  # noqa: BLE001 - 上报是观测数据,任何异常都不能连带打死 run
                 # 不只是 httpx.HTTPError:异步传输层异常(事件循环关闭、
@@ -144,6 +232,33 @@ class UsageReporter:
                     f"http {resp.status_code}: {resp.text[:200]}",
                 )
                 return
+
+    async def deliver(self, *, account_id: str, body: dict[str, Any]) -> None:
+        """严格投一条(dispatcher 消费者用):失败抛异常,交给 outbox 退避重试。"""
+        try:
+            resp = await self._client.post(
+                "/v1/usage/events",
+                json=body,
+                headers=self._headers(account_id),
+            )
+        except Exception as exc:  # noqa: BLE001 - 转成投递错误,让 outbox 记失败重试
+            observe_job_failure(kind="usage_delivery")
+            raise UsageDeliveryError(
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if resp.status_code >= 400:
+            observe_job_failure(kind="usage_delivery")
+            raise UsageDeliveryError(
+                f"http {resp.status_code}: {resp.text[:200]}"
+            )
+
+    def _headers(self, account_id: str) -> dict[str, str]:
+        return {
+            SECRET_HEADER: self._secret,
+            # account 的内部账号解析 = 共享密钥 + 显式 X-Account-Id;
+            # 缺这个头会 401 auth.account_missing,用量永远落库失败。
+            ACCOUNT_HEADER: account_id,
+        }
 
     @staticmethod
     def _failed(
@@ -164,6 +279,62 @@ class UsageReporter:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+class UsageDeliveryConsumer:
+    """把 usage.report.v1 逐条投给 account(至少一次 + event_id 幂等)。
+
+    dispatcher 保证失败会重投,所以这里**必须**严格:任何一条没落库就抛异常;
+    重复投递由 account 侧的 event_id 唯一约束兜住(见 account insights)。
+    """
+
+    name = USAGE_DELIVERY_CONSUMER
+
+    def __init__(
+        self,
+        reporter: UsageReporter,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        self._reporter = reporter
+        self._factory = session_factory
+
+    async def __call__(self, envelope: EventEnvelope) -> None:
+        if envelope.type != USAGE_REPORT_EVENT:
+            return
+        account_id = envelope.account_id
+        samples = envelope.payload.get("samples")
+        if not account_id or not isinstance(samples, list) or not samples:
+            # 坏事件无法自愈:直接抛给 dispatcher 记 failed 留痕,不无限重试。
+            raise ValueError(f"{USAGE_REPORT_EVENT} 缺少 account_id 或 samples")
+        async with session_scope(self._factory) as session:
+            if await is_processed(
+                session,
+                account_id=account_id,
+                consumer=self.name,
+                event_id=envelope.id,
+            ):
+                return
+        run_id = envelope.payload.get("run_id")
+        for index, sample in enumerate(samples):
+            if not isinstance(sample, dict):
+                raise ValueError(f"{USAGE_REPORT_EVENT} 的 sample 必须是对象")
+            await self._reporter.deliver(
+                account_id=account_id,
+                body={
+                    **sample,
+                    "run_id": run_id,
+                    # 逐条子事件 id:一条 outbox 事件可能带多个样本,
+                    # account 的唯一约束按样本去重,重投不会重复计费。
+                    "event_id": f"{envelope.id}:{index}",
+                },
+            )
+        async with session_scope(self._factory) as session:
+            await mark_processed(
+                session,
+                account_id=account_id,
+                consumer=self.name,
+                event_id=envelope.id,
+            )
 
 
 class TokenBudgetExceeded(RuntimeError):

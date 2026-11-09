@@ -33,6 +33,8 @@ class UsageSummary(BaseModel):
 class UsageEventCreate(BaseModel):
     """内部上报事件(orchestrator/seed 用;X-Internal-Secret 保护)。"""
 
+    #: 投递幂等键(<outbox 信封 id>:<样本序号>);缺省 = 不做去重(直连/旧调用)
+    event_id: str | None = Field(default=None, max_length=64)
     run_id: str | None = Field(default=None, max_length=32)
     model: str = Field(default="unknown", max_length=128)
     prompt_tokens: int = Field(default=0, ge=0)

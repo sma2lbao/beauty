@@ -21,6 +21,7 @@ NETWORK_SWITCHES: tuple[str, ...] = (
     "llm_enabled",
     "tools_enabled",
     "outbox_enabled",
+    "usage_outbox_enabled",
     "knowledge_ingest_enabled",
     "workspace_enabled",
     "sandbox_enabled",

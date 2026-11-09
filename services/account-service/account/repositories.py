@@ -133,6 +133,14 @@ class UsageEventRepository(AccountRepository[UsageEvent]):
     not_found_message = "用量事件不存在"
     id_detail_key = "usage_event_id"
 
+    async def find_by_event_id(
+        self, account_id: str, event_id: str
+    ) -> UsageEvent | None:
+        """投递幂等:同一账号下按 event_id 取已落库的用量事件。"""
+        return await self.session.scalar(
+            self.scoped(account_id, UsageEvent.event_id == event_id)
+        )
+
     async def list_since(self, account_id: str, since) -> list[UsageEvent]:
         return await self.list_scoped(
             account_id,

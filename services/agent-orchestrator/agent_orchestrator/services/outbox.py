@@ -41,6 +41,11 @@ from agent_orchestrator.services import artifacts as artifacts_service
 from agent_orchestrator.services import memory_extraction
 from agent_orchestrator.services.knowledge import Knowledge
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.usage import (
+    USAGE_REPORT_EVENT,
+    UsageDeliveryConsumer,
+    UsageReporter,
+)
 
 DELIVERED_EVENT = "run.delivered.v1"
 KNOWLEDGE_CONSUMER = "knowledge-ingest"
@@ -270,9 +275,14 @@ def register_consumers(
     store: Any = None,
     llm: LLMClient | None = None,
     settings: Settings | None = None,
+    usage: UsageReporter | None = None,
 ) -> list[str]:
     """把已启用的消费者挂到总线上,返回消费者名(便于启动日志)。"""
     registered: list[str] = []
+    if usage is not None:
+        usage_consumer = UsageDeliveryConsumer(usage, session_factory)
+        bus.subscribe(USAGE_REPORT_EVENT, usage_consumer)
+        registered.append(usage_consumer.name)
     if knowledge is not None:
         consumer = KnowledgeIngestConsumer(knowledge, session_factory, store)
         bus.subscribe(DELIVERED_EVENT, consumer)

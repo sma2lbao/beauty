@@ -1,7 +1,7 @@
 # 成本归因与用量计价（P0-1）
 
 > 状态：已落地（2026-11-09）。范围：llm-gateway 计价 → agent-orchestrator 透传 → account-service 落库/聚合 → Web 展示。
-> 相关设计：模型出口见 [architecture.md](../architecture.md) §5，BYOK 见 [byok.md](./byok.md)，观测口径见 [langfuse-observability.md](./langfuse-observability.md)。
+> 相关设计：模型出口见 [architecture.md](../architecture.md) §5，BYOK 见 [byok.md](./byok.md)，观测口径见 [langfuse-observability.md](./langfuse-observability.md)，用量的可靠投递见 [usage-delivery.md](./usage-delivery.md)。
 
 ## 1. 目标与不变量
 
@@ -24,7 +24,7 @@
 ## 3. 透传（agent-orchestrator）
 
 - `services/llm_gateway.py` 的 `_parse_usage()` 从网关回包读 `cost_usd` / `billing_source`，构造 `UsageSample(cost_usd, billing_source)`；脏值归一（成本转 float 失败→None，来源只认 `platform`/`byok`）。
-- `services/usage.py` 的 `UsageReporter.report()` 逐条 POST `/v1/usage/events`，body 含 `cost_usd` / `billing_source`。
+- `services/usage.py` 的 `UsageReporter.report()` 先把样本写进编排器 outbox（`usage.report.v1`），由 dispatcher 至少一次投递 `/v1/usage/events`，body 含 `cost_usd` / `billing_source`；可靠性语义见 [usage-delivery.md](./usage-delivery.md)。
 - `services/usage_events.py` 的 `run.usage.v1` 事件按模型聚合 `calls/prompt/completion/total/cost_usd`；`RunUsageTotals.cost_usd` 随 `GET /runs/{id}/usage` 与子代理用量返回。
 
 ## 4. 落库与聚合（account-service）
@@ -49,7 +49,7 @@
 
 ## 7. 未做 / 后续
 
-- **P0-3**：usage 上报仍是 at-most-once，失败即丢；成本要随 usage 走 `events.outbox` + event_id 幂等，否则金额也会丢。
+- ~~P0-3~~：已落地，成本随 usage 走 outbox + event_id 幂等，见 [usage-delivery.md](./usage-delivery.md)。
 - `step_id` / `phase` 维度拆分（把成本归到计划步骤）未做，当前只到 run 与模型。
 - 「哪次调用用了 BYOK」审计表未做；BYOK 目前只在 usage 行上标来源。
 - 平台成本看板、预算告警、eval 成本归集属 P1-K。
