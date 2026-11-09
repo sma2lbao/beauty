@@ -170,7 +170,12 @@ services:
       AGENT_ORCHESTRATOR__LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
       AGENT_ORCHESTRATOR__LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       AGENT_ORCHESTRATOR__LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      AGENT_ORCHESTRATOR__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-1.0}
+      # 生产默认 0.1(10% 采样);本地演示可传 TRACE_SAMPLE_RATIO=1.0。
+      # 走 Collector 尾部采样时必须传 1.0,否则错误 trace 在服务侧就丢了。
+      AGENT_ORCHESTRATOR__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}
+      # 非空则先发给 OTel Collector(observability profile 的 otel-collector),
+      # 例如 http://otel-collector:4318/v1/traces;为空仍直连 Langfuse。
+      AGENT_ORCHESTRATOR__OTLP_COLLECTOR_ENDPOINT: ${OTEL_COLLECTOR_ENDPOINT:-}
     depends_on: *db-depends
     restart: unless-stopped
 
@@ -194,7 +199,8 @@ services:
       LLM_GATEWAY__LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
       LLM_GATEWAY__LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LLM_GATEWAY__LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LLM_GATEWAY__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-1.0}
+      LLM_GATEWAY__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}
+      LLM_GATEWAY__OTLP_COLLECTOR_ENDPOINT: ${OTEL_COLLECTOR_ENDPOINT:-}
       LLM_GATEWAY__LOG_CONTENT: ${LLM_GATEWAY_LOG_CONTENT:-false}
     restart: unless-stopped
 
@@ -336,14 +342,36 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── 观测:OTel Collector(可选尾部采样,observability profile)──────────────
+  # 服务侧设 OTEL_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces 后,trace 先到
+  # 这里做尾部采样(错误/慢请求全留 + 10% 基线)再发往 Langfuse。
+  # 配置见 deploy/otel-collector/config.yaml;直连模式不需要这个服务。
+  otel-collector:
+    profiles: ['observability']
+    image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_IMAGE_TAG:-0.115.1}
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
+    environment:
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - '4317:4317'
+      - '4318:4318'
+    restart: unless-stopped
+
   # ── 观测:Langfuse v4(可选 profile,默认不启动) ───────────────────────────
   # 设计见 docs/design/langfuse-observability.md。启用:
   #   docker compose -f deploy/docker-compose.yml --profile observability up -d
   #   LANGFUSE_ENABLED=true docker compose -f deploy/docker-compose.yml up -d \
   #     agent-orchestrator llm-gateway        # 重新创建服务才会读到新环境变量
   # UI/登录:http://localhost:3001(dev@beauty-moon.local / beauty-moon)
-  # 对外只暴露 web 与 minio 控制台;其余组件只在内网可达,避免与主栈的
-  # postgres:5432 / redis:6379 抢端口(所以不映射宿主机端口)。
+  # 尾部采样(可选):让服务先把 trace 发给 otel-collector(服务侧必须全采):
+  #   TRACE_SAMPLE_RATIO=1.0 OTEL_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces \
+  #     docker compose -f deploy/docker-compose.yml --profile observability up -d
+  # 对外暴露:web、MinIO 控制台(9091)与 Collector 的 4317/4318;其余只在内网可达,
+  # 避免与主栈的 postgres:5432 / redis:6379 抢端口(所以不映射宿主机端口)。
   # 数据卷全部独立,down -v 只清观测数据;主栈运行不依赖这个 profile。
   langfuse-postgres:
     image: docker.io/postgres:17-alpine

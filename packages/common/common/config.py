@@ -47,6 +47,11 @@ class BaseAppSettings(BaseSettings):
     tracing_enabled: bool = True
     otlp_endpoint: str | None = None
     otlp_headers: dict[str, str] | None = None
+    # 指向 OTel Collector 的 OTLP/HTTP 端点(如 http://otel-collector:4318/v1/traces)。
+    # 设置后 span 先发给 Collector 做尾部采样,优先级高于 Langfuse 直连与
+    # OTLP_ENDPOINT;此时应把 trace_sample_ratio 调成 1.0,让 Collector 看到
+    # 全部 trace 再按错误/慢请求决定留哪些。
+    otlp_collector_endpoint: str | None = None
     trace_sample_ratio: float = 0.1
     # Langfuse(P3,docs/design/langfuse-observability.md):OTel 原生接入。
     # 开关 + public/secret key 三件套齐全才启用;启用后覆盖 OTLP_ENDPOINT/

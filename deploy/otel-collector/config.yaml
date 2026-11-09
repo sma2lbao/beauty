@@ -1,0 +1,79 @@
+# OTel Collector:尾部采样,把 8 个服务的 trace 汇聚后转发到 Langfuse。
+#
+# 为什么需要它:SDK 的 trace_sample_ratio 是「头部采样」,在 trace 开始时按比例
+# 丢,错误/慢请求即使出问题也可能已被丢掉。Collector 先在内存里等 trace 结束
+# (decision_wait),再按「有错误 / 太慢 / 基线比例」决定保留——所以走这条链路时
+# 服务侧必须把 trace_sample_ratio 设成 1.0,不能提前丢。
+#
+# 端口:4317(gRPC)/4318(HTTP)。LANGFUSE_HOST 不要以 / 结尾(会拼出双斜杠)。
+# 服务侧设置
+#   <SERVICE>__OTLP_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces
+# 即可切换到本链路;不设置则仍直连 Langfuse(见 docs/design/langfuse-observability.md)。
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 400
+    spike_limit_mib: 100
+
+  # 尾部采样:三选一命中即保留。
+  tail_sampling:
+    decision_wait: 30s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      # 1) 任何 span 状态为 ERROR 的 trace 全留(Span 上 record_error 会置 ERROR)。
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # 2) 超过 30s 的慢 trace 全留(单次 run 的长任务通常属于这类)。
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 30000
+      # 3) 其余按 10% 基线抽样。
+      - name: baseline
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+exporters:
+  # Langfuse OTLP 端点:otlphttp 会自动补 /v1/traces,所以 endpoint 写到
+  # /api/public/otel 为止。认证用 basicauth 扩展(等价于 Basic base64(pk:sk))。
+  otlphttp/langfuse:
+    endpoint: ${env:LANGFUSE_HOST}/api/public/otel
+    auth:
+      authenticator: basicauth/client
+    headers:
+      # v4 摄取协议必须带(缺了 Langfuse 会静默丢弃或按旧协议解析)。
+      x-langfuse-ingestion-version: "4"
+
+extensions:
+  basicauth/client:
+    client_auth:
+      username: ${env:LANGFUSE_PUBLIC_KEY}
+      password: ${env:LANGFUSE_SECRET_KEY}
+
+service:
+  extensions: [basicauth/client]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlphttp/langfuse]
+  telemetry:
+    logs:
+      level: warn

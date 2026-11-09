@@ -8,6 +8,9 @@
 - **Langfuse(可换后端)**:配置 `LANGFUSE_*` 三件套后,导出目标切换为
   Langfuse OTLP 端点并挂 baggage 处理器(trace 级属性落到每个 span),
   见 `common.langfuse` 与 docs/design/langfuse-observability.md;
+- **Collector(可选)**:`OTLP_COLLECTOR_ENDPOINT` 非空时先发给 OTel
+  Collector(尾部采样),优先级高于 Langfuse 直连;此时 head sampler 应保持
+  1.0,由 Collector 按错误/慢请求决定保留哪些 trace;
 - 服务端埋点用 FastAPI 原生 telemetry(FastAPI ≥ 0.143):`create_app` 里把
   `telemetry={"exclude": exclude_telemetry}` 传给 `FastAPI(...)`,探针与指标
   端点不产生 span;出站埋点与 `traceparent` 注入用官方 httpx 插桩;
@@ -74,6 +77,20 @@ def current_traceparent() -> str | None:
     return format_traceparent(context) if context is not None else None
 
 
+def _export_target(
+    settings: BaseAppSettings,
+) -> tuple[str, dict[str, str] | None] | None:
+    """选导出目标:Collector > Langfuse 直连 > 通用 OTLP > 不导出。"""
+    if settings.otlp_collector_endpoint:
+        return settings.otlp_collector_endpoint, settings.otlp_headers or None
+    langfuse_target = langfuse.export_target(settings)
+    if langfuse_target is not None:
+        return langfuse_target
+    if settings.otlp_endpoint:
+        return settings.otlp_endpoint, settings.otlp_headers or None
+    return None
+
+
 def _build_provider(
     settings: BaseAppSettings, exporter: SpanExporter | None
 ) -> TracerProvider:
@@ -96,26 +113,20 @@ def _build_provider(
 
     target = exporter
     simple = exporter is not None
-    langfuse_target = langfuse.export_target(settings) if target is None else None
-    if langfuse_target is not None:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
-        )
+    if target is None:
+        resolved = _export_target(settings)
+        if resolved is not None:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                OTLPSpanExporter,
+            )
 
-        endpoint, headers = langfuse_target
-        target = OTLPSpanExporter(endpoint=endpoint, headers=headers)
+            endpoint, headers = resolved
+            target = OTLPSpanExporter(endpoint=endpoint, headers=headers)
+    if langfuse.is_enabled(settings):
         # trace 级属性(session/user/tags)经 baggage 复制到每个 span,否则
-        # Langfuse 上按这些维度过滤会漏 span(官方要求)。
+        # Langfuse 上按这些维度过滤会漏 span(官方要求)。走 Collector 时也
+        # 保留,Collector 之后仍写入同一个 Langfuse 项目。
         provider.add_span_processor(langfuse.LangfuseBaggageSpanProcessor())
-    elif target is None and settings.otlp_endpoint:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
-        )
-
-        target = OTLPSpanExporter(
-            endpoint=settings.otlp_endpoint,
-            headers=settings.otlp_headers or None,
-        )
     if target is not None:
         # 测试注入的 exporter 用同步处理器(便于断言);生产 OTLP 走批量。
         provider.add_span_processor(
@@ -141,7 +152,7 @@ def init_tracing(
         atexit.register(shutdown_tracing)
         log.debug(
             "tracing_initialized",
-            otlp=bool(settings.otlp_endpoint),
+            otlp=bool(settings.otlp_endpoint or settings.otlp_collector_endpoint),
             langfuse=langfuse.is_enabled(settings),
             sample_ratio=settings.trace_sample_ratio,
         )

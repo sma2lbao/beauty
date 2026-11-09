@@ -188,3 +188,59 @@ def test_shutdown_tracing_is_idempotent() -> None:
     tracing.shutdown_tracing()
     assert tracing._provider is None  # noqa: SLF001
     tracing.shutdown_tracing()
+
+
+def test_export_target_prefers_collector() -> None:
+    # 配了 Collector 就发 Collector:尾部采样要求服务侧不提前丢 trace。
+    settings = _settings(
+        langfuse_enabled=True,
+        langfuse_public_key="pk-lf-test",
+        langfuse_secret_key="sk-lf-test",
+        langfuse_host="https://cloud.langfuse.com",
+        otlp_endpoint="http://legacy:4318/v1/traces",
+        otlp_headers={"x-scope": "collector"},
+        otlp_collector_endpoint="http://collector:4318/v1/traces",
+    )
+    assert tracing._export_target(settings) == (  # noqa: SLF001
+        "http://collector:4318/v1/traces",
+        {"x-scope": "collector"},
+    )
+
+
+def test_export_target_falls_back_to_langfuse() -> None:
+    settings = _settings(
+        langfuse_enabled=True,
+        langfuse_public_key="pk-lf-test",
+        langfuse_secret_key="sk-lf-test",
+        langfuse_host="https://cloud.langfuse.com",
+        otlp_collector_endpoint=None,
+    )
+    target = tracing._export_target(settings)  # noqa: SLF001
+    assert target is not None
+    endpoint, headers = target
+    assert endpoint == "https://cloud.langfuse.com/api/public/otel/v1/traces"
+    assert headers["Authorization"].startswith("Basic ")
+
+
+def test_export_target_uses_generic_otlp_without_langfuse() -> None:
+    settings = _settings(
+        langfuse_enabled=False,
+        langfuse_public_key=None,
+        langfuse_secret_key=None,
+        otlp_endpoint="http://oltp:4318/v1/traces",
+        otlp_headers={"x-token": "t"},
+    )
+    assert tracing._export_target(settings) == (  # noqa: SLF001
+        "http://oltp:4318/v1/traces",
+        {"x-token": "t"},
+    )
+
+
+def test_export_target_none_without_any_endpoint() -> None:
+    settings = _settings(
+        langfuse_enabled=False,
+        langfuse_public_key=None,
+        langfuse_secret_key=None,
+        otlp_endpoint=None,
+    )
+    assert tracing._export_target(settings) is None  # noqa: SLF001

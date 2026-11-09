@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）与尾部采样（Phase 4）待排期；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`），见 §11。
+> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）待排期；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -92,12 +92,13 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 
 `BaseAppSettings` 新增（各服务自动派生 `<SERVICE>__` 前缀）：
 
-| 字段                  | 默认值                  | 说明                                                                                                 |
-| --------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `langfuse_enabled`    | `false`                 | 总开关；关闭时零初始化、零出口                                                                       |
-| `langfuse_host`       | `http://localhost:3000` | Langfuse 地址；Cloud 用 `https://cloud.langfuse.com`，自托管 compose 内为 `http://langfuse-web:3000` |
-| `langfuse_public_key` | `null`                  | 项目公钥 `pk-lf-*`                                                                                   |
-| `langfuse_secret_key` | `null`                  | 项目私钥 `sk-lf-*`；只在服务端注入，禁止进前端或日志                                                 |
+| 字段                      | 默认值                  | 说明                                                                                                                  |
+| ------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `langfuse_enabled`        | `false`                 | 总开关；关闭时零初始化、零出口                                                                                        |
+| `langfuse_host`           | `http://localhost:3000` | Langfuse 地址；Cloud 用 `https://cloud.langfuse.com`，自托管 compose 内为 `http://langfuse-web:3000`                  |
+| `langfuse_public_key`     | `null`                  | 项目公钥 `pk-lf-*`                                                                                                    |
+| `langfuse_secret_key`     | `null`                  | 项目私钥 `sk-lf-*`；只在服务端注入，禁止进前端或日志                                                                  |
+| `otlp_collector_endpoint` | `null`                  | 非空则 trace 先发 OTel Collector（尾部采样，见 §9.2），优先级高于 Langfuse 直连；走它时 `trace_sample_ratio` 必须 1.0 |
 
 ### 5.1 当前默认：Langfuse Cloud（已配置到 8 个服务）
 
@@ -111,6 +112,8 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 <SERVICE>__LANGFUSE_PUBLIC_KEY=pk-lf-...        # Cloud 项目 → Settings → API Keys
 <SERVICE>__LANGFUSE_SECRET_KEY=sk-lf-...        # 只在服务端；不进前端/日志/git
 <SERVICE>__TRACE_SAMPLE_RATIO=1.0               # 本地全采；生产按 §9 调到 0.1~0.2
+# 可选：走 OTel Collector 尾部采样（§9.2），此时上面必须保持 1.0
+# <SERVICE>__OTLP_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces
 ```
 
 开关语义：`langfuse_enabled && public_key && secret_key` 三者齐全才会初始化导出，缺一项等于关闭（零网络）。公钥前缀 `pk-lf-`（可公开、可给前端）、私钥 `sk-lf-`（等同项目写权限，泄露即换）。
@@ -194,9 +197,10 @@ docker compose -f deploy/docker-compose.yml up -d agent-orchestrator llm-gateway
 
 **采样**
 
-- 沿用 `<SERVICE>__TRACE_SAMPLE_RATIO`（`ParentBased(TraceIdRatioBased)`）：入口决定是否采样，下游跟随，避免半截链路。
-- 默认 0.1 会丢掉 90% 的 run；本地/演示建议 1.0，生产按成本调 0.1~0.2。
-- 错误、超时、HITL 的 trace 想全留需要**尾部采样**（先全采、按结果丢弃），当前未做；不要用头部比例采样宣称"错误全留"。
+- 两种口径，**不要混用**：
+  - **直连 Langfuse（默认）**：`<SERVICE>__TRACE_SAMPLE_RATIO`（`ParentBased(TraceIdRatioBased)`）是头部采样，入口决定、下游跟随，避免半截链路。compose 生产默认 0.1，本地/演示 1.0。头部采样**做不到「错误全留」**——trace 开始时就已丢弃，不要这样宣称。
+  - **经 OTel Collector（§9.2）**：服务侧一律 1.0（全量发给 Collector），由 Collector 等 trace 结束后按「错误 / 慢 / 10% 基线」决定保留。
+- 错误、超时、HITL 的 trace 全留只能靠尾部采样（Collector，见 §9.2）；直连模式受限于头部采样。
 - 指标永不采样（Prometheus 口径不受此开关影响）。
 
 **脱敏（硬约束）**
@@ -230,6 +234,23 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 - **口径注意**：`UsageOut` 只有 prompt/completion 两个计数，缓存命中 token（deepseek cache hit 单价低一个量级）无法区分，缓存占比高时会**高估**成本；Phase 3 若要精确，需要 usage 里带 cache_read/cache_write。
 - 兜底仍可用 Cloud 项目里的模型定义（Settings → Models → New）；但它只影响之后的新数据，且与网关价目表可能不一致，二者择一即可。
 
+### 9.2 尾部采样（可选：OTel Collector）
+
+直连模式受限于头部采样，做不到「错误/HITL 全留」。需要这条能力时加一层 Collector：
+
+- **配置**：`deploy/otel-collector/config.yaml`（`otlp` receiver 4317/4318 → `tail_sampling` → `batch` → `otlphttp/langfuse`）。策略三选一命中即留：`status_code=ERROR`、`latency > 30s`、其余 10% 基线。认证用 `basicauth` 扩展读 `LANGFUSE_PUBLIC_KEY/SECRET_KEY`，并带 `x-langfuse-ingestion-version: 4`；`endpoint` 写到 `/api/public/otel`（otlphttp 自动补 `/v1/traces`）。
+- **启动**：服务侧必须**全量**发给 Collector（否则错误 trace 在服务内就被头采样丢了），所以在宿主机环境显式传两个变量后起观测 profile：
+
+  ```sh
+  TRACE_SAMPLE_RATIO=1.0 OTEL_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces \
+    docker compose -f deploy/docker-compose.yml --profile observability up -d
+  ```
+
+  服务容器内用服务名 `otel-collector`；宿主机调试用 `http://localhost:4318/v1/traces`。不传 `OTEL_COLLECTOR_ENDPOINT` 就仍直连 Langfuse，Collection 不参与。
+
+- **代价与限制**：`decision_wait: 30s` 意味着 trace 在 Langfuse 出现会晚约 30 秒；内存按 `num_traces: 50000` 估算；同一条 trace 的 span 必须落到**同一个** Collector 实例（多副本需按 trace_id 负载均衡，本编排单副本）。
+- **状态**：配置与 compose 服务已提交，通过 compose 静态校验与 YAML 解析；本机 Docker daemon 不可用，**未实测**「服务 → Collector → Cloud」链路。首次启用请同时看 Collector 日志与 Langfuse 是否收到数据。
+
 ---
 
 ## 10. 与既有观测的关系
@@ -258,7 +279,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 **Phase 4（待做）**
 
 1. ~~Web 端 run 详情加「在 Langfuse 查看」深链~~ **已完成**：`runs.trace_id` 由 `run_trace` 回写，`RunRead` 暴露，`apps/web` 的 run 详情按 `VITE_LANGFUSE_BASE_URL`（默认 Cloud）拼 `/trace/<trace_id>`；未执行过/tracing 关闭时隐藏。
-2. 采样升级为尾部采样（错误/HITL 全留）。
+2. ~~采样升级为尾部采样（错误/HITL 全留）~~ **配置已提供**：`deploy/otel-collector/config.yaml` + compose `otel-collector` 服务（observability profile），策略见 §9.2；本机无 Docker 未实测。
 
 ---
 

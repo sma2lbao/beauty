@@ -241,7 +241,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 - 采样：`<SERVICE>__TRACE_SAMPLE_RATIO`（默认 0.1）走 `ParentBased(TraceIdRatioBased)`——入口（API 网关）决定是否采样，下游跟随，避免半截链路。
 - 开关：`<SERVICE>__TRACING_ENABLED=false` 完全关闭（不建 provider、不插桩）。
 - 注意：FastAPI 原生 telemetry 自带 `metrics`/`logs` 能力；本仓库指标仍以 `/internal/metrics` 为准（Prometheus），OTel 侧未接 meter/logger provider，保持单一口径。
-- Langfuse 接入（P3，Phase 1/2 已实施）：8 个服务的 `.env` 已指向 **Langfuse Cloud**（`<SERVICE>__LANGFUSE_ENABLED/HOST/PUBLIC_KEY/SECRET_KEY`，同一项目密钥共用以串起跨服务 trace）；启用后 Langfuse 端点**优先于**通用 `<SERVICE>__OTLP_ENDPOINT`，orchestrator 图节点与 llm-gateway 的 `chat {model}` 调用分别出 span/generation。**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目表，generation span 写 `cost_details`；Cloud 托管价目表不含 deepseek，但 ingested 优先，见设计文档 §9.1）。属性映射、自托管 compose、采样与脱敏见 [design/langfuse-observability.md](./design/langfuse-observability.md)。
+- Langfuse 接入（P3，Phase 1/2 已实施）：8 个服务的 `.env` 已指向 **Langfuse Cloud**（`<SERVICE>__LANGFUSE_ENABLED/HOST/PUBLIC_KEY/SECRET_KEY`，同一项目密钥共用以串起跨服务 trace）；导出优先级为 **Collector > Langfuse 直连 > 通用 `<SERVICE>__OTLP_ENDPOINT`**（Collector 见设计文档 §9.2），orchestrator 图节点与 llm-gateway 的 `chat {model}` 调用分别出 span/generation。**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目表，generation span 写 `cost_details`；Cloud 托管价目表不含 deepseek，但 ingested 优先，见设计文档 §9.1）。属性映射、自托管 compose、采样与脱敏见 [design/langfuse-observability.md](./design/langfuse-observability.md)。
 
 ---
 
@@ -293,8 +293,8 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
-待办：`apps/web` 前端追踪、尾部采样与 eval；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
+P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。
+待办：`apps/web` 前端追踪与 eval；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
 
 ---
 
