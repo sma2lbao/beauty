@@ -55,6 +55,7 @@ from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.mcp_client import reset_url_guard
 from agent_orchestrator.services.mcp_server import (
     ApiKeyVerifier,
     OAuthTokenIntrospector,
@@ -278,6 +279,8 @@ class AppContainer(
 
     async def stop(self) -> None:
         """严格逆序关闭:worker → 中断 sweeper → outbox → 客户端 → DB → checkpointer。"""
+        # MCP 出站校验配置是进程级全局:关停复位,避免同进程的下个容器继承
+        reset_url_guard()
         if self.worker_task is not None:
             self.worker_task.cancel()
             with suppress(asyncio.CancelledError):

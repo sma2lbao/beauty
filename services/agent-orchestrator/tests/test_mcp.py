@@ -520,3 +520,49 @@ def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> Non
         assert marks == [("srv-1", "MCP 服务端要求授权(HTTP 401)")]
 
     asyncio.run(scenario())
+
+
+def test_test_server_blocks_internal_address(client: TestClient) -> None:
+    """P0-6:指向内网/元数据地址的 server 连接前被拒,且失败落库不再静默。"""
+    created = client.post(
+        "/api/v1/mcp/servers",
+        json={
+            "name": "metadata",
+            "url": "http://169.254.169.254/latest/meta-data",
+            "timeout_seconds": 2,
+        },
+        headers=ACCOUNT,
+    )
+    assert created.status_code == 201
+
+    from agent_orchestrator.services import mcp_runtime
+    from agent_orchestrator.services.mcp_client import MCPClient
+
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    def fake_build(server, secret: str, **kwargs):
+        return MCPClient(server.url, transport=httpx.MockTransport(handler))
+
+    original = mcp_runtime.build_client
+    mcp_runtime.build_client = fake_build  # type: ignore[assignment]
+    try:
+        tested = client.post(
+            f"/api/v1/mcp/servers/{created.json()['id']}/test", headers=ACCOUNT
+        )
+        assert tested.status_code == 200
+        body = tested.json()
+        assert body["ok"] is False
+        assert body["tools"] == []
+        assert "内网" in body["detail"]
+        # 校验在发请求之前:一个字节都没出站
+        assert sent == []
+
+        listing = client.get("/api/v1/mcp/servers", headers=ACCOUNT).json()
+        assert listing[0]["last_status"] == "error"
+        assert "BlockedTargetError" in (listing[0]["last_error"] or "")
+    finally:
+        mcp_runtime.build_client = original  # type: ignore[assignment]

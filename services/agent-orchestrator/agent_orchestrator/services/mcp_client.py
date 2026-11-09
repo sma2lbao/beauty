@@ -1,7 +1,9 @@
 """MCP Client:Streamable HTTP JSON-RPC(M1 本地版,不做 stdio)。
 
 安全口径:返回内容视为不可信数据,由工具调用层作为普通文本回喂模型;
-token 只在服务端解密后放进请求头,绝不进入日志/响应。
+token 只在服务端解密后放进请求头,绝不进入日志/响应。**出站地址一律过 SSRF 校验**
+(私网/回环/链路本地/元数据地址拒绝,见 services/net_guard.py;确需访问内网
+server 时用 MCP_ALLOWED_HOSTS 白名单放行)。
 
 传输口径(Streamable HTTP):
 - initialize 响应头里的 Mcp-Session-Id 回填到后续每个请求(含 notification);
@@ -15,14 +17,37 @@ token 只在服务端解密后放进请求头,绝不进入日志/响应。
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from contextlib import suppress
 from typing import Any
 
 import httpx
 
+from agent_orchestrator.services import net_guard
+
 PROTOCOL_VERSION = "2025-03-26"
 SESSION_HEADER = "Mcp-Session-Id"
 PROTOCOL_HEADER = "MCP-Protocol-Version"
+
+#: 出站 SSRF 校验的进程级配置(容器装配时按 settings 覆盖;测试注入 fake resolver)
+_ALLOWED_HOSTS: tuple[str, ...] = ()
+_RESOLVER: net_guard.Resolver | None = None
+
+
+def configure_url_guard(
+    *,
+    allowed_hosts: Sequence[str] = (),
+    resolver: net_guard.Resolver | None = None,
+) -> None:
+    """配置 MCP 出站地址校验(容器装配调用一次;测试可注入 resolver)。"""
+    global _ALLOWED_HOSTS, _RESOLVER
+    _ALLOWED_HOSTS = net_guard.parse_allowed_hosts(allowed_hosts)
+    _RESOLVER = resolver
+
+
+def reset_url_guard() -> None:
+    """恢复默认(空白名单 + 真实 DNS);测试清理用。"""
+    configure_url_guard()
 
 
 class MCPError(Exception):
@@ -64,6 +89,7 @@ class MCPClient:
         self._next_id = 0
         self._session_id: str | None = None
         self._protocol_version: str | None = None
+        self._url_checked = False
 
     async def aclose(self) -> None:
         # 规范允许客户端 DELETE 终止会话;部分 server 不支持,失败不报错
@@ -88,6 +114,13 @@ class MCPClient:
         return headers
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if not self._url_checked:
+            # P0-6:首个请求前做一次 SSRF 校验(initialize 必先发,故覆盖 test/list/call);
+            # 结果 memo,同一 client 后续请求不重复解析。
+            await net_guard.assert_url_allowed(
+                self._url, allowed_hosts=_ALLOWED_HOSTS, resolver=_RESOLVER
+            )
+            self._url_checked = True
         had_session = bool(self._session_id)
         response = await self._client.post(
             self._url, json=payload, headers=self._headers()

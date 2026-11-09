@@ -15,9 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import re
-import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -25,6 +23,11 @@ from urllib.parse import ParseResult, unquote, urlparse
 
 import httpx
 from common.errors import UpstreamError
+
+from agent_orchestrator.services.net_guard import (
+    is_blocked_address,
+    resolve_host_sync,
+)
 
 #: 允许抓取的扩展名 → 约定 MIME(用于响应头缺失时兜底)
 FILE_EXTENSIONS: dict[str, str] = {
@@ -155,30 +158,6 @@ def _guess_content_type(filename: str) -> str:
     return FILE_EXTENSIONS.get(_suffix(filename), DEFAULT_CONTENT_TYPE)
 
 
-def _resolve_sync(host: str) -> list[str]:
-    """同步解析主机名(在线程里跑,避免阻塞事件循环)。"""
-    infos = socket.getaddrinfo(host, None)
-    return [str(info[4][0]) for info in infos]
-
-
-def _is_blocked_address(address: str) -> bool:
-    """私网/回环/链路本地/保留/组播/未指定 → True(SSRF 收口)。"""
-    try:
-        ip = ipaddress.ip_address(address)
-    except ValueError:
-        return True  # 解析不到具体 IP 的一律不信
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
-
-
 class HttpFileDownloader:
     """httpx 实现:白名单 host 可访问私网,其余先过 SSRF 检查再下载。"""
 
@@ -201,7 +180,7 @@ class HttpFileDownloader:
         """解析主机名;默认走线程里的 getaddrinfo(可注入假 resolver)。"""
         if self._resolver is not None:
             return list(self._resolver(host))
-        return await asyncio.to_thread(_resolve_sync, host)
+        return await asyncio.to_thread(resolve_host_sync, host)
 
     async def _check_target(self, host: str) -> None:
         """SSRF 检查:allowed_hosts 显式放行,否则任一解析结果命中内网即拒绝。"""
@@ -226,7 +205,7 @@ class HttpFileDownloader:
                 f"域名没有解析结果:{host}",
                 details={"host": host},
             )
-        blocked = [address for address in addresses if _is_blocked_address(address)]
+        blocked = [address for address in addresses if is_blocked_address(address)]
         if blocked:
             raise UpstreamError(
                 "artifact.download_blocked",

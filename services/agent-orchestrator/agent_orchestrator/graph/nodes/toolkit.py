@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from common.logging import get_logger
+
 from agent_orchestrator.graph.ports import (
     ToolExtrasFactory,
     ToolkitFactory,
@@ -12,6 +14,8 @@ from agent_orchestrator.graph.ports import (
 )
 from agent_orchestrator.graph.runtime import GraphRuntime
 from agent_orchestrator.graph.state import RunGraphState
+
+logger = get_logger(__name__)
 
 
 def _scoped_toolkit(
@@ -56,7 +60,13 @@ async def _load_toolkit(
     if extras_factory is not None:
         try:
             extras = await extras_factory(account_id)
-        except Exception:  # noqa: BLE001 - MCP 故障降级为基础工具
+        except Exception as exc:  # noqa: BLE001 - 外部工具故障降级为基础工具
+            # P0-6:降级必须留痕——静默吞掉会让"MCP 工具没出现"无从排查
+            logger.warning(
+                "tool extras load failed; falling back to base tools",
+                account_id=account_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
             extras = []
         if extras:
             base = toolkit if toolkit is not None else _empty_toolkit(runtime)

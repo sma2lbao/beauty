@@ -8,6 +8,7 @@ from functools import partial
 
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import KnowledgeClient
+from agent_orchestrator.services.mcp_client import configure_url_guard
 from agent_orchestrator.services.token_broker import TokenBroker
 from agent_orchestrator.services.tool_client import (
     RemoteToolkit,
@@ -24,6 +25,8 @@ class ToolsAssemblyMixin:
 
     async def _assemble_tools(self) -> KnowledgeClient | None:
         settings = self.settings
+        # MCP 出站 SSRF 校验(P0-6):白名单来自配置,在 MCPClient 首次请求前生效
+        configure_url_guard(allowed_hosts=settings.mcp_allowed_hosts)
         # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——账号来自
         # 签名 claim,不再有 X-Account-Id 裸调路径;密钥未配置时在换发处明确报错
         broker = TokenBroker(

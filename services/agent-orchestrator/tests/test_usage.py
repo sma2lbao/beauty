@@ -330,12 +330,6 @@ def test_usage_report_is_durable_through_outbox(tmp_path, reporter) -> None:
             ).fetchone() == (2,)
 
 
-def _create_conversation(client) -> str:
-    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
-    assert resp.status_code == 201
-    return resp.json()["id"]
-
-
 def test_stream_chat_reports_usage_without_run(tmp_path, reporter) -> None:
     """对话路径:一次回复一条 usage(run_id 为空),triage 调用不计入。"""
     fake = FakeLLM(['{"mode": "chat"}', "你好!"])

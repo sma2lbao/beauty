@@ -72,6 +72,9 @@ class Settings(BaseAppSettings):
     # MCP Client(M1 本地版):允许账号配置第三方 MCP server
     mcp_enabled: bool = True
     mcp_secret: str = "dev-mcp-secret-change-me"
+    # 出站 SSRF 校验(P0-6):MCP server 的 host 解析到私网/回环/链路本地/元数据
+    # 地址一律拒绝;这里按 host 精确放行(小写比较),给自建内网 MCP 开口子。
+    mcp_allowed_hosts: list[str] = []
     # stdio 型 MCP(P2):在沙箱内拉起 MCP 进程,经 stdio JSON-RPC 调工具。
     # 需要 sandbox_enabled 同时为真(没有沙箱客户端时 test 端点明确报错、
     # tool_specs 跳过 stdio server);network=public 是 P2 的临时口径,

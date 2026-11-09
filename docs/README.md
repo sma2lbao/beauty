@@ -24,6 +24,7 @@
 | [docs/design/byok.md](./design/byok.md)                                     | BYOK 设计（信任边界/解析与回退/信封 v2 与 KMS/轮换/配置/威胁模型）                                                                                                                                                                            | Lead       | BYOK 契约或 KMS 形态变化时 |
 | [docs/design/cost-attribution.md](./design/cost-attribution.md)             | 成本归因与用量计价（网关价目表单源/缓存价/未计价语义/billing_source/account 聚合/前端展示）                                                                                                                                                   | Lead       | 计价口径或成本字段变化时   |
 | [docs/design/usage-delivery.md](./design/usage-delivery.md)                 | 用量可靠投递（P0-3：outbox 至少一次/event_id 幂等/开关/失败语义/单实例残余）                                                                                                                                                                  | Lead       | 投递链路或幂等键变化时     |
+| [docs/design/mcp-security.md](./design/mcp-security.md)                     | MCP 出站安全（P0-6：SSRF 校验/白名单/降级可见/残余与失败语义差异）                                                                                                                                                                            | Lead       | MCP 出站或安全策略变化时   |
 | [docs/design/context-engineering.md](./design/context-engineering.md)       | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）                                                                                                                                                                        | Lead       | 上下文策略或实现变化时     |
 | [docs/design/tool-execution.md](./design/tool-execution.md)                 | 工具执行面设计（exec MVP：契约/审批/截断/审计，含 web_search、todo 分期与对话内写操作确认）                                                                                                                                                   | Lead       | 执行面契约或实施进度变化时 |
 | [docs/design/code-execution.md](./design/code-execution.md)                 | 代码执行面设计(run_code P5:双工具边界/契约/执行路径/审批/审计)                                                                                                                                                                                | Lead       | 代码执行契约变化时         |
@@ -58,6 +59,7 @@
 - BYOK 契约（存储/解析/回退/KMS） → [design/byok.md](./design/byok.md)（唯一）
 - 成本计价与用量金额口径 → [design/cost-attribution.md](./design/cost-attribution.md)（唯一）
 - 用量投递可靠性（outbox 至少一次 / event_id 幂等） → [design/usage-delivery.md](./design/usage-delivery.md)（唯一）
+- MCP 出站安全（SSRF 校验 / 白名单 / 降级可见） → [design/mcp-security.md](./design/mcp-security.md)（唯一）
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）
