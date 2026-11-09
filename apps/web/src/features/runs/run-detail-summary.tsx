@@ -2,7 +2,10 @@
  * 运行详情头部摘要:状态徽标/轮次/模型/相对时间、目标、中断原因与父 run 血缘。
  * 只读展示,不含任何操作(操作在 ./run-detail-actions.tsx)。
  */
+import { ExternalLink } from 'lucide-react';
+
 import { ConsoleButton, RunStatusBadge } from '@/components/console/ui';
+import { langfuseBaseUrl } from '@/config/env';
 import {
   RUN_PARENT_KIND_LABELS,
   RUN_STATUS_LABELS,
@@ -38,6 +41,18 @@ export function RunDetailSummary({
           >
             模型 {run.model}
           </span>
+        ) : null}
+        {run?.trace_id ? (
+          <a
+            href={`${langfuseBaseUrl}/trace/${run.trace_id}`}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="run-langfuse-link"
+            className="inline-flex items-center gap-1 font-mono text-[11px] text-ha-muted transition-colors hover:text-ha-text-2"
+          >
+            <ExternalLink aria-hidden className="size-3.5" />
+            在 Langfuse 查看
+          </a>
         ) : null}
         <span className="ml-auto font-mono text-[11px] text-ha-faint">
           {relativeTime(run?.created_at)}

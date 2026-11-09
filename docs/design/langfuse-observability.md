@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）与 Web 深链、尾部采样（Phase 4）待排期，见 §11。
+> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）与尾部采样（Phase 4）待排期；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`），见 §11。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -134,6 +134,8 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 | `chat {model}`（流式）          | 同上                     | `generation`                | 同上 + completion_start_time（TTFT）                                                                            |
 | `execute_tool {name}`           | `execution/tool_span.py` | `tool`                      | tool.name、tool.call.id、risk、decision、duration_ms、result_chars、paths、sandbox_id；失败 WARNING，异常 ERROR |
 
+run 根 span 的 trace_id 会回写到 `runs.trace_id`（session_scope 提交）；一次 run 有多次执行（首次、approve、resume）时只保留**最近一次**。控制台 run 详情据此显示「在 Langfuse 查看」，跳 `${VITE_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}/trace/<trace_id>`；地址由 `apps/web` 的构建期变量 `VITE_LANGFUSE_BASE_URL` 决定，自托管时改成内网控制台地址。
+
 工具 span 的 `input` 默认空——参数原文与结果都属敏感内容，只在 `TOOL__LOG_CONTENT=true` 时写截断后的参数；审计表始终是完整事实源。跨进程续接已验证：FastAPI 原生 telemetry 从入站 `traceparent` 提取父上下文（入站 trace-id 与导出 span 的 trace-id 一致），出站 httpx 由插桩注入。
 
 未映射的 OTel 属性会落到 `metadata.attributes`，`resource` 属性落到 `metadata.resourceAttributes`——**这两处不可过滤**；要可按它过滤/聚合，必须显式写 `langfuse.trace.metadata.<key>` 或 `langfuse.observation.metadata.<key>`。
@@ -232,7 +234,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 
 ## 10. 与既有观测的关系
 
-- `X-Request-ID` 与 `trace_id` 双向可查：日志平台按 `trace_id` 跳到 Langfuse，Langfuse 的 trace 里也能拿到 HTTP span 上的 request_id（Phase 4 再加 UI 深链）。
+- `X-Request-ID` 与 `trace_id` 双向可查：日志平台按 `trace_id` 跳到 Langfuse，Langfuse 的 trace 里也能拿到 HTTP span 上的 request_id；控制台 run 详情有「在 Langfuse 查看」深链（`runs.trace_id`，见 §6）。
 - Sentry 事件与 Langfuse trace 共享同一 `trace_id`，异常点到对应 run 的链路可对上。
 - Langfuse 不注册 meter/logger provider，指标与日志口径不变；`/internal/metrics` 仍是唯一 Prometheus 出口。
 
@@ -255,7 +257,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 
 **Phase 4（待做）**
 
-1. Web 端 run 详情加「在 Langfuse 查看」深链（`${LANGFUSE_HOST}/trace/<trace_id>`），trace_id 从 run 事件或 span 上下文取。
+1. ~~Web 端 run 详情加「在 Langfuse 查看」深链~~ **已完成**：`runs.trace_id` 由 `run_trace` 回写，`RunRead` 暴露，`apps/web` 的 run 详情按 `VITE_LANGFUSE_BASE_URL`（默认 Cloud）拼 `/trace/<trace_id>`；未执行过/tracing 关闭时隐藏。
 2. 采样升级为尾部采样（错误/HITL 全留）。
 
 ---

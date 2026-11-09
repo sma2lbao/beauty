@@ -47,6 +47,11 @@ export type Run = {
    * 排障时要看的是「当时用了什么模型」;未指定模型(走网关默认)为 null。
    */
   model?: string | null;
+  /**
+   * 最近一次执行的 OTel trace_id(32 位十六进制,后端回写);为空表示尚未执行
+   * 或 tracing 未启用,控制台据此显示「在 Langfuse 查看」。
+   */
+  trace_id?: string | null;
   created_at: string;
 };
 

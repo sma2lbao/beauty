@@ -31,6 +31,16 @@ export const knowledgeBase: string =
 export const workspaceBase: string =
   (import.meta.env.VITE_WORKSPACE_API_URL as string | undefined) ?? '';
 
+/**
+ * Langfuse 观测台基址(VITE_LANGFUSE_BASE_URL),默认 Cloud EU。
+ *
+ * 只用于拼 run 详情里的「在 Langfuse 查看」深链;自托管时改成内网地址
+ * (如 http://langfuse.local:3001)。结尾斜杠统一剥掉。
+ */
+export const langfuseBaseUrl: string = (
+  import.meta.env.VITE_LANGFUSE_BASE_URL ?? 'https://cloud.langfuse.com'
+).replace(/\/+$/, '');
+
 /** Logto OIDC 配置(VITE_LOGTO_*):缺省 undefined,logto 模式下缺配置抛错(见 lib/auth)。 */
 export const logto = {
   endpoint: import.meta.env.VITE_LOGTO_ENDPOINT as string | undefined,

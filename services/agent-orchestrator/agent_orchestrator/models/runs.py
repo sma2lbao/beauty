@@ -86,6 +86,10 @@ class Run(UUIDMixin, AccountMixin, TimestampMixin, Base):
     # 用哪个模型(显式指定或继承所属对话),之后改会话模型不影响已建 run;
     # 为空表示"未指定",执行时走网关默认路由。
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # 观测:最近一次执行 trace 的 OTel trace_id(32 位十六进制)。为空表示尚未执行
+    # 过或 tracing 未启用;控制台据此给「在 Langfuse 查看」深链(见
+    # docs/design/langfuse-observability.md §6)。
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class RunEvent(UUIDMixin, AccountMixin, Base):

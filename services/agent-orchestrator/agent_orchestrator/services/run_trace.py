@@ -7,7 +7,9 @@
 
 - 已有父 span(HTTP 同步触发、审批恢复)时它挂在请求 span 下,不另起 trace;
 - trace 名 = `run {run_id}`;session = conversation_id;user = account_id;
-- observation 类型为 `agent`,run_id/attempts/agent_name 进可过滤 metadata。
+- observation 类型为 `agent`,run_id/attempts/agent_name 进可过滤 metadata;
+- 把这次执行的 trace_id 回写到 `run.trace_id`(session_scope 统一提交),
+  控制台据此拼「在 Langfuse 查看」深链。
 """
 
 from __future__ import annotations
@@ -56,4 +58,10 @@ def run_trace(run: Any, *, tracer: Tracer | None = None) -> Iterator[Any]:
         )
         present = {key: value for key, value in attributes.items() if value is not None}
         langfuse.apply_attributes(span, present)
+        context = span.get_span_context()
+        # is_recording() 为 False 表示这次 span 没被采样/未导出(如 ALWAYS_OFF),
+        # 此时记下 trace_id 只会得到一条打不开的死链,保留原值。
+        if context.is_valid and span.is_recording():
+            # 32 位小写十六进制,与 Langfuse trace 页 URL 的格式一致。
+            run.trace_id = f"{context.trace_id:032x}"
         yield span

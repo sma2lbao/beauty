@@ -2519,6 +2519,17 @@
             "title": "Title",
             "type": "string"
           },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
           "workspace_id": {
             "anyOf": [
               {

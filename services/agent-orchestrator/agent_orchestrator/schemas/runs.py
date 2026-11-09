@@ -65,6 +65,8 @@ class RunRead(BaseModel):
     mcp_server_ids: list[str] = Field(default_factory=list)
     # 模型路由快照(P1-G):为空表示建 run 时未指定(执行走网关默认)
     model: str | None = None
+    # 最近一次执行的 trace_id(观测深链);未执行过或 tracing 未启用为空
+    trace_id: str | None = None
     created_at: datetime
 
 

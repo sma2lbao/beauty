@@ -142,6 +142,17 @@ describe('RunDetail', () => {
     expect(screen.getByText('修复登录 30s 超时')).toBeTruthy();
   });
 
+  it('有 trace_id 时提供在 Langfuse 查看深链', async () => {
+    renderDetail('running', undefined, [], [], [], {
+      run: { trace_id: '0123456789abcdef0123456789abcdef' },
+    });
+    const link = await screen.findByTestId('run-langfuse-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://cloud.langfuse.com/trace/0123456789abcdef0123456789abcdef',
+    );
+    expect(link.getAttribute('target')).toBe('_blank');
+  });
+
   it('awaiting_approval 状态提供放行与拒绝按钮', async () => {
     renderDetail('awaiting_approval');
     await waitFor(() => {
