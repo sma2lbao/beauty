@@ -98,6 +98,12 @@ export function useRunDetail({
     refetchInterval: () =>
       runQuery.data && isRunQuiescent(runQuery.data.status) ? false : 1500,
   });
+  // 评分(P2):人工点赞/点踩写事件 + best-effort 推送 Langfuse,
+  // 读侧不轮询,提交成功后只失效自己的缓存。
+  const scoresQuery = useQuery({
+    queryKey: queryKeys.runScores(runId),
+    queryFn: () => runsApi.scores(runId),
+  });
   const { events, connected } = useRunEvents(runId);
 
   const refresh = async () => {
@@ -144,6 +150,12 @@ export function useRunDetail({
       await refresh();
     },
   });
+  const scoreMutation = useMutation({
+    mutationFn: (value: number) =>
+      runsApi.createScore(runId, { name: 'user-feedback', value }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.runScores(runId) }),
+  });
 
   const run = runQuery.data;
   const plan = planQuery.data;
@@ -181,6 +193,7 @@ export function useRunDetail({
     todosQuery,
     subagentsQuery,
     usageQuery,
+    scoresQuery,
     events,
     connected,
     retryMutation,
@@ -188,6 +201,7 @@ export function useRunDetail({
     savePlan,
     cancelMutation,
     queueInstruction,
+    scoreMutation,
     planDraft,
     setPlanDraft,
     rejectReason,

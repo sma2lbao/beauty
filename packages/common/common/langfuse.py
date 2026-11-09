@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
+import httpx
 from opentelemetry import baggage, context, trace
 from opentelemetry.sdk.trace import Span, SpanProcessor
 
@@ -30,6 +32,12 @@ from common.config import BaseAppSettings
 
 #: OTLP/HTTP trace 导出路径(Langfuse ≥ v3.22;v4 实时摄取建议加 ingestion 头)。
 OTLP_TRACES_PATH = "/api/public/otel/v1/traces"
+#: 公开 Scores API(评分不是 OTLP;走 REST,见 docs/design/langfuse-observability.md §6)。
+SCORES_PATH = "/api/public/scores"
+#: 评分上报超时:best-effort 副作用,不能拖住请求。
+SCORE_TIMEOUT_SECONDS = 5.0
+
+logger = logging.getLogger(__name__)
 #: v4 实时摄取版本头,不带时写入延迟最多 10 分钟(官方文档)。
 INGESTION_VERSION_HEADER = "x-langfuse-ingestion-version"
 INGESTION_VERSION = "4"
@@ -126,6 +134,62 @@ def export_target(
     if not is_enabled(settings):
         return None
     return langfuse_endpoint(settings), langfuse_headers(settings)
+
+
+def scores_endpoint(settings: BaseAppSettings) -> str:
+    """Langfuse 公开 Scores API 端点(host 允许带或不带尾部斜杠)。"""
+    return settings.langfuse_host.rstrip("/") + SCORES_PATH
+
+
+async def create_score(
+    settings: BaseAppSettings,
+    *,
+    trace_id: str,
+    name: str,
+    value: float,
+    comment: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> bool:
+    """把一条评分写到 Langfuse trace(best-effort,失败只返回 False)。
+
+    评分不是 OTLP:走公开 Scores API(`POST /api/public/scores`,Basic 认证)。
+    只映射 `traceId` / `name` / `value` / `comment`;数值 1/0 表示
+    「有用/无用」,与 Langfuse 控制台的 NUMERIC score 一致。
+
+    `client` 仅供测试注入(MockTransport);生产每次调用自建短连接。
+    """
+    if not is_enabled(settings):
+        return False
+    payload: dict[str, Any] = {
+        "traceId": trace_id,
+        "name": name,
+        "value": value,
+    }
+    if comment:
+        payload["comment"] = comment
+    headers = {"Authorization": langfuse_headers(settings)["Authorization"]}
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=SCORE_TIMEOUT_SECONDS)
+    try:
+        response = await client.post(
+            scores_endpoint(settings), json=payload, headers=headers
+        )
+        response.raise_for_status()
+        return True
+    except Exception as exc:  # noqa: BLE001 - 评分失败不能反噬主链路
+        logger.warning(
+            "langfuse score push failed",
+            extra={
+                "score": name,
+                "trace_id": trace_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        return False
+    finally:
+        if owns_client:
+            await client.aclose()
 
 
 def json_value(value: Any) -> str:

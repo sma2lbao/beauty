@@ -29,7 +29,7 @@ from agent_orchestrator.repositories import (
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import jobs as jobs_service
-from agent_orchestrator.services import memory_extraction
+from agent_orchestrator.services import memory_extraction, run_scores
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm_binding import bind_run_llm
@@ -282,6 +282,7 @@ async def _apply_graph_result(
             },
         )
         await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
+        await run_scores.record_rule_score(session, run, completed=False)
         return run
     run.status = RunStatus.COMPLETED.value
     metrics.observe_run_outcome(status=RunStatus.COMPLETED.value)
@@ -291,6 +292,7 @@ async def _apply_graph_result(
         "run.completed.v1",
         {"rounds": run.rounds, "results": values.get("results") or []},
     )
+    await run_scores.record_rule_score(session, run, completed=True)
     # 对话里的回复 = 交付物正文(没有时用执行结果小结兜底)
     await _append_assistant_message(
         session,

@@ -22,6 +22,7 @@ import type {
   RunStep,
   RunTodoItem,
   RunUsage,
+  RunScore,
   Subagent,
 } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
@@ -37,6 +38,8 @@ vi.mock('@/lib/runs-api', () => ({
     todos: vi.fn(),
     subagents: vi.fn(),
     usage: vi.fn(),
+    scores: vi.fn(),
+    createScore: vi.fn(),
     instructions: vi.fn(),
     retry: vi.fn(),
     approve: vi.fn(),
@@ -88,6 +91,8 @@ interface DetailOptions {
   onSelectRun?: (runId: string) => void;
   /** 覆盖 run 本身(子 run 头部、血缘文案)。 */
   run?: Partial<Run>;
+  /** 已有评分(P2 eval/scores)。 */
+  scores?: RunScore[];
 }
 
 function renderDetail(
@@ -105,6 +110,7 @@ function renderDetail(
   });
   vi.mocked(runsApi.subagents).mockResolvedValue(options.subagents ?? []);
   vi.mocked(runsApi.usage).mockResolvedValue(options.usage ?? zeroUsage);
+  vi.mocked(runsApi.scores).mockResolvedValue(options.scores ?? []);
   vi.mocked(runsApi.getPlan).mockResolvedValue(plan);
   vi.mocked(runsApi.instructions).mockResolvedValue([]);
   vi.mocked(runsApi.steps).mockResolvedValue(steps);
@@ -151,6 +157,31 @@ describe('RunDetail', () => {
       'https://cloud.langfuse.com/trace/0123456789abcdef0123456789abcdef',
     );
     expect(link.getAttribute('target')).toBe('_blank');
+  });
+
+  it('提供人工评分按钮并调用评分 API', async () => {
+    vi.mocked(runsApi.createScore).mockResolvedValue({
+      id: 'score-1',
+      run_id: 'run-1',
+      name: 'user-feedback',
+      value: 0,
+      comment: null,
+      source: 'human',
+      created_at: '2026-10-01T00:00:00Z',
+    });
+    renderDetail('completed', vi.fn(), [], [], [], {
+      run: { trace_id: '0123456789abcdef0123456789abcdef' },
+    });
+    const controls = await screen.findByTestId('run-score-controls');
+    fireEvent.click(within(controls).getByTestId('run-score-down'));
+    await waitFor(() => {
+      expect(runsApi.createScore).toHaveBeenCalledWith('run-1', {
+        name: 'user-feedback',
+        value: 0,
+      });
+    });
+    // 评分不改变 Langfuse 深链。
+    expect(screen.getByTestId('run-langfuse-link')).toBeTruthy();
   });
 
   it('awaiting_approval 状态提供放行与拒绝按钮', async () => {

@@ -21,6 +21,7 @@ import type {
   RunTodos,
   Subagent,
   RunUsage,
+  RunScore,
   RunAnswerPayload,
   RunAnswerAccepted,
   Artifact,
@@ -71,6 +72,17 @@ export const runsApi = {
   /** 用量汇总(§9):该 run 自身的调用次数与 token;无用量返回零值。 */
   usage: (runId: string) =>
     http.request<RunUsage>(`/api/v1/runs/${runId}/usage`),
+  /**
+   * 评分(人工点赞/点踩):同时落 `run.score.v1` 事件,开 Langfuse 时
+   * 后端在提交后 best-effort 推送到 trace;空数组是合法结果(还没人评分)。
+   */
+  scores: (runId: string) =>
+    http.request<RunScore[]>(`/api/v1/runs/${runId}/scores`),
+  createScore: (runId: string, body: { name?: string; value: number }) =>
+    http.request<RunScore>(`/api/v1/runs/${runId}/scores`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   generatePlan: (runId: string) =>
     http.request<Plan>(`/api/v1/runs/${runId}/plan`, { method: 'POST' }),
   updatePlan: (runId: string, planMarkdown: string) =>

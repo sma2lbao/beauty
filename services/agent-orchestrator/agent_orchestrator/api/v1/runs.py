@@ -31,6 +31,8 @@ from agent_orchestrator.schemas.runs import (
     RunEventRead,
     RunItemRead,
     RunRead,
+    RunScoreCreate,
+    RunScoreRead,
     RunStatus,
     RunUsageRead,
     StepRead,
@@ -40,8 +42,8 @@ from agent_orchestrator.schemas.runs import (
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import models as models_service
+from agent_orchestrator.services import run_scores, skill_packages
 from agent_orchestrator.services import runs as runs_service
-from agent_orchestrator.services import skill_packages
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.run_stream import (
     ensure_stream_target,
@@ -166,6 +168,57 @@ async def get_run_usage(
 ) -> RunUsageRead:
     """run 用量汇总(P1-E):聚合本地 ``run.usage.v1``,无用量返回零值。"""
     return await runs_service.run_usage(session, account_id, run_id)
+
+
+@router.post(
+    "/{run_id}/scores",
+    response_model=RunScoreRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_run_score(
+    run_id: str,
+    body: RunScoreCreate,
+    session: DBSession,
+    account_id: AccountId,
+) -> RunScoreRead:
+    """人工评分(点赞/点踩):落 `run.score.v1`,提交后 best-effort 上报 Langfuse。"""
+    run = await runs_service.require_run(session, account_id, run_id)
+    event = await run_scores.record_score(
+        session,
+        run,
+        run_scores.ScoreDraft(name=body.name, value=body.value, comment=body.comment),
+    )
+    payload = event.payload
+    return RunScoreRead(
+        id=event.id,
+        run_id=run.id,
+        name=payload["name"],
+        value=payload["value"],
+        comment=payload.get("comment"),
+        source=payload.get("source", "human"),
+        created_at=event.occurred_at,
+    )
+
+
+@router.get("/{run_id}/scores", response_model=list[RunScoreRead])
+async def list_run_scores(
+    run_id: str, session: DBSession, account_id: AccountId
+) -> list[RunScoreRead]:
+    """评分列表(人工 + 规则基线),按事件顺序;run 不存在一律 404。"""
+    await runs_service.require_run(session, account_id, run_id)
+    events = await run_scores.list_scores(session, account_id, run_id)
+    return [
+        RunScoreRead(
+            id=event.id,
+            run_id=run_id,
+            name=str(event.payload.get("name", "")),
+            value=float(event.payload.get("value", 0.0)),
+            comment=event.payload.get("comment"),
+            source=str(event.payload.get("source", "human")),
+            created_at=event.occurred_at,
+        )
+        for event in events
+    ]
 
 
 @router.get("/{run_id}/todos", response_model=TodoRead)

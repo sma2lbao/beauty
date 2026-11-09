@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）待排期；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
+> 剩余：导出前脱敏、留存策略、缓存 token 成本口径（Phase 3）待排期；eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -143,6 +143,16 @@ run 根 span 的 trace_id 会回写到 `runs.trace_id`（session_scope 提交）
 
 未映射的 OTel 属性会落到 `metadata.attributes`，`resource` 属性落到 `metadata.resourceAttributes`——**这两处不可过滤**；要可按它过滤/聚合，必须显式写 `langfuse.trace.metadata.<key>` 或 `langfuse.observation.metadata.<key>`。
 
+### 6.1 评分(scores)
+
+评分不走 OTLP,而是 **Langfuse Scores API**(POST /api/public/scores,Basic pk:sk)按 `trace_id` 挂到 trace 上;本仓库同时把评分落成 run 事件 `run.score.v1`(无新表、无迁移),因此**不开 Langfuse 也能本地回放**。
+
+- 规则基线:run 进入终态时自动写 `outcome`(completed=1 / failed=0,source=rule);未开 Langfuse 时不写,避免制造无意义事件。
+- 人工评分:控制台 run 详情提供「有用/无用」(value=1/0,source=human),`POST /runs/{id}/scores` 写入事件,列表走 `GET /runs/{id}/scores`。
+- 上报时机:事件随业务事务提交,`langfuse.create_score` 注册为 **after-commit** 回调(best-effort,5s 超时,失败只 warning);无 `runs.trace_id`(未执行/tracing 关闭/采样丢弃)时跳过,不会产生死链。
+- 口径:score 的 value 归一到 0~1;同名 score 多次提交时以 Langfuse 侧最新一条为准(面板可按 name 聚合)。
+- 实测(2026-11-09,Cloud):`POST /api/public/scores` 返回 score id;读侧注意 v2 scores 已弃用(2026-11-16 下线),改用 `GET /api/public/v3/scores`。
+
 ---
 
 ## 7. 关键映射约定
@@ -273,7 +283,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 2. ~~tool-service 工具 span~~ **已完成**：`execution/tool_span.py` 在 `POST /v1/tools/{name}/execute` 里按一次 tool_call 建 `execute_tool {name}`，元数据与 `tool_calls` 审计列对齐（risk/decision/duration_ms/result_chars/bytes_written/paths/sandbox_id/patch 行数）；默认不记参数原文，`TOOL__LOG_CONTENT=true` 才写截断后的 input。
 3. 导出前脱敏：自定义 SpanProcessor 白名单化属性，替代 `LOG_CONTENT` 粗粒度开关。
 4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；剩余口径缺口是缓存 token 未区分。
-5. eval/scores：run 结束后按事件写 `POST /api/public/scores`（人工标注 + 规则评分），回填 `/runs` 详情。
+5. ~~eval/scores~~ **已完成**：规则基线 `outcome`（completed=1 / failed=0）+ 人工点赞/点踩，落 `run.score.v1` 事件并经 after-commit best-effort 写 `POST /api/public/scores`；控制台 run 详情可评分、`GET /runs/{id}/scores` 回放（见 §6.1）。
 6. 留存与容量：ClickHouse TTL、MinIO 生命周期、成本告警。
 
 **Phase 4（待做）**

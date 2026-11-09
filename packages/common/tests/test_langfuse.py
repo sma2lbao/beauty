@@ -10,6 +10,7 @@ import base64
 import json
 from typing import Any
 
+import httpx
 from opentelemetry import baggage
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -212,3 +213,68 @@ def test_build_provider_keeps_generic_otlp_without_langfuse() -> None:
         isinstance(processor, langfuse.LangfuseBaggageSpanProcessor)
         for processor in processors
     )
+
+
+async def test_create_score_posts_public_scores_api() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers["authorization"]
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "score-1"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        ok = await langfuse.create_score(
+            _settings(),
+            trace_id="0123456789abcdef0123456789abcdef",
+            name="user-feedback",
+            value=1.0,
+            comment="有用",
+            client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert ok is True
+    assert captured["url"] == "http://langfuse.test:3000/api/public/scores"
+    assert (
+        captured["authorization"]
+        == "Basic " + base64.b64encode(b"pk-lf-test:sk-lf-test").decode()
+    )
+    assert captured["body"] == {
+        "traceId": "0123456789abcdef0123456789abcdef",
+        "name": "user-feedback",
+        "value": 1.0,
+        "comment": "有用",
+    }
+
+
+async def test_create_score_returns_false_on_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "boom"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        ok = await langfuse.create_score(
+            _settings(),
+            trace_id="0123456789abcdef0123456789abcdef",
+            name="user-feedback",
+            value=0.0,
+            client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert ok is False
+
+
+async def test_create_score_skips_when_disabled() -> None:
+    ok = await langfuse.create_score(
+        _settings(langfuse_enabled=False),
+        trace_id="0123456789abcdef0123456789abcdef",
+        name="user-feedback",
+        value=1.0,
+    )
+    assert ok is False

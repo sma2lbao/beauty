@@ -2,7 +2,7 @@
  * 运行详情头部摘要:状态徽标/轮次/模型/相对时间、目标、中断原因与父 run 血缘。
  * 只读展示,不含任何操作(操作在 ./run-detail-actions.tsx)。
  */
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { ConsoleButton, RunStatusBadge } from '@/components/console/ui';
 import { langfuseBaseUrl } from '@/config/env';
@@ -23,6 +23,10 @@ export function RunDetailSummary({
   onSelectRun?: (nextRunId: string) => void;
 }) {
   const { run, status, reasonLabel } = model;
+  // 人工评分以最后一次为准(rule 基线不算人的态度)。
+  const humanScore = (model.scoresQuery.data ?? [])
+    .filter((score) => score.source === 'human')
+    .at(-1);
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
@@ -53,6 +57,38 @@ export function RunDetailSummary({
             <ExternalLink aria-hidden className="size-3.5" />
             在 Langfuse 查看
           </a>
+        ) : null}
+        {run ? (
+          <span
+            className="inline-flex items-center gap-1"
+            data-testid="run-score-controls"
+          >
+            {humanScore ? (
+              <span className="font-mono text-[11px] text-ha-dim">
+                已评:{humanScore.value >= 0.5 ? '有用' : '无用'}
+              </span>
+            ) : null}
+            <ConsoleButton
+              variant={humanScore?.value === 1 ? 'primary' : 'secondary'}
+              size="sm"
+              data-testid="run-score-up"
+              aria-label="有用"
+              disabled={model.scoreMutation.isPending}
+              onClick={() => model.scoreMutation.mutate(1)}
+            >
+              <ThumbsUp aria-hidden className="size-3.5" />
+            </ConsoleButton>
+            <ConsoleButton
+              variant={humanScore?.value === 0 ? 'primary' : 'secondary'}
+              size="sm"
+              data-testid="run-score-down"
+              aria-label="无用"
+              disabled={model.scoreMutation.isPending}
+              onClick={() => model.scoreMutation.mutate(0)}
+            >
+              <ThumbsDown aria-hidden className="size-3.5" />
+            </ConsoleButton>
+          </span>
         ) : null}
         <span className="ml-auto font-mono text-[11px] text-ha-faint">
           {relativeTime(run?.created_at)}

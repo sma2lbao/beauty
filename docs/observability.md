@@ -293,8 +293,8 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。
-待办：`apps/web` 前端追踪与 eval；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
+P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。
+待办：`apps/web` 前端追踪；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
 
 ---
 

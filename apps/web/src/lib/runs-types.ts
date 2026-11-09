@@ -177,6 +177,24 @@ export type RunUsage = RunUsageTotals & {
 };
 
 /**
+ * run 评分(P2 eval/scores):人工点赞/点踩或终态规则基线。
+ *
+ * 评分同时以 `run.score.v1` 事件留在 run 事件流里(可回放),开了 Langfuse
+ * 时后端再 best-effort 写到对应 trace;scores 与 trace 的关系只靠 trace_id。
+ * `source` = human(人工)/ rule(规则基线,如 outcome=1 表示完成)。
+ */
+export type RunScore = {
+  id: string;
+  run_id: string;
+  name: string;
+  /** 0~1:1 表示正面,0 表示负面(规则基线同理)。 */
+  value: number;
+  comment?: string | null;
+  source: string;
+  created_at: string;
+};
+
+/**
  * 一个子代理(P1-E §8):父 run 委派出来的**独立 run**。
  *
  * 子代理有自己的一条 run 记录与事件流,详情沿用 `/runs/{id}` 同一套接口

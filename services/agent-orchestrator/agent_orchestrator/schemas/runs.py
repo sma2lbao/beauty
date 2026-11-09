@@ -288,6 +288,30 @@ class RunUsageRead(RunUsageTotals):
     by_model: list[RunUsageModelRead] = Field(default_factory=list)
 
 
+class RunScoreCreate(BaseModel):
+    """POST /runs/{id}/scores:人工评分(控制台点赞/点踩)。
+
+    `value` 取 0/1(无用/有用);`name` 固定默认 `user-feedback`,
+    便于 Langfuse 按分数名聚合;comment 可选写进 score 说明。
+    """
+
+    name: str = Field(default="user-feedback", min_length=1, max_length=50)
+    value: float = Field(ge=0, le=1)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class RunScoreRead(BaseModel):
+    """GET /runs/{id}/scores:评分事件投影(人工 + 规则基线)。"""
+
+    id: str
+    run_id: str
+    name: str
+    value: float
+    comment: str | None = None
+    source: str = "human"
+    created_at: datetime
+
+
 class SubagentRead(BaseModel):
     """子代理清单项(P1-E):父 run 视角下的子 run 摘要。
 

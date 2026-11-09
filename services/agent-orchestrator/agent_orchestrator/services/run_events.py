@@ -384,6 +384,12 @@ async def _fail_run(
         "run.failed.v1",
         {"stage": stage, "reason": run.status_reason},
     )
+    # 规则基线评分(Langfuse 启用时才写):失败记 outcome=0,便于控制台按分数筛选。
+    from agent_orchestrator.services import (
+        run_scores,  # 局部导入:避免与 append_event 循环
+    )
+
+    await run_scores.record_rule_score(session, run, completed=False)
     await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
 
 

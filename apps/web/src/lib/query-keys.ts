@@ -26,6 +26,8 @@ export const queryKeys = {
   runSubagents: (runId: string) => ['run-subagents', runId] as const,
   /** run 用量汇总(P1-E):['run-usage', runId]。 */
   runUsage: (runId: string) => ['run-usage', runId] as const,
+  /** run 评分(P2 eval/scores):['run-scores', runId]。 */
+  runScores: (runId: string) => ['run-scores', runId] as const,
   runArtifacts: (runId: string) => ['run-artifacts', runId] as const,
   runArtifactPreview: (runId: string, previewId: string | null | undefined) =>
     ['run-artifact-preview', runId, previewId] as const,
