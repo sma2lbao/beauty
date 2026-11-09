@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：留存策略（Phase 3）待排期；导出前脱敏与缓存 token 成本口径均已完成（§9）。eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
+> 状态：Phase 3 全部完成——导出前脱敏、缓存 token 成本口径、eval/scores、留存与容量策略（§9.3）已落地或已定策略；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。剩余只有 `apps/web` 前端追踪（与 Langfuse 无直接关系）。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -226,7 +226,7 @@ docker compose -f deploy/docker-compose.yml up -d agent-orchestrator llm-gateway
 
 **留存与成本**
 
-- trace/observation 存 ClickHouse，events/media 存 MinIO；Postgres 只存项目与配置。自托管按卷估算容量，保留期策略（TTL/清理）属 Phase 3。
+- trace/observation 存 ClickHouse，events/media 存 MinIO；Postgres 只存项目与配置。Cloud 的保留期在项目计划里设，自托管才需要自己配 TTL/生命周期；容量估算与分层策略见 §9.3。
 - 成本可 ingested（调用方给出）或 inferred（按价目表推算），**ingested 优先**；任何对外成本数字都要标注口径（厂商账单 / 价目表推算 / 网关实测），三者不可混算。
 
 ### 9.1 Cloud 成本口径（已实测的坑）
@@ -274,6 +274,40 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 - **代价与限制**：`decision_wait: 30s` 意味着 trace 在 Langfuse 出现会晚约 30 秒；内存按 `num_traces: 50000` 估算；同一条 trace 的 span 必须落到**同一个** Collector 实例（多副本需按 trace_id 负载均衡，本编排单副本）。
 - **状态**：配置与 compose 服务已提交，通过 compose 静态校验与 YAML 解析；本机 Docker daemon 不可用，**未实测**「服务 → Collector → Cloud」链路。首次启用请同时看 Collector 日志与 Langfuse 是否收到数据。
 
+### 9.3 留存与容量
+
+**结论：当前默认栈（Cloud + 0.1 采样 + 正文关闭）不需要额外的清理任务；容量与保留期按下面的口径盯。** 自托管 profile 才需要运维侧 TTL / 生命周期，且保留期定制属 Langfuse EE。
+
+分层留存（“哪份数据该留多久”由用途决定，不要让 trace 充当审计库）：
+
+| 数据                                           | 位置                                  | 建议保留                        | 清理/控制手段                                                                  |
+| ---------------------------------------------- | ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------ |
+| trace / observation / generation               | Langfuse（Cloud 或自托管 ClickHouse） | 生产 30–90 天；排障期可临时拉长 | Cloud：项目计划里的数据保留设置；自托管：ClickHouse TTL / Langfuse EE 保留策略 |
+| events / media（仅 `LOG_CONTENT=true` 时存在） | MinIO / S3                            | 7–30 天                         | 桶生命周期规则（`langfuse-media` 前缀）                                        |
+| 应用日志（structlog JSON）                     | 日志平台                              | 14–30 天                        | 日志平台保留策略；按 `trace_id` 回查 Langfuse                                  |
+| 业务事实：`run_events` / `tool_calls` 审计     | Postgres                              | 长期（按合规）                  | 业务库备份与归档，不依赖 Langfuse                                              |
+| 评分（scores）                                 | Langfuse + `run.score.v1`             | 随 trace；事件侧长期            | `run.score.v1` 在 run_events 里可回放                                          |
+
+容量估算（数量级判断，实测前先按上限规划）：
+
+- 单条 trace 的 observation 数 ≈ 1（run 根）+ 图节点 5–20 + 模型调用 M + 工具 T；典型 10–20 个。
+- 每个 observation 属性压缩后约 2–4 KB（含元数据、usage；正文关闭时不含 prompt/补全）。单 trace ≈ **30–80 KB**。
+- 示例：1000 run/天 × 50 KB ≈ **50 MB/天**，30 天约 **1.5 GB**；采样 0.1 后 ≈ 5 MB/天、30 天约 **150 MB**。自托管时 ClickHouse 原始盘按 2–3 倍余量给（副本、合并、索引）。
+- 打开 `LOG_CONTENT` 后，input/output 正文按 2000 字符截断（`redaction.py`），大对象走 MinIO media，**媒体体积才是大头**，要单独看桶增长。
+
+按优先级使用容量旋钮（越靠前越省且越不伤排障）：
+
+1. `LOG_CONTENT=false`（默认）：不存 prompt/补全正文，省得最多也最安全；
+2. `TRACE_SAMPLE_RATIO=0.1`（compose 生产默认）：只留 10% 基线 trace；
+3. 需要“错误全留”时改用 Collector 尾部采样（§9.2），把基线比例降到 0.05–0.1、错误/慢 trace 仍全留；
+4. 最后才调保留期——保留期缩短会直接删掉历史排障证据。
+
+成本/容量告警：
+
+- **Cloud 侧**：在项目/组织的用量与账单页设 spend 告警；保留期与用量上限由计划决定，升级计划前先看 observation 摄入量。
+- **应用侧**：token 预算已在 `services/*/services/usage.py`（预算阈值触发日志与用量上报）；Langfuse 不是计费真源，账单以厂商/网关口径为准。
+- **自托管侧**：监控 ClickHouse 磁盘、MinIO 桶大小、Collector 内存（`memory_limiter` 400 MiB）；这些都是运维指标，不要塞进 trace。
+
 ---
 
 ## 10. 与既有观测的关系
@@ -297,7 +331,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 3. ~~导出前脱敏~~ **已完成**：`common/redaction.py` 的 `AttributeRedactionSpanProcessor` 在导出前统一删敏感键、按 `LOG_CONTENT` 闸门保留正文、URL 去参与值截断；`_build_provider` 在导出处理器之前注册，见 §9。
 4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；缓存命中/写入 token 已按缓存价拆分，不再按全价高估。
 5. ~~eval/scores~~ **已完成**：规则基线 `outcome`（completed=1 / failed=0）+ 人工点赞/点踩，落 `run.score.v1` 事件并经 after-commit best-effort 写 `POST /api/public/scores`；控制台 run 详情可评分、`GET /runs/{id}/scores` 回放（见 §6.1）。
-6. 留存与容量：ClickHouse TTL、MinIO 生命周期、成本告警。
+6. ~~留存与容量~~ **已定策略**：分层留存表 + 容量估算 + 旋钮优先级 + 告警口径见 §9.3；Cloud 保留期在项目计划设置，自托管 TTL/生命周期待启用自托管时再配。
 
 **Phase 4（待做）**
 
