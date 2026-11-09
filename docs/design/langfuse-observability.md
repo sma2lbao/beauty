@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 状态：Phase 3 全部完成——导出前脱敏、缓存 token 成本口径、eval/scores、留存与容量策略（§9.3）已落地或已定策略；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。剩余只有 `apps/web` 前端追踪（与 Langfuse 无直接关系）。
+> 状态：Phase 3 全部完成——导出前脱敏、缓存 token 成本口径、eval/scores、留存与容量策略（§9.3）已落地或已定策略；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。`apps/web` 前端 Sentry 也已接入，并通过 `traceparent` 与服务端共享同一 trace_id（脱敏/采集收紧细节见 [docs/observability.md](../observability.md) §8）。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -313,7 +313,8 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 ## 10. 与既有观测的关系
 
 - `X-Request-ID` 与 `trace_id` 双向可查：日志平台按 `trace_id` 跳到 Langfuse，Langfuse 的 trace 里也能拿到 HTTP span 上的 request_id；控制台 run 详情有「在 Langfuse 查看」深链（`runs.trace_id`，见 §6）。
-- Sentry 事件与 Langfuse trace 共享同一 `trace_id`，异常点到对应 run 的链路可对上。
+- Sentry 事件与 Langfuse trace 共享同一 `trace_id`，异常点到对应 run 的链路可对上；前端 Sentry 采样命中时由 `lib/http.ts` 带 `traceparent`，后端 OTel 沿用该 trace_id，于是浏览器事务与 `run {run_id}` 根 span 同属一条 trace。
+- 前端关闭 Sentry（`VITE_SENTRY_DSN` 为空）时不带 `traceparent`，后端照样按自身采样策略开 trace，互不影响。
 - Langfuse 不注册 meter/logger provider，指标与日志口径不变；`/internal/metrics` 仍是唯一 Prometheus 出口。
 
 ---
@@ -333,7 +334,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 5. ~~eval/scores~~ **已完成**：规则基线 `outcome`（completed=1 / failed=0）+ 人工点赞/点踩，落 `run.score.v1` 事件并经 after-commit best-effort 写 `POST /api/public/scores`；控制台 run 详情可评分、`GET /runs/{id}/scores` 回放（见 §6.1）。
 6. ~~留存与容量~~ **已定策略**：分层留存表 + 容量估算 + 旋钮优先级 + 告警口径见 §9.3；Cloud 保留期在项目计划设置，自托管 TTL/生命周期待启用自托管时再配。
 
-**Phase 4（待做）**
+**Phase 4（剩余尾部采样实测）**
 
 1. ~~Web 端 run 详情加「在 Langfuse 查看」深链~~ **已完成**：`runs.trace_id` 由 `run_trace` 回写，`RunRead` 暴露，`apps/web` 的 run 详情按 `VITE_LANGFUSE_BASE_URL`（默认 Cloud）拼 `/trace/<trace_id>`；未执行过/tracing 关闭时隐藏。
 2. ~~采样升级为尾部采样（错误/HITL 全留）~~ **配置已提供**：`deploy/otel-collector/config.yaml` + compose `otel-collector` 服务（observability profile），策略见 §9.2；本机无 Docker 未实测。

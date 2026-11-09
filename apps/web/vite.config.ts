@@ -1,12 +1,50 @@
 import { fileURLToPath, URL } from 'node:url';
 
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+/**
+ * Sourcemap 上传只在 CI/发布机显式给了三个变量时启用:
+ * `SENTRY_AUTH_TOKEN`(不要提交)、`SENTRY_ORG`、`SENTRY_PROJECT`。
+ * 缺任何一个都正常构建,只是不传 sourcemap、不生成 map 文件。
+ */
+const sentryUpload = Boolean(
+  process.env.SENTRY_AUTH_TOKEN &&
+    process.env.SENTRY_ORG &&
+    process.env.SENTRY_PROJECT,
+);
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    ...(sentryUpload
+      ? [
+          sentryVitePlugin({
+            org: process.env.SENTRY_ORG,
+            project: process.env.SENTRY_PROJECT,
+            authToken: process.env.SENTRY_AUTH_TOKEN,
+            telemetry: false,
+            release: {
+              name:
+                process.env.VITE_SENTRY_RELEASE ??
+                process.env.SENTRY_RELEASE,
+            },
+            sourcemaps: {
+              assets: './dist/**',
+              filesToDeleteAfterUpload: ['./dist/**/*.map'],
+            },
+          }),
+        ]
+      : []),
+  ],
+  build: {
+    // hidden:生成 map 给 Sentry 上传,但不在 JS 末尾写 sourceMappingURL(不对外暴露源码)。
+    sourcemap: sentryUpload ? 'hidden' : false,
+  },
   server: {
     // 开发期把 /api 代理到 agent-orchestrator(:8002):前端同源、免 CORS
     // (服务端也配了白名单,直连同样可用;见 services/agent-orchestrator 的 CORS 配置)

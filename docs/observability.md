@@ -1,7 +1,7 @@
 # 服务可观测方案（监控日志）
 
-> 状态：**P0 日志与请求上下文、P1 Sentry（服务端）、P2 指标与 OTel 追踪均已实施**（2026-10-22）；**P3 Langfuse** 的 Phase 1/2 已实施，**当前接 Langfuse Cloud（EU），8 个服务本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
-> 剩余：`apps/web` 前端 Sentry 与 sourcemap、`outbox_pending` 派生指标。Langfuse 侧留存与容量策略已定义（`docs/design/langfuse-observability.md` §9.3）。
+> 状态：**P0 日志与请求上下文、P1 Sentry（服务端 + Web 前端）、P2 指标与 OTel 追踪均已实施**（2026-10-22；Web 前端 Sentry 2026-11-09）；**P3 Langfuse** 的 Phase 1/2 已实施，**当前接 Langfuse Cloud（EU），8 个服务本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
+> 剩余：`outbox_pending` 派生指标。Langfuse 侧留存与容量策略已定义（`docs/design/langfuse-observability.md` §9.3）。
 > 对齐 `docs/architecture.md`（现行唯一架构真源）§9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
 
@@ -18,7 +18,7 @@
 
 **非目标（本期）**
 
-- ~~不做分布式追踪（OTel span）与指标端点（Prometheus）~~ → **已实施**（见 §9）：OTel span（FastAPI 原生 telemetry + httpx 插桩、OTLP/HTTP 可选导出）与 `/internal/metrics`；前端追踪仍未做；
+- ~~不做分布式追踪（OTel span）与指标端点（Prometheus）~~ → **已实施**（见 §9）：OTel span（FastAPI 原生 telemetry + httpx 插桩、OTLP/HTTP 可选导出）与 `/internal/metrics`；Web 前端 Sentry 已接入（同一 trace_id，见 §8）；
 - 不做日志平台自建（Loki/ELK）；服务只写 stdout，采集归部署侧；
 - 不做 prompt/response 回放与 LLM 成本归因（属于 §11 的 P2 之后）。
 
@@ -191,7 +191,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 
 ## 8. 错误聚合：Sentry（P1，可选依赖）
 
-**状态：服务端已实施**（`packages/common/common/sentry.py`，由 `install_observability` 在 7 个服务的 `create_app` 统一调用）。Web 侧尚未接入（见本节末）。
+**状态：服务端与 Web 前端均已实施**（服务端 `packages/common/common/sentry.py`，由 `install_observability` 在 7 个服务的 `create_app` 统一调用；前端 `apps/web/src/lib/telemetry.ts`）。
 
 - 依赖：`sentry-sdk[fastapi]` 收在 `packages/common`（7 个服务共用），**默认关闭**——`<SERVICE>__SENTRY_DSN` 为空直接 `return False`，不 `init`、不发任何网络请求，内网形态零副作用。
 - 初始化参数：`environment=env`、`release=sentry_release`（部署侧注入镜像 tag 或 git sha）、`server_name=service_name`、`traces_sample_rate=sentry_traces_sample_rate`（默认 0）、FastAPI/Starlette 集成（`transaction_style="endpoint"`，路由模板而非原始路径）。
@@ -200,7 +200,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 - 忽略：`/healthz`、`/readyz`（探针不产生异常事件；无需额外过滤）。
 - 测试：`packages/common/tests/test_sentry.py`——无 DSN 时 no-op、4xx 丢弃、5xx 保留且脱敏、自定义 transport 实收事件验证 tag 与脱敏。
 - 环境变量（`BaseAppSettings` 字段，按服务前缀生效，如 `WORKSPACE__SENTRY_DSN`）：`SENTRY_DSN`、`SENTRY_RELEASE`、`SENTRY_TRACES_SAMPLE_RATE`。
-- **Web 侧（未做）**：`@sentry/react` 接入 `apps/web/src/main.tsx`，`beforeSend` 脱敏 + 上传 sourcemap + 与 API 网关共用 `release`；需要时按同一条规则落地。
+- **Web 侧（已接入）**：`@sentry/react` 在 `apps/web/src/lib/telemetry.ts` 初始化（`main.tsx` 渲染前调用），`VITE_SENTRY_DSN` 为空即 no-op、不发请求。① 脱敏与后端同原则：`beforeSend` 删请求体/cookie/query、敏感头与键抹值、URL 去 query/hash、字符串 2000 字符/数组 64 项截断；`beforeBreadcrumb` 丢弃 console 正文。② 采集用 v11 的 `dataCollection` 收紧（`userInfo:false`、`cookies:false`、请求/响应头关闭、`httpBodies:[]`、`urlQueryParams:false`），取代已移除的 `sendDefaultPii`。③ `lib/http.ts` 的 `jsonHeaders()`/FormData 请求带上 `traceparent`（`Sentry.getTraceData({propagateTraceparent:true})`，仅采样命中 `-01` 时带），后端 OTel 据此把服务端 span 挂到同一个 32 位 trace_id，前端 Sentry 与服务端 Langfuse 可按 id 互跳。④ sourcemap：`@sentry/vite-plugin` 仅在 `SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/`SENTRY_PROJECT` 三者齐全时启用（上传后删本地 `.map`，构建产物用 `hidden` 不暴露源码）；三个凭证不进镜像 build args。⑤ 配置项：`VITE_SENTRY_DSN`、`VITE_SENTRY_ENVIRONMENT`（默认按 PROD 区分）、`VITE_SENTRY_RELEASE`、`VITE_SENTRY_TRACES_SAMPLE_RATE`（生产 0.1 / 开发 1.0），compose 的 web build args 与 `deploy/docker/web.Dockerfile` 已透传；单测 `apps/web/src/lib/telemetry.test.ts`。
 
 ---
 
@@ -287,14 +287,13 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 
 ### P1 错误聚合 Sentry（可选依赖）
 
-**状态：服务端已完成**（`common/sentry.py` + `common/observability.py` 装配；7 服务 `create_app` 一行接入）。落地内容见 §8：DSN 为空 no-op、4xx 丢弃、`data_collection` 收紧、`before_send` 脱敏 + 上下文 tag。
-待办：Web 侧 `@sentry/react` + sourcemap（`apps/web`，需要单独排期）。
+**状态：服务端与 Web 前端均已完成**（`common/sentry.py` + `common/observability.py` 装配；7 服务 `create_app` 一行接入；Web 侧 `apps/web/src/lib/telemetry.ts`）。落地内容见 §8：DSN 为空 no-op、4xx 丢弃、`data_collection` 收紧、`before_send` 脱敏 + 上下文 tag；前端同规则脱敏、`dataCollection` 收紧、`traceparent` 串同一 trace_id、sourcemap 条件上传。
 
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost 与缓存 token 拆价）、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。导出前属性脱敏由 `common/redaction.py` 的 `AttributeRedactionSpanProcessor` 统一处理（敏感键删除、`LOG_CONTENT` 正文闸门、URL 去参、值截断，注册在导出处理器之前）。
-待办：`apps/web` 前端追踪；成本侧缓存命中/写入 token 已按缓存价拆分（`UsageOut.cache_read_tokens/cache_write_tokens`），无已知缺口；留存与容量策略已定义（设计文档 §9.3：分层留存、容量估算、旋钮优先级）。
+P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost 与缓存 token 拆价）、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。导出前属性脱敏由 `common/redaction.py` 的 `AttributeRedactionSpanProcessor` 统一处理（敏感键删除、`LOG_CONTENT` 正文闸门、URL 去参、值截断，注册在导出处理器之前）。Web 前端 Sentry 已接入（§8）：同规则脱敏、`dataCollection` 收紧、`traceparent` 让前后端共享 trace_id、sourcemap 条件上传。
+成本侧缓存命中/写入 token 已按缓存价拆分（`UsageOut.cache_read_tokens/cache_write_tokens`），无已知缺口；留存与容量策略已定义（设计文档 §9.3：分层留存、容量估算、旋钮优先级）。
 
 ---
 

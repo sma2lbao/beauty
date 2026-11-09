@@ -9,6 +9,7 @@
  */
 
 import { authHeaders, refreshAccessToken } from '@/lib/auth';
+import { traceparentHeader } from '@/lib/telemetry';
 
 /** 后端统一错误契约(§11)。 */
 export class ApiError extends Error {
@@ -28,9 +29,18 @@ export function isUnauthorized(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
 }
 
-/** JSON + 鉴权头(SSE 等自定义请求也复用它)。 */
+/**
+ * JSON + 鉴权头(SSE 等自定义请求也复用它)。
+ *
+ * 顺带带 `traceparent`:前端 Sentry trace 被采样时,后端 OTel/Langfuse 沿用同一个
+ * trace_id(未采样不带,避免把后端 trace 一起拖成丢弃);未接 Sentry 时为空对象。
+ */
 export async function jsonHeaders(): Promise<Record<string, string>> {
-  return { 'Content-Type': 'application/json', ...(await authHeaders()) };
+  return {
+    'Content-Type': 'application/json',
+    ...traceparentHeader(),
+    ...(await authHeaders()),
+  };
 }
 
 /** 请求体是 FormData(文件上传):Content-Type 必须由浏览器带 boundary 生成。 */
@@ -45,7 +55,7 @@ async function sendWithAuth(
   init?: RequestInit,
 ): Promise<Response> {
   const headers = isFormDataBody(init?.body)
-    ? await authHeaders()
+    ? { ...traceparentHeader(), ...(await authHeaders()) }
     : await jsonHeaders();
   return fetch(`${base}${path}`, {
     ...init,

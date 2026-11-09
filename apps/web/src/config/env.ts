@@ -41,15 +41,44 @@ export const langfuseBaseUrl: string = (
   import.meta.env.VITE_LANGFUSE_BASE_URL ?? 'https://cloud.langfuse.com'
 ).replace(/\/+$/, '');
 
+/** 是否生产构建(原 site-links.ts 的 import.meta.env.PROD 判定搬入)。 */
+export const isProd: boolean = import.meta.env.PROD;
+
+/**
+ * 前端错误/性能追踪(VITE_SENTRY_DSN):留空则完全不初始化,不发任何网络请求。
+ *
+ * 与后端共用同一个 Sentry 项目;release 建议与 API 网关一致(镜像 tag / git sha),
+ * 由 `SENTRY_RELEASE` 或构建期 `VITE_SENTRY_RELEASE` 注入。
+ */
+export const sentryDsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
+
+/** Sentry environment(VITE_SENTRY_ENVIRONMENT),默认按构建模式区分。 */
+export const sentryEnvironment: string =
+  (import.meta.env.VITE_SENTRY_ENVIRONMENT as string | undefined) ??
+  (isProd ? 'production' : 'development');
+
+/** Sentry release(VITE_SENTRY_RELEASE),与后端 `SENTRY_RELEASE` 用同一个值才能串起来。 */
+export const sentryRelease = import.meta.env.VITE_SENTRY_RELEASE as string | undefined;
+
+/**
+ * 前端 tracing 采样率(VITE_SENTRY_TRACES_SAMPLE_RATE):生产 0.1、开发 1.0。
+ * 这是 Sentry 自己的 trace 采样,与 Langfuse 的服务端采样相互独立。
+ */
+const configuredSentryRate = Number(
+  import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE,
+);
+export const sentryTracesSampleRate: number = Number.isFinite(configuredSentryRate)
+  ? configuredSentryRate
+  : isProd
+    ? 0.1
+    : 1.0;
+
 /** Logto OIDC 配置(VITE_LOGTO_*):缺省 undefined,logto 模式下缺配置抛错(见 lib/auth)。 */
 export const logto = {
   endpoint: import.meta.env.VITE_LOGTO_ENDPOINT as string | undefined,
   appId: import.meta.env.VITE_LOGTO_APP_ID as string | undefined,
   resource: import.meta.env.VITE_LOGTO_RESOURCE as string | undefined,
 };
-
-/** 是否生产构建(原 site-links.ts 的 import.meta.env.PROD 判定搬入)。 */
-export const isProd: boolean = import.meta.env.PROD;
 
 /**
  * 官网基址(VITE_SITE_URL),原 site-links.ts 的默认逻辑原样搬入:

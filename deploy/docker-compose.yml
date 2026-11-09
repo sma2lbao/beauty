@@ -334,6 +334,11 @@ services:
         # 同源 API 网关 Cookie 登录;token 模式需直连 account-service:8001,本编排未暴露(见 README)。
         VITE_AUTH_MODE: ${VITE_AUTH_MODE:-session}
         VITE_SITE_URL: ${VITE_SITE_URL:-http://localhost:3000}
+        # 前端 Sentry 错误/性能追踪;留空则完全不初始化。
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_ENVIRONMENT: ${VITE_SENTRY_ENVIRONMENT:-}
+        VITE_SENTRY_RELEASE: ${VITE_SENTRY_RELEASE:-}
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-}
     image: beauty-moon/web:local
     ports:
       - '8080:80'
