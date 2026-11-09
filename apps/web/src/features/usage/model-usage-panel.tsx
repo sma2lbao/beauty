@@ -4,6 +4,8 @@
 import { ConsolePanel, EmptyPanel, ToneBadge } from '@/components/console/ui';
 import type { UsageByModel } from '@/lib/insights-api';
 
+import { formatUsd } from '@/lib/presentation';
+
 import { formatNumber } from './format-number';
 
 export function ModelUsagePanel({ byModel }: { byModel: UsageByModel[] }) {
@@ -27,6 +29,14 @@ export function ModelUsagePanel({ byModel }: { byModel: UsageByModel[] }) {
                 <span className="font-mono text-[12px] text-ha-text">
                   {formatNumber(item.tokens)} tokens
                 </span>
+                <span className="font-mono text-[12px] text-ha-text-2">
+                  {formatUsd(item.cost_usd)}
+                </span>
+                {item.unpriced_events > 0 ? (
+                  <ToneBadge tone="warning">
+                    {item.unpriced_events} 未计价
+                  </ToneBadge>
+                ) : null}
                 <ToneBadge tone="neutral">{item.events} 次</ToneBadge>
               </span>
             </li>

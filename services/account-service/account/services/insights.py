@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from common.errors import AppError, NotFoundError
 from common.logging import get_logger
@@ -59,8 +60,15 @@ async def record_usage(
         prompt_tokens=data.prompt_tokens,
         completion_tokens=data.completion_tokens,
         total_tokens=total,
+        cost_usd=data.cost_usd,
+        billing_source=data.billing_source,
     )
     return await UsageEventRepository(session).add(event)
+
+
+def _cost(event: UsageEvent) -> Decimal | None:
+    """事件成本(Decimal);None = 未计价,聚合时按 0 计但单独计数。"""
+    return Decimal(event.cost_usd) if event.cost_usd is not None else None
 
 
 async def usage_summary(session: AsyncSession, account_id: str) -> UsageSummary:
@@ -69,18 +77,40 @@ async def usage_summary(session: AsyncSession, account_id: str) -> UsageSummary:
     )
     today = _start_of_today()
     today_events = [event for event in events if _aware(event.created_at) >= today]
-    by_model: dict[str, tuple[int, int]] = {}
+    # model -> (tokens, events, cost_usd, unpriced_events)
+    by_model: dict[str, tuple[int, int, Decimal, int]] = {}
     for event in events:
-        tokens, count = by_model.get(event.model, (0, 0))
-        by_model[event.model] = (tokens + event.total_tokens, count + 1)
+        tokens, count, cost, unpriced = by_model.get(
+            event.model, (0, 0, Decimal("0"), 0)
+        )
+        event_cost = _cost(event)
+        by_model[event.model] = (
+            tokens + event.total_tokens,
+            count + 1,
+            cost + (event_cost or Decimal("0")),
+            unpriced + (1 if event_cost is None else 0),
+        )
+    month_cost = sum((cost for _, _, cost, _ in by_model.values()), Decimal("0"))
+    today_cost = sum(
+        ((_cost(event) or Decimal("0")) for event in today_events), Decimal("0")
+    )
     return UsageSummary(
         today_tokens=sum(event.total_tokens for event in today_events),
         month_tokens=sum(event.total_tokens for event in events),
         today_events=len(today_events),
         month_events=len(events),
+        today_cost_usd=float(today_cost),
+        month_cost_usd=float(month_cost),
+        unpriced_events=sum(unpriced for _, _, _, unpriced in by_model.values()),
         by_model=[
-            UsageByModel(model=model, tokens=tokens, events=count)
-            for model, (tokens, count) in sorted(
+            UsageByModel(
+                model=model,
+                tokens=tokens,
+                events=count,
+                cost_usd=float(cost),
+                unpriced_events=unpriced,
+            )
+            for model, (tokens, count, cost, unpriced) in sorted(
                 by_model.items(), key=lambda item: item[1][0], reverse=True
             )
         ],

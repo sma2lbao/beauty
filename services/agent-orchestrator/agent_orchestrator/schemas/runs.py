@@ -273,6 +273,9 @@ class RunUsageTotals(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    #: 美元成本(网关按价目表估算);未计价调用按 0 计入,故这里的 0 也可能表示
+    #: 「全部未计价」——account 侧的聚合会单独给出未计价条数。
+    cost_usd: float = 0.0
 
 
 class RunUsageModelRead(RunUsageTotals):

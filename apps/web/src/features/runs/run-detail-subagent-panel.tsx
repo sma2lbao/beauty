@@ -11,7 +11,7 @@ import {
   ConsolePanel,
   RunStatusBadge,
 } from '@/components/console/ui';
-import { formatTokens } from '@/lib/presentation';
+import { formatTokens, formatUsd } from '@/lib/presentation';
 import type { RunUsage, Subagent } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
@@ -82,7 +82,8 @@ function RunUsageLine({
         本 run 用量:{usage.calls} 次调用 · 输入{' '}
         {formatTokens(usage.prompt_tokens)} · 输出{' '}
         {formatTokens(usage.completion_tokens)} · 合计{' '}
-        {formatTokens(usage.total_tokens)} tokens
+        {formatTokens(usage.total_tokens)} tokens · 成本{' '}
+        {formatUsd(usage.cost_usd ?? 0)}
       </p>
       {usage.by_model.length > 0 ? (
         <ul aria-label="按模型用量" className="space-y-0.5">

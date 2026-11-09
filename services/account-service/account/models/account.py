@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -67,7 +69,12 @@ class Session(UUIDMixin, AccountMixin, TimestampMixin, Base):
 
 
 class UsageEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
-    """用量事件(M0-11):run 级 token 记录,只读聚合给用量页。"""
+    """用量事件(M0-11):run 级 token + 成本记录,只读聚合给用量页。
+
+    ``cost_usd`` 为空 = 该模型未计价(BYOK 自定义模型/价目表缺项),
+    与「0 元」是两回事:聚合时按 0 计入金额,但单独统计未计价条数,
+    前端据此提示「有 N 次调用未计价」。
+    """
 
     __tablename__ = "usage_events"
 
@@ -76,6 +83,10 @@ class UsageEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    billing_source: Mapped[str] = mapped_column(
+        String(16), default="platform", server_default="platform"
+    )
 
 
 class BYOKKey(UUIDMixin, AccountMixin, TimestampMixin, Base):

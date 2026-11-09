@@ -37,7 +37,18 @@ describe('UsagePage', () => {
       month_tokens: 3000,
       today_events: 2,
       month_events: 3,
-      by_model: [{ model: 'deepseek/chat', tokens: 3000, events: 3 }],
+      today_cost_usd: 0.0012,
+      month_cost_usd: 0.0046,
+      unpriced_events: 1,
+      by_model: [
+        {
+          model: 'deepseek/chat',
+          tokens: 3000,
+          events: 3,
+          cost_usd: 0.0046,
+          unpriced_events: 1,
+        },
+      ],
     });
     vi.mocked(insightsApi.models).mockResolvedValue({
       object: 'list',
@@ -51,6 +62,9 @@ describe('UsagePage', () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText('1,200')).toBeInTheDocument();
     expect(screen.getByText('3,000')).toBeInTheDocument();
+    expect(screen.getByText('$0.0012')).toBeInTheDocument();
+    expect(screen.getAllByText('$0.0046').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 未计价')).toBeInTheDocument();
     expect(screen.getByText('默认')).toBeInTheDocument();
   });
 
@@ -60,6 +74,9 @@ describe('UsagePage', () => {
       month_tokens: 0,
       today_events: 0,
       month_events: 0,
+      today_cost_usd: 0,
+      month_cost_usd: 0,
+      unpriced_events: 0,
       by_model: [],
     });
     vi.mocked(insightsApi.models).mockResolvedValue({

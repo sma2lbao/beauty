@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -11,6 +13,9 @@ class UsageByModel(BaseModel):
     model: str
     tokens: int
     events: int
+    #: 该模型本月估算成本(USD);未计价调用按 0 计入,另行计数
+    cost_usd: float = 0.0
+    unpriced_events: int = 0
 
 
 class UsageSummary(BaseModel):
@@ -18,6 +23,10 @@ class UsageSummary(BaseModel):
     month_tokens: int
     today_events: int
     month_events: int
+    today_cost_usd: float = 0.0
+    month_cost_usd: float = 0.0
+    #: 本月未计价调用条数(价目表缺项/BYOK 自定义模型),用于前端提示口径
+    unpriced_events: int = 0
     by_model: list[UsageByModel]
 
 
@@ -28,6 +37,11 @@ class UsageEventCreate(BaseModel):
     model: str = Field(default="unknown", max_length=128)
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
+    #: 网关按价目表估算的美元成本;None = 未计价,不要补 0
+    cost_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=6
+    )
+    billing_source: Literal["platform", "byok"] = "platform"
 
 
 class UsageQuota(BaseModel):

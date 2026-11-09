@@ -84,6 +84,13 @@ class UsageOut(BaseModel):
     # 内;0 表示 provider 未返回。用于按缓存价拆分成本,避免整段输入按全价计。
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # 本次调用的估算成本(USD):按 litellm 本地价目表、缓存 token 按缓存价拆分
+    # (generation_trace.ingested_cost)。未知模型/BYOK 自定义模型没有价目时为空,
+    # 调用方应把空值当作"未计价"而不是 0 元。
+    cost_usd: float | None = None
+    # 密钥来源:platform=平台密钥(平台承担成本),byok=账号自带密钥
+    # (用户自付,成本仅作观测)。None=入口未解析(内部直调/测试)。
+    billing_source: Literal["platform", "byok"] | None = None
 
 
 class FallbackHop(BaseModel):

@@ -161,6 +161,21 @@ export function formatTokens(value: number | null | undefined): string {
   return `${(value / 1_000_000).toFixed(1)}M`;
 }
 
+/**
+ * 美元金额:单价通常很小(一次调用约 $0.000x),1 美元以下保留 4 位小数,
+ * 否则 2 位;固定 en-US 的 "$" 前缀,避免 zh-CN 下出现 "US$" 噪声。
+ */
+export function formatUsd(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '$0.00';
+  const digits = value !== 0 && Math.abs(value) < 1 ? 4 : 2;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;

@@ -256,6 +256,7 @@ async def test_parent_item_lifecycle_thread_and_turn(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "cost_usd": 0.0,
     }
 
 

@@ -79,11 +79,19 @@ def _parse_usage(raw: Any, model: str | None) -> usage_service.UsageSample | Non
         return None
     if prompt == 0 and completion == 0:
         return None
+    try:
+        raw_cost = raw.get("cost_usd")
+        cost = float(raw_cost) if raw_cost is not None else None
+    except (TypeError, ValueError):
+        cost = None
+    source = raw.get("billing_source")
     return usage_service.UsageSample(
         model=str(model or "unknown"),
         prompt_tokens=max(prompt, 0),
         completion_tokens=max(completion, 0),
         total_tokens=max(total, 0),
+        cost_usd=cost,
+        billing_source=source if source in ("platform", "byok") else "platform",
     )
 
 

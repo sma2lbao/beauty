@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from common.errors import StorageError
 from common.security import SecretBox
 from fastapi.testclient import TestClient
@@ -100,6 +101,9 @@ def test_usage_summary_empty_and_recorded(tmp_path: Path) -> None:
             "month_tokens": 0,
             "today_events": 0,
             "month_events": 0,
+            "today_cost_usd": 0.0,
+            "month_cost_usd": 0.0,
+            "unpriced_events": 0,
             "by_model": [],
         }
 
@@ -120,9 +124,82 @@ def test_usage_summary_empty_and_recorded(tmp_path: Path) -> None:
         assert summary["month_tokens"] == 15
         assert summary["today_events"] == 1
         assert summary["month_events"] == 1
+        assert summary["today_cost_usd"] == 0.0
+        assert summary["month_cost_usd"] == 0.0
+        # 这条上报没带 cost_usd → 未计价,必须计数而不是冒充 0 元
+        assert summary["unpriced_events"] == 1
         assert summary["by_model"] == [
-            {"model": "deepseek/chat", "tokens": 15, "events": 1}
+            {
+                "model": "deepseek/chat",
+                "tokens": 15,
+                "events": 1,
+                "cost_usd": 0.0,
+                "unpriced_events": 1,
+            }
         ]
+
+
+def test_usage_summary_aggregates_cost_and_billing_source(tmp_path: Path) -> None:
+    """P0-1:金额按模型聚合,平台/BYOK 分别记账;未计价与 0 元不混淆。"""
+    with _client(tmp_path) as client:
+        for body in (
+            {
+                "run_id": "r1",
+                "model": "deepseek/chat",
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "cost_usd": 0.0012,
+                "billing_source": "platform",
+            },
+            {
+                "run_id": "r1",
+                "model": "deepseek/chat",
+                "prompt_tokens": 20,
+                "completion_tokens": 10,
+                "cost_usd": 0.0034,
+                "billing_source": "platform",
+            },
+            {
+                "run_id": "r2",
+                "model": "openai/custom-model",
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "billing_source": "byok",
+            },
+        ):
+            resp = client.post("/v1/usage/events", json=body, headers=INTERNAL)
+            assert resp.status_code == 201
+
+        assert (
+            client.post(
+                "/v1/usage/events",
+                json={"model": "m", "cost_usd": -1},
+                headers=INTERNAL,
+            ).status_code
+            == 422
+        )
+
+        summary = client.get("/v1/usage/summary", headers=ACCOUNT).json()
+
+    assert summary["month_tokens"] == 47
+    assert summary["month_cost_usd"] == pytest.approx(0.0046)
+    assert summary["today_cost_usd"] == pytest.approx(0.0046)
+    assert summary["unpriced_events"] == 1
+    by_model = {entry["model"]: entry for entry in summary["by_model"]}
+    assert by_model["deepseek/chat"] == {
+        "model": "deepseek/chat",
+        "tokens": 45,
+        "events": 2,
+        "cost_usd": pytest.approx(0.0046),
+        "unpriced_events": 0,
+    }
+    assert by_model["openai/custom-model"] == {
+        "model": "openai/custom-model",
+        "tokens": 2,
+        "events": 1,
+        "cost_usd": 0.0,
+        "unpriced_events": 1,
+    }
 
 
 def test_usage_internal_secret_required(tmp_path: Path) -> None:

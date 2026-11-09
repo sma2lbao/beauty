@@ -40,6 +40,9 @@ def test_completion_success_default_model(client: TestClient, monkeypatch) -> No
     assert data["content"] == "好的,周报如下"
     assert data["model"] == "deepseek/deepseek-chat"
     assert data["usage"]["total_tokens"] == 15
+    # P0-1:成本按 litellm 本地价目表估算后随 usage 返回,平台 key 记 platform
+    assert data["usage"]["cost_usd"] > 0
+    assert data["usage"]["billing_source"] == "platform"
     assert captured["model"] == "deepseek/deepseek-chat"  # 不传 model 走默认路由
 
 

@@ -7,6 +7,7 @@ from typing import Any
 from llm_gateway import metrics
 from llm_gateway.schemas.completions import ToolCall, ToolFunction, UsageOut
 from llm_gateway.services.completion_request import _get
+from llm_gateway.services.generation_trace import ingested_cost
 
 
 def _normalize_tool_calls(message: Any) -> list[ToolCall]:
@@ -37,6 +38,26 @@ def _record_usage(usage: UsageOut | None, model: str) -> None:
     )
     metrics.observe_llm_tokens(
         model=model, direction="output", tokens=usage.completion_tokens
+    )
+
+
+def _bill(
+    usage: UsageOut | None, model: str, *, billing_source: str = "platform"
+) -> UsageOut | None:
+    """给用量补上成本与密钥来源(P0-1):成本只按价目表估算,算不出就留空。
+
+    billing_source 由入口层按 BYOK 解析结果给:平台 key 与账号 key 都按同一
+    价目表算成本,区别只在谁承担——用账号 key 的调用成本仍要落库(账号用量页
+    需要它),但平台侧应把它视为"非平台支出"。
+    """
+    if usage is None:
+        return None
+    cost = ingested_cost(model, usage)
+    return usage.model_copy(
+        update={
+            "cost_usd": cost["total"] if cost is not None else None,
+            "billing_source": billing_source,
+        }
     )
 
 

@@ -22,6 +22,10 @@ export type UsageByModel = {
   model: string;
   tokens: number;
   events: number;
+  /** 该模型本月估算成本(USD);未计价调用按 0 计入,见 unpriced_events */
+  cost_usd: number;
+  /** 该模型本月未计价调用条数(价目表缺项/BYOK 自定义模型) */
+  unpriced_events: number;
 };
 
 export type UsageSummary = {
@@ -29,6 +33,11 @@ export type UsageSummary = {
   month_tokens: number;
   today_events: number;
   month_events: number;
+  /** 网关按价目表估算的成本(USD);未计价调用按 0 计,另见 unpriced_events */
+  today_cost_usd: number;
+  month_cost_usd: number;
+  /** 本月未计价调用条数:金额为 0 不一定是真免费 */
+  unpriced_events: number;
   by_model: UsageByModel[];
 };
 

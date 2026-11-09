@@ -11,6 +11,7 @@ import pytest
 
 from agent_orchestrator.services import usage
 from agent_orchestrator.services.llm import LLMReply
+from agent_orchestrator.services.llm_gateway import _parse_usage
 from tests.conftest import ACCOUNT, FakeLLM, _client, _create_run
 
 
@@ -128,6 +129,41 @@ def test_run_reports_usage_once_per_model_call(tmp_path, reporter) -> None:
         assert body["model"] == "deepseek-chat"
         assert body["prompt_tokens"] == 10
         assert body["completion_tokens"] == 5
+        # 这条桩不经过真实网关,没有报价 → cost_usd 必须显式为空(未计价 ≠ 0 元)
+        assert body["cost_usd"] is None
+        assert body["billing_source"] == "platform"
+
+
+def test_parse_usage_carries_cost_and_billing_source() -> None:
+    """网关返回的 cost_usd/billing_source 必须原样进入用量样本(P0-1 成本归因)。"""
+    sample = _parse_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "cost_usd": 0.000123,
+            "billing_source": "byok",
+        },
+        "deepseek-chat",
+    )
+    assert sample is not None
+    assert sample.cost_usd == pytest.approx(0.000123)
+    assert sample.billing_source == "byok"
+
+    # 非法来源归一 platform;报价缺失/脏值留空,不冒充 0 元
+    fallback = _parse_usage(
+        {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "cost_usd": "not-a-number",
+            "billing_source": "mystery",
+        },
+        None,
+    )
+    assert fallback is not None
+    assert fallback.cost_usd is None
+    assert fallback.billing_source == "platform"
+    assert fallback.model == "unknown"
 
 
 def test_usage_report_failure_does_not_break_run(tmp_path) -> None:

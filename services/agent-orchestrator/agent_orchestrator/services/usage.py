@@ -30,6 +30,11 @@ class UsageSample:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    #: 网关按价目表估算的美元成本;None = 该模型未计价(BYOK 自定义模型常见),
+    #: 下游必须区分「0 元」和「不知道多少钱」,不能把 None 当 0。
+    cost_usd: float | None = None
+    #: 平台 key 还是用户自带 key(platform/byok),成本归因用。
+    billing_source: str = "platform"
 
 
 @dataclass
@@ -110,6 +115,8 @@ class UsageReporter:
                 "model": sample.model,
                 "prompt_tokens": sample.prompt_tokens,
                 "completion_tokens": sample.completion_tokens,
+                "cost_usd": sample.cost_usd,
+                "billing_source": sample.billing_source,
             }
             try:
                 resp = await self._client.post(

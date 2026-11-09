@@ -14,7 +14,7 @@ from common.errors import UnauthorizedError
 from common.security import SECRET_HEADER
 from fastapi import Header, Request
 
-from llm_gateway.services.byok import ByokResolver
+from llm_gateway.services.byok import ByokResolver, ResolvedKey
 from llm_gateway.services.byok_catalog import ByokCatalog
 
 
@@ -30,20 +30,31 @@ async def require_internal_secret(
         raise UnauthorizedError("auth.internal_forbidden", "内部调用未开放")
 
 
+async def resolve_byok_key(
+    request: Request,
+    *,
+    provider: str,
+    account_id: str | None,
+) -> ResolvedKey | None:
+    """按账号解析 BYOK key(带来源):未装配/未启用/未命中/解析失败都返回 None。
+
+    None 的语义 = 服务层回退平台 key,不是错误——BYOK 故障不能拖垮模型调用。
+    调用方需要 billing_source 时用本函数;只要 api_key 时用 resolve_byok_api_key。
+    """
+    resolver: ByokResolver | None = getattr(request.app.state, "byok_resolver", None)
+    if resolver is None:
+        return None
+    return await resolver.resolve(account_id, provider)
+
+
 async def resolve_byok_api_key(
     request: Request,
     *,
     provider: str,
     account_id: str | None,
 ) -> str | None:
-    """按账号解析 BYOK key;未装配/未启用/未命中/解析失败都返回 None。
-
-    None 的语义 = 服务层回退平台 key,不是错误——BYOK 故障不能拖垮模型调用。
-    """
-    resolver: ByokResolver | None = getattr(request.app.state, "byok_resolver", None)
-    if resolver is None:
-        return None
-    key = await resolver.resolve(account_id, provider)
+    """按账号解析 BYOK key 的明文;解析不到返回 None(服务层回退平台 key)。"""
+    key = await resolve_byok_key(request, provider=provider, account_id=account_id)
     return key.api_key if key is not None else None
 
 

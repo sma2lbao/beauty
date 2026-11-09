@@ -311,6 +311,44 @@ def test_api_completion_uses_byok_key(monkeypatch) -> None:
     assert stub.requests[0].headers["X-Account-Id"] == "t1"
 
 
+def test_api_completion_marks_billing_source_byok(monkeypatch) -> None:
+    """命中账号 BYOK:usage 带 billing_source=byok(成本仍按价目表估算)。"""
+    stub = AccountStub()
+    captured: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        message = type("M", (), {"content": "ok", "tool_calls": None})()
+        usage = type(
+            "U",
+            (),
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "prompt_tokens_details": None,
+            },
+        )()
+        return type(
+            "R",
+            (),
+            {
+                "choices": [type("C", (), {"message": message})()],
+                "usage": usage,
+                "model": "deepseek/deepseek-chat",
+            },
+        )()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    with _client_with_stub(stub) as client:
+        resp = client.post("/v1/completions", json=BODY, headers=HEADERS)
+
+    assert resp.status_code == 200
+    usage = resp.json()["usage"]
+    assert usage["billing_source"] == "byok"
+    assert usage["cost_usd"] > 0
+
+
 def test_api_completion_without_account_uses_platform_key(monkeypatch) -> None:
     stub = AccountStub()
     captured: dict = {}

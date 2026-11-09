@@ -260,12 +260,17 @@ async def test_usage_totals_aggregate_and_by_model(
     async with session_scope(factory) as session:
         run = await session.get(Run, parent.id)
         assert run is not None
-        for model, tokens in (("m-1", 10), ("m-2", 20), ("m-1", 5)):
+        for model, tokens, cost in (
+            ("m-1", 10, 0.001),
+            ("m-2", 20, 0.002),
+            ("m-1", 5, 0.003),
+        ):
             sample = usage_service.UsageSample(
                 model=model,
                 prompt_tokens=tokens,
                 completion_tokens=0,
                 total_tokens=tokens,
+                cost_usd=cost,
             )
             await append_event(
                 session,
@@ -279,8 +284,11 @@ async def test_usage_totals_aggregate_and_by_model(
     assert read.run_id == parent.id
     assert read.calls == 3
     assert read.total_tokens == 35
+    assert read.cost_usd == pytest.approx(0.006)
     by_model = {entry.model: entry.total_tokens for entry in read.by_model}
     assert by_model == {"m-1": 15, "m-2": 20}
+    by_model_cost = {entry.model: entry.cost_usd for entry in read.by_model}
+    assert by_model_cost == pytest.approx({"m-1": 0.004, "m-2": 0.002})
 
 
 # ---- API ----
@@ -302,6 +310,7 @@ def test_api_subagents_and_usage_endpoints(client) -> None:
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "cost_usd": 0.0,
         "by_model": [],
     }
 

@@ -48,6 +48,7 @@ from llm_gateway.services.completion_request import (
     _roles,
 )
 from llm_gateway.services.completion_response import (
+    _bill,
     _delta_text,
     _normalize_tool_calls,
     _record_usage,
@@ -70,6 +71,7 @@ from llm_gateway.services.completion_routing import (
 __all__ = [
     "_CONTENT_LIMIT",
     "_FALLBACK_CODE",
+    "_bill",
     "_FALLBACK_STATUS_CODES",
     "_SWITCHABLE_ERRORS",
     "_ToolCallAssembler",
@@ -106,12 +108,19 @@ async def complete(
     *,
     api_key: str | None = None,
     extra_models: Sequence[str] = (),
+    billing_source: str = "platform",
 ) -> CompletionResponse:
     """非流式补全:业务实现外包一层 generation span(异常也落状态)。"""
     model = resolve_model(settings, data.model, extra_models=extra_models)
     with generation_trace.generation_span(settings, data, model, stream=False) as span:
         try:
-            response = await _complete(settings, data, model=model, api_key=api_key)
+            response = await _complete(
+                settings,
+                data,
+                model=model,
+                api_key=api_key,
+                billing_source=billing_source,
+            )
         except BaseException as exc:
             generation_trace.record_error(span, exc)
             raise
@@ -132,6 +141,7 @@ async def _complete(
     *,
     model: str,
     api_key: str | None = None,
+    billing_source: str = "platform",
 ) -> CompletionResponse:
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
@@ -162,6 +172,7 @@ async def _complete(
         content = getattr(message, "content", None) or ""
         tool_calls = _normalize_tool_calls(message)
         resolved_model = str(getattr(resp, "model", None) or candidate)
+        usage_obj = _bill(usage_obj, resolved_model, billing_source=billing_source)
         _record_usage(usage_obj, resolved_model)
         metrics.observe_llm_latency(
             provider=provider, model=resolved_model, seconds=duration_seconds
@@ -202,6 +213,7 @@ async def stream(
     *,
     api_key: str | None = None,
     extra_models: Sequence[str] = (),
+    billing_source: str = "platform",
 ) -> AsyncIterator[CompletionChunk]:
     """流式补全:逐片产出增量正文,最后一片 done=true 带全文、用量与 tool_calls。
 
@@ -214,7 +226,13 @@ async def stream(
     with generation_trace.generation_span(settings, data, model, stream=True) as span:
         started_first_delta = False
         try:
-            async for chunk in _stream(settings, data, model=model, api_key=api_key):
+            async for chunk in _stream(
+                settings,
+                data,
+                model=model,
+                api_key=api_key,
+                billing_source=billing_source,
+            ):
                 if chunk.delta and not started_first_delta:
                     generation_trace.mark_completion_start(span)
                     started_first_delta = True
@@ -243,6 +261,7 @@ async def _stream(
     *,
     model: str,
     api_key: str | None = None,
+    billing_source: str = "platform",
 ) -> AsyncIterator[CompletionChunk]:
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
@@ -291,6 +310,7 @@ async def _stream(
     content = "".join(parts)
     tool_calls = tool_calls_in.calls()
     duration_seconds = time.perf_counter() - started
+    usage_out = _bill(usage_out, resolved_model, billing_source=billing_source)
     _record_usage(usage_out, resolved_model)
     metrics.observe_llm_latency(
         provider=provider, model=resolved_model, seconds=duration_seconds

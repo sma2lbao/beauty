@@ -162,6 +162,11 @@ export type RunUsageTotals = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /**
+   * 估算成本(USD,llm-gateway 价目表口径;P0-1 前的老 run 无此字段)。
+   * 未计价调用(未知模型/BYOK 自定义)按 0 计入,前端只显示数字不推断缺口。
+   */
+  cost_usd?: number;
 };
 
 /** 按模型拆分的用量行(模型名来自网关回包)。 */

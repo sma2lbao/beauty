@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 
 from llm_gateway.api.deps import (
     require_internal_secret,
-    resolve_byok_api_key,
+    resolve_byok_key,
     resolve_custom_models,
 )
 from llm_gateway.core.config import Settings
@@ -72,12 +72,16 @@ async def _prepare(
 
 async def _resolve_key(
     request: Request, account_id: str | None, model: str
-) -> str | None:
-    return await resolve_byok_api_key(
+) -> tuple[str | None, str]:
+    """解析 BYOK 密钥并带回来源:命中账号 key 记 byok,否则平台 key 记 platform。"""
+    resolved = await resolve_byok_key(
         request,
         provider=_provider(model),
         account_id=account_id,
     )
+    if resolved is None:
+        return None, "platform"
+    return resolved.api_key, resolved.source
 
 
 @router.post(
@@ -92,9 +96,13 @@ async def create_completion(
 ) -> CompletionResponse:
     settings: Settings = request.app.state.settings
     model, extra = await _prepare(settings, body, request, x_account_id)
-    api_key = await _resolve_key(request, x_account_id, model)
+    api_key, billing_source = await _resolve_key(request, x_account_id, model)
     return await completions_service.complete(
-        settings, body, api_key=api_key, extra_models=extra
+        settings,
+        body,
+        api_key=api_key,
+        extra_models=extra,
+        billing_source=billing_source,
     )
 
 
@@ -117,11 +125,15 @@ async def create_completion_stream(
     """
     settings: Settings = request.app.state.settings
     model, extra = await _prepare(settings, body, request, x_account_id)
-    api_key = await _resolve_key(request, x_account_id, model)
+    api_key, billing_source = await _resolve_key(request, x_account_id, model)
     return StreamingResponse(
         _sse(
             completions_service.stream(
-                settings, body, api_key=api_key, extra_models=extra
+                settings,
+                body,
+                api_key=api_key,
+                extra_models=extra,
+                billing_source=billing_source,
             )
         ),
         media_type="text/event-stream",

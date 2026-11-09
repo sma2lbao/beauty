@@ -2664,6 +2664,11 @@
             "title": "Completion Tokens",
             "type": "integer"
           },
+          "cost_usd": {
+            "default": 0.0,
+            "title": "Cost Usd",
+            "type": "number"
+          },
           "model": {
             "default": "",
             "title": "Model",
@@ -2703,6 +2708,11 @@
             "title": "Completion Tokens",
             "type": "integer"
           },
+          "cost_usd": {
+            "default": 0.0,
+            "title": "Cost Usd",
+            "type": "number"
+          },
           "prompt_tokens": {
             "default": 0,
             "title": "Prompt Tokens",
@@ -2734,6 +2744,11 @@
             "default": 0,
             "title": "Completion Tokens",
             "type": "integer"
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "title": "Cost Usd",
+            "type": "number"
           },
           "prompt_tokens": {
             "default": 0,

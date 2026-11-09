@@ -27,23 +27,25 @@ USAGE_EVENT = "run.usage.v1"
 _TOTAL_KEYS = ("calls", "prompt_tokens", "completion_tokens", "total_tokens")
 
 
-def _blank() -> dict[str, int]:
-    return {key: 0 for key in _TOTAL_KEYS}
+def _blank() -> dict[str, Any]:
+    # cost_usd 是浮点加总,不参与整数键的循环。
+    return {**{key: 0 for key in _TOTAL_KEYS}, "cost_usd": 0.0}
 
 
 def usage_payload(samples: list[UsageSample]) -> dict[str, Any]:
     """按模型聚合采样值:同一次图调用可能换模型,先分组再合计。"""
-    models: dict[str, dict[str, int]] = {}
+    models: dict[str, dict[str, Any]] = {}
     for sample in samples:
         bucket = models.setdefault(sample.model or "", _blank())
         bucket["calls"] += 1
         bucket["prompt_tokens"] += sample.prompt_tokens
         bucket["completion_tokens"] += sample.completion_tokens
         bucket["total_tokens"] += sample.total_tokens
+        bucket["cost_usd"] += float(sample.cost_usd or 0.0)
     totals = _blank()
     for bucket in models.values():
-        for key in _TOTAL_KEYS:
-            totals[key] += bucket[key]
+        for key, value in bucket.items():
+            totals[key] += value
     return {**totals, "models": models}
 
 
@@ -52,6 +54,7 @@ def _merge(totals: RunUsageTotals, payload: dict[str, Any]) -> None:
     totals.prompt_tokens += int(payload.get("prompt_tokens", 0) or 0)
     totals.completion_tokens += int(payload.get("completion_tokens", 0) or 0)
     totals.total_tokens += int(payload.get("total_tokens", 0) or 0)
+    totals.cost_usd += float(payload.get("cost_usd", 0.0) or 0.0)
 
 
 async def _usage_events(
