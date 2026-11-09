@@ -49,6 +49,7 @@ from agent_orchestrator.services.run_lifecycle import (
     _conversation_history,
 )
 from agent_orchestrator.services.run_quota import _usage_boundary
+from agent_orchestrator.services.run_trace import run_trace
 from agent_orchestrator.services.tool_names import normalize_tool_names
 from agent_orchestrator.services.workspace import Workspace
 
@@ -188,10 +189,11 @@ async def _invoke_plan(
                 ) as item_projector,
                 _usage_boundary(session, run),
             ):
-                values = await graph.ainvoke(
-                    state,
-                    config=_config(run, projector, step_projector, item_projector),
-                )
+                with run_trace(run):
+                    values = await graph.ainvoke(
+                        state,
+                        config=_config(run, projector, step_projector, item_projector),
+                    )
     except Exception as exc:
         await append_item_event(
             session,

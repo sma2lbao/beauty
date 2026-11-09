@@ -1,8 +1,8 @@
 # Langfuse 观测接入（trace / 成本 / 评估）
 
-> 状态：**Phase 1（common 基座）与 Phase 2（orchestrator 节点 span、llm-gateway generation span）已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
+> 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> Phase 3（eval/scores、导出前脱敏、留存策略）与 Phase 4（Web 深链、run 根 span、工具 span）待排期，见 §11。
+> 剩余：eval/scores、导出前脱敏、留存策略（Phase 3）与 Web 深链、尾部采样（Phase 4）待排期，见 §11。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -125,13 +125,16 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 
 ## 6. span 模型（已实施部分）
 
-| span                            | 来源                   | `langfuse.observation.type` | 关键属性                                                               |
-| ------------------------------- | ---------------------- | --------------------------- | ---------------------------------------------------------------------- |
-| `POST /api/v1/runs` 等 HTTP     | FastAPI 原生 telemetry | `span`（默认）              | http.route、http.status_code；自动继承 baggage 里的 trace/user/session |
-| 图节点：`plan`/`act`/`observe`… | `graph/steps.py`       | `span`                      | run_id、node、phase、attempt、round、step_id；失败写 ERROR             |
-| `chat {model}`（非流式）        | `generation_trace.py`  | `generation`                | request/response model、usage、fallback_count、input/output            |
-| `chat {model}`（流式）          | 同上                   | `generation`                | 同上 + completion_start_time（TTFT）                                   |
-| `execute_tool {name}`           | Phase 4 待做           | `tool`                      | tool.name、tool.call.id、risk、duration、ok                            |
+| span                            | 来源                     | `langfuse.observation.type` | 关键属性                                                                                                        |
+| ------------------------------- | ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/runs` 等 HTTP     | FastAPI 原生 telemetry   | `span`（默认）              | http.route、http.status_code；自动继承 baggage 里的 trace/user/session                                          |
+| `run {run_id}`                  | `services/run_trace.py`  | `agent`                     | run_id、attempts、agent_name、workspace_id；trace 名/session/user 在这里定死                                    |
+| 图节点：`plan`/`act`/`observe`… | `graph/steps.py`         | `span`                      | run_id、node、phase、attempt、round、step_id；失败写 ERROR                                                      |
+| `chat {model}`（非流式）        | `generation_trace.py`    | `generation`                | request/response model、usage、fallback_count、input/output                                                     |
+| `chat {model}`（流式）          | 同上                     | `generation`                | 同上 + completion_start_time（TTFT）                                                                            |
+| `execute_tool {name}`           | `execution/tool_span.py` | `tool`                      | tool.name、tool.call.id、risk、decision、duration_ms、result_chars、paths、sandbox_id；失败 WARNING，异常 ERROR |
+
+工具 span 的 `input` 默认空——参数原文与结果都属敏感内容，只在 `TOOL__LOG_CONTENT=true` 时写截断后的参数；审计表始终是完整事实源。跨进程续接已验证：FastAPI 原生 telemetry 从入站 `traceparent` 提取父上下文（入站 trace-id 与导出 span 的 trace-id 一致），出站 httpx 由插桩注入。
 
 未映射的 OTel 属性会落到 `metadata.attributes`，`resource` 属性落到 `metadata.resourceAttributes`——**这两处不可过滤**；要可按它过滤/聚合，必须显式写 `langfuse.trace.metadata.<key>` 或 `langfuse.observation.metadata.<key>`。
 
@@ -241,10 +244,10 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 
 **Phase 2 已完成**：orchestrator 节点 span、llm-gateway generation span（含流式 TTFT、错误、fallback 计数），common/gateway/orchestrator 测试通过。
 
-**Phase 3（待做）**
+**Phase 3（进行中）**
 
-1. run 根 span：`_invoke_plan` 及 approvals/answers 路径统一包一层，trace 名与 session（conversation_id）在根上定死，减少"同名 trace 分叉"。
-2. tool-service 工具 span：`execute_tool {name}`，带 risk/decision/duration/paths/truncated，与审计表 `tool_call` 对齐。
+1. ~~run 根 span~~ **已完成**：`services/run_trace.py` 的 `run_trace(run)` 包住 5 个 `graph.ainvoke` 边界（首次执行、approve、confirm、reject、answer），trace 名 = `run {run_id}`，session = conversation_id，user = account_id，observation 类型 `agent`；已有父 span（HTTP 同步触发）时挂在其下，不另起 trace。
+2. ~~tool-service 工具 span~~ **已完成**：`execution/tool_span.py` 在 `POST /v1/tools/{name}/execute` 里按一次 tool_call 建 `execute_tool {name}`，元数据与 `tool_calls` 审计列对齐（risk/decision/duration_ms/result_chars/bytes_written/paths/sandbox_id/patch 行数）；默认不记参数原文，`TOOL__LOG_CONTENT=true` 才写截断后的 input。
 3. 导出前脱敏：自定义 SpanProcessor 白名单化属性，替代 `LOG_CONTENT` 粗粒度开关。
 4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；剩余口径缺口是缓存 token 未区分。
 5. eval/scores：run 结束后按事件写 `POST /api/public/scores`（人工标注 + 规则评分），回填 `/runs` 详情。

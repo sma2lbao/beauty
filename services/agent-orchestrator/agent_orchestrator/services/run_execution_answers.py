@@ -43,6 +43,7 @@ from agent_orchestrator.services.run_execution_approvals import (
 )
 from agent_orchestrator.services.run_lifecycle import require_run, require_transition
 from agent_orchestrator.services.run_quota import _usage_boundary
+from agent_orchestrator.services.run_trace import run_trace
 from agent_orchestrator.services.workspace import Workspace
 
 #: 挂起问题已过 expires_at(设计 §10.5):客户端应答一律 409,等 sweeper 自动继续。
@@ -185,17 +186,18 @@ async def answer_run(
                 _step_stream(session, run) as step_projector,
                 _usage_boundary(session, run),
             ):
-                values = await graph.ainvoke(
-                    Command(
-                        resume={
-                            "action": action,
-                            "answers": payload["answers"],
-                            "question_id": pending_id,
-                            "reason": payload["reason"],
-                        }
-                    ),
-                    config=_config(run, projector, step_projector),
-                )
+                with run_trace(run):
+                    values = await graph.ainvoke(
+                        Command(
+                            resume={
+                                "action": action,
+                                "answers": payload["answers"],
+                                "question_id": pending_id,
+                                "reason": payload["reason"],
+                            }
+                        ),
+                        config=_config(run, projector, step_projector),
+                    )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="answer")
         return run

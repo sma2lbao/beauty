@@ -45,7 +45,9 @@ from tool_service.services.execution import (
     arguments_digest,
     audit_columns,
     failure_outcome,
+    finish_tool_span,
     is_available,
+    tool_span,
 )
 from tool_service.services.quota import check_total_calls, check_write_quota
 from tool_service.services.sandbox import scope_key_for
@@ -161,36 +163,44 @@ async def execute_tool(
         timeout_seconds=body.timeout_seconds,
         approved=body.approved,
     )
-    outcome, internal_arguments = await _preflight(
-        session, settings, descriptor, context, body.arguments
-    )
-    if outcome is None:
-        outcome = await runner.execute(
-            context,
-            descriptor.name,
-            body.arguments,
-            internal_arguments=internal_arguments,
+    # 一次 tool_call 一个 span:目录/鉴权/幂等重放都在上面,不算执行本身。
+    with tool_span(
+        descriptor,
+        context,
+        arguments=body.arguments,
+        log_content=settings.log_content,
+    ) as span:
+        outcome, internal_arguments = await _preflight(
+            session, settings, descriptor, context, body.arguments
         )
-        await _remember_read(session, descriptor, context, body, outcome)
-    decision = "approved" if body.approved else "auto"
-    columns = audit_columns(outcome, context, body.arguments, decision=decision)
-    record = ToolCall(
-        account_id=account_id,
-        tool_call_id=body.tool_call_id,
-        run_id=body.run_id,
-        conversation_id=body.conversation_id,
-        **columns,
-    )
-    session.add(record)
-    try:
-        await session.commit()
-    except IntegrityError:
-        # 并发同 tool_call_id:后到者回滚并按已存在记录重放
-        await session.rollback()
-        existing = await repository.find_by_call_id(account_id, body.tool_call_id)
-        if existing is None:
-            raise
-        return _replay_response(existing, digest)
+        if outcome is None:
+            outcome = await runner.execute(
+                context,
+                descriptor.name,
+                body.arguments,
+                internal_arguments=internal_arguments,
+            )
+            await _remember_read(session, descriptor, context, body, outcome)
+        decision = "approved" if body.approved else "auto"
+        columns = audit_columns(outcome, context, body.arguments, decision=decision)
+        finish_tool_span(span, columns=columns, ok=columns["ok"])
+        record = ToolCall(
+            account_id=account_id,
+            tool_call_id=body.tool_call_id,
+            run_id=body.run_id,
+            conversation_id=body.conversation_id,
+            **columns,
+        )
+        session.add(record)
+        try:
+            await session.commit()
+        except IntegrityError:
+            # 并发同 tool_call_id:后到者回滚并按已存在记录重放
+            await session.rollback()
+            existing = await repository.find_by_call_id(account_id, body.tool_call_id)
+            if existing is None:
+                raise
+            return _replay_response(existing, digest)
     return JSONResponse(outcome.response.envelope())
 
 

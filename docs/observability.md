@@ -293,8 +293,8 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span 与 orchestrator 图节点 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
-待办：run 根 span、tool-service 工具 span、`apps/web` 前端追踪与「在 Langfuse 查看」深链、尾部采样与 eval；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
+P3 进展：llm-gateway 的 `chat {model}` generation span、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
+待办：`apps/web` 前端追踪与「在 Langfuse 查看」深链、尾部采样与 eval；成本侧唯一缺口是缓存命中 token 未区分（`UsageOut` 只有 prompt/completion）。
 
 ---
 

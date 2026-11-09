@@ -88,6 +88,7 @@ from agent_orchestrator.services.run_lifecycle import (
     require_transition,
 )
 from agent_orchestrator.services.run_quota import _usage_boundary
+from agent_orchestrator.services.run_trace import run_trace
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 from agent_orchestrator.services.workspace import Workspace
@@ -344,10 +345,16 @@ async def approve_run(
                 _item_stream(session, run, step_projector) as item_projector,
                 _usage_boundary(session, run),
             ):
-                values = await graph.ainvoke(
-                    Command(resume={"action": "approve", "instructions": instructions}),
-                    config=_config(run, projector, step_projector, item_projector),
-                )
+                with run_trace(run):
+                    values = await graph.ainvoke(
+                        Command(
+                            resume={
+                                "action": "approve",
+                                "instructions": instructions,
+                            }
+                        ),
+                        config=_config(run, projector, step_projector, item_projector),
+                    )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
@@ -414,16 +421,17 @@ async def confirm_run(
                 _item_stream(session, run, step_projector) as item_projector,
                 _usage_boundary(session, run),
             ):
-                values = await graph.ainvoke(
-                    Command(
-                        resume={
-                            "action": action,
-                            "reason": reason,
-                            "instructions": instructions,
-                        }
-                    ),
-                    config=_config(run, projector, step_projector, item_projector),
-                )
+                with run_trace(run):
+                    values = await graph.ainvoke(
+                        Command(
+                            resume={
+                                "action": action,
+                                "reason": reason,
+                                "instructions": instructions,
+                            }
+                        ),
+                        config=_config(run, projector, step_projector, item_projector),
+                    )
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run
@@ -447,7 +455,7 @@ async def reject_run(
 ) -> Run:
     run = await require_run(session, account_id, run_id)
     require_transition(run, "reject")
-    with bind_run_llm(session, run), _tool_context(run):
+    with bind_run_llm(session, run), _tool_context(run), run_trace(run):
         await graph.ainvoke(
             Command(resume={"action": "reject", "reason": reason}),
             config=_config(run),

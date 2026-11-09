@@ -56,6 +56,7 @@ from tool_service.services.execution.outcome import (
     normalize_interaction,
 )
 from tool_service.services.execution.runner import ToolRunner
+from tool_service.services.execution.tool_span import finish_tool_span, tool_span
 
 __all__ = [
     # 常量
@@ -74,8 +75,10 @@ __all__ = [
     "arguments_digest",
     "is_available",
     "resolve_exec_cwd",
-    # 执行主流程
+    # 执行主流程与 trace
     "ToolRunner",
+    "finish_tool_span",
+    "tool_span",
     # 结果与审计
     "audit_columns",
     "failure_outcome",
