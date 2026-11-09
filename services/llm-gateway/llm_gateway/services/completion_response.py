@@ -43,10 +43,15 @@ def _record_usage(usage: UsageOut | None, model: str) -> None:
 def _usage(raw: Any) -> UsageOut | None:
     if raw is None:
         return None
+    details = _get(raw, "prompt_tokens_details")
     return UsageOut(
         prompt_tokens=getattr(raw, "prompt_tokens", 0) or 0,
         completion_tokens=getattr(raw, "completion_tokens", 0) or 0,
         total_tokens=getattr(raw, "total_tokens", 0) or 0,
+        # litellm 把 DeepSeek 的 prompt_cache_hit_tokens、Anthropic 的
+        # cache_read/cache_creation 都归一到 prompt_tokens_details。
+        cache_read_tokens=int(_get(details, "cached_tokens", 0) or 0),
+        cache_write_tokens=int(_get(details, "cache_write_tokens", 0) or 0),
     )
 
 

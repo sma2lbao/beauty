@@ -80,6 +80,10 @@ class UsageOut(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    # 缓存命中/写入 token(DeepSeek/Anthropic 系模型),已包含在 prompt_tokens
+    # 内;0 表示 provider 未返回。用于按缓存价拆分成本,避免整段输入按全价计。
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 class FallbackHop(BaseModel):

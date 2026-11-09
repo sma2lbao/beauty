@@ -49,12 +49,23 @@ def ingested_cost(model: str, usage: UsageOut) -> dict[str, float] | None:
         info = litellm.get_model_info(model)
     except Exception:  # noqa: BLE001 - 未映射模型是正常情况,不应影响请求
         return None
-    input_price = info.get("input_cost_per_token") or 0.0
-    output_price = info.get("output_cost_per_token") or 0.0
+    input_price = float(info.get("input_cost_per_token") or 0.0)
+    output_price = float(info.get("output_cost_per_token") or 0.0)
     if not input_price and not output_price:
         return None
-    prompt_cost = usage.prompt_tokens * float(input_price)
-    completion_cost = usage.completion_tokens * float(output_price)
+    # 缓存 token 已含在 prompt_tokens 里:先按缓存价算命中/写入部分,剩余输入
+    # 才按全价,否则缓存占比高时会显著高估(DeepSeek 命中价是全价的 1/10)。
+    cache_read = max(usage.cache_read_tokens, 0)
+    cache_write = max(usage.cache_write_tokens, 0)
+    uncached = max(usage.prompt_tokens - cache_read - cache_write, 0)
+    read_price = info.get("cache_read_input_token_cost")
+    write_price = info.get("cache_creation_input_token_cost")
+    read_price = input_price if read_price is None else float(read_price)
+    write_price = input_price if write_price is None else float(write_price)
+    prompt_cost = (
+        uncached * input_price + cache_read * read_price + cache_write * write_price
+    )
+    completion_cost = usage.completion_tokens * output_price
     return {
         "input": prompt_cost,
         "output": completion_cost,
@@ -126,6 +137,8 @@ def finish_generation(
                 input_tokens=usage.prompt_tokens,
                 output_tokens=usage.completion_tokens,
                 total_tokens=usage.total_tokens,
+                cache_read_tokens=usage.cache_read_tokens or None,
+                cache_write_tokens=usage.cache_write_tokens or None,
             )
         )
         cost = ingested_cost(model, usage)

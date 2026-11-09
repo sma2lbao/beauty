@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 import pytest
+from litellm.types.utils import Usage as LiteLLMUsage
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -18,7 +19,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import CompletionRequest, UsageOut
-from llm_gateway.services import generation_trace
+from llm_gateway.services import completion_response, generation_trace
 
 # OTel 全局 provider 一个进程只能设一次:模块级装一次,后续用例复用 exporter。
 _EXPORTER = InMemorySpanExporter()
@@ -94,6 +95,53 @@ def test_finish_generation_records_usage_and_ingested_cost() -> None:
     assert cost["input"] == pytest.approx(1000 * 2.8e-07)
     assert cost["output"] == pytest.approx(500 * 4.2e-07)
     assert cost["total"] == pytest.approx(cost["input"] + cost["output"])
+
+
+def test_ingested_cost_prices_cached_tokens_at_cache_rate() -> None:
+    usage = UsageOut(
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        cache_read_tokens=800,
+    )
+    cost = generation_trace.ingested_cost(DEEPSEEK, usage)
+    assert cost is not None
+    # 200 未命中按全价 2.8e-07,800 命中按缓存价 2.8e-08
+    assert cost["input"] == pytest.approx(200 * 2.8e-07 + 800 * 2.8e-08)
+    assert cost["output"] == pytest.approx(500 * 4.2e-07)
+    assert cost["total"] == pytest.approx(cost["input"] + cost["output"])
+
+
+def test_finish_generation_exports_cache_token_attributes() -> None:
+    usage = UsageOut(
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        cache_read_tokens=800,
+        cache_write_tokens=100,
+    )
+    with generation_trace.generation_span(
+        _settings(), _request(), DEEPSEEK, stream=False
+    ) as span:
+        generation_trace.finish_generation(
+            span, settings=_settings(), model=DEEPSEEK, usage=usage
+        )
+    attributes = _last().attributes
+    assert attributes["gen_ai.usage.cache_read_input_tokens"] == 800
+    assert attributes["gen_ai.usage.cache_creation_input_tokens"] == 100
+
+
+def test_usage_extracts_cache_tokens_from_litellm_details() -> None:
+    raw = LiteLLMUsage(
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        prompt_cache_hit_tokens=800,
+    )
+    usage = completion_response._usage(raw)
+    assert usage is not None
+    assert usage.cache_read_tokens == 800
+    assert usage.cache_write_tokens == 0
 
 
 def test_unknown_model_has_no_ingested_cost() -> None:

@@ -2,7 +2,7 @@
 
 > 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
-> 剩余：留存策略、缓存 token 成本口径（Phase 3）待排期；导出前脱敏已完成（§9）。eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
+> 剩余：留存策略（Phase 3）待排期；导出前脱敏与缓存 token 成本口径均已完成（§9）。eval/scores 已完成（规则基线 + 人工点赞/点踩，见 §6.1）；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
 ---
@@ -245,7 +245,16 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 - 价格来源：`LITELLM_LOCAL_MODEL_COST_MAP=True` 由 `llm_gateway/__init__.py` `setdefault`，用 litellm 随依赖发布的**本地价目表**——启动不发网络请求（离线/受限网络可启动），价格随依赖升级而更新，成本口径可复现；需要热更价目时显式设 False。
 - 实测（2026-11-09，`deepseek/deepseek-chat` 1000 input / 500 output）：Cloud 返回 `costDetails={"input":0.00028,"output":0.00021,"total":0.00049}`、`totalCost=0.00049`。
 - 未映射模型（BYOK 自定义名）→ 不写 `cost_details`，回落到 Cloud 目录/推断，不会因为算价失败影响请求。
-- **口径注意**：`UsageOut` 只有 prompt/completion 两个计数，缓存命中 token（deepseek cache hit 单价低一个量级）无法区分，缓存占比高时会**高估**成本；Phase 3 若要精确，需要 usage 里带 cache_read/cache_write。
+- **缓存 token 按缓存价计（不再高估）**：`UsageOut` 增加 `cache_read_tokens` / `cache_write_tokens`——litellm 把 DeepSeek 的 `prompt_cache_hit_tokens`、Anthropic 的 `cache_read/cache_creation_input_tokens` 统一收进 `prompt_tokens_details`，网关的 `_usage` 直接读它。`ingested_cost` 先把缓存部分从全价输入里扣掉，再按价目表的 `cache_read_input_token_cost` / `cache_creation_input_token_cost` 计价（字段缺失时回落到 `input_cost_per_token`），剩余输入才按全价：
+
+  ```text
+  input_cost = (prompt_tokens - cache_read - cache_write) * input_price
+             + cache_read * cache_read_price
+             + cache_write * cache_write_price
+  ```
+
+  实测口径：`deepseek/deepseek-chat` 1000 input 里 800 命中缓存 → input `0.0000784`（全价口径是 `0.00028`，差 3.6 倍）；DeepSeek 的 `cache_creation_input_token_cost=0`，Anthropic 系写入价按价目表给。缓存 read/write 同时以 `gen_ai.usage.cache_read_input_tokens` / `gen_ai.usage.cache_creation_input_tokens` 出 span；Cloud 实测落库为 `usageDetails={"input":200,"output":500,"total":1500,"input_cached_tokens":800}`、`costDetails={"input":7.84e-05,"output":0.00021,"total":0.0002884}`（Langfuse 把命中部分从 input 明细里单列，不会重复计）。
+
 - 兜底仍可用 Cloud 项目里的模型定义（Settings → Models → New）；但它只影响之后的新数据，且与网关价目表可能不一致，二者择一即可。
 
 ### 9.2 尾部采样（可选：OTel Collector）
@@ -286,7 +295,7 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 1. ~~run 根 span~~ **已完成**：`services/run_trace.py` 的 `run_trace(run)` 包住 5 个 `graph.ainvoke` 边界（首次执行、approve、confirm、reject、answer），trace 名 = `run {run_id}`，session = conversation_id，user = account_id，observation 类型 `agent`；已有父 span（HTTP 同步触发）时挂在其下，不另起 trace。
 2. ~~tool-service 工具 span~~ **已完成**：`execution/tool_span.py` 在 `POST /v1/tools/{name}/execute` 里按一次 tool_call 建 `execute_tool {name}`，元数据与 `tool_calls` 审计列对齐（risk/decision/duration_ms/result_chars/bytes_written/paths/sandbox_id/patch 行数）；默认不记参数原文，`TOOL__LOG_CONTENT=true` 才写截断后的 input。
 3. ~~导出前脱敏~~ **已完成**：`common/redaction.py` 的 `AttributeRedactionSpanProcessor` 在导出前统一删敏感键、按 `LOG_CONTENT` 闸门保留正文、URL 去参与值截断；`_build_provider` 在导出处理器之前注册，见 §9。
-4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；剩余口径缺口是缓存 token 未区分。
+4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；缓存命中/写入 token 已按缓存价拆分，不再按全价高估。
 5. ~~eval/scores~~ **已完成**：规则基线 `outcome`（completed=1 / failed=0）+ 人工点赞/点踩，落 `run.score.v1` 事件并经 after-commit best-effort 写 `POST /api/public/scores`；控制台 run 详情可评分、`GET /runs/{id}/scores` 回放（见 §6.1）。
 6. 留存与容量：ClickHouse TTL、MinIO 生命周期、成本告警。
 
