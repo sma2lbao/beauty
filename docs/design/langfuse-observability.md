@@ -1,7 +1,7 @@
 # Langfuse 观测接入（trace / 成本 / 评估）
 
 > 状态：**Phase 1（common 基座）与 Phase 2（orchestrator 节点 span、llm-gateway generation span）已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
-> 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**但 deepseek 模型不在 Cloud 的托管价目表里，成本需补模型定义或 ingested cost**（见 §9.1）。
+> 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
 > Phase 3（eval/scores、导出前脱敏、留存策略）与 Phase 4（Web 深链、run 根 span、工具 span）待排期，见 §11。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
 
@@ -215,10 +215,15 @@ docker compose -f deploy/docker-compose.yml up -d agent-orchestrator llm-gateway
 - `GET /api/public/v2/observations` 的 `model` / `modelId` 字段即使对命中价目的 gpt 也返回 null，**不要用它们判断成本是否算出**；看 `costDetails` / `totalCost`。
 - Traces API 2026-11-16 下线；读侧用 v2 observations（`fields=core,basic,usage,io,trace`）或 UI。
 
-补成本两条路（Phase 3 二选一，价格不要硬编码进代码）：
+**已解决：网关 ingested cost**
 
-1. **Cloud 项目里加模型定义**（Settings → Models → New）：modelName `deepseek-chat`，matchPattern 覆盖网关实际写的名字（网关写的是 provider 前缀形式，如 `deepseek/deepseek-chat`），input/output 单价按厂商当期价目填。只影响之后的新数据，历史不重算。
-2. **网关 ingested cost**：llm-gateway 用可配置价目表算出 `langfuse.observation.cost_details`，与 `usage_details` 一起写在 generation span 上（ingested 优先于 inferred，也便于区分 BYOK/平台 key 口径）。
+llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在 generation span 的 `langfuse.observation.cost_details`（`generation_trace.ingested_cost`）；ingested 优先于 Cloud 的 inferred cost，因此 **Cloud 目录里没有 deepseek 也能出成本**。
+
+- 价格来源：`LITELLM_LOCAL_MODEL_COST_MAP=True` 由 `llm_gateway/__init__.py` `setdefault`，用 litellm 随依赖发布的**本地价目表**——启动不发网络请求（离线/受限网络可启动），价格随依赖升级而更新，成本口径可复现；需要热更价目时显式设 False。
+- 实测（2026-11-09，`deepseek/deepseek-chat` 1000 input / 500 output）：Cloud 返回 `costDetails={"input":0.00028,"output":0.00021,"total":0.00049}`、`totalCost=0.00049`。
+- 未映射模型（BYOK 自定义名）→ 不写 `cost_details`，回落到 Cloud 目录/推断，不会因为算价失败影响请求。
+- **口径注意**：`UsageOut` 只有 prompt/completion 两个计数，缓存命中 token（deepseek cache hit 单价低一个量级）无法区分，缓存占比高时会**高估**成本；Phase 3 若要精确，需要 usage 里带 cache_read/cache_write。
+- 兜底仍可用 Cloud 项目里的模型定义（Settings → Models → New）；但它只影响之后的新数据，且与网关价目表可能不一致，二者择一即可。
 
 ---
 
@@ -241,7 +246,7 @@ docker compose -f deploy/docker-compose.yml up -d agent-orchestrator llm-gateway
 1. run 根 span：`_invoke_plan` 及 approvals/answers 路径统一包一层，trace 名与 session（conversation_id）在根上定死，减少"同名 trace 分叉"。
 2. tool-service 工具 span：`execute_tool {name}`，带 risk/decision/duration/paths/truncated，与审计表 `tool_call` 对齐。
 3. 导出前脱敏：自定义 SpanProcessor 白名单化属性，替代 `LOG_CONTENT` 粗粒度开关。
-4. **成本**：Cloud 加 deepseek 模型定义，或网关算 ingested cost（见 §9.1）；否则成本列恒为空。
+4. ~~成本：Cloud 加 deepseek 模型定义，或网关算 ingested cost~~ **已完成**：网关 ingested cost（litellm 本地价目，见 §9.1）；剩余口径缺口是缓存 token 未区分。
 5. eval/scores：run 结束后按事件写 `POST /api/public/scores`（人工标注 + 规则评分），回填 `/runs` 详情。
 6. 留存与容量：ClickHouse TTL、MinIO 生命周期、成本告警。
 

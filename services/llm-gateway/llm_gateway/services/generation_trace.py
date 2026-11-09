@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import litellm
 from common import langfuse
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
@@ -34,6 +35,31 @@ _STATUS_LIMIT = 500
 
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def ingested_cost(model: str, usage: UsageOut) -> dict[str, float] | None:
+    """按 litellm 内置价目表算 USD 成本,未知模型返回 None。
+
+    走 ingested cost 而不是让 Langfuse 推断:云端托管价目表不含 deepseek
+    (2026-11 实测),而 litellm 随网关依赖升级自带价目,不会漏模型。
+    价格不在本仓库硬编码;未映射的自定义/BYOK 模型返回 None,由 Langfuse
+    按自己的价目表推断(有则算、无则空),不会因为算价失败影响请求。
+    """
+    try:
+        info = litellm.get_model_info(model)
+    except Exception:  # noqa: BLE001 - 未映射模型是正常情况,不应影响请求
+        return None
+    input_price = info.get("input_cost_per_token") or 0.0
+    output_price = info.get("output_cost_per_token") or 0.0
+    if not input_price and not output_price:
+        return None
+    prompt_cost = usage.prompt_tokens * float(input_price)
+    completion_cost = usage.completion_tokens * float(output_price)
+    return {
+        "input": prompt_cost,
+        "output": completion_cost,
+        "total": prompt_cost + completion_cost,
+    }
 
 
 def _input_payload(
@@ -89,7 +115,7 @@ def finish_generation(
     content: str | None = None,
     fallbacks: int = 0,
 ) -> None:
-    """收尾:响应模型、token 用量(成本由 Langfuse 价目表推算)与可选正文。"""
+    """收尾:响应模型、token 用量、成本(ingested,litellm 价目)与可选正文。"""
     attributes: dict[str, Any] = {
         langfuse.GEN_AI_RESPONSE_MODEL: model,
         f"{langfuse.OBSERVATION_METADATA_PREFIX}fallback_count": str(fallbacks),
@@ -102,6 +128,9 @@ def finish_generation(
                 total_tokens=usage.total_tokens,
             )
         )
+        cost = ingested_cost(model, usage)
+        if cost is not None:
+            attributes[langfuse.OBSERVATION_COST] = langfuse.json_value(cost)
     if settings.log_content and content is not None:
         attributes[langfuse.OBSERVATION_OUTPUT] = langfuse.json_value(content)
     langfuse.apply_attributes(span, attributes)
