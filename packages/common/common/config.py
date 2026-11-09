@@ -48,6 +48,13 @@ class BaseAppSettings(BaseSettings):
     otlp_endpoint: str | None = None
     otlp_headers: dict[str, str] | None = None
     trace_sample_ratio: float = 0.1
+    # Langfuse(P3,docs/design/langfuse-observability.md):OTel 原生接入。
+    # 开关 + public/secret key 三件套齐全才启用;启用后覆盖 OTLP_ENDPOINT/
+    # OTLP_HEADERS,由 common.langfuse 派生端点与 Basic 认证头。
+    langfuse_enabled: bool = False
+    langfuse_host: str = "http://localhost:3000"
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
 
     @property
     def is_prod(self) -> bool:

@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from common import langfuse
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
+#: 节点 span 的 tracer 名(OTel 里按 instrumentation scope 分组)。
+_TRACER = trace.get_tracer("agent_orchestrator.graph")
+
 #: 步骤事件类型:payload 是 StepSpan 的固化结构;对外步骤视图见 services.run_steps。
 EVENT_TYPE = "run.step.v1"
 
@@ -127,12 +134,49 @@ def instrument_node(
 
         projector = runtime_from_config(config).steps
         span = projector.begin(name, phase)
-        try:
-            result = await node(state, config)
-        except BaseException:
-            projector.finish(span, "failed")
-            raise
-        projector.finish(span, _result_status(result))
-        return result
+        run_id = state.get("run_id") if isinstance(state, Mapping) else None
+        account_id = state.get("account_id") if isinstance(state, Mapping) else None
+        # 节点 span:一个 graph.ainvoke 内的节点是根 span 的子 span;没有活动
+        # 父 span 时(如后台 job 直接起图)它自己就是 trace 根。
+        with _TRACER.start_as_current_span(name) as otel_span:
+            langfuse.apply_attributes(
+                otel_span,
+                langfuse.trace_attributes(
+                    trace_name=f"run {run_id}" if run_id else None,
+                    user_id=str(account_id) if account_id else None,
+                    tags=["agent-orchestrator"],
+                ),
+            )
+            langfuse.apply_attributes(
+                otel_span,
+                langfuse.observation_attributes(
+                    observation_type="span",
+                    metadata={
+                        "run_id": run_id,
+                        "node": name,
+                        "phase": phase,
+                        "attempt": span.attempt if span is not None else None,
+                        "round": span.round if span is not None else None,
+                        "step_id": span.step_id if span is not None else None,
+                    },
+                ),
+            )
+            try:
+                result = await node(state, config)
+            except BaseException as exc:
+                projector.finish(span, "failed")
+                langfuse.apply_attributes(
+                    otel_span,
+                    {
+                        langfuse.OBSERVATION_LEVEL: "ERROR",
+                        langfuse.OBSERVATION_STATUS_MESSAGE: (
+                            f"{type(exc).__name__}: {exc}"
+                        )[:500],
+                    },
+                )
+                otel_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
+            projector.finish(span, _result_status(result))
+            return result
 
     return wrapper

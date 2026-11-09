@@ -5,7 +5,12 @@
 
 - ``completion_routing``:模型解析/白名单、候选链与 fallback 判定;
 - ``completion_request``:litellm 请求组装与请求日志;
-- ``completion_response``:响应/流片归一化(用量、增量正文、tool_calls 装配)。
+- ``completion_response``:响应/流片归一化(用量、增量正文、tool_calls 装配);
+- ``generation_trace``:把一次逻辑调用映射成 Langfuse generation span(纯 OTel)。
+
+对外入口在业务实现外包一层 generation span:一个 span 覆盖整个逻辑调用(含
+fallback 重试),模型/token/延迟/错误都会出现在 trace 里,便于 Langfuse 上按
+模型、会话、成本聚合;未配置导出器时 OTel 走 no-op,零开销。
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from llm_gateway.schemas.completions import (
     StreamError,
     UsageOut,
 )
+from llm_gateway.services import generation_trace
 from llm_gateway.services.completion_request import (
     _CONTENT_LIMIT,
     _clip,
@@ -101,7 +107,32 @@ async def complete(
     api_key: str | None = None,
     extra_models: Sequence[str] = (),
 ) -> CompletionResponse:
+    """非流式补全:业务实现外包一层 generation span(异常也落状态)。"""
     model = resolve_model(settings, data.model, extra_models=extra_models)
+    with generation_trace.generation_span(settings, data, model, stream=False) as span:
+        try:
+            response = await _complete(settings, data, model=model, api_key=api_key)
+        except BaseException as exc:
+            generation_trace.record_error(span, exc)
+            raise
+        generation_trace.finish_generation(
+            span,
+            settings=settings,
+            model=response.model,
+            usage=response.usage,
+            content=response.content,
+            fallbacks=len(response.fallbacks or ()),
+        )
+        return response
+
+
+async def _complete(
+    settings: Settings,
+    data: CompletionRequest,
+    *,
+    model: str,
+    api_key: str | None = None,
+) -> CompletionResponse:
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
     _log_request(settings, log, data, model, stream=False)
@@ -180,6 +211,39 @@ async def stream(
     成功收尾的 done 片才带切换记录(§5.2)。
     """
     model = resolve_model(settings, data.model, extra_models=extra_models)
+    with generation_trace.generation_span(settings, data, model, stream=True) as span:
+        started_first_delta = False
+        try:
+            async for chunk in _stream(settings, data, model=model, api_key=api_key):
+                if chunk.delta and not started_first_delta:
+                    generation_trace.mark_completion_start(span)
+                    started_first_delta = True
+                if chunk.error is not None:
+                    generation_trace.record_stream_error(span, chunk.error.message)
+                    yield chunk
+                    return
+                if chunk.done:
+                    generation_trace.finish_generation(
+                        span,
+                        settings=settings,
+                        model=chunk.model or model,
+                        usage=chunk.usage,
+                        content=chunk.content,
+                        fallbacks=len(chunk.fallbacks or ()),
+                    )
+                yield chunk
+        except BaseException as exc:
+            generation_trace.record_error(span, exc)
+            raise
+
+
+async def _stream(
+    settings: Settings,
+    data: CompletionRequest,
+    *,
+    model: str,
+    api_key: str | None = None,
+) -> AsyncIterator[CompletionChunk]:
     log = get_logger("llm_gateway.completions")
     chain = candidates(settings, model)
     _log_request(settings, log, data, model, stream=True)

@@ -32,6 +32,17 @@ x-db-depends: &db-depends
   migrate:
     condition: service_completed_successfully
 
+# 观测栈(Langfuse v4)四件依赖就绪后才启动 web/worker,见 docs/design/langfuse-observability.md。
+x-langfuse-depends: &langfuse-depends
+  langfuse-postgres:
+    condition: service_healthy
+  langfuse-clickhouse:
+    condition: service_healthy
+  langfuse-minio:
+    condition: service_healthy
+  langfuse-redis:
+    condition: service_healthy
+
 services:
   # ── 基础设施 ─────────────────────────────────────────────────────────────
   postgres:
@@ -151,6 +162,15 @@ services:
       AGENT_ORCHESTRATOR__MCP_RESOURCE_URL: http://localhost:8080/mcp
       AGENT_ORCHESTRATOR__MCP_OAUTH_REDIRECT_URI: http://localhost:8080/api/mcp/oauth/callback
       AGENT_ORCHESTRATOR__CORS_ALLOW_ORIGINS: '["http://localhost:8080"]'
+      # 观测(可选):--profile observability 起 Langfuse 后,置 LANGFUSE_ENABLED=true 才上报。
+      # trace_sample_ratio 默认 0.1 会丢 90% trace;本地演示给 1.0(指标永不采样)。
+      AGENT_ORCHESTRATOR__LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      # 默认指向 Langfuse Cloud(https://cloud.langfuse.com);用自托管观测 profile 时
+      # 传 LANGFUSE_HOST=http://langfuse-web:3000,pk/sk 用 compose 预建的 pk-lf-beauty/sk-lf-beauty。
+      AGENT_ORCHESTRATOR__LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      AGENT_ORCHESTRATOR__LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      AGENT_ORCHESTRATOR__LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      AGENT_ORCHESTRATOR__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-1.0}
     depends_on: *db-depends
     restart: unless-stopped
 
@@ -169,6 +189,13 @@ services:
       LLM_GATEWAY__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       # 容器内必须走服务名:默认 127.0.0.1:8001 会指向网关自身,BYOK 解析全失败
       LLM_GATEWAY__ACCOUNT_BASE_URL: http://account-service:8001
+      # 观测(可选):generation span 上报 Langfuse;LOG_CONTENT=true 才记录 prompt/输出正文
+      LLM_GATEWAY__LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LLM_GATEWAY__LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      LLM_GATEWAY__LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LLM_GATEWAY__LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LLM_GATEWAY__TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-1.0}
+      LLM_GATEWAY__LOG_CONTENT: ${LLM_GATEWAY_LOG_CONTENT:-false}
     restart: unless-stopped
 
   connector-service:
@@ -309,7 +336,164 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── 观测:Langfuse v4(可选 profile,默认不启动) ───────────────────────────
+  # 设计见 docs/design/langfuse-observability.md。启用:
+  #   docker compose -f deploy/docker-compose.yml --profile observability up -d
+  #   LANGFUSE_ENABLED=true docker compose -f deploy/docker-compose.yml up -d \
+  #     agent-orchestrator llm-gateway        # 重新创建服务才会读到新环境变量
+  # UI/登录:http://localhost:3001(dev@beauty-moon.local / beauty-moon)
+  # 对外只暴露 web 与 minio 控制台;其余组件只在内网可达,避免与主栈的
+  # postgres:5432 / redis:6379 抢端口(所以不映射宿主机端口)。
+  # 数据卷全部独立,down -v 只清观测数据;主栈运行不依赖这个 profile。
+  langfuse-postgres:
+    image: docker.io/postgres:17-alpine
+    profiles: ['observability']
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse-demo-password
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U langfuse']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  langfuse-clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:26.3.62.3
+    profiles: ['observability']
+    user: '101:101'
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: langfuse-demo-password
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    profiles: ['observability']
+    entrypoint: sh
+    # 启动前先建 langfuse bucket(Langfuse 的 events/media 上传都落这里)
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio-demo-password
+    ports:
+      # 控制台;S3 API 9000 只在 compose 内网供 langfuse-web/worker 使用
+      - '9091:9001'
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+    restart: unless-stopped
+
+  langfuse-redis:
+    image: docker.io/redis:7-alpine
+    profiles: ['observability']
+    # Langfuse 的 BullMQ 队列要求 noeviction,与主栈缓存用 redis 分开部署
+    command: >
+      --requirepass langfuse-demo-password
+      --maxmemory-policy noeviction
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a langfuse-demo-password ping | grep -q PONG']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:${LANGFUSE_IMAGE_TAG:-4}
+    profiles: ['observability']
+    depends_on: *langfuse-depends
+    environment: &langfuse-env
+      NEXTAUTH_URL: http://localhost:3001
+      DATABASE_URL: postgresql://langfuse:langfuse-demo-password@langfuse-postgres:5432/langfuse
+      # 演示口令;生产用 openssl rand -hex 32 生成 ENCRYPTION_KEY
+      SALT: beauty-moon-langfuse-demo-salt
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      TELEMETRY_ENABLED: 'false'
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: langfuse-demo-password
+      CLICKHOUSE_CLUSTER_ENABLED: 'false'
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: '6379'
+      REDIS_AUTH: langfuse-demo-password
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minio-demo-password
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: minio-demo-password
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+    restart: unless-stopped
+
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-4}
+    profiles: ['observability']
+    depends_on: *langfuse-depends
+    ports:
+      # 主栈 web 占 8080、官网 site 占 3000,这里用 3001
+      - '3001:3000'
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: beauty-moon-langfuse-demo-nextauth-secret
+      # 浏览器直连 minio 控制台端口做媒体预览;容器间走内网端点
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9091
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-minio:9000
+      # 无 UI 初始化:org/project/首用户固定下来,与 Python 服务里的 pk/sk 对齐
+      LANGFUSE_INIT_ORG_ID: beauty-moon
+      LANGFUSE_INIT_ORG_NAME: beauty-moon
+      LANGFUSE_INIT_PROJECT_ID: beauty-moon-agent
+      LANGFUSE_INIT_PROJECT_NAME: beauty-moon agent
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-beauty
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-beauty
+      LANGFUSE_INIT_USER_EMAIL: dev@beauty-moon.local
+      LANGFUSE_INIT_USER_NAME: beauty-moon
+      LANGFUSE_INIT_USER_PASSWORD: beauty-moon
+    restart: unless-stopped
+
 volumes:
   pgdata:
   account-keys:
   workspace-artifacts:
+  # Langfuse(observability profile)
+  langfuse-pgdata:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:
+  langfuse-redis-data:
+

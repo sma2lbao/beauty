@@ -5,6 +5,9 @@
 - **默认零依赖出口**:没配 `OTLP_ENDPOINT` 时不挂导出器——span 只在进程内生成,
   用于日志里的 `trace_id` 串联与本地排查,不产生任何网络请求;
 - 采样:`TRACE_SAMPLE_RATIO`(0~1,默认 0.1)走父级采样,入口决定下游是否采样;
+- **Langfuse(可换后端)**:配置 `LANGFUSE_*` 三件套后,导出目标切换为
+  Langfuse OTLP 端点并挂 baggage 处理器(trace 级属性落到每个 span),
+  见 `common.langfuse` 与 docs/design/langfuse-observability.md;
 - 服务端埋点用 FastAPI 原生 telemetry(FastAPI ≥ 0.143):`create_app` 里把
   `telemetry={"exclude": exclude_telemetry}` 传给 `FastAPI(...)`,探针与指标
   端点不产生 span;出站埋点与 `traceparent` 注入用官方 httpx 插桩;
@@ -30,6 +33,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased, TraceIdRatioBased
 from opentelemetry.trace import SpanContext
 
+from common import langfuse
 from common.config import BaseAppSettings
 from common.logging import get_logger
 from common.metrics import METRICS_PATH
@@ -77,6 +81,8 @@ def _build_provider(
         {
             "service.name": settings.service_name,
             "deployment.environment": settings.env,
+            # OTel semconv 新名;Langfuse 的 environment 过滤优先读它。
+            "deployment.environment.name": settings.env,
             **(
                 {"service.version": settings.sentry_release}
                 if settings.sentry_release
@@ -90,7 +96,18 @@ def _build_provider(
 
     target = exporter
     simple = exporter is not None
-    if target is None and settings.otlp_endpoint:
+    langfuse_target = langfuse.export_target(settings) if target is None else None
+    if langfuse_target is not None:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+
+        endpoint, headers = langfuse_target
+        target = OTLPSpanExporter(endpoint=endpoint, headers=headers)
+        # trace 级属性(session/user/tags)经 baggage 复制到每个 span,否则
+        # Langfuse 上按这些维度过滤会漏 span(官方要求)。
+        provider.add_span_processor(langfuse.LangfuseBaggageSpanProcessor())
+    elif target is None and settings.otlp_endpoint:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,
         )
@@ -125,6 +142,7 @@ def init_tracing(
         log.debug(
             "tracing_initialized",
             otlp=bool(settings.otlp_endpoint),
+            langfuse=langfuse.is_enabled(settings),
             sample_ratio=settings.trace_sample_ratio,
         )
 
