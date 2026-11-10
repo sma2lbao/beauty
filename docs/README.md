@@ -29,6 +29,7 @@
 | [docs/design/admin-plane.md](./design/admin-plane.md)                       | 管理面 RBAC/审计（P0-7：角色源与判定/管理 API/append-only 审计/前端 /admin/验收/残余）                                                                                                                                                        | Lead       | 管理面权限或审计契约变化时 |
 | [docs/design/tool-policy.md](./design/tool-policy.md)                       | 工具策略引擎（P1-A：参数级规则/优先级/会话授权/once-session-always/API 与前端契约/残余）                                                                                                                                                      | Lead       | 策略语义或授权模型变化时   |
 | [docs/design/hooks.md](./design/hooks.md)                                   | 应用级 hooks（P1-B：五挂点/命令协议/端口/失败语义/安全默认关闭/残余）                                                                                                                                                                         | Lead       | hooks 挂点或协议变化时     |
+| [docs/design/recovery.md](./design/recovery.md)                             | 恢复语义（P1-C：墙钟超时/优先级/检查点列表/rewind/fork/状态机与事件/残余）                                                                                                                                                                    | Lead       | 超时、回退或分叉语义变化时 |
 | [docs/design/context-engineering.md](./design/context-engineering.md)       | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）                                                                                                                                                                        | Lead       | 上下文策略或实现变化时     |
 | [docs/design/tool-execution.md](./design/tool-execution.md)                 | 工具执行面设计（exec MVP：契约/审批/截断/审计，含 web_search、todo 分期与对话内写操作确认）                                                                                                                                                   | Lead       | 执行面契约或实施进度变化时 |
 | [docs/design/code-execution.md](./design/code-execution.md)                 | 代码执行面设计(run_code P5:双工具边界/契约/执行路径/审批/审计)                                                                                                                                                                                | Lead       | 代码执行契约变化时         |
@@ -68,6 +69,7 @@
 - 管理面 RBAC 与审计（角色判定 / 管理 API / audit_logs） → [design/admin-plane.md](./design/admin-plane.md)（唯一）
 - 工具策略引擎（参数级规则 / 会话授权 / 三档授权） → [design/tool-policy.md](./design/tool-policy.md)（唯一）
 - 应用级 hooks（PreToolUse/PostToolUse/SessionStart/SessionEnd/PreCompact） → [design/hooks.md](./design/hooks.md)（唯一）
+- 恢复语义（run 墙钟超时 / 优先级 / 检查点列表 / rewind / fork） → [design/recovery.md](./design/recovery.md)（唯一）
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）
