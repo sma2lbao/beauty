@@ -251,6 +251,7 @@ export function conversationsModuleMock() {
       downloadAttachment: vi.fn(),
     },
     streamMessage: vi.fn(),
+    rewriteMessage: vi.fn(),
   };
 }
 
@@ -308,6 +309,12 @@ export async function runsModuleMock() {
       reject: vi.fn(),
       confirm: vi.fn(),
       answerRunQuestion: vi.fn(),
+      // 审批前编辑计划(interaction-closure §3)
+      updatePlan: vi.fn(async () => ({
+        run_id: 'run-1',
+        status: 'awaiting_approval',
+        plan_markdown: '# 执行计划',
+      })),
       artifacts: vi.fn(async () => []),
       downloadArtifact: vi.fn(),
     },

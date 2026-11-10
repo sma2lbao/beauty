@@ -94,6 +94,16 @@ class MessageCreate(BaseModel):
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
+class RewriteMessage(BaseModel):
+    """重写最后一轮(interaction-closure §2.1):content 语义随目标角色变化。
+
+    - 目标 user(编辑重发):content 必填,新正文覆盖原消息并删其后消息;
+    - 目标 assistant(重新生成):content 必须省略/为空,复用前一条 user 消息。
+    """
+
+    content: str | None = Field(default=None, max_length=2000)
+
+
 class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

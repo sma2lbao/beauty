@@ -9,12 +9,35 @@
  * 依赖较重,因此单独作为 "@beauty/console-ui/markdown" 子入口导出,
  * 不进入默认入口的依赖图(桌面端只消费状态基元时不会带入 react-markdown)。
  */
+import type { ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 
 import { cn } from './cn.js';
+import {
+  highlightCode,
+  languageFromClassName,
+  type CodeTokenKind,
+} from './markdown-highlight.js';
+
+/** 高亮 token 的颜色:只用既有 --ha-* 设计令牌对应的工具类。 */
+const TOKEN_CLASS: Record<CodeTokenKind, string | undefined> = {
+  keyword: 'text-ha-accent-soft',
+  string: 'text-ha-success',
+  comment: 'text-ha-faint italic',
+  number: 'text-ha-warning',
+  plain: undefined,
+};
+
+/** 代码块文本可能被 react-markdown 拆成多段 children。 */
+function textOf(children: ReactNode): string {
+  if (typeof children === 'string') return children;
+  if (typeof children === 'number') return String(children);
+  if (Array.isArray(children)) return children.map(textOf).join('');
+  return '';
+}
 
 const COMPONENTS: Components = {
   h1: ({ children }) => (
@@ -75,16 +98,36 @@ const COMPONENTS: Components = {
       </a>
     );
   },
-  code: ({ className, children }) => (
-    <code
-      className={cn(
-        'rounded bg-ha-panel-2 px-1 py-0.5 font-mono text-[12px] text-ha-text-body',
-        className,
-      )}
-    >
-      {children}
-    </code>
-  ),
+  code: ({ className, children }) => {
+    const language = languageFromClassName(className);
+    const text = language ? textOf(children) : '';
+    if (language && text) {
+      const tokens = highlightCode(text, language);
+      return (
+        <code className={className}>
+          {tokens.map((token, index) =>
+            token.kind === 'plain' ? (
+              <span key={index}>{token.text}</span>
+            ) : (
+              <span key={index} className={TOKEN_CLASS[token.kind]}>
+                {token.text}
+              </span>
+            ),
+          )}
+        </code>
+      );
+    }
+    return (
+      <code
+        className={cn(
+          'rounded bg-ha-panel-2 px-1 py-0.5 font-mono text-[12px] text-ha-text-body',
+          className,
+        )}
+      >
+        {children}
+      </code>
+    );
+  },
   pre: ({ children }) => (
     <pre className="my-3 overflow-x-auto rounded-lg border border-ha-border bg-ha-code p-3 font-mono text-[12px] leading-5 text-ha-text-2">
       {children}

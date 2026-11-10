@@ -6,11 +6,38 @@ import { GrantPicker } from '@/components/console/grant-picker';
 import { Markdown } from '@/components/console/markdown';
 import { ConsoleButton, ToneBadge } from '@/components/console/ui';
 import type { ApprovalGrant } from '@/lib/approval-api';
+import { ApiError } from '@/lib/http';
 import { summarizeArguments, type PendingWrite } from '@/lib/presentation';
 import type { Plan, Run, RunStatus } from '@/lib/runs-api';
 
+const PLAN_MAX = 20000;
+
+/** 编辑计划的就地错误:409 状态不对、422 长度不合法等给中文。 */
+function planSaveErrorMessage(failure: unknown): string {
+  if (failure instanceof ApiError) {
+    switch (failure.status) {
+      case 401:
+        return '登录已失效,请重新登录后再试。';
+      case 404:
+        return '任务不存在或已被删除。';
+      case 409:
+        return '当前状态已不允许编辑计划,请刷新后再试。';
+      case 422:
+        return '计划内容需为 1–20000 字。';
+      case 429:
+        return '本月额度已用完,请稍后再试。';
+      default:
+        return failure.message || '保存计划失败,请稍后再试。';
+    }
+  }
+  return failure instanceof Error
+    ? failure.message
+    : '保存计划失败,请稍后再试。';
+}
+
 /**
- * 待审批计划的就地卡片:放行 / 拒绝(附拒绝原因)。
+ * 待审批计划的就地卡片:放行 / 拒绝(附拒绝原因),以及审批前编辑计划
+ * (interaction-closure §3:保存后仍在待审批态,可继续放行/拒绝)。
  */
 export function PlanApprovalCard({
   plan,
@@ -19,6 +46,8 @@ export function PlanApprovalCard({
   onApprove,
   onReject,
   busy,
+  onSavePlan,
+  saveBusy = false,
 }: {
   plan: Plan;
   rejectReason: string;
@@ -26,7 +55,33 @@ export function PlanApprovalCard({
   onApprove: () => void;
   onReject: () => void;
   busy: boolean;
+  /** 审批前编辑计划(不传则隐藏编辑入口);失败由卡片就地展示。 */
+  onSavePlan?: (markdown: string) => Promise<void>;
+  saveBusy?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(plan.plan_markdown);
+  const [editError, setEditError] = useState<string | null>(null);
+  const startEditing = () => {
+    setDraft(plan.plan_markdown);
+    setEditError(null);
+    setEditing(true);
+  };
+  const save = async () => {
+    if (!onSavePlan) return;
+    const markdown = draft.trim();
+    if (!markdown || markdown.length > PLAN_MAX) {
+      setEditError('计划内容需为 1–20000 字。');
+      return;
+    }
+    setEditError(null);
+    try {
+      await onSavePlan(markdown);
+      setEditing(false);
+    } catch (failure) {
+      setEditError(planSaveErrorMessage(failure));
+    }
+  };
   return (
     <div className="rounded-lg border border-ha-warning-border bg-ha-warning-bg/40">
       <div className="flex items-center justify-between gap-3 border-b border-ha-warning-border/60 px-3 py-2.5">
@@ -36,7 +91,23 @@ export function PlanApprovalCard({
         <ToneBadge tone="warning">等待审批</ToneBadge>
       </div>
       <div className="max-h-64 overflow-auto px-3 py-2">
-        {plan.plan_markdown.trim() ? (
+        {editing ? (
+          <div className="flex flex-col gap-1.5">
+            <textarea
+              aria-label="编辑计划内容"
+              value={draft}
+              rows={8}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                setEditError(null);
+              }}
+              className="w-full resize-y rounded-md border border-ha-border-strong bg-ha-panel px-2.5 py-2 font-mono text-[12px] leading-5 text-ha-text-body outline-none focus:border-ha-accent"
+            />
+            <span className="text-right font-mono text-[11px] text-ha-faint">
+              {draft.trim().length}/{PLAN_MAX}
+            </span>
+          </div>
+        ) : plan.plan_markdown.trim() ? (
           <Markdown content={plan.plan_markdown} />
         ) : (
           // 计划正文是异步落库的:planning 阶段取到的空串会被 react-query 先缓存,
@@ -46,29 +117,70 @@ export function PlanApprovalCard({
           </p>
         )}
       </div>
+      {editError ? (
+        <p
+          role="alert"
+          className="px-3 pb-2 font-mono text-[11px] text-ha-danger"
+        >
+          {editError}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 border-t border-ha-warning-border/60 px-3 py-2.5">
-        <ConsoleButton
-          variant="primary"
-          size="sm"
-          onClick={onApprove}
-          disabled={busy}
-        >
-          放行执行
-        </ConsoleButton>
-        <ConsoleButton
-          variant="danger"
-          size="sm"
-          onClick={onReject}
-          disabled={busy}
-        >
-          拒绝计划
-        </ConsoleButton>
-        <input
-          aria-label="拒绝原因"
-          value={rejectReason}
-          onChange={(event) => onRejectReasonChange(event.target.value)}
-          className="h-7 min-w-40 flex-1 rounded-md border border-ha-border-strong bg-ha-panel px-2.5 text-[12px] text-ha-text-body outline-none placeholder:text-ha-dim focus:border-ha-accent"
-        />
+        {editing ? (
+          <>
+            <ConsoleButton
+              variant="primary"
+              size="sm"
+              onClick={() => void save()}
+              disabled={busy || saveBusy}
+            >
+              保存计划
+            </ConsoleButton>
+            <ConsoleButton
+              variant="secondary"
+              size="sm"
+              onClick={() => setEditing(false)}
+              disabled={busy || saveBusy}
+            >
+              取消
+            </ConsoleButton>
+          </>
+        ) : (
+          <>
+            <ConsoleButton
+              variant="primary"
+              size="sm"
+              onClick={onApprove}
+              disabled={busy}
+            >
+              放行执行
+            </ConsoleButton>
+            {onSavePlan ? (
+              <ConsoleButton
+                variant="secondary"
+                size="sm"
+                onClick={startEditing}
+                disabled={busy || saveBusy}
+              >
+                编辑计划
+              </ConsoleButton>
+            ) : null}
+            <ConsoleButton
+              variant="danger"
+              size="sm"
+              onClick={onReject}
+              disabled={busy}
+            >
+              拒绝计划
+            </ConsoleButton>
+            <input
+              aria-label="拒绝原因"
+              value={rejectReason}
+              onChange={(event) => onRejectReasonChange(event.target.value)}
+              className="h-7 min-w-40 flex-1 rounded-md border border-ha-border-strong bg-ha-panel px-2.5 text-[12px] text-ha-text-body outline-none placeholder:text-ha-dim focus:border-ha-accent"
+            />
+          </>
+        )}
       </div>
     </div>
   );

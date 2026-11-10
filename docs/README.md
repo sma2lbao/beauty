@@ -36,6 +36,7 @@
 | [docs/design/web-search.md](./design/web-search.md)                           | web_search 工具契约（P1-L/M3：目录描述/结果信封/tavily·brave 适配/出口校验/错误码/残余）                                                                                                                                                      | Lead       | 搜索契约或提供方变化时     |
 | [docs/design/background-jobs.md](./design/background-jobs.md)                 | 后台任务工具契约（P1-L/M2：job_start·job_output·job_kill/沙箱作业目录/元数据表/lazy 超时/残余）                                                                                                                                               | Lead       | 后台任务语义变化时         |
 | [docs/design/eval-and-cost-dashboard.md](./design/eval-and-cost-dashboard.md) | P1-K 契约：eval harness（用例 schema/断言/报告与基线）+ 平台成本汇总 API + 管理台成本页签                                                                                                                                                     | Lead       | 评测或成本口径变化时       |
+| [docs/design/interaction-closure.md](./design/interaction-closure.md)         | 交互原地闭环（消息重生成/编辑重发 API 与前端 + 会话内计划编辑 + 代码高亮 + 错误边界）                                                                                                                                                         | Lead       | 消息重写语义变化时         |
 | [docs/design/code-execution.md](./design/code-execution.md)                   | 代码执行面设计(run_code P5:双工具边界/契约/执行路径/审批/审计)                                                                                                                                                                                | Lead       | 代码执行契约变化时         |
 | [docs/design/event-taxonomy.md](./design/event-taxonomy.md)                   | 事件分类学契约（thread/turn/item + plan 一等 item）                                                                                                                                                                                           | Lead       | 事件 kind/相位变化时       |
 | [docs/design/subagents.md](./design/subagents.md)                             | 子代理委派(P1-E):run 树/spawn_subagent/过程项 kind=subagent/用量投影                                                                                                                                                                          | Lead       | 子代理契约变化时           |
@@ -81,6 +82,7 @@
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）
 - 评测与成本看板（eval harness 用例/断言/基线 / 平台成本聚合口径） → [design/eval-and-cost-dashboard.md](./design/eval-and-cost-dashboard.md)（唯一）
+- 消息重写与交互闭环（重生成/编辑重发的最后一轮语义 / 计划编辑 / 高亮 / 错误边界） → [design/interaction-closure.md](./design/interaction-closure.md)（唯一）
 - Agent 行为契约 → 根 [AGENTS.md](../AGENTS.md)
 - 历史分析全部在 [archive/](./archive/)，不再更新、不作为依据
 - 每波重构结束时检查一次是否存在"双真源"（playbook §12.3）

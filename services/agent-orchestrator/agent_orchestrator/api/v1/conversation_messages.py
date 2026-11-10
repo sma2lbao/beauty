@@ -36,6 +36,7 @@ from agent_orchestrator.schemas.conversations import (
     MessageCreate,
     MessagePostResult,
     MessageRead,
+    RewriteMessage,
 )
 from agent_orchestrator.schemas.runs import RunRead
 from agent_orchestrator.services import conversations as conversations_service
@@ -253,6 +254,72 @@ async def stream_message(
                 settings=settings,
                 context_pipeline=context_pipeline,
                 model=body.model,
+            )
+        ),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@router.post("/{conversation_id}/messages/{message_id}/rewrite")
+async def rewrite_message(
+    body: RewriteMessage,
+    conversation_id: str,
+    message_id: str,
+    request: Request,
+    account_id: AccountId,
+    graph: RunGraph,
+    llm: LLM,
+    settings: SettingsDep,
+    skills: SkillsDep,
+    toolkit_factory: ToolkitFactory,
+    tool_extras_factory: ToolExtrasFactory,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
+    context_pipeline: ContextPipelineDep,
+) -> StreamingResponse:
+    """编辑重发 / 重新生成最后一轮(interaction-closure §2.1)。
+
+    帧序列与 /messages/stream 完全一致(meta → delta/tool → done/error);
+    校验(404/409/422)与配额闸(429)都在开流前完成——SSE 一旦 200 就只能发
+    错误帧,所以"最后一轮 / 活跃 run / content 规则"必须先判掉。
+    """
+    # P0-2 配额闸必须在开流前:超限只能 429,不能开流后再发错误帧
+    await run_quota.enforce_monthly_quota(account_id)
+    container = get_container(request)
+    assert container.session_factory is not None
+    factory = container.session_factory
+    # 只读预检与 stream_rewrite 复用同一份判定,不会出现两套口径
+    await conversations_service.precheck_rewrite(
+        factory,
+        account_id,
+        conversation_id,
+        message_id,
+        body.content,
+        skills=skills,
+        settings=settings,
+    )
+    return StreamingResponse(
+        _message_frames(
+            conversations_service.stream_rewrite(
+                factory,
+                graph,
+                llm,
+                account_id,
+                conversation_id,
+                message_id,
+                body.content,
+                skills=skills,
+                jobs_enabled=settings.jobs_enabled,
+                toolkit_factory=toolkit_factory,
+                extras_factory=tool_extras_factory,
+                store=store,
+                workspace=workspace,
+                downloader=downloader,
+                max_download_files=settings.artifact_download_max_files,
+                settings=settings,
+                context_pipeline=context_pipeline,
             )
         ),
         media_type="text/event-stream",

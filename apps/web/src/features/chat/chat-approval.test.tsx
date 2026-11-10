@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatPage } from '@/pages/chat';
 
 import { conversationsApi } from '@/lib/conversations-api';
+import { ApiError } from '@/lib/http';
 import { queryKeys } from '@/lib/query-keys';
 import { runsApi } from '@/lib/runs-api';
 
@@ -313,5 +314,84 @@ describe('ChatPage 消息、审批与交付物', () => {
     );
     expect(await screen.findByText('本周周报.md')).toBeInTheDocument();
     expect(await screen.findByText('report.pdf')).toBeInTheDocument();
+  });
+});
+
+describe('PlanApprovalCard 审批前编辑计划(interaction-closure §3)', () => {
+  function seedPlan(): void {
+    setRunEvents([
+      event(1, 'token.delta.v1', { text: '# 执行计划', phase: 'plan' }),
+    ]);
+    vi.mocked(runsApi.getPlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 执行计划',
+    });
+  }
+
+  it('编辑计划:textarea 预填正文,保存调 PATCH /plan 并收起编辑态', async () => {
+    seedPlan();
+    vi.mocked(runsApi.updatePlan).mockResolvedValue({
+      run_id: 'run-1',
+      status: 'awaiting_approval',
+      plan_markdown: '# 改过的计划',
+    });
+    renderPage('/?conversation=c1');
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑计划' }));
+    const textarea = screen.getByLabelText('编辑计划内容');
+    expect(textarea).toHaveValue('# 执行计划');
+
+    fireEvent.change(textarea, { target: { value: '# 改过的计划' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存计划' }));
+
+    await waitFor(() =>
+      expect(runsApi.updatePlan).toHaveBeenCalledWith('run-1', '# 改过的计划'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText('编辑计划内容')).toBeNull(),
+    );
+    // 保存后仍在待审批:放行/拒绝与「编辑计划」入口都在
+    expect(
+      await screen.findAllByRole('button', { name: '放行执行' }),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getByRole('button', { name: '编辑计划' }),
+    ).toBeInTheDocument();
+  });
+
+  it('409 保存失败就地中文提示,保持编辑态可重试', async () => {
+    seedPlan();
+    vi.mocked(runsApi.updatePlan).mockRejectedValueOnce(
+      new ApiError(409, 'run.invalid_state', '状态不允许'),
+    );
+    renderPage('/?conversation=c1');
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑计划' }));
+    fireEvent.change(screen.getByLabelText('编辑计划内容'), {
+      target: { value: '# 改过的计划' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存计划' }));
+
+    expect(
+      await screen.findByText('当前状态已不允许编辑计划,请刷新后再试。'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('编辑计划内容')).toBeInTheDocument();
+  });
+
+  it('空内容不提交请求,就地提示长度要求', async () => {
+    seedPlan();
+    renderPage('/?conversation=c1');
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑计划' }));
+    fireEvent.change(screen.getByLabelText('编辑计划内容'), {
+      target: { value: '   ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存计划' }));
+
+    expect(
+      await screen.findByText('计划内容需为 1–20000 字。'),
+    ).toBeInTheDocument();
+    expect(runsApi.updatePlan).not.toHaveBeenCalled();
   });
 });

@@ -8,10 +8,10 @@
  */
 
 import { authHeaders } from '@/lib/auth';
+import { streamTurn } from '@/lib/conversation-stream';
 import { ApiError, createHttpClient } from '@/lib/http';
-import { connectSse, parseSseFrameText } from '@/lib/sse';
 import type { Run } from '@/lib/runs-api';
-import { toolCallMetaFrom, type ToolCallMeta } from '@/lib/tool-meta';
+import type { ToolCallMeta } from '@/lib/tool-meta';
 import { runsBase as BASE } from '@/config/env';
 
 export type Conversation = {
@@ -287,21 +287,7 @@ export type StreamMessageHandlers = {
   onError?: (error: { code: string; message: string }) => void;
   signal?: AbortSignal;
 };
-
-/** 解析一个具名 SSE 帧:`event: 名字` + `data: JSON`。 */
-export function parseSseFrame(
-  frame: string,
-): [string, Record<string, unknown>] | null {
-  const parsed = parseSseFrameText(frame);
-  if (!parsed?.event || !parsed.data) {
-    return null;
-  }
-  try {
-    return [parsed.event, JSON.parse(parsed.data) as Record<string, unknown>];
-  } catch {
-    return null;
-  }
-}
+export { parseSseFrame } from '@/lib/conversation-stream';
 
 /**
  * 流式发消息:模型边产出边回调 onDelta,页面据此增量渲染。
@@ -320,80 +306,49 @@ export async function streamMessage(
   mcpServerIds: string[] = [],
   model?: string,
 ): Promise<void> {
-  await connectSse(
+  await streamTurn(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
+    JSON.stringify({
+      content,
+      mode,
+      attachment_ids: attachmentIds,
+      skill_id: skillId,
+      // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
+      mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
+      // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
+      model: model ?? undefined,
+    }),
+    handlers,
     {
-      method: 'POST',
-      body: JSON.stringify({
-        content,
-        mode,
-        attachment_ids: attachmentIds,
-        skill_id: skillId,
-        // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
-        mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
-        // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
-        model: model ?? undefined,
-      }),
-      signal: handlers.signal,
-      mapError: async (response) => {
-        // HTTP 层已是 200 但没流式内容;或开流前失败(404/409/422)。
-        if (response.ok) {
-          return new ApiError(
-            response.status,
-            'stream_failed',
-            '响应没有流式内容',
-          );
-        }
-        let code = 'stream_failed';
-        let message = `发送失败(${response.status})`;
-        try {
-          const body = (await response.json()) as {
-            code?: string;
-            message?: string;
-          };
-          code = body.code ?? code;
-          message = body.message ?? message;
-        } catch {
-          // 非 JSON 错误体:保留兜底文案
-        }
-        return new ApiError(response.status, code, message);
-      },
-      onFrame: (frame) => {
-        // 复用既有帧解析器,保持「具名事件 + JSON data」的帧语义不变。
-        const parsed = parseSseFrame(frame.raw);
-        if (!parsed) {
-          return;
-        }
-        const [name, data] = parsed;
-        if (name === 'meta') {
-          handlers.onMeta?.(
-            data as Parameters<NonNullable<StreamMessageHandlers['onMeta']>>[0],
-          );
-        } else if (name === 'delta') {
-          handlers.onDelta?.(typeof data.text === 'string' ? data.text : '');
-        } else if (name === 'tool') {
-          if (typeof data.name === 'string') {
-            handlers.onTool?.({
-              name: data.name,
-              arguments:
-                typeof data.arguments === 'string' ? data.arguments : '',
-              ok: data.ok !== false,
-              ...toolCallMetaFrom(data),
-            });
-          }
-        } else if (name === 'done') {
-          handlers.onDone?.(
-            data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
-          );
-        } else if (name === 'error') {
-          handlers.onError?.({
-            code:
-              typeof data.code === 'string' ? data.code : 'llm.upstream_error',
-            message:
-              typeof data.message === 'string' ? data.message : '模型调用失败',
-          });
-        }
-      },
+      code: 'stream_failed',
+      emptyMessage: '响应没有流式内容',
+      failureMessage: (status) => `发送失败(${status})`,
+    },
+  );
+}
+
+/**
+ * 重写会话的最后一轮消息(interaction-closure §2.1):
+ * - 传 content = 编辑重发:服务端覆盖该 user 消息正文、删掉其后的消息再重跑本轮;
+ * - 不传 content = 重新生成:服务端删掉该 assistant 消息,复用前一条 user 消息。
+ *
+ * 响应同为 SSE,帧与 streamMessage 完全一致(meta/delta/tool/done/error)。
+ */
+export async function rewriteMessage(
+  conversationId: string,
+  messageId: string,
+  handlers: StreamMessageHandlers,
+  content?: string,
+): Promise<void> {
+  await streamTurn(
+    `${BASE}/api/v1/conversations/${conversationId}/messages/${messageId}/rewrite`,
+    // content 省略时不落键:assistant 目标要求 content 为 null(否则 422)
+    JSON.stringify(content === undefined ? {} : { content }),
+    handlers,
+    {
+      code: 'conversation.rewrite_failed',
+      emptyMessage: '响应没有流式内容',
+      failureMessage: (status) => `重写失败(${status})`,
     },
   );
 }

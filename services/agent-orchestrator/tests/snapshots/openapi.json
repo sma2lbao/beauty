@@ -2532,6 +2532,25 @@
         "title": "RewindRequest",
         "type": "object"
       },
+      "RewriteMessage": {
+        "description": "重写最后一轮(interaction-closure §2.1):content 语义随目标角色变化。\n\n- 目标 user(编辑重发):content 必填,新正文覆盖原消息并删其后消息;\n- 目标 assistant(重新生成):content 必须省略/为空,复用前一条 user 消息。",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          }
+        },
+        "title": "RewriteMessage",
+        "type": "object"
+      },
       "RunAnswerRead": {
         "description": "answer API 的 202 响应:接受后返回 run 快照(幂等成功也回 202)。",
         "properties": {
@@ -4966,6 +4985,96 @@
           }
         },
         "summary": "Stream Message",
+        "tags": ["conversations"]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages/{message_id}/rewrite": {
+      "post": {
+        "description": "编辑重发 / 重新生成最后一轮(interaction-closure §2.1)。\n\n帧序列与 /messages/stream 完全一致(meta → delta/tool → done/error);\n校验(404/409/422)与配额闸(429)都在开流前完成——SSE 一旦 200 就只能发\n错误帧,所以\"最后一轮 / 活跃 run / content 规则\"必须先判掉。",
+        "operationId": "rewrite_message_api_v1_conversations__conversation_id__messages__message_id__rewrite_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewriteMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewrite Message",
         "tags": ["conversations"]
       }
     },

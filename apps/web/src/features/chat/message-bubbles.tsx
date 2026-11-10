@@ -4,6 +4,7 @@
  * 附件下载:点击即流式取回 blob 触发浏览器下载,失败静默(可重点)。
  */
 import { FileText, Plug, Sparkles } from 'lucide-react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { Markdown } from '@/components/console/markdown';
@@ -12,19 +13,39 @@ import { conversationsApi } from '@/lib/conversations-api';
 import { clockTime, runMetaLine } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 
+import { EditMessageForm, MessageActionRow } from './message-actions';
+
+/** 最后一轮消息才挂上的操作(编辑重发 / 重新生成),busy 时全部禁用。 */
+export type MessageRewriteActions = {
+  busy: boolean;
+  error: string | null;
+  /** user 消息:编辑后重发(内容必填)。 */
+  onEdit?: (content: string) => void;
+  /** assistant 消息:重新生成(无内容)。 */
+  onRegenerate?: () => void;
+};
+
 export function UserBlock({
   text,
   createdAt,
   attachments = [],
   mcpServers = [],
+  actions,
 }: {
   text: string;
   createdAt?: string;
   attachments?: Attachment[];
   mcpServers?: { id: string; name: string }[];
+  /** 仅最后一轮用户消息传入:复制 / 编辑重发,就地 textarea 与错误。 */
+  actions?: {
+    busy: boolean;
+    error: string | null;
+    onResend: (content: string) => void;
+  };
 }) {
+  const [editing, setEditing] = useState(false);
   return (
-    <article>
+    <article className="group">
       <header className="flex items-center gap-2">
         <span className="text-[11px] font-semibold text-ha-dim">你</span>
         {createdAt ? (
@@ -33,9 +54,22 @@ export function UserBlock({
           </span>
         ) : null}
       </header>
-      <p className="mt-2 whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-body">
-        {text}
-      </p>
+      {editing && actions ? (
+        <EditMessageForm
+          initial={text}
+          busy={actions.busy}
+          error={actions.error}
+          onCancel={() => setEditing(false)}
+          onSubmit={(content) => {
+            setEditing(false);
+            actions.onResend(content);
+          }}
+        />
+      ) : (
+        <p className="mt-2 whitespace-pre-wrap text-[14px] leading-[23px] text-ha-text-body">
+          {text}
+        </p>
+      )}
       {mcpServers.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {mcpServers.map((server) => (
@@ -67,6 +101,14 @@ export function UserBlock({
           ))}
         </div>
       ) : null}
+      {actions ? (
+        <MessageActionRow
+          text={text}
+          busy={actions.busy}
+          error={editing ? null : actions.error}
+          onEditResend={() => setEditing(true)}
+        />
+      ) : null}
     </article>
   );
 }
@@ -95,15 +137,22 @@ export function AgentBlock({
   live = false,
   badge,
   children,
+  actions,
 }: {
   meta: string;
   live?: boolean;
   /** 头部附加标签(如任务阶段),与 meta 同行展示。 */
   badge?: ReactNode;
   children: string;
+  /** 仅最后一条 assistant 消息传入:复制 / 重新生成。 */
+  actions?: {
+    busy: boolean;
+    error: string | null;
+    onRegenerate: () => void;
+  };
 }) {
   return (
-    <article className="flex flex-col gap-3">
+    <article className="group flex flex-col gap-3">
       <header className="flex items-center gap-2">
         <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[#1f2333]">
           <Sparkles className="h-3 w-3 text-ha-accent-soft" />
@@ -115,6 +164,14 @@ export function AgentBlock({
         {badge}
       </header>
       <Markdown content={children} streaming={live} />
+      {actions ? (
+        <MessageActionRow
+          text={children}
+          busy={actions.busy}
+          error={actions.error}
+          onRegenerate={actions.onRegenerate}
+        />
+      ) : null}
     </article>
   );
 }
@@ -125,12 +182,15 @@ export function MessageBlock({
   steps,
   attachments,
   mcpCatalog = [],
+  rewrite,
 }: {
   message: ChatMessage;
   run?: Run;
   steps?: number;
   attachments?: Attachment[];
   mcpCatalog?: { id: string; name: string }[];
+  /** 最后一轮消息的操作(编辑重发/重新生成);其余消息不传。 */
+  rewrite?: MessageRewriteActions;
 }) {
   if (message.role === 'user') {
     // 消息只存 id;名字用当前 server 列表映射,列表里没有(已删除)则退回 id
@@ -144,6 +204,15 @@ export function MessageBlock({
         createdAt={message.created_at}
         attachments={attachments}
         mcpServers={mcpServers}
+        actions={
+          rewrite?.onEdit
+            ? {
+                busy: rewrite.busy,
+                error: rewrite.error,
+                onResend: rewrite.onEdit,
+              }
+            : undefined
+        }
       />
     );
   }
@@ -153,5 +222,20 @@ export function MessageBlock({
       : run
         ? runMetaLine(run)
         : 'beauty moon Agent';
-  return <AgentBlock meta={meta}>{message.content}</AgentBlock>;
+  return (
+    <AgentBlock
+      meta={meta}
+      actions={
+        rewrite?.onRegenerate
+          ? {
+              busy: rewrite.busy,
+              error: rewrite.error,
+              onRegenerate: rewrite.onRegenerate,
+            }
+          : undefined
+      }
+    >
+      {message.content}
+    </AgentBlock>
+  );
 }

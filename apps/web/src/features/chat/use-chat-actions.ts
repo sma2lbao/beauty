@@ -64,6 +64,28 @@ export function useChatActions(activeRunId: string | null) {
   const updateModel = (conversationId: string, model: string | null) =>
     modelMutation.mutate({ conversationId, model });
 
+  /**
+   * 审批前编辑计划(interaction-closure §3):PATCH 已存在的 /plan 端点,
+   * 成功后失效 plan/run/会话列表;失败由审批卡就地展示(不弹全局错误条)。
+   */
+  const planMutation = useMutation({
+    mutationFn: (input: { runId: string; planMarkdown: string }) =>
+      runsApi.updatePlan(input.runId, input.planMarkdown),
+    onSuccess: async (_plan, input) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.plan(input.runId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.run(input.runId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+      ]);
+    },
+  });
+  const savePlan = async (
+    runId: string,
+    planMarkdown: string,
+  ): Promise<void> => {
+    await planMutation.mutateAsync({ runId, planMarkdown });
+  };
+
   return {
     busy: action.isPending,
     error: action.error ?? modelMutation.error,
@@ -74,6 +96,9 @@ export function useChatActions(activeRunId: string | null) {
     confirmDanger,
     answerQuestion,
     updateModel,
+    savePlan,
+    planBusy: planMutation.isPending,
+    planError: planMutation.error,
   };
 }
 

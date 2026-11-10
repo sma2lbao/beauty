@@ -53,4 +53,31 @@ describe('Markdown', () => {
     rerender(<Markdown content="" streaming />);
     expect(screen.getByText('正在回答…')).toBeInTheDocument();
   });
+  it('围栏代码块按语言高亮关键字/字符串/注释', () => {
+    const fence = String.fromCharCode(96).repeat(3);
+    const { container } = render(
+      <Markdown
+        content={[fence + 'ts', "const a = 'hi';", '// note', fence].join('\n')}
+      />,
+    );
+
+    expect(container.querySelector('.text-ha-accent-soft')?.textContent).toBe(
+      'const',
+    );
+    expect(container.querySelector('.text-ha-success')?.textContent).toBe(
+      "'hi'",
+    );
+    expect(container.querySelector('.text-ha-faint')?.textContent).toContain(
+      '// note',
+    );
+  });
+
+  it('未知语言代码块原样渲染,不产生高亮片段', () => {
+    const fence = String.fromCharCode(96).repeat(3);
+    const { container } = render(
+      <Markdown content={[fence + 'sql', 'select 1;', fence].join('\n')} />,
+    );
+    expect(container.querySelector('.text-ha-accent-soft')).toBeNull();
+    expect(container.textContent).toContain('select 1;');
+  });
 });

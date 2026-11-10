@@ -72,6 +72,21 @@ export function ChatMessageList({
     changeNewSessionWorkspace,
   } = queries;
 
+  // 交互闭环(§2.2)只开放最后一轮:最后一条 user 可编辑重发,最后一条
+  // assistant 可重新生成;其余历史消息不挂操作行。
+  const lastMessageIndex = messages.length - 1;
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  const rewriteErrorFor = (messageId: string): string | null =>
+    stream.visibleRewriteError?.messageId === messageId
+      ? stream.visibleRewriteError.text
+      : null;
+
   const bottomRef = useMessageListScroll({
     messagesCount: messages.length,
     eventLinesCount: eventLines.length,
@@ -97,22 +112,48 @@ export function ChatMessageList({
           onSuggestion={(suggestion) => void stream.sendStreaming(suggestion)}
         />
 
-        {messages.map((message) => (
-          <MessageBlock
-            key={message.id}
-            message={message}
-            attachments={attachmentsByMessage.get(message.id)}
-            run={
-              message.run_id && message.run_id === activeRunId ? run : undefined
-            }
-            steps={
-              message.run_id && message.run_id === activeRunId
-                ? toolCalls.length
-                : 0
-            }
-            mcpCatalog={mcpCatalog}
-          />
-        ))}
+        {messages.map((message, index) => {
+          const error = rewriteErrorFor(message.id);
+          const lastUserText = messages[lastUserIndex]?.content ?? '';
+          const rewrite =
+            index === lastUserIndex && lastUserIndex >= 0
+              ? {
+                  busy: stream.sending,
+                  error,
+                  onEdit: (content: string) =>
+                    void stream.rewrite(message.id, content, content),
+                }
+              : index === lastMessageIndex && message.role === 'assistant'
+                ? {
+                    busy: stream.sending,
+                    error,
+                    onRegenerate: () =>
+                      void stream.rewrite(
+                        message.id,
+                        lastUserText || message.content,
+                      ),
+                  }
+                : undefined;
+          return (
+            <MessageBlock
+              key={message.id}
+              message={message}
+              attachments={attachmentsByMessage.get(message.id)}
+              run={
+                message.run_id && message.run_id === activeRunId
+                  ? run
+                  : undefined
+              }
+              steps={
+                message.run_id && message.run_id === activeRunId
+                  ? toolCalls.length
+                  : 0
+              }
+              mcpCatalog={mcpCatalog}
+              rewrite={rewrite}
+            />
+          );
+        })}
 
         {pending ? <ChatPendingBlock pending={pending} /> : null}
 
@@ -207,6 +248,8 @@ export function ChatMessageList({
             onApprove={() => actions.approve(run.id)}
             onReject={() => actions.rejectPlan(run.id)}
             busy={actions.busy}
+            onSavePlan={(markdown) => actions.savePlan(run.id, markdown)}
+            saveBusy={actions.planBusy}
           />
         ) : null}
 

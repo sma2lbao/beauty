@@ -3,6 +3,7 @@ import { Outlet, Route, Routes } from 'react-router';
 
 import { AuthGuard } from '@/components/auth-guard';
 import { ConsoleLayout } from '@/components/console/console-layout';
+import { ErrorBoundary } from '@/components/error-boundary';
 import { ExternalRedirect } from '@/components/external-redirect';
 import { SiteLayout } from '@/components/layout/site-layout';
 import { RouteFallback } from '@/components/route-fallback';
@@ -67,51 +68,57 @@ const AdminPage = lazy(() =>
 
 export function App() {
   return (
-    <Routes>
-      {/* 公开页:登录/回调/官网/关于 */}
-      <Route path="login" element={<LoginPage />} />
-      <Route path="callback" element={<CallbackPage />} />
-      {/* 官网已迁到 apps/site;旧深链兼容跳转,不再维护第二份 Landing */}
-      <Route path="landing" element={<ExternalRedirect to={siteUrl('/')} />} />
-      <Route element={<SiteLayout />}>
-        <Route path="about" element={<AboutPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
+    // 渲染异常只替换出错区域,控制台外壳(侧栏/顶栏)保留
+    <ErrorBoundary>
+      <Routes>
+        {/* 公开页:登录/回调/官网/关于 */}
+        <Route path="login" element={<LoginPage />} />
+        <Route path="callback" element={<CallbackPage />} />
+        {/* 官网已迁到 apps/site;旧深链兼容跳转,不再维护第二份 Landing */}
+        <Route
+          path="landing"
+          element={<ExternalRedirect to={siteUrl('/')} />}
+        />
+        <Route element={<SiteLayout />}>
+          <Route path="about" element={<AboutPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
 
-      {/* OAuth 2.1 授权页:登录门 + 独立布局 */}
-      <Route element={<AuthGuard />}>
-        <Route path="oauth/authorize" element={<OAuthAuthorizePage />} />
-      </Route>
-
-      {/* 控制台:登录门(§10)+ 侧边栏骨架 */}
-      <Route element={<ConsoleLayout />}>
+        {/* OAuth 2.1 授权页:登录门 + 独立布局 */}
         <Route element={<AuthGuard />}>
-          {/* Suspense 放在骨架内层:切页时侧栏/顶栏保持,仅主区域出骨架 */}
-          <Route
-            element={
-              <Suspense fallback={<RouteFallback />}>
-                <Outlet />
-              </Suspense>
-            }
-          >
-            <Route index element={<ChatPage />} />
-            <Route path="runs" element={<RunsPage />} />
-            <Route path="changes" element={<ChangesPage />} />
-            {/* MCP 入口已并入「连接器」页;这条路由保留给旧书签与 OAuth 兜底回跳 */}
-            <Route path="mcp" element={<McpPage />} />
-            <Route path="connectors" element={<ConnectorsPage />} />
-            <Route path="knowledge" element={<KnowledgePage />} />
-            <Route path="memory" element={<MemoryPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="skills" element={<SkillsPage />} />
-            <Route path="usage" element={<UsagePage />} />
-            <Route path="workspace" element={<WorkspacePage />} />
-            <Route path="outbox" element={<OutboxPage />} />
-            {/* 管理台入口在导航里按 me.role 过滤;非管理员直达由页面内闸门兜底 */}
-            <Route path="admin" element={<AdminPage />} />
+          <Route path="oauth/authorize" element={<OAuthAuthorizePage />} />
+        </Route>
+
+        {/* 控制台:登录门(§10)+ 侧边栏骨架 */}
+        <Route element={<ConsoleLayout />}>
+          <Route element={<AuthGuard />}>
+            {/* Suspense 放在骨架内层:切页时侧栏/顶栏保持,仅主区域出骨架 */}
+            <Route
+              element={
+                <Suspense fallback={<RouteFallback />}>
+                  <Outlet />
+                </Suspense>
+              }
+            >
+              <Route index element={<ChatPage />} />
+              <Route path="runs" element={<RunsPage />} />
+              <Route path="changes" element={<ChangesPage />} />
+              {/* MCP 入口已并入「连接器」页;这条路由保留给旧书签与 OAuth 兜底回跳 */}
+              <Route path="mcp" element={<McpPage />} />
+              <Route path="connectors" element={<ConnectorsPage />} />
+              <Route path="knowledge" element={<KnowledgePage />} />
+              <Route path="memory" element={<MemoryPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="skills" element={<SkillsPage />} />
+              <Route path="usage" element={<UsagePage />} />
+              <Route path="workspace" element={<WorkspacePage />} />
+              <Route path="outbox" element={<OutboxPage />} />
+              {/* 管理台入口在导航里按 me.role 过滤;非管理员直达由页面内闸门兜底 */}
+              <Route path="admin" element={<AdminPage />} />
+            </Route>
           </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </ErrorBoundary>
   );
 }

@@ -8,8 +8,10 @@ import type {
   StreamMessageHandlers,
 } from '@/lib/conversations-api';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
-import { queryKeys } from '@/lib/query-keys';
 import type { ToolCallMeta } from '@/lib/tool-meta';
+
+import { createChatStreamHandlers, type ChatToolEvent } from './stream-handlers';
+import { useChatRewrite } from './use-chat-rewrite';
 
 /** 会话内只读工具调用(由 SSE tool 帧流式累积;P1 富字段全部可缺省)。 */
 export type ChatToolCall = {
@@ -43,6 +45,8 @@ export type ChatToolConfirmation = {
 type UseChatStreamOptions = {
   activeConversationId: string | null;
   activeWorkspaceId: string | null;
+  /** 当前 run 的 id:重写成功后失效它(切会话/切 run 由页面传最新值)。 */
+  activeRunId: string | null;
   sendMode: SendMode;
   selectedSkill: string;
   selectedMcp: string;
@@ -64,6 +68,7 @@ type UseChatStreamOptions = {
 export function useChatStream({
   activeConversationId,
   activeWorkspaceId,
+  activeRunId,
   sendMode,
   selectedSkill,
   selectedMcp,
@@ -149,13 +154,58 @@ export function useChatStream({
       streamError.conversationId === '')
       ? streamError.error
       : null;
-
   const settle = async (conversationId: string) => {
     await settleConversation(conversationId);
     setPending((previous) =>
       previous && previous.conversationId === conversationId ? null : previous,
     );
   };
+
+  /**
+   * tool 帧:待确认的写工具常驻(同一 confirmation 只登记一次,避免重连重放
+   * 出现两张确认卡),其余只读工具进临时气泡的流水。
+   */
+  const appendToolEvent = (
+    conversationId: string,
+    call: ChatToolEvent,
+  ): void => {
+    if (call.confirmationId) {
+      setToolConfirmations((previous) =>
+        previous.some(
+          (item) =>
+            item.conversationId === conversationId &&
+            item.call.confirmationId === call.confirmationId,
+        )
+          ? previous
+          : [...previous, { conversationId, call }],
+      );
+      return;
+    }
+    setPending((previous) =>
+      previous && previous.conversationId === conversationId
+        ? { ...previous, chatTools: [...previous.chatTools, call] }
+        : previous,
+    );
+  };
+
+  // 编辑重发/重新生成:错误与流处理抽在 useChatRewrite(本文件守 400 行上限)
+  const { rewrite, rewriteFailure } = useChatRewrite({
+    activeConversationId,
+    activeRunId,
+    sending,
+    queryClient,
+    setManualRun,
+    settle,
+    setPending,
+    appendToolEvent,
+    setStreamError,
+    setSending,
+    abortRef,
+  });
+  const visibleRewriteError =
+    rewriteFailure && rewriteFailure.conversationId === activeConversationId
+      ? rewriteFailure
+      : null;
 
   const uploadAttachments = async (files: FileList | null) => {
     if (!files?.length || !activeConversationId) return;
@@ -218,58 +268,27 @@ export function useChatStream({
         chatTools: [],
       });
       const streamHandlers: StreamMessageHandlers = {
-        signal: controller.signal,
-        onMeta: (meta) => {
-          if (meta.run) {
-            setManualRun({
+        ...createChatStreamHandlers({
+          conversationId: targetConversationId,
+          queryClient,
+          onRun: setManualRun,
+          onDelta: (delta) =>
+            setPending((previous) =>
+              previous && previous.conversationId === targetConversationId
+                ? { ...previous, reply: previous.reply + delta }
+                : previous,
+            ),
+          onTool: (call) => appendToolEvent(targetConversationId, call),
+          onDone: () => void settle(targetConversationId),
+          onError: (failure) => {
+            setStreamError({
               conversationId: targetConversationId,
-              runId: meta.run.id,
+              error: new Error(failure.message),
             });
-          }
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.conversations,
-          });
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.conversation(targetConversationId),
-          });
-        },
-        onDelta: (delta) =>
-          setPending((previous) =>
-            previous && previous.conversationId === targetConversationId
-              ? { ...previous, reply: previous.reply + delta }
-              : previous,
-          ),
-        onTool: (call) => {
-          // 需要人工确认的写工具:粘在会话上常驻(见 ChatToolConfirmation)。
-          // 同一 confirmation_id 只登记一次,避免重连/重放时出现两张确认卡。
-          if (call.confirmationId) {
-            setToolConfirmations((previous) =>
-              previous.some(
-                (item) =>
-                  item.conversationId === targetConversationId &&
-                  item.call.confirmationId === call.confirmationId,
-              )
-                ? previous
-                : [...previous, { conversationId: targetConversationId, call }],
-            );
-            return;
-          }
-          setPending((previous) =>
-            previous && previous.conversationId === targetConversationId
-              ? { ...previous, chatTools: [...previous.chatTools, call] }
-              : previous,
-          );
-        },
-        onDone: () => {
-          void settle(targetConversationId);
-        },
-        onError: (failure) => {
-          setStreamError({
-            conversationId: targetConversationId,
-            error: new Error(failure.message),
-          });
-          void settle(targetConversationId);
-        },
+            void settle(targetConversationId);
+          },
+        }),
+        signal: controller.signal,
       };
       const attachmentIds = selectedAttachments.map(
         (attachment) => attachment.id,
@@ -338,6 +357,8 @@ export function useChatStream({
     visibleConfirmations,
     visibleError,
     sendStreaming,
+    rewrite,
+    visibleRewriteError,
   };
 }
 

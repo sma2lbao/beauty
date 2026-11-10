@@ -74,6 +74,8 @@ export function ChatPage() {
   const stream = useChatStream({
     activeConversationId,
     activeWorkspaceId: queries.activeWorkspaceId,
+    // 编辑重发/重新生成成功后要失效「当前 run」:旧的 run 可能被新的一轮替换
+    activeRunId: queries.activeRunId,
     sendMode,
     selectedSkill,
     selectedMcp,

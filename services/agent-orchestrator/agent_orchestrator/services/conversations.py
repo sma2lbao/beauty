@@ -87,7 +87,13 @@ from agent_orchestrator.services.conversations_messages import (
     post_message as post_message,
 )
 from agent_orchestrator.services.conversations_messages import (
+    precheck_rewrite as precheck_rewrite,
+)
+from agent_orchestrator.services.conversations_messages import (
     stream_message as stream_message,
+)
+from agent_orchestrator.services.conversations_messages import (
+    stream_rewrite as stream_rewrite,
 )
 from agent_orchestrator.services.conversations_persist import (
     DEFAULT_TITLE as DEFAULT_TITLE,
@@ -215,6 +221,7 @@ __all__ = [
     "list_messages",
     "logger",
     "post_message",
+    "precheck_rewrite",
     "rename_conversation",
     "require_conversation",
     "resolve_message_target",
@@ -223,6 +230,7 @@ __all__ = [
     "set_archived",
     "set_model",
     "stream_message",
+    "stream_rewrite",
     "title_from_message",
 ]
 
