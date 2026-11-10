@@ -112,6 +112,21 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             **common,
         )
         return
+    if kind == "rewind":
+        # 回退重跑(P1-C §6):API 侧已把状态推回 running 并落事件,这里只执行
+        await runs_service.rewind_run(
+            session,
+            graph,
+            job.account_id,
+            job.run_id,
+            str(payload.get("checkpoint_id") or ""),
+            store=container.artifact_store,
+            workspace=container.workspace_client,
+            emit_rewound=False,
+            from_job=True,
+            **common,
+        )
+        return
     if kind == "reject":
         await runs_service.reject_run(
             session,

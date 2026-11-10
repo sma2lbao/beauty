@@ -65,6 +65,9 @@ from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.memory_sweeper import (
     start_sweeper as start_memory_sweeper,
 )
+from agent_orchestrator.services.run_timeout_sweeper import (
+    start_sweeper as start_run_timeout_sweeper,
+)
 from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
@@ -136,6 +139,8 @@ class AppContainer(
         self.run_graph = None
         self.worker_task: asyncio.Task[None] | None = None
         self.interrupt_task: asyncio.Task[None] | None = None
+        # P1-C:run 执行超时 sweeper(独立于中断超时,按总时长兜底 failed)
+        self.run_timeout_task: asyncio.Task[None] | None = None
         self.memory_sweep_task: asyncio.Task[None] | None = None
         self.settings = settings
         self.llm_client = llm_client
@@ -272,6 +277,9 @@ class AppContainer(
                 or settings.question_timeout_seconds > 0
             ):
                 self.interrupt_task = start_sweeper(self)
+            # run 执行超时(P1-C):生效超时为 0(默认)时不启动,避免空转
+            if settings.run_timeout_seconds > 0:
+                self.run_timeout_task = start_run_timeout_sweeper(self)
         # 记忆清扫:过期清理 + 相似记忆巩固,独立于 job worker(纯运维后台任务)
         if settings.memory_enabled and settings.memory_sweep_interval_seconds > 0:
             self.memory_sweep_task = start_memory_sweeper(self)
@@ -279,7 +287,7 @@ class AppContainer(
     # ------------------------------------------------------------------ 关闭
 
     async def stop(self) -> None:
-        """严格逆序关闭:worker → 中断 sweeper → outbox → 客户端 → DB → checkpointer。"""
+        """严格逆序关闭:worker → 中断/超时 sweeper → outbox → 客户端 → DB。"""
         # MCP 出站校验配置是进程级全局:关停复位,避免同进程的下个容器继承
         reset_url_guard()
         hooks_service.reset_hooks()
@@ -293,6 +301,11 @@ class AppContainer(
             with suppress(asyncio.CancelledError):
                 await self.interrupt_task
             self.interrupt_task = None
+        if self.run_timeout_task is not None:
+            self.run_timeout_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.run_timeout_task
+            self.run_timeout_task = None
         if self.memory_sweep_task is not None:
             self.memory_sweep_task.cancel()
             with suppress(asyncio.CancelledError):

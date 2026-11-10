@@ -41,7 +41,11 @@ from agent_orchestrator.services.run_execution_approvals import (
     _config,
     _tool_context,
 )
-from agent_orchestrator.services.run_lifecycle import require_run, require_transition
+from agent_orchestrator.services.run_lifecycle import (
+    mark_started,
+    require_run,
+    require_transition,
+)
 from agent_orchestrator.services.run_quota import _usage_boundary
 from agent_orchestrator.services.run_trace import run_trace
 from agent_orchestrator.services.workspace import Workspace
@@ -138,11 +142,13 @@ async def answer_run(
             # 超时 sweeper 直接入队:timed_out/answered 事件已由 sweeper 落库,
             # 这里负责把状态推进到 running 再恢复图。
             run.status = RunStatus.RUNNING.value
+            mark_started(run)
         elif run.status != RunStatus.RUNNING.value:
             return run
     else:
         require_transition(run, "answer")
         run.status = RunStatus.RUNNING.value
+        mark_started(run)
         if question_id != pending_id:
             raise ConflictError(
                 QUESTION_MISMATCH_CODE,

@@ -67,6 +67,21 @@ async def is_cancelled(session: AsyncSession, run_id: str) -> bool:
     return status == RunStatus.CANCELLED.value
 
 
+#: 执行边界读到的"已被外部收尾"状态(P1-C):取消与超时失败都要丢弃迟到结果。
+_SUPERSEDING_STATUSES = frozenset({RunStatus.CANCELLED.value, RunStatus.FAILED.value})
+
+
+async def is_superseded(session: AsyncSession, run_id: str) -> str | None:
+    """执行边界回来时读库:被取消或已被超时 sweeper 判 failed 则返回该状态。
+
+    比 is_cancelled 多覆盖 failed——超时是"另一条会话条件更新"的终态,写库后
+    图仍在跑;迟到的 completed 结果若覆盖它,就丢掉了超时原因和可重试语义。
+    只读一条 SELECT 的约束同 is_cancelled(不 refresh ORM 对象)。
+    """
+    status = await session.scalar(select(Run.status).where(Run.id == run_id))
+    return status if status in _SUPERSEDING_STATUSES else None
+
+
 class _RunDeltaSink:
     """把节点上报的正文增量攒成 ``token.delta.v1`` 事件(§6.3)。
 
@@ -371,9 +386,10 @@ async def _fail_run(
     这是图调用边界的统一兜底——节点/LLM/图本身的异常都在这里收敛;
     failed 是终态,重试语义是新起 run。
 
-    协作式取消优先:取消请求已提交时不再写 failed,否则会覆盖 cancelled 终态。
+    协作式收尾优先(P0-2/P1-C):取消或超时失败已提交时不再写 failed,否则会
+    覆盖已有的终态与 status_reason(超时原因要保留给前端/重试提示)。
     """
-    if await is_cancelled(session, run.id):
+    if await is_superseded(session, run.id):
         return
     run.status = RunStatus.FAILED.value
     run.status_reason = f"{type(exc).__name__}: {exc}"[:500]

@@ -1,7 +1,12 @@
 # 恢复语义（P1-C）设计
 
-> 状态：契约（2026-11-10 定稿）。范围：run 墙钟超时、优先级、检查点列表、回退（rewind）与分叉（fork）。
+> 状态：**契约已全部落地（2026-11-10）**。范围：run 墙钟超时、优先级、检查点列表、回退（rewind）与分叉（fork）。
 > 分三阶段实施：**C1 超时 + 优先级** → **C2 检查点列表** → **C3 rewind/fork**。每阶段独立可交付、可回滚。
+>
+> 落地位置：迁移 `e3c9a1f7b5d2`（runs.timeout_seconds/priority/started_at + jobs.priority + 索引）、
+> 超时 sweeper `services/run_timeout_sweeper.py`、检查点/回退/分叉 `services/run_checkpoints.py` 与
+> `services/run_recovery.py`、端点 `GET /api/v1/runs/{id}/checkpoints`、`POST …/rewind`、`POST …/fork`、
+> job kind `rewind`、事件 `run.timeout.v1`/`run.rewind.v1`。残余见 §10。
 
 ## 1. 现状与约束
 

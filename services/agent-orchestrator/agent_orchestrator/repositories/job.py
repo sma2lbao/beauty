@@ -26,7 +26,8 @@ def _claim_statement(now: datetime):
                 ),
             )
         )
-        .order_by(Job.run_at, Job.created_at)
+        # P1-C 调度优先级:越大越先;同优先级按到期时间/入队时间 FIFO。
+        .order_by(Job.priority.desc(), Job.run_at, Job.created_at)
         .limit(1)
     )
 

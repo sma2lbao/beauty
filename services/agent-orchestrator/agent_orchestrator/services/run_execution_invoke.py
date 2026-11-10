@@ -48,6 +48,7 @@ from agent_orchestrator.services.run_execution_memory import _recall_memory_bloc
 from agent_orchestrator.services.run_lifecycle import (
     _consume_instructions,
     _conversation_history,
+    mark_started,
 )
 from agent_orchestrator.services.run_quota import _usage_boundary
 from agent_orchestrator.services.run_trace import run_trace
@@ -91,6 +92,8 @@ async def _invoke_plan(
     # P0-2:进图即 planning(前端/SSE 可见),不落事件——事件流保持
     # created → planned 的既有契约(计划真正产出后才发 planned)。
     run.status = RunStatus.PLANNING.value
+    # P1-C:首次执行落 started_at(超时基准);resume/重试的新线程不重置。
+    mark_started(run)
     # P1-D:计划是一等过程项——先落 started,成功后补 completed(§4/§7);
     # version 跨 attempt 连续推进,item_id 因而在重试/编辑后仍唯一可寻址。
     plan_thread_id = await resolve_thread_id(session, run)
@@ -259,6 +262,7 @@ async def _invoke_plan(
     )
     # P0-2:自动放行后图已在执行段,落 running 再投影终态(时间线如实)。
     run.status = RunStatus.RUNNING.value
+    mark_started(run)
     await _apply_graph_result(
         session,
         run,

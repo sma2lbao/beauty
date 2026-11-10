@@ -46,7 +46,7 @@ from agent_orchestrator.services.run_events import (
     _item_stream,
     _step_stream,
     append_event,
-    is_cancelled,
+    is_superseded,
 )
 from agent_orchestrator.services.run_execution_tool_events import (
     MAX_EVENT_ARGUMENTS_CHARS as MAX_EVENT_ARGUMENTS_CHARS,
@@ -86,6 +86,7 @@ from agent_orchestrator.services.run_execution_tool_events import (
 )
 from agent_orchestrator.services.run_lifecycle import (
     _consume_instructions,
+    mark_started,
     require_run,
     require_transition,
 )
@@ -152,6 +153,14 @@ def _tool_context(run: Run):
     )
 
 
+def _thread_id(run: Run) -> str:
+    """graph 线程标识(P1-C):同一 run 的每次 blocked→resume 周期一个新线程。
+
+    checkpoint 列表/回退/分叉都必须按同一规则拼线程 id,故集中在这里。
+    """
+    return f"{run.id}#{run.attempts}"
+
+
 def _config(
     run: Run,
     projector: delta.DeltaProjector | None = None,
@@ -165,7 +174,7 @@ def _config(
     """
     return {
         "configurable": {
-            "thread_id": f"{run.id}#{run.attempts}",
+            "thread_id": _thread_id(run),
             GRAPH_RUNTIME_KEY: GraphRuntime(
                 ports=_GRAPH_PORTS,
                 delta=projector or delta.DeltaProjector(),
@@ -210,11 +219,13 @@ async def _apply_graph_result(
     注意:state.tool_calls 是 add reducer,恢复执行(如确认闸放行)后会带上
     历史累积记录——按已落库条数只发增量,避免事件重复。
 
-    协作式取消(P0-2):执行期间收到取消请求时,结果一律丢弃——不改交付物、
-    不写 completed/failed,只把本地对象同步成 cancelled 后返回。
+    协作式收尾(P0-2/P1-C):执行期间 run 被取消或被超时 sweeper 判 failed 时,
+    结果一律丢弃——不改交付物、不写 completed/failed,只把本地对象同步成库里
+    的终态后返回,保住取消/超时给出的 status_reason。
     """
-    if await is_cancelled(session, run.id):
-        run.status = RunStatus.CANCELLED.value
+    superseded = await is_superseded(session, run.id)
+    if superseded is not None:
+        run.status = superseded
         return run
     records = values.get("tool_calls") or []
     emitted = await RunEventRepository(session).count_of_type(run.id, TOOL_CALLED_EVENT)
@@ -335,6 +346,7 @@ async def approve_run(
         require_transition(run, "approve")
         # P0-2:审批通过即进入执行,同步与 jobs 两条路径都在这里推进状态。
         run.status = RunStatus.RUNNING.value
+        mark_started(run)
     if emit_approved:
         # 放行动作先入事件流,再恢复图:执行失败时顺序如实(approved → failed)
         await append_event(session, run, "run.approved.v1", {"attempt": run.attempts})
@@ -449,6 +461,7 @@ async def confirm_run(
         require_transition(run, "confirm")
         # P0-2:确认后图继续执行,状态回到 running。
         run.status = RunStatus.RUNNING.value
+        mark_started(run)
     if emit_confirmation:
         await append_event(
             session,

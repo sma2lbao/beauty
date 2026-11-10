@@ -12,18 +12,21 @@ from typing import Annotated
 from common.errors import ConflictError, NotFoundError
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
+from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.api.deps import (
     get_account_id,
     get_container,
     get_llm_client,
+    get_run_graph,
     get_session,
     get_settings,
     get_skills,
 )
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import (
+    CheckpointRead,
     InstructionCreate,
     InstructionRead,
     PlanRead,
@@ -63,6 +66,7 @@ AccountId = Annotated[str, Depends(get_account_id)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SkillsDep = Annotated[SkillRegistry, Depends(get_skills)]
 LLMDep = Annotated[LLMClient | None, Depends(get_llm_client)]
+RunGraph = Annotated[CompiledStateGraph, Depends(get_run_graph)]
 
 
 def _plan_read(run_id: str, run_status: str, markdown: str) -> PlanRead:
@@ -119,6 +123,23 @@ async def list_runs(
 async def get_run(run_id: str, session: DBSession, account_id: AccountId) -> RunRead:
     run = await runs_service.require_run(session, account_id, run_id)
     return RunRead.model_validate(run)
+
+
+@router.get("/{run_id}/checkpoints", response_model=list[CheckpointRead])
+async def list_run_checkpoints(
+    run_id: str,
+    session: DBSession,
+    account_id: AccountId,
+    graph: RunGraph,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[CheckpointRead]:
+    """checkpoint 列表(P1-C):最新在前,供回退/分叉选择锚点。
+
+    数据源是图线程的 state history,不写 audit_logs;跨账号一律 404。
+    """
+    return await runs_service.list_checkpoints(
+        session, graph, account_id, run_id, limit
+    )
 
 
 @router.get("/{run_id}/events", response_model=list[RunEventRead])

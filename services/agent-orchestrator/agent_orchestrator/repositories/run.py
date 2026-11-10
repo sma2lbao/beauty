@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from database.repository import AccountRepository
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.schemas.runs import RunStatus
@@ -107,3 +107,55 @@ class RunRepository(AccountRepository[Run]):
             .limit(limit)
         )
         return list(await self.session.scalars(statement))
+
+    async def list_run_timeouts(
+        self,
+        now: datetime,
+        *,
+        default_timeout_seconds: int,
+        limit: int = 100,
+    ) -> list[Run]:
+        """扫描执行超时的活跃 run(P1-C run 超时 sweeper 用)。
+
+        跨账号的系统维护查询(同 list_stale_interrupts,后台任务没有请求账号
+        上下文);逐 run 收尾时仍回到各自账号作用域。
+
+        生效超时逐 run 不同(run.timeout_seconds 覆盖全局默认),先按
+        coalesce(started_at, created_at) 最老在前取下候选,再在 Python 侧算是否
+        真的超时——比在 SQL 里拼方言 epoch 函数可读,也避免时区/naive 差异。
+        最老的排前面,所以 limit 截断不会漏掉真正超时的行。
+        """
+        active = (
+            RunStatus.PENDING.value,
+            RunStatus.PLANNING.value,
+            RunStatus.RUNNING.value,
+            RunStatus.AWAITING_APPROVAL.value,
+            RunStatus.AWAITING_CONFIRMATION.value,
+            RunStatus.AWAITING_INPUT.value,
+            RunStatus.BLOCKED.value,
+        )
+        statement = (
+            select(Run)
+            .where(Run.status.in_(active))
+            .order_by(func.coalesce(Run.started_at, Run.created_at), Run.id)
+            .limit(limit)
+        )
+        runs = list(await self.session.scalars(statement))
+        moment = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        due: list[Run] = []
+        for run in runs:
+            timeout = (
+                run.timeout_seconds
+                if run.timeout_seconds is not None
+                else default_timeout_seconds
+            )
+            if timeout <= 0:
+                continue
+            started = run.started_at or run.created_at
+            if started is None:
+                continue
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            if (moment - started).total_seconds() >= timeout:
+                due.append(run)
+        return due

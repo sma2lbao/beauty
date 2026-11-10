@@ -24,6 +24,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 #: services 之间互相导入形成环。
 PARENT_KIND_RETRY = "retry"
 PARENT_KIND_SUBAGENT = "subagent"
+#: 分叉派生(P1-C):从父 run 的某个 checkpoint 起一条新线程。
+PARENT_KIND_FORK = "fork"
 
 
 class Run(UUIDMixin, AccountMixin, TimestampMixin, Base):
@@ -90,6 +92,18 @@ class Run(UUIDMixin, AccountMixin, TimestampMixin, Base):
     # 过或 tracing 未启用;控制台据此给「在 Langfuse 查看」深链(见
     # docs/design/langfuse-observability.md §6)。
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 执行超时(P1-C):建 run 时的显式秒数;为空表示用 settings.run_timeout_seconds
+    # 的全局默认。生效超时 = coalesce(本列, 全局默认),<= 0 视为关闭。
+    timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 调度优先级(P1-C):数字越大越先被 worker 领取;默认 0,允许负数压低。
+    priority: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # 首次进入 planning/running 的时刻(P1-C):超时基准取它,未开始过则回退
+    # created_at。只写一次——resume/确认续跑不重置时钟。
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RunEvent(UUIDMixin, AccountMixin, Base):
@@ -129,10 +143,17 @@ class Job(UUIDMixin, AccountMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "jobs"
-    __table_args__ = (Index("ix_jobs_status_run_at", "status", "run_at"),)
+    __table_args__ = (
+        Index("ix_jobs_status_priority_run_at", "status", "priority", "run_at"),
+    )
 
     kind: Mapped[str] = mapped_column(String(32))
     run_id: Mapped[str] = mapped_column(String(32), index=True)
+    # 调度优先级(P1-C):入队时从 run 复制(调用方可覆盖);领取顺序
+    # priority DESC, run_at, created_at。
+    priority: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)

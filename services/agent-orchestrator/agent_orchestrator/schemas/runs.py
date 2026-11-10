@@ -42,6 +42,11 @@ class RunCreate(BaseModel):
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
     # 模型路由(P1-G):不传则从所属对话继承,再没有就走网关默认路由
     model: str | None = Field(default=None, min_length=1, max_length=120)
+    # 执行超时(P1-C):不传 = 用全局 settings 默认;0 表示本 run 关闭超时。
+    # 上限 7 天,避免一次误填把 run 永久钉住。
+    timeout_seconds: int | None = Field(default=None, ge=0, le=604800)
+    # 调度优先级(P1-C):数字越大越先执行,默认 0,允许负数压低。
+    priority: int = Field(default=0, ge=-100, le=100)
 
 
 class RunRead(BaseModel):
@@ -67,7 +72,53 @@ class RunRead(BaseModel):
     model: str | None = None
     # 最近一次执行的 trace_id(观测深链);未执行过或 tracing 未启用为空
     trace_id: str | None = None
+    # 执行超时/优先级/首次开始时刻(P1-C):超时与优先级见 RunCreate;
+    # started_at 为空表示尚未进入 planning/running(超时基准回退 created_at)。
+    timeout_seconds: int | None = None
+    priority: int = 0
+    started_at: datetime | None = None
     created_at: datetime
+
+
+class CheckpointSummary(BaseModel):
+    """checkpoint 的状态摘要(列表页只给够判断的量级,不回传整份状态)。"""
+
+    rounds: int = 0
+    plan_chars: int = 0
+    tool_calls: int = 0
+    todos_count: int = 0
+    artifact_ready: bool = False
+
+
+class CheckpointRead(BaseModel):
+    """run 的一个 graph checkpoint(P1-C,见 docs/design/recovery.md §5)。
+
+    checkpoint_id 是回退/分叉的寻址键;created_at 取 checkpoint 时间戳,缺失时
+    回退 run.updated_at;runnable=True 表示该点之后还有节点待跑。
+    """
+
+    checkpoint_id: str
+    step: int | None = None
+    source: str | None = None
+    next: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    parent_checkpoint_id: str | None = None
+    runnable: bool = False
+    summary: CheckpointSummary = Field(default_factory=CheckpointSummary)
+
+
+class RewindRequest(BaseModel):
+    """回退重跑(P1-C §6):从指定 checkpoint 起复用同一线程继续执行。"""
+
+    checkpoint_id: str = Field(min_length=1, max_length=128)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class ForkRequest(BaseModel):
+    """分叉(P1-C §7):新起一条 run 线程,可选择性种入父 checkpoint 的状态。"""
+
+    checkpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class RunEventRead(BaseModel):

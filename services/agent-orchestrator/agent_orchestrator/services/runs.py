@@ -25,6 +25,7 @@ from agent_orchestrator.services.run_artifacts import (
     get_artifact,
 )
 from agent_orchestrator.services.run_cancel import cancel_run
+from agent_orchestrator.services.run_checkpoints import list_checkpoints
 from agent_orchestrator.services.run_events import (
     append_event,
     list_events,
@@ -46,6 +47,7 @@ from agent_orchestrator.services.run_lifecycle import (
     queue_instruction,
     require_run,
 )
+from agent_orchestrator.services.run_recovery import fork_run, rewind_run
 from agent_orchestrator.services.run_steps import list_steps
 from agent_orchestrator.services.subagents import list_subagents
 from agent_orchestrator.services.todos import list_todos
@@ -59,7 +61,9 @@ __all__ = [
     "cancel_run",
     "confirm_run",
     "create_run",
+    "fork_run",
     "get_artifact",
+    "list_checkpoints",
     "list_events",
     "list_instructions",
     "list_items",
@@ -73,6 +77,7 @@ __all__ = [
     "require_run",
     "resume_run",
     "retry_run",
+    "rewind_run",
     "run_usage",
     "update_plan",
 ]

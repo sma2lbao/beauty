@@ -27,9 +27,11 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.runs import (
     CancelRequest,
     ConfirmRequest,
+    ForkRequest,
     PlanRead,
     PlanUpdate,
     RejectRequest,
+    RewindRequest,
     RunAnswerRead,
     RunAnswerRequest,
     RunRead,
@@ -257,6 +259,58 @@ async def answer_run(
         max_download_files=settings.artifact_download_max_files,
     )
     return RunAnswerRead(run=RunRead.model_validate(run), accepted=True)
+
+
+@router.post("/{run_id}/rewind", response_model=RunRead)
+async def rewind_run(
+    body: RewindRequest,
+    run_id: str,
+    session: DBSession,
+    account_id: AccountId,
+    graph: RunGraph,
+    store: ArtifactStoreDep,
+    workspace: WorkspaceDep,
+    downloader: FileDownloaderDep,
+    settings: SettingsDep,
+) -> RunRead:
+    """回退重跑(P1-C §6):终态 run 从 checkpoint 继续同线程执行。
+
+    默认同步执行到下一个边界;开启 jobs 时入队由 worker 执行(立即返回 running)。
+    """
+    run = await runs_service.rewind_run(
+        session,
+        graph,
+        account_id,
+        run_id,
+        body.checkpoint_id,
+        reason=body.reason,
+        jobs_enabled=settings.jobs_enabled,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=settings.artifact_download_max_files,
+    )
+    return RunRead.model_validate(run)
+
+
+@router.post("/{run_id}/fork", response_model=RunRead, status_code=201)
+async def fork_run(
+    body: ForkRequest,
+    run_id: str,
+    session: DBSession,
+    account_id: AccountId,
+    graph: RunGraph,
+) -> RunRead:
+    """分叉(P1-C §7):以父 run 为模板新建 pending run;可种入父 checkpoint 状态。"""
+    run = await runs_service.fork_run(
+        session,
+        graph,
+        account_id,
+        run_id,
+        checkpoint_id=body.checkpoint_id,
+        title=body.title,
+    )
+    return RunRead.model_validate(run)
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)

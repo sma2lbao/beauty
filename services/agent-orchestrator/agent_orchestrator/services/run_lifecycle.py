@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from common.errors import ConflictError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +37,16 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
     "resume": frozenset({RunStatus.BLOCKED}),
     # 交互提问回答(tool-service §10.2):只有挂起提问时能回答;answer API 专用。
     "answer": frozenset({RunStatus.AWAITING_INPUT}),
+    # 回退重跑(P1-C,见 docs/design/recovery.md §6):终态(完成/失败/取消/阻塞)
+    # 可回到指定 checkpoint 重跑该点之后的部分;attempts 不变(不是重试,是同线程续跑)。
+    "rewind": frozenset(
+        {
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+            RunStatus.BLOCKED,
+        }
+    ),
     # 取消(P0-2):非终态都可取消。running/planning 是协作式——已发出的图调用
     # 不被打断,执行边界回来读库发现 cancelled 后跳过终态覆盖(见 _apply_graph_result)。
     "cancel": frozenset(
@@ -68,6 +80,15 @@ def _require_status(run: Run, *allowed: RunStatus) -> None:
 def require_transition(run: Run, action: str) -> None:
     """状态机守卫:按迁移表校验当前状态是否允许该动作(非法迁移 → 409)。"""
     _require_status(run, *TRANSITIONS[action])
+
+
+def mark_started(run: Run, now: datetime | None = None) -> None:
+    """首次进入执行态时落 started_at(P1-C):超时基准,只写一次。
+
+    resume/确认续跑不重置时钟——否则用户隔一天点「继续」就白送一整个超时窗口。
+    """
+    if run.started_at is None:
+        run.started_at = now or datetime.now(UTC)
 
 
 async def create_run(
@@ -126,6 +147,8 @@ async def create_run(
         skill_timeout_seconds=skill.timeout_seconds if skill else None,
         mcp_server_ids=list(data.mcp_server_ids or []),
         model=model,
+        timeout_seconds=data.timeout_seconds,
+        priority=data.priority,
     )
     await RunRepository(session).add(run)
     await append_event(

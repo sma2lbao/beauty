@@ -67,6 +67,12 @@ class Settings(BaseAppSettings):
     # 审批/确认默认 0 是因为它们面向运维动作,暴露面不同。0 = 关闭。
     question_timeout_seconds: int = 900
     interrupt_sweep_interval_seconds: float = 15.0
+    # 单 run 执行超时(P1-C,见 docs/design/recovery.md):生效值 = run.timeout_seconds
+    # 覆盖,否则用这里的全局默认;基准是 coalesce(started_at, created_at)。超时后
+    # 条件更新为 failed 并记 run.timeout.v1。0 = 关闭(默认),sweeper 仅在
+    # jobs_enabled 且 > 0 时启动。
+    run_timeout_seconds: int = 0
+    run_timeout_sweep_interval_seconds: float = 30.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
     # MCP Client(M1 本地版):允许账号配置第三方 MCP server

@@ -361,6 +361,110 @@
         "title": "CancelRequest",
         "type": "object"
       },
+      "CheckpointRead": {
+        "description": "run 的一个 graph checkpoint(P1-C,见 docs/design/recovery.md §5)。\n\ncheckpoint_id 是回退/分叉的寻址键;created_at 取 checkpoint 时间戳,缺失时\n回退 run.updated_at;runnable=True 表示该点之后还有节点待跑。",
+        "properties": {
+          "checkpoint_id": {
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "next": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "parent_checkpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Checkpoint Id"
+          },
+          "runnable": {
+            "default": false,
+            "title": "Runnable",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CheckpointSummary"
+          }
+        },
+        "required": ["checkpoint_id"],
+        "title": "CheckpointRead",
+        "type": "object"
+      },
+      "CheckpointSummary": {
+        "description": "checkpoint 的状态摘要(列表页只给够判断的量级,不回传整份状态)。",
+        "properties": {
+          "artifact_ready": {
+            "default": false,
+            "title": "Artifact Ready",
+            "type": "boolean"
+          },
+          "plan_chars": {
+            "default": 0,
+            "title": "Plan Chars",
+            "type": "integer"
+          },
+          "rounds": {
+            "default": 0,
+            "title": "Rounds",
+            "type": "integer"
+          },
+          "todos_count": {
+            "default": 0,
+            "title": "Todos Count",
+            "type": "integer"
+          },
+          "tool_calls": {
+            "default": 0,
+            "title": "Tool Calls",
+            "type": "integer"
+          }
+        },
+        "title": "CheckpointSummary",
+        "type": "object"
+      },
       "ConfirmRequest": {
         "description": "写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。\n\n`grant` 是确认时的授权范围(P1-A):once 只放行本次;session 在本会话内\n自动放行本次确认闸里的工具(无会话时降级 once);always 写账号级 auto 策略。\nreject 忽略 grant。",
         "properties": {
@@ -854,6 +958,39 @@
           }
         },
         "title": "ConversationUpdate",
+        "type": "object"
+      },
+      "ForkRequest": {
+        "description": "分叉(P1-C §7):新起一条 run 线程,可选择性种入父 checkpoint 的状态。",
+        "properties": {
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ForkRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2369,6 +2506,32 @@
         "title": "RequeueResultRead",
         "type": "object"
       },
+      "RewindRequest": {
+        "description": "回退重跑(P1-C §6):从指定 checkpoint 起复用同一线程继续执行。",
+        "properties": {
+          "checkpoint_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": ["checkpoint_id"],
+        "title": "RewindRequest",
+        "type": "object"
+      },
       "RunAnswerRead": {
         "description": "answer API 的 202 响应:接受后返回 run 快照(幂等成功也回 202)。",
         "properties": {
@@ -2461,6 +2624,13 @@
             ],
             "title": "Model"
           },
+          "priority": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "title": "Priority",
+            "type": "integer"
+          },
           "skill_id": {
             "anyOf": [
               {
@@ -2472,6 +2642,19 @@
               }
             ],
             "title": "Skill Id"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 604800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
           },
           "title": {
             "maxLength": 200,
@@ -2743,6 +2926,11 @@
             ],
             "title": "Parent Run Id"
           },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
           "rounds": {
             "title": "Rounds",
             "type": "integer"
@@ -2758,6 +2946,18 @@
             ],
             "title": "Skill Id"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
           "status": {
             "$ref": "#/components/schemas/RunStatus"
           },
@@ -2771,6 +2971,17 @@
               }
             ],
             "title": "Status Reason"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
           },
           "title": {
             "title": "Title",
@@ -7647,6 +7858,95 @@
         "tags": ["runs"]
       }
     },
+    "/api/v1/runs/{run_id}/checkpoints": {
+      "get": {
+        "description": "checkpoint 列表(P1-C):最新在前,供回退/分叉选择锚点。\n\n数据源是图线程的 state history,不写 audit_logs;跨账号一律 404。",
+        "operationId": "list_run_checkpoints_api_v1_runs__run_id__checkpoints_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CheckpointRead"
+                  },
+                  "title": "Response List Run Checkpoints Api V1 Runs  Run Id  Checkpoints Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Run Checkpoints",
+        "tags": ["runs"]
+      }
+    },
     "/api/v1/runs/{run_id}/confirm": {
       "post": {
         "description": "确认写操作(§6.2):放行则执行并继续,拒绝则跳过并继续验收。",
@@ -7891,6 +8191,89 @@
           }
         },
         "summary": "Stream Run Events",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/fork": {
+      "post": {
+        "description": "分叉(P1-C §7):以父 run 为模板新建 pending run;可种入父 checkpoint 状态。",
+        "operationId": "fork_run_api_v1_runs__run_id__fork_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fork Run",
         "tags": ["runs"]
       }
     },
@@ -8579,6 +8962,89 @@
           }
         },
         "summary": "Retry Run",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/rewind": {
+      "post": {
+        "description": "回退重跑(P1-C §6):终态 run 从 checkpoint 继续同线程执行。\n\n默认同步执行到下一个边界;开启 jobs 时入队由 worker 执行(立即返回 running)。",
+        "operationId": "rewind_run_api_v1_runs__run_id__rewind_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewindRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewind Run",
         "tags": ["runs"]
       }
     },
