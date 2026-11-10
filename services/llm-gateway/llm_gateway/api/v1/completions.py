@@ -28,9 +28,11 @@ from llm_gateway.schemas.completions import (
     CompletionChunk,
     CompletionRequest,
     CompletionResponse,
+    image_urls,
     validate_request,
 )
 from llm_gateway.services import completions as completions_service
+from llm_gateway.services.vision import require_image_support
 
 router = APIRouter(prefix="/completions", tags=["completions"])
 
@@ -67,6 +69,9 @@ async def _prepare(
     )
     extra = await resolve_custom_models(request, account_id)
     model = completions_service.resolve_model(settings, body.model, extra_models=extra)
+    if image_urls(body.messages):
+        # 模型不支持图片就 400:交给 litellm 只会静默折叠成文本,模型凭空作答
+        require_image_support(model, declared=settings.vision_models)
     return model, extra
 
 

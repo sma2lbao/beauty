@@ -28,6 +28,11 @@ class Settings(BaseAppSettings):
     # 多模态限制(§5.1):单次请求图片张数与单图 data URL 长度
     max_images_per_request: int = 8
     max_image_data_chars: int = 8_000_000
+    # 视觉能力声明(model-routing §7):litellm 的静态能力表漏标视觉模型时,
+    # 列在这里的模型启动即补写 supports_vision(否则适配层会把图片折叠成
+    # 纯文本、静默丢弃);未声明的模型收到图片一律 400 llm.model_no_vision。
+    # 默认值 = 本平台默认模型(DeepSeek V4 的 chat 别名,上游能吃图,litellm 未标注)。
+    vision_models: list[str] = ["deepseek/deepseek-chat"]
     # 提供商凭据:显式传给 litellm(不依赖 os.environ 注入)
     api_key: str = ""
     api_base: str = ""

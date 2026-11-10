@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from llm_gateway.api.health import health_router
 from llm_gateway.api.v1.router import api_router
 from llm_gateway.core.config import Settings
+from llm_gateway.services import vision
 from llm_gateway.services.byok import ByokResolver
 from llm_gateway.services.byok_catalog import ByokCatalog
 
@@ -32,6 +33,9 @@ def create_app(
     byok_catalog: ByokCatalog | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
+    # 视觉能力先于请求补齐:litellm 的静态能力表会漏标新模型,VISION_MODELS
+    # 声明的模型否则会把 image_url 片段静默折叠成文本(见 services/vision.py)。
+    vision.register_vision_models(settings.vision_models)
     # BYOK 解析器/模型目录:测试可注入(带 MockTransport),默认按配置自建
     # (懒建连接池,未用到就不建)。
     return create_service_app(

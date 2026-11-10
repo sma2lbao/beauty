@@ -20,6 +20,7 @@ from common.logging import get_logger
 from llm_gateway import metrics
 from llm_gateway.core.config import Settings
 from llm_gateway.schemas.completions import FallbackHop
+from llm_gateway.services import vision
 
 #: 可切换候选的 HTTP 状态码:限流/超时/上游 5xx(网关语义,不是调用方问题)
 _FALLBACK_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
@@ -71,12 +72,20 @@ def resolve_model(
     return model
 
 
-def candidates(settings: Settings, model: str) -> list[str]:
-    """候选链 = 主模型 + 备用模型(去重、保序,主模型永远排第一)。"""
+def candidates(
+    settings: Settings, model: str, *, requires_vision: bool = False
+) -> list[str]:
+    """候选链 = 主模型 + 备用模型(去重、保序,主模型永远排第一)。
+
+    ``requires_vision``:请求带图片时只保留能吃图的候选——切到文本模型等于把
+    图片扔掉(适配层会静默折叠成文本),宁可如实报 502 也不给假答案。
+    """
     chain = [model]
     for fallback in settings.fallback_models:
         if fallback and fallback not in chain:
             chain.append(fallback)
+    if requires_vision:
+        chain = [candidate for candidate in chain if vision.supports_images(candidate)]
     return chain
 
 

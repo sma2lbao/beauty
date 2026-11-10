@@ -107,6 +107,19 @@ account-service 换该账号配置的提供商密钥(共享内部密钥保护),�
   且 data URL 长度 ≤ `MAX_IMAGE_DATA_CHARS`(默认 8,000,000)。
 - `LOG_CONTENT=true` 时图片在日志里只记 `[image]` 占位符,不落 base64 正文。
 
+视觉能力:litellm 的模型能力表是随版本发布的静态数据,上游能吃图的新模型常常
+漏标 `supports_vision`;漏标时 litellm 的 DeepSeek 适配层会把 `image_url` 片段
+**折叠成纯文本、静默丢弃**——调用方以为图片送到了,模型却答"我没看到图片"。
+所以网关注册一份显式声明:
+
+- `VISION_MODELS`(默认 `["deepseek/deepseek-chat"]`,即本平台默认模型)
+  列出的模型在启动时补写 `supports_vision`(只补这一个字段,价格/上下文沿用
+  litellm 原值);BYOK / 账号自定义的视觉模型也要写进该清单;
+- 带图请求落到不支持视觉的模型 → 400 `llm.model_no_vision`(details 带
+  `model` 与 `vision_models`),早于开流,**绝不静默丢图**;
+- 带图请求的 fallback 链只保留视觉候选:主模型 5xx 而备用模型是文本模型时如实
+  502,而不是切过去给一个"没看到图片"的假答案。
+
 阶段 B 补齐:账号级配额与限流、模型路由按区域切换(§9)、调用审计落库、
 LiteLLM proxy 配置化(guardrails)。
 

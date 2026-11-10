@@ -31,6 +31,7 @@ from llm_gateway.schemas.completions import (
     FallbackHop,
     StreamError,
     UsageOut,
+    image_urls,
 )
 from llm_gateway.services import generation_trace
 from llm_gateway.services.completion_request import (
@@ -67,6 +68,7 @@ from llm_gateway.services.completion_routing import (
     candidates,
     resolve_model,
 )
+from llm_gateway.services.vision import require_image_support
 
 __all__ = [
     "_CONTENT_LIMIT",
@@ -144,7 +146,10 @@ async def _complete(
     billing_source: str = "platform",
 ) -> CompletionResponse:
     log = get_logger("llm_gateway.completions")
-    chain = candidates(settings, model)
+    # 带图请求的备用链只留视觉模型(文本模型会静默丢图,见 services/vision.py)
+    chain = candidates(settings, model, requires_vision=bool(image_urls(data.messages)))
+    if not chain:  # 入口层已 400;直接调服务层时同样拒绝,不静默交给文本模型
+        require_image_support(model, declared=settings.vision_models)
     _log_request(settings, log, data, model, stream=False)
     attempts: list[dict[str, str]] = []
     fallbacks: list[FallbackHop] = []
@@ -264,7 +269,9 @@ async def _stream(
     billing_source: str = "platform",
 ) -> AsyncIterator[CompletionChunk]:
     log = get_logger("llm_gateway.completions")
-    chain = candidates(settings, model)
+    chain = candidates(settings, model, requires_vision=bool(image_urls(data.messages)))
+    if not chain:  # 同上:开流前拒绝,避免"无候选"落到下面取 None 响应
+        require_image_support(model, declared=settings.vision_models)
     _log_request(settings, log, data, model, stream=True)
     started = time.perf_counter()
     fallbacks: list[FallbackHop] = []

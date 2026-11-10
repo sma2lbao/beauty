@@ -10,6 +10,7 @@ account-service 换密钥),INTERNAL_SECRET 留空(本地 dev 放行语义)。
 模型白名单与 fallback 链也必须钉死:Nx 会把项目 `.env` 注入任务环境
 (环境变量优先于 `_env_file=None`),本地 dev 的 `AVAILABLE_MODELS` 会让
 "任意模型"用例意外收到 400,`FALLBACK_MODELS` 会让失败用例真的去试备用模型。
+视觉能力声明同理:它决定"带图请求是否 400",必须与生产默认值一致地钉住。
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ _settings = settings_factory(
         "fallback_models": [],
         "max_images_per_request": 8,
         "max_image_data_chars": 8_000_000,
+        "vision_models": ["deepseek/deepseek-chat"],
     },
 )
 client = client_fixture(create_app, _settings)

@@ -254,8 +254,9 @@ def test_log_content_previews_images_without_payload(monkeypatch) -> None:
         fallback_models=[],
         log_content=True,
     )
+    # 用 litellm 能力表原生标注的视觉模型:本用例不经 create_app,不做能力补写
     request = CompletionRequest(
-        model="prov-a/vision",
+        model="deepseek/deepseek-flash",
         messages=[
             Message(role="user", content=_content()),
             Message(role="assistant", content=None),
