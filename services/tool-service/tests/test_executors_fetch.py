@@ -108,6 +108,7 @@ def test_allowed_schemes_are_http_only() -> None:
         ("172.16.3.9", False),
         ("192.168.1.1", False),
         ("169.254.169.254", False),
+        ("100.64.0.1", False),
         ("0.0.0.0", False),
         ("224.0.0.1", False),
         ("::1", False),

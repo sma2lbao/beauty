@@ -23,6 +23,9 @@ def arguments_digest(arguments: dict[str, Any]) -> str:
 
 # ---- 能力开关与 exec 辅助 ------------------------------------------------
 
+#: web_search 支持的提供方(与 web_search.SUPPORTED_PROVIDERS 口径一致)。
+_SEARCH_PROVIDERS: frozenset[str] = frozenset({"tavily", "brave"})
+
 
 def is_available(name: str, settings: Settings) -> bool:
     """能力即权限边界:开关关闭的工具在目录、详情与执行三处一致地"不存在"。"""
@@ -33,6 +36,13 @@ def is_available(name: str, settings: Settings) -> bool:
         return bool(settings.exec_enabled)
     if name == "run_code":
         return bool(settings.run_code_enabled)
+    if name == "web_search":
+        # 开关、提供方、密钥三者齐备才可用;缺一则目录里不可见。
+        return (
+            bool(settings.search_enabled)
+            and settings.search_provider in _SEARCH_PROVIDERS
+            and bool(settings.search_api_key)
+        )
     return True
 
 

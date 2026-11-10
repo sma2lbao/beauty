@@ -28,6 +28,7 @@ NETWORK_SWITCHES: tuple[str, ...] = (
     "mcp_stdio_enabled",
     "jobs_enabled",
     "fetch_enabled",
+    "search_enabled",
     # 观测出口:Langfuse 开启后 BatchSpanProcessor 会后台向 Cloud/自托管端点
     # 上传 span;测试必须零网络,也不能把测试数据写进真实 Langfuse 项目。
     "langfuse_enabled",

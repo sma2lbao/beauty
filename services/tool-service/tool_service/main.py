@@ -11,8 +11,10 @@ from tool_service.api.v1.router import api_router
 from tool_service.core.config import Settings
 from tool_service.services.connectors import ConnectorGateway
 from tool_service.services.execution import ToolRunner
+from tool_service.services.execution.arguments import is_available
 from tool_service.services.executors.fetch import FetchClient
 from tool_service.services.executors.http import HttpToolExecutor, KnowledgeRuntime
+from tool_service.services.executors.web_search import SearchClient
 from tool_service.services.sandbox import SandboxProvider, SandboxRuntime
 
 
@@ -32,6 +34,22 @@ def build_fetch_client(settings: Settings) -> FetchClient | None:
     )
 
 
+def build_search_client(settings: Settings) -> SearchClient | None:
+    """按配置构造搜索客户端;未开启/未配密钥时返回 None(目录也不暴露)。"""
+
+    if not is_available("web_search", settings):
+        return None
+    return SearchClient(
+        provider=settings.search_provider,
+        api_key=settings.search_api_key,
+        base_url=settings.search_base_url,
+        timeout_seconds=settings.search_timeout_seconds,
+        max_bytes=settings.search_max_bytes,
+        default_results=settings.search_default_results,
+        max_results=settings.search_max_results,
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     token_verifier: JwtVerifier | None = None,
@@ -39,6 +57,7 @@ def create_app(
     sandbox_provider: SandboxProvider | None = None,
     http_executor: HttpToolExecutor | None = None,
     fetch_client: FetchClient | None = None,
+    search_client: SearchClient | None = None,
     connector_gateway: ConnectorGateway | None = None,
 ) -> FastAPI:
     """构造应用;测试可注入 token_verifier、假沙箱提供方与假 HTTP 执行器。"""
@@ -55,13 +74,18 @@ def create_app(
         knowledge_runtime: KnowledgeRuntime | None = None
         executor = http_executor
         fetcher = fetch_client
+        searcher = search_client
         if executor is None:
             # 只建 httpx 客户端与 token broker,启动期不发请求;真实调用按需发生。
             knowledge_runtime = KnowledgeRuntime(settings=resolved)
             if fetcher is None:
                 fetcher = build_fetch_client(resolved)
+            if searcher is None:
+                searcher = build_search_client(resolved)
             executor = HttpToolExecutor(
-                knowledge=knowledge_runtime.client, fetcher=fetcher
+                knowledge=knowledge_runtime.client,
+                fetcher=fetcher,
+                searcher=searcher,
             )
         # 连接器网关只在配置了内部密钥时启用;未配置时目录只含内置工具。
         # 启动期不拉目录(首次 GET /v1/tools 才按账号请求,避免启动依赖)。
@@ -76,6 +100,7 @@ def create_app(
         app.state.sandbox_provider = provider
         app.state.knowledge_runtime = knowledge_runtime
         app.state.fetch_client = fetcher
+        app.state.search_client = searcher
         app.state.http_executor = executor
         app.state.connector_gateway = gateway
         app.state.tool_runner = ToolRunner(
@@ -97,6 +122,9 @@ def create_app(
         fetch_client: FetchClient | None = getattr(app.state, "fetch_client", None)
         if fetch_client is not None:
             await fetch_client.aclose()
+        search_client: SearchClient | None = getattr(app.state, "search_client", None)
+        if search_client is not None:
+            await search_client.aclose()
         gateway: ConnectorGateway | None = getattr(app.state, "connector_gateway", None)
         if gateway is not None:
             await gateway.aclose()

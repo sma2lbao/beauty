@@ -45,6 +45,19 @@ class Settings(ServiceSettings):
     fetch_max_redirects: int = 3
     #: 允许抓取的主机(逗号分隔;空 = 任意公网主机)。example.com 含其子域。
     fetch_allowed_hosts: str = ""
+    # P1-L:web_search 由服务端出站调用搜索提供方(tavily / brave),模型只传
+    # query 与 max_results;提供方与密钥由部署方配置。会发起外部 I/O,同样
+    # 属于 NETWORK_SWITCHES:测试默认钉成 False(零网络)。
+    search_enabled: bool = False
+    search_provider: str = "tavily"
+    #: 提供方 API key;为空时工具不可见(与 fetch_enabled 同口径)。
+    search_api_key: str = ""
+    #: 覆盖提供方基地址(必须 https;空 = 用提供方默认地址)。
+    search_base_url: str = ""
+    search_timeout_seconds: float = 10.0
+    search_default_results: int = 5
+    search_max_results: int = 10
+    search_max_bytes: int = 1024 * 1024
     # 连接器(C2.4):tool-service 是连接器工具的唯一执行面。catalog 从
     # connector-service 的内部端点拉取(按账号 TTL 缓存),执行则 POST 到
     # /v1/connectors/{provider}/execute。internal_secret 为空表示未启用连接器,

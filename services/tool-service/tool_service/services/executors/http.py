@@ -4,13 +4,15 @@
 跨服务只读能力没有沙箱语义,由本模块用服务间 token(TokenBroker,
 subject=svc-tool)带账号 JWT 调下游 HTTP API。`fetch` 属于第三种:不代理
 任何下游服务,由本模块直连公网(SSRF 防护与大小上限见
-tool_service/services/executors/fetch.py)。两类都把响应/失败归一成统一工具
+tool_service/services/executors/fetch.py;搜索见 executors/web_search.py)。
+两类都把响应/失败归一成统一工具
 信封。HTTP 执行器只做只读动作:参数在 journal 层已校验,这里不做写操作、
 不建表、不发事件(设计 §8.2)。
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -20,8 +22,10 @@ from common.middleware import inject_request_headers
 from common.security.token_broker import TokenBroker
 from common.tools import ToolError, ToolExecuteResponse
 
+from tool_service.constants import MAX_TOOL_CHARS
 from tool_service.core.config import Settings
 from tool_service.services.executors.fetch import FetchClient, FetchError
+from tool_service.services.executors.web_search import SearchClient, SearchError
 from tool_service.services.sandbox import SERVICE_SUBJECT
 
 #: 知识库检索路径(对应 knowledge-service 的 POST /v1/knowledge/search)。
@@ -174,9 +178,11 @@ class HttpToolExecutor:
         *,
         knowledge: KnowledgeClient | None = None,
         fetcher: FetchClient | None = None,
+        searcher: SearchClient | None = None,
     ) -> None:
         self._knowledge = knowledge
         self._fetcher = fetcher
+        self._searcher = searcher
 
     async def execute(
         self, account_id: str, tool_name: str, arguments: dict[str, Any]
@@ -187,6 +193,8 @@ class HttpToolExecutor:
             return await self._search_knowledge(account_id, arguments)
         if tool_name == "fetch":
             return await self._fetch(arguments)
+        if tool_name == "web_search":
+            return await self._web_search(arguments)
         return _error(
             "tool.executor_unavailable",
             f"http 执行器不支持工具 {tool_name}",
@@ -248,6 +256,47 @@ class HttpToolExecutor:
                 "tool.fetch_failed",
                 "抓取失败",
                 hint=str(exc),
+                retryable=True,
+            )
+        return ToolExecuteResponse(ok=True, result=result)
+
+    async def _web_search(self, arguments: dict[str, Any]) -> ToolExecuteResponse:
+        """公网搜索;未装配搜索客户端说明服务端没开 web_search。"""
+
+        if self._searcher is None:
+            return _error(
+                "tool.executor_unavailable",
+                "web_search 未启用",
+                hint="服务端未开启 TOOL__SEARCH_ENABLED / 未配置 provider",
+            )
+        query = str(arguments.get("query") or "")
+        raw_max = arguments.get("max_results")
+        max_results = None if raw_max is None else int(raw_max)
+        try:
+            result = await self._searcher.search(query, max_results=max_results)
+        except SearchError as exc:
+            return _error(
+                exc.code,
+                exc.message,
+                hint=exc.hint,
+                retryable=exc.retryable,
+            )
+        except httpx.TimeoutException:
+            return _error("tool.timeout", "搜索超时", retryable=True)
+        except httpx.HTTPError as exc:
+            return _error(
+                "tool.upstream_unavailable",
+                "搜索提供方不可达",
+                hint=str(exc),
+                retryable=True,
+            )
+        # 25k 是单条工具结果的硬上限(与 MAX_TOOL_CHARS 口径一致);
+        # 10 条结果的理论上限远小于它,这里只是保险。
+        if len(json.dumps(result, ensure_ascii=False)) > MAX_TOOL_CHARS:
+            return _error(
+                "tool.too_large",
+                "搜索结果超出单条工具结果上限",
+                hint="降低 max_results 后重试",
                 retryable=True,
             )
         return ToolExecuteResponse(ok=True, result=result)

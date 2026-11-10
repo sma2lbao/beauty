@@ -1,6 +1,6 @@
 # 工具执行面设计:exec / web_search / todo(P1-L)
 
-> 状态:**exec MVP(2026-10-27)与 todo 第一轮(2026-10-27)已落地**;web_search 仅为契约与分期,未实施。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
+> 状态:**exec MVP(2026-10-27)、todo 第一轮(2026-10-27)与 web_search(2026-11-10,M3)已落地**;M2 后台任务与持久 shell 仍待启动。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
 > 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload);双工具分工与 `run_code` 见 [code-execution.md](./code-execution.md)。
 
 ## 1. 摘要
@@ -8,7 +8,7 @@
 云端 run 此前只能读/写/改文件,**不能执行命令**:「改完跑测试」的闭环缺失(桌面本地模式已有 `run_command`,云端没有等价能力)。本册把「跨主流 agent 的必需执行面」拆成三件,并只落第一件:
 
 - **exec(已落地)**:`tool-service` 目录新增一等工具,在**工作区沙箱内**执行一条 shell 命令。风险档 `destructive`(legacy `danger`),默认关闭,开启后必须人工确认;输出自带截断与回读提示。
-- **web_search(待实施)**:联网检索(与只读抓取的 `fetch` 不同,检索需要搜索提供方与引用协议);依赖出口策略,见 §11。
+- **web_search(已落地,2026-11-10)**:公网检索,服务端出站调用 tavily/brave,返回 rank/title/url/snippet 供模型引用;出口校验复用 `fetch` 的公网地址判定,默认关闭(`TOOL__SEARCH_ENABLED`);契约见 [web-search.md](./web-search.md)。
 - **todo(已落地,第一轮)**:`todo_write` 是 **orchestrator 进程内**的 run 级工具(不进 tool-service 目录):模型把任务清单整包覆盖写进 `runs.todos` 快照、落 `run.todo.updated.v1` 事件,并在每轮 execute/verify/deliver 的系统提示里注入极简清单;只读端点 `GET /api/v1/runs/{id}/todos`,前端在 run 详情与会话右栏显示「任务清单」。item 化已随 P1-D 落地(2026-10-28):`todo_write` 写快照时追加 `kind=todo` 的 `run.item.v1`,`run.todo.updated.v1` 保留(见 §13.3)。
 
 五条关键决策:
@@ -220,12 +220,12 @@ orchestrator 侧无新配置:危险工具经目录自动进入审批链。
 
 ## 11. 分期与验收
 
-| 期  | 内容                                                           | 状态                                                     |
-| --- | -------------------------------------------------------------- | -------------------------------------------------------- |
-| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                                   |
-| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)                     |
-| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | 待启动(先定提供方与成本口径)                             |
-| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化已随 P1-D 落地(2026-10-28) |
+| 期  | 内容                                                           | 状态                                                       |
+| --- | -------------------------------------------------------------- | ---------------------------------------------------------- |
+| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                                     |
+| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)                       |
+| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | **已落地(2026-11-10)**;见 [web-search.md](./web-search.md) |
+| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化已随 P1-D 落地(2026-10-28)   |
 
 M1 验收:
 

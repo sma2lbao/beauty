@@ -25,7 +25,7 @@ from tool_service.constants import (
 )
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-11-04.p6"
+CATALOG_VERSION = "2026-11-10.p7"
 
 READ = ToolDescriptor(
     name="read",
@@ -306,6 +306,34 @@ FETCH = ToolDescriptor(
     timeout_seconds=20.0,
 )
 
+WEB_SEARCH = ToolDescriptor(
+    name="web_search",
+    description=(
+        "在公网做网页搜索（只读），返回按相关度排序的标题、URL 与摘要。"
+        "回答里引用来源时，必须使用结果里的 url 原文写成 markdown 链接，"
+        "不要编造或改写 URL；摘要不足以回答时再对具体 url 调 fetch 抓正文。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1, "maxLength": 500},
+            "max_results": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "default": 5,
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.READ,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.HTTP,
+    timeout_seconds=20.0,
+    enabled=True,
+)
+
 ASK_QUESTION = ToolDescriptor(
     name="ask_question",
     description=(
@@ -368,7 +396,7 @@ ASK_QUESTION = ToolDescriptor(
 )
 
 #: 全部工具:read、glob、grep、list_dir、write、edit、exec、run_code、
-#: search_knowledge、fetch、ask_question。
+#: search_knowledge、fetch、web_search、ask_question。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,
@@ -380,6 +408,7 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     RUN_CODE,
     SEARCH_KNOWLEDGE,
     FETCH,
+    WEB_SEARCH,
     ASK_QUESTION,
 )
 

@@ -1,6 +1,6 @@
 # web_search 工具契约（P1-L / M3）
 
-状态：**契约定稿（2026-11-10）**，实现待落地（task-15）。上游背景见
+状态：**已落地（2026-11-10）**；落地位置、与契约的偏离和验证见 §11。上游背景见
 [../gap-2026-11/00-refresh-2026-11-09.md](../gap-2026-11/00-refresh-2026-11-09.md) §5.2
 与 [tool-execution.md](./tool-execution.md) §9（M3）。
 
@@ -69,13 +69,14 @@ WEB_SEARCH = ToolDescriptor(
       "snippet": "摘要片段"
     }
   ],
-  "notes": ["引用来源请使用 results[].url 原文"]
+  "notes": ["摘要已截断"]
 }
 ```
 
 - `rank` 从 1 连续递增，按提供方返回顺序（不重排）。
-- `title` ≤ 300 字符；`snippet` ≤ 400 字符（超出截断并补 `…`）；`url` 最多 2048 字符。
-- `notes` 仅在有截断时出现（"摘要已截断"），无截断则省略。
+- `title` ≤ 300 字符；`snippet` ≤ 400 字符（超出截断并补 `…`）；`url` 为空或超 2048 字符的
+  结果条**直接丢弃**（无法安全引用），其余结果 rank 仍从 1 连续递增。
+- `notes` 仅在有截断（"标题已截断" / "摘要已截断"）或空结果时出现，正常结果省略。
 - 空结果不是错误：`results=[]` + `notes=["未找到结果，可换个更短的关键词"]`，`ok=true`。
 
 ## 5. 提供方适配（两种，均为服务端出站）
@@ -127,17 +128,19 @@ search_max_bytes: int = 1024 * 1024
 
 ## 8. 错误码
 
-| 场景                    | code                         | retryable | hint 口径                                               |
-| ----------------------- | ---------------------------- | --------- | ------------------------------------------------------- |
-| 参数非法（schema 层）   | `tool.invalid_args`          | false     | 指出字段                                                |
-| 未配置（执行器为 None） | `tool.executor_unavailable`  | false     | "服务端未开启 TOOL\_\_SEARCH_ENABLED / 未配置 provider" |
-| 出口地址被拒            | `tool.search_blocked`        | false     | 不暴露解析到的内网 IP                                   |
-| 提供方 401/403          | `tool.search_auth_failed`    | false     | "搜索提供方鉴权失败，请检查 TOOL\_\_SEARCH_API_KEY"     |
-| 提供方 429              | `tool.upstream_rate_limited` | true      | "搜索提供方限流，稍后重试"                              |
-| 提供方 5xx / 连接失败   | `tool.upstream_unavailable`  | true      | 截断到 200 字符的响应体                                 |
-| 超时                    | `tool.timeout`               | true      | "搜索超时（N 秒）"                                      |
-| 非 JSON / 结构不符      | `tool.upstream_bad_response` | true      | 提供方名 + 状态码                                       |
-| 结果超 25k              | `tool.too_large`             | true      | "降低 max_results"                                      |
+| 场景                       | code                         | retryable | hint 口径                                               |
+| -------------------------- | ---------------------------- | --------- | ------------------------------------------------------- |
+| 参数非法（schema 层）      | `tool.invalid_args`          | false     | 指出字段                                                |
+| 未配置（执行器为 None）    | `tool.executor_unavailable`  | false     | "服务端未开启 TOOL\_\_SEARCH_ENABLED / 未配置 provider" |
+| 出口地址被拒               | `tool.search_blocked`        | false     | 不暴露解析到的内网 IP                                   |
+| 提供方 401/403             | `tool.search_auth_failed`    | false     | "搜索提供方鉴权失败，请检查 TOOL\_\_SEARCH_API_KEY"     |
+| 提供方 429                 | `tool.upstream_rate_limited` | true      | "搜索提供方限流，稍后重试"                              |
+| 提供方 5xx / 连接失败      | `tool.upstream_unavailable`  | true      | 截断到 200 字符的响应体                                 |
+| 超时                       | `tool.timeout`               | true      | "搜索超时（N 秒）"                                      |
+| 非 JSON / 结构不符         | `tool.upstream_bad_response` | true      | 提供方名 + 状态码                                       |
+| 提供方 3xx（不跟随重定向） | `tool.upstream_bad_response` | false     | 提供方名 + 状态码（按出口策略视为失败）                 |
+| 其他 4xx（400/404 等）     | `tool.upstream_unavailable`  | false     | 截断到 200 字符的响应体                                 |
+| 结果超 25k                 | `tool.too_large`             | true      | "降低 max_results"                                      |
 
 ## 9. 测试口径（零网络）
 
@@ -161,3 +164,30 @@ search_max_bytes: int = 1024 * 1024
 - 摘要来自提供方，可能过时或含注入文本；模型侧靠既有"外部内容不可信"提示，
   本期不加额外清洗。
 - `brave` 的 `count` 上限为 20、tavily 为 20，请求上限 10 已足够。
+- `search_enabled` 已加入 `packages/common/common/service_testkit/settings.py` 的 `NETWORK_SWITCHES`，
+  各服务测试工厂自动钉 False（tool-service 的 conftest 仍显式保留一份，双保险）。
+- 顺带把 `fetch.is_public_address` 的 CGNAT（`100.64.0.0/10`）漏判补上：这是共用的出口判定，
+  `fetch` 工具也随之收紧（属契约 §6 的安全修复，不是新能力）。
+
+## 11. 落地位置与验证（2026-11-10）
+
+| 环节         | 落点                                                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 目录描述符   | `services/tool-service/tool_service/services/catalog.py` 的 `WEB_SEARCH`（`CATALOG_VERSION` 升 `2026-11-10.p7`）                 |
+| 搜索客户端   | `services/tool-service/tool_service/services/executors/web_search.py`（`SearchClient`、`SearchError`、`normalize_results`）      |
+| 执行器分派   | `services/tool-service/tool_service/services/executors/http.py` 的 `HttpToolExecutor(searcher=...)` 与 `_web_search`             |
+| 能力开关     | `services/tool-service/tool_service/services/execution/arguments.py::is_available`（`search_enabled` + provider + key 三者齐备） |
+| 配置与装配   | `core/config.py` 的 `search_*` 九个字段、`main.py::build_search_client`、`create_app(search_client=...)`、shutdown `aclose`      |
+| 入口校验复用 | `executors/fetch.py` 的 `is_public_address` / `parse_target`（并补 CGNAT 漏判）                                                  |
+| 测试         | `tests/test_executors_web_search.py`（46 例）、`tests/test_api_tools_web_search.py`（7 例）、`tests/test_catalog.py` 同步        |
+
+与契约的偏离（均已按实现收口到本文档）：
+
+1. §4 的 notes 规则按"仅截断/空结果"实现，不再固定输出引用提示（契约示例与条款自相矛盾，以条款为准；
+   引用要求写进描述符 description，模型侧可见）。
+2. 3xx 归 `tool.upstream_bad_response`（retryable=false），其他 4xx 归 `tool.upstream_unavailable`（retryable=false）；
+   契约原表只列了 401/403/429/5xx。
+3. `url` 为空或超 2048 的结果条丢弃而非截断（截断后的 URL 无法引用），rank 过滤后重新连续。
+
+验证：`npx nx test tool-service` 429 passed / 覆盖率 90.78%（门禁 82）；`npx nx lint tool-service` 通过；
+`ruff format --check` 干净；全部测试零网络（`httpx.MockTransport` + 注入 resolver + `search_enabled=False`）。

@@ -80,8 +80,13 @@ class FetchError(Exception):
         self.retryable = retryable
 
 
+#: CGNAT 共享地址段(100.64.0.0/10):RFC 6598 非公网,部分 Python 版本
+#: 的 is_private 尚未覆盖,这里显式拒绝。
+_CGNAT_V4 = ipaddress.ip_network("100.64.0.0/10")
+
+
 def is_public_address(raw: str) -> bool:
-    """判断地址是否为公网单播:内网/回环/链路本地/组播/保留/未指定一律拒绝。"""
+    """判断地址是否为公网单播:内网/回环/链路本地/CGNAT/组播/保留/未指定拒绝。"""
 
     try:
         address = ipaddress.ip_address(raw)
@@ -89,6 +94,8 @@ def is_public_address(raw: str) -> bool:
         return False
     if address.version == 6 and address.ipv4_mapped is not None:
         return is_public_address(str(address.ipv4_mapped))
+    if address.version == 4 and address in _CGNAT_V4:
+        return False
     return not (
         address.is_private
         or address.is_loopback

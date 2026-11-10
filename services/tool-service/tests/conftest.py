@@ -44,6 +44,7 @@ _settings = settings_factory(
         "exec_enabled": False,
         "run_code_enabled": False,
         "fetch_enabled": False,
+        "search_enabled": False,
         "connector_internal_secret": "",
     },
 )

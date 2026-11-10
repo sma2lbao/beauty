@@ -9,7 +9,7 @@ from tool_service.services import catalog
 
 
 def test_catalog_version_is_exposed() -> None:
-    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-11-04.p6"
+    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-11-10.p7"
 
 
 def test_enabled_tools_are_the_function_slice() -> None:
@@ -25,6 +25,7 @@ def test_enabled_tools_are_the_function_slice() -> None:
         "run_code",
         "search_knowledge",
         "fetch",
+        "web_search",
         "ask_question",
     ]
     risk_by_name = {tool.name: tool.risk for tool in catalog.descriptors()}
@@ -33,12 +34,14 @@ def test_enabled_tools_are_the_function_slice() -> None:
     assert risk_by_name["exec"] is ToolRisk.DESTRUCTIVE
     assert risk_by_name["search_knowledge"] is ToolRisk.READ
     assert risk_by_name["fetch"] is ToolRisk.READ
+    assert risk_by_name["web_search"] is ToolRisk.READ
     assert risk_by_name["ask_question"] is ToolRisk.READ
     executor_by_name = {tool.name: tool.executor for tool in catalog.descriptors()}
     for sandbox_name in ("read", "glob", "grep", "list_dir", "write", "edit", "exec"):
         assert executor_by_name[sandbox_name] is ExecutorKind.SANDBOX
     assert executor_by_name["search_knowledge"] is ExecutorKind.HTTP
     assert executor_by_name["fetch"] is ExecutorKind.HTTP
+    assert executor_by_name["web_search"] is ExecutorKind.HTTP
     assert executor_by_name["ask_question"] is ExecutorKind.NONE
 
 
@@ -55,6 +58,7 @@ def test_interaction_tool_schema_is_decoupled() -> None:
         "run_code",
         "search_knowledge",
         "fetch",
+        "web_search",
         "ask_question",
     ]
     assert catalog.find_descriptor("write").enabled is True
@@ -133,6 +137,31 @@ def test_fetch_descriptor_shape() -> None:
     assert url["maxLength"] == 2048
 
 
+def test_web_search_descriptor_shape() -> None:
+    search = catalog.find_descriptor("web_search")
+    assert search is not None
+    assert search.enabled is True
+    assert search.risk is ToolRisk.READ
+    assert search.kind is ToolKind.FUNCTION
+    assert search.executor is ExecutorKind.HTTP
+    assert search.timeout_seconds == 20.0
+    schema = search.input_schema
+    assert schema["required"] == ["query"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["query"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+    }
+    assert schema["properties"]["max_results"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10,
+        "default": 5,
+    }
+    assert "url" not in schema["properties"]
+
+
 def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,7 +178,7 @@ def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
 
 def test_openai_tools_shape() -> None:
     tools = catalog.openai_tools()
-    assert len(tools) == 11
+    assert len(tools) == 12
     for item in tools:
         assert item["type"] == "function"
         function = item["function"]
@@ -172,6 +201,7 @@ def test_descriptors_payload_roundtrip() -> None:
         "run_code",
         "search_knowledge",
         "fetch",
+        "web_search",
         "ask_question",
     ]
 
