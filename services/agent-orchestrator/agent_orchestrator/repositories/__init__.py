@@ -41,6 +41,7 @@ from agent_orchestrator.repositories.conversation import (
 from agent_orchestrator.repositories.event import (
     RunEventRepository as RunEventRepository,
 )
+from agent_orchestrator.repositories.hook import HookRepository as HookRepository
 from agent_orchestrator.repositories.instruction import (
     InstructionRepository as InstructionRepository,
 )

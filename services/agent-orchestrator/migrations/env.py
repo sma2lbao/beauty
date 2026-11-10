@@ -17,6 +17,7 @@ from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
     conversations as conversations_models,
 )
+from agent_orchestrator.models import hook as hook_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import memory as memory_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM

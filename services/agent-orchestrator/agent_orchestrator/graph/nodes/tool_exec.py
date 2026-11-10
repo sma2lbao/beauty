@@ -12,6 +12,7 @@ from typing import Any
 from agent_orchestrator.graph import items
 from agent_orchestrator.graph.nodes.audit import (
     DECISION_APPROVED,
+    DECISION_HOOK_DENIED,
     _elapsed_ms,
     _maybe_offload,
     _record,
@@ -29,10 +30,15 @@ from agent_orchestrator.graph.nodes.messages import (
 )
 from agent_orchestrator.graph.nodes.toolkit import _load_toolkit
 from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_POST_TOOL_USE,
+    HOOK_EVENT_PRE_TOOL_USE,
     RISK_DANGER,
+    HookDecision,
     OffloadPort,
     ToolExtrasFactory,
     ToolkitFactory,
+    append_hook_note,
+    build_hook_payload,
 )
 from agent_orchestrator.graph.runtime import runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
@@ -64,6 +70,34 @@ def make_tool_exec_node(
             arguments = str(call.get("arguments") or "{}")
             call_id = str(call.get("id") or "") or None
             risk = toolkit.risk(name) if toolkit is not None else RISK_DANGER
+            # P1-B:人工确认后的重放同样过 PreToolUse;deny 不执行(置信仍留
+            # pending 语义由调用方处理,这里只回喂并跳过本轮执行)
+            pre = await runtime.ports.hooks.run(
+                state.get("hooks") or [],
+                HOOK_EVENT_PRE_TOOL_USE,
+                build_hook_payload(
+                    HOOK_EVENT_PRE_TOOL_USE,
+                    account_id=str(state.get("account_id") or ""),
+                    conversation_id=state.get("conversation_id"),
+                    run_id=state.get("run_id"),
+                    tool=name,
+                    arguments=arguments,
+                ),
+            )
+            if pre.decision is HookDecision.DENY:
+                output = _tool_error(f"hook denied: {pre.reason}")
+                record = _record(
+                    name,
+                    arguments,
+                    output,
+                    tool_call_id=call_id,
+                    risk=str(risk),
+                    decision=DECISION_HOOK_DENIED,
+                )
+                records.append(record)
+                _tool_item_denied(runtime, name, arguments, record, node="tool_exec")
+                messages.append(_tool_message(str(call.get("id") or ""), output))
+                continue
             started = time.perf_counter()
             offload_record: Mapping[str, Any] | None = None
             if toolkit is None:
@@ -115,6 +149,21 @@ def make_tool_exec_node(
                 _tool_item_finish(
                     runtime, item_kind, name, arguments, item_span, record
                 )
+            # P1-B:PostToolUse 在 offload/_record 之后,note 只进模型可见内容
+            post = await runtime.ports.hooks.run(
+                state.get("hooks") or [],
+                HOOK_EVENT_POST_TOOL_USE,
+                build_hook_payload(
+                    HOOK_EVENT_POST_TOOL_USE,
+                    account_id=str(state.get("account_id") or ""),
+                    conversation_id=state.get("conversation_id"),
+                    run_id=state.get("run_id"),
+                    tool=name,
+                    arguments=arguments,
+                    result=output,
+                ),
+            )
+            output = append_hook_note(output, post)
             messages.append(_tool_message(str(call.get("id") or ""), output))
         return {
             "tool_history": messages[len(base) :],

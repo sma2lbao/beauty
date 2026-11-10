@@ -98,6 +98,10 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     "llm_image_max_count": 4,
     "llm_image_max_bytes": 5_242_880,
     "llm_image_max_total_bytes": 10_485_760,
+    # P1-B 应用级 hooks:默认关——开了会按账号配置发真实 HTTP 到 webhook
+    # (禁网门禁下会变成 SocketBlockedError);hooks 用例自己显式开启。
+    "hooks_enabled": False,
+    "hooks_allow_http": False,
 }
 
 #: 测试用配置:自足、零网络。保留 (tmp_path, name, **overrides) 签名,

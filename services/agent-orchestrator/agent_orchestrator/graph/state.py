@@ -14,6 +14,8 @@ class RunGraphState(TypedDict, total=False):
 
     run_id: str
     account_id: str
+    #: 触发该 run 的会话(可空):hooks 请求体需要 conversation_id(§4.1)。
+    conversation_id: str
     title: str
     goal: str
     acceptance_criteria: list[str]
@@ -47,6 +49,9 @@ class RunGraphState(TypedDict, total=False):
     # P0-4 审批策略快照:[{"tool": "name"|"*", "action": "auto"|"confirm"|"deny"}]
     # 由 services 层在起图时加载(节点纯函数,不查库);空表=按风险等级默认
     approval_policies: list[dict[str, str]]
+    # P1-B 应用级 hooks 快照(design/hooks.md §5):services 层起图时按账号加载,
+    # 节点只消费不查库;缺省=无 hook(旧 checkpoint 兼容,节点用 .get 读)。
+    hooks: list[dict[str, Any]]
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
     writes_approved: bool  # 确认闸的判定结果

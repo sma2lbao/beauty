@@ -25,6 +25,19 @@ RISK_DANGER = "danger"
 KIND_FUNCTION = "function"
 KIND_INTERACTION = "interaction"
 
+#: 应用级 hooks 的事件值域(design/hooks.md §2.1)。graph 只关心工具两事件;
+#: 会话/压缩事件由 services 层直接调 hooks 服务)。
+HOOK_EVENT_PRE_TOOL_USE = "PreToolUse"
+HOOK_EVENT_POST_TOOL_USE = "PostToolUse"
+HOOK_EVENT_SESSION_START = "SessionStart"
+HOOK_EVENT_SESSION_END = "SessionEnd"
+HOOK_EVENT_PRE_COMPACT = "PreCompact"
+#: 工具类事件(带 matcher;其余事件忽略 matcher)。
+HOOK_TOOL_EVENTS = frozenset({HOOK_EVENT_PRE_TOOL_USE, HOOK_EVENT_POST_TOOL_USE})
+#: §4.1 请求体里 arguments/result 的截断长度与尾注。
+HOOK_ARGUMENT_CHARS = 8000
+HOOK_TRUNCATED_SUFFIX = "…(truncated)"
+
 
 class ApprovalDecision(StrEnum):
     """审批策略求值结果(graph 侧值域,services 侧枚举值与之对齐)。"""
@@ -140,6 +153,100 @@ class ApprovalPort(Protocol):
     ) -> ApprovalDecision: ...
 
 
+class HookDecision(StrEnum):
+    """hook 决策(graph 侧值域,与 services.hooks 响应解析结果对齐)。
+
+    allow=继续(仍要走审批策略);deny 仅 PreToolUse 生效;skip 仅 PreCompact 生效。
+    """
+
+    ALLOW = "allow"
+    DENY = "deny"
+    SKIP = "skip"
+
+
+@dataclass(frozen=True, slots=True)
+class HookOutcome:
+    """一次 hooks 串行求值的结果:decision + 可回喂的 reason/note。"""
+
+    decision: HookDecision = HookDecision.ALLOW
+    reason: str = ""
+    note: str = ""
+
+
+class HookPort(Protocol):
+    """应用级 hooks 执行器:按事件串行请假账号 hook(无 hook 时零开销放行)。"""
+
+    async def run(
+        self,
+        hooks: Sequence[Mapping[str, Any]],
+        event: str,
+        payload: Mapping[str, Any],
+    ) -> HookOutcome: ...
+
+
+class _NullHooks:
+    """默认实现:未注入真实 runner 时直接放行(单测/未配置场景)。"""
+
+    async def run(
+        self,
+        hooks: Sequence[Mapping[str, Any]],
+        event: str,
+        payload: Mapping[str, Any],
+    ) -> HookOutcome:
+        del hooks, event, payload
+        return HookOutcome()
+
+
+def _hook_text(value: object) -> str:
+    """§4.1:arguments/result 截断到 8000 字符,尾部标注 (truncated)。"""
+    text = "" if value is None else str(value)
+    if len(text) <= HOOK_ARGUMENT_CHARS:
+        return text
+    return text[:HOOK_ARGUMENT_CHARS] + HOOK_TRUNCATED_SUFFIX
+
+
+def build_hook_payload(
+    event: str,
+    *,
+    account_id: str,
+    conversation_id: str | None = None,
+    run_id: str | None = None,
+    tool: str | None = None,
+    arguments: object = None,
+    result: object = None,
+    tokens_before: int | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """§4.1 请求体:与该事件无关的字段省略,不塞 None/空串。"""
+    payload: dict[str, Any] = {"account_id": account_id}
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if run_id:
+        payload["run_id"] = run_id
+    if tool:
+        payload["tool"] = tool
+    if arguments is not None:
+        payload["arguments"] = _hook_text(arguments)
+    if result is not None:
+        payload["result"] = _hook_text(result)
+    if tokens_before is not None:
+        payload["tokens_before"] = int(tokens_before)
+    if reason:
+        payload["reason"] = reason
+    return payload
+
+
+#: PostToolUse note 的追加格式(§6.2):只改模型可见内容,不改审计/投影。
+HOOK_NOTE_PREFIX = "\n\n[hook note] "
+
+
+def append_hook_note(output: str, outcome: HookOutcome) -> str:
+    """把 PostToolUse 的 note 追加到工具输出尾部(无 note 时原样返回)。"""
+    if not outcome.note:
+        return output
+    return f"{output}{HOOK_NOTE_PREFIX}{outcome.note}"
+
+
 class OffloadedOutputLike(Protocol):
     """offload 决策结果(§6.6):回喂模型的正文 + 合并进审计记录的字段。
 
@@ -204,5 +311,6 @@ class GraphPorts:
 
     usage: UsagePort = field(default_factory=_NullUsage)
     approval: ApprovalPort = field(default_factory=RiskDefaultApproval)
+    hooks: HookPort = field(default_factory=_NullHooks)
     #: 仅 extras、无基础工具时用来合并;None 表示装配方未提供(遇到即报错)。
     empty_toolkit: EmptyToolkitFactory | None = None

@@ -24,10 +24,18 @@ from common.errors import ConflictError, NotFoundError
 from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_POST_TOOL_USE,
+    HOOK_EVENT_PRE_TOOL_USE,
+    HookDecision,
+    append_hook_note,
+    build_hook_payload,
+)
 from agent_orchestrator.graph.tool_results import is_tool_error, parse_tool_error
 from agent_orchestrator.models.conversations import ChatMessage, ChatToolConfirmation
 from agent_orchestrator.repositories import ChatToolConfirmationRepository
 from agent_orchestrator.services import approval as approval_service
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services.conversations_persist import _persist_assistant_content
 
 if TYPE_CHECKING:
@@ -47,6 +55,8 @@ ERROR_EXPIRED = "tool_confirmation.expired"
 ERROR_NOT_PENDING = "tool_confirmation.not_pending"
 #: 确认时工具已不可用(工具被删/连接器停用):契约外的兜底码,409
 ERROR_TOOL_UNAVAILABLE = "tool_confirmation.tool_unavailable"
+#: P1-B:PreToolUse hook 拒绝(确认保持 pending,可稍后重试)
+ERROR_HOOK_DENIED = "tool.hook_denied"
 
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
@@ -304,12 +314,45 @@ async def confirm(
             "工具已不可用,请重新发起",
             details={"tool": confirmation.tool_name},
         )
+    # P1-B:PreToolUse 在真正执行之前;deny 时确认保持 pending(不改状态)
+    hooks = await hooks_service.load_hooks(session, account_id)
+    pre = await hooks_service.run_hooks(
+        hooks,
+        HOOK_EVENT_PRE_TOOL_USE,
+        build_hook_payload(
+            HOOK_EVENT_PRE_TOOL_USE,
+            account_id=account_id,
+            conversation_id=conversation_id,
+            tool=confirmation.tool_name,
+            arguments=confirmation.arguments,
+        ),
+    )
+    if pre.decision is HookDecision.DENY:
+        raise ConflictError(
+            ERROR_HOOK_DENIED,
+            "工具调用被 hook 拒绝",
+            details={"tool": confirmation.tool_name, "reason": pre.reason},
+        )
     output = await toolkit.execute(
         confirmation.tool_name,
         confirmation.arguments,
         approved=True,
         tool_call_id=confirmation.tool_call_id,
     )
+    # P1-B:PostToolUse 在执行之后,note 追加到落库/回填的结果正文
+    post = await hooks_service.run_hooks(
+        hooks,
+        HOOK_EVENT_POST_TOOL_USE,
+        build_hook_payload(
+            HOOK_EVENT_POST_TOOL_USE,
+            account_id=account_id,
+            conversation_id=conversation_id,
+            tool=confirmation.tool_name,
+            arguments=confirmation.arguments,
+            result=output,
+        ),
+    )
+    output = append_hook_note(output, post)
     message = await _persist_assistant_content(
         session,
         account_id=account_id,

@@ -40,6 +40,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.context.policy import policy_from_settings
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_SESSION_START,
+    build_hook_payload,
+)
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import ConversationRepository, MessageRepository
@@ -53,6 +57,7 @@ from agent_orchestrator.services import (
     post_commit,
     triage,
 )
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.compaction import CompactionResult
@@ -248,4 +253,15 @@ async def create_conversation(
         model=model,
     )
     await ConversationRepository(session).add(conversation)
+    # P1-B:SessionStart 在提交后 best-effort(失败只 warning,不影响建会话)
+    await hooks_service.notify_after_commit(
+        session,
+        account_id,
+        HOOK_EVENT_SESSION_START,
+        build_hook_payload(
+            HOOK_EVENT_SESSION_START,
+            account_id=account_id,
+            conversation_id=conversation.id,
+        ),
+    )
     return conversation

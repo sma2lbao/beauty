@@ -113,6 +113,19 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   精确工具 > `*` > **风险等级默认值**(DANGER 需确认、READ/WRITE 自动),
   空表即等价于旧行为;策略快照随状态进图(节点仍纯函数),命中 `deny` 不执行并把
   原因回喂模型,对话路径也走同一套判定(`confirm` 在 chat 里降级为"请改用任务");
+- **应用级 hooks**(P1-B,契约 `docs/design/hooks.md`):账号级 webhook,在五个事件
+  (`PreToolUse`/`PostToolUse`/`SessionStart`/`SessionEnd`/`PreCompact`)上同步回调。
+  顺序硬约束:**PreToolUse 先于审批策略**(deny 直接短路、不产生 pending;allow
+  也不能绕过审批),PostToolUse 在结果落审计后只向模型可见内容追加 `note`。
+  管理面 `GET/POST /api/v1/hooks`、`PATCH/DELETE /api/v1/hooks/{hook_id}`、
+  `POST /api/v1/hooks/{hook_id}/rotate`(secret 仅创建/轮换响应返回一次,
+  所有端点受 `AGENT_ORCHESTRATOR__HOOKS_ENABLED` 总开关约束,关闭时 409
+  `hooks.disabled`)。超时 `HOOKS_TIMEOUT_SECONDS`(≤30)、上限
+  `HOOKS_MAX_PER_ACCOUNT`、失败策略 `HOOKS_FAIL_CLOSED`(默认放行)、
+  `HOOKS_ALLOW_HTTP`(仅调试,默认 https-only)。目标地址创建时严格解析 DNS、
+  每次请求前再过 SSRF 校验(私网/环回/元数据拒绝),请求带 HMAC-SHA256 签名;
+  多 hook 按创建序**串行**、首个 `deny`/`skip` 短路;调用失败只 warning,
+  不影响主流程(打开 `HOOKS_FAIL_CLOSED` 时降级为 deny);
 - 状态守卫:非法迁移 409(`run.invalid_state`),统一错误模型来自 `common`;
   规划节点进入时置 `planning`、放行/确认通过时置 `running`(状态变更不单落事件);
   **中断超时**:审批/确认默认关闭、提问默认开启(`APPROVAL_TIMEOUT_SECONDS` /

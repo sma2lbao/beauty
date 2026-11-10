@@ -9,6 +9,10 @@ from common.errors import AppError, NotFoundError
 from common.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_SESSION_END,
+    build_hook_payload,
+)
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
@@ -18,6 +22,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunStatus
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services.conversation_targets import (
     MessageTarget as MessageTarget,
 )
@@ -236,6 +241,17 @@ async def delete_conversation(
     conversation.updated_at = datetime.now(UTC)
     await ConversationApprovalGrantRepository(session).delete_for_conversation(
         account_id, conversation_id
+    )
+    # P1-B:SessionEnd 在提交后 best-effort(失败只 warning,不回滚删除)
+    await hooks_service.notify_after_commit(
+        session,
+        account_id,
+        HOOK_EVENT_SESSION_END,
+        build_hook_payload(
+            HOOK_EVENT_SESSION_END,
+            account_id=account_id,
+            conversation_id=conversation_id,
+        ),
     )
 
 

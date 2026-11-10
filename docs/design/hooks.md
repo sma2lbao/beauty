@@ -186,15 +186,15 @@ class HookPort(Protocol):
 
 ## 7. API
 
-账号鉴权（Bearer + account 隔离），前缀 `/v1/hooks`：
+账号鉴权（Bearer + account 隔离），前缀 `/api/v1/hooks`：
 
-| 方法   | 路径                  | 说明                                                                       |
-| ------ | --------------------- | -------------------------------------------------------------------------- |
-| GET    | /v1/hooks             | 列表，可选 event 过滤，按 created_at, id 升序；secret 不回显               |
-| POST   | /v1/hooks             | 创建；校验事件枚举、https、matcher 长度、超时 1..30；响应一次性返回 secret |
-| PATCH  | /v1/hooks/{id}        | 局部更新（matcher/target/timeout/enabled）                                 |
-| DELETE | /v1/hooks/{id}        | 删除，warning 级日志（不入 audit_logs）                                    |
-| POST   | /v1/hooks/{id}/rotate | 轮换 secret，响应返回新 secret                                             |
+| 方法   | 路径                      | 说明                                                                       |
+| ------ | ------------------------- | -------------------------------------------------------------------------- |
+| GET    | /api/v1/hooks             | 列表，可选 event 过滤，按 created_at, id 升序；secret 不回显               |
+| POST   | /api/v1/hooks             | 创建；校验事件枚举、https、matcher 长度、超时 1..30；响应一次性返回 secret |
+| PATCH  | /api/v1/hooks/{id}        | 局部更新（matcher/target/timeout/enabled）                                 |
+| DELETE | /api/v1/hooks/{id}        | 删除，warning 级日志（不入 audit_logs）                                    |
+| POST   | /api/v1/hooks/{id}/rotate | 轮换 secret，响应返回新 secret                                             |
 
 错误码：hooks.disabled（总开关关）、hooks.too_many（>20 条）、hooks.not_found（404，账号隔离）、
 hooks.invalid_target（非 https / 私网地址 / 解析失败）。

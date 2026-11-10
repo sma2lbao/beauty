@@ -21,6 +21,13 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_POST_TOOL_USE,
+    HOOK_EVENT_PRE_TOOL_USE,
+    HookDecision,
+    append_hook_note,
+    build_hook_payload,
+)
 from agent_orchestrator.graph.tool_results import (
     is_tool_error,
     parse_tool_error,
@@ -31,6 +38,7 @@ from agent_orchestrator.repositories import MessageRepository
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import history, tool_confirmations
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services.llm import LLMClient, ToolCall
 from agent_orchestrator.services.tools import ToolRisk
 
@@ -166,60 +174,113 @@ async def _execute_calls(
     calls: tuple[ToolCall, ...],
     policies: list[dict[str, str]] | None,
     confirmations: tool_confirmations.ConfirmationRecorder | None = None,
+    *,
+    hooks: list[dict[str, Any]] | None = None,
+    hook_base: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     """执行一轮工具调用:回填 tool 消息,逐个产出 ("tool", ...) 事件。
 
     risk=write 且提供确认通道时**不执行**:落 pending 确认,帧里带
     confirmation_id/expires_at(前端出确认卡片),回喂"等用户确认"给模型。
+
+    P1-B:hooks 为该账号的 hook 快照(调用方加载),hook_base 提供请求体的
+    account/conversation/run 字段。PreToolUse 在策略之前(deny 不落 pending),
+    PostToolUse 只把 note 追加到回喂内容。
     """
+    base = hook_base or {}
     for call in calls:
         # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
         risk = str(toolkit.risk(call.name))
-        # 参数级规则(§4/§6.1):命中显式 auto 的工具按已授权执行,不再出确认卡片。
-        rule = approval_service.match_rule(policies, call.name, call.arguments)
-        explicit_auto = rule is not None and (
-            str(rule.get("action", "")).lower() == "auto"
-        )
-        decision = approval_service.decide(
-            policies, call.name, ToolRisk(risk), call.arguments
+        # P1-B:PreToolUse 先于审批策略——hook deny 直接短路,不产生确认卡片
+        pre = await hooks_service.run_hooks(
+            hooks or [],
+            HOOK_EVENT_PRE_TOOL_USE,
+            build_hook_payload(
+                HOOK_EVENT_PRE_TOOL_USE,
+                account_id=str(base.get("account_id") or ""),
+                conversation_id=base.get("conversation_id"),
+                run_id=base.get("run_id"),
+                tool=call.name,
+                arguments=call.arguments,
+            ),
         )
         duration_ms = 0
         error_code: str | None = None
         extra: dict[str, str] = {}
-        if decision is approval_service.ApprovalAction.DENY:
-            output = _tool_error(f"工具 {call.name} 被账号审批策略禁止使用")
-        elif decision is approval_service.ApprovalAction.CONFIRM and risk != "write":
-            # DANGER 不切流给对话:回喂错误让模型引导走任务(任务里有确认闸)
-            output = _tool_error(
-                "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
-            )
-        elif risk == "write":
-            if explicit_auto:
-                # 账号策略/会话授权显式放行(§4):按已授权执行,不落 pending 卡片。
-                started = time.perf_counter()
-                output = await toolkit.execute(call.name, call.arguments, approved=True)
-                duration_ms = int((time.perf_counter() - started) * 1000)
-            # 写操作就地确认:不执行,只落 pending 并让前端出卡片
-            elif confirmations is None:
-                output = _tool_error(
-                    "写操作需要用户确认,当前对话不支持就地确认,请提示用户改用「任务」发送"
-                )
-            else:
-                pending = await confirmations.record(
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    risk=risk,
-                    arguments=call.arguments,
-                )
-                output = tool_confirmations.pending_tool_output(call.name)
-                error_code = tool_confirmations.ERROR_CONFIRMATION_REQUIRED
-                extra = pending.frame_fields()
+        executed = False
+        hook_denied = pre.decision is HookDecision.DENY
+        decision = approval_service.ApprovalAction.DENY
+        if hook_denied:
+            # hook 拒绝:不执行、不落 pending,审批策略也不再求值
+            output = _tool_error(f"hook denied: {pre.reason}")
         else:
-            started = time.perf_counter()
-            # 走到这里的只有 READ(WRITE 上面已转确认、DANGER 在对话里不暴露),
-            # approved 恒 False 即可;tool-service 侧仍有风险下限兜底。
-            output = await toolkit.execute(call.name, call.arguments, approved=False)
-            duration_ms = int((time.perf_counter() - started) * 1000)
+            # 参数级规则(§4/§6.1):命中显式 auto 的工具按已授权执行,不再出确认卡片。
+            rule = approval_service.match_rule(policies, call.name, call.arguments)
+            explicit_auto = rule is not None and (
+                str(rule.get("action", "")).lower() == "auto"
+            )
+            decision = approval_service.decide(
+                policies, call.name, ToolRisk(risk), call.arguments
+            )
+            if decision is approval_service.ApprovalAction.DENY:
+                output = _tool_error(f"工具 {call.name} 被账号审批策略禁止使用")
+            elif (
+                decision is approval_service.ApprovalAction.CONFIRM and risk != "write"
+            ):
+                # DANGER 不切流给对话:回喂错误让模型引导走任务(任务里有确认闸)
+                output = _tool_error(
+                    "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
+                )
+            elif risk == "write":
+                if explicit_auto:
+                    # 账号策略/会话授权显式放行(§4):按已授权执行,不落卡片。
+                    started = time.perf_counter()
+                    output = await toolkit.execute(
+                        call.name, call.arguments, approved=True
+                    )
+                    executed = True
+                    duration_ms = int((time.perf_counter() - started) * 1000)
+                # 写操作就地确认:不执行,只落 pending 并让前端出卡片
+                elif confirmations is None:
+                    output = _tool_error(
+                        "写操作需要用户确认,当前对话不支持就地确认,"
+                        "请提示用户改用「任务」发送"
+                    )
+                else:
+                    pending = await confirmations.record(
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        risk=risk,
+                        arguments=call.arguments,
+                    )
+                    output = tool_confirmations.pending_tool_output(call.name)
+                    error_code = tool_confirmations.ERROR_CONFIRMATION_REQUIRED
+                    extra = pending.frame_fields()
+            else:
+                started = time.perf_counter()
+                # 走到这里的只有 READ(WRITE 上面已转确认、DANGER 在对话里不暴露),
+                # approved 恒 False 即可;tool-service 侧仍有风险下限兜底。
+                output = await toolkit.execute(
+                    call.name, call.arguments, approved=False
+                )
+                executed = True
+                duration_ms = int((time.perf_counter() - started) * 1000)
+        if executed:
+            # P1-B:PostToolUse 在真正执行之后;note 只追加到回喂给模型的内容
+            post = await hooks_service.run_hooks(
+                hooks or [],
+                HOOK_EVENT_POST_TOOL_USE,
+                build_hook_payload(
+                    HOOK_EVENT_POST_TOOL_USE,
+                    account_id=str(base.get("account_id") or ""),
+                    conversation_id=base.get("conversation_id"),
+                    run_id=base.get("run_id"),
+                    tool=call.name,
+                    arguments=call.arguments,
+                    result=output,
+                ),
+            )
+            output = append_hook_note(output, post)
         messages.append(_tool_message(call.id, output))
         result_fields = tool_result_fields(output)
         payload: dict[str, Any] = {
@@ -227,7 +288,9 @@ async def _execute_calls(
             "arguments": call.arguments,
             "ok": not is_tool_error(output),
             "risk": risk,
-            "decision": "confirm" if extra else _DECISION_TEXT[decision],
+            "decision": "hook_denied"
+            if hook_denied
+            else ("confirm" if extra else _DECISION_TEXT[decision]),
             "error_code": error_code
             if error_code is not None
             else parse_tool_error(output),
@@ -247,6 +310,8 @@ async def run_tool_loop(
     policies: list[dict[str, str]] | None = None,
     stream: bool = False,
     confirmations: tool_confirmations.ConfirmationRecorder | None = None,
+    hooks: list[dict[str, Any]] | None = None,
+    hook_base: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str, dict[str, Any] | str]]:
     """对话内 function-calling 循环(只读 + 受控写,§6.7)。
 
@@ -289,7 +354,13 @@ async def run_tool_loop(
             last_text = text or last_text
         messages.append(_assistant_tool_message(text, calls))
         async for item in _execute_calls(
-            messages, toolkit, calls, policies, confirmations
+            messages,
+            toolkit,
+            calls,
+            policies,
+            confirmations,
+            hooks=hooks,
+            hook_base=hook_base,
         ):
             yield item
     # 轮次用尽仍在要工具:补一次不带工具的收束,让已执行的结果落到正文里
@@ -314,6 +385,8 @@ async def answer(
     context: ChatPromptContext | None = None,
     settings: Settings | None = None,
     confirmations: tool_confirmations.ConfirmationRecorder | None = None,
+    hooks: list[dict[str, Any]] | None = None,
+    hook_base: dict[str, Any] | None = None,
 ) -> str:
     """给一条用户消息生成直接回复(一次拿全文,非流式路径)。
 
@@ -333,7 +406,13 @@ async def answer(
         return reply.content
     final = ""
     async for kind, payload in run_tool_loop(
-        llm, messages, toolkit, policies=policies, confirmations=confirmations
+        llm,
+        messages,
+        toolkit,
+        policies=policies,
+        confirmations=confirmations,
+        hooks=hooks,
+        hook_base=hook_base,
     ):
         if kind == "content":
             final = str(payload)

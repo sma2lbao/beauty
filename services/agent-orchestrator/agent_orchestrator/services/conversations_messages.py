@@ -22,6 +22,7 @@ from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import chat, post_commit, tool_confirmations, triage
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.conversation_targets import require_conversation
 from agent_orchestrator.services.conversations_context import (
@@ -170,6 +171,12 @@ async def post_message(
             policies = await approval_service.load_policies(
                 session, account_id, conversation_id
             )
+            # P1-B:hook 快照与 account/conversation 请求体上下文
+            hooks = await hooks_service.load_hooks(session, account_id)
+            hook_base = {
+                "account_id": account_id,
+                "conversation_id": conversation_id,
+            }
             # 写操作就地确认:非流式路径与请求同事务落 pending(提交时一起生效)
             confirmations = tool_confirmations.ChatConfirmationRecorder(
                 session, account_id=account_id, conversation_id=conversation_id
@@ -192,6 +199,8 @@ async def post_message(
                     context=context,
                     settings=settings,
                     confirmations=confirmations,
+                    hooks=hooks,
+                    hook_base=hook_base,
                 )
             finally:
                 usage_service.unbind(usage_token)
@@ -397,6 +406,7 @@ async def stream_message(
                     policies = await approval_service.load_policies(
                         policy_session, account_id, conversation_id
                     )
+                    hooks = await hooks_service.load_hooks(policy_session, account_id)
                 # 写操作就地确认:流式路径不在长事务里,每条 pending 独立短事务落库
                 confirmations = tool_confirmations.StreamConfirmationRecorder(
                     factory, account_id=account_id, conversation_id=conversation_id
@@ -408,6 +418,11 @@ async def stream_message(
                     policies=policies,
                     stream=True,
                     confirmations=confirmations,
+                    hooks=hooks,
+                    hook_base={
+                        "account_id": account_id,
+                        "conversation_id": conversation_id,
+                    },
                 ):
                     if kind == "delta":
                         delta = str(payload["text"])

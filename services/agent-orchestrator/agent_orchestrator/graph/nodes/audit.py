@@ -19,10 +19,12 @@ from agent_orchestrator.graph.tool_results import (
     tool_result_fields,
 )
 
-#: 审计记录 decision 值域:策略自动放行 / 人工确认后放行 / 未执行(拒绝)。
+#: 审计记录 decision 值域:策略自动放行 / 人工确认后放行 / 未执行(拒绝)/
+#: 被应用级 hook 拒绝(design/hooks.md §6.2)。
 DECISION_AUTO = "auto"
 DECISION_APPROVED = "approved"
 DECISION_DENIED = "denied"
+DECISION_HOOK_DENIED = "hook_denied"
 
 #: detail 里保留的结果原文长度(与 P0 一致,前端旧字段语义不变)。
 DETAIL_CHARS = 200

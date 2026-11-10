@@ -29,6 +29,7 @@ from agent_orchestrator.repositories import (
 )
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import memory_extraction, run_scores
 from agent_orchestrator.services import usage as usage_service
@@ -124,10 +125,11 @@ class _ApprovalAdapter:
 
 
 def _graph_ports() -> GraphPorts:
-    """装配 graph 侧端口:预算闸、审批策略、空工具注册表兜底。"""
+    """装配 graph 侧端口:预算闸、审批策略、应用 hooks、空工具注册表兜底。"""
     return GraphPorts(
         usage=usage_service,
         approval=_ApprovalAdapter(),
+        hooks=hooks_service.WebhookHookRunner(),
         empty_toolkit=lambda: ToolRegistry([]),
     )
 

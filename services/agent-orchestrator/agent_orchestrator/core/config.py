@@ -260,6 +260,19 @@ class Settings(BaseAppSettings):
     skill_exec_timeout_seconds: int = 600
     skill_max_output_files: int = 10
     skill_max_output_bytes: int = 100_000
+    # 应用级 hooks(P1-B,design/hooks.md §7):账号配置的出站 webhook,
+    # 在五个生命周期挂点被调用。默认关闭——关闭时 API 全 409 hooks.disabled,
+    # 执行侧零开销(不加载快照、不建 HTTP 客户端)。
+    hooks_enabled: bool = False
+    #: 单次 hook 请求超时上限(实际取 min(本值, hook 列, 30 秒))。
+    hooks_timeout_seconds: float = 3.0
+    #: hook 调用失败(超时/连接失败/非 2xx)时的语义:false=放行(warning),
+    #: true=拒绝(hooks_fail_closed,仅 PreToolUse 生效)。
+    hooks_fail_closed: bool = False
+    #: 单账号 hook 条数上限(超出 409 hooks.too_many)。
+    hooks_max_per_account: int = 20
+    #: 仅调试用:允许 http:// target(生产必须 https)。
+    hooks_allow_http: bool = False
     # 浏览器直连时的跨域白名单(dev 默认 Vite;prod 用 JSON 数组覆盖)
     cors_allow_origins: list[str] = [
         "http://localhost:5173",

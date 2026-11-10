@@ -26,12 +26,18 @@ from typing import TYPE_CHECKING
 from common.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_PRE_COMPACT,
+    HookDecision,
+    build_hook_payload,
+)
 from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.repositories import (
     ConversationSummaryRepository,
     MessageRepository,
 )
 from agent_orchestrator.services import history
+from agent_orchestrator.services import hooks as hooks_service
 
 if TYPE_CHECKING:
     from agent_orchestrator.services.llm import LLMClient
@@ -150,6 +156,27 @@ async def compact_history(
     if tokens_before <= threshold_tokens:
         return None
     folded = fresh[:-keep_recent]
+    # P1-B:PreCompact 在阈值判定通过后、真正调模型摘要之前;skip 即不压缩
+    pre = await hooks_service.run_for_account(
+        session,
+        account_id,
+        HOOK_EVENT_PRE_COMPACT,
+        build_hook_payload(
+            HOOK_EVENT_PRE_COMPACT,
+            account_id=account_id,
+            conversation_id=conversation_id,
+            tokens_before=tokens_before,
+            reason="threshold",
+        ),
+    )
+    if pre.decision is HookDecision.SKIP:
+        logger.warning(
+            "compaction.skipped_by_hook",
+            account_id=account_id,
+            conversation_id=conversation_id,
+            reason=pre.reason,
+        )
+        return None
     try:
         summary = await summarize(
             llm, previous_summary=previous, rows=folded, max_chars=summary_max_chars

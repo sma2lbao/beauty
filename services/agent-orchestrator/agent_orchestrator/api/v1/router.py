@@ -6,6 +6,7 @@ from agent_orchestrator.api.v1 import (
     approval_policies,
     conversation_messages,
     conversations,
+    hooks,
     mcp,
     memory,
     models,
@@ -32,5 +33,6 @@ api_router.include_router(skills.router)
 api_router.include_router(mcp.presets_router)
 api_router.include_router(mcp.router)
 api_router.include_router(approval_policies.router)
+api_router.include_router(hooks.router)
 api_router.include_router(memory.router)
 api_router.include_router(models.router)

@@ -22,6 +22,7 @@ from agent_orchestrator.models.runs import PARENT_KIND_SUBAGENT, Run
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import context_service
+from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.items import (
     append_item_event,
@@ -112,6 +113,7 @@ async def _invoke_plan(
     state: dict[str, Any] = {
         "run_id": run.id,
         "account_id": run.account_id,
+        "conversation_id": run.conversation_id,
         "title": run.title,
         "goal": run.goal,
         "acceptance_criteria": list(run.acceptance_criteria or []),
@@ -151,6 +153,8 @@ async def _invoke_plan(
     state["approval_policies"] = await approval_service.load_policies(
         session, run.account_id, run.conversation_id
     )
+    # P1-B:应用级 hooks 快照同样随状态进图(节点不查库;空表=零开销)
+    state["hooks"] = await hooks_service.load_hooks(session, run.account_id)
     # §6.5:规划边界消费排队指令,并入图状态供各节点遵循
     instructions = await _consume_instructions(session, run)
     if instructions:

@@ -18,6 +18,7 @@ from agent_orchestrator.graph.nodes.ask import (
 from agent_orchestrator.graph.nodes.audit import (
     DECISION_AUTO,
     DECISION_DENIED,
+    DECISION_HOOK_DENIED,
     _elapsed_ms,
     _maybe_offload,
     _record,
@@ -37,13 +38,18 @@ from agent_orchestrator.graph.nodes.messages import (
 from agent_orchestrator.graph.nodes.toolkit import _load_toolkit
 from agent_orchestrator.graph.plan_nodes import _text_reply
 from agent_orchestrator.graph.ports import (
+    HOOK_EVENT_POST_TOOL_USE,
+    HOOK_EVENT_PRE_TOOL_USE,
     KIND_INTERACTION,
     ApprovalDecision,
+    HookDecision,
     LLMPort,
     OffloadPort,
     ToolExtrasFactory,
     ToolkitFactory,
     ToolReplyPort,
+    append_hook_note,
+    build_hook_payload,
 )
 from agent_orchestrator.graph.runtime import runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
@@ -196,6 +202,36 @@ def make_execute_node(
                 if str(getattr(call, "id", "")) in skip_ids:
                     continue
                 risk = str(toolkit.risk(call.name))
+                # P1-B:PreToolUse 在审批策略**之前**——hook deny 直接短路,
+                # 不进入 decide、不产生 pending;hook allow 不能绕过下面的策略
+                pre = await runtime.ports.hooks.run(
+                    state.get("hooks") or [],
+                    HOOK_EVENT_PRE_TOOL_USE,
+                    build_hook_payload(
+                        HOOK_EVENT_PRE_TOOL_USE,
+                        account_id=str(state.get("account_id") or ""),
+                        conversation_id=state.get("conversation_id"),
+                        run_id=state.get("run_id"),
+                        tool=call.name,
+                        arguments=call.arguments,
+                    ),
+                )
+                if pre.decision is HookDecision.DENY:
+                    output = _tool_error(f"hook denied: {pre.reason}")
+                    record = _record(
+                        call.name,
+                        call.arguments,
+                        output,
+                        tool_call_id=getattr(call, "id", None),
+                        risk=risk,
+                        decision=DECISION_HOOK_DENIED,
+                    )
+                    records.append(record)
+                    _tool_item_denied(
+                        runtime, call.name, call.arguments, record, node="execute"
+                    )
+                    messages.append(_tool_message(call.id, output))
+                    continue
                 decision = runtime.ports.approval.decide(
                     policies, call.name, risk, call.arguments
                 )
@@ -285,6 +321,22 @@ def make_execute_node(
                 _tool_item_finish(
                     runtime, item_kind, call.name, call.arguments, item_span, record
                 )
+                # P1-B:PostToolUse 在 offload 与 _record 之后——note 只追加到
+                # 模型可见内容,审计记录与过程项保持不变
+                post = await runtime.ports.hooks.run(
+                    state.get("hooks") or [],
+                    HOOK_EVENT_POST_TOOL_USE,
+                    build_hook_payload(
+                        HOOK_EVENT_POST_TOOL_USE,
+                        account_id=str(state.get("account_id") or ""),
+                        conversation_id=state.get("conversation_id"),
+                        run_id=state.get("run_id"),
+                        tool=call.name,
+                        arguments=call.arguments,
+                        result=output,
+                    ),
+                )
+                output = append_hook_note(output, post)
                 messages.append(_tool_message(call.id, output))
             if pending:
                 return {

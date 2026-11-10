@@ -869,6 +869,224 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HookCreate": {
+        "additionalProperties": false,
+        "description": "创建:matcher 只对工具事件生效,其余事件忽略。",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "event": {
+            "enum": [
+              "PreToolUse",
+              "PostToolUse",
+              "SessionStart",
+              "SessionEnd",
+              "PreCompact"
+            ],
+            "title": "Event",
+            "type": "string"
+          },
+          "matcher": {
+            "default": "*",
+            "maxLength": 200,
+            "title": "Matcher",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 3,
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": ["event", "target"],
+        "title": "HookCreate",
+        "type": "object"
+      },
+      "HookRead": {
+        "description": "hook 的读端形态(secret 永不回显)。",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "matcher": {
+            "title": "Matcher",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "matcher",
+          "kind",
+          "target",
+          "timeout_seconds",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "HookRead",
+        "type": "object"
+      },
+      "HookSecretRead": {
+        "description": "创建/轮换的响应:额外一次性返回 secret(接收端据此校验签名)。",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "matcher": {
+            "title": "Matcher",
+            "type": "string"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "matcher",
+          "kind",
+          "target",
+          "timeout_seconds",
+          "enabled",
+          "created_at",
+          "updated_at",
+          "secret"
+        ],
+        "title": "HookSecretRead",
+        "type": "object"
+      },
+      "HookUpdate": {
+        "additionalProperties": false,
+        "description": "局部更新:省略=保持。event/kind/secret 不在此列(secret 走 /rotate)。",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "matcher": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matcher"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          }
+        },
+        "title": "HookUpdate",
+        "type": "object"
+      },
       "InstructionCreate": {
         "description": "运行中追加指令(§6.5):在下一个图边界(规划/放行/确认)被消费。",
         "properties": {
@@ -4815,6 +5033,389 @@
         },
         "summary": "Confirm Tool Call",
         "tags": ["conversations"]
+      }
+    },
+    "/api/v1/hooks": {
+      "get": {
+        "description": "列出账号 hooks(created_at, id 升序;event 可选过滤;不回显 secret)。",
+        "operationId": "list_hooks_api_v1_hooks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "event",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "PreToolUse",
+                    "PostToolUse",
+                    "SessionStart",
+                    "SessionEnd",
+                    "PreCompact"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HookRead"
+                  },
+                  "title": "Response List Hooks Api V1 Hooks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Hooks",
+        "tags": ["hooks"]
+      },
+      "post": {
+        "description": "创建 hook:一次性返回 secret(之后无法再取,只能轮换)。",
+        "operationId": "create_hook_api_v1_hooks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HookCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookSecretRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Hook",
+        "tags": ["hooks"]
+      }
+    },
+    "/api/v1/hooks/{hook_id}": {
+      "delete": {
+        "description": "删除 hook(不入审计;返回 204)。",
+        "operationId": "delete_hook_api_v1_hooks__hook_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hook_id",
+            "required": true,
+            "schema": {
+              "title": "Hook Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Hook",
+        "tags": ["hooks"]
+      },
+      "patch": {
+        "description": "局部更新 matcher/target/timeout_seconds/enabled(省略=保持)。",
+        "operationId": "update_hook_api_v1_hooks__hook_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hook_id",
+            "required": true,
+            "schema": {
+              "title": "Hook Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HookUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Hook",
+        "tags": ["hooks"]
+      }
+    },
+    "/api/v1/hooks/{hook_id}/rotate": {
+      "post": {
+        "description": "轮换签名密钥:返回新 secret,旧 secret 立即失效。",
+        "operationId": "rotate_secret_api_v1_hooks__hook_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hook_id",
+            "required": true,
+            "schema": {
+              "title": "Hook Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookSecretRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Secret",
+        "tags": ["hooks"]
       }
     },
     "/api/v1/mcp/presets": {
