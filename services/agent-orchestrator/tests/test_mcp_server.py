@@ -14,6 +14,8 @@ from agent_orchestrator.services.tools import ToolRisk
 from tests.conftest import _IDP, _settings
 
 AUTH = {"Authorization": "Bearer bm_live_test"}
+LEGACY = "2025-03-26"
+STATELESS = "2026-07-28"
 
 
 class FakeVerifier:
@@ -73,7 +75,20 @@ def _client(
     return TestClient(app)
 
 
-def _rpc(client: TestClient, method: str, params: dict | None = None, rpc_id: int = 1):
+def _rpc(
+    client: TestClient,
+    method: str,
+    params: dict | None = None,
+    rpc_id: int = 1,
+    *,
+    version: str | None = None,
+    accept: str | None = None,
+):
+    headers = dict(AUTH)
+    if version is not None:
+        headers["MCP-Protocol-Version"] = version
+    if accept is not None:
+        headers["Accept"] = accept
     return client.post(
         "/mcp",
         json={
@@ -82,7 +97,7 @@ def _rpc(client: TestClient, method: str, params: dict | None = None, rpc_id: in
             "method": method,
             "params": params or {},
         },
-        headers=AUTH,
+        headers=headers,
     )
 
 
@@ -290,3 +305,108 @@ def test_oauth_token_and_protected_resource_metadata(tmp_path: Path) -> None:
         )
         assert bad.status_code == 401
         assert "oauth-protected-resource" in bad.headers["www-authenticate"]
+
+
+# ---------------------------------------------------------------------------
+# 双栈(P1-H,见 docs/design/mcp-dual-stack.md §6):版本头分流
+# ---------------------------------------------------------------------------
+
+
+def test_stateless_discover_and_sessionless_requests(tmp_path: Path) -> None:
+    """2026-07-28:server/discover 可用、免 initialize、不签会话、响应回告版本。"""
+    with _client(tmp_path) as client:
+        discover = _rpc(client, "server/discover", version=STATELESS)
+        assert discover.status_code == 200
+        result = discover.json()["result"]
+        assert result["protocolVersions"] == [STATELESS, LEGACY]
+        assert result["protocolVersion"] == STATELESS
+        assert result["serverInfo"]["name"] == "beauty-moon"
+        assert set(result["capabilities"]) >= {"tools", "resources"}
+        assert result["instructions"]
+        assert discover.headers["MCP-Protocol-Version"] == STATELESS
+        assert "mcp-session-id" not in discover.headers
+
+        init = _rpc(client, "initialize", version=STATELESS)
+        assert init.status_code == 200
+        assert init.json()["result"]["protocolVersion"] == STATELESS
+        assert "mcp-session-id" not in init.headers
+
+        # 不握手也能直接列工具,且响应仍带版本头
+        tools = _rpc(client, "tools/list", version=STATELESS)
+        assert tools.status_code == 200
+        names = [tool["name"] for tool in tools.json()["result"]["tools"]]
+        assert "beauty.whoami" in names
+        assert tools.headers["MCP-Protocol-Version"] == STATELESS
+        assert "mcp-session-id" not in tools.headers
+
+    # 分流不改变授权面:scope 仍逐方法校验
+    with _client(tmp_path, scopes=["artifacts:read"]) as client:
+        forbidden = _rpc(client, "tools/list", version=STATELESS)
+        assert forbidden.status_code == 200
+        assert forbidden.json()["error"]["message"].startswith("缺少 scope")
+
+
+def test_legacy_stack_versions_and_unknown_discover(tmp_path: Path) -> None:
+    """旧栈(无头或 2025-03-26):initialize 回旧版本;server/discover 不支持。"""
+    with _client(tmp_path) as client:
+        bare = _rpc(client, "initialize")
+        assert bare.status_code == 200
+        assert bare.json()["result"]["protocolVersion"] == LEGACY
+        assert "MCP-Protocol-Version" not in bare.headers
+
+        explicit = _rpc(client, "initialize", version=LEGACY)
+        assert explicit.json()["result"]["protocolVersion"] == LEGACY
+        assert "MCP-Protocol-Version" not in explicit.headers
+
+        discover = _rpc(client, "server/discover", version=LEGACY)
+        assert discover.status_code == 200
+        assert discover.json()["error"]["code"] == -32601
+
+
+def test_unsupported_protocol_version_is_rejected_before_auth(tmp_path: Path) -> None:
+    """未知版本头:HTTP 400 + -32600 + supported_versions(先于鉴权判定)。"""
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            headers={"MCP-Protocol-Version": "2024-01-01"},
+        )
+        assert response.status_code == 400
+        error = response.json()["error"]
+        assert error["code"] == -32600
+        assert error["data"]["supported_versions"] == [STATELESS, LEGACY]
+
+        # 带合法凭证也是同样的确定性协议错误
+        unauthorized = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "initialize"},
+            headers={**AUTH, "MCP-Protocol-Version": "2024-01-01"},
+        )
+        assert unauthorized.status_code == 400
+
+
+def test_stateless_method_matrix_and_http_verbs(tmp_path: Path) -> None:
+    """无状态栈:未知方法 -32601;GET 405;DELETE 204(旧栈仍 405)。"""
+    with _client(tmp_path) as client:
+        subscription = _rpc(client, "subscriptions/listen", version=STATELESS)
+        assert subscription.status_code == 200
+        assert subscription.json()["error"]["code"] == -32601
+        assert "不支持" in subscription.json()["error"]["message"]
+
+        get_response = client.get(
+            "/mcp", headers={**AUTH, "MCP-Protocol-Version": STATELESS}
+        )
+        assert get_response.status_code == 405
+
+        deleted = client.delete(
+            "/mcp", headers={**AUTH, "MCP-Protocol-Version": STATELESS}
+        )
+        assert deleted.status_code == 204
+
+        legacy_delete = client.delete("/mcp", headers=AUTH)
+        assert legacy_delete.status_code == 405
+
+        anonymous_delete = client.delete(
+            "/mcp", headers={"MCP-Protocol-Version": STATELESS}
+        )
+        assert anonymous_delete.status_code == 401

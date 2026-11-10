@@ -7,6 +7,7 @@ from __future__ import annotations
 from functools import partial
 
 from agent_orchestrator.services import hooks as hooks_service
+from agent_orchestrator.services import mcp_runtime
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.mcp_client import configure_url_guard
@@ -28,6 +29,9 @@ class ToolsAssemblyMixin:
         settings = self.settings
         # MCP 出站 SSRF 校验(P0-6):白名单来自配置,在 MCPClient 首次请求前生效
         configure_url_guard(allowed_hosts=settings.mcp_allowed_hosts)
+        # MCP 协议版本策略(P1-H):auto = 先探测 2026-07-28 无状态栈,失败回落
+        # 2025-03-26;也可强制其中一档(见 docs/design/mcp-dual-stack.md)
+        mcp_runtime.configure_protocol_version(settings.mcp_protocol_version)
         # 应用级 hooks(P1-B):进程级配置(总开关/超时/失败语义/上限/白名单),
         # runner 每次调用时读取——GraphPorts 是模块常量,不能按容器参数化
         hooks_service.configure_hooks(settings)

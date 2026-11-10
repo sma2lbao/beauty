@@ -27,7 +27,41 @@ from agent_orchestrator.repositories import ArtifactRepository, RunRepository
 from agent_orchestrator.services import artifacts as artifacts_service
 from agent_orchestrator.services.tools import ToolRisk
 
-PROTOCOL_VERSION = "2025-03-26"
+#: 有状态会话栈(不带版本头的老客户端也落这里)
+PROTOCOL_VERSION_LEGACY = "2025-03-26"
+#: 无状态自包含栈(每请求自带版本头,不建会话)
+PROTOCOL_VERSION_STATELESS = "2026-07-28"
+#: 公告顺序:最新在前(server/discover 与错误响应共用)
+SUPPORTED_PROTOCOL_VERSIONS = (PROTOCOL_VERSION_STATELESS, PROTOCOL_VERSION_LEGACY)
+#: 兼容旧引用(initialize 的旧栈返回版本)
+PROTOCOL_VERSION = PROTOCOL_VERSION_LEGACY
+
+SERVER_INFO: dict[str, str] = {"name": "beauty-moon", "version": "0.1.0"}
+SERVER_CAPABILITIES: dict[str, Any] = {"tools": {}, "resources": {}}
+SERVER_INSTRUCTIONS = "公开 MCP 只暴露只读工具与交付物资源"
+
+
+class MCPMethodNotFoundError(AppError):
+    """本部署不支持的 MCP 方法:JSON-RPC -32601。
+
+    无状态栈的所有未知方法与旧栈的 `server/discover` 走这里;旧栈其它未知方法
+    保持既有的 -32000(零回归)。
+    """
+
+    def __init__(self, method: str) -> None:
+        super().__init__("mcp.method_not_found", f"本部署不支持该方法:{method}")
+        self.rpc_code = -32601
+
+
+def discover_result() -> dict[str, Any]:
+    """server/discover 结果(无状态栈握手探测入口,仅需已认证)。"""
+    return {
+        "protocolVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+        "protocolVersion": PROTOCOL_VERSION_STATELESS,
+        "serverInfo": dict(SERVER_INFO),
+        "capabilities": {"tools": {}, "resources": {}},
+        "instructions": SERVER_INSTRUCTIONS,
+    }
 
 
 @dataclass(frozen=True)
@@ -301,14 +335,32 @@ def _builtin_tools() -> list[dict[str, Any]]:
     ]
 
 
-async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dict:
+async def handle_jsonrpc(
+    request,
+    principal: MCPPrincipal,
+    payload: dict,
+    *,
+    protocol_version: str = PROTOCOL_VERSION_LEGACY,
+) -> dict:
+    """按协议栈分派 JSON-RPC 方法。
+
+    两栈共用鉴权、scope 与工具/资源目录;只有握手与会话语义不同:
+    - legacy:initialize 回 2025-03-26,不支持 server/discover;
+    - stateless:无 initialize 依赖,每请求自包含,server/discover 可探版本。
+    """
+    stateless = protocol_version == PROTOCOL_VERSION_STATELESS
     method = payload.get("method")
     params = payload.get("params") or {}
+    if stateless and method == "server/discover":
+        return discover_result()
     if method == "initialize":
+        # 无状态栈也宽容接受 initialize(部分新客户端仍先握手),但不建会话
         return {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}, "resources": {}},
-            "serverInfo": {"name": "beauty-moon", "version": "0.1.0"},
+            "protocolVersion": (
+                PROTOCOL_VERSION_STATELESS if stateless else PROTOCOL_VERSION_LEGACY
+            ),
+            "capabilities": dict(SERVER_CAPABILITIES),
+            "serverInfo": dict(SERVER_INFO),
         }
     if method == "ping":
         return {}
@@ -350,4 +402,8 @@ async def handle_jsonrpc(request, principal: MCPPrincipal, payload: dict) -> dic
             }
         except AppError as exc:
             raise NotFoundError("mcp.resource_not_found", exc.message) from exc
+    if stateless or method == "server/discover":
+        # 无状态栈的未知方法(含 subscriptions/listen)与旧栈的 server/discover
+        # 都是 -32601;旧栈其它未知方法保持既有 -32000(零回归)。
+        raise MCPMethodNotFoundError(str(method))
     raise NotFoundError("mcp.method_not_found", f"未知 MCP 方法:{method}")

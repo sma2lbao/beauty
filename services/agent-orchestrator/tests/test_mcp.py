@@ -133,6 +133,8 @@ def test_mcp_client_forwards_session_and_protocol_headers() -> None:
             "http://mcp.local/mcp",
             timeout_seconds=2,
             transport=httpx.MockTransport(handler),
+            # 该 handler 不认识 server/discover,显式锁 legacy 栈
+            protocol_version="2025-03-26",
         )
         await client.initialize()
         tools = await client.list_tools()

@@ -81,6 +81,10 @@ class Settings(BaseAppSettings):
     # 出站 SSRF 校验(P0-6):MCP server 的 host 解析到私网/回环/链路本地/元数据
     # 地址一律拒绝;这里按 host 精确放行(小写比较),给自建内网 MCP 开口子。
     mcp_allowed_hosts: list[str] = []
+    # MCP 协议版本策略(P1-H,见 docs/design/mcp-dual-stack.md):auto = 先探测
+    # 2026-07-28 无状态栈,不可用则回落 2025-03-26 有状态栈;也可强制
+    # "2025-03-26"/"2026-07-28"(强制 stateless 时探测失败直接报错)。
+    mcp_protocol_version: str = "auto"
     # stdio 型 MCP(P2):在沙箱内拉起 MCP 进程,经 stdio JSON-RPC 调工具。
     # 需要 sandbox_enabled 同时为真(没有沙箱客户端时 test 端点明确报错、
     # tool_specs 跳过 stdio server);network=public 是 P2 的临时口径,

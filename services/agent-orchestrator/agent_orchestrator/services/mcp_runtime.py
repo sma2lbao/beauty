@@ -25,6 +25,7 @@ from agent_orchestrator.schemas.mcp import (
 from agent_orchestrator.services.mcp_client import (
     MCPAuthRequired,
     MCPClient,
+    normalize_protocol_version,
 )
 from agent_orchestrator.services.mcp_crypto import decrypt_token, encrypt_token
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
@@ -37,6 +38,16 @@ TRANSPORT_HTTP = "http"
 
 
 TRANSPORT_STDIO = "stdio"
+
+#: MCP 协议版本策略(None=auto 协商):由容器按配置注入,进程级生效
+_PROTOCOL_VERSION: str | None = None
+
+
+def configure_protocol_version(value: str | None) -> None:
+    """设置远程 MCP 客户端的协议版本策略(见 docs/design/mcp-dual-stack.md)。"""
+    global _PROTOCOL_VERSION
+    _PROTOCOL_VERSION = normalize_protocol_version(value)
+
 
 #: 调用前解析 OAuth token 的回调:第二参为 True 表示强制刷新(401 后重试)
 
@@ -102,6 +113,7 @@ def build_client(
         token=token,
         timeout_seconds=server.timeout_seconds,
         transport=transport,
+        protocol_version=_PROTOCOL_VERSION,
     )
 
 

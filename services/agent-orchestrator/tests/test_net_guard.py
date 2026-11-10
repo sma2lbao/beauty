@@ -216,7 +216,9 @@ def test_mcp_client_allowed_host_still_reaches_server() -> None:
 
     async def scenario() -> str:
         client = MCPClient(
-            "http://internal.example/mcp", transport=_recording_transport(requests)
+            "http://internal.example/mcp",
+            transport=_recording_transport(requests),
+            protocol_version="2025-03-26",
         )
         try:
             return json.dumps(await client.initialize(), ensure_ascii=False)
