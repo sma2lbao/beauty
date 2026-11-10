@@ -192,6 +192,32 @@ async def context_for_message(
 #: 可作为多模态输入注入模型的图片类型(与 ALLOWED_TYPES 的图片子集一致)
 IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
+
+async def images_in(
+    session: AsyncSession, account_id: str, attachment_ids: list[str]
+) -> bool:
+    """这批附件里有没有图片(分流/开流前的模式预检用,只读)。
+
+    未知/跨账号 id → 404(与 link_attachments 同口径,预检先报错好过开流后
+    只发一帧错误)。附件最多 5 个,逐条查足够。
+    """
+    if not attachment_ids:
+        return False
+    repo = AttachmentRepository(session)
+    found = False
+    for attachment_id in attachment_ids:
+        attachment = await repo.require_for_account(account_id, attachment_id)
+        found = found or attachment.content_type in IMAGE_TYPES
+    return found
+
+
+async def message_has_images(
+    session: AsyncSession, account_id: str, message_id: str
+) -> bool:
+    """消息绑定的附件里有没有图片(重写复用轮的分流预检用,只读)。"""
+    rows = await AttachmentRepository(session).list_for_message(account_id, message_id)
+    return any(row.content_type in IMAGE_TYPES for row in rows)
+
 #: 默认多模态预算(P1-G §7;Settings 里同名配置可覆盖)
 DEFAULT_IMAGE_MAX_COUNT = 4
 DEFAULT_IMAGE_MAX_BYTES = 5_242_880

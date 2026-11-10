@@ -63,6 +63,9 @@ from agent_orchestrator.services import usage as usage_service
 from agent_orchestrator.services.compaction import CompactionResult
 from agent_orchestrator.services.conversation_targets import MessageTarget
 from agent_orchestrator.services.conversation_targets import (
+    precheck_image_mode as precheck_image_mode,
+)
+from agent_orchestrator.services.conversation_targets import (
     require_conversation as require_conversation,
 )
 from agent_orchestrator.services.conversation_targets import (
@@ -221,6 +224,7 @@ __all__ = [
     "list_messages",
     "logger",
     "post_message",
+    "precheck_image_mode",
     "precheck_rewrite",
     "rename_conversation",
     "require_conversation",

@@ -149,9 +149,14 @@ async def post_message(
             max_count=5,
         )
     attachment_context = ""
+    has_images = False
     if attachment_ids:
         attachment_context = await attachments_service.context_for_message(
             session, account_id, message.id
+        )
+        # 任务路径不注入图片(model-routing §7):带图消息的分流要看这一点
+        has_images = await attachments_service.images_in(
+            session, account_id, attachment_ids
         )
     resolved_model = model or model_for_conversation(conversation)
     with bind_dialogue_llm(
@@ -159,7 +164,7 @@ async def post_message(
         conversation_id=conversation_id,
         model=resolved_model,
     ):
-        decided = await triage.decide(content, llm, mode=mode)
+        decided = await triage.decide(content, llm, mode=mode, has_images=has_images)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
         # 工具 handler 执行时读得到对话上下文(stdio MCP 沙箱按对话复用);
@@ -310,6 +315,7 @@ async def _prepare_turn(
     *,
     attachment_context: str,
     resolved_model: str | None,
+    has_images: bool = False,
     mode: str = triage.AUTO,
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
@@ -327,13 +333,15 @@ async def _prepare_turn(
 
     发消息与重写共用这一层,保证两条入口的分流/上下文/建 run 口径只有一份。
     返回 (prompt, run|None, 处理方式);task 路径 prompt 为空。
+
+    has_images 表示本轮用户消息带图片:任务路径不注入图片,分流据此直答。
     """
     with bind_dialogue_llm(
         account_id=account_id,
         conversation_id=conversation.id,
         model=resolved_model,
     ):
-        decided = await triage.decide(content, llm, mode=mode)
+        decided = await triage.decide(content, llm, mode=mode, has_images=has_images)
     # llm 为空时 decide 不会给出 chat(显式 chat 无模型会 409),这里判空只为收窄类型
     if decided == triage.CHAT and llm is not None:
         context = await _prepare_chat_context(
@@ -677,9 +685,14 @@ async def stream_message(
                 max_count=5,
             )
         attachment_context = ""
+        has_images = False
         if attachment_ids:
             attachment_context = await attachments_service.context_for_message(
                 session, account_id, message.id
+            )
+            # 任务路径不注入图片(model-routing §7):带图消息的分流要看这一点
+            has_images = await attachments_service.images_in(
+                session, account_id, attachment_ids
             )
         resolved_model = model or model_for_conversation(conversation)
         prompt, run, outcome = await _prepare_turn(
@@ -692,6 +705,7 @@ async def stream_message(
             content,
             attachment_context=attachment_context,
             resolved_model=resolved_model,
+            has_images=has_images,
             mode=mode,
             jobs_enabled=jobs_enabled,
             skill=skill,
@@ -780,6 +794,10 @@ async def stream_rewrite(
         attachment_context = await attachments_service.context_for_message(
             session, account_id, message.id
         )
+        # 复用轮同样看附件里有没有图:带图重发不该被判成任务(任务不注入图片)
+        has_images = await attachments_service.message_has_images(
+            session, account_id, message.id
+        )
         # 不继承 model 覆盖:走会话默认模型(conversation.model 可能为空 → 网关默认)
         resolved_model = model_for_conversation(conversation)
         prompt, run, outcome = await _prepare_turn(
@@ -792,6 +810,7 @@ async def stream_rewrite(
             message.content,
             attachment_context=attachment_context,
             resolved_model=resolved_model,
+            has_images=has_images,
             mode=triage.AUTO,
             jobs_enabled=jobs_enabled,
             skill=plan.target.skill,

@@ -18,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.models.conversations import Conversation
 from agent_orchestrator.repositories import ConversationRepository
+from agent_orchestrator.services import attachments as attachments_service
 from agent_orchestrator.services import mcp as mcp_service
-from agent_orchestrator.services import skill_packages
+from agent_orchestrator.services import skill_packages, triage
 from agent_orchestrator.services.skill_packages import SkillDefinition
 
 if TYPE_CHECKING:
+    from agent_orchestrator.services.llm import LLMClient
     from agent_orchestrator.services.skills import SkillRegistry
 
 
@@ -75,6 +77,30 @@ async def resolve_message_target(
         mcp_server_ids=[server.id for server in servers],
         mcp_reference_note=mcp_service.reference_note(servers),
     )
+
+
+async def precheck_image_mode(
+    factory: async_sessionmaker[AsyncSession],
+    account_id: str,
+    *,
+    mode: str,
+    attachment_ids: list[str],
+    llm: LLMClient | None,
+) -> None:
+    """开流前的图片/模式预检(独立短事务):带图任务/带图无模型 → 409。
+
+    任务(run)路径本期不注入图片(model-routing §7):带图任务等于丢图,
+    所以必须在 StreamingResponse 之前拒绝——开流后只能发一帧错误。
+    """
+    if not attachment_ids:
+        triage.require_task_images(mode, False)
+        return
+    async with session_scope(factory) as session:
+        has_images = await attachments_service.images_in(
+            session, account_id, attachment_ids
+        )
+    triage.require_task_images(mode, has_images)
+    triage.require_image_model(mode, llm, has_images)
 
 
 async def resolve_stream_target(

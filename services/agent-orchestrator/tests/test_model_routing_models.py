@@ -15,6 +15,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+import pytest
+from common.errors import ConflictError
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
@@ -28,6 +30,7 @@ from agent_orchestrator.services.llm import (
 )
 from agent_orchestrator.services.tools import ToolRegistry, ToolSpec
 from tests.conftest import _IDP, ACCOUNT, FakeLLM, _client, _settings
+from tests.support.conversations import _sse_events
 
 #: 1x1 PNG(内容本身不重要,只验证 base64 往返与 parts 形状)
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
@@ -245,6 +248,32 @@ def test_triage_uses_json_schema_response_format(tmp_path: Path) -> None:
     assert fake.response_formats[0] == triage.TRIAGE_RESPONSE_FORMAT
 
 
+async def test_triage_with_images_skips_model_and_goes_chat() -> None:
+    """带图消息不进模型判别:任务路径不注入图片,判成 task 就等于丢图。"""
+    fake = FakeLLM(['{"mode": "task"}'])
+    assert await triage.decide("看一下这张图", fake, has_images=True) == triage.CHAT
+    assert fake.calls == []
+
+
+async def test_triage_without_images_still_asks_model() -> None:
+    fake = FakeLLM(['{"mode": "task"}'])
+    assert await triage.decide("整理成周报", fake) == triage.TASK
+    assert fake.response_formats[0] == triage.TRIAGE_RESPONSE_FORMAT
+
+
+async def test_triage_rejects_task_mode_with_images() -> None:
+    with pytest.raises(ConflictError) as excinfo:
+        await triage.decide("整理成周报", None, mode=triage.TASK, has_images=True)
+    assert excinfo.value.code == "task.image_unsupported"
+
+
+async def test_triage_with_images_without_llm_is_conflict() -> None:
+    """没有模型时两条路都看不见图:带图 auto 也必须如实 409,不能丢进任务。"""
+    with pytest.raises(ConflictError) as excinfo:
+        await triage.decide("看一下这张图", None, has_images=True)
+    assert excinfo.value.code == "chat.llm_disabled"
+
+
 # --------------------------------------------------------------------- §6.5 工具参数
 
 
@@ -358,3 +387,134 @@ async def test_history_prompt_inlines_images() -> None:
 
     assert prompt[0]["content"] == [{"type": "text", "text": "看一下图"}, *parts]
     assert prompt[1] == {"role": "assistant", "content": "好的"}
+
+# ------------------------------------------------------- §7 带图分流(任务不注入图片)
+
+
+def test_auto_message_with_image_goes_chat_without_triage(tmp_path: Path) -> None:
+    """auto + 带图:任务路径不注入图片,所以直接直答,不调分流判别。"""
+    fake = FakeLLM(["红色"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        image_id = _upload_image(client, conversation_id, "pic.png")
+        resp = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={"content": "这张图是什么颜色?", "attachment_ids": [image_id]},
+            headers=ACCOUNT,
+        )
+
+    assert resp.status_code == 201
+    assert resp.json()["mode"] == "chat"
+    assert resp.json()["run"] is None
+    # 没有分流判别调用(json_schema),第一次调用就是多模态直答
+    assert triage.TRIAGE_RESPONSE_FORMAT not in fake.response_formats
+    content = fake.calls[0][-1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "这张图是什么颜色?"}
+    assert content[1]["type"] == "image_url"
+
+
+def test_task_mode_with_image_is_rejected(tmp_path: Path) -> None:
+    """显式任务模式带图 → 409:任务路径看不见图,静默丢图比报错更糟。"""
+    fake = FakeLLM(["不该被调用"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        image_id = _upload_image(client, conversation_id, "pic.png")
+        resp = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={
+                "content": "整理成周报",
+                "mode": "task",
+                "attachment_ids": [image_id],
+            },
+            headers=ACCOUNT,
+        )
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "task.image_unsupported"
+    assert fake.calls == []
+
+
+def test_stream_task_mode_with_image_is_rejected_before_streaming(
+    tmp_path: Path,
+) -> None:
+    """SSE 开流前就 409:一旦 200 开流,只能塞一帧错误。"""
+    fake = FakeLLM(["不该被调用"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        image_id = _upload_image(client, conversation_id, "pic.png")
+        resp = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages/stream",
+            json={
+                "content": "整理成周报",
+                "mode": "task",
+                "attachment_ids": [image_id],
+            },
+            headers=ACCOUNT,
+        )
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "task.image_unsupported"
+    assert fake.calls == []
+
+
+def test_stream_auto_message_with_image_reports_chat(tmp_path: Path) -> None:
+    fake = FakeLLM(["红色"])
+    with _client(tmp_path, fake) as client:
+        conversation_id = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        image_id = _upload_image(client, conversation_id, "pic.png")
+        resp = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages/stream",
+            json={"content": "这张图是什么颜色?", "attachment_ids": [image_id]},
+            headers=ACCOUNT,
+        )
+        events = _sse_events(resp.text)
+
+    assert resp.status_code == 200
+    meta = next(data for name, data in events if name == "meta")
+    assert meta["mode"] == "chat"
+    assert meta["run"] is None
+    done = next(data for name, data in events if name == "done")
+    assert done["reply"]["content"] == "红色"
+
+def test_auto_message_with_image_without_llm_is_conflict(client: TestClient) -> None:
+    """没有模型时带图消息 409:任务路径不注入图片,不能悄悄把图丢掉。"""
+    conversation_id = client.post(
+        "/api/v1/conversations", json={}, headers=ACCOUNT
+    ).json()["id"]
+    image_id = _upload_image(client, conversation_id, "pic.png")
+
+    resp = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={"content": "这张图是什么颜色?", "attachment_ids": [image_id]},
+        headers=ACCOUNT,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "chat.llm_disabled"
+
+
+def test_stream_auto_message_with_image_without_llm_is_409_before_stream(
+    client: TestClient,
+) -> None:
+    conversation_id = client.post(
+        "/api/v1/conversations", json={}, headers=ACCOUNT
+    ).json()["id"]
+    image_id = _upload_image(client, conversation_id, "pic.png")
+
+    resp = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages/stream",
+        json={"content": "这张图是什么颜色?", "attachment_ids": [image_id]},
+        headers=ACCOUNT,
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "chat.llm_disabled"

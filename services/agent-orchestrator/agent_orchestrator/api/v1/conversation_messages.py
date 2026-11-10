@@ -220,6 +220,14 @@ async def stream_message(
     container = get_container(request)
     assert container.session_factory is not None
     factory = container.session_factory
+    # 图片/模式预检放在开流前:任务路径不注入图片,带图任务 → 409(只能开流前判)
+    await conversations_service.precheck_image_mode(
+        factory,
+        account_id,
+        mode=body.mode,
+        attachment_ids=body.attachment_ids,
+        llm=llm,
+    )
     # 会话存在性/技能/MCP 解析放在开流前:未知 id 直接 404,而不是开流后只能发错误帧
     target = await conversations_service.resolve_stream_target(
         factory,

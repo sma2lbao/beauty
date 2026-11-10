@@ -225,6 +225,30 @@ max_count, max_bytes, max_total_bytes) -> list[dict]`:取该消息绑定的图�
 - 限制(orchestrator `Settings`):`llm_image_max_count=4`、
   `llm_image_max_bytes=5_242_880`(单张原始字节)、
   `llm_image_max_total_bytes=10_485_760`。
+- **视觉能力声明**(网关 `services/vision.py`):litellm 的模型能力表是随版本
+  发布的静态数据,上游能吃图的新模型常漏标 `supports_vision`;漏标时其 DeepSeek
+  适配层走 `_forward_or_collapse_content` → `convert_content_list_to_str`,把
+  `image_url` 片段折叠成纯文本——图片静默消失、模型凭空作答(用户看到的是
+  "我没收到图片")。因此:
+  - 配置 `VISION_MODELS`(默认 `["deepseek/deepseek-chat"]`,即平台默认模型),
+    应用启动前调 `vision.register_vision_models(...)` → `litellm.register_model`,
+    **只补** `supports_vision` 字段(价格/上下文沿用 litellm 原值,跨成本表
+    reload 保持);BYOK / 账号自定义视觉模型也要列进该配置。
+  - 入口层 `require_image_support`:带图请求落到不支持视觉的模型 → 400
+    `llm.model_no_vision`(早于开流,details 带 `model` 与 `vision_models`),
+    绝不静默丢图。
+  - 候选链 `candidates(..., requires_vision=...)`:带图请求只保留视觉候选;
+    主模型失败而备用是文本模型时如实 502,不切过去丢图。
+- **分流**(`services/triage.py`,§6.7):任务路径不注入图片,判成任务等于把图丢掉,所以
+  - `mode=auto` + 本条消息带图片 → **直接走对话直答**,不交给模型判别(triage 只看文本,
+    判成 task 就会丢图);
+  - `mode=task` + 带图片 → 409 `task.image_unsupported`("任务模式暂不支持图片输入:
+    请改用对话模式发送图片,或去掉图片后重试");非流式在事务内抛,流式由
+    `precheck_image_mode` 在**开流前**判(开流后只能发错误帧);
+  - 带图片但没有模型(`LLM_ENABLED=false`)→ 409 `chat.llm_disabled`:任务路径不注入图片、
+    对话路径必须调模型,两条路都看不见图,如实拒绝而不是把图丢进任务;
+  - 判定只看**本条消息**的附件:历史图片不参与;编辑重发/重新生成复用的消息附件
+    (`message_has_images`)作为"本条"参与,不做跨轮推断。
 - **边界**:任务(run)执行图本期不注入图片——run 的 goal 文本已含附件解析文本;
   任务里的图片理解留后续(需要把图片快照进 run state/checkpoint)。
 
@@ -252,11 +276,16 @@ max_count, max_bytes, max_total_bytes) -> list[dict]`:取该消息绑定的图�
 - llm-gateway `tests/test_fallback.py`:完整/流式 fallback、不可切换错误、全失败、
   `fallbacks` 回传、指标计数;`tests/test_response_format.py`:透传与非法值 400;
   `tests/test_multimodal.py`:content 列表透传 litellm、图片张数/长度校验 400;
+  `tests/test_vision.py`:视觉能力补写(只写 `supports_vision`、幂等、跳过已支持)、
+  带图请求文本模型 400 `llm.model_no_vision`、候选链不切文本模型(502);
   `tests/test_models.py` 补白名单 400。
-- agent-orchestrator `tests/test_model_routing.py`:模型 contextvar 优先级、run.model
+- agent-orchestrator `tests/test_model_routing_models.py`:模型 contextvar 优先级、run.model
   传递到网关请求体、对话模型解析、白名单 400、`/api/v1/models`(网关可用/不可达)、
   fallback 事件、triage `response_format`、本地工具参数校验、图片 parts 生成与上限、
-  对话 prompt 多模态形状;迁移 + `alembic check`;openapi 快照重生成。
+  对话 prompt 多模态形状、**带图分流**(auto+图直接 chat 且不调判别模型、
+  `mode=task`+图 409 `task.image_unsupported`(非流式与开流前流式)、
+  带图无模型 409 `chat.llm_disabled`(非流式与开流前流式)、纯文本仍走判别);
+  迁移 + `alembic check`;openapi 快照重生成。
 - apps/web:模型选择器(`chat-model-select`)选择→PATCH/发送带 model、
   runs-api/详情模型展示、图片消息渲染。
 - 文档:`check-docs.sh` / `check-workspace.sh`。
