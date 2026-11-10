@@ -15,7 +15,9 @@ import { ConsoleNavLink } from '@/components/console/ui';
 import { ConsoleSidebar } from '@/components/console/sidebar';
 import { CommandPalette } from '@/features/command-palette/command-palette';
 import { useCommandPaletteShortcut } from '@/features/command-palette/use-command-palette-shortcut';
+import { useAccountRole } from '@/features/auth/use-account-role';
 import { MOBILE_NAV_ITEMS } from '@/features/sidebar/nav-data';
+import { visibleNavItems } from '@/features/sidebar/nav-state';
 import { useRunStatusNotifications } from '@/lib/run-status-watcher';
 import { useUiStore } from '@/stores/ui-store';
 
@@ -25,6 +27,9 @@ export function ConsoleLayout() {
   const setCommandPaletteOpen = useUiStore(
     (state) => state.setCommandPaletteOpen,
   );
+  const { isAdmin } = useAccountRole();
+  // 移动顶栏与桌面侧栏/命令面板共用同一份过滤:管理员入口只对管理员显示。
+  const mobileNavItems = visibleNavItems(MOBILE_NAV_ITEMS, isAdmin);
   // 命令面板挂在布局层:任何页面、侧栏隐藏时都能用 ⌘K 打开。
   useCommandPaletteShortcut();
   // 通知(M0 交互面):全局状态探测(runs 轮询 diff)+ toast 视口挂在布局层,
@@ -53,7 +58,7 @@ export function ConsoleLayout() {
             aria-label="移动端导航"
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           >
-            {MOBILE_NAV_ITEMS.map((item) => (
+            {mobileNavItems.map((item) => (
               <ConsoleNavLink key={item.to} {...item} compact />
             ))}
           </nav>

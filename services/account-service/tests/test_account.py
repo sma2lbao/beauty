@@ -60,7 +60,14 @@ def test_me_returns_registered_account(client: TestClient) -> None:
     assert body["display_name"] == "alice"  # 未填则回落 email 前缀
     assert body["status"] == "active"
     assert body["created_at"]
-    assert set(body) == {"id", "email", "display_name", "status", "created_at"}
+    assert set(body) == {
+        "id",
+        "email",
+        "display_name",
+        "status",
+        "role",
+        "created_at",
+    }
 
 
 def test_me_unknown_account_is_404(client: TestClient) -> None:

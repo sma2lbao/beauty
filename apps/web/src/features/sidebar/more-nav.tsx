@@ -16,20 +16,28 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 
 import { ConsoleNavLink } from '@/components/console/ui';
+import { useAccountRole } from '@/features/auth/use-account-role';
 import { cn } from '@/lib/utils';
 
-import { MORE_GROUPS, isNavItemActive } from './nav-state';
+import {
+  MORE_GROUPS,
+  isNavItemActive,
+  visibleGroups,
+} from './nav-state';
 
 const PANEL_ID = 'sidebar-more-menu';
 
 export function MoreNav() {
   const { pathname } = useLocation();
+  const { isAdmin } = useAccountRole();
   const [openAt, setOpenAt] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
+  // 管理台只对管理员开放;角色未知时按非管理员处理(失败关闭)。
+  const groups = visibleGroups(MORE_GROUPS, isAdmin);
   const open = openAt === pathname;
-  const active = MORE_GROUPS.some((group) =>
+  const active = groups.some((group) =>
     group.items.some((item) => isNavItemActive(item, pathname)),
   );
 
@@ -99,7 +107,7 @@ export function MoreNav() {
           id={PANEL_ID}
           className="absolute left-0 right-0 top-full z-40 mt-1 rounded-lg border border-ha-border-strong bg-ha-panel p-1 shadow-[0_18px_44px_rgba(0,0,0,0.55)]"
         >
-          {MORE_GROUPS.map((group, index) => (
+          {groups.map((group, index) => (
             <div key={group.id} className="flex flex-col gap-0.5">
               {index > 0 ? (
                 <div aria-hidden="true" className="my-1 h-px bg-ha-border" />

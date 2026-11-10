@@ -5,10 +5,11 @@
 
 **隔离边界就是账号**:一个账号一行 `users`,主键 `users.id`(32 位 hex)即
 `account_id`,也是所有账号私有数据与 JWT 的 `account_id` claim。没有组织、
-成员、邀请、角色或套餐产品层——账号即个人空间(ChatGPT 个人模型)。
+成员、邀请或套餐产品层——账号即个人空间(ChatGPT 个人模型);管理面只用
+`users.role`(`user`/`admin`)区分权限,角色**不进 JWT**(每请求读库,见下)。
 
 - `GET /v1/me` / `PATCH /v1/me`:当前账号档案,返回
-  `AccountRead{id,email,display_name,status,created_at}`;PATCH 只改
+  `AccountRead{id,email,display_name,status,role,created_at}`;PATCH 只改
   `display_name`(显式 `null` 回落到 email 前缀),邮箱/状态由认证流程维护;
 - `POST /v1/sessions`、`GET /v1/sessions`、`POST /v1/sessions/{id}/revoke`:
   多端会话/设备登记与吊销(app 预留,§7);只能看到/吊销自己账号的会话;
@@ -51,6 +52,39 @@
 | `SIGNING_KEY_PATH`    | 空         | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test)          |
 | `INTERNAL_SECRET`     | 空         | 内部端点(`/v1/auth/issue`、`/usage/events`、`/byok/*` 内部面)的共享密钥,留空即关闭     |
 | `AUTH_ENABLED`        | true       | 校验 Bearer 并从 token claim 解析账号(自建 IdP 即本服务;显式关闭走 `X-Account-Id` 头,仅特殊部署) |
+| `ADMIN_EMAILS`       | []         | 管理员引导名单(JSON 数组,大小写不敏感);注册/登录命中即持久化 `role=admin`,鉴权时也兜底放行 |
+
+## 管理面(RBAC / 审计)
+
+管理员 = `users.role='admin'` **或**邮箱命中 `ADMIN_EMAILS`(兜底);两种判定
+都**每请求读库**(access token 里仍只有 `account_id`,权限变更即时生效,最长
+延迟只是 access token 的 1h 生命周期本身)。
+
+引导第一个管理员:把邮箱写进 `ACCOUNT__ADMIN_EMAILS`(JSON 数组)并重启,
+该邮箱注册/登录后 `role` 被持久化为 `admin`;随后建议用
+`PATCH /v1/admin/accounts/{id}/role` 显式授权,再从名单移除(名单只升不降——
+移出名单不会自动降权,先降 `role` 再移)。
+
+- `GET /v1/admin/accounts`:账号列表(`q` 对 email/display_name 大小写不敏感包含、
+  `status` 过滤、`limit` 1..100 默认 20、`offset`;返回 `{items,total}`,每项带
+  本月 token/事件数/成本与未计价事件数);
+- `GET /v1/admin/accounts/{account_id}`:单账号详情(`{account, usage}`,usage 与
+  `/v1/usage/summary` 同口径);
+- `PATCH /v1/admin/accounts/{account_id}/quota`:改配额(字段省略=保持、显式
+  `null`=清除、整数 `>=1`;至少一个字段);
+- `PATCH /v1/admin/accounts/{account_id}/role`:`user`/`admin`;改自己 409
+  `admin.self_role`;
+- `PATCH /v1/admin/accounts/{account_id}/status`:`active`/`disabled`;停用同一
+  事务把该账号**全部** refresh token(`revoked_at`)与 sessions(`status=revoked`)
+  吊销,并立即禁止其访问管理面;停用自己 409 `admin.self_disable`;
+- `GET /v1/admin/audit-logs`:审计流水(可按 `actor_account_id`/`action`/
+  `target_id` 过滤,`created_at desc, id desc`)。
+
+无权限访问管理端点返回 403 `admin.required`,并**先落一条 denied 审计**
+(`admin.access.denied`,独立短事务,失败只告警)。写动作的审计与业务同事务:
+`action` 为 `account.quota.update`/`account.role.update`/`account.status.update`,
+`detail` 记 before/after(**不含任何密钥/令牌**),读端点不审计。`audit_logs`
+append-only:服务只追加与分页读取,不提供改/删。
 
 ## API Key
 
@@ -121,7 +155,10 @@ v2 之前的**裸 Fernet token** 保持可解(依次尝试当前/历史密钥),�
 ## 迁移
 
 - `users`:一账号一行,`id` 即 `account_id`;唯一约束在 `subject`,
-  `password_hash` 空 = 未设密码,`quota` JSON 默认 `{}`;
+  `password_hash` 空 = 未设密码,`quota` JSON 默认 `{}`,`role` 默认 `user`
+  (迁移时存量行自动回填);
+- `audit_logs`:管理面审计流水(append-only,按 `actor_account_id`/`action`/
+  `target_id`/`created_at` 建索引);
 - `refresh_tokens` / `sessions` / `api_keys` / `usage_events` / `byok_keys` /
   `oauth_*`:全部账号私有,带 `account_id` 列(索引/唯一约束按
   `NAMING_CONVENTION` 命名);`oauth_clients` 是全局表,不带账号列。

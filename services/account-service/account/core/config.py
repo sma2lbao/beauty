@@ -58,3 +58,7 @@ class Settings(ServiceSettings):
     google_client_secret: str = ""
     github_client_id: str = ""
     github_client_secret: str = ""
+    # 管理面引导名单(admin-plane §2.2):env JSON 数组,大小写不敏感;
+    # 命中邮箱在注册/登录时持久化为 admin,require_admin 亦以此兜底放行。
+    # 移除名单不自动降权(先经管理面改 role 再移)。
+    admin_emails: list[str] = []

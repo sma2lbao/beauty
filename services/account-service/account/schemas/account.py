@@ -14,6 +14,7 @@ class AccountRead(BaseModel):
     email: str
     display_name: str | None
     status: str
+    role: str
     created_at: datetime
 
 

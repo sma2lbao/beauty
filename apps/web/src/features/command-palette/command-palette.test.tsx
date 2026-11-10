@@ -13,6 +13,13 @@ vi.mock('@/lib/conversations-api', () => ({
   conversationsApi: { page: vi.fn() },
 }));
 
+// 页面项按角色过滤:钉住角色钩子,测试里切到管理员再看「管理台」是否出现。
+const roleState = vi.hoisted(() => ({ isAdmin: false }));
+
+vi.mock('@/features/auth/use-account-role', () => ({
+  useAccountRole: () => ({ isAdmin: roleState.isAdmin }),
+}));
+
 // 工作区选择会连带拉工作区接口;这里只关心面板跳转,直接给一个固定工作区,
 // 避免测试被无关请求与默认工作区回写 URL 的 effect 干扰。
 vi.mock('@/lib/workspace-selection', () => ({
@@ -80,6 +87,7 @@ beforeEach(() => {
 afterEach(() => {
   // store 是模块级单例,不重置会让下一条用例直接带着「已打开」的状态起跑。
   useUiStore.setState({ commandPaletteOpen: false });
+  roleState.isAdmin = false;
   vi.clearAllMocks();
 });
 
@@ -163,6 +171,24 @@ describe('CommandPalette', () => {
       expect(screen.getByTestId('location')).toHaveTextContent('/runs');
       expect(useUiStore.getState().commandPaletteOpen).toBe(false);
     });
+  });
+
+  it('管理台页面项只对管理员出现', async () => {
+    const first = renderPalette();
+    fireEvent.change(getInput(), { target: { value: '管理台' } });
+    expect(screen.queryByRole('option', { name: /管理台/ })).toBeNull();
+    first.unmount();
+
+    roleState.isAdmin = true;
+    renderPalette();
+    fireEvent.change(getInput(), { target: { value: '管理台' } });
+    expect(screen.getByRole('option', { name: /管理台/ })).toBeInTheDocument();
+
+    fireEvent.keyDown(getInput(), { key: 'Enter' });
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent('/admin');
+    });
+    roleState.isAdmin = false;
   });
 
   it('Esc 关闭面板并把 store 置回 false', () => {

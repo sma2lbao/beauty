@@ -83,6 +83,35 @@ export const queryKeys = {
   accountMe: ['account-me'] as const,
   accountSessions: ['account-sessions'] as const,
 
+  /**
+   * 管理台域(P0-7):列表键把过滤维度拼进键(维度变→自动重查);
+   * adminAccounts / adminAuditLogs 是域级前缀键,写操作后统一失效。
+   */
+  adminAccounts: ['admin-accounts'] as const,
+  adminAccountList: (
+    query: string,
+    status: string,
+    limit: number,
+    offset: number,
+  ) => ['admin-accounts', 'list', query, status, limit, offset] as const,
+  adminAuditLogs: ['admin-audit-logs'] as const,
+  adminAuditLogList: (
+    limit: number,
+    offset: number,
+    actorAccountId: string,
+    action: string,
+    targetId: string,
+  ) =>
+    [
+      'admin-audit-logs',
+      'list',
+      limit,
+      offset,
+      actorAccountId,
+      action,
+      targetId,
+    ] as const,
+
   /** 模型与用量域。 */
   models: ['models'] as const,
   /**

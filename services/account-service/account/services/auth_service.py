@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from account.core.config import Settings
 from account.core.idp import IdPSigner
 from account.core.oauth import OAuthProfile
+from account.core.roles import ROLE_ADMIN, is_admin_email, role_for_email
 from account.models.account import OAuthIdentity, RefreshToken, User
 from account.repositories import (
     OAuthIdentityRepository,
@@ -78,6 +79,17 @@ def _verify_password(password: str, stored: str | None) -> bool:
 
 def _default_display_name(email: str) -> str:
     return email.split("@", 1)[0]
+
+
+async def _sync_role(session: AsyncSession, settings: Settings, user: User) -> User:
+    """登录时按 ADMIN_EMAILS 补持久化管理员角色(admin-plane §2.2)。
+
+    只升不降:移出名单不会自动降权(降权走管理面显式改 role)。
+    """
+    if is_admin_email(settings, user.email) and user.role != ROLE_ADMIN:
+        user.role = ROLE_ADMIN
+        return await UserRepository(session).add(user)
+    return user
 
 
 async def _issue_tokens(
@@ -132,6 +144,7 @@ async def register(
             email=data.email,
             display_name=data.display_name or _default_display_name(data.email),
             status="active",
+            role=role_for_email(settings, data.email),
             password_hash=_hasher.hash(data.password),
             quota={},
         )
@@ -149,6 +162,7 @@ async def login(
     user = await UserRepository(session).find_active_by_email(data.email)
     if not _verify_password(data.password, user.password_hash if user else None):
         raise UnauthorizedError("auth.invalid_credentials", "邮箱或密码不正确")
+    user = await _sync_role(session, settings, user)
     return await _issue_tokens(session, settings, signer, user, device="password-login")
 
 
@@ -205,6 +219,7 @@ async def oauth_login(
         user = await UserRepository(session).require(identity.account_id)
         if user.status != "active":
             raise UnauthorizedError("auth.user_disabled", "账号已停用")
+        user = await _sync_role(session, settings, user)
         return await _issue_tokens(
             session, settings, signer, user, device=f"oauth-{profile.provider}"
         )
@@ -218,12 +233,14 @@ async def oauth_login(
                 email=profile.email,
                 display_name=profile.name or _default_display_name(profile.email),
                 status="active",
+                role=role_for_email(settings, profile.email),
                 password_hash=None,
                 quota={},
             )
         )
     elif user.status != "active":
         raise UnauthorizedError("auth.user_disabled", "账号已停用")
+    user = await _sync_role(session, settings, user)
     await identities.add(
         OAuthIdentity(
             account_id=user.id,

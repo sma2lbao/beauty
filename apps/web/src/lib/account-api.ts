@@ -22,6 +22,11 @@ export type Account = {
   /** 服务端保证是字符串(未设置时回落邮箱前缀)。 */
   display_name: string;
   status: 'active' | 'disabled';
+  /**
+   * 平台角色(P0-7):普通用户 / 平台管理员。
+   * 只用于前端入口的显示层判断;权限由服务端每请求查库校验。
+   */
+  role: 'user' | 'admin';
   created_at: string;
 };
 

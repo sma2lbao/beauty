@@ -46,6 +46,10 @@ vi.mock('@/lib/auth', () => ({
   accountLabel: vi.fn(async () => null),
 }));
 
+vi.mock('@/features/auth/use-account-role', () => ({
+  useAccountRole: () => ({ isAdmin: false }),
+}));
+
 vi.mock('@/lib/workspace-api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/workspace-api')>(
     '@/lib/workspace-api',

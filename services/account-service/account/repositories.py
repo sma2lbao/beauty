@@ -6,11 +6,19 @@
   命名方法留在各自仓储,用 `select` 逃生口,方法名声明这个例外。
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+from decimal import Decimal
+
 from database.repository import AccountRepository, Repository
-from sqlalchemy import select
+from sqlalchemy import case, func, select, update
+from sqlalchemy.sql.elements import ColumnElement
 
 from account.models.account import (
     ApiKey,
+    AuditLog,
     BYOKKey,
     OAuthAuthorizationCode,
     OAuthClient,
@@ -45,12 +53,34 @@ class UserRepository(Repository[User]):
             select(User).where(User.email == email).limit(1)
         )
 
+    async def search(
+        self, *criteria: ColumnElement[bool], limit: int, offset: int = 0
+    ) -> list[User]:
+        """管理面账号检索(唯一跨账号读):created_at desc, id desc 稳定分页。"""
+        statement = (
+            select(User)
+            .where(*criteria)
+            .order_by(User.created_at.desc(), User.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(await self.session.scalars(statement))
+
 
 class SessionRepository(AccountRepository[Session]):
     model = Session
     not_found_code = "account.session_not_found"
     not_found_message = "会话不存在"
     id_detail_key = "session_id"
+
+    async def revoke_all_for_account(self, account_id: str) -> int:
+        """停用账号时批量吊销其全部活跃会话,返回吊销行数。"""
+        result = await self.session.execute(
+            update(Session)
+            .where(Session.account_id == account_id, Session.status == "active")
+            .values(status="revoked")
+        )
+        return int(result.rowcount or 0)
 
 
 class OAuthIdentityRepository(AccountRepository[OAuthIdentity]):
@@ -149,6 +179,64 @@ class UsageEventRepository(AccountRepository[UsageEvent]):
         )
 
 
+class AuditLogRepository(Repository[AuditLog]):
+    """审计日志仓储:append-only,只暴露 add/list/count(没有 update/delete)。
+
+    跨账号读是管理面自身的职责(审计查看不看 actor 的账号归属)。
+    """
+
+    model = AuditLog
+    not_found_code = "audit.log_not_found"
+    not_found_message = "审计记录不存在"
+    id_detail_key = "audit_log_id"
+
+    async def list_page(
+        self, *criteria: ColumnElement[bool], limit: int, offset: int = 0
+    ) -> list[AuditLog]:
+        """created_at desc, id desc:同秒批量写入也能稳定翻页。"""
+        statement = (
+            select(AuditLog)
+            .where(*criteria)
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(await self.session.scalars(statement))
+
+
+class AdminUsageRepository(Repository[UsageEvent]):
+    """管理面跨账号用量聚合(admin-plane §3.2):管理端唯一跨账号读。
+
+    单条 group by 覆盖一页账号,避免按账号 N+1;其余用量读仍走
+    UsageEventRepository 的账号隔离方法。
+    """
+
+    model = UsageEvent
+
+    async def month_totals(
+        self, account_ids: Sequence[str], since: datetime
+    ) -> dict[str, tuple[int, int, Decimal, int]]:
+        """按账号聚合 [since, now) 的 tokens/事件数/金额/未计价条数。"""
+        ids = list(account_ids)
+        if not ids:
+            return {}
+        statement = (
+            select(
+                UsageEvent.account_id,
+                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+                func.coalesce(
+                    func.sum(case((UsageEvent.cost_usd.is_(None), 1), else_=0)), 0
+                ),
+            )
+            .where(UsageEvent.account_id.in_(ids), UsageEvent.created_at >= since)
+            .group_by(UsageEvent.account_id)
+        )
+        rows = await self.session.execute(statement)
+        return {row[0]: (int(row[1]), int(row[2]), row[3], int(row[4])) for row in rows}
+
+
 class BYOKRepository(AccountRepository[BYOKKey]):
     model = BYOKKey
     not_found_code = "byok.not_found"
@@ -172,3 +260,17 @@ class RefreshTokenRepository(AccountRepository[RefreshToken]):
         return await self.session.scalar(
             self.select(RefreshToken.token_hash == token_hash)
         )
+
+    async def revoke_all_for_account(
+        self, account_id: str, *, revoked_at: datetime
+    ) -> int:
+        """停用账号时批量吊销其全部未吊销刷新令牌,返回吊销行数。"""
+        result = await self.session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.account_id == account_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=revoked_at)
+        )
+        return int(result.rowcount or 0)

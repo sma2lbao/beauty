@@ -15,7 +15,9 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useAccountRole } from '@/features/auth/use-account-role';
 import { ALL_NAV_ITEMS, SETTINGS_NAV_ITEM } from '@/features/sidebar/nav-data';
+import { visibleNavItems } from '@/features/sidebar/nav-state';
 import { conversationsApi, type Conversation } from '@/lib/conversations-api';
 import { queryKeys } from '@/lib/query-keys';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
@@ -67,6 +69,7 @@ function newConversationHref(activeWorkspaceId: string | null): string {
 
 export function useCommandPaletteModel() {
   const navigate = useNavigate();
+  const { isAdmin } = useAccountRole();
   const { activeWorkspaceId } = useWorkspaceSelection();
   const setCommandPaletteOpen = useUiStore(
     (state) => state.setCommandPaletteOpen,
@@ -96,7 +99,7 @@ export function useCommandPaletteModel() {
   });
 
   const pages = useMemo<CommandPaletteItem[]>(() => {
-    return [...ALL_NAV_ITEMS, SETTINGS_NAV_ITEM]
+    return [...visibleNavItems(ALL_NAV_ITEMS, isAdmin), SETTINGS_NAV_ITEM]
       .filter((item) => matchesLabel(item.label, term))
       .map((item) => ({
         id: `page:${item.to}`,
@@ -105,7 +108,7 @@ export function useCommandPaletteModel() {
         hint: item.to === '/' ? undefined : item.to,
         run: () => navigate(item.to),
       }));
-  }, [navigate, term]);
+  }, [isAdmin, navigate, term]);
 
   const sessions = useMemo<CommandPaletteItem[]>(() => {
     const rows = conversationQuery.data?.items ?? [];

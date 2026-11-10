@@ -20,6 +20,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -39,6 +40,8 @@ class User(UUIDMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(320), index=True)
     display_name: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    # 角色(user/admin):不进 JWT,管理面每请求读库判定(admin-plane §2.1)
+    role: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
     # argon2 哈希(PHCF 格式,约 97 字符);空 = 未设密码
     password_hash: Mapped[str | None] = mapped_column(String(512))
     # 账号配额:monthly_tokens / max_concurrent_runs;空 = 不限(fail-open)
@@ -182,3 +185,26 @@ class RefreshToken(UUIDMixin, AccountMixin, TimestampMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True
     )
+
+
+class AuditLog(UUIDMixin, TimestampMixin, Base):
+    """管理面审计:append-only(只 add/list/count,没有 update/delete 入口)。
+
+    写动作与业务同事务落库(before/after 快照);拒绝访问发生在业务之前,
+    由独立短事务写入(status="denied"),失败不影响 403 结论。
+    """
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created_at", "created_at"),)
+
+    actor_account_id: Mapped[str] = mapped_column(String(32), index=True)
+    actor_email: Mapped[str] = mapped_column(String(320))
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="success")
+    # 变更快照 {before, after} 或拒绝上下文 {method, required};不含密钥/令牌
+    detail: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)

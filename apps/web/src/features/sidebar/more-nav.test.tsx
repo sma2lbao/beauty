@@ -6,9 +6,16 @@
  */
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MoreNav } from './more-nav';
+
+// 入口可见性只取决于角色:这里钉住 useAccountRole,避免真发 /me 请求。
+const roleState = vi.hoisted(() => ({ isAdmin: false }));
+
+vi.mock('@/features/auth/use-account-role', () => ({
+  useAccountRole: () => ({ isAdmin: roleState.isAdmin }),
+}));
 
 function LocationProbe() {
   const location = useLocation();
@@ -27,6 +34,10 @@ function renderMoreNav(entry = '/') {
 function trigger() {
   return screen.getByRole('button', { name: '更多' });
 }
+
+beforeEach(() => {
+  roleState.isAdmin = false;
+});
 
 describe('MoreNav 更多入口', () => {
   it('默认收起,展开后才出现资源与管理两组入口', () => {
@@ -47,6 +58,29 @@ describe('MoreNav 更多入口', () => {
     // 分组标签沿用 nav-data 的 label,方便用户按「资源/管理」扫视
     expect(screen.getByText('资源')).toBeInTheDocument();
     expect(screen.getByText('管理')).toBeInTheDocument();
+  });
+
+  it('非管理员看不到管理台入口', () => {
+    renderMoreNav();
+    fireEvent.click(trigger());
+
+    expect(screen.queryByRole('link', { name: '管理台' })).toBeNull();
+    // 其余管理组入口对普通用户仍然可见
+    expect(screen.getByRole('link', { name: '用量' })).toHaveAttribute(
+      'href',
+      '/usage',
+    );
+  });
+
+  it('管理员在「管理」组看到管理台入口', () => {
+    roleState.isAdmin = true;
+    renderMoreNav();
+    fireEvent.click(trigger());
+
+    expect(screen.getByRole('link', { name: '管理台' })).toHaveAttribute(
+      'href',
+      '/admin',
+    );
   });
 
   it('当前页在弹层里时,收起态也能看出「我在哪」', () => {

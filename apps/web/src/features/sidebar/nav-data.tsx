@@ -9,7 +9,7 @@
  * 分组依据是「多久碰一次」,不是功能域 —— 这是收敛入口的落点:
  * - work:每个会话都要用(工作台/任务编排/变更)→ 常驻;
  * - resources:知识库/记忆/Skills/连接器 → 常驻,但排在会话之后;
- * - ops:用量/事件队列 → 默认折叠,统计与运维不参与日常路径。
+ * - ops:管理台(仅管理员)/用量/事件队列 → 默认折叠,统计与运维不参与日常路径。
  *
  * 刻意不放进 NAV_GROUPS 的两个入口:
  * - 「设置」「官网」属于账户行为,挂在底部账户卡片的菜单里;
@@ -28,6 +28,7 @@ import {
   Inbox,
   LayoutGrid,
   Settings,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -42,6 +43,8 @@ export type NavItem = {
   end?: boolean;
   icon: ReactNode;
   label: string;
+  /** 仅管理员可见(P0-7):消费方按当前角色过滤,见 nav-state.ts。 */
+  adminOnly?: boolean;
 };
 
 export type NavGroup = {
@@ -80,6 +83,12 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '管理',
     defaultOpen: false,
     items: [
+      {
+        to: '/admin',
+        icon: <ShieldCheck />,
+        label: '管理台',
+        adminOnly: true,
+      },
       { to: '/usage', icon: <BarChart3 />, label: '用量' },
       { to: '/outbox', icon: <Inbox />, label: '事件队列' },
     ],

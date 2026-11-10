@@ -26,6 +26,7 @@
 | [docs/design/usage-delivery.md](./design/usage-delivery.md)                 | 用量可靠投递（P0-3：outbox 至少一次/event_id 幂等/开关/失败语义/单实例残余）                                                                                                                                                                  | Lead       | 投递链路或幂等键变化时     |
 | [docs/design/mcp-security.md](./design/mcp-security.md)                     | MCP 出站安全（P0-6：SSRF 校验/白名单/降级可见/残余与失败语义差异）                                                                                                                                                                            | Lead       | MCP 出站或安全策略变化时   |
 | [docs/design/rate-limiting.md](./design/rate-limiting.md)                   | 限流后端（P0-5：内存滑动窗口回退/Redis 固定窗口/键设计/fail-open/残余）                                                                                                                                                                       | Lead       | 限流后端或配置变化时       |
+| [docs/design/admin-plane.md](./design/admin-plane.md)                       | 管理面 RBAC/审计（P0-7：角色源与判定/管理 API/append-only 审计/前端 /admin/验收/残余）                                                                                                                                                        | Lead       | 管理面权限或审计契约变化时 |
 | [docs/design/context-engineering.md](./design/context-engineering.md)       | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）                                                                                                                                                                        | Lead       | 上下文策略或实现变化时     |
 | [docs/design/tool-execution.md](./design/tool-execution.md)                 | 工具执行面设计（exec MVP：契约/审批/截断/审计，含 web_search、todo 分期与对话内写操作确认）                                                                                                                                                   | Lead       | 执行面契约或实施进度变化时 |
 | [docs/design/code-execution.md](./design/code-execution.md)                 | 代码执行面设计(run_code P5:双工具边界/契约/执行路径/审批/审计)                                                                                                                                                                                | Lead       | 代码执行契约变化时         |
@@ -62,6 +63,7 @@
 - 用量投递可靠性（outbox 至少一次 / event_id 幂等） → [design/usage-delivery.md](./design/usage-delivery.md)（唯一）
 - MCP 出站安全（SSRF 校验 / 白名单 / 降级可见） → [design/mcp-security.md](./design/mcp-security.md)（唯一）
 - 限流后端（进程内回退 / Redis 固定窗口 / fail-open） → [design/rate-limiting.md](./design/rate-limiting.md)（唯一）
+- 管理面 RBAC 与审计（角色判定 / 管理 API / audit_logs） → [design/admin-plane.md](./design/admin-plane.md)（唯一）
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）

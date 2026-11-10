@@ -61,6 +61,9 @@ const ConnectorsPage = lazy(() =>
     default: module.ConnectorsPage,
   })),
 );
+const AdminPage = lazy(() =>
+  import('@/pages/admin').then((module) => ({ default: module.AdminPage })),
+);
 
 export function App() {
   return (
@@ -104,6 +107,8 @@ export function App() {
             <Route path="usage" element={<UsagePage />} />
             <Route path="workspace" element={<WorkspacePage />} />
             <Route path="outbox" element={<OutboxPage />} />
+            {/* 管理台入口在导航里按 me.role 过滤;非管理员直达由页面内闸门兜底 */}
+            <Route path="admin" element={<AdminPage />} />
           </Route>
         </Route>
       </Route>

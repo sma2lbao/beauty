@@ -34,6 +34,7 @@ const account: Account = {
   email: 'me@example.com',
   display_name: '小月',
   status: 'active',
+  role: 'user',
   created_at: '2026-10-13T00:00:00+00:00',
 };
 
