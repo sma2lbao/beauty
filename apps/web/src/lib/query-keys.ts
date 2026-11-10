@@ -29,6 +29,8 @@ export const queryKeys = {
   /** run 评分(P2 eval/scores):['run-scores', runId]。 */
   runScores: (runId: string) => ['run-scores', runId] as const,
   runArtifacts: (runId: string) => ['run-artifacts', runId] as const,
+  /** 图检查点列表(P1-C):['run-checkpoints', runId];rewind/fork 后失效。 */
+  runCheckpoints: (runId: string) => ['run-checkpoints', runId] as const,
   runArtifactPreview: (runId: string, previewId: string | null | undefined) =>
     ['run-artifact-preview', runId, previewId] as const,
 

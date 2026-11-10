@@ -52,7 +52,54 @@ export type Run = {
    * 或 tracing 未启用,控制台据此显示「在 Langfuse 查看」。
    */
   trace_id?: string | null;
+  /**
+   * 执行超时(P1-C):创建时的超时秒数快照。null = 走平台默认;
+   * 0 = 不限制;未回填的老数据缺省。
+   */
+  timeout_seconds?: number | null;
+  /** 调度优先级(P1-C):-100..100,越大越先调度;缺省按 0(普通)。 */
+  priority?: number;
+  /** 实际开始执行时间(P1-C);排队中为 null。 */
+  started_at?: string | null;
   created_at: string;
+};
+
+/** 检查点摘要(P1-C):回退/分叉时用来判断「这个点值不值得回去」。 */
+export type RunCheckpointSummary = {
+  rounds: number;
+  plan_chars: number;
+  tool_calls: number;
+  todos_count: number;
+  artifact_ready: boolean;
+};
+
+/**
+ * 一个图检查点(P1-C):GET /v1/runs/{id}/checkpoints 的元素,最新在前。
+ *
+ * checkpoint_id 只在本 run 线程(run.id#attempts)内有效,跨 run 的 id 回退会
+ * 得到 409 run.checkpoint_not_found;runnable 表示「该点之后还有节点待跑」。
+ */
+export type RunCheckpoint = {
+  checkpoint_id: string;
+  step: number | null;
+  source: string | null;
+  next: string[];
+  created_at: string | null;
+  parent_checkpoint_id: string | null;
+  runnable: boolean;
+  summary: RunCheckpointSummary;
+};
+
+/** 回退请求(P1-C):reason 可选,后端只留痕不参与执行。 */
+export type RewindInput = {
+  checkpoint_id: string;
+  reason?: string;
+};
+
+/** 分叉请求(P1-C):checkpoint_id 省略 = 从当前线程末端分叉。 */
+export type ForkInput = {
+  checkpoint_id?: string;
+  title?: string;
 };
 
 export type RunEvent = {

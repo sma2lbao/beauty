@@ -162,6 +162,8 @@ describe('RunsPage', () => {
         title: '整理本周文档成周报',
         goal: '汇总本周文档,生成周报草稿',
         acceptance_criteria: ['覆盖本周主要进展', '不超过 300 字'],
+        // P1-C:表单默认提交优先级 0(普通);超时留空则不落键。
+        priority: 0,
       }),
     );
   });

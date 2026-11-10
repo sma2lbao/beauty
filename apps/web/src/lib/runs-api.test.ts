@@ -313,6 +313,71 @@ describe('runsApi', () => {
 
     await expect(runsApi.get('r1')).rejects.toBeInstanceOf(ApiError);
   });
+
+  it('检查点列表带 limit 查询参数', async () => {
+    const checkpoint = {
+      checkpoint_id: 'ck1',
+      step: 3,
+      source: 'planner',
+      next: ['executor'],
+      created_at: null,
+      parent_checkpoint_id: null,
+      runnable: true,
+      summary: {
+        rounds: 1,
+        plan_chars: 20,
+        tool_calls: 0,
+        todos_count: 0,
+        artifact_ready: false,
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [checkpoint],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const list = await runsApi.checkpoints('r1', 20);
+
+    expect(list[0].checkpoint_id).toBe('ck1');
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe('/api/v1/runs/r1/checkpoints?limit=20');
+  });
+
+  it('回退走 /rewind,只带填写的原因', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'r1', status: 'pending' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runsApi.rewind('r1', { checkpoint_id: 'ck1', reason: '计划错了' });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/rewind');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      checkpoint_id: 'ck1',
+      reason: '计划错了',
+    });
+  });
+
+  it('分叉走 /fork 并返回新 run', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 'r2', status: 'pending' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const created = await runsApi.fork('r1', { checkpoint_id: 'ck1' });
+
+    expect(created.id).toBe('r2');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/fork');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ checkpoint_id: 'ck1' });
+  });
 });
 
 describe('streamRunEvents', () => {

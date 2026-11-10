@@ -25,6 +25,9 @@ import type {
   RunScore,
   RunAnswerPayload,
   RunAnswerAccepted,
+  RunCheckpoint,
+  RewindInput,
+  ForkInput,
   Artifact,
   ArtifactMeta,
   Instruction,
@@ -43,6 +46,10 @@ export const runsApi = {
     title: string;
     goal: string;
     acceptance_criteria: string[];
+    /** 超时秒数:省略 = 平台默认,0 = 不限(后端 ge 0 le 604800)。 */
+    timeout_seconds?: number;
+    /** 调度优先级:-100..100,省略按 0(普通)。 */
+    priority?: number;
   }) =>
     http.request<Run>('/api/v1/runs', {
       method: 'POST',
@@ -153,6 +160,26 @@ export const runsApi = {
     http.request<Instruction>(`/api/v1/runs/${runId}/instructions`, {
       method: 'POST',
       body: JSON.stringify({ content }),
+    }),
+  /**
+   * 图检查点列表(P1-C):最新在前。空数组合法(旧 run 尚无 checkpoint),
+   * 只读、不写审计;run 不存在沿用 run.not_found。
+   */
+  checkpoints: (runId: string, limit = 50) =>
+    http.request<RunCheckpoint[]>(
+      `/api/v1/runs/${runId}/checkpoints?limit=${limit}`,
+    ),
+  /** 回退到检查点(P1-C):仅终态可回退,运行中需先 cancel;409 见 checkpoint 错误文案。 */
+  rewind: (runId: string, body: RewindInput) =>
+    http.request<Run>(`/api/v1/runs/${runId}/rewind`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 从检查点分叉(P1-C):返回**新 run**(201),旧 run 不受影响。 */
+  fork: (runId: string, body: ForkInput) =>
+    http.request<Run>(`/api/v1/runs/${runId}/fork`, {
+      method: 'POST',
+      body: JSON.stringify(body),
     }),
 };
 

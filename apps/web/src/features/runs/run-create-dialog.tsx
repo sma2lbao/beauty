@@ -9,14 +9,20 @@ import type { RunsModel } from './use-runs-model';
 
 export function RunCreateDialog({ model }: { model: RunsModel }) {
   const {
+    createError,
     createMutation,
     createOpen,
     criteria,
     goal,
+    priority,
     setCreateOpen,
     setCriteria,
     setGoal,
+    setPriority,
+    setTimeoutSeconds,
     setTitle,
+    submitCreate,
+    timeoutSeconds,
     title,
   } = model;
   return (
@@ -37,7 +43,7 @@ export function RunCreateDialog({ model }: { model: RunsModel }) {
           <ConsoleButton
             variant="primary"
             size="md"
-            onClick={() => createMutation.mutate()}
+            onClick={submitCreate}
             disabled={createMutation.isPending || !title.trim() || !goal.trim()}
           >
             {createMutation.isPending ? '创建中…' : '创建'}
@@ -69,8 +75,45 @@ export function RunCreateDialog({ model }: { model: RunsModel }) {
             onChange={(event) => setCriteria(event.target.value)}
           />
         </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="超时(秒)"
+            htmlFor="new-run-timeout"
+            hint="留空 = 平台默认,0 = 不限,最大 604800。"
+          >
+            <Input
+              id="new-run-timeout"
+              type="number"
+              min={0}
+              step={1}
+              placeholder="平台默认"
+              value={timeoutSeconds}
+              onChange={(event) => setTimeoutSeconds(event.target.value)}
+            />
+          </Field>
+          <Field
+            label="优先级"
+            htmlFor="new-run-priority"
+            hint="-100..100,越大越先调度。"
+          >
+            <Input
+              id="new-run-priority"
+              type="number"
+              min={-100}
+              max={100}
+              step={1}
+              value={priority}
+              onChange={(event) => setPriority(event.target.value)}
+            />
+          </Field>
+        </div>
+        {createError ? (
+          <p role="alert" className="text-[12px] text-ha-danger">
+            {createError}
+          </p>
+        ) : null}
         {createMutation.isError ? (
-          <p className="text-[12px] text-ha-danger">
+          <p role="alert" className="text-[12px] text-ha-danger">
             {createMutation.error.message}
           </p>
         ) : null}

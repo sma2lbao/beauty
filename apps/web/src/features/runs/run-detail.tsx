@@ -8,14 +8,16 @@
  * 摘要/操作/计划/子代理/追加指令/事件流见 ./run-detail-*.tsx。
  */
 import { X } from 'lucide-react';
+import { useState } from 'react';
 
-import { ConsolePanel } from '@/components/console/ui';
+import { ConsolePanel, ConsoleTabs } from '@/components/console/ui';
 import { RunArtifacts } from '@/features/runs/run-artifacts';
 import { RunItemTimeline } from '@/features/runs/run-item-timeline';
 import { RunStepTimeline } from '@/features/runs/run-step-timeline';
 import { RunTodoList } from '@/features/runs/run-todo-list';
 
 import { RunDetailActions } from './run-detail-actions';
+import { RunDetailCheckpointsPanel } from './run-detail-checkpoints';
 import { RunDetailEventsPanel } from './run-detail-events-panel';
 import { RunDetailInstructionsPanel } from './run-detail-instructions';
 import { RunDetailPlanPanel } from './run-detail-plan-panel';
@@ -33,6 +35,7 @@ export function RunDetail({
   onClose: () => void;
 }) {
   const model = useRunDetail({ runId, onSelectRun });
+  const [tab, setTab] = useState<'overview' | 'checkpoints'>('overview');
   const {
     itemsQuery,
     run,
@@ -61,59 +64,80 @@ export function RunDetail({
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        <section>
-          <RunDetailSummary model={model} onSelectRun={onSelectRun} />
-          <RunDetailActions model={model} />
-        </section>
-
-        <RunDetailPlanPanel model={model} />
-
-        <ConsolePanel className="p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[12px] font-semibold text-ha-text-2">
-              运行项
-            </span>
-            <span className="font-mono text-[11px] text-ha-faint">
-              {itemsQuery.data?.length ?? 0} 项
-            </span>
-          </div>
-          <RunItemTimeline
-            items={itemsQuery.data ?? []}
-            className="mt-2 max-h-96 overflow-y-auto"
-            onOpenRun={onSelectRun}
-          />
-        </ConsolePanel>
-
-        {showSubagents ? (
-          <RunDetailSubagentPanel model={model} onSelectRun={onSelectRun} />
-        ) : null}
-
-        <ConsolePanel className="p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[12px] font-semibold text-ha-text-2">
-              执行步骤
-            </span>
-            <span className="font-mono text-[11px] text-ha-faint">
-              {stepsQuery.data?.length ?? 0} 个节点
-            </span>
-          </div>
-          <RunStepTimeline
-            steps={stepsQuery.data ?? []}
-            className="mt-2 max-h-72 overflow-y-auto"
-          />
-          <RunTodoList todos={todosQuery.data?.todos ?? []} className="mt-3" />
-        </ConsolePanel>
-
-        <RunDetailInstructionsPanel model={model} />
-
-        {showArtifact ? <RunArtifacts runId={runId} /> : null}
-
-        <RunDetailEventsPanel
-          events={model.events}
-          connected={model.connected}
+      <div className="flex shrink-0 items-center border-b border-ha-border px-4 py-2">
+        <ConsoleTabs
+          items={[
+            { value: 'overview', label: '概览' },
+            { value: 'checkpoints', label: '检查点' },
+          ]}
+          value={tab}
+          onChange={setTab}
         />
       </div>
+
+      {tab === 'overview' ? (
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          <section>
+            <RunDetailSummary model={model} onSelectRun={onSelectRun} />
+            <RunDetailActions model={model} />
+          </section>
+
+          <RunDetailPlanPanel model={model} />
+
+          <ConsolePanel className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold text-ha-text-2">
+                运行项
+              </span>
+              <span className="font-mono text-[11px] text-ha-faint">
+                {itemsQuery.data?.length ?? 0} 项
+              </span>
+            </div>
+            <RunItemTimeline
+              items={itemsQuery.data ?? []}
+              className="mt-2 max-h-96 overflow-y-auto"
+              onOpenRun={onSelectRun}
+            />
+          </ConsolePanel>
+
+          {showSubagents ? (
+            <RunDetailSubagentPanel model={model} onSelectRun={onSelectRun} />
+          ) : null}
+
+          <ConsolePanel className="p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold text-ha-text-2">
+                执行步骤
+              </span>
+              <span className="font-mono text-[11px] text-ha-faint">
+                {stepsQuery.data?.length ?? 0} 个节点
+              </span>
+            </div>
+            <RunStepTimeline
+              steps={stepsQuery.data ?? []}
+              className="mt-2 max-h-72 overflow-y-auto"
+            />
+            <RunTodoList todos={todosQuery.data?.todos ?? []} className="mt-3" />
+          </ConsolePanel>
+
+          <RunDetailInstructionsPanel model={model} />
+
+          {showArtifact ? <RunArtifacts runId={runId} /> : null}
+
+          <RunDetailEventsPanel
+            events={model.events}
+            connected={model.connected}
+          />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <RunDetailCheckpointsPanel
+            runId={runId}
+            run={run}
+            onSelectRun={onSelectRun}
+          />
+        </div>
+      )}
     </aside>
   );
 }

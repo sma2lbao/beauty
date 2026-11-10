@@ -4,7 +4,11 @@
  */
 import { ExternalLink, ThumbsDown, ThumbsUp } from 'lucide-react';
 
-import { ConsoleButton, RunStatusBadge } from '@/components/console/ui';
+import {
+  ConsoleButton,
+  RunStatusBadge,
+  ToneBadge,
+} from '@/components/console/ui';
 import { langfuseBaseUrl } from '@/config/env';
 import {
   RUN_PARENT_KIND_LABELS,
@@ -13,6 +17,7 @@ import {
   relativeTime,
 } from '@/lib/presentation';
 
+import { isTimeoutFailure, priorityLabel, timeoutLabel } from './run-recovery-meta';
 import type { RunDetailModel } from './use-run-detail';
 
 export function RunDetailSummary({
@@ -38,6 +43,29 @@ export function RunDetailSummary({
           {RUN_STATUS_LABELS[status]}
           {run && run.rounds > 0 ? ' · 第 ' + run.rounds + ' 轮' : ''}
         </span>
+        {run ? (
+          <span
+            className="font-mono text-[11px] text-ha-faint"
+            data-testid="run-timeout"
+          >
+            {timeoutLabel(run.timeout_seconds)}
+          </span>
+        ) : null}
+        {run ? (
+          <span
+            className="font-mono text-[11px] text-ha-faint"
+            data-testid="run-priority"
+          >
+            {priorityLabel(run.priority)}
+          </span>
+        ) : null}
+        {run && isTimeoutFailure(run) ? (
+          <span data-testid="run-timeout-badge">
+            <ToneBadge tone="danger" mono={false}>
+              超时
+            </ToneBadge>
+          </span>
+        ) : null}
         {run?.model ? (
           <span
             className="font-mono text-[11px] text-ha-muted"

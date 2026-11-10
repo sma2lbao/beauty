@@ -15,6 +15,8 @@ import { ToneBadge } from '@/components/console/ui';
 import type { Run } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
+import { isTimeoutFailure } from './run-recovery-meta';
+
 export function RunBoardColumn({
   label,
   tone,
@@ -84,6 +86,13 @@ export function RunBoardColumn({
                     <span data-testid="run-subagent-badge">
                       <ToneBadge tone="accent" mono={false}>
                         {RUN_PARENT_KIND_LABELS.subagent}
+                      </ToneBadge>
+                    </span>
+                  ) : null}
+                  {isTimeoutFailure(run) ? (
+                    <span data-testid="run-timeout-badge">
+                      <ToneBadge tone="danger" mono={false}>
+                        超时
                       </ToneBadge>
                     </span>
                   ) : null}
