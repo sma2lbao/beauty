@@ -108,6 +108,9 @@ def create_app(
             sandbox=provider,
             http=executor,
             connector=gateway,
+            # 后台作业(job_*)需要独立短期事务读写 background_jobs/配额;
+            # 其它工具不碰库,传 None 也能用(测试注入的假沙箱场景)。
+            session_factory=getattr(app.state, "session_factory", None),
         )
 
     async def shutdown(app: FastAPI) -> None:

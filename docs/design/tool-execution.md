@@ -1,6 +1,6 @@
 # 工具执行面设计:exec / web_search / todo(P1-L)
 
-> 状态:**exec MVP(2026-10-27)、todo 第一轮(2026-10-27)与 web_search(2026-11-10,M3)已落地**;M2 后台任务与持久 shell 仍待启动。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
+> 状态:**exec MVP(2026-10-27)、todo 第一轮(2026-10-27)、web_search(2026-11-10,M3)与后台任务 job_start/job_output/job_kill(2026-11-10,M2)已落地**;M2 的跨实例持久 shell 会话仍待启动(契约 [background-jobs.md](./background-jobs.md))。范围:exec 在 `services/tool-service`(契约/执行/审批/审计),orchestrator 侧不加新代码(危险工具复用既有审批链);todo 在 `services/agent-orchestrator`(进程内工具 + run 快照 + 事件 + 提示注入 + 只读 API,不进 tool-service 目录)。2026-11-04 补 §7.6「对话内写操作就地确认」(连接器/MCP 写工具),既有 exec 审批链不变。
 > 关联:`docs/gap-2026-10/08-refresh-2026-10-27.md` 的 P1-L 与能力矩阵「工具面(执行/发现)」;`docs/design/tool-service.md`(D13 修订注记);`docs/design/context-engineering.md`(大工具结果 offload);双工具分工与 `run_code` 见 [code-execution.md](./code-execution.md)。
 
 ## 1. 摘要
@@ -44,7 +44,7 @@ D13 原文(需修订的决策)在 `docs/design/tool-service.md` §决策表:「�
 ### 3.2 非目标
 
 - 不开沙箱网络(`network=deny` 不变):`pip install` / `npm install` 之类需要 egress 的命令会失败,这是有意的边界。
-- 不做后台任务 / 持久 shell 会话 / PTY(二期,见 §11)。
+- 不做持久 shell 会话 / PTY(二期,见 §11);后台任务已作为独立工具落地(`job_*`,见 [background-jobs.md](./background-jobs.md))。
 - 不做命令前缀白名单/自动放行(依赖 P1-A policy 引擎);本册所有 exec 调用都要确认。
 - 不在宿主机执行任何命令;`LocalSandboxProvider`(无隔离)只允许本地单账号开发。
 - 不替换文件工具:读文件优先 `read`(有 sha/行号/读前置),exec 只用于「必须有进程」的场景。
@@ -220,12 +220,12 @@ orchestrator 侧无新配置:危险工具经目录自动进入审批链。
 
 ## 11. 分期与验收
 
-| 期  | 内容                                                           | 状态                                                       |
-| --- | -------------------------------------------------------------- | ---------------------------------------------------------- |
-| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                                     |
-| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 待启动(可复用 workspace 的 PTY 会话)                       |
-| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | **已落地(2026-11-10)**;见 [web-search.md](./web-search.md) |
-| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化已随 P1-D 落地(2026-10-28)   |
+| 期  | 内容                                                           | 状态                                                                                                                           |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| M1  | exec MVP:目录/开关/执行/审批/截断/审计/测试                    | **已落地(2026-10-27)**                                                                                                         |
+| M2  | 后台任务(`job_start`/`job_output`/`job_kill`)+ 持久 shell 会话 | 后台任务**已落地(2026-11-10)**;持久 shell 待启动(可复用 workspace 的 PTY 会话);契约 [background-jobs.md](./background-jobs.md) |
+| M3  | `web_search`:搜索提供方 + 引用协议 + 出口策略                  | **已落地(2026-11-10)**;见 [web-search.md](./web-search.md)                                                                     |
+| M4  | `todo`:run 级任务清单(第一轮)                                  | **已落地(2026-10-27)**;item 化已随 P1-D 落地(2026-10-28)                                                                       |
 
 M1 验收:
 
@@ -263,7 +263,7 @@ M1 验收:
 ### 12.4 已知残留(未在本期解决)
 
 - **chat 路径用不到 exec**:对话侧只保留 `risk=read`,而 exec 是 `destructive`;想让对话助手跑命令需 P1-A policy 做命令前缀 allowlist 后再单独开 READ 档通道。
-- **无持久 shell/后台任务**:每次调用一条 `sh -lc`,`cd`/环境变量/后台进程都不跨调用保存(M2)。
+- **无跨实例持久 shell**:每次调用一条 `sh -lc`,`cd`/环境变量不跨调用保存;后台作业已落地(`job_*`,见 [background-jobs.md](./background-jobs.md)),但仍是沙箱进程、无 sweeper、不保证 at-least-once。
 - **输出仍受 `MAX_TOOL_CHARS` 约束**:exec 自行回缩到 25K 以内,与 P1-F 的 offload 没有串联(offload 目前只覆盖 orchestrator 侧工具结果信封;exec 超长输出应「重定向到文件 → read」)。
 
 ## 13. todo 实施记录(M4 第一轮,2026-10-27)

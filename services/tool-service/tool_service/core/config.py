@@ -73,3 +73,17 @@ class Settings(ServiceSettings):
     # 与 exec 同款风险:一旦出现在启用目录里,orchestrator 的 plan 闸会对所有
     # run 触发确认,因此默认关闭;开启前请确认沙箱用 microsandbox + network=deny。
     run_code_enabled: bool = False
+    # P1-L/M2:job_* 三项后台作业工具(启动/读输出/终止)。job_start 是
+    # DESTRUCTIVE,一旦启用会让 orchestrator 的 plan 闸对所有 run 触发确认
+    # (与 exec/run_code 同款),因此默认关闭;作业跑在既有工作区沙箱里,
+    # 默认无网络,沙箱被回收时作业状态记为 lost(不保证 at-least-once)。
+    jobs_enabled: bool = False
+    #: 单个作业最长运行秒数;超过后在下一次 job_output/job_kill 时标记 timeout 并终止。
+    job_max_runtime_seconds: int = 600
+    #: 单账号并发 running 作业上限;超限 job_start 回 tool.budget_exceeded。
+    job_max_concurrent_per_account: int = 5
+    #: job_output 未传 tail_chars 时的默认尾部字符数与上限。
+    job_output_default_chars: int = 8000
+    job_output_max_chars: int = 20000
+    #: 作业目录与终态记录的保留小时数;job_start 时 best-effort 清理更早的。
+    job_retention_hours: int = 24

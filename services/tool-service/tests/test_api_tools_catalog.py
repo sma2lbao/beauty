@@ -91,3 +91,21 @@ def test_get_unknown_tool_is_404_but_interaction_is_listed(client: TestClient) -
     assert interaction.json()["name"] == "ask_question"
     assert interaction.json()["kind"] == "interaction"
     assert interaction.json()["executor"] == "none"
+
+
+def test_job_tools_are_hidden_when_jobs_are_disabled(client: TestClient) -> None:
+    names = [tool["name"] for tool in client.get("/v1/tools").json()["tools"]]
+    for job_tool in ("job_start", "job_output", "job_kill"):
+        assert job_tool not in names
+        detail = client.get(f"/v1/tools/{job_tool}")
+        assert detail.status_code == 404
+        assert detail.json()["code"] == "tool.not_found"
+        assert job_tool in detail.json()["message"]
+
+    resp = client.post(
+        "/v1/tools/job_start:execute",
+        json={"tool_call_id": "call-job", "arguments": {"command": "echo hi"}},
+        headers=ACCOUNT,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "tool.not_found"

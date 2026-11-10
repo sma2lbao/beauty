@@ -20,6 +20,7 @@ from common.tools import (
     ToolRisk,
     validate_arguments,
 )
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tool_service.constants import DEFAULT_TOOL_TIMEOUT_SECONDS
 from tool_service.core.config import Settings
@@ -29,6 +30,7 @@ from tool_service.services.execution.arguments import is_available
 from tool_service.services.execution.connector_path import ConnectorExecutionMixin
 from tool_service.services.execution.exec_path import ExecExecutionMixin
 from tool_service.services.execution.http_path import HttpExecutionMixin
+from tool_service.services.execution.job_path import JobExecutionMixin
 from tool_service.services.execution.models import (
     ExecutionContext,
     ExecutionOutcome,
@@ -50,13 +52,19 @@ class ToolRunner(
     SandboxExecutionMixin,
     HttpExecutionMixin,
     ConnectorExecutionMixin,
+    JobExecutionMixin,
 ):
-    """按目录分派工具执行;一个实例可被并发请求复用(无状态)。"""
+    """按目录分派工具执行;一个实例可被并发请求复用(无状态)。
+
+    job_start / job_output / job_kill 需要独立的短期事务读写后台作业表,
+    因此额外持有可选的会话工厂(测试与未装配数据库的场景可留空)。
+    """
 
     _settings: Settings
     _sandbox: SandboxProvider
     _http: HttpToolExecutor | None
     _connector: ConnectorGateway | None
+    _session_factory: async_sessionmaker[AsyncSession] | None
 
     def __init__(
         self,
@@ -65,11 +73,13 @@ class ToolRunner(
         sandbox: SandboxProvider,
         http: HttpToolExecutor | None = None,
         connector: ConnectorGateway | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._settings = settings
         self._sandbox = sandbox
         self._http = http
         self._connector = connector
+        self._session_factory = session_factory
 
     async def execute(
         self,
@@ -133,6 +143,13 @@ class ToolRunner(
         if descriptor.name == "run_code":
             # 代码经 stdin 交给 python3 -,与 exec 同走沙箱直跑路径(设计 §2)。
             return await self._run_code(context, descriptor, arguments, started)
+        if descriptor.name == "job_start":
+            # 后台作业:先启动进程再落库,超时/配额/日志见设计 §6。
+            return await self._run_job_start(context, descriptor, arguments, started)
+        if descriptor.name == "job_output":
+            return await self._run_job_output(context, descriptor, arguments, started)
+        if descriptor.name == "job_kill":
+            return await self._run_job_kill(context, descriptor, arguments, started)
         if descriptor.executor is ExecutorKind.SANDBOX:
             return await self._run_sandbox(
                 context, descriptor, arguments, started, internal_arguments

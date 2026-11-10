@@ -12,6 +12,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from tool_service.models.file_read import FileRead
 from tool_service.models.tool_call import ToolCall
+
+# 包门面:子模块公开名在此重导出,调用方始终 from tool_service.repositories import X。
+from tool_service.repositories.background_jobs import (
+    BackgroundJobRepository as BackgroundJobRepository,
+)
 from tool_service.schemas.tools import ToolCallRead
 
 PATH_LIST_PREFIX = "["

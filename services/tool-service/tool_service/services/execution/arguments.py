@@ -43,6 +43,8 @@ def is_available(name: str, settings: Settings) -> bool:
             and settings.search_provider in _SEARCH_PROVIDERS
             and bool(settings.search_api_key)
         )
+    if name in ("job_start", "job_output", "job_kill"):
+        return bool(settings.jobs_enabled)
     return True
 
 

@@ -25,7 +25,7 @@ from tool_service.constants import (
 )
 
 #: 目录版本随镜像发布,写进 /v1/tools 响应与审计行。
-CATALOG_VERSION = "2026-11-10.p7"
+CATALOG_VERSION = "2026-11-10.p8"
 
 READ = ToolDescriptor(
     name="read",
@@ -334,6 +334,86 @@ WEB_SEARCH = ToolDescriptor(
     enabled=True,
 )
 
+JOB_START = ToolDescriptor(
+    name="job_start",
+    description=(
+        "在沙箱里用 /bin/sh -lc 后台启动一条命令并立即返回 job_id,适合训练、"
+        "构建、长爬取等长任务;之后用 job_output 查看进度与日志、job_kill 终止。"
+        "命令在后台运行,stdout/stderr 落到 /workspace/.tool-jobs/<job_id>/ 下的日志"
+        "文件(保留尾部);沙箱默认没有网络。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "cwd": {"type": "string", "minLength": 1, "maxLength": 512},
+            "name": {"type": "string", "minLength": 1, "maxLength": 80},
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.DESTRUCTIVE,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.SANDBOX,
+    timeout_seconds=30.0,
+    enabled=True,
+)
+
+JOB_OUTPUT = ToolDescriptor(
+    name="job_output",
+    description=(
+        "读取后台作业的输出尾部与状态(running/exited/killed/timeout/lost)。"
+        "exited 时退出码真实值,非零也算读取成功;wait_seconds 可在 1~15 秒内"
+        "轮询等待状态变化。stdout/stderr 只保留尾部,完整输出请 read 日志文件。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "job_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+            "tail_chars": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 20000,
+                "default": 8000,
+            },
+            "wait_seconds": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 15,
+                "default": 0,
+            },
+        },
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.READ,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.SANDBOX,
+    timeout_seconds=30.0,
+    enabled=True,
+)
+
+JOB_KILL = ToolDescriptor(
+    name="job_kill",
+    description=(
+        "终止一个后台作业:先向进程组发 SIGTERM,1 秒后仍存活则 SIGKILL。"
+        "已结束的作业不报错(already_finished=true),只回显当前状态与退出码。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "job_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        },
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+    risk=ToolRisk.WRITE,
+    kind=ToolKind.FUNCTION,
+    executor=ExecutorKind.SANDBOX,
+    timeout_seconds=20.0,
+    enabled=True,
+)
+
 ASK_QUESTION = ToolDescriptor(
     name="ask_question",
     description=(
@@ -396,7 +476,8 @@ ASK_QUESTION = ToolDescriptor(
 )
 
 #: 全部工具:read、glob、grep、list_dir、write、edit、exec、run_code、
-#: search_knowledge、fetch、web_search、ask_question。
+#: search_knowledge、fetch、web_search、job_start、job_output、job_kill、
+#: ask_question。
 TOOLS: tuple[ToolDescriptor, ...] = (
     READ,
     GLOB,
@@ -409,6 +490,9 @@ TOOLS: tuple[ToolDescriptor, ...] = (
     SEARCH_KNOWLEDGE,
     FETCH,
     WEB_SEARCH,
+    JOB_START,
+    JOB_OUTPUT,
+    JOB_KILL,
     ASK_QUESTION,
 )
 

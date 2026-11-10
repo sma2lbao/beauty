@@ -82,3 +82,44 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
     assert {"patch", "lines_added", "lines_removed", "patch_truncated"} <= columns
     # C2.4:连接器审计列必须随迁移落到真实库(create_all 测不出来)。
     assert "connection_id" in columns
+
+
+def test_background_jobs_table_and_indexes(tmp_path: Path) -> None:
+    """后台作业表必须随迁移落到真实库(测试 create_all 会掩盖缺失)。"""
+
+    settings = _settings(tmp_path)
+    upgrade(MIGRATIONS, settings)
+    with sqlite3.connect(tmp_path / "migrations.db") as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(background_jobs)"
+            ).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND tbl_name = 'background_jobs'"
+            ).fetchall()
+        }
+    assert {
+        "id",
+        "account_id",
+        "sandbox_id",
+        "scope_key",
+        "run_id",
+        "conversation_id",
+        "tool_call_id",
+        "name",
+        "command",
+        "cwd",
+        "status",
+        "exit_code",
+        "finished_at",
+        "created_at",
+        "updated_at",
+    } <= columns
+    assert "ix_background_jobs_account_created" in indexes
+    assert "ix_background_jobs_account_id" in indexes
+    assert "ix_background_jobs_status" in indexes

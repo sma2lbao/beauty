@@ -9,7 +9,7 @@ from tool_service.services import catalog
 
 
 def test_catalog_version_is_exposed() -> None:
-    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-11-10.p7"
+    assert catalog.catalog_version() == catalog.CATALOG_VERSION == "2026-11-10.p8"
 
 
 def test_enabled_tools_are_the_function_slice() -> None:
@@ -26,6 +26,9 @@ def test_enabled_tools_are_the_function_slice() -> None:
         "search_knowledge",
         "fetch",
         "web_search",
+        "job_start",
+        "job_output",
+        "job_kill",
         "ask_question",
     ]
     risk_by_name = {tool.name: tool.risk for tool in catalog.descriptors()}
@@ -35,9 +38,23 @@ def test_enabled_tools_are_the_function_slice() -> None:
     assert risk_by_name["search_knowledge"] is ToolRisk.READ
     assert risk_by_name["fetch"] is ToolRisk.READ
     assert risk_by_name["web_search"] is ToolRisk.READ
+    assert risk_by_name["job_start"] is ToolRisk.DESTRUCTIVE
+    assert risk_by_name["job_output"] is ToolRisk.READ
+    assert risk_by_name["job_kill"] is ToolRisk.WRITE
     assert risk_by_name["ask_question"] is ToolRisk.READ
     executor_by_name = {tool.name: tool.executor for tool in catalog.descriptors()}
-    for sandbox_name in ("read", "glob", "grep", "list_dir", "write", "edit", "exec"):
+    for sandbox_name in (
+        "read",
+        "glob",
+        "grep",
+        "list_dir",
+        "write",
+        "edit",
+        "exec",
+        "job_start",
+        "job_output",
+        "job_kill",
+    ):
         assert executor_by_name[sandbox_name] is ExecutorKind.SANDBOX
     assert executor_by_name["search_knowledge"] is ExecutorKind.HTTP
     assert executor_by_name["fetch"] is ExecutorKind.HTTP
@@ -59,6 +76,9 @@ def test_interaction_tool_schema_is_decoupled() -> None:
         "search_knowledge",
         "fetch",
         "web_search",
+        "job_start",
+        "job_output",
+        "job_kill",
         "ask_question",
     ]
     assert catalog.find_descriptor("write").enabled is True
@@ -178,7 +198,7 @@ def test_alias_mechanism_kept_but_catalog_has_no_legacy_aliases(
 
 def test_openai_tools_shape() -> None:
     tools = catalog.openai_tools()
-    assert len(tools) == 12
+    assert len(tools) == 15
     for item in tools:
         assert item["type"] == "function"
         function = item["function"]
@@ -202,8 +222,59 @@ def test_descriptors_payload_roundtrip() -> None:
         "search_knowledge",
         "fetch",
         "web_search",
+        "job_start",
+        "job_output",
+        "job_kill",
         "ask_question",
     ]
+
+
+def test_job_descriptor_shapes() -> None:
+    start = catalog.find_descriptor("job_start")
+    assert start is not None
+    assert start.risk is ToolRisk.DESTRUCTIVE
+    assert start.kind is ToolKind.FUNCTION
+    assert start.executor is ExecutorKind.SANDBOX
+    assert start.timeout_seconds == 30.0
+    schema = start.input_schema
+    assert schema["required"] == ["command"]
+    assert schema["additionalProperties"] is False
+    properties = schema["properties"]
+    assert properties["command"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+    }
+    assert properties["cwd"]["maxLength"] == 512
+    assert properties["name"]["maxLength"] == 80
+
+    output = catalog.find_descriptor("job_output")
+    assert output is not None
+    assert output.risk is ToolRisk.READ
+    assert output.timeout_seconds == 30.0
+    output_schema = output.input_schema
+    assert output_schema["required"] == ["job_id"]
+    assert output_schema["additionalProperties"] is False
+    assert output_schema["properties"]["job_id"]["pattern"] == "^[0-9a-f]{32}$"
+    assert output_schema["properties"]["tail_chars"] == {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 20000,
+        "default": 8000,
+    }
+    assert output_schema["properties"]["wait_seconds"] == {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 15,
+        "default": 0,
+    }
+
+    kill = catalog.find_descriptor("job_kill")
+    assert kill is not None
+    assert kill.risk is ToolRisk.WRITE
+    assert kill.timeout_seconds == 20.0
+    assert kill.input_schema["required"] == ["job_id"]
+    assert kill.input_schema["properties"]["job_id"]["pattern"] == "^[0-9a-f]{32}$"
 
 
 def test_dumps_schema_is_deterministic() -> None:

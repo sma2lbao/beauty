@@ -1,6 +1,6 @@
 # 后台任务工具契约（P1-L / M2：job_start / job_output / job_kill）
 
-状态：**契约定稿（2026-11-10）**，实现待落地（task-16）。上游背景见
+状态：**已落地（2026-11-10，落地位置见 §11）**。上游背景见
 [../gap-2026-11/00-refresh-2026-11-09.md](../gap-2026-11/00-refresh-2026-11-09.md) §5.2
 与 [tool-execution.md](./tool-execution.md) §9（M2）。
 
@@ -89,7 +89,9 @@ JOB_KILL = ToolDescriptor(
 
 - `job_start` 是 `DESTRUCTIVE`：run 路径由 plan 闸 + 确认闸保护；对话路径的只读工具集
   不含它（与 `exec` 同口径）。
-- `job_kill` 是 `WRITE`：run 路径默认需要确认（风险下限），对话路径不可见。
+- `job_kill` 是 `WRITE`：run 路径默认需要确认（风险下限）。**已实现偏差**：对话路径
+  仍按 `WRITE` 走确认卡（原契约期望对话不可见）；因 `job_start` 是 `DESTRUCTIVE` 已被
+  对话只读工具集过滤、且对话沙箱 `scope_key` 与 run 不同，保留此偏差不做特殊裁剪。
 - `job_output` 是 `READ`：对话路径可见（模型可在对话里查看自己启动的任务；启动仍需 run）。
 - 三个工具都受同一开关 `jobs_enabled`（默认 False）控制：关闭时目录/详情/执行三处一致"不存在"。
 
@@ -136,28 +138,29 @@ JOB_KILL = ToolDescriptor(
 
 新表 `background_jobs`（tool-service 自己的库）：
 
-| 列                                    | 类型             | 说明                               |
-| ------------------------------------- | ---------------- | ---------------------------------- |
-| id                                    | String(32) PK    | 32 位 hex（`uuid4().hex`）         |
-| account_id                            | String(64) index | 账号隔离                           |
-| sandbox_id                            | String(64)       | 启动时解析出的沙箱                 |
-| scope_key                             | String(160)      | 会话/任务/账号 scope，便于审计     |
-| run_id / conversation_id              | String(64) NULL  | 来源上下文（可空）                 |
-| tool_call_id                          | String(64) NULL  | 启动它的那次工具调用               |
-| name                                  | String(80) NULL  | 展示名                             |
-| command                               | String(4000)     | 原文（审计只看得到截断）           |
-| cwd                                   | String(512)      | 解析后的工作区绝对路径             |
-| status                                | String(16) index | running/exited/killed/timeout/lost |
-| exit_code                             | Integer NULL     | 退出码                             |
-| created_at / updated_at / finished_at | DateTime(tz)     | finished_at 可空                   |
+| 列                                    | 类型             | 说明                                   |
+| ------------------------------------- | ---------------- | -------------------------------------- |
+| id                                    | String(32) PK    | 32 位 hex（`uuid4().hex`）             |
+| account_id                            | String(32) index | 账号隔离（AccountMixin，与审计表一致） |
+| sandbox_id                            | String(128)      | 启动时解析出的沙箱                     |
+| scope_key                             | String(160)      | 会话/任务/账号 scope，便于审计         |
+| run_id / conversation_id              | String(64) NULL  | 来源上下文（可空）                     |
+| tool_call_id                          | String(64) NULL  | 启动它的那次工具调用                   |
+| name                                  | String(80) NULL  | 展示名                                 |
+| command                               | String(4000)     | 原文（审计只看得到截断）               |
+| cwd                                   | String(512)      | 解析后的工作区绝对路径                 |
+| status                                | String(16) index | running/exited/killed/timeout/lost     |
+| exit_code                             | Integer NULL     | 退出码                                 |
+| created_at / updated_at / finished_at | DateTime(tz)     | finished_at 可空                       |
 
 - 索引：`(account_id, created_at)`、`(status)`。
 - 迁移：新增 `services/tool-service/migrations/versions/0005_background_jobs.py`，
   `down_revision = "154f533a1698"`（实现前用 `uv run alembic heads` 复核；**不得**改既有迁移）。
   `upgrade` 建表 + 索引，`downgrade` 可逆删除。
 - 仓储：`tool_service/repositories/background_jobs.py`（新建）：
-  `create` / `get_for_account` / `list_running_count` / `mark_finished`（条件 UPDATE：
-  `WHERE id=? AND account_id=? AND status='running'`，rowcount 0 表示已被别人收尾，不覆盖）。
+  `create` / `get_for_account` / `count_running` / `mark_finished`（条件 UPDATE：
+  `WHERE id=? AND account_id=? AND status='running'`，rowcount 0 表示已被别人收尾，不覆盖）、
+  `list_terminal_before` / `delete_by_ids`（保留期清理）。
 
 ## 6. 执行语义
 
@@ -289,3 +292,25 @@ job_retention_hours: int = 24
 - 进程组终止依赖 `setsid`；沙箱镜像无 `setsid` 时降级为只杀直接子进程（孙进程可能残留），
   契约允许并需在 `notes`/日志留痕。
 - 无 Web 端专用面板：本期用通用工具调用卡片展示（前端改造留到前端批次）。
+- 并发 `job_start` 的 `count_running` → `create` 非原子：极端并发可轻微超出
+  `job_max_concurrent_per_account`（不加锁，成本极低，接受）。
+
+## 11. 落地位置（2026-11-10）
+
+| 关注点         | 位置                                                                                                                                                                                                                             |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 目录与描述符   | `tool_service/services/catalog.py:337`（`JOB_START`，DESTRUCTIVE）、`:362`（`JOB_OUTPUT`，READ）、`:396`（`JOB_KILL`，WRITE）；`CATALOG_VERSION` 升到 `2026-11-10.p8`、`TOOLS` 共 15 个                                          |
+| 表与迁移       | `tool_service/models/background_job.py`（5 个状态常量、`BackgroundJob`）；`migrations/versions/0005_background_jobs.py`（`down_revision="154f533a1698"`，建表 + 3 索引）                                                         |
+| 仓储           | `tool_service/repositories/background_jobs.py`（`create`/`count_running`/`mark_finished`/`list_terminal_before`/`delete_by_ids`；`repositories.py` 升级为包）                                                                    |
+| 脚本（纯函数） | `tool_service/services/execution/job_scripts.py`：`start_argv`/`status_argv`/`kill_argv`/`cleanup_argv`/`parse_status`/`split_logs`                                                                                              |
+| 执行语义       | `tool_service/services/execution/job_path.py`（`JobExecutionMixin`）：`_run_job_start`/`_run_job_output`/`_run_job_kill`/`_cleanup_expired_jobs`/`_fit_job_logs`；由 `runner.py` 多继承分派，`session_factory` 由 `main.py` 注入 |
+| 开关           | `tool_service/core/config.py`：`jobs_enabled`（默认 False）、`job_max_runtime_seconds=600`、`job_max_concurrent_per_account=5`、`job_output_default_chars=8000`、`job_output_max_chars=20000`、`job_retention_hours=24`          |
+| 审计           | 沿用 `tool_calls` 自动审计；`WRITE`/`DESTRUCTIVE` 无 `approved=true` 一律 403 `tool.confirmation_required`，故 `job_start`/`job_kill` 必须确认，`job_output` 不需要                                                              |
+| 测试           | `tests/test_tool_jobs.py`（20 例，含脚本化 `JobSandboxProvider`）、`tests/test_catalog.py`、`tests/test_api_tools_catalog.py`、`tests/test_migrations.py`；全服务 **452 passed / 85.95%**（门禁 82）                             |
+
+**实现偏离**：`job_kill` 在对话路径仍走确认卡（见 §3 注）；`account_id` 用
+`AccountMixin` 的 `String(32)`、`sandbox_id` 用 `String(128)`（契约原写 64，与既有表对齐）；
+catalog 版本号取 `2026-11-10.p8`。
+
+**已知小瑕疵**：`cleanup` 脚本按 `-name "[0-9a-f]*"` 粗筛目录名（非严格 32 位 hex），目录由服务端
+生成，风险低；`_job_output_outcome` 的超时分支在极端情况下可能回显本地断言而非回读值。

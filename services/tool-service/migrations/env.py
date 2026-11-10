@@ -11,6 +11,9 @@ from common.alembic_kit import apply_service_config, run_migrations
 from database.base import Base
 
 from tool_service.core.config import Settings
+from tool_service.models import (  # noqa: F401  注册 ORM
+    background_job as background_job_models,
+)
 from tool_service.models import file_read as file_read_models  # noqa: F401  注册 ORM
 from tool_service.models import tool_call as tool_call_models  # noqa: F401  注册 ORM
 
