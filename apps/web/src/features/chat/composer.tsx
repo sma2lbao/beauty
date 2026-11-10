@@ -3,6 +3,7 @@ import { ArrowUp, Paperclip, X } from 'lucide-react';
 import type { SendMode } from '@/lib/conversations-api';
 import { ApiError } from '@/lib/http';
 
+import { MAX_ATTACHMENTS } from './use-chat-attachments';
 import type { ChatQueries } from './use-chat-queries';
 import type { ChatStream } from './use-chat-stream';
 
@@ -18,12 +19,12 @@ export type ChatComposerProps = {
   /** 本轮使用的模型 id;空串 = 默认模型(不指定,由网关路由)。 */
   selectedModel: string;
   onModelChange: (modelId: string) => void;
-  activeConversationId: string | null;
 };
 
 /**
- * 输入区:模型、发送方式/技能/MCP 选择与发送按钮。
+ * 输入区:附件、模型、发送方式/技能/MCP 选择与发送按钮。
  * 只负责表单呈现,上传/发送逻辑由上层 hook 提供。
+ * 新会话(还没有 id)也能选附件:hook 先暂存,发送时建会话再上传。
  */
 export function ChatComposer({
   queries,
@@ -36,22 +37,9 @@ export function ChatComposer({
   onMcpChange,
   selectedModel,
   onModelChange,
-  activeConversationId,
 }: ChatComposerProps) {
-  const {
-    draft,
-    draftAttachments: attachments,
-    fileInputRef,
-    attachmentError,
-    uploading,
-    sending,
-    canSend,
-    setDraft,
-    removeAttachment,
-    uploadAttachments,
-    submit,
-    stop,
-  } = stream;
+  const { draft, attachments, sending, canSend, setDraft, submit, stop } =
+    stream;
   const {
     skills,
     models,
@@ -60,6 +48,17 @@ export function ChatComposer({
     mcpServerName,
     inFlight,
   } = queries;
+  const {
+    uploaded,
+    staged,
+    uploading,
+    error: attachmentError,
+    fileInputRef,
+    pick,
+    removeUploaded,
+    removeStaged,
+  } = attachments;
+  const attachmentCount = uploaded.length + staged.length;
   // 配额拦截(429 quota.*)就地提示:P0-2 起对话直答也过配额闸,
   // 错误详情里的月用量/上限在「用量」页能看,这里只给一条可行动提示。
   const quotaBlocked =
@@ -74,9 +73,9 @@ export function ChatComposer({
         }}
         className="mx-auto w-full max-w-[820px] rounded-[10px] border border-ha-border-strong bg-ha-panel p-3 transition-colors focus-within:border-ha-accent/70"
       >
-        {attachments.length ? (
+        {attachmentCount ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {attachments.map((attachment) => (
+            {uploaded.map((attachment) => (
               <span
                 key={attachment.id}
                 className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
@@ -86,7 +85,25 @@ export function ChatComposer({
                 <button
                   type="button"
                   aria-label={`移除附件 ${attachment.filename}`}
-                  onClick={() => removeAttachment(attachment.id)}
+                  onClick={() => removeUploaded(attachment.id)}
+                  className="text-ha-dim hover:text-ha-text"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {staged.map((file, index) => (
+              <span
+                key={`staged-${index}-${file.name}`}
+                title="发送首条消息时上传"
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-dashed border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
+              >
+                <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
+                <span className="truncate">{file.name}</span>
+                <button
+                  type="button"
+                  aria-label={`移除附件 ${file.name}`}
+                  onClick={() => removeStaged(index)}
                   className="text-ha-dim hover:text-ha-text"
                 >
                   <X className="h-3 w-3" />
@@ -138,19 +155,17 @@ export function ChatComposer({
               multiple
               className="hidden"
               accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp"
-              onChange={(event) => void uploadAttachments(event.target.files)}
+              onChange={(event) => void pick(event.target.files)}
             />
             <button
               type="button"
               aria-label="添加附件"
               title={
-                activeConversationId
-                  ? '添加附件(文本/Markdown/CSV/JSON/PDF/docx/xlsx/图片,单个 ≤10MB)'
-                  : '先发一条消息创建会话,再添加附件'
+                attachmentCount >= MAX_ATTACHMENTS
+                  ? `最多 ${MAX_ATTACHMENTS} 个附件`
+                  : '添加附件(文本/Markdown/CSV/JSON/PDF/docx/xlsx/图片,单个 ≤10MB)'
               }
-              disabled={
-                !activeConversationId || uploading || attachments.length >= 5
-              }
+              disabled={uploading || attachmentCount >= MAX_ATTACHMENTS}
               onClick={() => fileInputRef.current?.click()}
               className="grid h-6 w-6 place-items-center rounded text-ha-muted transition-colors hover:bg-ha-panel-2 hover:text-ha-text disabled:opacity-40"
             >

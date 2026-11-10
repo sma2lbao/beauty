@@ -88,6 +88,94 @@ describe('ChatPage 附件', () => {
       ),
     );
   });
+
+  it('新会话也能选附件:先暂存,建会话后上传并随首条消息发送', async () => {
+    const attachment = {
+      id: 'a1',
+      conversation_id: 'c-new',
+      message_id: null,
+      filename: 'note.md',
+      content_type: 'text/markdown',
+      size_bytes: 4,
+      created_at: '2026-10-13T10:00:00+00:00',
+    };
+    vi.mocked(conversationsApi.uploadAttachment).mockResolvedValue(attachment);
+    renderPage();
+    await screen.findByText('会话将保存在「默认工作区」中。');
+
+    // 新会话没有 id,但附件按钮必须可用(旧实现这里 disabled,点了没反应)
+    expect(screen.getByLabelText('添加附件')).toBeEnabled();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(['# hi'], 'note.md', { type: 'text/markdown' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    // 还没有会话 id:只暂存,不上传
+    expect(await screen.findByText('note.md')).toBeInTheDocument();
+    expect(conversationsApi.uploadAttachment).not.toHaveBeenCalled();
+
+    typeAndSend('看看附件');
+    await waitFor(() =>
+      expect(conversationsApi.uploadAttachment).toHaveBeenCalledWith(
+        'c-new',
+        file,
+      ),
+    );
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c-new',
+        '看看附件',
+        'auto',
+        expect.anything(),
+        ['a1'],
+      ),
+    );
+  });
+
+  it('暂存附件可移除,发送时不再上传', async () => {
+    renderPage();
+    await screen.findByText('会话将保存在「默认工作区」中。');
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: {
+        files: [new File(['# hi'], 'note.md', { type: 'text/markdown' })],
+      },
+    });
+    await screen.findByText('note.md');
+
+    fireEvent.click(screen.getByLabelText('移除附件 note.md'));
+    await waitFor(() => expect(screen.queryByText('note.md')).toBeNull());
+
+    typeAndSend('看看');
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c-new',
+        '看看',
+        'auto',
+        expect.anything(),
+        [],
+      ),
+    );
+    expect(conversationsApi.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('超过 10MB 的附件被拒绝并提示', async () => {
+    renderPage();
+    await screen.findByText('会话将保存在「默认工作区」中。');
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const big = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [big] } });
+
+    expect(await screen.findByText('附件超过 10MB 上限')).toBeInTheDocument();
+    expect(screen.queryByText('big.pdf')).toBeNull();
+    expect(conversationsApi.uploadAttachment).not.toHaveBeenCalled();
+  });
 });
 
 describe('ChatPage 技能', () => {

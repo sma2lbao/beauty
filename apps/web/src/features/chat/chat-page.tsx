@@ -152,7 +152,6 @@ export function ChatPage() {
               onMcpChange={setMcpOverride}
               selectedModel={selectedModel}
               onModelChange={changeModel}
-              activeConversationId={activeConversationId}
             />
           )}
         </section>

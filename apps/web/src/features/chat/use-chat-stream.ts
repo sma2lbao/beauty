@@ -10,7 +10,11 @@ import type {
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import type { ToolCallMeta } from '@/lib/tool-meta';
 
-import { createChatStreamHandlers, type ChatToolEvent } from './stream-handlers';
+import {
+  createChatStreamHandlers,
+  type ChatToolEvent,
+} from './stream-handlers';
+import { useChatAttachments } from './use-chat-attachments';
 import { useChatRewrite } from './use-chat-rewrite';
 
 /** 会话内只读工具调用(由 SSE tool 帧流式累积;P1 富字段全部可缺省)。 */
@@ -82,10 +86,8 @@ export function useChatStream({
   const conversationParam = searchParams.get('conversation');
 
   const [draft, setDraft] = useState('');
-  const [draftAttachments, setDraftAttachments] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 附件选择/上传/暂存(新会话没有 id 时先暂存,发送时随建会话上传)
+  const attachments = useChatAttachments(activeConversationId);
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
   const [pending, setPending] = useState<ChatPending | null>(null);
   // 待确认的写工具:跨流存活,仅在用户确认/取消/失效后仍留在列表里展示结果
@@ -207,40 +209,14 @@ export function useChatStream({
       ? rewriteFailure
       : null;
 
-  const uploadAttachments = async (files: FileList | null) => {
-    if (!files?.length || !activeConversationId) return;
-    setUploading(true);
-    setAttachmentError(null);
-    const selected = [...draftAttachments];
-    try {
-      for (const file of Array.from(files)) {
-        if (selected.length >= 5) break;
-        if (file.size > 10 * 1024 * 1024) {
-          throw new Error('附件超过 10MB 上限');
-        }
-        selected.push(
-          await conversationsApi.uploadAttachment(activeConversationId, file),
-        );
-      }
-      setDraftAttachments(selected);
-    } catch (failure) {
-      setAttachmentError(
-        failure instanceof Error ? failure.message : '附件上传失败',
-      );
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
   const sendStreaming = async (text: string) => {
     const controller = new AbortController();
     abortRef.current = controller;
-    const selectedAttachments = draftAttachments;
+    // 发送失败要原样还回输入区:附件先记住当前状态,新会话暂存文件由 uploadStaged 补上
+    let selectedAttachments = attachments.uploaded;
     setStreamError(null);
     setSending(true);
     setDraft('');
-    setDraftAttachments([]);
     let conversationId = activeConversationId;
     try {
       if (!conversationId) {
@@ -255,6 +231,10 @@ export function useChatStream({
         setFreshConversationId(created.id);
       }
       const targetConversationId = conversationId;
+      // 新会话的附件暂存在本地:会话建好后才会上传,再把 id 随首条消息发出去
+      selectedAttachments =
+        await attachments.uploadStaged(targetConversationId);
+      attachments.clear();
       const mcpServerIds = selectedMcp ? [selectedMcp] : [];
       setPending({
         conversationId: targetConversationId,
@@ -320,7 +300,7 @@ export function useChatStream({
           failure instanceof Error ? failure : new Error('发送失败');
         setStreamError({ conversationId: conversationId ?? '', error });
         setDraft(text);
-        setDraftAttachments(selectedAttachments);
+        attachments.restore(selectedAttachments);
       }
     } finally {
       setSending(false);
@@ -335,20 +315,11 @@ export function useChatStream({
     void sendStreaming(text);
   };
   const stop = () => abortRef.current?.abort();
-  const removeAttachment = (attachmentId: string) =>
-    setDraftAttachments((previous) =>
-      previous.filter((item) => item.id !== attachmentId),
-    );
 
   return {
     draft,
     setDraft,
-    draftAttachments,
-    removeAttachment,
-    uploading,
-    attachmentError,
-    fileInputRef,
-    uploadAttachments,
+    attachments,
     sending,
     canSend,
     submit,
