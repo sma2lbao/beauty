@@ -2,7 +2,12 @@
  * 运行详情操作区:按 run 状态给出生成计划/放行/拒绝/确认/重试/取消/查看交付物,
  * 并显示各变更的错误(失败不静默)。
  */
+import { useState } from 'react';
+
+import { RUN_GRANT_LABELS } from '@/components/console/grant-labels';
+import { GrantPicker } from '@/components/console/grant-picker';
 import { ConsoleButton } from '@/components/console/ui';
+import type { ApprovalGrant } from '@/lib/approval-api';
 import { runsApi } from '@/lib/runs-api';
 
 import type { RunDetailModel } from './use-run-detail';
@@ -20,6 +25,8 @@ export function RunDetailActions({ model }: { model: RunDetailModel }) {
     setShowArtifact,
     status,
   } = model;
+  /** 危险确认的授权范围(P1-A §7.2):默认本次,只在点确认时随请求发出。 */
+  const [grant, setGrant] = useState<ApprovalGrant>('once');
   return (
     <>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -76,11 +83,19 @@ export function RunDetailActions({ model }: { model: RunDetailModel }) {
 
         {status === 'awaiting_confirmation' ? (
           <>
+            <GrantPicker
+              value={grant}
+              onChange={setGrant}
+              disabled={action.isPending}
+              labels={RUN_GRANT_LABELS}
+            />
             <ConsoleButton
               variant="primary"
               size="sm"
               onClick={() =>
-                action.mutate(() => runsApi.confirm(runId, 'approve'))
+                action.mutate(() =>
+                  runsApi.confirm(runId, 'approve', undefined, grant),
+                )
               }
               disabled={action.isPending}
             >

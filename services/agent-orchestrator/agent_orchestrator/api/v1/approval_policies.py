@@ -1,7 +1,8 @@
 """审批策略端点(P0-4):读/整表更新账号级工具审批规则。
 
 策略是"当前意图",因此更新语义是**整表替换**(PUT),不做逐条增量;
-读返回规范顺序(按工具名),便于前端/运维对比。
+读返回规范顺序(按工具名+参数条件),便于前端/运维对比。
+会话级授权不在此端点维护:它由对话确认流落库(grant=session)、删会话时清理。
 """
 
 from __future__ import annotations
@@ -34,7 +35,14 @@ async def update_policies(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[ApprovalPolicyRead]:
     items = [
-        {"tool": item.tool.strip(), "action": item.action} for item in payload.policies
+        {
+            "tool": item.tool,
+            "action": item.action,
+            "arg_name": item.arg_name,
+            "arg_match": item.arg_match,
+            "arg_value": item.arg_value,
+        }
+        for item in payload.policies
     ]
     rows = await approval_service.replace_policies(session, account_id, items)
     return [ApprovalPolicyRead(**row) for row in rows]

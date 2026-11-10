@@ -136,6 +136,7 @@ class ApprovalPort(Protocol):
         policies: Sequence[Mapping[str, str]] | None,
         tool: str,
         risk: str,
+        arguments: Mapping[str, Any] | str | None = None,
     ) -> ApprovalDecision: ...
 
 
@@ -189,8 +190,9 @@ class RiskDefaultApproval:
         policies: Sequence[Mapping[str, str]] | None,
         tool: str,
         risk: str,
+        arguments: Mapping[str, Any] | str | None = None,
     ) -> ApprovalDecision:
-        del policies, tool
+        del policies, tool, arguments
         if risk == RISK_DANGER:
             return ApprovalDecision.CONFIRM
         return ApprovalDecision.AUTO

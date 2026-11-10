@@ -103,7 +103,33 @@ describe('ChatPage 消息、审批与交付物', () => {
     fireEvent.click(await screen.findByRole('button', { name: '确认并执行' }));
 
     await waitFor(() =>
-      expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
+      expect(runsApi.confirm).toHaveBeenCalledWith(
+        'run-1',
+        'approve',
+        undefined,
+        'once',
+      ),
+    );
+  });
+
+  it('待确认危险操作:可选「本会话」并把 grant 透传给 confirm', async () => {
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_confirmation' }),
+    );
+    renderPage('/?conversation=c1');
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '本会话允许这些工具' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '确认并执行' }));
+
+    await waitFor(() =>
+      expect(runsApi.confirm).toHaveBeenCalledWith(
+        'run-1',
+        'approve',
+        undefined,
+        'session',
+      ),
     );
   });
 

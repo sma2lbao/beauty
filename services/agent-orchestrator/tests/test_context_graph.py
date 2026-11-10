@@ -105,7 +105,10 @@ class _FixedApproval:
     def __init__(self, decision: ApprovalDecision) -> None:
         self.decision = decision
 
-    def decide(self, policies: Any, tool_name: str, risk: str) -> ApprovalDecision:
+    def decide(
+        self, policies: Any, tool_name: str, risk: str, arguments: Any = None
+    ) -> ApprovalDecision:
+        del policies, tool_name, risk, arguments
         return self.decision
 
 

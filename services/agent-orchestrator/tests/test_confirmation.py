@@ -1,12 +1,21 @@
 """写操作确认闸(§6.2):写工具先中断等人工放行,拒绝则不执行、如实记录。"""
 
+import asyncio
+
+from database.session import create_session_factory, session_scope
+from sqlalchemy import select
+
+from agent_orchestrator.models.runs import Run
+from agent_orchestrator.repositories import ConversationApprovalGrantRepository
 from agent_orchestrator.services.llm import LLMReply, ToolCall
+from agent_orchestrator.services.run_execution_approvals import _apply_grants
 from tests.conftest import (
     ACCOUNT,
     FakeDangerTool,
     FakeKnowledge,
     FakeLLM,
     _create_run,
+    _settings,
     _tool_client,
 )
 
@@ -199,3 +208,177 @@ def test_confirmation_cycles_are_capped(tmp_path) -> None:
             ).json()
         assert run["status"] == "completed"
         assert len(danger.sent) == 3  # 上限 3 次,第 4 次请求被跳过
+
+
+# ---- P1-A:确认时的授权范围(grant) ----
+
+
+def _db_url(tmp_path) -> str:
+    return _settings(
+        tmp_path, "tools.db", llm_enabled=True, tools_enabled=True
+    ).database_url
+
+
+def _grants(tmp_path, conversation_id: str) -> list[str]:
+    """直读会话授权表,返回工具名(按工具名排序)。"""
+
+    async def read() -> list[str]:
+        factory = create_session_factory(_db_url(tmp_path))
+        try:
+            async with session_scope(factory) as session:
+                rows = await ConversationApprovalGrantRepository(
+                    session
+                ).list_for_conversation("t-1", conversation_id)
+                return [row.tool for row in rows]
+        finally:
+            await factory.engine.dispose()
+
+    return asyncio.run(read())
+
+
+def _create_conversation(client) -> str:
+    resp = client.post("/api/v1/conversations", json={}, headers=ACCOUNT)
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+def _create_conversation_run(client, conversation_id: str) -> str:
+    resp = client.post(
+        "/api/v1/runs",
+        json={
+            "title": "周报",
+            "goal": "整理本周日程",
+            "acceptance_criteria": ["日程已整理"],
+            "conversation_id": conversation_id,
+        },
+        headers=ACCOUNT,
+    )
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()["id"]
+
+
+def test_confirm_with_always_grant_writes_account_policy(tmp_path) -> None:
+    """approve + always:写账号级 auto 策略(§5.2)。"""
+    verify_pass = '{"summary": "已发布", "verdicts": {"日程已整理": true}}'
+    fake = FakeLLM(["# 计划", _send_call(), "已发布", verify_pass, "# 交付物"])
+    danger = FakeDangerTool()
+    with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        assert (
+            client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()[
+                "status"
+            ]
+            == "awaiting_confirmation"
+        )
+        run = client.post(
+            f"/api/v1/runs/{run_id}/confirm",
+            json={"action": "approve", "grant": "always"},
+            headers=ACCOUNT,
+        ).json()
+        assert run["status"] == "completed"
+        assert danger.sent == [{"title": "对外发布说明"}]
+        rows = client.get("/api/v1/approval-policies", headers=ACCOUNT).json()
+    assert rows == [
+        {
+            "tool": "external_publish",
+            "action": "auto",
+            "arg_name": "",
+            "arg_match": "",
+            "arg_value": "",
+        }
+    ]
+
+
+def test_confirm_with_session_grant_without_conversation_degrades(tmp_path) -> None:
+    """run 无 conversation_id:session 降级 once,不落会话授权。"""
+    verify_pass = '{"summary": "已发布", "verdicts": {"日程已整理": true}}'
+    fake = FakeLLM(["# 计划", _send_call(), "已发布", verify_pass, "# 交付物"])
+    danger = FakeDangerTool()
+    with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
+        run = client.post(
+            f"/api/v1/runs/{run_id}/confirm",
+            json={"action": "approve", "grant": "session"},
+            headers=ACCOUNT,
+        ).json()
+        assert run["status"] == "completed"
+        assert danger.sent == [{"title": "对外发布说明"}]
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []
+
+        async def grant_count() -> int:
+            factory = create_session_factory(_db_url(tmp_path))
+            try:
+                async with session_scope(factory) as session:
+                    rows = await ConversationApprovalGrantRepository(
+                        session
+                    ).list_scoped("t-1")
+                    return len(rows)
+            finally:
+                await factory.engine.dispose()
+
+        assert asyncio.run(grant_count()) == 0
+
+
+def test_confirm_with_session_grant_on_conversation_run(tmp_path) -> None:
+    """有会话的 run:session 授权落该会话(工具名来自 pending_writes)。"""
+    verify_pass = '{"summary": "已发布", "verdicts": {"日程已整理": true}}'
+    fake = FakeLLM(["# 计划", _send_call(), "已发布", verify_pass, "# 交付物"])
+    danger = FakeDangerTool()
+    with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
+        conversation_id = _create_conversation(client)
+        run_id = _create_conversation_run(client, conversation_id)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
+        run = client.post(
+            f"/api/v1/runs/{run_id}/confirm",
+            json={"action": "approve", "grant": "session"},
+            headers=ACCOUNT,
+        ).json()
+        assert run["status"] == "completed"
+        assert danger.sent == [{"title": "对外发布说明"}]
+        assert _grants(tmp_path, conversation_id) == ["external_publish"]
+
+
+def test_reject_ignores_grant(tmp_path) -> None:
+    """reject + always:拒绝不放行,不落任何授权。"""
+    verify_pass = '{"summary": "未发布", "verdicts": {"日程已整理": true}}'
+    fake = FakeLLM(["# 计划", _send_call(), verify_pass, "# 交付物"])
+    danger = FakeDangerTool()
+    with _tool_client(tmp_path, fake, extras=(danger.spec(),)) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
+        run = client.post(
+            f"/api/v1/runs/{run_id}/confirm",
+            json={"action": "reject", "grant": "always", "reason": "先别发"},
+            headers=ACCOUNT,
+        ).json()
+        assert run["status"] == "completed"
+        assert danger.sent == []
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []
+
+
+def test_grant_without_pending_writes_only_warns(tmp_path) -> None:
+    """确认闸事件缺失(无 pending_writes):落授权只告警,不抛异常、不写策略。"""
+    verify_pass = '{"summary": "ok", "verdicts": {"日程已整理": true}}'
+    fake = FakeLLM(["# 计划", "执行", verify_pass, "# 交付物"])
+    with _tool_client(tmp_path, fake) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
+
+        async def apply() -> None:
+            factory = create_session_factory(_db_url(tmp_path))
+            try:
+                async with session_scope(factory) as session:
+                    run = await session.scalar(select(Run).where(Run.id == run_id))
+                    assert run is not None
+                    await _apply_grants(session, run, "always")
+            finally:
+                await factory.engine.dispose()
+
+        asyncio.run(apply())
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []

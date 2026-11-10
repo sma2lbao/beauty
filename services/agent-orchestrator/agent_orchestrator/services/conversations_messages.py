@@ -167,7 +167,9 @@ async def post_message(
             toolkit = await _toolkit_for(
                 toolkit_factory, extras_factory, account_id, chat=True
             )
-            policies = await approval_service.load_policies(session, account_id)
+            policies = await approval_service.load_policies(
+                session, account_id, conversation_id
+            )
             # 写操作就地确认:非流式路径与请求同事务落 pending(提交时一起生效)
             confirmations = tool_confirmations.ChatConfirmationRecorder(
                 session, account_id=account_id, conversation_id=conversation_id
@@ -393,7 +395,7 @@ async def stream_message(
                 # 复用已 close 的 session 会隐式 autobegin 再签出连接,无人归还
                 async with session_scope(factory) as policy_session:
                     policies = await approval_service.load_policies(
-                        policy_session, account_id
+                        policy_session, account_id, conversation_id
                     )
                 # 写操作就地确认:流式路径不在长事务里,每条 pending 独立短事务落库
                 confirmations = tool_confirmations.StreamConfirmationRecorder(

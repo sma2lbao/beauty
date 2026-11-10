@@ -8,12 +8,18 @@
  *
  * 状态机:idle → confirming / cancelling → confirmed / cancelled / resolved。
  * 请求期间两个按钮都禁用,防止重复点击触发第二次确认。
+ *
+ * 授权范围(P1-A §7.2):主按钮旁的三档分段控件决定本次确认放行多久——
+ * once 只放行本次;session 本会话内同名工具不再确认;always 写账号级策略
+ * (会出现在设置页「工具审批策略」,可在那里改回)。
  */
 import { useQueryClient } from '@tanstack/react-query';
 import { ShieldAlert } from 'lucide-react';
 import { useState } from 'react';
 
+import { GrantPicker } from '@/components/console/grant-picker';
 import { ConsoleButton } from '@/components/console/ui';
+import type { ApprovalGrant } from '@/lib/approval-api';
 import {
   conversationsApi,
   type ToolConfirmationResult,
@@ -27,7 +33,11 @@ type Phase =
   | { kind: 'idle' }
   | { kind: 'confirming' }
   | { kind: 'cancelling' }
-  | { kind: 'confirmed'; result: ToolConfirmationResult }
+  | {
+      kind: 'confirmed';
+      result: ToolConfirmationResult;
+      grant: ApprovalGrant;
+    }
   | { kind: 'cancelled' }
   | { kind: 'resolved'; message: string };
 
@@ -81,6 +91,7 @@ export function ToolConfirmationCard({
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
+  const [grant, setGrant] = useState<ApprovalGrant>('once');
 
   const refreshConversation = () =>
     Promise.all([
@@ -111,8 +122,9 @@ export function ToolConfirmationCard({
       const result = await conversationsApi.confirmToolCall(
         conversationId,
         confirmationId,
+        grant,
       );
-      setPhase({ kind: 'confirmed', result });
+      setPhase({ kind: 'confirmed', result, grant });
       settle(result.ok === false ? 'failed' : 'confirmed');
       void refreshConversation();
     } catch (failure) {
@@ -187,7 +199,13 @@ export function ToolConfirmationCard({
       </div>
 
       {actionable || busy ? (
-        <div className="mt-2 flex items-center gap-2 pl-6">
+        <div className="mt-2 flex flex-wrap items-center gap-2 pl-6">
+          <GrantPicker
+            value={grant}
+            onChange={setGrant}
+            disabled={!actionable}
+            ariaLabel="授权范围"
+          />
           <ConsoleButton
             variant="primary"
             size="sm"
@@ -214,7 +232,7 @@ export function ToolConfirmationCard({
       ) : null}
 
       {phase.kind === 'confirmed' ? (
-        <ConfirmedResult result={phase.result} />
+        <ConfirmedResult result={phase.result} grant={phase.grant} />
       ) : null}
 
       {phase.kind === 'cancelled' ? (
@@ -230,9 +248,25 @@ export function ToolConfirmationCard({
   );
 }
 
+/** 授权生效范围的一次性说明:让用户知道「以后还会不会问」。 */
+function grantNote(grant: ApprovalGrant): string | null {
+  if (grant === 'session') return '本会话内该工具不再确认。';
+  if (grant === 'always') {
+    return '已加入账号策略:该工具后续不再确认,可在设置页「工具审批策略」修改。';
+  }
+  return null;
+}
+
 /** 执行结果:成功/失败都可能有 result_text,默认展开、可折叠。 */
-function ConfirmedResult({ result }: { result: ToolConfirmationResult }) {
+function ConfirmedResult({
+  result,
+  grant,
+}: {
+  result: ToolConfirmationResult;
+  grant: ApprovalGrant;
+}) {
   const failed = result.ok === false;
+  const note = grantNote(grant);
   return (
     <div className="mt-2 flex flex-col gap-1.5 pl-6">
       <p
@@ -263,6 +297,9 @@ function ConfirmedResult({ result }: { result: ToolConfirmationResult }) {
       ) : null}
       {result.message_id ? (
         <p className="font-mono text-[10px] text-ha-faint">已写入会话消息</p>
+      ) : null}
+      {note ? (
+        <p className="text-[11px] leading-4 text-ha-muted">{note}</p>
       ) : null}
     </div>
   );

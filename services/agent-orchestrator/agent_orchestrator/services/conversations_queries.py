@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
+    ConversationApprovalGrantRepository,
     ConversationRepository,
     MessageRepository,
     RunRepository,
@@ -225,10 +226,17 @@ async def set_archived(
 async def delete_conversation(
     session: AsyncSession, account_id: str, conversation_id: str
 ) -> None:
-    """软删除:保留审计数据,列表/详情/消息随即按 404 处理。"""
+    """软删除:保留审计数据,列表/详情/消息随即按 404 处理。
+
+    会话授权(P1-A)随会话一起删除:同一事务内清掉 conversation_approval_grants,
+    否则同名工具的新会话会继承不到也不该继承旧会话的授权(契约 §3.2)。
+    """
     conversation = await require_conversation(session, account_id, conversation_id)
     conversation.deleted_at = datetime.now(UTC)
     conversation.updated_at = datetime.now(UTC)
+    await ConversationApprovalGrantRepository(session).delete_for_conversation(
+        account_id, conversation_id
+    )
 
 
 async def active_run(

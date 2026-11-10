@@ -83,6 +83,9 @@ export const queryKeys = {
   accountMe: ['account-me'] as const,
   accountSessions: ['account-sessions'] as const,
 
+  /** 工具审批策略域(P1-A):整表读/写共用同一键,PUT 成功后失效重取。 */
+  approvalPolicies: ['approval-policies'] as const,
+
   /**
    * 管理台域(P0-7):列表键把过滤维度拼进键(维度变→自动重查);
    * adminAccounts / adminAuditLogs 是域级前缀键,写操作后统一失效。

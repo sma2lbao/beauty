@@ -36,11 +36,29 @@
         "type": "object"
       },
       "ApprovalPolicyIn": {
-        "description": "一条策略:工具名(或 ``*``)+ 动作。",
+        "description": "一条策略:工具名(或 `*`)+ 动作 + 可选参数条件。\n\n`arg_name` 为空表示无条件规则(命中该工具的所有调用);非空时必须给出\n`arg_match`(exact/prefix/glob)与 `arg_value`。",
         "properties": {
           "action": {
             "enum": ["auto", "confirm", "deny"],
             "title": "Action",
+            "type": "string"
+          },
+          "arg_match": {
+            "default": "",
+            "maxLength": 16,
+            "title": "Arg Match",
+            "type": "string"
+          },
+          "arg_name": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Arg Name",
+            "type": "string"
+          },
+          "arg_value": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Arg Value",
             "type": "string"
           },
           "tool": {
@@ -58,6 +76,21 @@
         "properties": {
           "action": {
             "title": "Action",
+            "type": "string"
+          },
+          "arg_match": {
+            "default": "",
+            "title": "Arg Match",
+            "type": "string"
+          },
+          "arg_name": {
+            "default": "",
+            "title": "Arg Name",
+            "type": "string"
+          },
+          "arg_value": {
+            "default": "",
+            "title": "Arg Value",
             "type": "string"
           },
           "tool": {
@@ -329,11 +362,17 @@
         "type": "object"
       },
       "ConfirmRequest": {
-        "description": "写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。",
+        "description": "写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。\n\n`grant` 是确认时的授权范围(P1-A):once 只放行本次;session 在本会话内\n自动放行本次确认闸里的工具(无会话时降级 once);always 写账号级 auto 策略。\nreject 忽略 grant。",
         "properties": {
           "action": {
             "enum": ["approve", "reject"],
             "title": "Action",
+            "type": "string"
+          },
+          "grant": {
+            "default": "once",
+            "enum": ["once", "session", "always"],
+            "title": "Grant",
             "type": "string"
           },
           "reason": {
@@ -3269,6 +3308,19 @@
         "title": "ToolConfirmationCancelResult",
         "type": "object"
       },
+      "ToolConfirmationConfirmRequest": {
+        "description": "确认写操作时的授权范围(P1-A):不传等价 once。\n\n- once:只放行这一次;\n- session:本会话内同名工具以后自动放行(落会话授权);\n- always:永远放行该工具(落账号级 auto 策略)。",
+        "properties": {
+          "grant": {
+            "default": "once",
+            "enum": ["once", "session", "always"],
+            "title": "Grant",
+            "type": "string"
+          }
+        },
+        "title": "ToolConfirmationConfirmRequest",
+        "type": "object"
+      },
       "ToolConfirmationConfirmResult": {
         "description": "确认写操作的响应(字段名与前端已约定,不得改名)。\n\n- ok / error_code / result_text 是工具执行的原始结果投影:\n  成功 ok=true、error_code 为空;失败 ok=false、error_code 是工具错误码;\n- message_id 是本次确认落的 assistant 消息 id(前端据此把结果插入对话)。",
         "properties": {
@@ -4722,6 +4774,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolConfirmationConfirmRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

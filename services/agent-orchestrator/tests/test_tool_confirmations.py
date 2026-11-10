@@ -18,7 +18,10 @@ from database.session import create_session_factory, session_scope
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
-from agent_orchestrator.repositories import ChatToolConfirmationRepository
+from agent_orchestrator.repositories import (
+    ChatToolConfirmationRepository,
+    ConversationApprovalGrantRepository,
+)
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk, ToolSpec
 from tests.conftest import ACCOUNT, OTHER, FakeLLM, _settings, verifier
@@ -350,3 +353,127 @@ def test_post_message_path_also_creates_pending(tmp_path: Path) -> None:
         assert confirm.status_code == 200
         assert confirm.json()["ok"] is True
         assert seen == [{"title": "周报"}]
+
+
+def _db_url(tmp_path: Path) -> str:
+    return _settings(
+        tmp_path, "tool-confirmations.db", llm_enabled=True, tools_enabled=True
+    ).database_url
+
+
+def _grants(tmp_path: Path, conversation_id: str) -> list[str]:
+    """直读会话授权表,返回工具名(按工具名排序)。"""
+
+    async def read() -> list[str]:
+        factory = create_session_factory(_db_url(tmp_path))
+        try:
+            async with session_scope(factory) as session:
+                rows = await ConversationApprovalGrantRepository(
+                    session
+                ).list_for_conversation(ACCOUNT_ID, conversation_id)
+                return [row.tool for row in rows]
+        finally:
+            await factory.engine.dispose()
+
+    return asyncio.run(read())
+
+
+def test_confirm_with_session_grant_auto_executes_next_call(tmp_path: Path) -> None:
+    """session 授权:同会话同名工具下一轮直接执行(decision=auto,不再出卡片)。"""
+    seen: list[dict] = []
+    replies = [
+        _tool_call_reply(WRITE_TOOL),
+        "请确认。",
+        _tool_call_reply(WRITE_TOOL),
+        "已直接写入。",
+    ]
+    with _app(tmp_path, seen, replies) as client:
+        conversation_id = _create_conversation(client)
+        _, frame = _stream_write_call(client, conversation_id)
+
+        resp = client.post(
+            _confirm_url(conversation_id, frame["confirmation_id"]),
+            json={"grant": "session"},
+            headers=ACCOUNT,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert seen == [{"title": "周报"}]
+        # 授权已落库(同会话 + 同名工具各一行)
+        assert _grants(tmp_path, conversation_id) == [WRITE_TOOL]
+
+        # 第二轮:同一工具命中 session 授权 → 直接执行,帧里 decision=auto
+        second = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages/stream",
+            json={"content": "再写一份", "mode": "chat"},
+            headers=ACCOUNT,
+        )
+        assert second.status_code == 200
+        tool_events = [
+            data for name, data in _sse_events(second.text) if name == "tool"
+        ]
+        assert len(tool_events) == 1
+        assert tool_events[0]["decision"] == "auto"
+        assert tool_events[0]["ok"] is True
+        assert "confirmation_id" not in tool_events[0]
+        assert seen == [{"title": "周报"}, {"title": "周报"}]
+
+
+def test_confirm_with_always_grant_writes_account_policy(tmp_path: Path) -> None:
+    """always 授权:写一条账号级 auto 策略,该工具以后不再确认。"""
+    seen: list[dict] = []
+    replies = [_tool_call_reply(WRITE_TOOL), "请确认。"]
+    with _app(tmp_path, seen, replies) as client:
+        conversation_id = _create_conversation(client)
+        _, frame = _stream_write_call(client, conversation_id)
+        resp = client.post(
+            _confirm_url(conversation_id, frame["confirmation_id"]),
+            json={"grant": "always"},
+            headers=ACCOUNT,
+        )
+        assert resp.status_code == 200
+        assert seen == [{"title": "周报"}]
+        rows = client.get("/api/v1/approval-policies", headers=ACCOUNT).json()
+        assert rows == [
+            {
+                "tool": WRITE_TOOL,
+                "action": "auto",
+                "arg_name": "",
+                "arg_match": "",
+                "arg_value": "",
+            }
+        ]
+        # always 不写会话授权表
+        assert _grants(tmp_path, conversation_id) == []
+
+
+def test_confirm_without_grant_does_not_persist_authorization(tmp_path: Path) -> None:
+    """不传 grant 等价 once:既没有会话授权,也没有账号策略。"""
+    seen: list[dict] = []
+    replies = [_tool_call_reply(WRITE_TOOL), "请确认。"]
+    with _app(tmp_path, seen, replies) as client:
+        conversation_id = _create_conversation(client)
+        _, frame = _stream_write_call(client, conversation_id)
+        resp = client.post(
+            _confirm_url(conversation_id, frame["confirmation_id"]), headers=ACCOUNT
+        )
+        assert resp.status_code == 200
+        assert seen == [{"title": "周报"}]
+        assert _grants(tmp_path, conversation_id) == []
+        assert client.get("/api/v1/approval-policies", headers=ACCOUNT).json() == []
+
+
+def test_confirm_rejects_invalid_grant(tmp_path: Path) -> None:
+    """非法 grant → 422,且不执行工具。"""
+    seen: list[dict] = []
+    replies = [_tool_call_reply(WRITE_TOOL), "请确认。"]
+    with _app(tmp_path, seen, replies) as client:
+        conversation_id = _create_conversation(client)
+        _, frame = _stream_write_call(client, conversation_id)
+        resp = client.post(
+            _confirm_url(conversation_id, frame["confirmation_id"]),
+            json={"grant": "forever"},
+            headers=ACCOUNT,
+        )
+        assert resp.status_code == 422
+        assert seen == []

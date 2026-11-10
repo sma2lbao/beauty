@@ -1,8 +1,11 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
+import { RUN_GRANT_LABELS } from '@/components/console/grant-labels';
+import { GrantPicker } from '@/components/console/grant-picker';
 import { Markdown } from '@/components/console/markdown';
 import { ConsoleButton, ToneBadge } from '@/components/console/ui';
+import type { ApprovalGrant } from '@/lib/approval-api';
 import { summarizeArguments, type PendingWrite } from '@/lib/presentation';
 import type { Plan, Run, RunStatus } from '@/lib/runs-api';
 
@@ -85,10 +88,12 @@ export function DangerConfirmCard({
   busy,
 }: {
   writes: PendingWrite[];
-  onConfirm: () => void;
+  /** 授权范围(P1-A §7.2):由卡片内部三段控件选择,默认本次。 */
+  onConfirm: (grant: ApprovalGrant) => void;
   onReject: () => void;
   busy: boolean;
 }) {
+  const [grant, setGrant] = useState<ApprovalGrant>('once');
   return (
     <div className="rounded-lg border border-ha-warning-border bg-ha-warning-bg/40">
       <div className="flex items-center justify-between gap-3 border-b border-ha-warning-border/60 px-3 py-2.5">
@@ -129,10 +134,16 @@ export function DangerConfirmCard({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-ha-warning-border/60 px-3 py-2.5">
+        <GrantPicker
+          value={grant}
+          onChange={setGrant}
+          disabled={busy}
+          labels={RUN_GRANT_LABELS}
+        />
         <ConsoleButton
           variant="primary"
           size="sm"
-          onClick={onConfirm}
+          onClick={() => onConfirm(grant)}
           disabled={busy}
         >
           确认并执行

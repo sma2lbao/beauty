@@ -274,6 +274,7 @@ describe('ChatPage 发送与流式', () => {
     expect(conversationsApi.confirmToolCall).toHaveBeenCalledWith(
       'c1',
       'cfm-1',
+      'once',
     );
   });
 

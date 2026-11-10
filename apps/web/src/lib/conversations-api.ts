@@ -147,11 +147,7 @@ export const conversationsApi = {
     http.request<void>(`/api/v1/conversations/${conversationId}`, {
       method: 'DELETE',
     }),
-  /**
-   * 建会话:workspace_id 决定会话归属(不传由服务端落账号默认工作区);
-   * title 留空则等首条消息自动定题。空调用仍发 `{}`,保持旧契约。
-   * 新会话在输入区选的模型随建会话一并落库(§6.3 `ConversationCreate.model`)。
-   */
+  /** 建会话:workspace_id 归属、title 留空自动定题、model 落库(§6.3);空调用仍发 {}。 */
   create: (
     input: {
       title?: string;
@@ -201,11 +197,15 @@ export const conversationsApi = {
         }),
       },
     ),
-  /** 确认执行待确认的写工具(后端执行并落一条 assistant 消息)。 */
-  confirmToolCall: (conversationId: string, confirmationId: string) =>
+  /** 确认执行待确认的写工具;grant(§5,不传等价 once)随请求体透传。 */
+  confirmToolCall: (
+    conversationId: string,
+    confirmationId: string,
+    grant?: 'once' | 'session' | 'always',
+  ) =>
     http.request<ToolConfirmationResult>(
       `/api/v1/conversations/${conversationId}/tool-confirmations/${confirmationId}/confirm`,
-      { method: 'POST' },
+      { method: 'POST', body: grant ? JSON.stringify({ grant }) : undefined },
     ),
   /** 取消待确认的写工具:不执行;已处理/已过期返回 409。 */
   cancelToolCall: (conversationId: string, confirmationId: string) =>

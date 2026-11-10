@@ -26,6 +26,7 @@ from agent_orchestrator.api.deps import (
 )
 from agent_orchestrator.schemas.conversations import (
     ToolConfirmationCancelResult,
+    ToolConfirmationConfirmRequest,
     ToolConfirmationConfirmResult,
 )
 from agent_orchestrator.services import tool_confirmations as confirmations_service
@@ -52,6 +53,7 @@ async def confirm_tool_call(
     account_id: AccountId,
     toolkit_factory: ToolkitFactory,
     tool_extras_factory: ToolExtrasFactory,
+    body: ToolConfirmationConfirmRequest | None = None,
 ) -> ToolConfirmationConfirmResult:
     """确认并执行待确认的写调用(重复确认 409,不重复执行)。"""
     conversation = await require_conversation(session, account_id, conversation_id)
@@ -73,6 +75,7 @@ async def confirm_tool_call(
             conversation_id=conversation.id,
             confirmation_id=confirmation_id,
             toolkit=toolkit,
+            grant=body.grant if body is not None else "once",
         )
     return ToolConfirmationConfirmResult(
         confirmation_id=outcome.confirmation.id,

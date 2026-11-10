@@ -170,10 +170,16 @@ class RejectRequest(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
-    """写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。"""
+    """写操作确认(§6.2):放行则执行,拒绝则跳过并继续验收。
+
+    `grant` 是确认时的授权范围(P1-A):once 只放行本次;session 在本会话内
+    自动放行本次确认闸里的工具(无会话时降级 once);always 写账号级 auto 策略。
+    reject 忽略 grant。
+    """
 
     action: Literal["approve", "reject"]
     reason: str | None = Field(default=None, max_length=2000)
+    grant: Literal["once", "session", "always"] = "once"
 
 
 class AnswerItem(BaseModel):

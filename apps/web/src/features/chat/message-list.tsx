@@ -213,7 +213,7 @@ export function ChatMessageList({
         {run && status === 'awaiting_confirmation' ? (
           <DangerConfirmCard
             writes={pendingWrites}
-            onConfirm={() => actions.confirmDanger(run.id, 'approve')}
+            onConfirm={(grant) => actions.confirmDanger(run.id, 'approve', grant)}
             onReject={() => actions.confirmDanger(run.id, 'reject')}
             busy={actions.busy}
           />

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from common.artifacts import ArtifactStore
+from common.logging import get_logger
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,8 +117,9 @@ class _ApprovalAdapter:
         policies: Any,
         tool: str,
         risk: str,
+        arguments: Any = None,
     ) -> ApprovalDecision:
-        action = approval_service.decide(policies, tool, ToolRisk(risk))
+        action = approval_service.decide(policies, tool, ToolRisk(risk), arguments)
         return ApprovalDecision(action.value)
 
 
@@ -371,6 +373,49 @@ async def approve_run(
     )
 
 
+logger = get_logger(__name__)
+
+
+async def _pending_write_tools(session: AsyncSession, run: Run) -> list[str]:
+    """本次确认闸里待写入的工具名(去重保序);事件缺失时返回空列表。
+
+    授权对象是"用户刚刚放行的那批写操作",因此从最近一条
+    run.confirmation.required.v1 的载荷里取 pending_writes,而不是重新推理。
+    """
+    event = await RunEventRepository(session).latest_of_type(
+        run.id, "run.confirmation.required.v1"
+    )
+    payload = event.payload if event is not None else None
+    pending = payload.get("pending_writes") if isinstance(payload, Mapping) else None
+    tools: list[str] = []
+    for item in pending or []:
+        name = item.get("name") if isinstance(item, Mapping) else None
+        if name and str(name) not in tools:
+            tools.append(str(name))
+    return tools
+
+
+async def _apply_grants(session: AsyncSession, run: Run, grant: str) -> None:
+    """按用户选择的授权范围落会话授权/账号策略(§5.2,与状态推进同一事务)。"""
+    tools = await _pending_write_tools(session, run)
+    if not tools:
+        logger.warning(
+            "approval.grant_without_pending_writes",
+            run_id=run.id,
+            account_id=run.account_id,
+            grant=grant,
+        )
+        return
+    for tool in tools:
+        await approval_service.record_grant(
+            session,
+            account_id=run.account_id,
+            conversation_id=run.conversation_id,
+            tool=tool,
+            grant=grant,
+        )
+
+
 async def confirm_run(
     session: AsyncSession,
     graph: CompiledStateGraph,
@@ -381,13 +426,18 @@ async def confirm_run(
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
     *,
+    grant: str = "once",
     jobs_enabled: bool = False,
     emit_confirmation: bool = True,
     from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
 ) -> Run:
-    """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。"""
+    """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。
+
+    grant 只在 action="approve" 且非 once 时生效(§5.2):session 把本次确认闸里的
+    工具写成会话授权(无会话时降级 once),always 写成账号级 auto 策略;reject 忽略。
+    """
     run = await require_run(session, account_id, run_id)
     if from_job:
         # 同 approve_run:worker 路径状态已由 API 侧推进,守卫在此不重复校验。
@@ -404,6 +454,10 @@ async def confirm_run(
             "run.confirmation.received.v1",
             {"action": action, "reason": reason},
         )
+    # §5.2:放行时按用户选择的授权范围落库;reject 永不放行,不落授权。
+    # from_job 路径的授权已由 API 侧在同一事务里落库,worker 不重复写。
+    if action == "approve" and grant != approval_service.GRANT_ONCE and not from_job:
+        await _apply_grants(session, run, grant)
     if jobs_enabled:
         await jobs_service.enqueue(
             session,

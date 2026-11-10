@@ -106,6 +106,17 @@ class MessageRead(BaseModel):
     created_at: datetime
 
 
+class ToolConfirmationConfirmRequest(BaseModel):
+    """确认写操作时的授权范围(P1-A):不传等价 once。
+
+    - once:只放行这一次;
+    - session:本会话内同名工具以后自动放行(落会话授权);
+    - always:永远放行该工具(落账号级 auto 策略)。
+    """
+
+    grant: Literal["once", "session", "always"] = "once"
+
+
 class ToolConfirmationConfirmResult(BaseModel):
     """确认写操作的响应(字段名与前端已约定,不得改名)。
 

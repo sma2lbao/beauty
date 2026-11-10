@@ -149,7 +149,7 @@ async def _invoke_plan(
         state["conversation_history"] = await _conversation_history(session, run)
     # P0-4:审批策略随状态进图(节点是纯函数,不能自己查库);空表即沿用风险默认值
     state["approval_policies"] = await approval_service.load_policies(
-        session, run.account_id
+        session, run.account_id, run.conversation_id
     )
     # §6.5:规划边界消费排队指令,并入图状态供各节点遵循
     instructions = await _consume_instructions(session, run)

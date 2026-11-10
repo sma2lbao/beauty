@@ -212,7 +212,12 @@ describe('RunsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '确认执行危险操作' }));
     await waitFor(() =>
-      expect(runsApi.confirm).toHaveBeenCalledWith('run-1', 'approve'),
+      expect(runsApi.confirm).toHaveBeenCalledWith(
+        'run-1',
+        'approve',
+        undefined,
+        'once',
+      ),
     );
   });
 

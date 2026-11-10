@@ -175,20 +175,32 @@ async def _execute_calls(
     for call in calls:
         # 远端工具箱回旧枚举字符串,本机注册表回 ToolRisk;统一成枚举再求值。
         risk = str(toolkit.risk(call.name))
-        decision = approval_service.decide(policies, call.name, ToolRisk(risk))
+        # 参数级规则(§4/§6.1):命中显式 auto 的工具按已授权执行,不再出确认卡片。
+        rule = approval_service.match_rule(policies, call.name, call.arguments)
+        explicit_auto = rule is not None and (
+            str(rule.get("action", "")).lower() == "auto"
+        )
+        decision = approval_service.decide(
+            policies, call.name, ToolRisk(risk), call.arguments
+        )
         duration_ms = 0
         error_code: str | None = None
         extra: dict[str, str] = {}
         if decision is approval_service.ApprovalAction.DENY:
             output = _tool_error(f"工具 {call.name} 被账号审批策略禁止使用")
-        elif decision is approval_service.ApprovalAction.CONFIRM:
+        elif decision is approval_service.ApprovalAction.CONFIRM and risk != "write":
             # DANGER 不切流给对话:回喂错误让模型引导走任务(任务里有确认闸)
             output = _tool_error(
                 "危险操作不允许在对话中执行,请提示用户改用「任务」发送"
             )
         elif risk == "write":
+            if explicit_auto:
+                # 账号策略/会话授权显式放行(§4):按已授权执行,不落 pending 卡片。
+                started = time.perf_counter()
+                output = await toolkit.execute(call.name, call.arguments, approved=True)
+                duration_ms = int((time.perf_counter() - started) * 1000)
             # 写操作就地确认:不执行,只落 pending 并让前端出卡片
-            if confirmations is None:
+            elif confirmations is None:
                 output = _tool_error(
                     "写操作需要用户确认,当前对话不支持就地确认,请提示用户改用「任务」发送"
                 )
@@ -204,7 +216,7 @@ async def _execute_calls(
                 extra = pending.frame_fields()
         else:
             started = time.perf_counter()
-            # 走到这里的只有 READ(WRITE 上面已转确认、DANGER 已拒),
+            # 走到这里的只有 READ(WRITE 上面已转确认、DANGER 在对话里不暴露),
             # approved 恒 False 即可;tool-service 侧仍有风险下限兜底。
             output = await toolkit.execute(call.name, call.arguments, approved=False)
             duration_ms = int((time.perf_counter() - started) * 1000)

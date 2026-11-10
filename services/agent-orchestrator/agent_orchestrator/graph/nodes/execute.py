@@ -118,7 +118,9 @@ def make_execute_node(
                     continue
                 risk = str(toolkit.risk(call.name))
                 if (
-                    runtime.ports.approval.decide(policies, call.name, risk)
+                    runtime.ports.approval.decide(
+                        policies, call.name, risk, call.arguments
+                    )
                     is ApprovalDecision.DENY
                 ):
                     # 账号策略禁用提问:走普通工具的"策略禁止"分支回喂
@@ -194,7 +196,9 @@ def make_execute_node(
                 if str(getattr(call, "id", "")) in skip_ids:
                     continue
                 risk = str(toolkit.risk(call.name))
-                decision = runtime.ports.approval.decide(policies, call.name, risk)
+                decision = runtime.ports.approval.decide(
+                    policies, call.name, risk, call.arguments
+                )
                 if decision is ApprovalDecision.DENY:
                     # 策略禁用:不执行,如实回喂模型(它能据此换个做法)
                     output = _tool_error(

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Account, Session } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
+import { approvalApi } from '@/lib/approval-api';
 import { ApiError } from '@/lib/http';
 
 import { SettingsPage } from './settings';
@@ -22,6 +23,17 @@ vi.mock('@/lib/account-api', async () => {
       addSession: vi.fn(),
       revokeSession: vi.fn(),
     },
+  };
+});
+
+vi.mock('@/lib/approval-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/approval-api')>(
+      '@/lib/approval-api',
+    );
+  return {
+    ...actual,
+    approvalApi: { list: vi.fn(), replace: vi.fn() },
   };
 });
 
@@ -62,6 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(accountApi.me).mockResolvedValue(account);
   vi.mocked(accountApi.sessions).mockResolvedValue([session]);
+  vi.mocked(approvalApi.list).mockResolvedValue([]);
 });
 
 describe('SettingsPage', () => {
@@ -77,6 +90,15 @@ describe('SettingsPage', () => {
     expect(screen.getByLabelText('显示名')).toHaveProperty('value', '小月');
     expect(screen.getByText('正常')).toBeTruthy();
     expect(screen.getByText('MacBook / Chrome')).toBeTruthy();
+  });
+
+  it('展示工具审批策略面板与空表说明', async () => {
+    renderPage();
+
+    expect(await screen.findByText('工具审批策略')).toBeTruthy();
+    expect(
+      await screen.findByText(/还没有规则:默认按风险等级处理/),
+    ).toBeTruthy();
   });
 
   it('保存显示名时调用 PATCH /me', async () => {

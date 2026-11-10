@@ -13,6 +13,9 @@ from __future__ import annotations
 from agent_orchestrator.repositories.approval import (
     ApprovalPolicyRepository as ApprovalPolicyRepository,
 )
+from agent_orchestrator.repositories.approval import (
+    ConversationApprovalGrantRepository as ConversationApprovalGrantRepository,
+)
 from agent_orchestrator.repositories.attachment import (
     AttachmentRepository as AttachmentRepository,
 )

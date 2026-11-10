@@ -221,6 +221,7 @@ async def confirm_run(
         body.reason,
         store,
         workspace,
+        grant=body.grant,
         jobs_enabled=settings.jobs_enabled,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,

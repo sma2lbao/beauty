@@ -12,6 +12,7 @@
 import { ApiError, createHttpClient, isUnauthorized } from '@/lib/http';
 import { connectSse } from '@/lib/sse';
 import { runsBase as BASE } from '@/config/env';
+import type { ApprovalGrant } from './approval-api';
 import type {
   Run,
   Plan,
@@ -97,10 +98,19 @@ export const runsApi = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
-  confirm: (runId: string, action: 'approve' | 'reject', reason?: string) =>
+  /**
+   * 危险操作确认(§5):grant 只在 approve 且非 once 时落授权;reject 忽略它。
+   * body 里省略 undefined 键,保持既有请求形状不变。
+   */
+  confirm: (
+    runId: string,
+    action: 'approve' | 'reject',
+    reason?: string,
+    grant?: ApprovalGrant,
+  ) =>
     http.request<Run>(`/api/v1/runs/${runId}/confirm`, {
       method: 'POST',
-      body: JSON.stringify({ action, reason }),
+      body: JSON.stringify({ action, reason, grant }),
     }),
   /**
    * 回答/跳过挂起提问(ask_question,§10.5):202 返回更新后的 run。

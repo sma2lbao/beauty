@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_orchestrator.graph.tool_results import is_tool_error, parse_tool_error
 from agent_orchestrator.models.conversations import ChatMessage, ChatToolConfirmation
 from agent_orchestrator.repositories import ChatToolConfirmationRepository
+from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services.conversations_persist import _persist_assistant_content
 
 if TYPE_CHECKING:
@@ -280,11 +281,15 @@ async def confirm(
     confirmation_id: str,
     toolkit: Any,
     now: datetime | None = None,
+    grant: str = "once",
 ) -> ConfirmationOutcome:
     """执行确认的写操作:approved=True 重放调用,结果落 assistant 消息。
 
     重复确认/已取消/过期都在 require_pending_confirmation 里挡掉(409),
     因此这里不会重复执行;工具执行抛错由上层按 UpstreamError 处理,不落结果。
+
+    `grant` 是用户选择的授权范围(once/session/always):确认成功后按它落
+    会话授权或账号 auto 策略,与确认结果同一事务;`once` 不落库。
     """
     confirmation = await require_pending_confirmation(
         session,
@@ -318,6 +323,14 @@ async def confirm(
     confirmation.message_id = message.id
     confirmation.decided_at = moment
     await session.flush()
+    # 授权落库与确认结果同一事务:确认成功才授权,回滚则授权也不生效。
+    await approval_service.record_grant(
+        session,
+        account_id=account_id,
+        conversation_id=conversation_id,
+        tool=confirmation.tool_name,
+        grant=grant,
+    )
     return ConfirmationOutcome(confirmation=confirmation, message=message)
 
 

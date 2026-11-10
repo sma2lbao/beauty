@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -66,6 +72,7 @@ describe('ToolConfirmationCard', () => {
     expect(conversationsApi.confirmToolCall).toHaveBeenCalledWith(
       'c1',
       'cfm-1',
+      'once',
     );
     expect(screen.getByText('执行完成')).toBeTruthy();
     expect(screen.getByText('已写入会话消息')).toBeTruthy();
@@ -126,6 +133,52 @@ describe('ToolConfirmationCard', () => {
       });
     });
     expect(screen.getByText('执行完成')).toBeTruthy();
+  });
+
+  it('选「本会话」后确认:grant=session 并提示本会话不再确认', async () => {
+    vi.spyOn(conversationsApi, 'confirmToolCall').mockResolvedValue({
+      confirmation_id: 'cfm-1',
+      status: 'confirmed',
+      ok: true,
+      result_text: 'ok',
+    });
+    renderCard();
+
+    fireEvent.click(screen.getByRole('button', { name: '本会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认执行' }));
+
+    await waitFor(() =>
+      expect(conversationsApi.confirmToolCall).toHaveBeenCalledWith(
+        'c1',
+        'cfm-1',
+        'session',
+      ),
+    );
+    expect(
+      await screen.findByText('本会话内该工具不再确认。'),
+    ).toBeTruthy();
+  });
+
+  it('选「始终允许该工具」后确认:grant=always 并提示可在设置页修改', async () => {
+    vi.spyOn(conversationsApi, 'confirmToolCall').mockResolvedValue({
+      confirmation_id: 'cfm-1',
+      status: 'confirmed',
+      ok: true,
+      result_text: 'ok',
+    });
+    renderCard();
+
+    fireEvent.click(screen.getByRole('button', { name: '始终允许该工具' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认执行' }));
+
+    await waitFor(() =>
+      expect(conversationsApi.confirmToolCall).toHaveBeenCalledWith(
+        'c1',
+        'cfm-1',
+        'always',
+      ),
+    );
+    expect(await screen.findByText(/可在设置页「工具审批策略」修改/)).toBeTruthy();
   });
 
   it('取消成功:提示已取消,操作不会执行', async () => {
