@@ -33,6 +33,8 @@
 | [docs/design/mcp-dual-stack.md](./design/mcp-dual-stack.md)                 | MCP 双栈（P1-H：2025-03-26 与 2026-07-28 分流/server-discover/客户端自动协商/兼容矩阵/残余）                                                                                                                                                  | Lead       | MCP 协议版本或分流变化时   |
 | [docs/design/context-engineering.md](./design/context-engineering.md)       | 上下文工程管线设计（压缩/offload/SKILL.md 渐进/AGENTS.md，含实施记录）                                                                                                                                                                        | Lead       | 上下文策略或实现变化时     |
 | [docs/design/tool-execution.md](./design/tool-execution.md)                 | 工具执行面设计（exec MVP：契约/审批/截断/审计，含 web_search、todo 分期与对话内写操作确认）                                                                                                                                                   | Lead       | 执行面契约或实施进度变化时 |
+| [docs/design/web-search.md](./design/web-search.md)                         | web_search 工具契约（P1-L/M3：目录描述/结果信封/tavily·brave 适配/出口校验/错误码/残余）                                                                                                                                                      | Lead       | 搜索契约或提供方变化时     |
+| [docs/design/background-jobs.md](./design/background-jobs.md)               | 后台任务工具契约（P1-L/M2：job_start·job_output·job_kill/沙箱作业目录/元数据表/lazy 超时/残余）                                                                                                                                               | Lead       | 后台任务语义变化时         |
 | [docs/design/code-execution.md](./design/code-execution.md)                 | 代码执行面设计(run_code P5:双工具边界/契约/执行路径/审批/审计)                                                                                                                                                                                | Lead       | 代码执行契约变化时         |
 | [docs/design/event-taxonomy.md](./design/event-taxonomy.md)                 | 事件分类学契约（thread/turn/item + plan 一等 item）                                                                                                                                                                                           | Lead       | 事件 kind/相位变化时       |
 | [docs/design/subagents.md](./design/subagents.md)                           | 子代理委派(P1-E):run 树/spawn_subagent/过程项 kind=subagent/用量投影                                                                                                                                                                          | Lead       | 子代理契约变化时           |
@@ -73,6 +75,8 @@
 - 恢复语义（run 墙钟超时 / 优先级 / 检查点列表 / rewind / fork） → [design/recovery.md](./design/recovery.md)（唯一）
 - MCP 协议双栈（2025-03-26 / 2026-07-28 分流、server/discover、客户端协商） → [design/mcp-dual-stack.md](./design/mcp-dual-stack.md)（唯一）
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
+- 公网搜索工具（web_search 契约 / 提供方适配 / 出口校验） → [design/web-search.md](./design/web-search.md)（唯一）
+- 后台任务工具（job_start/job_output/job_kill / 沙箱作业目录 / lazy 超时） → [design/background-jobs.md](./design/background-jobs.md)（唯一）
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）
 - Agent 行为契约 → 根 [AGENTS.md](../AGENTS.md)
