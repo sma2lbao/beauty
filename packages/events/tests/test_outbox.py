@@ -14,12 +14,15 @@ from sqlalchemy import select
 from events.bus import EventBus, InMemoryEventBus
 from events.envelope import EventEnvelope
 from events.outbox import (
+    DEFAULT_CLAIM_LEASE_SECONDS,
     DISPATCHED,
     FAILED,
     PENDING,
     OutboxDispatcher,
     OutboxRepository,
     ProcessedEvent,
+    _claim_statement,
+    _is_postgres,
     is_processed,
     mark_processed,
 )
@@ -94,6 +97,61 @@ async def test_claim_respects_available_at(factory) -> None:
         assert len(later) == 2
 
 
+async def test_claim_takes_lease_and_recovers_after_crash(factory) -> None:
+    """领取即占租约:提交后其它 dispatcher 看不到;租约到期可重领(崩溃恢复)。"""
+    base = datetime.now(UTC)
+    async with session_scope(factory) as session:
+        await OutboxRepository(session).record("t-1", _envelope(), available_at=base)
+
+    async with session_scope(factory) as session:
+        first = await OutboxRepository(session).claim(now=base)
+        assert len(first) == 1
+
+    async with session_scope(factory) as session:
+        repository = OutboxRepository(session)
+        # 租约未到期:另一个 dispatcher 领不到同一行
+        assert await repository.claim(now=base) == []
+        # 租约到期:进程崩溃的场景由下一轮自动重领
+        reclaimed = await repository.claim(
+            now=base + timedelta(seconds=DEFAULT_CLAIM_LEASE_SECONDS + 1)
+        )
+        assert len(reclaimed) == 1
+
+
+async def test_claim_row_lock_branch_is_used_on_postgres(factory, monkeypatch) -> None:
+    """PG 分支会叠加 FOR UPDATE;SQLite 编译器忽略该子句,行为一致。"""
+    from events import outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_is_postgres", lambda session: True)
+    base = datetime.now(UTC)
+    async with session_scope(factory) as session:
+        await OutboxRepository(session).record("t-1", _envelope(), available_at=base)
+    async with session_scope(factory) as session:
+        claimed = await OutboxRepository(session).claim(now=base)
+        assert len(claimed) == 1
+
+
+def test_claim_statement_compiles_skip_locked_on_postgres() -> None:
+    from sqlalchemy.dialects import postgresql
+
+    statement = _claim_statement(datetime.now(UTC), 10).with_for_update(
+        skip_locked=True
+    )
+    sql = str(statement.compile(dialect=postgresql.dialect())).upper()
+    assert "FOR UPDATE SKIP LOCKED" in sql
+
+
+def test_is_postgres_reads_session_dialect() -> None:
+    class _FakeBind:
+        dialect = type("_Dialect", (), {"name": "postgresql"})()
+
+    class _FakeSession:
+        def get_bind(self) -> _FakeBind:
+            return _FakeBind()
+
+    assert _is_postgres(_FakeSession()) is True  # type: ignore[arg-type]
+
+
 async def test_dispatcher_publishes_and_marks_dispatched(factory) -> None:
     bus = RecordingBus()
     async with session_scope(factory) as session:
@@ -125,9 +183,11 @@ async def test_failure_retries_with_backoff_then_succeeds(factory) -> None:
     async with session_scope(factory) as session:
         repository = OutboxRepository(session)
         assert await repository.count_by_status(PENDING) == 1  # 仍在待投递
-        pending = await repository.claim()
-        assert pending[0].attempts == 1
-        assert "消费者不可用" in (pending[0].last_error or "")
+        # 直接读行(不用 claim:claim 会占租约,会把下一轮挡住)
+        pending = await repository.get_by_id(recorded.id)
+        assert pending is not None
+        assert pending.attempts == 1
+        assert "消费者不可用" in (pending.last_error or "")
     assert recorded.id
 
     second = await dispatcher.drain_once()  # 退避为 0,立即可重试

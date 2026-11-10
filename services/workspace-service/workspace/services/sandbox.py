@@ -17,15 +17,15 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 
 import structlog
 from common.errors import AppError, ConflictError, UpstreamError
-from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from workspace.core.config import Settings
 from workspace.models.sandbox import SandboxInstance
-from workspace.repositories import CrossAccountSandboxRepository, SandboxRepository
+from workspace.repositories import SandboxRepository
 from workspace.schemas.sandbox import (
     MAX_TREE_DEPTH,
     MAX_TREE_ENTRIES,
@@ -40,6 +40,7 @@ from workspace.services.sandbox_lifecycle import (
     NAME_HEX_LEN,
     NAME_PREFIX,
     _as_utc,
+    _claim_reapable,
     _claim_rebuild,
     _destroy_quietly,
     _ensure_usable,
@@ -54,6 +55,7 @@ from workspace.services.sandbox_lifecycle import (
     _spec_from,
     _start_runtime,
     _ttl_seconds,
+    _write_back_reaped,
 )
 from workspace.services.sandbox_provider import (
     ExecResult,
@@ -381,47 +383,74 @@ async def list_tree(
 async def reap_expired(
     factory: async_sessionmaker[AsyncSession],
     provider: SandboxProvider,
+    settings: Settings,
     *,
     limit: int = 100,
     on_reaped: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> int:
-    """回收过期沙箱:逐个销毁,失败只记 last_error,不阻塞其他实例。
+    """回收过期沙箱(多副本互斥):短事务领取 → 事务外销毁 → 短事务回写。
+
+    领取租约语义(P0-4c):
+
+    - 领取在短事务内完成:命中行的 `expires_at` 立即推后到 now +
+      `sandbox_reap_lease_seconds`(默认 300s)。提交后其它副本的
+      claim/list 都看不到这批行,因此同一批运行时只会被销毁一次;
+    - `provider.destroy` 一律在**事务外**执行,不在数据库事务里做外部调用;
+    - 成功:status=stopped、last_error=None;失败:保留原状态(不写 status),
+      `last_error` 留痕,并把 `expires_at` 推后到 now +
+      `sandbox_reap_retry_delay_seconds`(默认 30s),避免每轮锤同一个坏容器;
+    - 领取后进程崩溃:租约到期后该行重新变成"过期",下一轮会被重新领取——
+      destroy 必须按幂等对待(provider 侧失败也已被异常兜底)。
 
     返回本轮成功回收的数量。记录保留(status=stopped)以便审计;
     显式 DELETE 才真正删行。
 
     `on_reaped(account_id, sandbox_id)` 是可选的联动回调(进程装配时传
     shell 会话管理器的 close_sandbox):运行时被回收后,该沙箱上的 shell
-    会话也一并关闭,避免内存里留下"永远等不到 EOF"的会话。
+    会话也一并关闭,避免内存里留下"永远等不到 EOF"的会话。回调在回写提交
+    之后逐条执行,best-effort(异常只记 warning)。
     """
     now = _now()
-    reaped = 0
-    async with session_scope(factory) as session:
-        records = await CrossAccountSandboxRepository(session).list_expired(
-            now, limit=limit
-        )
-        for record in records:
+    lease_seconds = settings.sandbox_reap_lease_seconds
+    claimed = await _claim_reapable(
+        factory, now=now, limit=limit, lease_seconds=lease_seconds
+    )
+    if not claimed:
+        return 0
+
+    succeeded: list[tuple[str, str]] = []
+    failed: list[tuple[str, str]] = []
+    for sandbox_id, account_id, sandbox_name in claimed:
+        try:
+            await provider.destroy(sandbox_name)
+        except Exception as exc:
+            error_text = _error_text(exc)
+            failed.append((sandbox_id, error_text))
+            logger.warning(
+                "sandbox reap failed",
+                sandbox_id=sandbox_id,
+                sandbox_name=sandbox_name,
+                error=error_text,
+            )
+            continue
+        succeeded.append((sandbox_id, account_id))
+
+    await _write_back_reaped(
+        factory,
+        succeeded=succeeded,
+        failed=failed,
+        retry_delay_seconds=settings.sandbox_reap_retry_delay_seconds,
+        claimed_until=now + timedelta(seconds=lease_seconds),
+    )
+
+    if on_reaped is not None:
+        for sandbox_id, account_id in succeeded:
             try:
-                await provider.destroy(record.external_name)
-            except Exception as exc:
-                record.last_error = _error_text(exc)
+                await on_reaped(account_id, sandbox_id)
+            except Exception as exc:  # noqa: BLE001 - 清理失败不影响回收结果
                 logger.warning(
-                    "sandbox reap failed",
-                    sandbox_id=record.id,
-                    sandbox_name=record.external_name,
+                    "sandbox reap callback failed",
+                    sandbox_id=sandbox_id,
                     error=_error_text(exc),
                 )
-                continue
-            record.status = "stopped"
-            record.last_error = None
-            reaped += 1
-            if on_reaped is not None:
-                try:
-                    await on_reaped(record.account_id, record.id)
-                except Exception as exc:  # noqa: BLE001 - 清理失败不影响回收结果
-                    logger.warning(
-                        "sandbox reap callback failed",
-                        sandbox_id=record.id,
-                        error=_error_text(exc),
-                    )
-    return reaped
+    return len(succeeded)

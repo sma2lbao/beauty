@@ -66,8 +66,9 @@ services:
       start_period: 10s
 
   redis:
-    # 当前代码没有任何 redis 依赖(限流是进程内实现),仅预留:保留容器便于后续
-    # 限流/缓存/队列接入时直接使用,可在不需要时注释掉。
+    # 限流后端:api-gateway 与 account-service 配置 <PREFIX>__REDIS_URL 后走 Redis
+    # 固定窗口(多副本共享计数);不配则回退进程内滑动窗口(见 docs/design/rate-limiting.md)。
+    # 本容器只被这两个服务使用,其余服务仍为纯进程内限流。
     image: redis:7-alpine
     ports:
       - '6379:6379'
@@ -127,9 +128,14 @@ services:
       ACCOUNT__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       ACCOUNT__OAUTH_STATE_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       ACCOUNT__OAUTH21_WEB_ORIGIN: http://localhost:8080
+      # 动态注册限流共享计数;注释掉该行即回退进程内滑动窗口。
+      ACCOUNT__REDIS_URL: redis://redis:6379/0
     volumes:
       - account-keys:/data/keys
-    depends_on: *db-depends
+    depends_on:
+      <<: *db-depends
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   agent-orchestrator:
@@ -309,8 +315,12 @@ services:
       API_GATEWAY__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       API_GATEWAY__COOKIE_SECURE: 'false'
       API_GATEWAY__READY_PROBE_UPSTREAMS: ${READY_PROBE_UPSTREAMS:-false}
+      # /api 限流共享计数;注释掉该行即回退进程内滑动窗口。
+      API_GATEWAY__REDIS_URL: redis://redis:6379/0
     depends_on:
       <<: *db-depends
+      redis:
+        condition: service_healthy
       account-service:
         condition: service_healthy
       agent-orchestrator:

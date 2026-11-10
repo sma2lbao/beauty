@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from database.repository import AccountRepository
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from agent_orchestrator.models.runs import Job
@@ -95,3 +95,72 @@ class JobRepository(AccountRepository[Job]):
         job.locked_by = worker_id
         job.lease_until = now + timedelta(seconds=lease_seconds)
         return job
+
+    async def renew_lease(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """续租:只有仍由本 worker 持锁的 running job 才更新,返回是否续上。
+
+        worker 执行期间由 heartbeat 周期调用;返回 False 表示租约已丢
+        (被别的 worker 重领,或 job 已被收尾),调用方应停止续租。
+        """
+        moment = now or datetime.now(UTC)
+        result = await self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job_id,
+                Job.status == "running",
+                Job.locked_by == worker_id,
+            )
+            .values(lease_until=moment + timedelta(seconds=lease_seconds))
+        )
+        return bool(result.rowcount)
+
+    async def mark_succeeded(self, job_id: str, worker_id: str) -> bool:
+        """收尾成功:仅当仍由本 worker 持锁时生效,避免覆盖别人的执行结果。"""
+        result = await self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job_id,
+                Job.status == "running",
+                Job.locked_by == worker_id,
+            )
+            .values(status="succeeded", lease_until=None, locked_by=None)
+        )
+        return bool(result.rowcount)
+
+    async def finish_failure(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        error: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """收尾失败:按尝试次数决定重排或落 failed;仅当仍持锁时生效。"""
+        moment = now or datetime.now(UTC)
+        statement = select(Job).where(
+            Job.id == job_id,
+            Job.status == "running",
+            Job.locked_by == worker_id,
+        )
+        if _is_postgres(self.session):
+            statement = statement.with_for_update()
+        job = await self.session.scalar(statement)
+        if job is None:
+            return False
+        job.last_error = error[:1000]
+        job.lease_until = None
+        job.locked_by = None
+        if job.attempts >= job.max_attempts:
+            job.status = "failed"
+        else:
+            job.status = "queued"
+            job.run_at = moment + timedelta(seconds=min(2**job.attempts, 30))
+        await self.session.flush()
+        return True

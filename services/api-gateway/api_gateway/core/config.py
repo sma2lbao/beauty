@@ -32,7 +32,9 @@ class Settings(BaseAppSettings):
     cookie_ttl_seconds: int = 7 * 24 * 3600
     # 内部签发(stream token)使用的共享密钥;为空则 /api/stream-token 503
     internal_secret: str = ""
-    # 进程内限流(Redis 在 M0-03 接入);每账号/IP 每分钟请求数
+    # 每账号/IP 每分钟请求数;配置 REDIS_URL 后走 Redis 固定窗口(多副本共享
+    # 计数),未配置回退进程内滑动窗口(单副本,见 docs/design/rate-limiting.md)
     rate_limit_per_minute: int = 120
+    redis_url: str | None = None
     # /readyz 可选上游探测:默认关闭,避免上游抖动把 API 网关级联打成不就绪(R-37)
     ready_probe_upstreams: bool = False

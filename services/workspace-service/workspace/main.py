@@ -46,7 +46,10 @@ async def _sandbox_reaper_loop(app: FastAPI) -> None:
     while True:
         try:
             reaped = await reap_expired(
-                factory, provider, on_reaped=shell_sessions.close_sandbox
+                factory,
+                provider,
+                settings,
+                on_reaped=shell_sessions.close_sandbox,
             )
             if reaped:
                 logger.info("sandbox reaper swept expired sandboxes", count=reaped)

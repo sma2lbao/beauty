@@ -6,8 +6,11 @@ Nx(仓库根):npx nx run account-service:serve
 
 from __future__ import annotations
 
+from typing import Any
+
 from common.auth import JwtVerifier
-from common.security import SlidingWindowLimiter
+from common.logging import get_logger
+from common.security import build_rate_limiter
 from common.service_kit import build_lifespan, create_service_app, install_database
 from fastapi import FastAPI
 
@@ -22,6 +25,8 @@ from account.core.config import Settings
 from account.core.idp import IdPSigner, load_or_create_signer
 from account.models import account as account_models  # noqa: F401  注册 ORM 元数据
 
+logger = get_logger(__name__)
+
 
 async def _startup(app: FastAPI) -> None:
     """启动:建 session 工厂(dev/test 可直建表)+ 装配 BYOK KMS。
@@ -34,10 +39,16 @@ async def _startup(app: FastAPI) -> None:
 
 
 async def _shutdown_before_verifier(app: FastAPI) -> None:
-    """关闭:先回收 KMS,再交给 kit 关 token 校验器(顺序与原 lifespan 一致)。"""
+    """关闭:先回收 KMS 与限流后端,再交给 kit 关 token 校验器。"""
     kms: BYOKKms | None = app.state.byok_kms
     if kms is not None:
         await kms.aclose()
+    limiter = getattr(app.state, "oauth_register_limiter", None)
+    if limiter is not None:
+        try:
+            await limiter.aclose()
+        except Exception:  # noqa: BLE001 - 回收失败不应阻止进程退出
+            logger.warning("rate_limit.close_failed", exc_info=True)
 
 
 _lifespan = build_lifespan(
@@ -50,9 +61,10 @@ def create_app(
     token_verifier: JwtVerifier | None = None,
     oauth_transport=None,
     byok_kms: BYOKKms | None = None,
+    oauth_register_limiter: Any = None,
 ) -> FastAPI:
     """测试注入:token_verifier(假 JWKS)、oauth_transport(假 OAuth HTTP)、
-    byok_kms(假 KMS);未注入时 lifespan 按 Settings 装配。"""
+    byok_kms(假 KMS)、oauth_register_limiter(假限流器);未注入时按 Settings 装配。"""
     settings = settings or Settings()
     app = create_service_app(
         name="account-service",
@@ -70,8 +82,12 @@ def create_app(
             "token_verifier": token_verifier,
             "oauth_transport": oauth_transport,
             "byok_kms": byok_kms,
-            "oauth_register_limiter": SlidingWindowLimiter(
-                settings.oauth21_register_limit_per_hour, window_seconds=3600.0
+            "oauth_register_limiter": oauth_register_limiter
+            or build_rate_limiter(
+                limit=settings.oauth21_register_limit_per_hour,
+                window_seconds=3600.0,
+                redis_url=settings.redis_url,
+                namespace="account:oauth-register",
             ),
         },
     )

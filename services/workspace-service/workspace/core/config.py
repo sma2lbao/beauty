@@ -41,6 +41,11 @@ class Settings(BaseAppSettings):
     sandbox_max_output_bytes: int = 262_144  # 单条 stdout/stderr 截断上限
     sandbox_reaper_enabled: bool = True
     sandbox_reaper_interval_seconds: int = 60
+    # 回收器多副本互斥(P0-4c):领取后把 expires_at 推后这么久,期间其它副本
+    # 看不到这批行;进程崩溃后租约到期会被下一轮重新领取(destroy 需幂等)。
+    sandbox_reap_lease_seconds: int = 300
+    # 销毁失败后的重试延迟:避免每轮锤同一个坏容器。
+    sandbox_reap_retry_delay_seconds: int = 30
     # microsandbox runtime home(空 = 用 SDK 默认 ~/.microsandbox);
     # 部署时必须指向可写目录,且 runtime 需要能访问 OCI registry
     sandbox_msb_home: str = ""

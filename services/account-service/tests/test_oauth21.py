@@ -257,3 +257,39 @@ def test_registration_rate_limit(tmp_path: Path) -> None:
         )
         assert third.status_code == 429
         assert third.json()["error"] == "temporarily_unavailable"
+
+
+class _DenyLimiter:
+    """假限流器:永远拒绝,并记录调用与关闭。"""
+
+    def __init__(self) -> None:
+        self.keys: list[str] = []
+        self.closed = False
+
+    async def allow(self, key: str) -> bool:
+        self.keys.append(key)
+        return False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_injected_register_limiter_rejects(tmp_path: Path) -> None:
+    limiter = _DenyLimiter()
+    app = create_app(
+        _settings(tmp_path, internal_secret="internal-secret"),
+        token_verifier=_IDP.verifier(),
+        oauth_register_limiter=limiter,
+    )
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/v1/oauth/register",
+            json={
+                "client_name": "too many",
+                "redirect_uris": ["http://127.0.0.1:9876/callback"],
+            },
+        )
+        assert rejected.status_code == 429
+        assert rejected.json()["error"] == "temporarily_unavailable"
+    assert limiter.keys == ["oauth-register:testclient"]
+    assert limiter.closed is True

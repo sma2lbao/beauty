@@ -47,6 +47,28 @@ DISPATCHED = "dispatched"
 FAILED = "failed"
 
 DEFAULT_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 5.0, 30.0, 120.0)
+# claim 的领取租约:领取后 available_at 被推到这段时间之后,其它 dispatcher
+# 看不到;进程在投递/标记之间崩溃时,租约到期后自动重领。
+DEFAULT_CLAIM_LEASE_SECONDS: float = 60.0
+
+
+def _is_postgres(session: AsyncSession) -> bool:
+    """按方言分叉:PG 有行锁,SQLite(单进程 dev)没有 FOR UPDATE。"""
+    bind = session.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") == "postgresql"
+
+
+def _claim_statement(moment: datetime, limit: int):
+    """待投递行的选取语句(claim 在 PG 上再叠加 FOR UPDATE SKIP LOCKED)。"""
+    return (
+        select(OutboxEvent)
+        .where(
+            OutboxEvent.status == PENDING,
+            OutboxEvent.available_at <= moment,
+        )
+        .order_by(OutboxEvent.created_at, OutboxEvent.id)
+        .limit(limit)
+    )
 
 
 class OutboxEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
@@ -117,20 +139,32 @@ class OutboxRepository:
         return event
 
     async def claim(
-        self, *, limit: int = 50, now: datetime | None = None
+        self,
+        *,
+        limit: int = 50,
+        now: datetime | None = None,
+        lease_seconds: float = DEFAULT_CLAIM_LEASE_SECONDS,
     ) -> list[OutboxEvent]:
-        """取一批待投递事件(跨账号,按登记顺序)。"""
+        """领取一批待投递事件(跨账号,按登记顺序),并在同事务里占住租约。
+
+        多实例正确性:claim 不只读,还把命中行的 available_at 推到
+        now + lease_seconds。提交后其它 dispatcher 看不到这批行,不会重复投递;
+        领取后进程崩溃时,租约到期(available_at 再次到点)由下一轮自动重领——
+        与原有"至少一次"语义一致,但多副本不再空转抢同一批。
+
+        PostgreSQL 上再叠加 FOR UPDATE SKIP LOCKED:并发 claim 直接跳过被锁行,
+        不互相等锁;SQLite(单进程 dev)没有行锁,靠单写者事务即可。
+        """
         moment = now or datetime.now(UTC)
-        rows = await self.session.scalars(
-            select(OutboxEvent)
-            .where(
-                OutboxEvent.status == PENDING,
-                OutboxEvent.available_at <= moment,
-            )
-            .order_by(OutboxEvent.created_at, OutboxEvent.id)
-            .limit(limit)
-        )
-        return list(rows)
+        statement = _claim_statement(moment, limit)
+        if _is_postgres(self.session):
+            statement = statement.with_for_update(skip_locked=True)
+        rows = list(await self.session.scalars(statement))
+        lease_until = moment + timedelta(seconds=lease_seconds)
+        for event in rows:
+            event.available_at = lease_until
+        await self.session.flush()
+        return rows
 
     async def get_by_id(self, event_id: str) -> OutboxEvent | None:
         """按 id 取事件(dispatcher 在独立事务里标记时用)。"""
@@ -258,12 +292,14 @@ class OutboxDispatcher:
         batch_size: int = 50,
         max_attempts: int = 5,
         backoff_seconds: tuple[float, ...] = DEFAULT_BACKOFF_SECONDS,
+        claim_lease_seconds: float = DEFAULT_CLAIM_LEASE_SECONDS,
     ) -> None:
         self._factory = factory
         self._bus = bus
         self._batch_size = batch_size
         self._max_attempts = max_attempts
         self._backoff_seconds = backoff_seconds
+        self._claim_lease_seconds = claim_lease_seconds
         self._log = get_logger("events.outbox")
 
     async def drain_once(self) -> DispatchStats:
@@ -273,7 +309,8 @@ class OutboxDispatcher:
         outbox 事务里会导致①长事务持锁(sqlite 下直接 `database is locked`)、
         ②外部调用与数据库锁耦合。因此:
 
-        1. 短事务:领取一批并提交(立刻释放锁);
+        1. 短事务:领取一批并提交——claim 同时把 available_at 推到租约之后,
+           其它 dispatcher 不会重复领取(立刻释放数据库锁);
         2. 事务外:逐条投递(失败只记录,不影响其它事件);
         3. 短事务:逐条标记 dispatched / failed(+ 退避)。
 
@@ -283,7 +320,10 @@ class OutboxDispatcher:
         from database.session import session_scope
 
         async with session_scope(self._factory) as session:
-            claimed = await OutboxRepository(session).claim(limit=self._batch_size)
+            claimed = await OutboxRepository(session).claim(
+                limit=self._batch_size,
+                lease_seconds=self._claim_lease_seconds,
+            )
             envelopes = [(event.id, event.to_envelope()) for event in claimed]
 
         delivered = failed = 0

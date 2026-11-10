@@ -7,9 +7,12 @@ uv run uvicorn api_gateway.main:app --port 8007
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
+from common.logging import get_logger
 from common.middleware import inject_request_headers
-from common.security import SlidingWindowLimiter
+from common.security import build_rate_limiter
 from common.service_kit import build_lifespan, create_service_app
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +27,8 @@ from api_gateway.api.proxy import router as proxy_router
 from api_gateway.core.config import Settings
 from api_gateway.core.security import SessionCodec
 
+logger = get_logger(__name__)
+
 
 async def _startup(app: FastAPI) -> None:
     """启动:建上游 HTTP 客户端(测试可注入 transport,不打真实网络)。"""
@@ -36,10 +41,16 @@ async def _startup(app: FastAPI) -> None:
 
 
 async def _shutdown(app: FastAPI) -> None:
-    """关闭:回收上游 HTTP 客户端连接池(启动失败时客户端可能未建)。"""
+    """关闭:回收上游 HTTP 客户端连接池与限流后端(启动失败时可能未建)。"""
     client: httpx.AsyncClient | None = getattr(app.state, "upstream_client", None)
     if client is not None:
         await client.aclose()
+    limiter = getattr(app.state, "rate_limiter", None)
+    if limiter is not None:
+        try:
+            await limiter.aclose()
+        except Exception:  # noqa: BLE001 - 回收失败不应阻止进程退出
+            logger.warning("rate_limit.close_failed", exc_info=True)
 
 
 _lifespan = build_lifespan(startup=_startup, shutdown=_shutdown)
@@ -71,8 +82,11 @@ async def _rate_limit(request: Request, call_next: RequestResponseEndpoint) -> R
 
 
 def create_app(
-    settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None
+    settings: Settings | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    rate_limiter: Any = None,
 ) -> FastAPI:
+    """测试注入:transport(假上游 HTTP)、rate_limiter(假限流器)。"""
     settings = settings or Settings()
     return create_service_app(
         name="api-gateway",
@@ -90,7 +104,12 @@ def create_app(
         state={
             "transport": transport,
             "session_codec": SessionCodec(settings.session_secret),
-            "rate_limiter": SlidingWindowLimiter(settings.rate_limit_per_minute),
+            "rate_limiter": rate_limiter
+            or build_rate_limiter(
+                limit=settings.rate_limit_per_minute,
+                redis_url=settings.redis_url,
+                namespace="api-gateway",
+            ),
         },
         cors_origins=[settings.app_origin],
         # 限流在 CORS 之内、统一错误处理之后;请求上下文仍是最外层。

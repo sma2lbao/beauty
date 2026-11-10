@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime, timedelta
+from contextlib import suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -123,6 +124,38 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
     raise ValueError(f"unknown job kind: {kind}")
 
 
+async def _heartbeat_loop(
+    container: AppContainer, job_id: str, stop: asyncio.Event
+) -> None:
+    """执行期间周期续租,避免长 run 被别的 worker 当成租约过期重领。
+
+    间隔取 lease 的 1/3(夹在 1s~30s);续租失败(租约已丢)只告警并退出,
+    不打断当前执行——最终收尾由 mark_succeeded/finish_failure 的持锁校验兜底。
+    """
+    settings = container.settings
+    factory = container.session_factory
+    if factory is None:  # pragma: no cover - process_one 已 assert
+        return
+    interval = max(1.0, min(settings.jobs_lease_seconds / 3.0, 30.0))
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+            return
+        except TimeoutError:
+            pass
+        try:
+            async with session_scope(factory) as session:
+                renewed = await JobRepository(session).renew_lease(
+                    job_id, WORKER_ID, lease_seconds=settings.jobs_lease_seconds
+                )
+        except Exception:  # noqa: BLE001 - 续租失败不能中断执行本身
+            logger.exception("job lease renewal failed", job_id=job_id)
+            continue
+        if not renewed:
+            logger.warning("job lease lost; stop renewing", job_id=job_id)
+            return
+
+
 async def process_one(container: AppContainer) -> bool:
     """领取并执行一个 job;返回是否实际领到任务。"""
     settings = container.settings
@@ -130,6 +163,7 @@ async def process_one(container: AppContainer) -> bool:
     assert factory is not None
     account_id: str | None = None
     job_id: str | None = None
+    job_kind: str | None = None
     async with session_scope(factory) as session:
         job = await JobRepository(session).claim_next(
             WORKER_ID, datetime.now(UTC), settings.jobs_lease_seconds
@@ -138,6 +172,7 @@ async def process_one(container: AppContainer) -> bool:
             return False
         account_id = job.account_id
         job_id = job.id
+        job_kind = job.kind
     assert account_id is not None and job_id is not None
 
     # 后台任务没有 HTTP 请求:用 job id 作种子,让同一 job 的日志可串联
@@ -148,6 +183,12 @@ async def process_one(container: AppContainer) -> bool:
         session_factory=factory,
         llm=container.llm_client,
         settings=container.settings,
+    )
+    # 执行期间周期续租:长 run 不能被别的 worker 当成"租约过期"重领
+    stop_heartbeat = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _heartbeat_loop(container, job_id, stop_heartbeat),
+        name=f"job-heartbeat-{job_id}",
     )
     try:
         try:
@@ -162,27 +203,29 @@ async def process_one(container: AppContainer) -> bool:
         except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
             logger.exception("job failed", job_id=job_id)
             async with session_scope(factory) as session:
-                repo = JobRepository(session)
-                job = await repo.require_for_account(account_id, job_id)
-                metrics.observe_job_failure(kind=job.kind)
-                job.last_error = f"{type(exc).__name__}: {exc}"[:1000]
-                job.lease_until = None
-                if job.attempts >= job.max_attempts:
-                    job.status = "failed"
-                else:
-                    job.status = "queued"
-                    job.run_at = datetime.now(UTC) + timedelta(
-                        seconds=min(2**job.attempts, 30)
-                    )
+                finished = await JobRepository(session).finish_failure(
+                    job_id,
+                    WORKER_ID,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            if finished:
+                metrics.observe_job_failure(kind=job_kind or "unknown")
+            else:
+                # 租约已丢:另一个 worker 已接手,收尾交给它,不要覆盖
+                logger.warning("job finalize skipped; lease lost", job_id=job_id)
             return True
 
         async with session_scope(factory) as session:
-            job = await JobRepository(session).require_for_account(account_id, job_id)
-            job.status = "succeeded"
-            job.lease_until = None
-            job.locked_by = None
+            finished = await JobRepository(session).mark_succeeded(job_id, WORKER_ID)
+        if not finished:
+            # 租约已丢或 job 已被收尾:不要覆盖别人的结果
+            logger.warning("job finalize skipped; lease lost", job_id=job_id)
         return True
     finally:
+        stop_heartbeat.set()
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
         clear_request_context()
 
 

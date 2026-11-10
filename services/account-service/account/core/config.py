@@ -50,8 +50,10 @@ class Settings(ServiceSettings):
     oauth21_code_ttl_seconds: int = 600
     oauth21_access_ttl_seconds: int = 3600
     oauth21_refresh_ttl_seconds: int = 2_592_000
-    # 动态注册限流(进程内;生产换 Redis/网关)
+    # 动态注册限流(每个客户端 IP 每小时);配置 REDIS_URL 后走 Redis 固定窗口
+    # (多副本共享计数),未配置回退进程内滑动窗口
     oauth21_register_limit_per_hour: int = 10
+    redis_url: str | None = None
     google_client_id: str = ""
     google_client_secret: str = ""
     github_client_id: str = ""

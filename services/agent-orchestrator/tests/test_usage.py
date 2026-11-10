@@ -316,7 +316,8 @@ def test_usage_report_is_durable_through_outbox(tmp_path, reporter) -> None:
             ).fetchone() == (2,)
             conn.execute(
                 "UPDATE outbox_events SET status = 'pending', attempts = 0,"
-                " dispatched_at = NULL WHERE event_type = ?",
+                " dispatched_at = NULL, available_at = '2000-01-01 00:00:00.000000'"
+                " WHERE event_type = ?",
                 (usage.USAGE_REPORT_EVENT,),
             )
             conn.commit()

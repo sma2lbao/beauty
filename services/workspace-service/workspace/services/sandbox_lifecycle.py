@@ -12,13 +12,14 @@ from uuid import uuid4
 
 import structlog
 from common.errors import AppError, ConflictError, UpstreamError
-from sqlalchemy import update
+from database.session import session_scope
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from workspace.core.config import Settings
 from workspace.models.sandbox import SandboxInstance
-from workspace.repositories import SandboxRepository
+from workspace.repositories import CrossAccountSandboxRepository, SandboxRepository
 from workspace.schemas.sandbox import SandboxCreate
 from workspace.services.sandbox_provider import SandboxProvider, SandboxSpec
 
@@ -256,6 +257,69 @@ async def _claim_rebuild(
         return False
     await session.refresh(record)
     return True
+
+
+async def _claim_reapable(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime,
+    limit: int,
+    lease_seconds: int,
+) -> list[tuple[str, str, str]]:
+    """短事务原子领取过期沙箱,返回 (id, account_id, external_name) 快照。
+
+    领取即在同事务内把 expires_at 推后到租约末端并提交:此后其它副本的
+    claim/list 都看不到这批行,回收只在事务外做一次。
+    """
+    async with session_scope(factory) as session:
+        records = await CrossAccountSandboxRepository(session).claim_expired(
+            now, limit=limit, lease_seconds=lease_seconds
+        )
+        return [
+            (record.id, record.account_id, record.external_name) for record in records
+        ]
+
+
+async def _write_back_reaped(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    succeeded: list[tuple[str, str]],
+    failed: list[tuple[str, str]],
+    retry_delay_seconds: int,
+    claimed_until: datetime,
+) -> None:
+    """短事务回写回收结果:成功置 stopped,失败留痕并推后 expires_at。
+
+    失败行只在仍处于本轮租约窗口(expires_at <= claimed_until)时才推后到
+    now + retry_delay,避免覆盖用户刚做的续期。事务内不做任何外部调用;
+    行已被并发删除时跳过回写。
+    """
+    sandbox_ids = [sandbox_id for sandbox_id, _ in succeeded] + [
+        sandbox_id for sandbox_id, _ in failed
+    ]
+    if not sandbox_ids:
+        return
+    retry_at = _now() + timedelta(seconds=retry_delay_seconds)
+    async with session_scope(factory) as session:
+        records = {
+            record.id: record
+            for record in await session.scalars(
+                select(SandboxInstance).where(SandboxInstance.id.in_(sandbox_ids))
+            )
+        }
+        for sandbox_id, _account_id in succeeded:
+            record = records.get(sandbox_id)
+            if record is None:
+                continue
+            record.status = "stopped"
+            record.last_error = None
+        for sandbox_id, error_text in failed:
+            record = records.get(sandbox_id)
+            if record is None:
+                continue
+            record.last_error = error_text
+            if _as_utc(record.expires_at) <= claimed_until:
+                record.expires_at = retry_at
 
 
 async def _ensure_usable(

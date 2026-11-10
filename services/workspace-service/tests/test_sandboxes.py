@@ -21,6 +21,7 @@ from tests.conftest import (
 )
 from workspace.main import create_app
 from workspace.models.sandbox import SandboxInstance
+from workspace.repositories import CrossAccountSandboxRepository, _is_postgres
 from workspace.services.sandbox import reap_expired
 
 
@@ -257,13 +258,16 @@ async def test_reap_expired_destroys_only_expired(
     expired = _create(client, ttl_seconds=600)
     await _set_expired(client, expired["id"])
 
-    reaped = await reap_expired(client.app.state.session_factory, sandbox_provider)
+    reaped = await reap_expired(
+        client.app.state.session_factory,
+        sandbox_provider,
+        client.app.state.settings,
+    )
     assert reaped == 1
     assert sandbox_provider.destroyed == [expired["name"]]
-    assert (
-        client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()["status"]
-        == "stopped"
-    )
+    fetched = client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()
+    assert fetched["status"] == "stopped"
+    assert fetched["last_error"] is None
     assert (
         client.get(f"/v1/sandboxes/{alive['id']}", headers=ACCOUNT).json()["status"]
         == "running"
@@ -276,12 +280,90 @@ async def test_reap_failure_keeps_last_error(
     expired = _create(client, ttl_seconds=600)
     await _set_expired(client, expired["id"])
     sandbox_provider.fail_destroy = True
+    settings = client.app.state.settings
+    before = datetime.now(UTC)
 
-    reaped = await reap_expired(client.app.state.session_factory, sandbox_provider)
+    reaped = await reap_expired(
+        client.app.state.session_factory, sandbox_provider, settings
+    )
     assert reaped == 0
     fetched = client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()
     assert fetched["status"] == "running"
     assert fetched["last_error"]
+    # 失败行推后到 now + 重试延迟:下一轮不会立刻锤同一个坏容器
+    delay = settings.sandbox_reap_retry_delay_seconds
+    retry_at = _parse_utc(fetched["expires_at"])
+    assert before < retry_at <= before + timedelta(seconds=delay + 1)
+
+
+async def test_claim_expired_lease_blocks_other_copies(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """领取即推后 expires_at:同一 now 二次领取为空,租约期内 list 不可见。
+
+    两个独立 session 模拟两个副本(NullPool → 各自 aiosqlite 连接)。
+    """
+    expired = _create(client, ttl_seconds=600)
+    await _set_expired(client, expired["id"])
+    factory = client.app.state.session_factory
+    now = datetime.now(UTC)
+
+    async with session_scope(factory) as session:
+        # SQLite 单写者策略:不加 FOR UPDATE,靠领取事务里推后 expires_at 互斥
+        assert not _is_postgres(session)
+        repo = CrossAccountSandboxRepository(session)
+        first = await repo.claim_expired(now, limit=10, lease_seconds=300)
+        assert [row.id for row in first] == [expired["id"]]
+        assert await repo.claim_expired(now, limit=10, lease_seconds=300) == []
+
+    async with session_scope(factory) as session:
+        repo = CrossAccountSandboxRepository(session)
+        assert await repo.claim_expired(now, limit=10, lease_seconds=300) == []
+        assert await repo.list_expired(now) == []
+
+    # 领取后进程崩溃:租约到点后重新可领,下一轮会接着回收
+    later = now + timedelta(seconds=301)
+    async with session_scope(factory) as session:
+        again = await CrossAccountSandboxRepository(session).claim_expired(
+            later, limit=10, lease_seconds=300
+        )
+        assert [row.id for row in again] == [expired["id"]]
+
+
+async def test_reap_twice_destroys_once(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """两个 reaper 先后跑:同一运行时只销毁一次,成功回写 status=stopped。"""
+    expired = _create(client, ttl_seconds=600)
+    await _set_expired(client, expired["id"])
+    factory = client.app.state.session_factory
+    settings = client.app.state.settings
+
+    assert await reap_expired(factory, sandbox_provider, settings) == 1
+    assert await reap_expired(factory, sandbox_provider, settings) == 0
+    assert sandbox_provider.destroyed == [expired["name"]]
+    fetched = client.get(f"/v1/sandboxes/{expired['id']}", headers=ACCOUNT).json()
+    assert fetched["status"] == "stopped"
+    assert fetched["last_error"] is None
+
+
+def test_claim_statement_locks_rows_on_postgres() -> None:
+    """PG 多副本靠 FOR UPDATE SKIP LOCKED 领取;SQLite 分支没有该子句。"""
+    from sqlalchemy.dialects import postgresql
+
+    from workspace.repositories import _claim_statement
+
+    now = datetime.now(UTC)
+    locked = str(
+        _claim_statement(now, limit=10, lock=True).compile(dialect=postgresql.dialect())
+    ).upper()
+    assert "FOR UPDATE SKIP LOCKED" in locked
+    plain = str(
+        _claim_statement(now, limit=10, lock=False).compile(
+            dialect=postgresql.dialect()
+        )
+    ).upper()
+    assert "FOR UPDATE" not in plain
 
 
 async def test_provider_create_failure_is_502(
