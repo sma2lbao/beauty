@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account, Session } from '@/lib/account-api';
 import { accountApi } from '@/lib/account-api';
 import { approvalApi } from '@/lib/approval-api';
+import { hooksApi } from '@/lib/hooks-api';
 import { ApiError } from '@/lib/http';
 
 import { SettingsPage } from './settings';
@@ -34,6 +35,23 @@ vi.mock('@/lib/approval-api', async () => {
   return {
     ...actual,
     approvalApi: { list: vi.fn(), replace: vi.fn() },
+  };
+});
+
+vi.mock('@/lib/hooks-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/hooks-api')>(
+      '@/lib/hooks-api',
+    );
+  return {
+    ...actual,
+    hooksApi: {
+      list: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+      rotate: vi.fn(),
+    },
   };
 });
 
@@ -75,6 +93,7 @@ beforeEach(() => {
   vi.mocked(accountApi.me).mockResolvedValue(account);
   vi.mocked(accountApi.sessions).mockResolvedValue([session]);
   vi.mocked(approvalApi.list).mockResolvedValue([]);
+  vi.mocked(hooksApi.list).mockResolvedValue([]);
 });
 
 describe('SettingsPage', () => {
@@ -99,6 +118,13 @@ describe('SettingsPage', () => {
     expect(
       await screen.findByText(/还没有规则:默认按风险等级处理/),
     ).toBeTruthy();
+  });
+
+  it('展示自动化 hooks 面板与空态说明', async () => {
+    renderPage();
+
+    expect(await screen.findByText('自动化 hooks')).toBeTruthy();
+    expect(await screen.findByText(/还没有 hook/)).toBeTruthy();
   });
 
   it('保存显示名时调用 PATCH /me', async () => {

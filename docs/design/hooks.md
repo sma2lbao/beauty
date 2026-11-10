@@ -246,15 +246,19 @@ hooks.invalid_target（非 https / 私网地址 / 解析失败）。
 - API：CRUD/rotate、事件枚举 422、https 与私网 422、命令开关 409、上限 409、账号隔离 404；
 - 迁移：upgrade/downgrade（sqlite 临时库）+ `alembic check`。
 
-## 11. 文件清单（实施时更新）
+## 11. 文件清单（2026-11-10 后端已落地）
 
-后端：`models/hook.py`、`services/hooks.py`、`graph/ports.py`、`graph/state.py`、
-`graph/nodes/execute.py`、`graph/nodes/tool_exec.py`、`services/chat.py`、`services/tool_confirmations.py`、
-`services/compaction.py`、
-`services/conversations_context.py`、`services/conversations.py`、`services/conversations_queries.py`、
-`services/run_execution_approvals.py`、`core/config.py`、`schemas/hook.py`、`api/v1/hooks.py`、
-`api/v1/router.py`、迁移（`down_revision` = P1-A 迁移 head）、`tests/test_hooks_*.py`。
-前端：`lib/hooks-api.ts`、`features/settings/hooks-panel.tsx`、`use-hooks-model.ts` 等。
+后端（已提交 13ec46d）：`models/hook.py`、`repositories/hook.py`、`schemas/hook.py`、
+`services/hooks.py`、`api/v1/hooks.py`、`api/v1/router.py`、`graph/ports.py`、`graph/state.py`、
+`graph/nodes/audit.py`、`graph/nodes/execute.py`、`graph/nodes/tool_exec.py`、`services/chat.py`、
+`services/tool_confirmations.py`、`services/compaction.py`、`services/conversations.py`、
+`services/conversations_queries.py`、`services/conversations_messages.py`、
+`services/run_execution_approvals.py`、`services/run_execution_invoke.py`、`core/config.py`、
+`core/container.py`、`core/container_tools.py`、迁移 `b7f3d1c8e4a2`（`down_revision` = P1-A `e2b7c4a9d1f3`）、
+`tests/test_hooks_service.py`、`tests/test_hooks_api.py`、`tests/test_hooks_mounts.py`。
+（PreCompact 只挂在 `compaction.py::compact_history`，任务路径 `_task_compaction` 复用它，无需另挂。）
+前端（Web 已落地）：`lib/hooks-api.ts`、`features/settings/hooks-panel.tsx`、
+`features/settings/hooks-panel.test.tsx`、`use-hooks-model.ts`、`hook-secret-dialog.tsx`。
 
 ## 12. 残余与后续
 
@@ -263,5 +267,5 @@ hooks.invalid_target（非 https / 私网地址 / 解析失败）。
 - secret DB 明文存储（应复用 BYOK/MCP 的 envelope 加密），轮换需人工；
 - 无声明式 DSL、无参数改写、matcher 只有精确/glob；
 - hook 不写 audit_logs（量大且非管理动作），只有结构化日志与 warning；
-- 与 P1-A 同文件的改动（graph/ports.py、execute.py、chat.py、run_execution_approvals.py）
-  必须等 P1-A 合并后再开工（迁移 id 串行接在 P1-A revision 之后）。
+- 已按计划串行落地：P1-A 先合并，本契约的迁移接在 P1-A revision `e2b7c4a9d1f3` 之后
+  （`b7f3d1c8e4a2`）。

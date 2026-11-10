@@ -86,6 +86,9 @@ export const queryKeys = {
   /** 工具审批策略域(P1-A):整表读/写共用同一键,PUT 成功后失效重取。 */
   approvalPolicies: ['approval-policies'] as const,
 
+  /** 自动化 hooks 域(P1-B):列表键,创建/更新/删除/轮换后统一失效重取。 */
+  hooks: ['hooks'] as const,
+
   /**
    * 管理台域(P0-7):列表键把过滤维度拼进键(维度变→自动重查);
    * adminAccounts / adminAuditLogs 是域级前缀键,写操作后统一失效。
