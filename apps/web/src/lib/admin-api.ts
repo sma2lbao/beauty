@@ -77,6 +77,61 @@ export type AuditLogList = {
   total: number;
 };
 
+/** 平台成本汇总(P1-K)的窗口总量:UTC 自然日,含今天在内最近 days 天。 */
+export type AdminCostTotals = {
+  events: number;
+  tokens: number;
+  cost_usd: number;
+  /** 没有计价记录的调用次数:金额按 0 计,单列以免看起来"少算了"。 */
+  unpriced_events: number;
+  platform_events: number;
+  byok_events: number;
+};
+
+/** 成本来源拆分:platform = 平台承担,byok = 用户自带 key。 */
+export type AdminCostBySource = {
+  source: 'platform' | 'byok';
+  events: number;
+  cost_usd: number;
+};
+
+export type AdminCostByDay = {
+  date: string;
+  events: number;
+  tokens: number;
+  cost_usd: number;
+  unpriced_events: number;
+};
+
+/** 模型维度按 cost_usd 降序,服务端取前 20。 */
+export type AdminCostByModel = {
+  model: string;
+  events: number;
+  tokens: number;
+  cost_usd: number;
+  unpriced_events: number;
+};
+
+/** Top 账号按 cost_usd 降序取前 10;账号已删/查不到时 email 为 null。 */
+export type AdminCostTopAccount = {
+  account_id: string;
+  email: string | null;
+  events: number;
+  tokens: number;
+  cost_usd: number;
+};
+
+/** GET /v1/admin/cost/summary 响应:by_day 已按日期升序补齐窗口内每一天。 */
+export type AdminCostSummary = {
+  days: number;
+  since: string;
+  totals: AdminCostTotals;
+  cost_by_source: AdminCostBySource[];
+  by_day: AdminCostByDay[];
+  by_model: AdminCostByModel[];
+  top_accounts: AdminCostTopAccount[];
+};
+
 /** PATCH quota:省略字段=保持,显式 null=清除(不限),整数 >= 1。 */
 export type QuotaPatch = {
   monthly_tokens?: number | null;
@@ -155,5 +210,10 @@ export const adminApi = {
         action: query.action,
         target_id: query.target_id,
       }),
+    ),
+  /** 平台成本汇总(P1-K):days 1..90(默认 30),读端点不写审计;服务端补零天。 */
+  costSummary: (days: number) =>
+    http.request<AdminCostSummary>(
+      withQuery(PREFIX + '/v1/admin/cost/summary', { days }),
     ),
 };

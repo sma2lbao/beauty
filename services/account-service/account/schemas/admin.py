@@ -97,3 +97,62 @@ class AuditLogRead(BaseModel):
 class AuditLogList(BaseModel):
     items: list[AuditLogRead]
     total: int
+
+
+class CostTotals(BaseModel):
+    """平台成本窗口总量(未计价事件按 0 计金额、单独计数)。"""
+
+    events: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+    unpriced_events: int = 0
+    platform_events: int = 0
+    byok_events: int = 0
+
+
+class CostSourceRow(BaseModel):
+    """来源拆分:管理台固定展示 platform / byok 两行。"""
+
+    source: str
+    events: int = 0
+    cost_usd: float = 0.0
+
+
+class CostDayRow(BaseModel):
+    """按 UTC 自然日一行;窗口内无事件的日期补零。"""
+
+    date: str
+    events: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+    unpriced_events: int = 0
+
+
+class CostModelRow(BaseModel):
+    model: str
+    events: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+    unpriced_events: int = 0
+
+
+class CostAccountRow(BaseModel):
+    """成本 top 账号;账号已删/查不到时 email 为 null(前端回落到 id 前缀)。"""
+
+    account_id: str
+    email: str | None = None
+    events: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class CostSummary(BaseModel):
+    """GET /v1/admin/cost/summary(eval-and-cost-dashboard §3.2)。"""
+
+    days: int
+    since: datetime
+    totals: CostTotals
+    cost_by_source: list[CostSourceRow]
+    by_day: list[CostDayRow]
+    by_model: list[CostModelRow]
+    top_accounts: list[CostAccountRow]

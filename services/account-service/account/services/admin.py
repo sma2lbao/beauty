@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common.errors import ConflictError
@@ -31,6 +31,12 @@ from account.schemas.admin import (
     AdminUsage,
     AuditLogList,
     AuditLogRead,
+    CostAccountRow,
+    CostDayRow,
+    CostModelRow,
+    CostSourceRow,
+    CostSummary,
+    CostTotals,
     QuotaUpdate,
     RoleUpdate,
     StatusUpdate,
@@ -283,4 +289,126 @@ async def list_audit_logs(
     return AuditLogList(
         items=[AuditLogRead.model_validate(record) for record in records],
         total=total,
+    )
+
+
+#: 成本看板的 topN 与固定来源行(eval-and-cost-dashboard §3.2)
+_TOP_MODELS = 20
+_TOP_ACCOUNTS = 10
+_COST_SOURCES = ("platform", "byok")
+
+
+def _start_of_today() -> datetime:
+    """UTC 今天 00:00:成本看板窗口起点按 UTC 自然日算。"""
+    now = datetime.now(UTC)
+    return datetime(now.year, now.month, now.day, tzinfo=UTC)
+
+
+async def cost_summary(session: AsyncSession, *, days: int = 30) -> CostSummary:
+    """平台成本汇总(eval-and-cost-dashboard §3.2):管理面跨账号聚合。
+
+    - 时间口径 UTC 自然日:窗口 = 含今天在内最近 days 天;
+    - SQL 只做 GROUP BY,按天补零与 topN(模型 20、账号 10)在服务层做;
+    - 未计价事件按 0 计入金额、单独计数(与 /usage/summary 同口径);
+    - 读端点不写 audit_logs。
+    """
+    since = _start_of_today() - timedelta(days=days - 1)
+    repo = AdminUsageRepository(session)
+
+    (
+        events,
+        tokens,
+        cost,
+        unpriced,
+        platform_events,
+        byok_events,
+    ) = await repo.cost_totals(since)
+
+    source_totals = {
+        source: (count, amount)
+        for source, count, amount in await repo.cost_by_source(since)
+    }
+    cost_by_source = [
+        CostSourceRow(
+            source=source,
+            events=source_totals.get(source, (0, 0))[0],
+            cost_usd=float(source_totals.get(source, (0, 0))[1]),
+        )
+        for source in _COST_SOURCES
+    ]
+
+    day_totals = {
+        date: (day_events, day_tokens, day_cost, day_unpriced)
+        for date, day_events, day_tokens, day_cost, day_unpriced in (
+            await repo.cost_by_day(since)
+        )
+    }
+    window_dates = [
+        (since + timedelta(days=offset)).date().isoformat() for offset in range(days)
+    ]
+    by_day = []
+    for date in window_dates:
+        day_events, day_tokens, day_cost, day_unpriced = day_totals.get(
+            date, (0, 0, 0, 0)
+        )
+        by_day.append(
+            CostDayRow(
+                date=date,
+                events=day_events,
+                tokens=day_tokens,
+                cost_usd=float(day_cost),
+                unpriced_events=day_unpriced,
+            )
+        )
+
+    ranked_models = sorted(
+        await repo.cost_by_model(since),
+        key=lambda row: (-row[3], -row[1], row[0]),
+    )[:_TOP_MODELS]
+    by_model = [
+        CostModelRow(
+            model=model,
+            events=model_events,
+            tokens=model_tokens,
+            cost_usd=float(model_cost),
+            unpriced_events=model_unpriced,
+        )
+        for model, model_events, model_tokens, model_cost, model_unpriced in (
+            ranked_models
+        )
+    ]
+
+    ranked_accounts = sorted(
+        await repo.cost_by_account(since),
+        key=lambda row: (-row[3], -row[1], row[0]),
+    )[:_TOP_ACCOUNTS]
+    emails = await UserRepository(session).emails_for(
+        [row[0] for row in ranked_accounts]
+    )
+    top_accounts = [
+        CostAccountRow(
+            account_id=account_id,
+            email=emails.get(account_id),
+            events=account_events,
+            tokens=account_tokens,
+            cost_usd=float(account_cost),
+        )
+        for account_id, account_events, account_tokens, account_cost in ranked_accounts
+    ]
+
+    return CostSummary(
+        days=days,
+        since=since,
+        totals=CostTotals(
+            events=events,
+            tokens=tokens,
+            cost_usd=float(cost),
+            unpriced_events=unpriced,
+            platform_events=platform_events,
+            byok_events=byok_events,
+        ),
+        cost_by_source=cost_by_source,
+        by_day=by_day,
+        by_model=by_model,
+        top_accounts=top_accounts,
     )

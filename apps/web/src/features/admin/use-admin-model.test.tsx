@@ -22,6 +22,7 @@ vi.mock('@/lib/admin-api', async () => {
       updateRole: vi.fn(),
       updateStatus: vi.fn(),
       listAuditLogs: vi.fn(),
+      costSummary: vi.fn(),
     },
   };
 });
@@ -233,5 +234,20 @@ describe('useAdminModel 审计', () => {
         target_id: row.id,
       }),
     );
+  });
+});
+
+describe('useAdminModel 页签', () => {
+  it('默认账号页签,切到成本页签不触发审计查询', async () => {
+    const { result } = renderModel();
+    await waitFor(() => expect(result.current.access).toBe('ok'));
+    expect(result.current.tab).toBe('accounts');
+
+    act(() => {
+      result.current.setTab('cost');
+    });
+
+    await waitFor(() => expect(result.current.tab).toBe('cost'));
+    expect(adminApi.listAuditLogs).not.toHaveBeenCalled();
   });
 });

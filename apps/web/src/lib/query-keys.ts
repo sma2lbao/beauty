@@ -119,6 +119,13 @@ export const queryKeys = {
       action,
       targetId,
     ] as const,
+  /**
+   * 成本看板(P1-K):按窗口天数分键(7/30/90),切换范围自然重查;
+   * adminCostSummaries 是前缀键,写操作/权限变化时可整体失效。
+   */
+  adminCostSummaries: ['admin-cost-summary'] as const,
+  adminCostSummary: (days: number) =>
+    ['admin-cost-summary', days] as const,
 
   /** 模型与用量域。 */
   models: ['models'] as const,

@@ -7,6 +7,7 @@ import { accountApi } from '@/lib/account-api';
 import {
   adminApi,
   type AdminAccount,
+  type AdminCostSummary,
   type AuditLogRead,
 } from '@/lib/admin-api';
 import { ApiError } from '@/lib/http';
@@ -25,6 +26,7 @@ vi.mock('@/lib/admin-api', async () => {
       updateRole: vi.fn(),
       updateStatus: vi.fn(),
       listAuditLogs: vi.fn(),
+      costSummary: vi.fn(),
     },
   };
 });
@@ -98,6 +100,51 @@ const auditLog: AuditLogRead = {
   created_at: '2026-10-15T00:00:00+00:00',
 };
 
+const costSummary: AdminCostSummary = {
+  days: 30,
+  since: '2026-10-12T00:00:00Z',
+  totals: {
+    events: 120,
+    tokens: 45000,
+    cost_usd: 1.23,
+    unpriced_events: 4,
+    platform_events: 100,
+    byok_events: 20,
+  },
+  cost_by_source: [
+    { source: 'platform', events: 100, cost_usd: 1.1 },
+    { source: 'byok', events: 20, cost_usd: 0.13 },
+  ],
+  by_day: [
+    {
+      date: '2026-10-12',
+      events: 2,
+      tokens: 100,
+      cost_usd: 0.2,
+      unpriced_events: 0,
+    },
+    {
+      date: '2026-10-13',
+      events: 3,
+      tokens: 150,
+      cost_usd: 0.4,
+      unpriced_events: 1,
+    },
+  ],
+  by_model: [
+    { model: 'gpt-x', events: 80, tokens: 30000, cost_usd: 0.9, unpriced_events: 0 },
+  ],
+  top_accounts: [
+    {
+      account_id: OTHER_ID,
+      email: 'ops@example.com',
+      events: 40,
+      tokens: 12000,
+      cost_usd: 0.5,
+    },
+  ],
+};
+
 function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -130,10 +177,11 @@ beforeEach(() => {
     status: 'disabled',
   });
   vi.mocked(adminApi.updateQuota).mockResolvedValue(other);
+  vi.mocked(adminApi.costSummary).mockResolvedValue(costSummary);
 });
 
 describe('AdminPage 访问控制', () => {
-  it('管理员看到管理台、账号表格与两个页签', async () => {
+  it('管理员看到管理台、账号表格与三个页签', async () => {
     renderPage();
 
     expect(
@@ -151,6 +199,7 @@ describe('AdminPage 访问控制', () => {
       'true',
     );
     expect(screen.getByRole('tab', { name: '审计日志' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '成本' })).toBeInTheDocument();
   });
 
   it('非管理员直接访问显示无权限面板,且不查询账号', async () => {
@@ -362,5 +411,34 @@ describe('AdminPage 审计', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '审计日志' }));
     expect(await screen.findByText('没有审计记录')).toBeInTheDocument();
+  });
+});
+describe('AdminPage 成本', () => {
+  it('切到成本页签按默认 30 天查询,切换范围重新查询', async () => {
+    renderPage();
+    await screen.findByText('ops@example.com');
+    expect(adminApi.costSummary).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('tab', { name: '成本' }));
+    await waitFor(() => expect(adminApi.costSummary).toHaveBeenCalledWith(30));
+    expect(await screen.findByTestId('admin-cost-panel')).toBeInTheDocument();
+    expect(screen.getByText('$1.23')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '最近 7 天' }));
+    await waitFor(() =>
+      expect(adminApi.costSummary).toHaveBeenLastCalledWith(7),
+    );
+  });
+
+  it('成本查询 403 沿用「无管理员权限」面板', async () => {
+    vi.mocked(adminApi.costSummary).mockRejectedValue(
+      new ApiError(403, 'admin.required', '需要管理员权限'),
+    );
+    renderPage();
+    await screen.findByText('ops@example.com');
+
+    fireEvent.click(screen.getByRole('tab', { name: '成本' }));
+    expect(await screen.findByText('无管理员权限')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-cost-panel')).not.toBeInTheDocument();
   });
 });

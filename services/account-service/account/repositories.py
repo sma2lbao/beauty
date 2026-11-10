@@ -66,6 +66,16 @@ class UserRepository(Repository[User]):
         )
         return list(await self.session.scalars(statement))
 
+    async def emails_for(self, account_ids: Sequence[str]) -> dict[str, str]:
+        """管理面成本看板的 top 账号 email:跨账号批量读(查不到的不返回)。"""
+        ids = list(account_ids)
+        if not ids:
+            return {}
+        rows = await self.session.execute(
+            select(User.id, User.email).where(User.id.in_(ids))
+        )
+        return {row[0]: row[1] for row in rows}
+
 
 class SessionRepository(AccountRepository[Session]):
     model = Session
@@ -235,6 +245,118 @@ class AdminUsageRepository(Repository[UsageEvent]):
         )
         rows = await self.session.execute(statement)
         return {row[0]: (int(row[1]), int(row[2]), row[3], int(row[4])) for row in rows}
+
+    async def cost_totals(
+        self, since: datetime
+    ) -> tuple[int, int, Decimal, int, int, int]:
+        """[since, now) 的平台总量:(事件, tokens, 成本, 未计价, platform, byok)。
+
+        未计价事件按 0 计入金额、单独计数(与 insights.usage_summary 同口径)。
+        """
+        statement = select(
+            func.count(UsageEvent.id),
+            func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+            func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+            func.coalesce(
+                func.sum(case((UsageEvent.cost_usd.is_(None), 1), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((UsageEvent.billing_source == "platform", 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((UsageEvent.billing_source == "byok", 1), else_=0)), 0
+            ),
+        ).where(UsageEvent.created_at >= since)
+        row = (await self.session.execute(statement)).one()
+        return (
+            int(row[0]),
+            int(row[1]),
+            row[2],
+            int(row[3]),
+            int(row[4]),
+            int(row[5]),
+        )
+
+    async def cost_by_day(
+        self, since: datetime
+    ) -> list[tuple[str, int, int, Decimal, int]]:
+        """按 UTC 自然日聚合:(date 'YYYY-MM-DD', 事件, tokens, 成本, 未计价)。
+
+        sqlite 的 func.date 返回字符串、Postgres 返回 date,统一 str()[:10]。
+        """
+        day = func.date(UsageEvent.created_at)
+        statement = (
+            select(
+                day,
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+                func.coalesce(
+                    func.sum(case((UsageEvent.cost_usd.is_(None), 1), else_=0)), 0
+                ),
+            )
+            .where(UsageEvent.created_at >= since)
+            .group_by(day)
+        )
+        rows = await self.session.execute(statement)
+        return [
+            (str(row[0])[:10], int(row[1]), int(row[2]), row[3], int(row[4]))
+            for row in rows
+        ]
+
+    async def cost_by_model(
+        self, since: datetime
+    ) -> list[tuple[str, int, int, Decimal, int]]:
+        """按模型聚合:(model, 事件, tokens, 成本, 未计价);topN 由服务层切。"""
+        statement = (
+            select(
+                UsageEvent.model,
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+                func.coalesce(
+                    func.sum(case((UsageEvent.cost_usd.is_(None), 1), else_=0)), 0
+                ),
+            )
+            .where(UsageEvent.created_at >= since)
+            .group_by(UsageEvent.model)
+        )
+        rows = await self.session.execute(statement)
+        return [
+            (str(row[0]), int(row[1]), int(row[2]), row[3], int(row[4])) for row in rows
+        ]
+
+    async def cost_by_source(self, since: datetime) -> list[tuple[str, int, Decimal]]:
+        """按计费来源聚合:(billing_source, 事件, 成本)。"""
+        statement = (
+            select(
+                UsageEvent.billing_source,
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+            )
+            .where(UsageEvent.created_at >= since)
+            .group_by(UsageEvent.billing_source)
+        )
+        rows = await self.session.execute(statement)
+        return [(str(row[0]), int(row[1]), row[2]) for row in rows]
+
+    async def cost_by_account(
+        self, since: datetime
+    ) -> list[tuple[str, int, int, Decimal]]:
+        """按账号聚合:(account_id, 事件, tokens, 成本);topN 由服务层切。"""
+        statement = (
+            select(
+                UsageEvent.account_id,
+                func.count(UsageEvent.id),
+                func.coalesce(func.sum(UsageEvent.total_tokens), 0),
+                func.coalesce(func.sum(UsageEvent.cost_usd), 0),
+            )
+            .where(UsageEvent.created_at >= since)
+            .group_by(UsageEvent.account_id)
+        )
+        rows = await self.session.execute(statement)
+        return [(str(row[0]), int(row[1]), int(row[2]), row[3]) for row in rows]
 
 
 class BYOKRepository(AccountRepository[BYOKKey]):

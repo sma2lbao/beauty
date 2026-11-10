@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "chat-direct",
+      "cases": [
+        {
+          "id": "direct-answer",
+          "ok": true,
+          "duration_ms": 196.24,
+          "run_status": null,
+          "events": [],
+          "tool_calls": [],
+          "tokens": 66,
+          "deliverables": 0,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "task-approval",
+      "cases": [
+        {
+          "id": "approve-then-complete",
+          "ok": true,
+          "duration_ms": 237.85,
+          "run_status": "completed",
+          "events": [
+            "run.created.v1",
+            "run.item.v1",
+            "run.usage.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.approved.v1",
+            "run.usage.v1",
+            "run.confirmation.required.v1",
+            "run.confirmation.received.v1",
+            "run.usage.v1",
+            "run.item.v1",
+            "run.item.v1",
+            "run.tool.called.v1",
+            "run.delivered.v1",
+            "run.completed.v1"
+          ],
+          "tool_calls": [
+            "external_publish"
+          ],
+          "tokens": 300,
+          "deliverables": 1,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "name": "tool-policy",
+      "cases": [
+        {
+          "id": "auto-policy-skips-confirmation",
+          "ok": true,
+          "duration_ms": 195.09,
+          "run_status": "completed",
+          "events": [
+            "run.created.v1",
+            "run.item.v1",
+            "run.usage.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.approved.v1",
+            "run.usage.v1",
+            "run.item.v1",
+            "run.item.v1",
+            "run.tool.called.v1",
+            "run.delivered.v1",
+            "run.completed.v1"
+          ],
+          "tool_calls": [
+            "external_publish"
+          ],
+          "tokens": 302,
+          "deliverables": 1,
+          "failures": []
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "cases": 3,
+    "passed": 3,
+    "failed": 0,
+    "tokens": 668
+  }
+}

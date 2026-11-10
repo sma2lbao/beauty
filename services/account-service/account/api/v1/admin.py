@@ -18,6 +18,7 @@ from account.schemas.admin import (
     AdminAccountDetail,
     AdminAccountList,
     AuditLogList,
+    CostSummary,
     QuotaUpdate,
     RoleUpdate,
     StatusUpdate,
@@ -44,6 +45,16 @@ async def list_accounts(
     return await admin_service.list_accounts(
         session, q=q, status=status, limit=limit, offset=offset
     )
+
+
+@router.get("/cost/summary", response_model=CostSummary)
+async def cost_summary(
+    session: DBSession,
+    _: AdminUser,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> CostSummary:
+    """平台成本汇总:UTC 自然日窗口(含今天),按天补零 + 模型/账号 topN。"""
+    return await admin_service.cost_summary(session, days=days)
 
 
 @router.get("/accounts/{account_id}", response_model=AdminAccountDetail)

@@ -21,7 +21,8 @@ import { queryKeys } from '@/lib/query-keys';
 
 export const ADMIN_PAGE_SIZE = 20;
 
-export type AdminTab = 'accounts' | 'audit';
+/** 管理台页签:账号治理 / 审计日志 / 成本看板(P1-K)。 */
+export type AdminTab = 'accounts' | 'audit' | 'cost';
 
 /** 整页闸门:加载中 / 可访问 / 未登录 / 非管理员 / 读取失败。 */
 export type AdminAccess =

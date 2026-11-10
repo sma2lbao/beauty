@@ -78,7 +78,10 @@
   事务把该账号**全部** refresh token(`revoked_at`)与 sessions(`status=revoked`)
   吊销,并立即禁止其访问管理面;停用自己 409 `admin.self_disable`;
 - `GET /v1/admin/audit-logs`:审计流水(可按 `actor_account_id`/`action`/
-  `target_id` 过滤,`created_at desc, id desc`)。
+  `target_id` 过滤,`created_at desc, id desc`);
+- `GET /v1/admin/cost/summary?days=30`:平台成本汇总(UTC 自然日窗口,含今天;
+  `days` 1..90;按天补零、模型前 20、账号前 10,`platform`/`byok` 来源拆分与
+  未计价条数;读端点不写审计)。
 
 无权限访问管理端点返回 403 `admin.required`,并**先落一条 denied 审计**
 (`admin.access.denied`,独立短事务,失败只告警)。写动作的审计与业务同事务:

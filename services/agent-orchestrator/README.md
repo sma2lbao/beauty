@@ -328,6 +328,19 @@ SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
   - chat 路径没有 `run_id`,`skill_run` 不会出现在对话直答的工具列表里
     (能力边界由 ToolContext 决定)。
 
+- **评测 harness(P1-K M1,契约 `docs/design/eval-and-cost-dashboard.md` §2)**:包内
+  `agent_orchestrator/evals/`,`bash scripts/eval/eval.sh`(等价
+  `uv run python -m agent_orchestrator.evals`)在**进程内**用脚本化模型 +
+  合成工具跑用例,断言 run 事件/工具调用/交付物/token 用量,并与提交在仓库里的
+  `evals/baseline.json` 比对;零网络、每用例独立临时 sqlite。三套内置套件:
+  `chat-direct`(流式直答不建 run)、`task-approval`(计划审批 → 危险工具确认 →
+  交付 → completed)、`tool-policy`(策略命中 auto 的工具不经确认直接执行)。
+  常用参数:`--suite <name>`(可重复)、`--suite-json <path>`(外部用例集)、
+  `--json <path>`(默认 `reports/eval/<UTC>.json`)、`--max-tokens` /
+  `--max-total-tokens`、`--update-baseline`(人工更新基线,失败时拒绝写)。
+  退出码:0=全通过且无 drift,1=有用例失败,2=仅与基线 drift(用例增删、ok 翻转、
+  token 超基线 20%、事件/工具集合变化)。CI 未自动接入,按需在发布前手工跑。
+
 后续补齐:更多工具与技能、S3 兼容交付物存储、Redis Streams 直播(替代 SSE 轮询)。
 
 命令(仓库根执行):`npx nx run agent-orchestrator:serve`(:8002)/ `npx nx test agent-orchestrator` / `npx nx lint agent-orchestrator`
