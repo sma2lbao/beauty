@@ -12,9 +12,12 @@ from common.metrics import (
     METRICS_PATH,
     http_request_duration_seconds,
     http_requests_total,
+    http_upstream_duration_seconds,
+    http_upstream_requests_total,
     install_metrics_endpoint,
     metrics_payload,
     observe_http,
+    observe_upstream,
 )
 from common.middleware import RequestContextMiddleware
 
@@ -143,3 +146,38 @@ def test_metrics_payload_is_prometheus_text() -> None:
     payload = metrics_payload()
     assert isinstance(payload, bytes)
     assert b"# TYPE http_requests_total counter" in payload
+    assert b"# TYPE http_upstream_requests_total counter" in payload
+
+
+def test_observe_upstream_counts_and_times() -> None:
+    """网关→上游 RED 指标:独立标签集,不污染各服务的请求级指标。"""
+    before = _value(
+        http_upstream_requests_total,
+        service="svc-proxy",
+        upstream="runtime",
+        route="/api/v1/runs/{id}",
+        status="502",
+    )
+    observe_upstream(
+        service="svc-proxy",
+        upstream="runtime",
+        route="/api/v1/runs/{id}",
+        status=502,
+        duration_seconds=0.03,
+    )
+    assert (
+        _value(
+            http_upstream_requests_total,
+            service="svc-proxy",
+            upstream="runtime",
+            route="/api/v1/runs/{id}",
+            status="502",
+        )
+        == before + 1
+    )
+    assert (
+        http_upstream_duration_seconds.labels(
+            service="svc-proxy", upstream="runtime", route="/api/v1/runs/{id}"
+        )._sum.get()  # type: ignore[attr-defined]
+        >= 0.03
+    )

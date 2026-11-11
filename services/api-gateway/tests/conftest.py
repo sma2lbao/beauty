@@ -6,14 +6,26 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
+import structlog
 from common.service_testkit import build_settings
 from fastapi.testclient import TestClient
 
+from api_gateway.api import proxy as proxy_module
 from api_gateway.core.config import Settings
 from api_gateway.main import create_app
 
 ACCESS = "access-1"
 REFRESH = "refresh-1"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_proxy_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """structlog 首次使用即缓存绑定(common.logging 开启 cache_logger_on_first_use)。
+
+    模块级 logger 若在上一测试的 capture_logs 内完成绑定,后续测试的 proxy_call
+    会写进已关闭的捕获列表;每个测试换成新的懒绑定,让捕获落在当前测试里。
+    """
+    monkeypatch.setattr(proxy_module, "log", structlog.get_logger("proxy"))
 
 
 def token_payload(access: str = ACCESS, refresh: str = REFRESH) -> dict:
@@ -95,6 +107,17 @@ def handler(request: httpx.Request) -> httpx.Response:
             headers={"content-type": "text/event-stream"},
             content=b"event: stream.end\ndata: {}\n\n",
         )
+    # 观测测试用:32 位 hex id 的详情/事件流路径,route 模板应归一化成 {id}。
+    if path.startswith("/api/v1/runs/") and path.endswith("/events/stream"):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b"event: stream.end\ndata: {}\n\n",
+        )
+    if path.startswith("/api/v1/runs/"):
+        suffix = path.removeprefix("/api/v1/runs/")
+        if len(suffix) == 32 and all(char in "0123456789abcdef" for char in suffix):
+            return httpx.Response(200, json={"id": suffix})
     if path == "/api/v1/notifications/stream":
         return httpx.Response(
             200,

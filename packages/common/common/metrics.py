@@ -44,6 +44,19 @@ http_request_duration_seconds = Histogram(
     ("service", "route"),
     buckets=_DURATION_BUCKETS,
 )
+# 网关到上游的 RED 指标:与请求级指标分开定义,避免把 `upstream` 塞进
+# 所有服务的标签集(非网关服务没有上游概念,标签恒为 none 只是噪声)。
+http_upstream_requests_total = Counter(
+    "http_upstream_requests_total",
+    "网关到上游的请求数(按服务/上游/路由模板/状态码)",
+    ("service", "upstream", "route", "status"),
+)
+http_upstream_duration_seconds = Histogram(
+    "http_upstream_duration_seconds",
+    "网关到上游的耗时(秒;流式请求为响应头/TTFB 耗时)",
+    ("service", "upstream", "route"),
+    buckets=_DURATION_BUCKETS,
+)
 _default_service: str = "unknown"
 
 
@@ -79,6 +92,28 @@ def observe_http(
     http_request_duration_seconds.labels(service=service, route=route).observe(
         max(duration_seconds, 0.0)
     )
+
+
+def observe_upstream(
+    *,
+    service: str | None = None,
+    upstream: str,
+    route: str,
+    status: int,
+    duration_seconds: float,
+) -> None:
+    """记录一次网关→上游调用的 RED 指标(只在代理层调用)。
+
+    `upstream` 用低基数服务名(runtime/account/…),`route` 用归一化模板;
+    流式请求的 `duration_seconds` 是到响应头为止的耗时(TTFB),不是整条流时长。
+    """
+    service = service_label(service)
+    http_upstream_requests_total.labels(
+        service=service, upstream=upstream, route=route, status=str(status)
+    ).inc()
+    http_upstream_duration_seconds.labels(
+        service=service, upstream=upstream, route=route
+    ).observe(max(duration_seconds, 0.0))
 
 
 def metrics_payload() -> bytes:

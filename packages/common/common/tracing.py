@@ -77,6 +77,24 @@ def current_traceparent() -> str | None:
     return format_traceparent(context) if context is not None else None
 
 
+def update_current_span(
+    name: str | None = None, attributes: dict[str, str] | None = None
+) -> None:
+    """给当前 span 改名/补属性(追踪关闭或无活动 span 时是空操作)。
+
+    网关的 catch-all 路由会让 FastAPI 原生 telemetry 把 span 名与 `http.route`
+    都写成 `/api/{path:path}`;代理层解析出真实模板后用它覆盖,日志/指标/追踪
+    三边才有一致的业务维度。
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    if name:
+        span.update_name(name)
+    for key, value in (attributes or {}).items():
+        span.set_attribute(key, value)
+
+
 def _export_target(
     settings: BaseAppSettings,
 ) -> tuple[str, dict[str, str] | None] | None:

@@ -69,7 +69,55 @@ def _trace_id_from(traceparent: str | None) -> str | None:
     return match.group("trace_id") if match else None
 
 
+#: 资源 id 段:32 位 hex(uuid4().hex,见 packages/database/database/base.py)、
+#: 标准 UUID、纯数字。只认高熵/纯数字形态,避免把 `stream`、`v1` 这类静态段误伤。
+_ID_SEGMENT_PATTERNS = (
+    re.compile(r"^[0-9a-f]{32}$"),
+    re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    re.compile(r"^\d+$"),
+)
+
+
+def normalize_path_template(path: str) -> str:
+    """把路径里的资源 id 段换成 `{id}`,得到低基数路由模板。
+
+    网关的 catch-all 路由(`/api/{path:path}`)会让日志/指标的 route 维度坍缩,
+    代理层用本函数把真实路径归一化后写进 `request.state.route_template`,
+    中间件再从那里取模板(见 `_route_template`)。不能直接用原始 path:
+    run_id / conversation_id 会把指标基数打爆。
+    """
+    if not path.startswith("/"):
+        path = "/" + path
+    segments = []
+    for segment in path.split("/"):
+        lowered = segment.lower()
+        if segment and any(pattern.match(lowered) for pattern in _ID_SEGMENT_PATTERNS):
+            segments.append("{id}")
+        else:
+            segments.append(segment)
+    return "/".join(segments)
+
+
+def _state_value(scope: Scope, key: str) -> str | None:
+    """读应用层写进 `request.state` 的低基数标签。
+
+    `scope["state"]` 是 Starlette `request.state` 背后的同一个 dict,所以即使
+    路由处理跑在 BaseHTTPMiddleware 的独立 anyio 任务里(contextvars 不回传),
+    这里也能读到。当前用于代理网关的 `route_template` 与 `upstream`。
+    """
+    state = scope.get("state")
+    if isinstance(state, dict):
+        value = state.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _route_template(scope: Scope) -> str:
+    # 应用层解析出真实模板时优先用它(网关代理的路由不是 FastAPI 路由)。
+    template = _state_value(scope, "route_template")
+    if template is not None:
+        return template
     route = scope.get("route")
     path = getattr(route, "path", None)
     if isinstance(path, str) and path:
@@ -83,6 +131,7 @@ class _ResponseState:
     __slots__ = (
         "status",
         "route",
+        "upstream",
         "started",
         "is_sse",
         "frames",
@@ -93,6 +142,7 @@ class _ResponseState:
     def __init__(self) -> None:
         self.status = 0
         self.route = ""
+        self.upstream = ""
         self.started = 0.0
         self.is_sse = False
         self.frames = 0
@@ -177,6 +227,7 @@ class RequestContextMiddleware:
                     scope.get("path", ""),
                     _ms(duration),
                     scope.get("method", ""),
+                    upstream=state.upstream or _state_value(scope, "upstream"),
                 )
             raise
         finally:
@@ -195,6 +246,7 @@ class RequestContextMiddleware:
         state.status = int(message["status"])
         state.started = time.perf_counter()
         state.route = _route_template(scope)
+        state.upstream = _state_value(scope, "upstream") or ""
         headers = Headers(raw=message.get("headers", []))
         state.is_sse = SSE_MEDIA_TYPE in (headers.get("content-type") or "")
         # 回写 request id:先摘掉应用自己写的同名头,避免重复。
@@ -213,6 +265,7 @@ class RequestContextMiddleware:
             self.log.info(
                 "sse_opened",
                 route=state.route,
+                upstream=state.upstream or None,
                 status=state.status,
                 duration_ms=_ms(duration),
             )
@@ -223,6 +276,7 @@ class RequestContextMiddleware:
             scope.get("path", ""),
             _ms(duration),
             scope.get("method", ""),
+            upstream=state.upstream or None,
         )
         duration_ms = _ms(duration)
         if (
@@ -232,6 +286,7 @@ class RequestContextMiddleware:
             self.log.warning(
                 "http_request_slow",
                 route=state.route,
+                upstream=state.upstream or None,
                 status=state.status,
                 duration_ms=duration_ms,
                 threshold_ms=self.settings.slow_request_ms,
@@ -253,6 +308,7 @@ class RequestContextMiddleware:
         path: str,
         duration_ms: float,
         method: str = "",
+        upstream: str | None = None,
     ) -> None:
         if not self.settings.access_log_enabled:
             return
@@ -261,6 +317,8 @@ class RequestContextMiddleware:
             "status": status,
             "duration_ms": duration_ms,
         }
+        if upstream:
+            fields["upstream"] = upstream
         if route == "unmatched":
             fields["path"] = path
         if status >= 500:
@@ -278,6 +336,7 @@ class RequestContextMiddleware:
             self.log.info(
                 "sse_closed",
                 route=state.route,
+                upstream=state.upstream or None,
                 status=state.status,
                 duration_ms=_ms(time.perf_counter() - began),
                 frames=state.frames,

@@ -202,9 +202,7 @@ async def test_redis_store_increments_and_expires_atomically() -> None:
 
 
 def test_build_rate_limiter_without_redis_url_uses_memory() -> None:
-    limiter = build_rate_limiter(
-        limit=10, redis_url=None, namespace="api-gateway"
-    )
+    limiter = build_rate_limiter(limit=10, redis_url=None, namespace="api-gateway")
     assert isinstance(limiter, SlidingWindowLimiter)
 
 

@@ -1,35 +1,59 @@
-"""网关路径映射:连接器前缀直通 /v1(含 OAuth 回调的显式 v1 形态)。"""
+"""网关路径解析:声明式前缀表 →(低基数上游名, 上游 URL)。
+
+路由表是数据:新增服务只往 `_SERVICE_BASES` / `resolve_upstream` 里加一条,
+日志/指标/span 的 `upstream` 维度自动跟着变(见 docs/observability.md §10)。
+"""
 
 from __future__ import annotations
 
-from api_gateway.api.proxy import _resolve_upstream
+import pytest
+
+from api_gateway.api.proxy import Upstream, resolve_upstream
 from tests.conftest import settings
 
-
-def test_connector_rest_gets_v1_prefix() -> None:
-    base = settings(connector_base_url="http://connector")
-    assert (
-        _resolve_upstream(base, "connector/connections/c1/refresh")
-        == "http://connector/v1/connections/c1/refresh"
-    )
-
-
-def test_connector_rest_with_explicit_v1_passes_through() -> None:
-    """OAuth 回调地址是 .../api/connector/v1/oauth/{provider}/callback。"""
-
-    base = settings(connector_base_url="http://connector")
-    assert (
-        _resolve_upstream(base, "connector/v1/oauth/demo/callback")
-        == "http://connector/v1/oauth/demo/callback"
-    )
+BASES = {
+    "account_base_url": "http://account",
+    "workspace_base_url": "http://workspace",
+    "knowledge_base_url": "http://knowledge",
+    "connector_base_url": "http://connector",
+    "llm_gateway_base_url": "http://llm",
+}
 
 
-def test_other_prefixes_unchanged() -> None:
-    base = settings(
-        account_base_url="http://account", knowledge_base_url="http://knowledge"
-    )
-    assert (
-        _resolve_upstream(base, "knowledge/v1/knowledge/search")
-        == "http://knowledge/v1/knowledge/search"
-    )
-    assert _resolve_upstream(base, "unknown/path") is None
+@pytest.mark.parametrize(
+    ("path", "service", "url"),
+    [
+        ("v1/runs", "runtime", "http://runtime/api/v1/runs"),
+        (
+            "v1/runs/r1/events/stream",
+            "runtime",
+            "http://runtime/api/v1/runs/r1/events/stream",
+        ),
+        ("models", "llm-gateway", "http://llm/v1/models"),
+        ("usage/today", "account", "http://account/v1/usage/today"),
+        ("byok/keys", "account", "http://account/v1/byok/keys"),
+        (
+            "connector/connections/c1/refresh",
+            "connector",
+            "http://connector/v1/connections/c1/refresh",
+        ),
+        (
+            "connector/v1/oauth/demo/callback",
+            "connector",
+            "http://connector/v1/oauth/demo/callback",
+        ),
+        ("account/v1/devices", "account", "http://account/v1/devices"),
+        ("workspace/v1/workspaces", "workspace", "http://workspace/v1/workspaces"),
+        (
+            "knowledge/v1/knowledge/search",
+            "knowledge",
+            "http://knowledge/v1/knowledge/search",
+        ),
+    ],
+)
+def test_resolve_upstream(path: str, service: str, url: str) -> None:
+    assert resolve_upstream(settings(**BASES), path) == Upstream(service, url)
+
+
+def test_unknown_prefix_is_not_routed() -> None:
+    assert resolve_upstream(settings(**BASES), "unknown/path") is None

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
@@ -28,6 +28,7 @@ from common.middleware import (
     RequestContextMiddleware,
     inject_request_headers,
     install_app_error_handler,
+    normalize_path_template,
 )
 
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
@@ -62,6 +63,13 @@ def _app(settings: TestSettings) -> FastAPI:
     @app.get("/missing")
     async def missing() -> dict[str, str]:
         raise NotFoundError("item.not_found", "找不到")
+
+    @app.get("/api/{path:path}")
+    async def catch_all(path: str, request: Request) -> dict[str, str]:
+        """模拟网关:catch-all 路由由应用层补真实模板与上游名。"""
+        request.state.route_template = normalize_path_template("/api/" + path)
+        request.state.upstream = "runtime"
+        return {"path": path}
 
     @app.get("/events")
     async def events() -> StreamingResponse:
@@ -248,3 +256,38 @@ def test_redact_masks_secrets() -> None:
     assert redact(None) == ""
     assert redact("short") == "***"
     assert redact("sk-live-abcdefghijklmnop") == "sk-l…op"
+
+
+def test_route_template_from_request_state() -> None:
+    """应用层解析出真实模板时,访问日志用它覆盖 catch-all 路由模板。"""
+    settings = _settings()
+    setup_logging(settings)
+    client = TestClient(_app(settings))
+    with capture_logs(processors=[structlog.contextvars.merge_contextvars]) as logs:
+        response = client.get("/api/v1/runs/0123456789abcdef0123456789abcdef")
+    assert response.status_code == 200
+    (entry,) = _entries(logs, "http_request")
+    assert entry["route"] == "/api/v1/runs/{id}"
+    assert entry["upstream"] == "runtime"
+
+
+def test_normalize_path_template_only_replaces_id_segments() -> None:
+    assert (
+        normalize_path_template("/api/v1/runs/0123456789abcdef0123456789abcdef/events")
+        == "/api/v1/runs/{id}/events"
+    )
+    assert (
+        normalize_path_template(
+            "/api/account/v1/users/123e4567-e89b-12d3-a456-426614174000"
+        )
+        == "/api/account/v1/users/{id}"
+    )
+    assert normalize_path_template("/api/v1/runs/42") == "/api/v1/runs/{id}"
+    # 静态段不动:服务前缀、短别名(r1)、语义路径
+    assert (
+        normalize_path_template("/api/v1/runs/r1/events/stream")
+        == "/api/v1/runs/r1/events/stream"
+    )
+    assert normalize_path_template("api/v1/models") == "/api/v1/models"
+    # 尾部斜杠保持原样
+    assert normalize_path_template("/api/v1/runs/") == "/api/v1/runs/"
