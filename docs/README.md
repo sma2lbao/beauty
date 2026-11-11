@@ -21,6 +21,7 @@
 | [docs/observability.md](./observability.md)                                   | 日志/指标/追踪约定（可观测性契约）                                                                                                                                                                                                            | Lead       | 观测设施变化时             |
 | [docs/design/tool-service.md](./design/tool-service.md)                       | 内置工具服务设计（catalog/执行/审计/ask_question，含 OSS 对比与实施步骤）                                                                                                                                                                     | Lead       | 工具契约或实施进度变化时   |
 | [docs/design/serverless-deployment.md](./design/serverless-deployment.md)     | serverless 部署方案（平台对比/改造清单/分期）                                                                                                                                                                                                 | Lead       | 部署形态或平台变化时       |
+| [docs/design/hybrid-deployment.md](./design/hybrid-deployment.md)             | 混合部署落地（Vercel + 腾讯云轻量首尔 + Neon；改造清单/上线步骤/运维手册）                                                                                                                                                                    | Lead       | 部署形态或平台变化时       |
 | [docs/design/byok.md](./design/byok.md)                                       | BYOK 设计（信任边界/解析与回退/信封 v2 与 KMS/轮换/配置/威胁模型）                                                                                                                                                                            | Lead       | BYOK 契约或 KMS 形态变化时 |
 | [docs/design/cost-attribution.md](./design/cost-attribution.md)               | 成本归因与用量计价（网关价目表单源/缓存价/未计价语义/billing_source/account 聚合/前端展示）                                                                                                                                                   | Lead       | 计价口径或成本字段变化时   |
 | [docs/design/usage-delivery.md](./design/usage-delivery.md)                   | 用量可靠投递（P0-3：outbox 至少一次/event_id 幂等/开关/失败语义/单实例残余）                                                                                                                                                                  | Lead       | 投递链路或幂等键变化时     |
@@ -60,6 +61,7 @@
 
 ## 单一真源约定
 
+- 部署形态与平台选型（当前：Vercel + 轻量首尔 + Neon） → [architecture.md](./architecture.md) ADR-012 + [design/hybrid-deployment.md](./design/hybrid-deployment.md)（落地）
 - 架构/选型 → [architecture.md](./architecture.md)（唯一）
 - 未完成计划 → [roadmap.md](./roadmap.md)（唯一）
 - 重构执行状态 → [refactoring/roadmap.md](./refactoring/roadmap.md)

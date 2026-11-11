@@ -1,0 +1,154 @@
+# 腾讯云轻量应用服务器（首尔）单机生产编排。
+#
+# 用法（在仓库根执行）：
+#   docker compose -f deploy/tencent/docker-compose.cvm.yml --env-file deploy/tencent/.env up -d
+#   docker compose -f deploy/tencent/docker-compose.cvm.yml --env-file deploy/tencent/.env run --rm migrate
+#
+# 设计要点：
+# - 8 个 Python 服务复用同一个镜像（deploy/docker/python-service.Dockerfile，靠 SERVICE 选入口），
+#   生产只 pull 不 build；镜像由本地/CI 以 --platform linux/amd64 构建后推 TCR；
+# - 只有 api-gateway 绑 127.0.0.1:8007，公网流量经 Caddy 反代；其余服务只走 compose 内网，
+#   服务间地址一律用服务名（http://agent-orchestrator:8002 等），不再用 127.0.0.1；
+# - 数据库/Redis 外置（Neon / 云 Redis），本机不跑有状态基础设施；迁移是一次性 migrate 作业；
+# - 内存上限按 2C4G 机型调（合计约 3.5G + 系统）；升到 4C8G 后可整体上调；
+# - 沙箱不落本机：轻量没有 /dev/kvm，microsandbox 不可用，见 README「沙箱」一节；
+# - 同一个镜像内 ENV SERVICE 会被 compose 的 `environment.SERVICE` 覆盖：每个服务必须显式指定，
+#   否则 8 个容器都会跑镜像构建时选定的那个入口。
+name: beauty-prod
+
+x-common: &common
+  image: ${REGISTRY}/beauty/python-service:${TAG}
+  restart: unless-stopped
+  env_file:
+    - .env
+  networks:
+    - beauty
+  logging:
+    driver: json-file
+    options:
+      max-size: '20m'
+      max-file: '3'
+
+services:
+  # ── 业务服务（同一镜像、不同 SERVICE 构建入口）────────────────────────────
+  account-service:
+    <<: *common
+    environment:
+      SERVICE: account-service
+    mem_limit: 380m
+    volumes:
+      # 签名 PEM 必须持久化：留空会每次进程内生成 RSA，重启后旧 token 全部失效
+      - account-keys:/data/keys
+
+  agent-orchestrator:
+    <<: *common
+    environment:
+      SERVICE: agent-orchestrator
+    mem_limit: 650m
+
+  llm-gateway:
+    <<: *common
+    environment:
+      SERVICE: llm-gateway
+    mem_limit: 500m
+
+  connector-service:
+    <<: *common
+    environment:
+      SERVICE: connector-service
+    mem_limit: 300m
+
+  knowledge-service:
+    <<: *common
+    environment:
+      SERVICE: knowledge-service
+    mem_limit: 380m
+
+  workspace-service:
+    <<: *common
+    environment:
+      SERVICE: workspace-service
+    mem_limit: 450m
+    volumes:
+      # 过渡期 filesystem artifact store；切 COS 后保留挂载即可（不再写入）
+      - workspace-artifacts:/data/artifacts
+
+  tool-service:
+    <<: *common
+    environment:
+      SERVICE: tool-service
+    mem_limit: 380m
+
+  api-gateway:
+    <<: *common
+    environment:
+      SERVICE: api-gateway
+    mem_limit: 380m
+    ports:
+      - '127.0.0.1:8007:8007'
+    depends_on:
+      account-service:
+        condition: service_healthy
+      agent-orchestrator:
+        condition: service_healthy
+      llm-gateway:
+        condition: service_started
+      connector-service:
+        condition: service_healthy
+      knowledge-service:
+        condition: service_healthy
+      workspace-service:
+        condition: service_healthy
+      tool-service:
+        condition: service_healthy
+
+  # ── 入口：Caddy 自动 HTTPS + SSE 不缓冲 ──────────────────────────────────
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      API_HOST: ${API_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - beauty
+    mem_limit: 120m
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '3'
+
+  # ── 一次性迁移：6 个库按依赖顺序 alembic upgrade head ─────────────────────
+  migrate:
+    <<: *common
+    profiles: ['migrate']
+    restart: 'no'
+    entrypoint: ['/bin/sh', '-lc']
+    command:
+      - |
+        set -eu
+        cd /app/services/account-service && alembic upgrade head
+        cd ../agent-orchestrator && alembic upgrade head
+        cd ../connector-service && alembic upgrade head
+        cd ../knowledge-service && alembic upgrade head
+        cd ../workspace-service && alembic upgrade head
+        cd ../tool-service && alembic upgrade head
+        echo "migrations: all 6 databases at head"
+
+networks:
+  beauty: {}
+
+volumes:
+  account-keys: {}
+  workspace-artifacts: {}
+  caddy-data: {}
+  caddy-config: {}

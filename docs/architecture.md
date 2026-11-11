@@ -43,19 +43,20 @@
 
 ## 1. ADR（最终状态）
 
-| ADR | 决策                                     | 状态                   | 说明                                                                                                                                                                            |
-| --- | ---------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 001 | Vite SPA + Next.js 独立静态官网          | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                                   |
-| 002 | 静态 SPA + FastAPI 网关 + 容器 runtime   | ✅ 采用                | 八个 Python 服务（七业务 + API 网关）；API 网关为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭） |
-| 003 | 长任务用 Postgres job 表 + worker        | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                        |
-| 004 | Sandbox 用 microsandbox provider         | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                       |
-| 005 | 数据：云 PG + 云 Redis；对象存储暂缓     | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                               |
-| 006 | 身份：自建 account-service（不用 Logto） | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                                  |
-| 007 | API 网关 httpOnly Cookie + 短时 JWT      | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                              |
-| 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                         |
-| 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                    |
-| 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                                                                                                                                           |
-| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                                  |
+| ADR | 决策                                                                            | 状态                   | 说明                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 001 | Vite SPA + Next.js 独立静态官网                                                 | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                                           |
+| 002 | 静态 SPA + FastAPI 网关 + 容器 runtime                                          | ✅ 采用                | 八个 Python 服务（七业务 + API 网关）；API 网关为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭）         |
+| 003 | 长任务用 Postgres job 表 + worker                                               | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                                |
+| 004 | Sandbox 用 microsandbox provider                                                | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                               |
+| 005 | 数据：云 PG + 云 Redis；对象存储暂缓                                            | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                                       |
+| 006 | 身份：自建 account-service（不用 Logto）                                        | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                                          |
+| 007 | API 网关 httpOnly Cookie + 短时 JWT                                             | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                                      |
+| 008 | 计费：usage ledger + Free 配额 + BYOK                                           | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                                 |
+| 009 | MCP Server + Client                                                             | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                            |
+| 010 | Tool Registry + Skill + Workspace 类型                                          | ✅ 采用                | coding/办公共用运行时                                                                                                                                                                   |
+| 011 | 内网/离线部署可启动                                                             | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                                          |
+| 012 | 部署主线：Vercel 静态层 + 腾讯云轻量（首尔）单机 Compose + Neon；沙箱外置 Modal | ✅ 采用                | 2026-11-11 定稿，理由/改造/成本见 [design/hybrid-deployment.md](./design/hybrid-deployment.md)；Cloud Run/Fly 降为备选（[serverless-deployment.md](./design/serverless-deployment.md)） |
 
 ---
 
@@ -315,22 +316,22 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 10.1 环境
 
-| 环境    | Web                              | Runtime             | 数据                                           |
-| ------- | -------------------------------- | ------------------- | ---------------------------------------------- |
-| dev     | 本地 Vite + 本地 API 网关        | 本地进程（dev.sh）  | SQLite + 本地 Redis + 本地目录                 |
-| staging | Nginx SPA + Vercel preview(site) | 容器平台 + API 网关 | 云 PG（staging URL）+ 云 Redis + DB artifact   |
-| prod    | Nginx SPA + Vercel(site)         | 容器平台 + API 网关 | 云 PG + 云 Redis + DB artifact（对象存储后置） |
+| 环境    | Web                                    | Runtime                                | 数据                                         |
+| ------- | -------------------------------------- | -------------------------------------- | -------------------------------------------- |
+| dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                     | SQLite + 本地 Redis + 本地目录               |
+| staging | Vercel preview（SPA + `/api` rewrite） | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon staging 6 库 + 本地卷 artifact          |
+| prod    | Vercel（SPA + `/api` rewrite）         | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon prod 6 库 + 本地卷 artifact（COS 后置） |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
 - 服务镜像：8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
 - 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
-- 成本护栏：容器平台 scale-to-zero、Free 配额、预算告警。
+- 成本护栏：单机固定成本 + Neon 按量计费、Free 配额、预算告警。
 
 ### 10.2 从当前仓库迁移（M0 路径）
 
 1. ✅ 新增 `services/api-gateway`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
-2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；容器平台（Fly/Cloud Run）部署配置待补；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
-3. ⏳ 接入云 PG/云 Redis URL——**M0-03，未启动**；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
+2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；生产编排见 `deploy/tencent/`（轻量单机 + Caddy + 8 服务 Compose，2026-11-11）；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
+3. ⏳ 接入云 PG（Neon 6 库）/ 云 Redis URL——**M0-03 进行中**，配置样例见 `deploy/tencent/.env.example`；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
 4. ⏳ account-service 补 Google/GitHub OAuth + API 网关 Cookie 会话（保留 token 模式开发兜底）——API 网关 Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
 6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；

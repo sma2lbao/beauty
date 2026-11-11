@@ -1,0 +1,28 @@
+# 腾讯云轻量（首尔）生产入口。
+# - 只反代 api-gateway:8007；其余服务不对外；
+# - flush_interval -1：SSE 事件逐个下发、不聚合（run 事件流/对话流的关键）；
+# - 不开启 encode：压缩会引入缓冲，长流会卡住，流量成本可忽略；
+# - 证书由 Caddy 用 Let's Encrypt 自动签发，需 DNS A 记录已指向本机且 80/443 可达。
+{
+	admin off
+}
+
+{$API_HOST} {
+	reverse_proxy api-gateway:8007 {
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}
