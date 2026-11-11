@@ -1,6 +1,6 @@
 # 服务可观测方案（监控日志）
 
-> 状态：**P0 日志与请求上下文、P1 Sentry（服务端 + Web 前端）、P2 指标与 OTel 追踪均已实施**（2026-10-22；Web 前端 Sentry 2026-11-09）；**P3 Langfuse** 的 Phase 1/2 已实施，**当前接 Langfuse Cloud（EU），8 个服务本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）。
+> 状态：**P0 日志与请求上下文、P1 Sentry（服务端 + Web 前端）、P2 指标与 OTel 追踪均已实施**（2026-10-22；Web 前端 Sentry 2026-11-09）；**P3 Langfuse** 的 Phase 1/2 已实施，**当前接 Langfuse Cloud（EU）并对 Cloud 实测通过**（2026-11-09）；**上报范围已收窄为 agent-orchestrator 与 llm-gateway 两个服务**，api-gateway 及各业务服务保留 `TRACING_ENABLED=true` 只建 span / 注入 `traceparent`、不上报 Langfuse（2026-11-11，见 [design/langfuse-observability.md](./design/langfuse-observability.md) §5.1）。
 > 剩余：`outbox_pending` 派生指标。Langfuse 侧留存与容量策略已定义（`docs/design/langfuse-observability.md` §9.3）。
 > 对齐 `docs/architecture.md`（现行唯一架构真源）§9：可观测 = **结构化日志 + traceId + Sentry + 指标/追踪**（后两者已落到服务端）。
 > 本文定规范与实施计划；P0 的落地位置见 §11。
@@ -69,25 +69,26 @@
 
 ### 4.2 字段字典（保留字，业务代码不得复用）
 
-| 字段                        | 类型   | 说明                                                                                                          |
-| --------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `timestamp`                 | string | UTC ISO8601，structlog `TimeStamper` 输出                                                                     |
-| `level`                     | string | `debug`/`info`/`warning`/`error`/`critical`                                                                   |
-| `event`                     | string | 事件名，`snake_case`（如 `http_request`、`run_failed`），**不把变量拼进事件名**                               |
-| `service`                   | string | `settings.service_name`，启动时绑定                                                                           |
-| `env`                       | string | `dev`/`staging`/`prod`，启动时绑定                                                                            |
-| `logger`                    | string | 模块名，替代 structlog 默认的 `logger` 字段                                                                   |
-| `request_id`                | string | 每个请求一个，跨服务透传（§5.1）                                                                              |
-| `trace_id`                  | string | W3C traceparent 的 trace-id；P0 只有透传时存在，P2 由 OTel 补齐                                               |
-| `account_id`                | string | 鉴权后绑定（§5.3）；内部调用以 token claim 为准                                                               |
-| `user_id`                   | string | 可选，鉴权后绑定                                                                                              |
-| `method` / `route` / `path` | string | 访问日志用；`route` 是模板（`/api/v1/runs/{run_id}`），`path` 是原始路径（仅 `route` 为空时兜底，防基数爆炸） |
-| `status`                    | int    | HTTP 状态码                                                                                                   |
-| `duration_ms`               | number | 请求/调用耗时，保留 1 位小数                                                                                  |
-| `client_ip`                 | string | 仅 API 网关记录（用户侧）；服务间调用记 `client` 服务名更值钱                                                 |
-| `error_code`                | string | `AppError.code`（对外契约，如 `workspace.default_protected`）                                                 |
-| `exception`                 | string | 异常栈（`format_exc_info` 输出）                                                                              |
-| `msg`                       | string | 人类可读补充说明，**不承载结构化信息**                                                                        |
+| 字段                        | 类型   | 说明                                                                                                                                                          |
+| --------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timestamp`                 | string | UTC ISO8601，structlog `TimeStamper` 输出                                                                                                                     |
+| `level`                     | string | `debug`/`info`/`warning`/`error`/`critical`                                                                                                                   |
+| `event`                     | string | 事件名，`snake_case`（如 `http_request`、`run_failed`），**不把变量拼进事件名**                                                                               |
+| `service`                   | string | `settings.service_name`，启动时绑定                                                                                                                           |
+| `env`                       | string | `dev`/`staging`/`prod`，启动时绑定                                                                                                                            |
+| `logger`                    | string | 模块名，替代 structlog 默认的 `logger` 字段                                                                                                                   |
+| `request_id`                | string | 每个请求一个，跨服务透传（§5.1）                                                                                                                              |
+| `trace_id`                  | string | W3C traceparent 的 trace-id；P0 只有透传时存在，P2 由 OTel 补齐                                                                                               |
+| `account_id`                | string | 鉴权后绑定（§5.3）；内部调用以 token claim 为准                                                                                                               |
+| `user_id`                   | string | 可选，鉴权后绑定                                                                                                                                              |
+| `method` / `route` / `path` | string | 访问日志用；`route` 是模板（`/api/v1/runs/{run_id}`），`path` 是原始路径（仅 `route` 为空时兜底，防基数爆炸）；api-gateway 的 `route` 由代理层归一化（见 §6） |
+| `status`                    | int    | HTTP 状态码；`proxy_call` 里是**上游**返回的状态码                                                                                                            |
+| `duration_ms`               | number | 请求/调用耗时，保留 1 位小数；`proxy_call` 为到上游响应头为止（流式=TTFB）                                                                                    |
+| `upstream`                  | string | 低基数上游服务名（`runtime`/`llm-gateway`/`account`/`connector`/`workspace`/`knowledge`），仅 api-gateway 代理层记录                                          |
+| `client_ip`                 | string | 访问日志不记（网关代码无此字段）；用户侧地址由部署层 Nginx access log 的 `$remote_addr` 承载（§6）。服务间调用记 `client` 服务名更值钱                        |
+| `error_code`                | string | `AppError.code`（对外契约，如 `workspace.default_protected`）                                                                                                 |
+| `exception`                 | string | 异常栈（`format_exc_info` 输出）                                                                                                                              |
+| `msg`                       | string | 人类可读补充说明，**不承载结构化信息**                                                                                                                        |
 
 其余业务字段（`run_id`、`tool`、`model`、`job_kind`、`attempts`、`latency_ms`、`tokens_in`/`tokens_out` 等）按事件就近命名，进 §10 清单，不再回填本表。
 
@@ -162,15 +163,18 @@
 
 ```
 timestamp, level, event, service, env, logger,
-request_id, trace_id?, account_id?, user_id?,
-method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
+request_id, trace_id?, account_id?, user_id?, upstream?,
+method, route, status, duration_ms, error_code?
 ```
 
 - `route` 用 **路由模板**：`request.scope["route"].path`（如 `/api/v1/conversations/{conversation_id}/messages/stream`）；未命中路由（404）用 `method` + 固定占位 `unmatched`，不落原始 path 里可能带 id 的片段——这是控制日志基数的关键。
+- **api-gateway 的 `route` 归一化**：网关的业务路径走 catch-all 路由（`/api/{path:path}`），`scope["route"].path` 对**所有**请求都是同一个常量，日志与指标按路由聚合时完全失效。因此代理层在转发前用 `normalize_path_template()`（`packages/common/common/middleware.py`）把真实路径归一化成业务模板并写进 `request.state.route_template`，中间件优先读它。规则：**32 位小写 hex**（`uuid4().hex`，仓库主键形态）、**标准 UUID**、**纯数字**段替换为 `{id}`，其余段原样保留（`/api/v1/runs/{id}/events/stream`）。只认这三种高熵/纯数字形态，避免把 `stream`、`v1` 这类静态段误伤；原始 path 仍能从 `http_request` 之外的访问入口（Nginx access log 的 `$uri`）拿到。
+- `upstream`：仅 api-gateway 代理层绑定（日志上下文），值取自代理目标的服务名（`runtime`/`llm-gateway`/`account`/`connector`/`workspace`/`knowledge`），因此 `http_request`/`sse_opened`/`sse_closed` 在网关上都带它。用于把「用户看到的慢」直接落到某个后端服务。
+- **网关与 Nginx 的两级上游视角**：网关进程内打 `proxy_call`（上游 `status`、到上游响应头的 `duration_ms`，流式即 TTFB）；Nginx 侧用自定义 `log_format api_gateway` 记 `$remote_addr`/`$upstream_addr`/`$upstream_status`/`$upstream_response_time`/`$request_time`（见 `deploy/web/nginx.conf`，`/api/` 的 `access_log /dev/stdout api_gateway`）。`$request_time` 与网关 `duration_ms` 的差值是接入层开销（排队、连接、客户端读写）；`$upstream_response_time` 对应网关自身的处理时长。**只看一边会把「网关慢」和「后端慢」混为一谈**，两边都要有才定位得动。
 - 分级：`status >= 500` → `error`；`status in (401,403,409,429)` → `warning`；其余 2xx/3xx → `info`；探针路径 → `debug`。
 - 慢请求：`duration_ms > <SERVICE>__SLOW_REQUEST_MS`（默认 1500，SSE 除外）额外打 `event=http_request_slow`（`warning`），带 route 与耗时，便于直接 grep 慢接口。
-- SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/api-gateway/api_gateway/api/proxy.py:123`。
-- 限流命中（API 网关 `services/api-gateway/api_gateway/main.py:60` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`account_id`、`group`），访问日志本身仍是 429。
+- SSE：`http_request` 记录的是**建立连接**的耗时（到响应头写出），不记整个流；连接关闭时另打 `sse_closed`（`duration_ms`、`frames`、`disconnected`）。涉及端点：`services/agent-orchestrator/agent_orchestrator/api/v1/conversations.py:407`、`services/agent-orchestrator/agent_orchestrator/api/v1/runs.py:452`、`services/agent-orchestrator/agent_orchestrator/api/v1/notifications.py:128`、`services/agent-orchestrator/agent_orchestrator/api/mcp_server.py:106`、`services/api-gateway/api_gateway/api/proxy.py` 的 `_proxy_stream()`。
+- 限流命中（API 网关 `services/api-gateway/api_gateway/main.py` 的 `rate_limit` 中间件）记 `event=rate_limited`（`warning`，`account_id`、`group`），访问日志本身仍是 429。
 
 ---
 
@@ -212,23 +216,25 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 
 - 暴露：`GET /internal/metrics`（Prometheus 文本），`metrics_enabled=false` 时整个端点不注册；**不在 `/api/v1` 公共契约里**，API 网关不代理它。
 - 公网入口（API 网关）建议配 `<SERVICE>__METRICS_TOKEN`：配了之后必须带同值令牌（`X-Metrics-Token` 或 `Authorization: Bearer`），否则按 404 响应（不暴露端点存在性）。
-- 标签只放低基数字段（`service`/`method`/`route`/`status`/`kind`/`provider`/`code`），**禁** `account_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。
-- 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total` 记失败，provider 取模型前缀；`llm_tokens_total`/`llm_request_duration_seconds` 记用量与耗时）。
+- 标签只放低基数字段（`service`/`method`/`route`/`status`/`upstream`/`kind`/`provider`/`code`），**禁** `account_id`/`run_id`/原始 path；未匹配路由统一记 `route="unmatched"`，避免 404 扫描打爆基数。`upstream` 只出现在网关代理指标上，取值是固定服务名枚举。
+- 采集点：中间件（`http_requests_total`/`http_request_duration_seconds`，异常且响应未开始时补记 500）、api-gateway 代理层（`observe_upstream()` 记 `http_upstream_requests_total`/`http_upstream_duration_seconds`，只在 `proxy()`/`_proxy_stream()` 里调，非网关服务不产生这两个指标）、orchestrator `runs`（`run_outcomes_total`：completed/failed）、jobs worker（`job_failures_total`）、llm-gateway 与 orchestrator 的模型调用（`llm_upstream_errors_total` 记失败，provider 取模型前缀；`llm_tokens_total`/`llm_request_duration_seconds` 记用量与耗时）。
 - 业务代码调用 `metrics.observe_*` 时不必传 service：默认从日志上下文（启动时绑定的 `service`）取。
 - 若暂时不部署 Prometheus，也可用 `metrics_payload()` 定时落 `event=metrics_snapshot` 的 info 日志，效果等价。
 
 指标设计如下（除 `outbox_pending` 外均已实施；它仍从运维端点 `/api/v1/outbox/*` 派生）：
 
-| 指标                            | 类型      | 标签                           | 来源                                                                                    |
-| ------------------------------- | --------- | ------------------------------ | --------------------------------------------------------------------------------------- |
-| `http_requests_total`           | counter   | service, method, route, status | 访问日志中间件                                                                          |
-| `http_request_duration_seconds` | histogram | service, route                 | 同上                                                                                    |
-| `run_outcomes_total`            | counter   | status                         | orchestrator `run.completed.v1`/`run.failed.v1`                                         |
-| `job_failures_total`            | counter   | kind                           | jobs worker（`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`） |
-| `outbox_pending`                | gauge     | —                              | outbox 计数（已有运维端点 `/api/v1/outbox/*`）                                          |
-| `llm_upstream_errors_total`     | counter   | provider, code                 | llm-gateway                                                                             |
-| `llm_tokens_total`              | counter   | model, direction               | llm-gateway 响应使用量（input=提示 / output=补全）                                      |
-| `llm_request_duration_seconds`  | histogram | provider, model                | llm-gateway（complete 与 stream 收尾各记一次）                                          |
+| 指标                             | 类型      | 标签                             | 来源                                                                                             |
+| -------------------------------- | --------- | -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `http_requests_total`            | counter   | service, method, route, status   | 访问日志中间件                                                                                   |
+| `http_request_duration_seconds`  | histogram | service, route                   | 同上                                                                                             |
+| `http_upstream_requests_total`   | counter   | service, upstream, route, status | api-gateway 代理层（`proxy()`/`_proxy_stream()` 调 `observe_upstream()`；`status` 是上游状态码） |
+| `http_upstream_duration_seconds` | histogram | service, upstream, route         | 同上；桶同 RED 指标，流式请求记到响应头（TTFB）                                                  |
+| `run_outcomes_total`             | counter   | status                           | orchestrator `run.completed.v1`/`run.failed.v1`                                                  |
+| `job_failures_total`             | counter   | kind                             | jobs worker（`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`）          |
+| `outbox_pending`                 | gauge     | —                                | outbox 计数（已有运维端点 `/api/v1/outbox/*`）                                                   |
+| `llm_upstream_errors_total`      | counter   | provider, code                   | llm-gateway                                                                                      |
+| `llm_tokens_total`               | counter   | model, direction                 | llm-gateway 响应使用量（input=提示 / output=补全）                                               |
+| `llm_request_duration_seconds`   | histogram | provider, model                  | llm-gateway（complete 与 stream 收尾各记一次）                                                   |
 
 ### 9.2 追踪（OTel）
 
@@ -241,22 +247,22 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 - 采样：`<SERVICE>__TRACE_SAMPLE_RATIO`（默认 0.1）走 `ParentBased(TraceIdRatioBased)`——入口（API 网关）决定是否采样，下游跟随，避免半截链路。
 - 开关：`<SERVICE>__TRACING_ENABLED=false` 完全关闭（不建 provider、不插桩）。
 - 注意：FastAPI 原生 telemetry 自带 `metrics`/`logs` 能力；本仓库指标仍以 `/internal/metrics` 为准（Prometheus），OTel 侧未接 meter/logger provider，保持单一口径。
-- Langfuse 接入（P3，Phase 1/2 已实施）：8 个服务的 `.env` 已指向 **Langfuse Cloud**（`<SERVICE>__LANGFUSE_ENABLED/HOST/PUBLIC_KEY/SECRET_KEY`，同一项目密钥共用以串起跨服务 trace）；导出优先级为 **Collector > Langfuse 直连 > 通用 `<SERVICE>__OTLP_ENDPOINT`**（Collector 见设计文档 §9.2），orchestrator 图节点与 llm-gateway 的 `chat {model}` 调用分别出 span/generation。**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目表，generation span 写 `cost_details`；Cloud 托管价目表不含 deepseek，但 ingested 优先，见设计文档 §9.1）。属性映射、自托管 compose、采样与脱敏见 [design/langfuse-observability.md](./design/langfuse-observability.md)。
+- Langfuse 接入（P3，Phase 1/2 已实施）：**只有 agent-orchestrator 与 llm-gateway 直连 Langfuse**（`<SERVICE>__LANGFUSE_ENABLED=true` + 同一项目密钥）；其余服务（api-gateway/account/connector/knowledge/tool/workspace）`LANGFUSE_ENABLED=false`，其中 **api-gateway 保留 `TRACING_ENABLED=true`**——只为建 span、注入/续传 `traceparent`，网关的通用 HTTP span **不上报 Langfuse**。因此一次 UI 对话的 trace 根是真实业务服务的 span（orchestrator 的 `METHOD /api/v1/...`，`run {run_id}` 挂其下），而不是网关的 catch-all span；这样不丢业务语义、也省掉大量无业务含义的网关事件。两个上报服务的导出优先级为 **Collector > Langfuse 直连 > 通用 `<SERVICE>__OTLP_ENDPOINT`**（Collector 见设计文档 §9.2），orchestrator 图节点与 llm-gateway 的 `chat {model}` 调用分别出 span/generation。**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目表，generation span 写 `cost_details`；Cloud 托管价目表不含 deepseek，但 ingested 优先，见设计文档 §9.1）。属性映射、自托管 compose、采样与脱敏见 [design/langfuse-observability.md](./design/langfuse-observability.md)。
 
 ---
 
 ## 10. 各服务埋点清单
 
-| 服务               | 关键事件（`event` 名）                                                                                                                                                                                                                                                                                                   | 现有可复用点                                                                                                                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 全部               | `http_request`、`http_request_slow`、`sse_opened`/`sse_closed`、`app_error`、`unhandled_exception`                                                                                                                                                                                                                       | 新中间件（P0）                                                                                                                                                                                                                                       |
-| agent-orchestrator | `run_created`、`run_planned`、`run_approved`、`run_completed`、`run_failed`、`run_blocked`、`job_enqueued`、`job_finished`、`tool_invoked`（tool、duration、status）、`llm_call`（model、phase、latency_ms、tokens_in/out）、`sse_opened`（channel=run_events/notifications）、`outbox_dispatch`（event_type、attempts） | `services/agent-orchestrator/agent_orchestrator/services/runs.py`、`graph/nodes.py`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`、`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`、`events` 消费处 |
-| llm-gateway        | `llm_request`（provider、model、stream、message_count、roles、prompt_chars、tool_count、temperature）、`llm_response`（model、finish_reason、prompt/completion/total_tokens、tool_calls、chars、duration_ms）、`llm_content`（`LOG_CONTENT=true` 才出：direction、payload 截断 2KB）、`llm_upstream_error`（code）       | `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/llm-gateway/llm_gateway/services/embeddings.py:29`                                                                                                                          |
-| api-gateway        | `proxy_call`（target、status、latency_ms、stream）、`rate_limited`、`session_refresh_failed`                                                                                                                                                                                                                             | `services/api-gateway/api_gateway/main.py:60`、`services/api-gateway/api_gateway/api/proxy.py:215`、`services/api-gateway/api_gateway/api/mcp_oauth.py:21`                                                                                           |
-| account-service    | `auth_login`（result）、`token_refresh`（result、reuse_detected）、`device_registered`                                                                                                                                                                                                                                   | `services/account-service/account/`（登录/刷新路由）                                                                                                                                                                                                 |
-| workspace-service  | `sandbox_lifecycle`（state、duration）、`artifact_put`/`artifact_get`（bytes）、`workspace_created`/`renamed`/`deleted`                                                                                                                                                                                                  | `services/workspace-service/workspace/services/sandbox.py:38`、`services/workspace-service/workspace/services/workspaces.py:17`                                                                                                                      |
-| knowledge-service  | `ingest_finished`（chunks、duration）、`search_finished`（k、latency_ms、hits）                                                                                                                                                                                                                                          | 入库/检索服务层                                                                                                                                                                                                                                      |
-| connector-service  | `connection_list`、`connection_revoked`、`credential_stored`                                                                                                                                                                                                                                                             | 连接器服务层                                                                                                                                                                                                                                         |
+| 服务               | 关键事件（`event` 名）                                                                                                                                                                                                                                                                                                   | 现有可复用点                                                                                                                                                                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 全部               | `http_request`、`http_request_slow`、`sse_opened`/`sse_closed`、`app_error`、`unhandled_exception`（api-gateway 的 `http_request`/`sse_opened`/`sse_closed` 额外带 `upstream`，由代理层经日志上下文绑定）                                                                                                                | 新中间件（P0）+ `packages/common/common/middleware.py`                                                                                                                                                                                                                                                        |
+| agent-orchestrator | `run_created`、`run_planned`、`run_approved`、`run_completed`、`run_failed`、`run_blocked`、`job_enqueued`、`job_finished`、`tool_invoked`（tool、duration、status）、`llm_call`（model、phase、latency_ms、tokens_in/out）、`sse_opened`（channel=run_events/notifications）、`outbox_dispatch`（event_type、attempts） | `services/agent-orchestrator/agent_orchestrator/services/runs.py`、`graph/nodes.py`、`services/agent-orchestrator/agent_orchestrator/services/llm.py:110`、`services/agent-orchestrator/agent_orchestrator/services/jobs_worker.py`、`events` 消费处                                                          |
+| llm-gateway        | `llm_request`（provider、model、stream、message_count、roles、prompt_chars、tool_count、temperature）、`llm_response`（model、finish_reason、prompt/completion/total_tokens、tool_calls、chars、duration_ms）、`llm_content`（`LOG_CONTENT=true` 才出：direction、payload 截断 2KB）、`llm_upstream_error`（code）       | `services/llm-gateway/llm_gateway/services/completions.py:91`、`services/llm-gateway/llm_gateway/services/embeddings.py:29`                                                                                                                                                                                   |
+| api-gateway        | `proxy_call`（**已实现**：`upstream`、`route`、`method`、`status`、`duration_ms`、`stream`；5xx 记 `error`）、`rate_limited`、`session_refresh_failed`、`mcp_oauth_*`                                                                                                                                                    | `services/api-gateway/api_gateway/api/proxy.py` 的 `proxy()` / `_proxy_stream()` / `_record_proxy()`（路由模板归一化 `normalize_path_template()` 在 `packages/common/common/middleware.py`）、`services/api-gateway/api_gateway/main.py` 的 `rate_limit`、`services/api-gateway/api_gateway/api/mcp_oauth.py` |
+| account-service    | `auth_login`（result）、`token_refresh`（result、reuse_detected）、`device_registered`                                                                                                                                                                                                                                   | `services/account-service/account/`（登录/刷新路由）                                                                                                                                                                                                                                                          |
+| workspace-service  | `sandbox_lifecycle`（state、duration）、`artifact_put`/`artifact_get`（bytes）、`workspace_created`/`renamed`/`deleted`                                                                                                                                                                                                  | `services/workspace-service/workspace/services/sandbox.py:38`、`services/workspace-service/workspace/services/workspaces.py:17`                                                                                                                                                                               |
+| knowledge-service  | `ingest_finished`（chunks、duration）、`search_finished`（k、latency_ms、hits）                                                                                                                                                                                                                                          | 入库/检索服务层                                                                                                                                                                                                                                                                                               |
+| connector-service  | `connection_list`、`connection_revoked`、`credential_stored`                                                                                                                                                                                                                                                             | 连接器服务层                                                                                                                                                                                                                                                                                                  |
 
 写法约定：`log.info("run_failed", run_id=..., stage=..., error_code=...)`——事件名是第一个位置参数（structlog 的 `event`），其余一律关键字。
 
@@ -292,7 +298,7 @@ method, route, status, duration_ms, client_ip?(仅 API 网关), error_code?
 ### P2 指标与追踪
 
 **状态：已完成**——指标见 §9.1（`common/metrics.py`，`/internal/metrics`）；追踪见 §9.2（`common/tracing.py`，FastAPI 原生 telemetry + httpx 插桩 + 可选 OTLP/HTTP 导出）。
-P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost 与缓存 token 拆价）、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 已实施并接 Langfuse Cloud（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)）；run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。导出前属性脱敏由 `common/redaction.py` 的 `AttributeRedactionSpanProcessor` 统一处理（敏感键删除、`LOG_CONTENT` 正文闸门、URL 去参、值截断，注册在导出处理器之前）。Web 前端 Sentry 已接入（§8）：同规则脱敏、`dataCollection` 收紧、`traceparent` 让前后端共享 trace_id、sourcemap 条件上传。
+P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost 与缓存 token 拆价）、orchestrator 的 run 根 span 与图节点 span、tool-service 的 `execute_tool {name}` 工具 span 均已实施；**其中只有 orchestrator 与 llm-gateway 的 span 上报 Langfuse**（实测 trace/usage/environment/baggage 均生效，见 [design/langfuse-observability.md](./design/langfuse-observability.md)），tool-service 默认 `LANGFUSE_ENABLED=false`，工具 span 只在开启该服务导出后才出现在 Langfuse。run 评分已接 Langfuse Scores（规则基线 `outcome` + 人工点赞/点踩，本地 `run.score.v1` 事件可回放）。采样分两种口径：直连 Langfuse 用头部 `TRACE_SAMPLE_RATIO`（compose 生产默认 0.1、本地 1.0）；需要「错误/慢 trace 全留」时走可选 OTel Collector 尾部采样（`deploy/otel-collector/config.yaml` + observability profile，服务侧 1.0，见设计文档 §9.2；本机无 Docker 未实测）。导出前属性脱敏由 `common/redaction.py` 的 `AttributeRedactionSpanProcessor` 统一处理（敏感键删除、`LOG_CONTENT` 正文闸门、URL 去参、值截断，注册在导出处理器之前）。Web 前端 Sentry 已接入（§8）：同规则脱敏、`dataCollection` 收紧、`traceparent` 让前后端共享 trace_id、sourcemap 条件上传。
 成本侧缓存命中/写入 token 已按缓存价拆分（`UsageOut.cache_read_tokens/cache_write_tokens`），无已知缺口；留存与容量策略已定义（设计文档 §9.3：分层留存、容量估算、旋钮优先级）。
 
 ---
@@ -329,3 +335,7 @@ P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost �
 - [x] 每个请求的 `http_request` 带 `trace_id`/`span_id`，与 span、Sentry tag 同 id（真机冒烟）
 - [x] `/healthz`、`/readyz`、`/internal/metrics` 不产生 span
 - [x] 配 `<SERVICE>__OTLP_ENDPOINT` 时 OTLP/HTTP 收到 span（本地 collector 验收集合与 `service.name`）；不配时零出口
+- [x] api-gateway 的 `http_request.route` 是归一化业务模板（不再是 catch-all `/api/{path:path}`），`http_request`/`sse_opened`/`sse_closed` 带 `upstream`
+- [x] 网关代理路径每次上游调用一条 `proxy_call`（`upstream`/`route`/`method`/`status`/`duration_ms`/`stream`），`http_upstream_requests_total`/`http_upstream_duration_seconds` 可按 `upstream`+`route` 聚合
+- [x] Nginx `/api/` 的 access log 带 `$http_x_request_id`/`$upstream_addr`/`$upstream_status`/`$upstream_response_time`/`$request_time`（静态复核：本机无网络拉不到 nginx 镜像，未跑 `nginx -t`）
+- [x] Langfuse 只接收 agent-orchestrator 与 llm-gateway 的 span：网关与其余服务 `LANGFUSE_ENABLED=false`、`TRACING_ENABLED=true`，trace 根是业务服务 span

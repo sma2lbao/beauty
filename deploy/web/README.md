@@ -183,6 +183,7 @@ services:
 - 每个容器 `HEALTHCHECK` 打自己的 `/healthz`（**进程存活**，不依赖 DB/下游），Python 镜像用标准库 `urllib`（runtime 没有 curl），web 用 `wget` 打静态首页。
 - `/readyz` 是**就绪**语义：API 网关检查关键配置（session/internal 密钥齐全且非默认值），可选 `READY_PROBE_UPSTREAMS=true` 时再探下游；各业务服务返回自身依赖状态。nginx 已把这两个路径反代到 API 网关，不会被 SPA 回退吃掉。
 - compose 内部只把 `service_healthy` 当作启动顺序依据（用 `/healthz`）。如果编排层（K8s/ECS）要做流量摘除，用 `/readyz` 而不是 `/healthz`。
+- `/api/` 的访问日志用自定义 `log_format api_gateway`（JSON：`request_id`/`uri`/`status`/`$remote_addr` + `$upstream_addr`/`$upstream_status`/`$upstream_response_time`/`$request_time`），与网关自己的 `proxy_call` 一起区分「接入层慢 / 网关慢 / 后端慢」；`/healthz`、`/readyz` 保持 `access_log off`。
 - 探针约定与日志降噪见 [docs/observability.md](../../docs/observability.md)。
 
 ## 8. 升级、回滚与备份

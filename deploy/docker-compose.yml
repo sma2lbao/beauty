@@ -317,6 +317,9 @@ services:
       API_GATEWAY__READY_PROBE_UPSTREAMS: ${READY_PROBE_UPSTREAMS:-false}
       # /api 限流共享计数;注释掉该行即回退进程内滑动窗口。
       API_GATEWAY__REDIS_URL: redis://redis:6379/0
+      # 观测:网关只建 span、注入/续传 traceparent,不上报 Langfuse
+      # (TRACING_ENABLED 默认 true;LANGFUSE_ENABLED 保持 false)。
+      # 一次 UI 对话的 trace 根是业务服务 span,见 docs/design/langfuse-observability.md §5.1。
     depends_on:
       <<: *db-depends
       redis:

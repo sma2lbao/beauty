@@ -1,4 +1,5 @@
-# OTel Collector:尾部采样,把 8 个服务的 trace 汇聚后转发到 Langfuse。
+# OTel Collector:尾部采样,把**上报服务**(当前是 agent-orchestrator 与 llm-gateway;
+# 网关与其余服务只传播 traceparent、不导出)的 trace 汇聚后转发到 Langfuse。
 #
 # 为什么需要它:SDK 的 trace_sample_ratio 是「头部采样」,在 trace 开始时按比例
 # 丢,错误/慢请求即使出问题也可能已被丢掉。Collector 先在内存里等 trace 结束

@@ -1,6 +1,6 @@
 # Langfuse 观测接入（trace / 成本 / 评估）
 
-> 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域），8 个服务的本地 `.env` 已配置并对 Cloud 实测通过**（2026-11-09）。
+> 状态：**Phase 1（common 基座）、Phase 2（orchestrator 节点 span、llm-gateway generation span）与 run 根 span / 工具 span 已实施；当前接入 Langfuse Cloud（EU 区域）并对 Cloud 实测通过**（2026-11-09）。**上报范围已收窄（2026-11-11）：只有 agent-orchestrator 与 llm-gateway 直连 Langfuse**，api-gateway 与其余业务服务保留 `TRACING_ENABLED=true`、只建 span 与传播 `traceparent`，不上报（见 §5.1）。
 > 已用真实 OTLP 导出验证：Cloud 侧能看到 trace/observation、observation type 正确（SPAN / GENERATION）、token 用量（`usageDetails`）、baggage 传播的 user/session 生效；**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目，见 §9.1）。
 > 状态：Phase 3 全部完成——导出前脱敏、缓存 token 成本口径、eval/scores、留存与容量策略（§9.3）已落地或已定策略；Web 端「在 Langfuse 查看」深链已完成（`runs.trace_id`）；尾部采样已提供可选的 OTel Collector 配置（错误/慢 trace 全留 + 10% 基线，见 §9.2），本机无 Docker 未实测启动。`apps/web` 前端 Sentry 也已接入，并通过 `traceparent` 与服务端共享同一 trace_id（脱敏/采集收紧细节见 [docs/observability.md](../observability.md) §8）。
 > 本文是 Langfuse 接入的单一真源；日志/指标/Sentry 的既有规范仍在 [docs/observability.md](../observability.md)，两者不冲突。
@@ -50,7 +50,7 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
                         可选: 自托管观测 profile（本地/离线，四件套见 §8.2）
 ```
 
-写入端只有 OTel：`common.tracing.init_tracing` 建进程级 `TracerProvider`，Langfuse 与通用 OTLP 二选一（Langfuse 优先），导出到 `POST /api/public/otel/v1/traces`，Basic 认证 + `x-langfuse-ingestion-version: 4`。**不依赖 Langfuse SDK**，因此换后端（Tempo/Jaeger/Phoenix）只改配置；Cloud 与自托管只差 `langfuse_host`（Cloud：`https://cloud.langfuse.com`，EU；另有 US/JP/HIPAA 区域）。
+写入端只有 OTel：`common.tracing.init_tracing` 建进程级 `TracerProvider`，Langfuse 与通用 OTLP 二选一（Langfuse 优先），导出到 `POST /api/public/otel/v1/traces`，Basic 认证 + `x-langfuse-ingestion-version: 4`。**但只有 agent-orchestrator 与 llm-gateway 会建 exporter**：其余服务的 `TracerProvider` 只留在进程内，同样解析/注入 `traceparent`，只是不导出（见 §5.1）。**不依赖 Langfuse SDK**，因此换后端（Tempo/Jaeger/Phoenix）只改配置；Cloud 与自托管只差 `langfuse_host`（Cloud：`https://cloud.langfuse.com`，EU；另有 US/JP/HIPAA 区域）。
 
 ---
 
@@ -63,7 +63,7 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 - `export_target(settings)`：返回 `(endpoint, headers)`；endpoint = `langfuse_host + /api/public/otel/v1/traces`，headers = `Authorization: Basic base64(pk:sk)` + 摄取版本头。
 - `trace_attributes(...)` / `observation_attributes(...)` / `gen_ai_usage_attributes(...)`：把业务语义翻译成上述键；`tags` 序列化成 JSON 字符串，`usage`/`cost` 用 Langfuse 文档要求的 JSON 字符串。
 - `set_trace_attributes(span, ...)`：直接写当前 span；`langfuse_scope(**kwargs)`：写当前 span + 把同名属性塞进 OTel Baggage，退出时 detach。
-- `LangfuseBaggageSpanProcessor`：on_start 从父 Context 的 Baggage 复制 `langfuse.` 前缀属性。**这是关键**：Langfuse 要求 user/session/tags 出现在每条 observation 上，否则过滤聚合会漏；HTTP span、gateway span 由该 processor 自动继承，业务代码不用逐层重设。
+- `LangfuseBaggageSpanProcessor`：on_start 从父 Context 的 Baggage 复制 `langfuse.` 前缀属性。**这是关键**：Langfuse 要求 user/session/tags 出现在每条 observation 上，否则过滤聚合会漏；上报进程内的 HTTP span 与所有子 span 由该 processor 自动继承，业务代码不用逐层重设（api-gateway 不导出，其 span 不涉及 Langfuse 属性）。
 - `json_value(value)`：统一 JSON 编码（`ensure_ascii=False`、`default=str`、紧凑分隔符），保证非字符串值可入库。
 
 ### 4.2 `packages/common/common/tracing.py`
@@ -100,13 +100,35 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 | `langfuse_secret_key`     | `null`                  | 项目私钥 `sk-lf-*`；只在服务端注入，禁止进前端或日志                                                                  |
 | `otlp_collector_endpoint` | `null`                  | 非空则 trace 先发 OTel Collector（尾部采样，见 §9.2），优先级高于 Langfuse 直连；走它时 `trace_sample_ratio` 必须 1.0 |
 
-### 5.1 当前默认：Langfuse Cloud（已配置到 8 个服务）
+### 5.1 上报范围与当前默认：只有两个服务直连 Langfuse
 
-8 个服务的本地 `.env` 已写入同一段（`.env` 被 git 忽略；`.env.example` 里有留空模板）。**所有服务共用一个 Langfuse 项目密钥**——跨服务 trace 才串得起来。
+**谁上报（按服务区分，不是「全部服务都报」）**：
+
+| 服务                                               | `LANGFUSE_ENABLED` | `TRACING_ENABLED` | 说明                                                                    |
+| -------------------------------------------------- | ------------------ | ----------------- | ----------------------------------------------------------------------- |
+| agent-orchestrator                                 | `true`             | `true`            | run 根 span、图节点 span；trace 的语义与 session/user 在这里定死        |
+| llm-gateway                                        | `true`             | `true`            | `chat {model}` generation span、usage 与 ingested cost                  |
+| api-gateway                                        | **`false`**        | **`true`**        | 只建 span、注入/续传 `traceparent`；通用 HTTP span **不导出**           |
+| account / connector / knowledge / tool / workspace | `false`            | `true`            | 同上：span 只留在进程内（供日志 `trace_id` 串联），不产生 Langfuse 事件 |
+
+**为什么这样分层**：
+
+1. **别让通用 span 顶掉业务语义**：网关的 HTTP span 来自 catch-all 路由（`/api/{path:path}`），导出后它就成了 Langfuse 里一条 UI 对话的 trace 根，按 run / 会话 / 账号筛选时要多点一层，而且名字不带任何业务含义。
+2. **省 Langfuse 事件量**：网关承载全部 API 请求（轮询、状态查询、探针等），每个请求都建 trace 会快速吃掉额度；这些请求的因果与成本信息在业务服务的 span 里已经有了。
+3. **链路不能断**：网关保留 `TRACING_ENABLED=true` 才能在入站生成 / 续传 `traceparent` 并带进下游；把网关 tracing 关掉，浏览器 → 网关 → orchestrator 的 W3C 传播从第一跳就断了，下游各自起一条新 trace。
+
+**trace 根是谁**（关键口径）：一次 UI 对话的 trace 根是**真实业务服务的 span**，不是网关的通用 span。
+
+- 简单对话 / 同步触发：orchestrator 的 HTTP span（`METHOD /api/v1/...`，FastAPI 原生 telemetry）是根，llm-gateway 的 `chat {model}` 是子 generation；
+- 复杂任务：`run {run_id}`（`services/run_trace.py`）挂在该 HTTP span 之下，trace 名 = `run {run_id}`，session = conversation_id，user = account_id；
+- 后台/无父 span 时（job worker、定时任务），`run {run_id}` 自己就是根。
+
+原有「一次 run = 一条 trace」的目标不变，改的是**根的定义**：run 子树仍在同一条 trace 里，但 trace 的起笔是业务服务处理请求的那一跳。
+
+**当前默认：Langfuse Cloud（仅两个上报服务）**。agent-orchestrator 与 llm-gateway 的本地 `.env` 写入同一段（`.env` 被 git 忽略；`.env.example` 里是留空/`false` 模板）。两个服务共用同一个 Langfuse 项目密钥——跨服务 trace 才串得起来。
 
 ```sh
-# 前缀按服务替换：ACCOUNT / AGENT_ORCHESTRATOR / API_GATEWAY / CONNECTOR /
-# KNOWLEDGE / LLM_GATEWAY / TOOL / WORKSPACE
+# 前缀按服务替换：AGENT_ORCHESTRATOR / LLM_GATEWAY（其余服务的 LANGFUSE_ENABLED 保持 false）
 <SERVICE>__LANGFUSE_ENABLED=true
 <SERVICE>__LANGFUSE_HOST=https://cloud.langfuse.com
 <SERVICE>__LANGFUSE_PUBLIC_KEY=pk-lf-...        # Cloud 项目 → Settings → API Keys
@@ -114,6 +136,13 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 <SERVICE>__TRACE_SAMPLE_RATIO=1.0               # 本地全采；生产按 §9 调到 0.1~0.2
 # 可选：走 OTel Collector 尾部采样（§9.2），此时上面必须保持 1.0
 # <SERVICE>__OTLP_COLLECTOR_ENDPOINT=http://otel-collector:4318/v1/traces
+```
+
+其余服务（api-gateway、account、connector、knowledge、tool、workspace）保持：
+
+```sh
+<SERVICE>__LANGFUSE_ENABLED=false   # 不建 exporter、零网络出口
+<SERVICE>__TRACING_ENABLED=true     # 仍建 span 并传播 traceparent（网关尤其必须）
 ```
 
 开关语义：`langfuse_enabled && public_key && secret_key` 三者齐全才会初始化导出，缺一项等于关闭（零网络）。公钥前缀 `pk-lf-`（可公开、可给前端）、私钥 `sk-lf-`（等同项目写权限，泄露即换）。
@@ -136,6 +165,8 @@ api-gateway ──► agent-orchestrator ──► llm-gateway ──► 模型�
 | `chat {model}`（非流式）        | `generation_trace.py`    | `generation`                | request/response model、usage、fallback_count、input/output                                                     |
 | `chat {model}`（流式）          | 同上                     | `generation`                | 同上 + completion_start_time（TTFT）                                                                            |
 | `execute_tool {name}`           | `execution/tool_span.py` | `tool`                      | tool.name、tool.call.id、risk、decision、duration_ms、result_chars、paths、sandbox_id；失败 WARNING，异常 ERROR |
+
+> 表内只列**会上报 Langfuse** 的 span。api-gateway 也有 HTTP span（代理层会用 `update_current_span()` 把名字改成归一化业务模板），但它不导出，只服务于进程内日志 `trace_id` 串联——trace 根因此是业务服务的 HTTP span，而不是网关 span。
 
 run 根 span 的 trace_id 会回写到 `runs.trace_id`（session_scope 提交）；一次 run 有多次执行（首次、approve、resume）时只保留**最近一次**。控制台 run 详情据此显示「在 Langfuse 查看」，跳 `${VITE_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}/trace/<trace_id>`；地址由 `apps/web` 的构建期变量 `VITE_LANGFUSE_BASE_URL` 决定，自托管时改成内网控制台地址。
 
@@ -171,7 +202,7 @@ run 根 span 的 trace_id 会回写到 `runs.trace_id`（session_scope 提交）
 
 ### 8.1 Cloud（当前默认，零额外容器）
 
-不需要起任何东西：服务本地 `.env` 已指向 Cloud，`npm run dev` 起服务后 trace 直接进 Cloud 项目。造一条 run 后验证：
+不需要起任何东西：两个上报服务（orchestrator / llm-gateway）的本地 `.env` 已指向 Cloud，`npm run dev` 起服务后 trace 直接进 Cloud 项目。造一条 run 后验证：
 
 ```sh
 curl -sS -u "$PK:$SK" \
@@ -312,8 +343,9 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 
 ## 10. 与既有观测的关系
 
-- `X-Request-ID` 与 `trace_id` 双向可查：日志平台按 `trace_id` 跳到 Langfuse，Langfuse 的 trace 里也能拿到 HTTP span 上的 request_id；控制台 run 详情有「在 Langfuse 查看」深链（`runs.trace_id`，见 §6）。
-- Sentry 事件与 Langfuse trace 共享同一 `trace_id`，异常点到对应 run 的链路可对上；前端 Sentry 采样命中时由 `lib/http.ts` 带 `traceparent`，后端 OTel 沿用该 trace_id，于是浏览器事务与 `run {run_id}` 根 span 同属一条 trace。
+- `X-Request-ID` 与 `trace_id` 双向可查：日志平台按 `trace_id` 跳到 Langfuse，Langfuse 的 trace 里也能拿到**上报服务** HTTP span 上的 request_id；控制台 run 详情有「在 Langfuse 查看」深链（`runs.trace_id`，见 §6）。
+- 网关的通用 HTTP span 不进 Langfuse（§5.1）：排查接入层用 Nginx access log 与网关 `proxy_call`，排查业务因果与成本用 Langfuse，两者按 `trace_id`/`request_id` 对齐。
+- Sentry 事件与 Langfuse trace 共享同一 `trace_id`，异常点到对应 run 的链路可对上；前端 Sentry 采样命中时由 `lib/http.ts` 带 `traceparent`，后端 OTel 沿用该 trace_id，于是浏览器事务与 `run {run_id}` span 同属一条 trace（trace 根随之为 orchestrator 的业务 HTTP span，见 §5.1）。
 - 前端关闭 Sentry（`VITE_SENTRY_DSN` 为空）时不带 `traceparent`，后端照样按自身采样策略开 trace，互不影响。
 - Langfuse 不注册 meter/logger provider，指标与日志口径不变；`/internal/metrics` 仍是唯一 Prometheus 出口。
 
@@ -350,6 +382,6 @@ llm-gateway 每次调用都用 litellm 随包价目表算出 USD 成本，写在
 - **metadata 默认不可过滤**：要过滤必须写 `langfuse.trace.metadata.*` / `langfuse.observation.metadata.*`。
 - **Langfuse 不是日志库**：不要拿 trace 当审计或全量日志，体量与留存都会失控。
 - **自托管依赖重**（Postgres + ClickHouse + Redis + MinIO 四件套）：默认 profile 关闭，本地只想看 span 时可直接配通用 `OTLP_ENDPOINT` 指向临时 collector。
-- **Cloud 区域**：`https://cloud.langfuse.com` 是 EU；数据驻留要求更高时换 US/JP/HIPAA 端点，或切自托管。密钥按项目（不是按用户）签发，一个项目给全部服务用——多套密钥会把链路拆成几个项目、trace 串不起来。
+- **Cloud 区域**：`https://cloud.langfuse.com` 是 EU；数据驻留要求更高时换 US/JP/HIPAA 端点，或切自托管。密钥按项目（不是按用户）签发，一个项目给所有上报服务用（当前是 orchestrator 与 llm-gateway）——多套密钥会把链路拆成几个项目、trace 串不起来。
 - **Cloud 成本列默认可能是空的**：托管价目表不含 deepseek（见 §9.1），别把「成本 0」当成真实花费。
 - **`langfuse_secret_key` 等同项目写权限**：只在服务端 `.env`，不进前端构建、不进日志、不进 span 属性；泄露立刻在 Cloud 轮换。
