@@ -143,7 +143,7 @@ async def test_http_provider_touch_and_close() -> None:
 
 
 async def test_runtime_builds_http_provider_and_closes(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, auth_issuer="http://idp.test")
+    settings = _settings(tmp_path, account_service_url="http://idp.test")
     runtime = SandboxRuntime(settings=settings)
 
     assert isinstance(runtime.provider, HttpSandboxProvider)

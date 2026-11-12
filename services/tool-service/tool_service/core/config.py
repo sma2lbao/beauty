@@ -24,6 +24,9 @@ class Settings(ServiceSettings):
     # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 TOOL__DATABASE_URL 覆盖
     database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_tool"
     internal_secret: str = ""
+    # 签发方 account-service 的集群内地址;auth_issuer 是 token 的 iss 公网标识,
+    # 不能当 HTTP 基地址(边缘只路由 /api/*)。
+    account_service_url: str = "http://127.0.0.1:8001"
     workspace_service_url: str = "http://127.0.0.1:8005"
     workspace_timeout_seconds: float = 60.0
     # P2:search_knowledge 经 HTTP 执行器代理到知识库(只读)。

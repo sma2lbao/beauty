@@ -307,7 +307,7 @@ class KnowledgeRuntime:
 
     def __init__(self, *, settings: Settings) -> None:
         self._broker = TokenBroker(
-            base_url=settings.auth_issuer,
+            base_url=settings.account_service_url,
             internal_secret=settings.internal_secret,
             subject=SERVICE_SUBJECT,
         )

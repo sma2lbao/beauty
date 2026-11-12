@@ -38,7 +38,9 @@ class ToolsAssemblyMixin:
         # 服务间 token(§5):内部调用一律经 TokenBroker 换标准 JWT——账号来自
         # 签名 claim,不再有 X-Account-Id 裸调路径;密钥未配置时在换发处明确报错
         broker = TokenBroker(
-            base_url=settings.auth_issuer,  # 签发方即 account-service
+            # 签发方是 account-service,必须用集群内地址:auth_issuer 是 token 的
+            # iss 公网标识,经边缘只路由 /api/*,POST /v1/auth/issue 会 404。
+            base_url=settings.account_service_url,
             internal_secret=settings.internal_auth_secret,
         )
         self.broker = broker
