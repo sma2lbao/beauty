@@ -476,6 +476,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 - **P2（2026-10-20）**：stdio MCP 接入——命令在沙箱内拉起，`StdioSandboxPool` 按对话级复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；`env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换；
 - **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
 - **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单账号可信环境（桌面本地模式），启动即打 warning；生产/多账号仍只用 microsandbox；
+- **外置 microVM provider=e2b（2026-11-12）**：`workspace/services/sandbox_provider/e2b_sandbox.py` 通过 E2B 控制面（E2B 官方云 / 阿里云 Agent Sandbox 极速版，同一 SDK 只换 Key 与 Domain）提供与 microsandbox 相同的 `SandboxProvider` 协议；沙箱按 `metadata.beauty_sandbox_name` 标记并在服务重启后查回，`destroy` 幂等；`network` 映射 `allow_internet_access`，`cols/rows` 走 `pty.create`；轻量服务器无 `/dev/kvm` 时作为生产 provider（`WORKSPACE__SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`，Hobby 单会话 ≤1h）；
 - **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
 

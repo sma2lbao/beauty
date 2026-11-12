@@ -1,6 +1,6 @@
 """沙箱 ORM:一行对应运行时里的一个沙箱实例(§7 阶段 B / P1)。
 
-运行本体在 provider(microsandbox)侧,本表只保留账号、生命周期与配额元数据;
+运行本体在 provider(microsandbox / e2b 等)侧,本表只保留账号、生命周期与配额元数据;
 `name` 是 provider 全局唯一名,同时作为运行时句柄。
 
 `scope_key` 是 account 内的幂等键(P0-05):tool-service 每次工具调用先

@@ -1,8 +1,10 @@
 """沙箱运行时适配层:业务层只依赖 `SandboxProvider` 协议。
 
-两种实现:
+三种实现:
 
 - `MicrosandboxProvider`:microsandbox microVM(默认,隔离);
+- `E2bSandboxProvider`:E2B 云沙箱 microVM(官方云或兼容 E2B 的阿里云
+  Agent Sandbox 极速版),远端运行、按 metadata 名字查回;
 - `LocalSandboxProvider`:宿主本地目录 + 子进程,**无隔离**,仅用于
   没有 microVM runtime 的本地开发/单账号可信环境。
 
@@ -22,6 +24,7 @@ W5 拆包说明:实现按职责拆到同包子模块(`protocols` / `utils` /
 
 from __future__ import annotations
 
+from .e2b_sandbox import E2bSandboxProvider, E2bShellSession
 from .factory import build_sandbox_provider
 from .local import (
     LOCAL_HOME_SUBDIR,
@@ -93,6 +96,8 @@ __all__ = [
     "LocalPipeShellSession",
     "LocalPtyShellSession",
     "LocalSandboxProvider",
+    "E2bSandboxProvider",
+    "E2bShellSession",
     "MicroShellSession",
     "MicrosandboxProvider",
     "UnavailableSandboxProvider",

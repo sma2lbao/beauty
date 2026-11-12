@@ -15,7 +15,9 @@ class Settings(BaseAppSettings):
     service_name: str = "workspace-service"
     # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
     # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 WORKSPACE__DATABASE_URL 覆盖
-    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_workspace"
+    database_url: str = (
+        "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_workspace"
+    )
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     # 单库多迁移链(多服务共用一个库)时的独立版本表;留空即默认 alembic_version
     alembic_version_table: str | None = None
@@ -53,6 +55,13 @@ class Settings(BaseAppSettings):
     # microsandbox runtime home(空 = 用 SDK 默认 ~/.microsandbox);
     # 部署时必须指向可写目录,且 runtime 需要能访问 OCI registry
     sandbox_msb_home: str = ""
+    # E2B 云沙箱(provider=e2b):microVM 跑在 E2B 控制面。官方云与兼容 E2B 的
+    # 厂商(如阿里云 Agent Sandbox 极速版)走同一套代码,只换 Key / Domain;
+    # API Key 建议用环境变量 E2B_API_KEY 注入,不要写进仓库文件。
+    sandbox_e2b_api_key: str | None = None
+    sandbox_e2b_domain: str | None = None  # 兼容厂商填其 E2B_DOMAIN,官方云留空
+    # 模板名(镜像);空 = 优先用请求里的 image,再退化 base
+    sandbox_e2b_template: str = ""
     # local provider 的沙箱根目录:每个沙箱一个 <root>/<name>/ 目录,
     # /workspace 映射到其中的 workspace/;默认落在服务目录下并被 gitignore
     sandbox_local_root: str = "./.sandboxes"

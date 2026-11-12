@@ -27,7 +27,7 @@ class UnavailableSandboxProvider:
         return UpstreamError(
             "sandbox.provider_unavailable",
             "沙箱运行时未启用(provider=unavailable);"
-            "请配置 WORKSPACE__SANDBOX_PROVIDER=microsandbox 或 local",
+            "请配置 WORKSPACE__SANDBOX_PROVIDER=microsandbox、e2b 或 local",
         )
 
     async def create(self, spec: SandboxSpec) -> None:

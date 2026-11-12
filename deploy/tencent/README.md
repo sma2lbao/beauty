@@ -103,18 +103,26 @@ bash deploy/tencent/scripts/deploy.sh
 
 ## 7. 沙箱
 
-轻量没有 `/dev/kvm`，`microsandbox` 不能跑。当前 `.env` 用：
+轻量没有 `/dev/kvm`，`microsandbox` 不能跑。外置 microVM 用 **`e2b` provider**
+（2026-11-12 落地，`workspace/services/sandbox_provider/e2b_sandbox.py`）：E2B 官方云
+或阿里云 Agent Sandbox 极速版，同一套代码只换 Key/Domain。
 
 ```dotenv
-WORKSPACE__SANDBOX_PROVIDER=unavailable
-WORKSPACE__SANDBOX_REAPER_ENABLED=false
+WORKSPACE__SANDBOX_PROVIDER=e2b
+E2B_API_KEY=CHANGE-ME-e2b-key
+# 阿里云极速版（可选）：同时设置
+# E2B_API_URL=https://api.cn-hongkong.sandbox.aliyuncs.com
+# E2B_DOMAIN=cn-hongkong.sandbox.aliyuncs.com
+WORKSPACE__SANDBOX_REAPER_ENABLED=true
 ```
 
-含义：工具执行返回明确的「沙箱不可用」错误，其余功能正常。
+没有 E2B Key 时保持 `WORKSPACE__SANDBOX_PROVIDER=unavailable`（工具执行返回明确的
+「沙箱不可用」错误，其余功能正常）。E2B Hobby 单沙箱寿命上限 1h，按套餐调整
+`WORKSPACE__SANDBOX_MAX_TTL_SECONDS`（默认 7200 会超限，建议 ≤3600）。
 
 - **禁止**在生产用 `WORKSPACE__SANDBOX_PROVIDER=local`：等于在宿主机直接跑用户代码。
-- P0 改造：新增 Modal Sandboxes provider（`workspace/services/sandbox_provider/modal.py`），用 `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` 认证；接口契约与 microsandbox 一致（argv + stdin + 超时）。没有 Modal 账号时，在 [modal.com](https://modal.com) 注册并 `pip install modal && modal token new` 即可拿到 token。
-- 该 provider 落地前，Agent 的文件/命令类工具不可用（对话、知识库、连接器不受影响）。
+- 备选：Modal Sandboxes provider（尚未实现，`sandbox_provider/modal.py`）用 `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` 认证；接口契约与 microsandbox 一致（argv + stdin + 超时）。没有 Modal 账号时，在 [modal.com](https://modal.com) 注册并 `pip install modal && modal token new` 即可拿到 token。
+- 未配置任何 microVM provider 时，Agent 的文件/命令类工具不可用（对话、知识库、连接器不受影响）。
 
 ## 8. 备份 / 监控
 

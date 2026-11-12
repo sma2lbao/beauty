@@ -5,15 +5,15 @@
 
 ## 1. 结论与范围
 
-| 层         | 选型                                         | 说明                                                     |
-| ---------- | -------------------------------------------- | -------------------------------------------------------- |
-| Web / 官网 | Vercel                                       | 现状不动；`/api/:path*` rewrite 到公网 API 网关          |
-| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose   | 8 个 Python 服务 + Caddy 全量；升配 4C8G                 |
-| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn` | 只反代 api-gateway:8007，其余服务仅内网                  |
-| 数据库     | Neon（新加坡），6 个库                       | 一服务一库；首尔到新加坡 RTT ≈ 70–90ms                   |
-| 沙箱       | 外置 Modal Sandboxes（待落地）               | 轻量无 `/dev/kvm`；落地前 `SANDBOX_PROVIDER=unavailable` |
-| 交付物     | 过渡期本地卷，后续 COS                       | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点          |
-| 密钥       | 主机 `.env`（600）+ 卷内 PEM                 | 后续可换 Secret Manager / KMS                            |
+| 层         | 选型                                             | 说明                                                                               |
+| ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Web / 官网 | Vercel                                           | 现状不动；`/api/:path*` rewrite 到公网 API 网关                                    |
+| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose       | 8 个 Python 服务 + Caddy 全量；升配 4C8G                                           |
+| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`     | 只反代 api-gateway:8007，其余服务仅内网                                            |
+| 数据库     | Neon（新加坡），6 个库                           | 一服务一库；首尔到新加坡 RTT ≈ 70–90ms                                             |
+| 沙箱       | 外置 E2B 控制面（官方云 / 阿里云极速版，已落地） | 轻量无 `/dev/kvm`；`SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`；无 Key 时 `unavailable` |
+| 交付物     | 过渡期本地卷，后续 COS                           | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点                                    |
+| 密钥       | 主机 `.env`（600）+ 卷内 PEM                     | 后续可换 Secret Manager / KMS                                                      |
 
 **为什么不是「尽量都放 Vercel」**：api-gateway 要代理 SSE 长流（Vercel 函数时长 Hobby 300s / Pro 800s），agent-orchestrator 跑分钟级 run 与 5 个常驻循环，workspace/connector 也各带常驻循环，这些都不是函数模型能承载的；把 8 个服务放同一台机器还顺带消灭了跨云鉴权与内网延迟问题。详见 serverless-deployment.md §3.2/§3.3。
 
