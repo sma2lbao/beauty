@@ -37,16 +37,22 @@ npx nx test @beauty/web       # vitest + Testing Library 单测
 
 ### 1. Vercel 项目设置
 
-| 设置             | 值                                                                   |
-| ---------------- | -------------------------------------------------------------------- |
-| Root Directory   | `apps/web`                                                           |
-| Framework Preset | Vite                                                                 |
-| Build Command    | `npm run build`（= `tsc --noEmit && vite build`；依赖由仓库根安装）  |
-| Output Directory | `dist`                                                               |
-| 环境变量         | `VITE_AUTH_MODE=session`、`VITE_SITE_URL=https://site.beautymoon.cn` |
+| 设置             | 值                                                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Root Directory   | `apps/web`                                                                                                                                       |
+| Framework Preset | Vite                                                                                                                                             |
+| Build Command    | `npm run build`（= `tsc --noEmit && vite build`；依赖由仓库根安装）                                                                              |
+| Output Directory | `dist`                                                                                                                                           |
+| 环境变量         | `VITE_AUTH_MODE=session`、`VITE_SITE_URL=https://site.beautymoon.cn`（仓库里 `apps/web/.env.production` 已写死默认值，面板不配也不会回退 token） |
 
 Vercel 上必须用 `session` 模式（见 `.env.example`）：`token` 模式直连 `/account-api`、`/workspace-api`、
 `/knowledge-api` 三个服务，而 `runs`/`conversations` 仍走 `/api/*`，等于把三个后端都摊到公网，不推荐。
+
+仓库里提交了 `apps/web/.env.production`（`VITE_AUTH_MODE=session`、`VITE_SITE_URL`），所以 `vite build`
+即使面板没配环境变量也会按 `session` 构建。**注意本地用 Nx 构建时**：`npx nx build @beauty/web` 会被
+Nx 把 `apps/web/.env`（gitignored，本地 `token`）注入成进程环境变量，而进程环境变量优先级高于
+`.env.production`，于是产物会退回 `token`。要本地验证生产产物，直接用
+`cd apps/web && npx vite build`（Vite 的 mode 文件优先级高于 `.env`），或临时挪走 `.env`。
 
 ### 2. `vercel.json`
 
@@ -55,7 +61,7 @@ Vercel 上必须用 `session` 模式（见 `.env.example`）：`token` 模式直
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://api-gateway.beautymoon.cn/api/:path*"
+      "destination": "https://api-cvm.beautymoon.cn/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
@@ -64,7 +70,7 @@ Vercel 上必须用 `session` 模式（见 `.env.example`）：`token` 模式直
 
 - **顺序有意义**：`/api/*` 先整体代理到 API 网关，其余路径才走 SPA 回退；静态文件（`/assets/*`、
   `/favicon.svg`）先命中文件系统，回退不会遮蔽它们。
-- `api-gateway.beautymoon.cn` 是**占位域名**：换成 API 网关实际公网域名（需加 DNS 记录），它是文件里唯一要改的字符串。
+- `api-cvm.beautymoon.cn` 是当前 API 网关公网入口（Caddy → `api-gateway:8007`，`/api` 前缀原样透传）；换部署域名时只需改这一处，并同步 `deploy/tencent/.env` 的 `API_HOST` 与各 `*__AUTH_ISSUER`。
 - 还没部署 API 网关时只保留第二条 catch-all，否则 `/api/*` 会因目标不可达返回 5xx。
 - API 网关的公网入口必须保留 `/api` 前缀并透传流式响应（见下）。
 
