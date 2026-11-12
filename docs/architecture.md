@@ -98,7 +98,7 @@ Browser
 
 - 普通 CRUD / 短请求：浏览器 → Nginx → FastAPI 网关 → 容器服务；
 - 长任务事件流：API 网关发短时 token，浏览器直连 runtime SSE（避免 API 网关/代理超时）；
-- 公开 API / MCP：第三方 → api.beautymoon.cn（API Key/OAuth，限流）；
+- 公开 API / MCP：第三方 → api-cvm.beautymoon.cn（API Key/OAuth，限流）；
 - 服务间：内部 HTTP + 账号 JWT；禁止跨服务直连数据库。
 
 ---

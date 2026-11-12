@@ -132,7 +132,9 @@ services:
     <<: *common
     profiles: ['migrate']
     restart: 'no'
-    entrypoint: ['/bin/sh', '-lc']
+    # 注意用非 login shell：`sh -lc` 会读 /etc/profile 覆盖镜像的 PATH，
+    # 导致 /app/.venv/bin/alembic 找不到（alembic: not found）。
+    entrypoint: ['/bin/sh', '-c']
     command:
       - |
         set -eu

@@ -741,7 +741,7 @@ D1 的改造要点（相对 Cloud Run 主线）：
 - 删除这 6 个服务 `pyproject.toml` 里的 `[tool.vercel]` 表；
 - 删除 `scripts/check-vercel-config.py`，`scripts/check-workspace.sh` 相应收敛为三查。
 
-`apps/web/vercel.json`（SPA rewrite，`/api/:path*` → `https://api.beautymoon.cn/:path*`）与 `packages/design/vercel.json`（文档站）保留。下面保留当时的实测结论，供将来若重新评估 Vercel 导出路线的参考：
+`apps/web/vercel.json`（SPA rewrite，`/api/:path*` → `https://api-cvm.beautymoon.cn/:path*`）与 `packages/design/vercel.json`（文档站）保留。下面保留当时的实测结论，供将来若重新评估 Vercel 导出路线的参考：
 
 - **`maxDuration` 受部署计划硬上限约束**：Hobby 上限 300s，写 800 会被 Vercel 拒绝（`The value for maxDuration must be between 1 second and 300 seconds, in order to increase this limit upgrade your plan`）；Pro/Enterprise 单函数最高 800s。
 - **必须显式覆盖 Nx 自动配置**：仓库根有 `nx.json`，Vercel 会按 Nx monorepo 改写 install/build 命令；Python 服务没有 build target，于是报 `NX   Cannot find configuration for task <服务>:build`。当时靠 `framework: "fastapi"` / `installCommand` / `buildCommand: "true"` 三项覆盖。

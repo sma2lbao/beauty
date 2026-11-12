@@ -9,7 +9,7 @@
 | ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | Web / 官网 | Vercel                                           | 现状不动；`/api/:path*` rewrite 到公网 API 网关                                    |
 | 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose       | 8 个 Python 服务 + Caddy 全量；升配 4C8G                                           |
-| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`     | 只反代 api-gateway:8007，其余服务仅内网                                            |
+| 入口       | Caddy 自动 HTTPS，仅暴露 `api-cvm.beautymoon.cn` | 只反代 api-gateway:8007，其余服务仅内网                                            |
 | 数据库     | Neon（新加坡），6 个库                           | 一服务一库；首尔到新加坡 RTT ≈ 70–90ms                                             |
 | 沙箱       | 外置 E2B 控制面（官方云 / 阿里云极速版，已落地） | 轻量无 `/dev/kvm`；`SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`；无 Key 时 `unavailable` |
 | 交付物     | 过渡期本地卷，后续 COS                           | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点                                    |
@@ -24,9 +24,9 @@
 ```text
 浏览器
   │  https://app.beautymoon.cn        （Vercel：静态 SPA + 深链 rewrite）
-  │      /api/:path*  ──rewrite──►  https://api.beautymoon.cn
+  │      /api/:path*  ──rewrite──►  https://api-cvm.beautymoon.cn
   ▼
-https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
+https://api-cvm.beautymoon.cn             （DNS A → 轻量公网 IP）
   │  Caddy :443  （自动证书；flush_interval -1，SSE 不缓冲）
   ▼
 ┌─────────────── 轻量（docker compose 网络 beauty）───────────────┐
@@ -51,7 +51,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 - 现状：run 事件流 `GET /api/v1/runs/{id}/events/stream` 支持 `Last-Event-ID`；api-gateway 逐块代理（`services/api-gateway/api_gateway/api/proxy.py`），Caddy 用 `flush_interval -1` 保证逐事件下发。
 - 风险点：**浏览器 → Vercel rewrite → 轻量** 这一跳。Vercel 的函数时长限制不适用于外部 rewrite 代理，但代理行为（缓冲/超时）需要实测。
-- 兜底：前端直连 `https://api.beautymoon.cn`（Cookie 改 `SameSite=None; Secure` + 网关 CORS allowlist），或让 Caddy 直连；`Last-Event-ID` 续流保证断线可恢复。
+- 兜底：前端直连 `https://api-cvm.beautymoon.cn`（Cookie 改 `SameSite=None; Secure` + 网关 CORS allowlist），或让 Caddy 直连；`Last-Event-ID` 续流保证断线可恢复。
 
 ### 3.2 长任务与常驻循环
 
@@ -64,7 +64,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ### 3.3 鉴权
 
-- 全部服务同机：`AUTH_ISSUER=https://api.beautymoon.cn`，account-service 签发、兄弟服务经 JWKS 验签，无需跨云信任配置。
+- 全部服务同机：`AUTH_ISSUER=https://api-cvm.beautymoon.cn`，account-service 签发、兄弟服务经 JWKS 验签，无需跨云信任配置。
 - `ACCOUNT__SIGNING_KEY_PATH` 指向卷内 PEM；文件不存在时自动生成并 0600 落盘，重启不轮换 kid。
 
 ### 3.4 沙箱（唯一真实缺口）
@@ -170,7 +170,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ## 9. 验收清单
 
-- [ ] `https://api.beautymoon.cn/healthz` 200，证书有效
+- [ ] `https://api-cvm.beautymoon.cn/healthz` 200，证书有效
 - [ ] 注册/登录 → Cookie `Secure/HttpOnly/SameSite` 正确，刷新不掉线
 - [ ] 发消息 SSE 逐字输出；>5 分钟 run 不断流；断线后 `Last-Event-ID` 补齐
 - [ ] 工具执行（Modal 落地后）与 `unavailable` 错误语义正确
