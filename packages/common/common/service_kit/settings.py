@@ -20,6 +20,10 @@ class ServiceSettings(BaseAppSettings):
     # 数据库:不提供默认值,强制每个服务显式声明自己的库,避免误连。
     database_url: str
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
+    # 单库多迁移链(如开发环境多个服务共用一个 Postgres 库)时,各服务可指定独立
+    # 的 alembic 版本表(如 alembic_version_account),避免共享 alembic_version
+    # 互相覆盖版本号;留空即默认表名。
+    alembic_version_table: str | None = None
     # 鉴权(架构 §10):默认开启,与全平台同一套 token→账号约定(自建 IdP)
     auth_enabled: bool = True
     auth_issuer: str = "http://127.0.0.1:8001"  # 自建 IdP:account-service

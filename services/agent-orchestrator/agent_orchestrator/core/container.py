@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
@@ -82,6 +83,23 @@ from agent_orchestrator.services.workspace import Workspace
 logger = get_logger(__name__)
 
 ToolkitFactory = Callable[[str], ToolkitPort]
+
+
+def _psycopg_conninfo(database_url: str) -> str:
+    """SQLAlchemy asyncpg URL → psycopg 连接串(checkpointer 用)。
+
+    psycopg 走 libpq 口径,不认 asyncpg 的 `ssl=` 查询参数:按 `sslmode=` 转写,
+    asyncpg 专属的连接参数直接丢弃。
+    """
+    parts = urlsplit(database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    asyncpg_only = {"statement_cache_size", "prepared_statement_cache_size"}
+    query = [
+        ("sslmode" if key == "ssl" else key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in asyncpg_only
+    ]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
 
 #: 可注入项名称:create_app 收哪些测试替身,容器就发布哪些(测试按名读 app.state)
 INJECTED = (
@@ -236,9 +254,7 @@ class AppContainer(
             # 惰性导入:sqlite/dev 环境不需要 psycopg,模块加载零成本
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            pg_url = settings.database_url.replace(
-                "postgresql+asyncpg://", "postgresql://", 1
-            )
+            pg_url = _psycopg_conninfo(settings.database_url)
             saver = await self._stack.enter_async_context(
                 AsyncPostgresSaver.from_conn_string(pg_url)
             )

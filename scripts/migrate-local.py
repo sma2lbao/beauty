@@ -93,6 +93,14 @@ def database_url(service_dir: Path, prefix: str) -> str | None:
     return env_file_value(service_dir / ".env", key)
 
 
+def version_table(service_dir: Path, prefix: str) -> str:
+    """服务配置的 alembic 版本表名(单库多迁移链时每服务独立);默认 alembic_version。"""
+    key = f"{prefix}__ALEMBIC_VERSION_TABLE"
+    from_env = os.environ.get(key, "").strip()
+    value = from_env or env_file_value(service_dir / ".env", key)
+    return value or "alembic_version"
+
+
 def sqlite_file(url: str | None, service_dir: Path) -> Path | None:
     """解析 sqlite URL 为库文件绝对路径;非 sqlite 或内存库返回 None。"""
     if not url or not url.startswith("sqlite"):
@@ -172,21 +180,20 @@ def head_revision(service_dir: Path, prefix: str) -> str:
     return first[0].split()[0]
 
 
-def tracked_revision(db: Path) -> str | None:
-    """alembic_version 里的 revision;None = 没有版本表(create_all 建的库)。"""
+def tracked_revision(db: Path, table: str = "alembic_version") -> str | None:
+    """版本表里的 revision;None = 没有版本表(create_all 建的库)。"""
     if not db.exists():
         return None
+    quoted = '"' + table.replace('"', '""') + '"'
     try:
         with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
             has_table = conn.execute(
-                "select 1 from sqlite_master "
-                "where type='table' and name='alembic_version'"
+                "select 1 from sqlite_master where type='table' and name=?",
+                (table,),
             ).fetchone()
             if not has_table:
                 return None
-            row = conn.execute(
-                "select version_num from alembic_version limit 1"
-            ).fetchone()
+            row = conn.execute(f"select version_num from {quoted} limit 1").fetchone()
             return str(row[0]) if row else ""
     except sqlite3.Error:
         return None
@@ -222,6 +229,7 @@ def adopt_untracked(
     prefix: str,
     db: Path,
     head: str,
+    table: str = "alembic_version",
 ) -> tuple[bool, str]:
     """未登记版本的库:副本上 stamp+check,结构与 head 一致才给真实库登记基线。"""
     with tempfile.TemporaryDirectory(prefix="beauty-migrate-") as tmp:
@@ -237,12 +245,15 @@ def adopt_untracked(
             return False, f"复制库文件失败:{exc}"
 
         # 副本上清掉不可识别的版本记录:check 以 head 为当前基线比对结构。
+        # 同时清掉默认表名(旧库/旧配置可能登记在 alembic_version)。
         try:
             with sqlite3.connect(copy) as conn:
-                conn.execute("drop table if exists alembic_version")
+                for name in {table, "alembic_version"}:
+                    quoted = '"' + name.replace('"', '""') + '"'
+                    conn.execute(f"drop table if exists {quoted}")
                 conn.commit()
         except sqlite3.Error as exc:
-            return False, f"清理副本 alembic_version 失败:{exc}"
+            return False, f"清理副本版本表失败:{exc}"
 
         copy_url = f"sqlite+aiosqlite:///{copy}"
         stamped = alembic(service_dir, prefix, "stamp", "head", url=copy_url)
@@ -299,6 +310,7 @@ def migrate_service(name: str, prefix: str, default_db: str) -> bool:
         return True
 
     head = head_revision(service_dir, prefix)
+    vtable = version_table(service_dir, prefix)
 
     if not db.exists() or table_count(db) == 0:
         proc = upgrade_head(service_dir, prefix)
@@ -307,7 +319,7 @@ def migrate_service(name: str, prefix: str, default_db: str) -> bool:
         log(f"  🆕 {name}:空库,已建到 {head}")
         return True
 
-    revision = tracked_revision(db)
+    revision = tracked_revision(db, vtable)
     if revision:
         if revision == head:
             log(f"  ✅ {name}:已是最新({head})")
@@ -326,7 +338,7 @@ def migrate_service(name: str, prefix: str, default_db: str) -> bool:
     else:
         log(f"  ℹ️ {name}:库未登记 alembic 版本(create_all 建库),校验结构后收养…")
 
-    ok, detail = adopt_untracked(service_dir, prefix, db, head)
+    ok, detail = adopt_untracked(service_dir, prefix, db, head, vtable)
     if not ok:
         return fail(name, detail)
     log(f"  🔖 {name}:结构与 {head} 一致,已登记版本基线")

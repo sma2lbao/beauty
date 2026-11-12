@@ -68,6 +68,11 @@ def apply_service_config(config: Config, settings: SettingsLike) -> None:
         fileConfig(config.config_file_name)
     if not config.get_main_option("sqlalchemy.url"):
         config.set_main_option("sqlalchemy.url", settings.database_url)
+    # 单库多迁移链(多个服务共用一个库)时,版本表必须按服务分开,否则
+    # alembic_version 的单行版本号会被其它服务的迁移链覆盖/读不懂。
+    version_table = getattr(settings, "alembic_version_table", None)
+    if version_table:
+        config.set_main_option("version_table", version_table)
 
 
 def run_migrations(config: Config, target_metadata: MetaData) -> None:
@@ -83,12 +88,16 @@ def run_migrations(config: Config, target_metadata: MetaData) -> None:
 def _run_offline(config: Config, target_metadata: MetaData) -> None:
     from alembic import context
 
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+    options: dict[str, object] = {
+        "url": config.get_main_option("sqlalchemy.url"),
+        "target_metadata": target_metadata,
+        "literal_binds": True,
+        "dialect_opts": {"paramstyle": "named"},
+    }
+    version_table = config.get_main_option("version_table")
+    if version_table:
+        options["version_table"] = version_table
+    context.configure(**options)
     with context.begin_transaction():
         context.run_migrations()
 
@@ -96,11 +105,15 @@ def _run_offline(config: Config, target_metadata: MetaData) -> None:
 def _configure(connection: Connection, target_metadata: MetaData) -> None:
     from alembic import context
 
-    context.configure(
-        connection=connection,
-        target_metadata=target_metadata,
-        compare_type=True,
-    )
+    options: dict[str, object] = {
+        "connection": connection,
+        "target_metadata": target_metadata,
+        "compare_type": True,
+    }
+    version_table = context.config.get_main_option("version_table")
+    if version_table:
+        options["version_table"] = version_table
+    context.configure(**options)
     with context.begin_transaction():
         context.run_migrations()
 
@@ -131,6 +144,9 @@ def make_config(
     config = Config(None if config_file_name is None else str(config_file_name))
     config.set_main_option("script_location", str(Path(script_location).resolve()))
     config.set_main_option("sqlalchemy.url", settings.database_url)
+    version_table = getattr(settings, "alembic_version_table", None)
+    if version_table:
+        config.set_main_option("version_table", version_table)
     return config
 
 

@@ -17,6 +17,8 @@ class Settings(BaseAppSettings):
     # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 WORKSPACE__DATABASE_URL 覆盖
     database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_workspace"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
+    # 单库多迁移链(多服务共用一个库)时的独立版本表;留空即默认 alembic_version
+    alembic_version_table: str | None = None
     # 交付物内容存储(§7):database = DB 列;filesystem = 本地对象目录
     artifact_store: str = "filesystem"
     artifact_root: str = "./.artifacts"

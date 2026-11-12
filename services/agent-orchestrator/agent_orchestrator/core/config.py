@@ -28,6 +28,8 @@ class Settings(BaseAppSettings):
     # 生产用 AGENT_ORCHESTRATOR__DATABASE_URL 覆盖
     database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_agent"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
+    # 单库多迁移链(多服务共用一个库)时的独立版本表;留空即默认 alembic_version
+    alembic_version_table: str | None = None
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
     # 正文增量流(§6.3 token.delta.v1):run 执行时把模型正文边产出边落成事件,
