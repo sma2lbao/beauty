@@ -20,7 +20,9 @@ class Settings(ServiceSettings):
     )
 
     service_name: str = "tool-service"
-    database_url: str = "sqlite+aiosqlite:///./tool.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 TOOL__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_tool"
     internal_secret: str = ""
     workspace_service_url: str = "http://127.0.0.1:8005"
     workspace_timeout_seconds: float = 60.0

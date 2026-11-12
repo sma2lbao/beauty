@@ -27,7 +27,7 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   (`run.planned.v1` 带 `auto_approved=true`,并补一条 `run.approved.v1`),
   `AGENT_ORCHESTRATOR__PLAN_AUTO_APPROVE=false` 可关回"每跑必审";有 DANGER
   工具才 interrupt 人工放行。checkpointer 按 DATABASE_URL 自动选择:
-  postgres → `langgraph-checkpoint-postgres`(图线程跨进程可恢复),sqlite/dev → InMemorySaver;
+  Postgres(默认 compose)→ `langgraph-checkpoint-postgres`(图线程跨进程可恢复),SQLite 覆盖/未配置 → InMemorySaver;
 - **节点步骤投影(S1,2026-10-25)**:plan/execute/tool_exec/verify/deliver 每个节点
   执行完落一条 `run.step.v1`(payload `step_id`/`node`/`phase`/`attempt`/`round`/
   `status`/`started_at`/`finished_at`/`duration_ms`,`record_outbox=False`),

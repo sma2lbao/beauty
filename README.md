@@ -4,24 +4,29 @@
 
 ## 环境要求
 
-| 工具    | 版本                    | 说明                                                    |
-| ------- | ----------------------- | ------------------------------------------------------- |
-| Node.js | >= 22.22.2（本机 24.x） | 运行 Nx 与 JS 工具链                                    |
-| npm     | 随 Node                 | 安装 JS 依赖                                            |
-| Python  | 3.12.x                  | uv workspace 共享 venv，由根 `.python-version` 统一锁定 |
-| uv      | >= 0.5                  | Python 包管理 / 虚拟环境 / 构建                         |
+| 工具    | 版本                    | 说明                                                           |
+| ------- | ----------------------- | -------------------------------------------------------------- |
+| Node.js | >= 22.22.2（本机 24.x） | 运行 Nx 与 JS 工具链                                           |
+| npm     | 随 Node                 | 安装 JS 依赖                                                   |
+| Python  | 3.12.x                  | uv workspace 共享 venv，由根 `.python-version` 统一锁定        |
+| uv      | >= 0.5                  | Python 包管理 / 虚拟环境 / 构建                                |
+| Docker  | 可选                    | 本地数据库默认用 compose 的 `postgres:16`；不用时可改回 SQLite |
 
 ## 本地开发（推荐）
 
-不依赖 Docker/云服务,本地默认 SQLite + 文件系统产物 + 模型桩:
+本地默认用 Docker Compose 的 Postgres（每服务独立库）+ 文件系统产物 + 模型桩，不需要云 PG/Redis、Vercel 或真实 OAuth 凭据：
 
 ```sh
 npm install
-npm run dev          # 七个业务服务 + API 网关 + Vite SPA
+docker compose -f deploy/docker-compose.yml up -d postgres   # 本地数据库
+npm run dev          # 先自动迁移到 alembic head,再起七个业务服务 + API 网关 + Vite SPA
 npm run dev:status   # 健康检查
 npm run dev:seed     # 演示账号/会话/产物/run
-npm run dev:reset    # 清空本地 SQLite 与产物
+npm run dev:reset    # 重置本地 Postgres 库(6 个)与 SQLite/产物
 ```
+
+离线/无 Docker 时,可把各服务 `.env` 里的 `<PREFIX>__DATABASE_URL` 换回 SQLite
+(`sqlite+aiosqlite:///./<name>.db`),迁移脚本会走 SQLite 路径。
 
 详见 [docs/local-dev.md](docs/local-dev.md)。API 网关(:8007) 现在是必需的,Web 的
 `/api` 统一代理到 API 网关。

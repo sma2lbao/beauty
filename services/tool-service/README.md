@@ -37,7 +37,7 @@
 
 | 变量                                   | 默认                            | 说明                                                                                        |
 | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
-| `TOOL__DATABASE_URL`                   | `sqlite+aiosqlite:///./tool.db` | 审计库(生产 postgresql+asyncpg)                                                             |
+| `TOOL__DATABASE_URL`                   | `postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_tool` | 审计库(本地默认 compose Postgres;生产 Neon 同协议;测试/离线可改 SQLite)                     |
 | `TOOL__AUTO_CREATE_TABLES`             | `false`                         | 生产 false,迁移走 alembic                                                                   |
 | `TOOL__AUTH_ENABLED`                   | `true`                          | 校验账号 JWT(内部签发走 account-service)                                                    |
 | `TOOL__AUTH_ISSUER`                    | `http://127.0.0.1:8001`         | 签发方/JWKS 来源                                                                            |

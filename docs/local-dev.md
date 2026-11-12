@@ -1,13 +1,20 @@
 # 本地开发
 
-面向「本地优先」开发:不需要 Docker、云 PG/Redis、Vercel 或真实 OAuth 凭据。
-本地默认使用 SQLite + 文件系统产物 + LLM 桩。
+面向「本地优先」开发:数据库默认用本机 Docker Compose 的 Postgres(每服务独立库),
+其余不需要云 PG/Redis、Vercel 或真实 OAuth 凭据;产物落文件系统、模型默认桩。
+不想用 Docker 时,可把各服务 `.env` 的 `<PREFIX>__DATABASE_URL` 换回 SQLite(见 §7.1)。
 
 ## 1. 前置
 
 - Node.js >= 22.22.2（jsdom 30 要求；本机 24.x）
 - Python 3.12
 - uv >= 0.5
+- Docker（可选；本地数据库默认用 compose 的 `postgres:16`，不用时可改回 SQLite）:
+
+```sh
+docker compose -f deploy/docker-compose.yml up -d postgres
+```
+
 - 首次使用先安装 JS 依赖:
 
 ```sh
@@ -23,14 +30,14 @@ npm install
 npm run dev            # 七个业务服务 + API 网关 + Vite SPA
 npm run dev:site       # 额外启动 Next.js 官网(:3000)
 npm run dev:status     # 只检查健康状态
-npm run dev:migrate    # 只把本地 SQLite 迁移到 alembic head(dev 启动前会自动执行)
+npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic head(dev 启动前会自动执行)
 ```
 
 脚本行为:
 
 - 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
 - 缺 .env 自动创建;
-- 启动前把 6 个带 alembic 迁移的服务的 SQLite 库推到 head(见 §7.1),失败则中止启动;
+- 启动前把 6 个带 alembic 迁移的服务的库(默认 compose Postgres)推到 head(见 §7.1),失败则中止启动;
 - 服务日志在 .cache/dev/\*.log;
 - Ctrl+C 停止由脚本启动的全部进程;
 - 任一子进程退出时整体退出,方便发现崩溃。
@@ -273,13 +280,15 @@ npm run dev:reset          # 交互确认
 npm run dev:reset -- --yes # 不确认
 ```
 
-会删除:
+会重置:
 
-- services/_/_.db(SQLite)
+- Postgres 的 6 个服务库(本机 compose,drop 后重建,不动实例本身)
+- services/_/_.db(SQLite 覆盖库)
 - services/\*/.artifacts(本地产物)
 - .cache/dev(日志)
 
-保留 .env 与源码。服务运行中会拒绝删除;先 Ctrl+C 停 dev.sh,或加 --force。
+保留 .env 与源码。服务运行中会拒绝重置;先 Ctrl+C 停 dev.sh,或加 --force。
+Postgres 未启动/未装 asyncpg 时跳过库重置,只清文件。
 重置后重新 npm run dev,启动前会自动按 alembic 迁移建表(create_all 仍是兜底)。
 
 ## 7. 日志与排障
@@ -292,7 +301,8 @@ npm run dev:reset -- --yes # 不确认
 | 登录后页面空           | 检查 account-service :8001 与 API 网关日志                                                                                                                                                                                                                                   |
 | 会话接口 404/旧结构    | 重启 agent-orchestrator,确认它跑的是当前代码                                                                                                                                                                                                                                 |
 | 官网打不开             | 单独 npm run dev:site(SPA 里「官网」跳 :3000)                                                                                                                                                                                                                                |
-| SQLite 表结构不对      | 启动时已自动迁移;仍报 no such column/迁移提示结构漂移时先 npm run dev:migrate 看原因,确实无法对齐再 npm run dev:reset                                                                                                                                                        |
+| 数据库表结构不对       | 启动时已自动迁移;仍报 no such column/迁移提示结构漂移时先 npm run dev:migrate 看原因,确实无法对齐再 npm run dev:reset                                                                                                                                                        |
+| 连不上 Postgres        | 迁移报 connection refused/连不上 localhost:5432 时先起库:`docker compose -f deploy/docker-compose.yml up -d postgres`;不想用 Docker 可把 `.env` 里的 DATABASE_URL 换回 SQLite                                                                                                |
 | 启动报缺 `aiosqlite`   | 共享 venv 的服务 dev 依赖被根 `uv sync` 或单项目 `uv run` 剪掉了;`npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"` 补齐(`npm run dev` 启动前会自动检测并同步)                                                                                        |
 | 想用真实模型           | 配 LLM_GATEWAY\_\_API_KEY(+可选 API_BASE)后重启 llm-gateway                                                                                                                                                                                                                  |
 | BYOK 不生效/烧平台 key | 三处 internal_secret 必须同一值（account/gateway/knowledge）；容器内 `ACCOUNT_BASE_URL` 要指向 `http://account-service:8001`；看 `llm_byok_lookups_total{status}` 与 `byok_lookup_failed` 日志                                                                               |
@@ -306,12 +316,20 @@ npm run dev:reset -- --yes # 不确认
 
 ### 7.1 本地数据库迁移(自动)
 
-npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm run dev:migrate),把 6 个带 alembic 迁移的服务的 SQLite 库推到 head,失败则中止启动:
+npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm run dev:migrate),把 6 个带 alembic 迁移的服务的库推到 head,失败则中止启动。
+
+默认库是本机 compose Postgres(每服务一个独立库:`beauty_account`/`beauty_agent`/`beauty_connector`/`beauty_knowledge`/`beauty_workspace`/`beauty_tool`,见 `deploy/postgres/initdb/01-create-databases.sql`):
+
+- 连接不上:先起库 `docker compose -f deploy/docker-compose.yml up -d postgres`,再重试;
+- 空库/落后 revision:alembic upgrade head 补齐,已最新则无操作。
+
+把 `.env` 里 `<PREFIX>__DATABASE_URL` 显式改成 `sqlite+aiosqlite:///./<name>.db` 时(离线/无 Docker)走 SQLite 路径:
 
 - 空库/库不存在:从零迁移到 head;
 - 已登记 alembic_version:补齐落后的 revision;
-- create_all 建的旧库(无版本记录):先在临时副本上 stamp head + alembic check,结构一致才给真实库登记基线(收养),不一致则不动真实库并报错;
-- 非 SQLite(如 Postgres):跳过并提示手动 `alembic upgrade head`。
+- create_all 建的旧库(无版本记录):先在临时副本上 stamp head + alembic check,结构一致才给真实库登记基线(收养),不一致则不动真实库并报错。
+
+其它协议:跳过并提示手动 `alembic upgrade head`。
 
 它只负责「应用迁移」,不生成迁移:改 ORM 表结构仍必须新增 alembic 迁移脚本(见 AGENTS.md 的模型/迁移条目)。
 
@@ -341,6 +359,6 @@ bash scripts/golden-run/golden-run.sh --keep    # 保留库到 .cache/golden-run
 
 ## 9. 暂不包含
 
-- 容器化/云 PG/云 Redis/部署
+- 云 PG/云 Redis/部署(本地数据库用本机 compose Postgres,见 §1)
 - 真实 Google/GitHub OAuth 凭据
 - Sentry、对象存储、沙箱执行、MCP

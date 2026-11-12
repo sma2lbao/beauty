@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 把本地开发库迁移到 alembic head(scripts/dev.sh 启动前会自动调用)。
-# 处理 SQLite 的 create_all 旧库、未登记版本、落后 revision;详见 migrate-local.py。
+# 默认连 compose Postgres(每服务独立库);SQLite 覆盖库的 create_all 旧库、
+# 未登记版本、落后 revision 也会处理;详见 migrate-local.py。
 #
 # 用法:
 #   scripts/migrate-local.sh   # 或 npm run dev:migrate
@@ -29,10 +30,10 @@ if [ ! -x "$ROOT/.venv/bin/python" ]; then
   exit 1
 fi
 
-# 本地库是 sqlite+aiosqlite,而 aiosqlite 只声明在各服务的 dev group:
-# 根目录 uv sync 或单项目 uv run 都可能把它剪掉,alembic 异步引擎随后 import 失败。
+# aiosqlite 只在各服务的 dev group(SQLite 覆盖库/测试用);被剪掉时
+# alembic 异步引擎在 SQLite 路径会 import 失败(默认 Postgres 路径用 asyncpg)。
 if ! "$ROOT/.venv/bin/python" -c "import aiosqlite" >/dev/null 2>&1; then
-  echo "⚠️  共享 venv 缺少 aiosqlite,SQLite 迁移会失败;先补齐全 workspace dev 依赖:" >&2
+  echo "⚠️  共享 venv 缺少 aiosqlite,SQLite 覆盖库迁移会失败;先补齐全 workspace dev 依赖:" >&2
   echo "   npx nx run agent-orchestrator:sync --args=\"--all-packages --all-groups\"" >&2
 fi
 

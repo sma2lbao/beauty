@@ -13,7 +13,9 @@ class Settings(ServiceSettings):
     )
 
     service_name: str = "knowledge-service"
-    database_url: str = "sqlite+aiosqlite:///./knowledge.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 KNOWLEDGE__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_knowledge"
     # 嵌入(架构 §5 唯一出口):local = 无依赖词法近似;gateway = 经 llm-gateway
     embedding_provider: str = "local"
     embedding_model: str = "bge-m3"

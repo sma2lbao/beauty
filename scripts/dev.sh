@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 本地开发一键启动(无需 docker/云依赖):
+# 本地开发一键启动(默认连本机 compose Postgres,无需云依赖):
 #   - 七个业务服务 + API 网关 + Vite SPA
 #   - 缺 .env 时自动从 .env.example 复制
-#   - 启动前把本地 SQLite 库迁移到 alembic head(create_all 不给已有表加列)
+#   - 启动前把本地数据库(默认 Postgres)迁移到 alembic head(create_all 不给已有表加列)
 #   - 统一日志与 Ctrl+C 清理
 #
 # 用法:
@@ -179,12 +179,12 @@ trap cleanup INT TERM EXIT
 # 启动前把共享 venv 同步到「全 workspace dev 依赖」:
 # - nx 的 sync target 底层是根目录 `uv sync`,只装根项目 dev group,会剪掉各服务的 dev 依赖;
 # - `uv run`(如 npx nx test/lint <服务>)也会按单项目 dev group 精确同步并剪掉兄弟项目依赖;
-# - 本地库是 sqlite+aiosqlite,而 aiosqlite 只声明在各服务的 dev group;它被剪掉后
-#   迁移脚本(alembic 异步引擎)会直接 ModuleNotFoundError,启动在迁移阶段中止。
-# 所以这里显式带 --all-packages --all-groups;检测到 aiosqlite 被剪掉时也会重新同步。
+# - 测试与 SQLite 覆盖库仍需要 aiosqlite(只声明在各服务 dev group),被剪掉后
+#   测试/离线迁移会直接 ModuleNotFoundError;默认 Postgres 路径用主依赖 asyncpg。
+# 所以这里显式带 --all-packages --all-groups;检测到 aiosqlite/asyncpg 缺失时也会重新同步。
 if [ ! -d "$ROOT/.venv" ] \
   || [ "$ROOT/uv.lock" -nt "$ROOT/.venv" ] \
-  || ! "$ROOT/.venv/bin/python" -c "import aiosqlite" >/dev/null 2>&1; then
+  || ! "$ROOT/.venv/bin/python" -c "import aiosqlite, asyncpg" >/dev/null 2>&1; then
   echo "▶ 同步共享 venv(全 workspace dev 依赖)…"
   if ! (cd "$ROOT" && npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"); then
     echo "⚠️  uv sync 失败,继续尝试启动(若服务报缺依赖,先手动执行:" >&2
@@ -192,13 +192,14 @@ if [ ! -d "$ROOT/.venv" ] \
   fi
 fi
 
-# 启动服务前把本地 SQLite 库迁移到 alembic head:
+# 启动服务前把本地数据库(默认 Postgres)迁移到 alembic head:
 # 服务内 AUTO_CREATE_TABLES 的 create_all 只建缺失的表、不会给已有表加列;
 # ORM 加列(如 M4a 的 runs.todos)后旧库会持续 500(no such column)。
 # 迁移失败直接中止启动,避免带着错结构跑出一堆 500。
 if ! bash "$ROOT/scripts/migrate-local.sh"; then
   echo "❌ 本地数据库迁移失败,已中止启动;" >&2
-  echo "   修复后重试,或 npm run dev:reset(会清空本地 SQLite/产物)。" >&2
+  echo "   先确认 Postgres 已启动:docker compose -f deploy/docker-compose.yml up -d postgres" >&2
+  echo "   修复后重试,或 npm run dev:reset(会重置本地 Postgres 库与 SQLite/产物)。" >&2
   exit 1
 fi
 

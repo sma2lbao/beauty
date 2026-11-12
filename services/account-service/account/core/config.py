@@ -16,8 +16,9 @@ class Settings(ServiceSettings):
     )
 
     service_name: str = "account-service"
-    # 本服务即自建 IdP:进程内开发库默认值,生产用 ACCOUNT__DATABASE_URL 覆盖
-    database_url: str = "sqlite+aiosqlite:///./account.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 ACCOUNT__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_account"
     # 自建认证:注册/登录/刷新/内部签发 + OIDC 发现/JWKS。
     # access token 的账号 claim 由共享库 auth_account_claim(默认 account_id)决定。
     token_ttl_seconds: int = 3600

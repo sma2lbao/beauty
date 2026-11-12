@@ -21,7 +21,9 @@ class Settings(ServiceSettings):
     )
 
     service_name: str = "connector-service"
-    database_url: str = "sqlite+aiosqlite:///./connector.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 CONNECTOR__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_connector"
     # 连接凭证应用层加密密钥(生产必须换随机长密钥/KMS)
     credential_secret: str = "dev-connector-secret-change-me"
 

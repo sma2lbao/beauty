@@ -13,7 +13,9 @@ class Settings(BaseAppSettings):
     )
 
     service_name: str = "workspace-service"
-    database_url: str = "sqlite+aiosqlite:///./workspace.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 WORKSPACE__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_workspace"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     # 交付物内容存储(§7):database = DB 列;filesystem = 本地对象目录
     artifact_store: str = "filesystem"

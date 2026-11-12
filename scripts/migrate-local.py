@@ -1,45 +1,67 @@
 #!/usr/bin/env python3
-"""本地开发数据库迁移:把 services/* 的 SQLite 库对齐到 alembic head。
+"""本地开发数据库迁移:把 services/* 的库对齐到 alembic head。
 
 为什么需要:scripts/dev.sh 只负责启动服务,不跑迁移;服务内 AUTO_CREATE_TABLES
 的 create_all 只建缺失的表,不会给已有表加列。ORM 一加列(如 M4a 的 runs.todos),
 旧库就持续 500(no such column: runs.todos)。本脚本在启动服务前把库推到 head。
 
-处理策略(按库现状):
-- 空库/库不存在 → alembic upgrade head(直接建到 head);
-- 已登记 alembic_version → alembic upgrade head(落后补齐,已最新则跳过);
-- 未登记(create_all 建的库)或 revision 无法识别 → 先在临时副本上 stamp head +
-  alembic check,确认结构与 head 完全一致才在真实库登记基线(收养);
+本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库,见
+deploy/postgres/initdb/01-create-databases.sql);也支持显式用 SQLite 覆盖
+(测试/离线场景),按库类型走不同策略:
+
+- Postgres(默认)→ 检查连接后 alembic upgrade head;连不上时提示先起 compose;
+- SQLite 空库/库不存在 → alembic upgrade head(直接建到 head);
+- SQLite 已登记 alembic_version → alembic upgrade head(落后补齐,已最新则跳过);
+- SQLite 未登记(create_all 建的库)或 revision 无法识别 → 先在临时副本上
+  stamp head + alembic check,确认结构与 head 完全一致才在真实库登记基线(收养);
   有漂移则不动真实库并失败,提示 npm run dev:reset;
-- 非 SQLite(如 Postgres)→ 跳过并提示手动 alembic upgrade head。
+- 其它协议 → 跳过并提示手动 alembic upgrade head。
 
 执行方式:用共享 venv 的 python -m alembic 子进程(工作目录 = 服务目录),不走
 uv run——uv run 会按单项目 dev group 精确同步共享 venv,剪掉兄弟项目的 dev 依赖。
 数据库地址先读环境变量 `<PREFIX>__DATABASE_URL`,再读服务 .env,最后回退默认
-sqlite 路径;相对路径按服务目录解析(与服务运行时 cwd 一致)。
+Postgres URL;SQLite 相对路径按服务目录解析(与服务运行时 cwd 一致)。
 """
 
 from __future__ import annotations
 
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# (服务目录, Settings 环境变量前缀, 默认 db 文件名)
+# 本地 compose Postgres 的连接串(与 deploy/docker-compose.yml 的 creds 一致);
+# 每个服务一个独立库,避免 6 条 alembic 链共用 alembic_version 表互相踩。
+POSTGRES_HOST = "localhost"
+POSTGRES_PORT = 5432
+POSTGRES_USER = "beauty"
+POSTGRES_PASSWORD = "beauty"  # 仅本地 compose 固定凭据
+POSTGRES_DEFAULT_DATABASE = "beauty"  # initdb 建出来的初始库(用于连通性检查)
+
+# (服务目录, Settings 环境变量前缀, 默认 PG 库名)
 SERVICES: tuple[tuple[str, str, str], ...] = (
-    ("account-service", "ACCOUNT", "account.db"),
-    ("agent-orchestrator", "AGENT_ORCHESTRATOR", "agent_orchestrator.db"),
-    ("connector-service", "CONNECTOR", "connector.db"),
-    ("knowledge-service", "KNOWLEDGE", "knowledge.db"),
-    ("workspace-service", "WORKSPACE", "workspace.db"),
-    ("tool-service", "TOOL", "tool.db"),
+    ("account-service", "ACCOUNT", "beauty_account"),
+    ("agent-orchestrator", "AGENT_ORCHESTRATOR", "beauty_agent"),
+    ("connector-service", "CONNECTOR", "beauty_connector"),
+    ("knowledge-service", "KNOWLEDGE", "beauty_knowledge"),
+    ("workspace-service", "WORKSPACE", "beauty_workspace"),
+    ("tool-service", "TOOL", "beauty_tool"),
 )
+
+
+def default_database_url(name: str) -> str:
+    """本地默认 Postgres URL(每服务独立库)。"""
+    return (
+        f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+        f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{name}"
+    )
 
 
 def log(message: str) -> None:
@@ -82,6 +104,47 @@ def sqlite_file(url: str | None, service_dir: Path) -> Path | None:
     if not path.is_absolute():
         path = service_dir / path
     return path.resolve()
+
+
+def postgres_target(url: str) -> tuple[str, int] | None:
+    """从 Postgres URL 里取 (host, port);解析失败返回 None。"""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return host, parts.port or POSTGRES_PORT
+
+
+def postgres_up(host: str, port: int) -> bool:
+    """TCP 连通性探测:本地 compose Postgres 是否已启动(1s 超时)。"""
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+def migrate_postgres(name: str, prefix: str, url: str, service_dir: Path) -> bool:
+    """Postgres 库:alembic upgrade head(落后补齐,已最新则无操作)。"""
+    target = postgres_target(url)
+    if target is None:
+        return fail(name, f"无法解析 Postgres URL:{url}")
+    host, port = target
+    if not postgres_up(host, port):
+        return fail(
+            name,
+            f"连不上本地 Postgres({host}:{port});先起库:"
+            "docker compose -f deploy/docker-compose.yml up -d postgres",
+        )
+    head = head_revision(service_dir, prefix)
+    proc = upgrade_head(service_dir, prefix)
+    if proc.returncode != 0:
+        return fail(name, f"Postgres 迁移失败({prefix}__DATABASE_URL):\n" + tail(proc))
+    log(f"  ✅ {name}:已对齐 {head}(Postgres)")
+    return True
 
 
 def alembic(
@@ -218,19 +281,21 @@ def migrate_service(name: str, prefix: str, default_db: str) -> bool:
 
     url = database_url(service_dir, prefix)
     if not url:
-        url = f"sqlite+aiosqlite:///./{default_db}"
+        url = default_database_url(default_db)
         log(f"  ℹ️ {name}:未配置 {prefix}__DATABASE_URL,按默认 {url} 处理")
 
     db = sqlite_file(url, service_dir)
     if db is None:
         if url.startswith("sqlite"):
             log(f"  ℹ️ {name}:内存 SQLite,无需迁移")
-        else:
-            scheme = url.split("://", 1)[0]
-            log(
-                f"  ℹ️ {name}:非 SQLite({scheme}),跳过自动迁移;"
-                "请在服务目录手动执行 alembic upgrade head"
-            )
+            return True
+        if url.startswith("postgres"):
+            return migrate_postgres(name, prefix, url, service_dir)
+        scheme = url.split("://", 1)[0]
+        log(
+            f"  ℹ️ {name}:未知库类型({scheme}),跳过自动迁移;"
+            "请在服务目录手动执行 alembic upgrade head"
+        )
         return True
 
     head = head_revision(service_dir, prefix)
@@ -278,7 +343,7 @@ def main() -> int:
         )
         return 1
 
-    log("▶ 检查本地 SQLite 库是否落后 alembic head…")
+    log("▶ 检查本地数据库(默认 Postgres)是否落后 alembic head…")
     failed: list[str] = []
     for name, prefix, default_db in SERVICES:
         try:
@@ -293,8 +358,8 @@ def main() -> int:
         log(f"❌ 本地数据库迁移失败:{', '.join(failed)}")
         log("   库结构与迁移脚本不一致时,自动迁移不会改动已有表(避免破坏数据)。")
         log(
-            "   若本地数据可丢:npm run dev:reset 后重新 npm run dev;"
-            "否则请按上面的 alembic 输出手动处理。"
+            "   若本地数据可丢:npm run dev:reset(重置 Postgres 库与 SQLite/产物)后"
+            "重新 npm run dev;否则请按上面的 alembic 输出手动处理。"
         )
         return 1
     log("✅ 本地数据库已对齐 alembic head")

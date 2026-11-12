@@ -9,10 +9,10 @@
 
 | 领域              | 生产                                                  | 开发环境                                     | 状态                                                                                                                 |
 | ----------------- | ----------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）         | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 已实施（生产接入为 M0-03，待办）                                                                                  |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）         | **本机 compose Postgres:16**（每服务独立库） | ✅ 已实施（生产 Neon 接入为 M0-03 待办；SQLite 仍可显式覆盖）                                                        |
 | Redis             | **云 Redis，提供 URL**                                | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                                                               |
 | 对象存储          | **暂不引入**                                          | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**           | 同左（SQLite 下用文件/内存 worker）          | ✅ 已实施；Temporal / Inngest **暂不做**                                                                             |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**           | 同左（SQLite 覆盖时用文件/内存 worker）      | ✅ 已实施；Temporal / Inngest **暂不做**                                                                             |
 | 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底     | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                                                                     |
 | 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）   | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                                                                 |
 | 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud** | 同左（本地日志）                             | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                   |
@@ -49,7 +49,7 @@
 | 002 | 静态 SPA + FastAPI 网关 + 容器 runtime                                          | ✅ 采用                | 八个 Python 服务（七业务 + API 网关）；API 网关为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭）         |
 | 003 | 长任务用 Postgres job 表 + worker                                               | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                                |
 | 004 | Sandbox 用 microsandbox provider                                                | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                               |
-| 005 | 数据：云 PG + 云 Redis；对象存储暂缓                                            | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                                                                                       |
+| 005 | 数据：云 PG + 云 Redis；对象存储暂缓                                            | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件（2026-11-12 起本地默认改为 compose Postgres，SQLite 降为显式覆盖）；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                    |
 | 006 | 身份：自建 account-service（不用 Logto）                                        | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                                          |
 | 007 | API 网关 httpOnly Cookie + 短时 JWT                                             | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                                      |
 | 008 | 计费：usage ledger + Free 配额 + BYOK                                           | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                                 |
@@ -79,16 +79,16 @@ Browser
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
 ├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(当前无内置 provider)（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
-├── knowledge-service       摄取/检索/重排（JSON 向量，SQLite 兼容）                :8006
+├── knowledge-service       摄取/检索/重排（JSON 向量，无需 pgvector）                :8006
 └── account-service         账号/会话/配额/usage/API Key（自建 IdP）                 :8001
 
 云托管（只保留 URL 型依赖）
-├── 云 Postgres             生产库（URL 注入；开发 SQLite）
+├── 云 Postgres             生产库（URL 注入；开发用本机 compose Postgres）
 ├── 云 Redis                限流/锁/短期缓存（URL 注入；开发本地 Redis；业务接入待办）
 └── Sentry                  前端/服务错误（官方 SaaS）
 
 开发环境
-├── SQLite                  AUTO_CREATE_TABLES=true，零外部依赖
+├── compose Postgres:16     每服务独立库（deploy/docker-compose.yml；SQLite 可显式覆盖）
 ├── 本地 Redis              可选（未配置时降级为进程内限流）
 ├── 本地目录                artifact_store=filesystem（默认）
 └── 本地 SMTP               事务邮件联调（生产暂不做）
@@ -224,17 +224,17 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 | 数据                                                             | 生产                             | 开发               | 说明                                                   |
 | ---------------------------------------------------------------- | -------------------------------- | ------------------ | ------------------------------------------------------ |
-| runs / run_events / conversations / chat_messages / instructions | 云 Postgres                      | SQLite             | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
-| connections / credentials                                        | 云 Postgres                      | SQLite             | 凭证加密暂用应用层密钥；KMS 后置                       |
-| workspaces / artifacts / sandboxes                               | 云 Postgres + 内容存 DB/文件系统 | SQLite + 本地目录  | 对象存储后置；单实例 filesystem 可用                   |
-| knowledge_documents / chunks                                     | 云 Postgres（JSON 向量）         | SQLite             | 现有实现不依赖 pgvector，可直接跑                      |
-| orgs / members / quotas / usage_ledger / api_keys                | 云 Postgres                      | SQLite             | usage ledger 新增；Stripe 后置                         |
+| runs / run_events / conversations / chat_messages / instructions | 云 Postgres                      | 本机 PG            | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
+| connections / credentials                                        | 云 Postgres                      | 本机 PG            | 凭证加密暂用应用层密钥；KMS 后置                       |
+| workspaces / artifacts / sandboxes                               | 云 Postgres + 内容存 DB/文件系统 | 本机 PG + 本地目录 | 对象存储后置；单实例 filesystem 可用                   |
+| knowledge_documents / chunks                                     | 云 Postgres（JSON 向量）         | 本机 PG            | 现有实现不依赖 pgvector，可直接跑                      |
+| orgs / members / quotas / usage_ledger / api_keys                | 云 Postgres                      | 本机 PG            | usage ledger 新增；Stripe 后置                         |
 | session / rate limit / locks                                     | 云 Redis（**业务未接，R-P1-8**） | 本地 Redis（可选） | 未配置时降级为进程内实现                               |
-| jobs                                                             | 云 Postgres（job 表）            | SQLite job 表      | 队列与重试；worker 轮询                                |
+| jobs                                                             | 云 Postgres（job 表）            | 本机 PG job 表     | 队列与重试；worker 轮询                                |
 
 **开发/生产一致性**
 
-- 开发：SQLite + `AUTO_CREATE_TABLES=true`（现有默认），零外部依赖；
+- 开发：本机 compose Postgres:16，每服务独立库（见 `deploy/docker-compose.yml`）；离线/测试可显式改回 SQLite，`AUTO_CREATE_TABLES=true` 仅作兜底建表；
 - 生产：云 Postgres + Alembic 迁移（现有迁移未使用 PG 专属类型，SQLite 兼容）；
 - CI 必须对**云 PG**跑一遍迁移 + 集成测试，避免「SQLite 过、PG 挂」；
 - 多实例部署时 **filesystem artifact store 不可用**，必须用 database 模式或共享盘；对象存储接入后替换。
@@ -316,11 +316,11 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 10.1 环境
 
-| 环境    | Web                                    | Runtime                                | 数据                                         |
-| ------- | -------------------------------------- | -------------------------------------- | -------------------------------------------- |
-| dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                     | SQLite + 本地 Redis + 本地目录               |
-| staging | Vercel preview（SPA + `/api` rewrite） | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon staging 6 库 + 本地卷 artifact          |
-| prod    | Vercel（SPA + `/api` rewrite）         | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon prod 6 库 + 本地卷 artifact（COS 后置） |
+| 环境    | Web                                    | Runtime                                | 数据                                                |
+| ------- | -------------------------------------- | -------------------------------------- | --------------------------------------------------- |
+| dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                     | 本机 compose Postgres + 本地 Redis(可选) + 本地目录 |
+| staging | Vercel preview（SPA + `/api` rewrite） | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon staging 6 库 + 本地卷 artifact                 |
+| prod    | Vercel（SPA + `/api` rewrite）         | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon prod 6 库 + 本地卷 artifact（COS 后置）        |
 
 - CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
 - 服务镜像：8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
@@ -331,7 +331,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 1. ✅ 新增 `services/api-gateway`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
 2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；生产编排见 `deploy/tencent/`（轻量单机 + Caddy + 8 服务 Compose，2026-11-11）；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
-3. ⏳ 接入云 PG（Neon 6 库）/ 云 Redis URL——**M0-03 进行中**，配置样例见 `deploy/tencent/.env.example`；开发保持 SQLite/本地 Redis；产物改 database 模式以支持多实例；
+3. ⏳ 接入云 PG（Neon 6 库）/ 云 Redis URL——**M0-03 进行中**，配置样例见 `deploy/tencent/.env.example`；开发默认本机 compose Postgres/本地 Redis；产物改 database 模式以支持多实例；
 4. ⏳ account-service 补 Google/GitHub OAuth + API 网关 Cookie 会话（保留 token 模式开发兜底）——API 网关 Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
 6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；
@@ -414,7 +414,7 @@ run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自�
 
 > 状态注记（2026-10-25，P0-2 已落地）：`planning` 在进入规划节点时赋值、`running` 在放行执行（人工审批放行/确认通过）时赋值，两者**不落独立事件**；`cancelled` 为新增终态，由 `POST /api/v1/runs/{id}/cancel` 触发。取消是**协作式**：立刻落终态并撤掉排队中的 job，不打断执行中的图，图的结果在下一个执行边界（`run_events.is_cancelled`）丢弃；取消与完成同刻的竞态仍可能让结果先落库（并入 06 P0-3 多实例残余）。中断超时由 sweeper 兜底（`APPROVAL_TIMEOUT_SECONDS` / `CONFIRMATION_TIMEOUT_SECONDS` / `QUESTION_TIMEOUT_SECONDS`，前两者默认 0=关闭、生产建议审批 86400s / 确认 600s，提问默认 900s，依赖 `JOBS_ENABLED`）：审批超时自动拒绝计划转 blocked，确认超时自动拒绝危险写并继续验收，提问超时按 decline 自动回答并继续执行。完整状态时间线（`run.status_changed.v1` 事件）仍缺，见 07-run-step-model.md；节点级步骤投影（S1）已于 2026-10-25 落地，见 §11.5。
 
-- 执行引擎 **LangGraph + PG checkpointer**（生产 Postgres 用 `AsyncPostgresSaver`；SQLite 开发用 InMemorySaver）；
+- 执行引擎 **LangGraph + PG checkpointer**（Postgres 默认用 `AsyncPostgresSaver`；SQLite 覆盖/未配置时用 InMemorySaver）；
 - run 启动/恢复走 **PG job 表 + worker**：入队 → worker 领取（`FOR UPDATE SKIP LOCKED`）→ 执行；**心跳与 lease 续租未实现**（job 60s lease 无续租，多实例下存在重复领取风险，见 06 P0-3）；
 - 同一 run 同一时刻只由一个 worker 执行（领取时行锁；lease 无续租），崩溃后按 checkpoint 恢复；
 - **plan**：产出可编辑的 Markdown 计划 artifact（存对象存储，画布上直接改），不是 yes/no 门；

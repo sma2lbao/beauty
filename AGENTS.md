@@ -25,7 +25,7 @@
 
 微服务架构设计(定稿)见 `docs/architecture.md`:微服务放 `services/`(部署单元),共享库实名命名(不用 `py-` 前缀),新 Python 项目必须在根 `pyproject.toml` 登记 uv workspace members。
 
-环境要求:Node.js >= 22.22.2(jsdom 30 与 undici 8 的下限);Python 3.12(根 `.python-version` 锁定);uv >= 0.5。
+环境要求:Node.js >= 22.22.2(jsdom 30 与 undici 8 的下限);Python 3.12(根 `.python-version` 锁定);uv >= 0.5;Docker(可选,本地数据库默认用 compose 的 postgres:16,不用时可把 `<PREFIX>__DATABASE_URL` 改回 SQLite,见 `docs/local-dev.md` §7.1)。
 
 ## 常用命令
 
@@ -39,9 +39,9 @@ npx nx graph                # 打开项目依赖关系图
 
 npm run dev                 # 本地一键启动(七服务 + API 网关 + web;详见 docs/local-dev.md)
 npm run dev:status          # 本地健康检查
-npm run dev:migrate         # 本地 SQLite 迁移到 alembic head(dev 启动前自动执行)
+npm run dev:migrate         # 本地数据库(默认 compose Postgres)迁移到 alembic head(dev 启动前自动执行)
 npm run dev:seed            # 写入演示数据
-npm run dev:reset           # 清空本地 SQLite/产物
+npm run dev:reset           # 重置本地 Postgres 库(6 个)与 SQLite/产物
 ```
 
 ### TypeScript / React
@@ -141,7 +141,7 @@ npx nx run common:sync                              # 变更后同步 .venv
 ## 关键机制(改代码前必读)
 
 - **`@beauty/source` 源码直连条件**:包 `exports` 中的 `@beauty/source` 条件指向 `src/`,由 `tsconfig.base.json` 的 `customConditions` 与 `apps/web/vite.config.ts` 的 `resolve.conditions` 启用——workspace 内包间引用直接消费源码,改组件即时生效、无需先构建;仓库外/发布走 `dist/`。两条路径共用同一份源码。
-- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。**注意**:`uv run` 按当前项目的 dev group 精确同步共享 venv,其他项目 dev group 的包会被剪掉——测试需要的依赖(`pytest-asyncio`、`aiosqlite` 等)必须写进**本项目**的 `[dependency-groups].dev`,不能指望兄弟项目替你装。需要一次装齐全仓 dev 依赖时用 `npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"`(`scripts/dev.sh` 启动前会自动这么做,保证本地 SQLite 迁移能 import `aiosqlite`)。
+- **共享 venv**:uv workspace 全仓库只有一份 `.venv`(仓库根)和一份 `uv.lock`(提交 git)。Python 依赖任何变更后必须 `npx nx run <项目>:sync`。uv 默认缓存(`~/.cache/uv`)在受限环境(如 agent 沙箱)不可写时,改用仓库本地缓存:`export UV_CACHE_DIR="$PWD/.uv-cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv-python"`。**注意**:`uv run` 按当前项目的 dev group 精确同步共享 venv,其他项目 dev group 的包会被剪掉——测试需要的依赖(`pytest-asyncio`、`aiosqlite` 等)必须写进**本项目**的 `[dependency-groups].dev`,不能指望兄弟项目替你装。需要一次装齐全仓 dev 依赖时用 `npx nx run agent-orchestrator:sync --args="--all-packages --all-groups"`(`scripts/dev.sh` 启动前会自动这么做;`aiosqlite` 供测试与 SQLite 覆盖库使用,默认 Postgres 路径用主依赖 `asyncpg`)。
 - **uv workspace members 是显式清单**:根 `pyproject.toml` 的 `members` 不能用 glob(`apps/`、`packages/` 下混有 npm 项目,glob 会命中无 `pyproject.toml` 的目录导致 uv 报错);新 Python 项目需登记 members + dependencies + `[tool.uv.sources]` 后 `npx nx run <项目>:sync`。
 - **数据访问走仓储**:业务查询经 `database.repository`(`AccountRepository` 自动带 account_id、
   跨账号一律 404 不泄漏存在性、404 的 details 键名由 `id_detail_key` 声明以保持各服务既有契约);
@@ -176,6 +176,7 @@ npx nx run common:sync                              # 变更后同步 .venv
 - **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service` 另跑 `npx nx test <项目>`。
 - **模型/迁移(易踩坑)**:改 ORM 表结构必须配 alembic 迁移——服务默认 `AUTO_CREATE_TABLES=false`,
   而测试走 `create_all` 会自动建表,**缺迁移在测试里看不出来、真实库上直接 500**;
-  本地 dev 启动前由 `scripts/migrate-local.sh` 自动升级并按需「收养」SQLite 库
-  (见 `docs/local-dev.md` §7.1);改完在服务目录内跑 `uv run alembic check` 确认模型与迁移一致。
+  本地默认库是 compose Postgres(每服务独立库),`scripts/migrate-local.sh` 在 dev 启动前自动升级;
+  SQLite 覆盖库(测试/离线时显式改 `<PREFIX>__DATABASE_URL`,见 `docs/local-dev.md` §7.1)同样自动升级并按需「收养」;
+  改完在服务目录内跑 `uv run alembic check` 确认模型与迁移一致。
 - **依赖变更**:Python 先 `nx run <项目>:add/remove` 再 `nx run <项目>:sync`;JS 改 `package.json` 后根目录 `npm install`。

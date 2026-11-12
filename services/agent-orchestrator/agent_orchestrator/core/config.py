@@ -23,7 +23,10 @@ class Settings(BaseAppSettings):
     )
 
     service_name: str = "agent-orchestrator"
-    database_url: str = "sqlite+aiosqlite:///./agent_orchestrator.db"
+    # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
+    # 测试走临时 SQLite、离线场景用 SQLite 覆盖;
+    # 生产用 AGENT_ORCHESTRATOR__DATABASE_URL 覆盖
+    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_agent"
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     sse_poll_interval_seconds: float = 0.5  # SSE 活跃轮询间隔(测试可调小)
     sse_keepalive_polls: int = 30  # 每 N 次空轮询发一次 keep-alive 注释
