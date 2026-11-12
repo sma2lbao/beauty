@@ -203,4 +203,5 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 1. serverless-deployment.md 的「Cloud Run 首选」不再代表当前决策（保留为备选分析）；
 2. 该文档 §4.6「worker 必须单实例 / 租约无续期」在 912e15b 后已过时；
-3. 该文档「Vercel 不推荐」仍然成立（针对全量后端），但**静态层 + rewrite 入口**是当前方案的一部分。
+3. 该文档「Vercel 不推荐」仍然成立（针对全量后端），但**静态层 + rewrite 入口**是当前方案的一部分；
+4. 该文档 §7.6 的服务级 Vercel 导出配置（`services/*/vercel.json`、`services/*/.python-version`、`pyproject.toml` 的 `[tool.vercel]`、`scripts/check-vercel-config.py`）已于 2026-11-12 移除，Vercel 侧只保留 `apps/web` 与 `packages/design` 的 `vercel.json`。

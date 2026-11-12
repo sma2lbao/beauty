@@ -106,7 +106,7 @@ npx nx run api-gateway:serve         # uvicorn :8007(FastAPI 网关,同源 /api)
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
-**Vercel 部署注意**:仓库根有 `nx.json`,Vercel 会把仓库识别为 Nx monorepo 并把 Build Command 改成 `npx nx build <项目>`;Python 服务无 build target,因此必须靠 `services/<svc>/vercel.json` 显式覆盖 `framework` / `installCommand` / `buildCommand`(一致性由 `scripts/check-vercel-config.py` 卡住,细节见 `docs/design/serverless-deployment.md` §7.6)。
+**Vercel 部署注意**:当前部署主线是 hybrid(见 `docs/design/hybrid-deployment.md`):Vercel 只承载 `apps/web` / `apps/site` 静态层与 `/api` rewrite,8 个 Python 服务在腾讯云轻量(首尔)上用 Docker Compose 部署。仓库根有 `nx.json`,Vercel 会把仓库识别为 Nx monorepo 并改写 install/build 命令,新建 Vercel 项目时需显式覆盖(JS 项目由各自的 `vercel.json` 处理)。`apps/web/vercel.json`(`/api/:path*` → `https://api.beautymoon.cn/:path*`)与 `packages/design/vercel.json`(文档站)保留;`services/*` 已不再有 `vercel.json` / `.python-version` / `[tool.vercel]`,`scripts/check-vercel-config.py` 已于 2026-11-12 删除,`scripts/check-workspace.sh` 收敛为三查。
 
 ### 依赖管理
 

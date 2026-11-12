@@ -177,18 +177,13 @@ cd services/tool-service && uv run alembic upgrade head   # 或 AUTO_CREATE_TABL
 
 真沙箱(microsandbox)默认关闭:测试用 FakeSandboxProvider,未配置沙箱时执行器返回 `tool.upstream_unavailable` 而不是退回宿主机直读。
 
-## Vercel 部署（导出约定）
+## 部署
 
-Vercel Python runtime 只自动识别根级 `app.py`/`main.py` 等入口；本服务的 `app` 在
-`tool_service/main.py`，因此由 `pyproject.toml` 的 `[tool.vercel] entrypoint` 显式声明：
+本服务随仓库在腾讯云轻量服务器（首尔）上用 Docker Compose 部署；Vercel 只承载
+`apps/web` / `apps/site` 静态层。编排见
+[deploy/tencent/docker-compose.cvm.yml](../../deploy/tencent/docker-compose.cvm.yml)，
+方案与验收见 [hybrid 部署方案](../../docs/design/hybrid-deployment.md) 与
+[deploy/tencent/README.md](../../deploy/tencent/README.md)。
 
-- 入口：`tool_service.main:app`（与 `vercel.json` 的 `functions` key `tool_service/main.py` 对应）
-- Python 版本：`.python-version` 固定 3.12
-- 函数配置：`vercel.json` 设 `maxDuration`，并排除 `tests/`、本地 `*.db`、`__pycache__`
-  等（Python 包体上限 500MB，Vercel 不做 tree-shaking）
-
-已知阻塞：服务依赖同仓库 uv workspace 内的 `common` / `database` / `events`，而
-Vercel 以 `services/tool-service` 为部署根、不包含仓库其他目录；真实部署前需先把这三个包
-发布到私有索引或构建期 vendor。本次只覆盖无状态短请求服务，`agent-orchestrator` /
-`workspace-service` 含常驻后台循环，按设计文档外置。详见
-[serverless 部署方案](../../docs/design/serverless-deployment.md)。
+服务目录不再包含 Vercel 导出配置（`vercel.json` / `.python-version` /
+`pyproject.toml` 的 `[tool.vercel]`），这些已于 2026-11-12 随部署主线切换清理。

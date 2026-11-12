@@ -733,58 +733,21 @@ D1 的改造要点（相对 Cloud Run 主线）：
 6. CI 增加 `vercel deploy --prebuilt`（或 Git 集成），迁移与外部 worker 仍由 Actions/Cloud Run 管理；web/API 网关与 worker 的版本要一起发，协议兼容按 §5.4 expand/contract。
 7. 成本：Vercel Pro 20 美元/座/月起 + 函数用量；Vercel Sandbox Active CPU 0.128 美元/vCPU·小时、内存 0.0212 美元/GB·小时；外部 worker 仍有 Cloud Run/Fly 固定成本。
 
-#### 已落地：6 个无状态服务的 Vercel 导出配置（2026-11）
+#### 已移除：6 个无状态服务的 Vercel 导出配置（2026-11-12）
 
-按 [Vercel FastAPI 文档](https://vercel.com/docs/frameworks/backend/fastapi#exporting-the-fastapi-application) 的「导出应用」约定，本轮只做配置层改造（不改服务代码、不影响本地与 Docker 部署），覆盖 `api-gateway` / `account-service` / `llm-gateway` / `connector-service` / `knowledge-service` / `tool-service`：
+2026-11-11 部署主线切到 [hybrid 部署](hybrid-deployment.md)：Vercel 只承载 `apps/web` / `apps/site` 静态层与 `/api` rewrite，8 个 Python 服务跑在腾讯云轻量（首尔）的 Docker Compose 上，数据库用 Neon 6 库。因此 D1 时期落地的服务级 Vercel 导出配置已整体移除：
 
-| 服务              | `[tool.vercel] entrypoint` | `vercel.json` 的 `functions` key | `maxDuration`（秒） | 取值的依据                                             |
-| ----------------- | -------------------------- | -------------------------------- | ------------------- | ------------------------------------------------------ |
-| api-gateway       | `api_gateway.main:app`     | `api_gateway/main.py`            | 300                 | SSE 代理长连接；300 为 Hobby/非 Pro 上限（800 需 Pro） |
-| account-service   | `account.main:app`         | `account/main.py`                | 60                  | 认证/会话/JWKS 均为短请求                              |
-| llm-gateway       | `llm_gateway.main:app`     | `llm_gateway/main.py`            | 300                 | 上游 `request_timeout_seconds=60` + 重试/回退余量      |
-| connector-service | `connector.main:app`       | `connector/main.py`              | 60                  | 连接 CRUD 与凭证操作                                   |
-| knowledge-service | `knowledge.main:app`       | `knowledge/main.py`              | 300                 | 本地嵌入冷启动 + 入库                                  |
-| tool-service      | `tool_service.main:app`    | `tool_service/main.py`           | 300                 | 工具执行编排 + 沙箱调用                                |
+- 删除 `services/<svc>/vercel.json` 与 `services/<svc>/.python-version`（`api-gateway` / `account-service` / `llm-gateway` / `connector-service` / `knowledge-service` / `tool-service` 共 6 个服务）；
+- 删除这 6 个服务 `pyproject.toml` 里的 `[tool.vercel]` 表；
+- 删除 `scripts/check-vercel-config.py`，`scripts/check-workspace.sh` 相应收敛为三查。
 
-每个服务目录同时新增 `.python-version`（固定 3.12，与根 `.python-version` 一致，避免 Vercel 按 `requires-python` 解析到 3.13/3.14）与 `vercel.json`（`excludeFiles` 排除 `tests/`、本地 `*.db`、`__pycache__`、`reports/`、`coverage/`，控制 500MB 包体上限）。入口与函数 key 的一致性由 `scripts/check-vercel-config.py` 在 CI 的 `check-workspace.sh` 中校验，防止漂移。
+`apps/web/vercel.json`（SPA rewrite，`/api/:path*` → `https://api.beautymoon.cn/:path*`）与 `packages/design/vercel.json`（文档站）保留。下面保留当时的实测结论，供将来若重新评估 Vercel 导出路线的参考：
 
-**`maxDuration` 必须落在部署计划的硬上限内（2026-11 实测）**：在未升级的计划（Hobby）上部署 `api-gateway` 时，`vercel.json` 里的 `maxDuration: 800` 会被 Vercel 直接拒绝，部署报错 `The value for maxDuration must be between 1 second and 300 seconds, in order to increase this limit upgrade your plan`。Vercel 的时长上限随计划变化：Hobby 默认与最大都是 300s；Pro/Enterprise 默认 300s、单函数最高 800s（GA），>800s 的 30 分钟档仍在 Beta 且需逐函数配置。因此配置按「不依赖计划即可部署」取 300s（上表其余服务的 60/300 也都在 Hobby 上限内）。要拿到 800s 需升级 Pro：把 `services/api-gateway/vercel.json` 改回 800，并同步调高 `scripts/check-vercel-config.py` 的 `MAX_FUNCTION_DURATION`（CI 会拦住超过上限的取值）。300s 被截断时的兜底：run 事件流带 `Last-Event-ID` 续流，chat 流断线靠消息重拉（见 §7.6 的承载表）。
-
-**必须显式覆盖 Nx 自动配置（2026-11 实测）**：仓库根有 `nx.json`，Vercel 会把该仓库识别为 Nx monorepo 并自动"调整默认设置"——install 命令被改成 `npm install --prefix=../..`、Build Command 被改成 `cd ../.. && npx nx build <项目>`。本仓库 Python 服务刻意没有 build target，于是部署直接失败：`NX   Cannot find configuration for task account-service:build`（`[BUILD_UTILS_SPAWN_1]`，exit 1）。因此每个服务的 `vercel.json` 必须显式写三项，并由 `scripts/check-vercel-config.py` 一并卡住：
-
-| 字段             | 取值                                                                  | 作用                                                                                                                                                                                                                                            |
-| ---------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `framework`      | `"fastapi"`                                                           | 钉住框架预设，避免 Nx 自动配置改写后的框架判定漂移                                                                                                                                                                                              |
-| `installCommand` | `"uv sync --active --no-dev --no-editable --package <服务> --frozen"` | 覆盖 Nx 注入的 `npm install`，显式用 uv workspace 把依赖装进 builder 按 `.python-version` 预建的 venv；`--no-editable` 让 `common` 等成员以普通包随 `_vendor` 进 bundle。**留空等于跳过 Install Command，实测函数里没有任何第三方依赖**，见下文 |
-| `buildCommand`   | `"true"`                                                              | no-op 占位，替换被劫持的 `npx nx build`（FastAPI 应用由 runtime 打包，不需要用户构建步骤）                                                                                                                                                      |
-
-**空 `installCommand` 会静默跳过 Python 依赖安装（2026-11 实测）**：第一版配置把 `installCommand` 写成 `""`，按 [`vercel.json` 参考文档](https://vercel.com/docs/project-configuration/vercel-json) 的语义等于「跳过 Install Command」——本意是绕开 Nx 注入的 `npm install`，让 Python runtime 自己按 `pyproject.toml` / `uv.lock` 装依赖。实际部署「成功」了，但函数一被调用就报 `could not import "api_gateway/main.py"` / `ModuleNotFoundError: No module named 'httpx'`：bundle 里只有应用代码，`httpx`、`fastapi`、`common` 全都不在。因此改成显式命令 `uv sync --active --no-dev --no-editable --package <服务> --frozen`：
-
-- `--active`：装进 builder 按 `.python-version` 预建的 venv（builder 执行 Install Command 时带 `VIRTUAL_ENV`；不加 `--active` 会另建 `.venv`，打包时仍拿不到依赖）；
-- `--no-editable`：让 `common` 等 workspace 成员以普通包落进 site-packages（editable 的 `.pth` 指向 `../../packages/*`，函数运行时不存在），顺带解决「workspace 依赖摊平」；
-- `--package <服务>`：只装该服务依赖，否则整 workspace 11 个项目全装；`--frozen`：用仓库根已提交的 `uv.lock`，构建期不改锁文件。
-
-代价：自定义 Install Command 会让 Vercel 认为依赖由用户自行管理（`hasCustomCommand`），不再做函数包体优化，整份 site-packages 直接进 `_vendor`——本仓库 6 个服务的依赖实测约 40MB，远低于 225MB 的优化阈值与 500MB 包体上限。该命令依赖构建容器能读到仓库根（前面的 Nx 报错已证明整仓可见）；若将来 Root Directory 隔离导致读不到，构建会显式失败，而不是再发出一个没有依赖的函数。
-
-**服务依赖必须在服务自己的 `pyproject.toml` 里自足（2026-11 实测）**：函数运行环境只装该服务的依赖（`uv sync --package <服务>`），而本地开发用的是仓库根共享 `.venv`，兄弟服务的依赖或 extra 会把它掩盖住。`api-gateway` 就踩了这个坑：`api_gateway/schemas/auth.py` 用了 `EmailStr`，但依赖里只有 `fastapi` / `common`，本地因为 `account-service` 声明了 `pydantic[email]` 而能跑；函数里直接报 `ImportError: email-validator is not installed`。修复是把 `pydantic[email]>=2.13.5` 写进 `services/api-gateway/pyproject.toml` 的 dependencies（与 `account-service` 一致）。部署前可本地复刻函数环境验证入口能导入：
-
-```sh
-uv venv --python 3.12 /tmp/fn-venv
-cd services/api-gateway
-VIRTUAL_ENV=/tmp/fn-venv uv sync --active --no-dev --no-editable --package api-gateway --frozen
-/tmp/fn-venv/bin/python -c "import api_gateway.main"
-```
-
-2026-11 用同样的方式逐个审计了 6 个无状态服务（各自干净 venv + 只装本服务依赖），入口均可导入。
-
-**仍未解决（真实部署前必须处理）**：
-
-- ~~**workspace 依赖摊平**~~（已解决，2026-11）：`installCommand` 改为
-  `uv sync --no-editable` 后，`common` / `database` / `events` 以普通包进入函数
-  `_vendor`，运行时不再依赖指向 `../../packages/*` 的 editable `.pth`；无需发布私有索引，
-  也无需在 CI 里额外 vendor。
-- **未覆盖的服务**：`agent-orchestrator` / `workspace-service` 含常驻后台循环（outbox dispatcher、jobs worker、interrupts sweeper、sandbox reaper）与沙箱生命周期，按 D1 外置，不放进 Functions。
-- **平台侧配置**：区域、内存、Cron/Queues、迁移 Job 与 `apps/web` 的 `rewrites` 落点仍需在 Vercel 项目与 CI 中配置（`apps/web/vercel.json` 目前把 `/api/*` 指向 `https://api.beautymoon.cn/*`）。
+- **`maxDuration` 受部署计划硬上限约束**：Hobby 上限 300s，写 800 会被 Vercel 拒绝（`The value for maxDuration must be between 1 second and 300 seconds, in order to increase this limit upgrade your plan`）；Pro/Enterprise 单函数最高 800s。
+- **必须显式覆盖 Nx 自动配置**：仓库根有 `nx.json`，Vercel 会按 Nx monorepo 改写 install/build 命令；Python 服务没有 build target，于是报 `NX   Cannot find configuration for task <服务>:build`。当时靠 `framework: "fastapi"` / `installCommand` / `buildCommand: "true"` 三项覆盖。
+- **`installCommand` 不能留空**：留空等于跳过 Install Command，函数里只有应用代码（`ModuleNotFoundError: No module named 'httpx'`）；显式 `uv sync --active --no-dev --no-editable --package <服务> --frozen` 才能把 workspace 依赖装进 bundle。
+- **服务依赖必须自足**：函数环境只装本服务依赖，本地共享 `.venv` 会掩盖缺失——`api-gateway` 的 `EmailStr` 需要本服务声明 `pydantic[email]`，否则报 `email-validator is not installed`。
+- **未覆盖的服务**：`agent-orchestrator` / `workspace-service` 含常驻后台循环与沙箱生命周期，按 D1 外置，从未放进 Functions。
 
 #### D2：全 Vercel（25-35 人日，不推荐本期）
 
