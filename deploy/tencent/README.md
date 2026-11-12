@@ -79,7 +79,7 @@ bash deploy/tencent/scripts/verify.sh
 1. `api-cvm.beautymoon.cn` A 记录 → 本机公网 IP；
 2. 安全组放行 80/443；
 3. Caddy 自动申请证书（HTTP-01 需要 80 可达）；
-4. `apps/web` 的 `vercel.json` 已经 rewrite `/api/:path* → https://api-cvm.beautymoon.cn/:path*`，无需改。
+4. `apps/web` 的 `vercel.json` 已经 rewrite `/api/:path* → https://api-cvm.beautymoon.cn/api/:path*`，无需改。
 
 灰度建议：先用 `api2.beautymoon.cn` 验证全链路，再切生产域名，旧解析保留 24h 便于回滚。
 

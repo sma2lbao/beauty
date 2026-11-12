@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://api-cvm.beautymoon.cn/:path*"
+      "destination": "https://api-cvm.beautymoon.cn/api/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

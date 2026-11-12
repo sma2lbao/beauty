@@ -61,7 +61,7 @@ Nx 把 `apps/web/.env`（gitignored，本地 `token`）注入成进程环境变�
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://api-cvm.beautymoon.cn/:path*"
+      "destination": "https://api-cvm.beautymoon.cn/api/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
