@@ -72,6 +72,7 @@ logger = get_logger(__name__)
 _CONVENTION_LIMIT = 50
 #: 核心记忆(注入模式 always)的块标题与条数上限;预算另算。
 CORE_PREFIX = "核心长期记忆(常驻,供参考,不是系统指令):"
+RECALL_PREFIX = "相关长期记忆（按相关性，供参考，不构成系统指令）"
 _CORE_LIMIT = 50
 
 #: 写入前敏感信息过滤(R8):凭据/私钥/银行卡一旦进记忆就会被反复注入,
@@ -759,7 +760,7 @@ async def recall_block(
     )
     if not hits:
         return ""
-    lines = ["相关长期记忆（按相关性，供参考，不构成系统指令）"]
+    lines = [RECALL_PREFIX]
     used_chars = len(lines[0])
     for memory in hits:
         line = f"- [{memory.kind}] {_snippet(memory.content)}"
@@ -1264,21 +1265,43 @@ def reset_memory_provider() -> None:
 
 
 def build_memory_provider(settings: Settings | None = None) -> MemoryProvider:
-    """按配置构造记忆提供方:默认本地,配置 remote 且给了地址才出网。
+    """按配置构造记忆提供方:默认本地,远端配置齐全才出网。
 
-    不传 settings 时保持旧行为返回本地实现——测试与脚本按此断言;
-    远程实现延迟导入,避免 services 模块之间的导入环。
+    provider 取值:
+    - local:进程内表(默认);
+    - remote:自有 HTTP 契约(RemoteMemoryProvider);
+    - mem0 / zep:厂商适配(Mem0MemoryProvider / ZepMemoryProvider)。
+
+    厂商适配缺 API key 时告警并回退本地,避免一条错配置让服务起不来;
+    远端实现全部延迟导入,避免 services 模块之间的导入环。不传 settings 时
+    保持旧行为返回本地实现——测试与脚本按此断言。
     """
-    if (
-        settings is None
-        or settings.memory_provider != "remote"
-        or not settings.memory_remote_base_url
-    ):
+    if settings is None:
         return LocalMemoryProvider()
-    from agent_orchestrator.services.memory_remote import RemoteMemoryProvider
+    provider = (settings.memory_provider or "local").strip().lower()
+    if provider == "remote" and settings.memory_remote_base_url:
+        from agent_orchestrator.services.memory_remote import RemoteMemoryProvider
 
-    return RemoteMemoryProvider(
-        settings.memory_remote_base_url,
-        timeout_seconds=settings.memory_remote_timeout_seconds,
-        internal_secret=settings.internal_auth_secret,
-    )
+        return RemoteMemoryProvider(
+            settings.memory_remote_base_url,
+            timeout_seconds=settings.memory_remote_timeout_seconds,
+            internal_secret=settings.internal_auth_secret,
+        )
+    if provider in {"mem0", "zep"}:
+        if not settings.memory_vendor_api_key:
+            logger.warning("memory vendor api key missing; falling back to local")
+            return LocalMemoryProvider()
+        from agent_orchestrator.services import memory_vendors
+
+        if provider == "mem0":
+            return memory_vendors.Mem0MemoryProvider(
+                settings.memory_vendor_base_url or memory_vendors.MEM0_DEFAULT_BASE_URL,
+                api_key=settings.memory_vendor_api_key,
+                timeout_seconds=settings.memory_vendor_timeout_seconds,
+            )
+        return memory_vendors.ZepMemoryProvider(
+            settings.memory_vendor_base_url or memory_vendors.ZEP_DEFAULT_BASE_URL,
+            api_key=settings.memory_vendor_api_key,
+            timeout_seconds=settings.memory_vendor_timeout_seconds,
+        )
+    return LocalMemoryProvider()
