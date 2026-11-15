@@ -19,7 +19,7 @@ from workspace.api.health import health_router
 from workspace.api.v1.router import api_router
 from workspace.core.config import Settings
 from workspace.models import sandbox as sandbox_models  # noqa: F401  注册 ORM 元数据
-from workspace.models import shell as shell_models  # noqa: F401
+from workspace.models import shell as shell_models  # noqa: F401  注册 ORM 元数据
 from workspace.models import workspace as workspace_models  # noqa: F401
 from workspace.services.sandbox import reap_expired
 from workspace.services.sandbox_provider import (
