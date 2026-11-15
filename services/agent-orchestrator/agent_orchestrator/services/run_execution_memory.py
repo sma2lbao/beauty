@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run
-from agent_orchestrator.services import memory as memory_service
+from agent_orchestrator.services import (
+    memory as memory_service,  # noqa: F401 - 保留模块别名,既有测试按此路径打桩
+)
+from agent_orchestrator.services import memory_context
 
 logger = get_logger(__name__)
 
@@ -32,24 +35,14 @@ async def _recall_memory_block(
     看到 failed——所以这里吞异常只留 warning。
     """
     try:
-        convention = await memory_service.convention_block(
+        # 核心块/约定/召回的组装与对话路径共用同一实现,顺序与预算只维护一份。
+        return await memory_context.prompt_memory_block(
             session,
             run.account_id,
+            _memory_query(run),
             workspace_id=run.workspace_id,
-            max_chars=settings.memory_convention_max_chars,
+            settings=settings,
         )
-        query = _memory_query(run)
-        recall = ""
-        if query:
-            recall = await memory_service.recall_block(
-                session,
-                run.account_id,
-                query,
-                workspace_id=run.workspace_id,
-                limit=settings.memory_recall_limit,
-                max_chars=settings.memory_recall_max_chars,
-            )
-        return "\n\n".join(part for part in (convention, recall) if part)
     except Exception as exc:  # noqa: BLE001 - 记忆故障不阻断执行
         logger.warning(
             "memory recall failed",

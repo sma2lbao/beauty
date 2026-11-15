@@ -56,6 +56,16 @@ class UnavailableSandboxProvider:
     ) -> ShellSession:
         raise self._unavailable()
 
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        raise self._unavailable()
+
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         raise self._unavailable()
 

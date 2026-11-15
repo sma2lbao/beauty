@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import update
 
 from agent_orchestrator.main import create_app
-from agent_orchestrator.models.memory import Memory
+from agent_orchestrator.models.memory import Memory, MemoryReview
 from tests.conftest import ACCOUNT, OTHER, _settings, verifier
 
 PREFIX = "/api/v1/memories"
@@ -70,9 +70,25 @@ def test_create_list_search_delete(client: TestClient) -> None:
     ).json()
     assert search["query"] == "简洁回答"
     assert [hit["id"] for hit in search["hits"]] == [memory["id"]]
+    # GET 只读:预览检索不能污染访问统计(缓存/审计网关会重复 GET)
+    assert search["hits"][0]["access_count"] == 0
+
+    touched = client.post(
+        f"{PREFIX}/search", json={"query": "简洁回答"}, headers=ACCOUNT
+    )
+    assert touched.status_code == 200
+    assert [hit["id"] for hit in touched.json()["hits"]] == [memory["id"]]
+    assert client.get(PREFIX, headers=ACCOUNT).json()[0]["access_count"] == 1
 
     stats = client.get(f"{PREFIX}/stats", headers=ACCOUNT).json()
-    assert stats == {"total": 1, "active": 1, "pinned": 0, "expired": 0}
+    assert stats == {
+        "total": 1,
+        "active": 1,
+        "pinned": 0,
+        "expired": 0,
+        "superseded": 0,
+        "pending_reviews": 0,
+    }
 
     deleted = client.delete(f"{PREFIX}/{memory['id']}", headers=ACCOUNT)
     assert deleted.status_code == 204
@@ -126,6 +142,8 @@ def test_validation_and_business_errors(client: TestClient) -> None:
     assert bad_scope.status_code == 422
     missing_query = client.get(f"{PREFIX}/search", headers=ACCOUNT)
     assert missing_query.status_code == 422
+    empty_query = client.post(f"{PREFIX}/search", json={"query": ""}, headers=ACCOUNT)
+    assert empty_query.status_code == 422
     missing_workspace = client.post(
         PREFIX, json={"content": "x", "scope": "workspace"}, headers=ACCOUNT
     )
@@ -148,6 +166,8 @@ def test_account_isolation(client: TestClient) -> None:
         "active": 0,
         "pinned": 0,
         "expired": 0,
+        "superseded": 0,
+        "pending_reviews": 0,
     }
     cross_delete = client.delete(f"{PREFIX}/{memory['id']}", headers=OTHER)
     assert cross_delete.status_code == 404
@@ -168,7 +188,14 @@ def test_purge_expired_endpoint(tmp_path: Path) -> None:
 
         _expire_all(settings.database_url)
         stats = client.get(f"{PREFIX}/stats", headers=ACCOUNT).json()
-        assert stats == {"total": 1, "active": 0, "pinned": 0, "expired": 1}
+        assert stats == {
+            "total": 1,
+            "active": 0,
+            "pinned": 0,
+            "expired": 1,
+            "superseded": 0,
+            "pending_reviews": 0,
+        }
 
         purged = client.post(f"{PREFIX}/purge-expired", headers=ACCOUNT)
         assert purged.json() == {"purged": 1}
@@ -197,6 +224,166 @@ def test_create_uses_settings_limits_and_default_ttl(tmp_path: Path) -> None:
         assert second.json()["code"] == "memory.limit_reached"
 
         client.delete(f"{PREFIX}/{first['id']}", headers=ACCOUNT)
-        # 显式 0 表示"不单独设期限",仍按默认有效期而非永久
+        # 显式 0 表示永久,不再被部署默认值覆盖
         third = _create(client, content="第三条", ttl_days=0)
-        assert third["expires_at"] is not None
+        assert third["expires_at"] is None
+
+
+def _insert_review(
+    database_url: str,
+    *,
+    content: str,
+    kind: str = "fact",
+    confidence: float = 0.3,
+) -> str:
+    """直连库插一条待复核候选(复核队列只有自动抽取会写,API 不提供入口)。"""
+
+    async def run() -> str:
+        factory = create_session_factory(database_url)
+        try:
+            async with factory.engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            async with session_scope(factory) as session:
+                review = MemoryReview(
+                    account_id="t-1",
+                    scope="account",
+                    kind=kind,
+                    content=content,
+                    confidence=confidence,
+                    evidence_quote="用户原话",
+                    source_type="chat",
+                    source_id="c-1",
+                )
+                session.add(review)
+                await session.flush()
+                return review.id
+        finally:
+            await factory.engine.dispose()
+
+    return asyncio.run(run())
+
+
+def test_get_patch_and_optimistic_conflict(client: TestClient) -> None:
+    memory = _create(client)
+    fetched = client.get(f"{PREFIX}/{memory['id']}", headers=ACCOUNT)
+    assert fetched.status_code == 200
+    assert fetched.json()["content"] == memory["content"]
+
+    patched = client.patch(
+        f"{PREFIX}/{memory['id']}",
+        json={
+            "content": "用户偏好一句话回答",
+            "pinned": True,
+            "expected_updated_at": memory["updated_at"],
+        },
+        headers=ACCOUNT,
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["content"] == "用户偏好一句话回答"
+    assert patched.json()["pinned"] is True
+
+    # 旧的 updated_at 再提交 = 乐观并发冲突
+    stale = client.patch(
+        f"{PREFIX}/{memory['id']}",
+        json={"content": "另一次修改", "expected_updated_at": memory["updated_at"]},
+        headers=ACCOUNT,
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "memory.conflict"
+
+    # ttl_days=0 显式改永久
+    permanent = client.patch(
+        f"{PREFIX}/{memory['id']}", json={"ttl_days": 0}, headers=ACCOUNT
+    )
+    assert permanent.status_code == 200
+    assert permanent.json()["expires_at"] is None
+    assert client.get(f"{PREFIX}/nope", headers=ACCOUNT).status_code == 404
+
+
+def test_sensitive_content_rejected(client: TestClient) -> None:
+    rejected = client.post(
+        PREFIX,
+        json={"content": "部署私钥 -----BEGIN RSA PRIVATE KEY----- 请记住"},
+        headers=ACCOUNT,
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "memory.sensitive_rejected"
+    assert client.get(PREFIX, headers=ACCOUNT).json() == []
+
+
+def test_new_fact_supersedes_old_and_include_invalid(client: TestClient) -> None:
+    old = _create(
+        client,
+        content="用户偏好使用中文回复并保持简洁",
+        kind="preference",
+    )
+    new = _create(
+        client,
+        content="用户偏好使用英文回复并保持简洁",
+        kind="preference",
+    )
+    active = client.get(PREFIX, headers=ACCOUNT).json()
+    assert [row["id"] for row in active] == [new["id"]]
+
+    history = client.get(
+        PREFIX, params={"include_invalid": True}, headers=ACCOUNT
+    ).json()
+    assert {row["id"] for row in history} == {old["id"], new["id"]}
+    stale = next(row for row in history if row["id"] == old["id"])
+    assert stale["invalid_at"] is not None
+    assert stale["superseded_by"] == new["id"]
+    assert client.get(f"{PREFIX}/stats", headers=ACCOUNT).json()["superseded"] == 1
+
+
+def test_review_queue_approve_and_reject(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, "memory-reviews.db")
+    app = create_app(settings, token_verifier=verifier())
+    with TestClient(app) as client:
+        review_id = _insert_review(settings.database_url, content="用户下周去东京")
+        listed = client.get(f"{PREFIX}/reviews", headers=ACCOUNT).json()
+        assert [item["id"] for item in listed] == [review_id]
+        assert listed[0]["status"] == "pending"
+        assert listed[0]["confidence"] == 0.3
+
+        approved = client.post(
+            f"{PREFIX}/reviews/{review_id}/approve",
+            json={"note": "确认"},
+            headers=ACCOUNT,
+        )
+        assert approved.status_code == 201, approved.text
+        assert approved.json()["content"] == "用户下周去东京"
+        assert client.get(f"{PREFIX}/reviews", headers=ACCOUNT).json() == []
+        assert client.get(PREFIX, headers=ACCOUNT).json()[0]["source_type"] == "manual"
+
+        # 已处理的复核项再次提交按冲突处理
+        again = client.post(
+            f"{PREFIX}/reviews/{review_id}/approve", json={}, headers=ACCOUNT
+        )
+        assert again.status_code == 409
+        assert again.json()["code"] == "memory.review_resolved"
+
+        rejected_id = _insert_review(settings.database_url, content="用户讨厌表格")
+        rejected = client.post(
+            f"{PREFIX}/reviews/{rejected_id}/reject", json={}, headers=ACCOUNT
+        )
+        assert rejected.status_code == 204
+        assert client.get(f"{PREFIX}/reviews", headers=ACCOUNT).json() == []
+        assert len(client.get(PREFIX, headers=ACCOUNT).json()) == 1
+
+
+def test_export_and_purge_all(client: TestClient) -> None:
+    _create(client)
+    exported = client.get(f"{PREFIX}/export", headers=ACCOUNT)
+    assert exported.status_code == 200
+    payload = exported.json()
+    assert len(payload["memories"]) == 1
+    assert "exported_at" in payload
+
+    unconfirmed = client.delete(PREFIX, headers=ACCOUNT)
+    assert unconfirmed.status_code == 400
+    assert unconfirmed.json()["code"] == "memory.confirm_required"
+
+    purged = client.delete(f"{PREFIX}?confirm=true", headers=ACCOUNT)
+    assert purged.status_code == 200
+    assert purged.json() == {"memories": 1, "reviews": 0}
+    assert client.get(PREFIX, headers=ACCOUNT).json() == []

@@ -160,6 +160,7 @@ dev 显式失败)。
 | `SANDBOX_E2B_API_KEY`(None)                                             | 仅 `provider=e2b`:控制面 Key(留空回退环境变量 `E2B_API_KEY`;不要写进仓库)                                                                                         |
 | `SANDBOX_E2B_DOMAIN`(None)                                              | 仅 `provider=e2b`:控制面域名(留空回退 `E2B_DOMAIN`;阿里云极速版填 `<region>.sandbox.aliyuncs.com`)                                                                |
 | `SANDBOX_E2B_TEMPLATE`("")                                              | 仅 `provider=e2b`:默认模板名(空= `base`;`image` 非 `python` 时优先用 `image` 当模板名)                                                                            |
+| `INSTANCE_ID`("") / `SANDBOX_SHELL_LEASE_SECONDS`(120)                  | 实例身份(空= 主机名:pid)与 shell 会话租约;跨实例归属/接管见 [design/persistent-shell.md](../../docs/design/persistent-shell.md)                                   |
 | `SANDBOX_SHELL_IDLE_SECONDS`(1800)                                      | 持久 shell 会话空闲回收 TTL(无输入/输出/订阅满该时长即关)                                                                                                         |
 | `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS`(30)                              | 空闲回收 sweeper 周期                                                                                                                                             |
 | `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(300)                           | 已关闭会话在内存里保留多久,供断线重连回放(之后按 404 处理)                                                                                                        |
@@ -222,7 +223,28 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 | 单会话订阅者超限(`SANDBOX_SHELL_MAX_SUBSCRIBERS`)   | `sandbox.session_busy`                            | 409       |
 | `Last-Event-ID` 不是合法整数                        | `sandbox.bad_cursor`                              | 400       |
 | `cwd`/`cols`/`rows` 非法 / 输入超 8KB               | —(FastAPI 校验)                                   | 422       |
+| 会话被别的实例持有(租约有效)                        | `sandbox.session_elsewhere`                       | 409       |
+| 会话登记过但进程已不可接管                          | `sandbox.session_lost`                            | 409       |
 | provider 起不来 / 沙箱过期                          | `sandbox.provider_error` / `sandbox.expired`      | 502 / 409 |
+
+### 跨实例归属与接管
+
+会话的**身份**落 `shell_sessions` 表,**输出流**仍在持有实例内存里;设计与取舍见
+[design/persistent-shell.md](../../docs/design/persistent-shell.md)。
+
+- 每行记 `provider`/`runtime_name`/`provider_pid`/`owner_instance`/`lease_expires_at`,
+  以及 `status`(`running`/`closed`/`lost`);`owner_instance` 默认 `主机名:pid`,
+  可用 `INSTANCE_ID` 覆盖;
+- 持有实例每轮 sweep 续租(租约 `SANDBOX_SHELL_LEASE_SECONDS`,默认 120s = 4 个 30s 周期);
+- 别的实例收到请求时,归属者租约有效 → **409 `sandbox.session_elsewhere`**
+  (`details` 带 `owner_instance`/`provider`/`resumable`),不再是误报 404;
+- 归属者重启或崩溃、租约过期后,新实例先做**原子 UPDATE 认领**(并发只有一个赢家),
+  再用 `provider.attach_shell(runtime_name, provider_pid)` 接回输出流并续租。
+  认领失败立即返回 409 且**不碰 pty**——避免误杀正在别处运行的会话;
+- 只有 `e2b` 支持按 pid 重连(`pty.connect`);`local`/`microsandbox` 做不到接管,
+  会得到明确的 409 `sandbox.session_lost`;
+- 孤儿回收:sweep 扫过期 `running` 行,能接管就先接上再 `close()`(真的把 provider
+  侧进程杀掉),然后标 `lost`;超过保留期的 `closed` 行被清理。每轮最多 50 行。
 
 三路 provider 的实现差异(**TTY 是否成立**):
 
@@ -240,7 +262,7 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 
 生命周期与资源回收:
 
-- 会话表在**进程内**(键 `account_id/sandbox_id/session_id`),不落库;进程重启即丢;
+- 会话**身份**落 `shell_sessions` 表(键 `account_id/sandbox_id/session_id`),`owner_instance` + 租约决定谁有权操作 pty;**输出流**(ring buffer、`seq`、订阅者)仍在持有实例内存里,因此接管只是「接着往下走」,不回放接管前的输出;
 - 空闲回收:后台 sweeper 每 `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS` 扫一遍,超过
   `SANDBOX_SHELL_IDLE_SECONDS`(30 分钟)无输入/输出/订阅的会话被关闭;
 - 已关闭会话在内存里保留 `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(5 分钟)供回放,
@@ -250,16 +272,18 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
 
 **限制(务必在部署前确认)**:
 
-- **单实例假设**:会话表是进程内字典,不做跨实例共享/粘性路由。多副本部署时,
-  `POST .../sessions`、`.../input`、`.../stream`、`DELETE ...` 必须落在**同一个实例**
-  (否则表现为会话不存在 404);水平扩展需要粘性会话或把会话状态外置(未实现);
+- **跨实例边界**:会话归属已落库并有租约,但**输出流**仍只在持有实例内存里。多副本时
+  非归属者调用四个端点会得到明确的 409 `sandbox.session_elsewhere`(不再是 404),
+  要无缝多副本仍需粘性路由或把输出外置(未实现,见 design §9);归属者崩溃/重启后
+  `e2b` 能接管会话(最多等一个租约周期,默认 120s,接管前输出不可回放),
+  `local`/`microsandbox` 只能得到 409 `sandbox.session_lost`;
 - **长连接**:SSE 是长期占用的 HTTP 连接。API 网关的 httpx 读超时是**两次收数据**的间隔
   (30s),服务端 15s 心跳 < 30s,因此不会被掐断;但任何代理/网关都要关闭响应缓冲
   (`X-Accel-Buffering: no` 只对 nginx 生效,其他网关需自行配置);
 - **资源**:每个会话一个 provider 侧进程 + 一个后台读任务 + 最多 32 个订阅队列;
-  单沙箱最多 8 个会话。异常路径靠 sweeper/沙箱回收兜底,不做跨进程强制清理——
-  provider 侧进程若在服务崩溃后残留,需要 provider 自己的生命周期(microVM TTL /
-  宿主进程组)清理;
+  单沙箱最多 8 个会话。异常路径靠 sweeper 兜底:租约过期后能接管的 provider(e2b)
+  由孤儿回收真杀进程;接管不了的 provider(local/microsandbox)仍依赖自己的生命周期
+  (microVM TTL / 宿主进程组)清理;
 - **回放不是持久化**:ring buffer 只保留最近 64KB,且只存在于存活实例的内存里;
   断线太久或实例重启后不可回放。
 

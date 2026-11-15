@@ -8,7 +8,7 @@ import type { Memory } from '@/lib/memory-api';
 import { MemoryRow } from './memory-row';
 import type { MemoryModel } from './use-memory-model';
 
-/** 行列表:删除的二次确认状态由 model 统一管理。 */
+/** 行列表:删除的二次确认与行内编辑状态由 model 统一管理。 */
 export function MemoryRows({
   model,
   memories,
@@ -16,8 +16,20 @@ export function MemoryRows({
   model: MemoryModel;
   memories: Memory[];
 }) {
-  const { workspaceNames, confirmingId, setConfirmingId, removeMutation } =
-    model;
+  const {
+    workspaceNames,
+    confirmingId,
+    setConfirmingId,
+    removeMutation,
+    updateMutation,
+    editingId,
+    editingContent,
+    setEditingContent,
+    startEdit,
+    cancelEdit,
+    saveEdit,
+    togglePinned,
+  } = model;
 
   return (
     <ul className="divide-y">
@@ -34,6 +46,17 @@ export function MemoryRows({
           deleting={
             removeMutation.isPending && removeMutation.variables === memory.id
           }
+          editing={editingId === memory.id}
+          editingContent={editingContent}
+          saving={
+            updateMutation.isPending &&
+            updateMutation.variables?.id === memory.id
+          }
+          onEditingContentChange={setEditingContent}
+          onStartEdit={() => startEdit(memory)}
+          onSaveEdit={() => saveEdit(memory)}
+          onCancelEdit={cancelEdit}
+          onTogglePinned={() => togglePinned(memory)}
           onRequestDelete={() => setConfirmingId(memory.id)}
           onConfirmDelete={() => removeMutation.mutate(memory.id)}
           onCancelDelete={() => setConfirmingId(null)}

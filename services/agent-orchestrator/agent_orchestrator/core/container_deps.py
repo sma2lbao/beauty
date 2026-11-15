@@ -14,6 +14,10 @@ from agent_orchestrator.services.embeddings import (
 from agent_orchestrator.services.file_capture import HttpFileDownloader
 from agent_orchestrator.services.llm import GatewayClient
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
+from agent_orchestrator.services.memory import (
+    build_memory_provider,
+    configure_memory_provider,
+)
 from agent_orchestrator.services.sandbox import SandboxClient
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.workspace import WorkspaceClient
@@ -41,10 +45,12 @@ class DepsAssemblyMixin:
         self._publish("llm_client", llm)
 
     def _assemble_memory(self) -> None:
-        """记忆 P2:嵌入提供方全局装配(本地哈希默认;gateway 走 llm-gateway)。
+        """记忆 P3:嵌入 + 记忆提供方全局装配(默认本地,可配置远程)。
 
         嵌入是记忆检索/去重/巩固的共同底座,进程内只应有一份配置;provider
         自建的 HTTP 客户端由容器负责关闭(本地哈希无资源,不用登记 closer)。
+        记忆提供方同一套约定:读路径(对话/run 注入)只认注册进来的那一份,
+        远程实现失败时由 memory_context 回退本地,不在这里做容错。
         """
         provider = build_embedding_provider(self.settings)
         configure_embedding(provider)
@@ -52,6 +58,13 @@ class DepsAssemblyMixin:
         aclose = getattr(provider, "aclose", None)
         if aclose is not None:
             self._closers.append(("embedding provider", aclose))
+
+        memory_provider = build_memory_provider(self.settings)
+        configure_memory_provider(memory_provider)
+        self._publish("memory_provider", memory_provider)
+        memory_aclose = getattr(memory_provider, "aclose", None)
+        if memory_aclose is not None:
+            self._closers.append(("memory provider", memory_aclose))
 
     async def _assemble_graph_deps(self) -> None:
         settings = self.settings

@@ -20,8 +20,12 @@ from common.metrics import configure, metrics_payload
 from agent_orchestrator.metrics import (
     job_failures_total,
     llm_upstream_errors_total,
+    memory_sweep_account_failures_total,
+    memory_sweep_items_total,
+    memory_sweeps_total,
     observe_job_failure,
     observe_llm_error,
+    observe_memory_sweep,
     observe_run_outcome,
     run_outcomes_total,
 )
@@ -37,6 +41,9 @@ def test_domain_counters_are_registered() -> None:
     assert b"# TYPE run_outcomes_total counter" in payload
     assert b"# TYPE job_failures_total counter" in payload
     assert b"# TYPE llm_upstream_errors_total counter" in payload
+    assert b"# TYPE memory_sweeps_total counter" in payload
+    assert b"# TYPE memory_sweep_items_total counter" in payload
+    assert b"# TYPE memory_sweep_account_failures_total counter" in payload
 
 
 def test_domain_counters_increment() -> None:
@@ -56,6 +63,24 @@ def test_domain_counters_increment() -> None:
         )
         == 1
     )
+
+
+def test_memory_sweep_outcome_and_items_increment() -> None:
+    observe_memory_sweep(
+        outcome="completed",
+        purged=2,
+        consolidated=1,
+        failed_accounts=1,
+        service="svc-mem",
+    )
+    observe_memory_sweep(outcome="skipped", service="svc-mem")
+    assert _value(memory_sweeps_total, service="svc-mem", outcome="completed") == 1
+    assert _value(memory_sweeps_total, service="svc-mem", outcome="skipped") == 1
+    assert _value(memory_sweep_items_total, service="svc-mem", action="purged") == 2
+    assert (
+        _value(memory_sweep_items_total, service="svc-mem", action="consolidated") == 1
+    )
+    assert _value(memory_sweep_account_failures_total, service="svc-mem") == 1
 
 
 def test_service_name_defaults_to_log_context() -> None:

@@ -59,6 +59,9 @@ from agent_orchestrator.repositories.mcp import (
 from agent_orchestrator.repositories.memory import (
     MemoryRepository as MemoryRepository,
 )
+from agent_orchestrator.repositories.memory import (
+    MemoryReviewRepository as MemoryReviewRepository,
+)
 from agent_orchestrator.repositories.message import (
     MessageRepository as MessageRepository,
 )

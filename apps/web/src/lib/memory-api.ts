@@ -2,12 +2,16 @@
  * 记忆控制台的数据层:agent-orchestrator 的 /api/v1/memories 契约。
  *
  * 契约来源 services/agent-orchestrator/agent_orchestrator/api/v1/memory.py:
- * - 列表 `GET /api/v1/memories`(workspace_id/kind/q/limit 过滤);
- * - 语义检索 `GET /api/v1/memories/search`(query 必填);
- * - 统计 `GET /api/v1/memories/stats`(total/active/pinned/expired);
+ * - 列表 `GET /api/v1/memories`(workspace_id/kind/source_type/q/include_invalid/limit);
+ * - 单条 `GET /api/v1/memories/{id}`(含已失效,便于查看替代链);
+ * - 语义检索 `GET /api/v1/memories/search`(query 必填,只读不计数);
+ * - 统计 `GET /api/v1/memories/stats`(total/active/pinned/expired/superseded/pending_reviews);
  * - 新建 `POST /api/v1/memories`(201 返回 MemoryRead);
+ * - 局部更新 `PATCH /api/v1/memories/{id}`(expected_updated_at 乐观并发,冲突 409);
  * - 删除 `DELETE /api/v1/memories/{id}`(204,跨账号 404 memory.not_found);
- * - 清理过期 `POST /api/v1/memories/purge-expired`(返回 purged 条数)。
+ * - 清理过期 `POST /api/v1/memories/purge-expired`(返回 purged 条数);
+ * - 复核队列 `GET /api/v1/memories/reviews` + approve/reject;
+ * - 导出 `GET /api/v1/memories/export`;彻底删除 `DELETE /api/v1/memories?confirm=true`。
  *
  * 基址与 runs/outbox 相同(`VITE_RUNS_API_URL`,留空走同源 API 网关代理),
  * 鉴权头/401 续期/错误映射全部复用 `@/lib/http`。
@@ -33,6 +37,14 @@ export type MemoryKind = (typeof MEMORY_KINDS)[number];
 export const MEMORY_SCOPES = ['account', 'workspace'] as const;
 export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
+/** 注入模式:retrieved 按相关性召回 / always 常驻核心块。 */
+export const MEMORY_INJECTION_MODES = ['retrieved', 'always'] as const;
+export type MemoryInjectionMode = (typeof MEMORY_INJECTION_MODES)[number];
+
+/** 记忆来源(与后端 MEMORY_SOURCE_TYPES 一致)。 */
+export const MEMORY_SOURCES = ['manual', 'chat', 'run', 'tool'] as const;
+export type MemorySource = (typeof MEMORY_SOURCES)[number];
+
 /** 一条记忆(对应后端 MemoryRead,无 embedding 字段)。 */
 export type Memory = {
   id: string;
@@ -43,6 +55,11 @@ export type Memory = {
   pinned: boolean;
   source_type: string;
   source_id: string | null;
+  injection_mode: MemoryInjectionMode | string;
+  confidence: number;
+  valid_from: string | null;
+  invalid_at: string | null;
+  superseded_by: string | null;
   expires_at: string | null;
   last_accessed_at: string | null;
   access_count: number;
@@ -56,6 +73,24 @@ export type MemoryStats = {
   active: number;
   pinned: number;
   expired: number;
+  superseded: number;
+  pending_reviews: number;
+};
+
+/** 待复核候选(低置信度自动抽取;通过后才写入长期记忆)。 */
+export type MemoryReview = {
+  id: string;
+  workspace_id: string | null;
+  scope: MemoryScope | string;
+  kind: MemoryKind | string;
+  content: string;
+  confidence: number;
+  evidence_quote: string | null;
+  source_type: string;
+  source_id: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
 };
 
 /** 检索响应:命中项就是普通 MemoryRead 列表。 */
@@ -64,10 +99,19 @@ export type MemorySearchResponse = {
   hits: Memory[];
 };
 
+/** 导出响应:含失效条目,便于迁移/备份。 */
+export type MemoryExport = {
+  exported_at: string;
+  memories: Memory[];
+};
+
 export type MemoryListQuery = {
   workspaceId?: string;
   kind?: MemoryKind;
+  sourceType?: string;
   q?: string;
+  /** 是否包含已被替代/失效的条目。 */
+  includeInvalid?: boolean;
   limit?: number;
 };
 
@@ -87,13 +131,60 @@ export type MemoryCreateInput = {
   workspace_id?: string | null;
   pinned?: boolean;
   ttl_days?: number | null;
+  injection_mode?: MemoryInjectionMode;
+};
+
+/** 批量导入单条:与后端 MemoryImportItem 对齐(可直接喂导出的 memories)。 */
+export type MemoryImportItem = {
+  content: string;
+  kind?: MemoryKind | string;
+  scope?: MemoryScope | string;
+  workspace_id?: string | null;
+  pinned?: boolean;
+  ttl_days?: number | null;
+  injection_mode?: MemoryInjectionMode | string;
+  confidence?: number;
+  source_type?: string;
+  source_id?: string | null;
+};
+
+/** 导入结果:近重复/非法条目分别计数,errors 最多保留前 50 条。 */
+export type MemoryImportResult = {
+  received: number;
+  created: number;
+  skipped_duplicate: number;
+  skipped_invalid: number;
+  dry_run: boolean;
+  errors: { index: number; code: string; message: string }[];
+};
+
+/** 重嵌入结果:按当前嵌入模型重建向量不一致/缺失的行。 */
+export type MemoryReembedResult = {
+  scanned: number;
+  updated: number;
+  skipped: number;
+  model: string;
+  dry_run: boolean;
+};
+
+/** 局部更新入参:字段名与后端 MemoryUpdate 逐字对齐。 */
+export type MemoryUpdateInput = {
+  content?: string;
+  kind?: MemoryKind;
+  pinned?: boolean;
+  ttl_days?: number | null;
+  injection_mode?: MemoryInjectionMode;
+  /** 客户端读到的 updated_at:服务端检测到并发修改时返回 409。 */
+  expected_updated_at?: string;
 };
 
 function toListQuery(query: MemoryListQuery): string {
   const params = new URLSearchParams();
   if (query.workspaceId) params.set('workspace_id', query.workspaceId);
   if (query.kind) params.set('kind', query.kind);
+  if (query.sourceType) params.set('source_type', query.sourceType);
   if (query.q) params.set('q', query.q);
+  if (query.includeInvalid) params.set('include_invalid', 'true');
   if (query.limit !== undefined) params.set('limit', String(query.limit));
   const search = params.toString();
   return search ? `?${search}` : '';
@@ -102,6 +193,8 @@ function toListQuery(query: MemoryListQuery): string {
 export const memoryApi = {
   list: (query: MemoryListQuery = {}) =>
     http.request<Memory[]>(`${MEMORIES_PATH}${toListQuery(query)}`),
+  get: (memoryId: string) =>
+    http.request<Memory>(`${MEMORIES_PATH}/${encodeURIComponent(memoryId)}`),
   search: (query: MemorySearchQuery) => {
     const params = new URLSearchParams({ query: query.query });
     if (query.workspaceId) params.set('workspace_id', query.workspaceId);
@@ -117,6 +210,11 @@ export const memoryApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  update: (memoryId: string, input: MemoryUpdateInput) =>
+    http.request<Memory>(`${MEMORIES_PATH}/${encodeURIComponent(memoryId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
   remove: (memoryId: string) =>
     http.request<void>(`${MEMORIES_PATH}/${encodeURIComponent(memoryId)}`, {
       method: 'DELETE',
@@ -125,4 +223,34 @@ export const memoryApi = {
     http.request<{ purged: number }>(`${MEMORIES_PATH}/purge-expired`, {
       method: 'POST',
     }),
+  reviews: (limit = 50) =>
+    http.request<MemoryReview[]>(
+      `${MEMORIES_PATH}/reviews?limit=${encodeURIComponent(String(limit))}`,
+    ),
+  approveReview: (reviewId: string, note?: string) =>
+    http.request<Memory>(
+      `${MEMORIES_PATH}/reviews/${encodeURIComponent(reviewId)}/approve`,
+      { method: 'POST', body: JSON.stringify({ note: note ?? null }) },
+    ),
+  rejectReview: (reviewId: string, note?: string) =>
+    http.request<void>(
+      `${MEMORIES_PATH}/reviews/${encodeURIComponent(reviewId)}/reject`,
+      { method: 'POST', body: JSON.stringify({ note: note ?? null }) },
+    ),
+  exportAll: () => http.request<MemoryExport>(`${MEMORIES_PATH}/export`),
+  importAll: (items: MemoryImportItem[], dryRun = false) =>
+    http.request<MemoryImportResult>(`${MEMORIES_PATH}/import`, {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun, memories: items }),
+    }),
+  reembed: (limit?: number) =>
+    http.request<MemoryReembedResult>(`${MEMORIES_PATH}/reembed`, {
+      method: 'POST',
+      body: JSON.stringify(limit === undefined ? {} : { limit }),
+    }),
+  removeAll: () =>
+    http.request<{ memories: number; reviews: number }>(
+      `${MEMORIES_PATH}?confirm=true`,
+      { method: 'DELETE' },
+    ),
 };

@@ -321,6 +321,21 @@ class MicrosandboxProvider:
             details=_error_details(name, last_error or RuntimeError("没有可用 shell")),
         )
 
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """microsandbox 的 stdin/stdout 流句柄不在进程间共享,暂不支持接管。"""
+        raise UpstreamError(
+            "sandbox.provider_unsupported",
+            "microsandbox provider 暂不支持接管已存在的 shell 会话",
+            details={"sandbox_name": name, "pid": pid},
+        )
+
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         sandbox = await self._connect(name)
         try:

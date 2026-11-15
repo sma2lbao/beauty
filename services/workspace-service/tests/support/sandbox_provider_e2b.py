@@ -311,7 +311,9 @@ def _use_fake_e2b(monkeypatch: pytest.MonkeyPatch) -> FakeE2bModule:
     _reset_fake()
     fake = FakeE2bModule()
     fake_module = fake  # 真实 SDK 是模块,假对象只需属性形状一致
-    monkeypatch.setattr(provider_impl, "_import_e2b", lambda: fake_module)
+    # 包化后 _import_e2b 的调用点在 provider 子模块(模块级绑定),
+    # 打门面属性不会影响已绑定的函数全局,所以 monkeypatch 必须打到 provider。
+    monkeypatch.setattr(provider_impl.provider, "_import_e2b", lambda: fake_module)
     return fake
 
 

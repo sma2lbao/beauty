@@ -65,7 +65,14 @@ class Settings(BaseAppSettings):
     # local provider 的沙箱根目录:每个沙箱一个 <root>/<name>/ 目录,
     # /workspace 映射到其中的 workspace/;默认落在服务目录下并被 gitignore
     sandbox_local_root: str = "./.sandboxes"
-    # 持久 shell 会话(#2):进程内管理器,单实例假设(见 README 限制)。
+    # 持久 shell 会话(#2):会话表仍在进程内,但会话的"归属"落库
+    # (shell_sessions 表),因此多副本时能给出明确 409、持有实例消失后还能
+    # 由 provider 接管(e2b 的 pty.connect)。见 docs/design/persistent-shell.md。
+    # 实例身份:显式配置优先;留空时用 "主机名:pid",同机多 worker 也不会
+    # 同时认为自己持有同一个 pty。注意 pid 参与身份 → 重启后要等租约过期
+    # (sandbox_shell_lease_seconds)才能接管自己重启前的会话。
+    instance_id: str = ""
+    sandbox_shell_lease_seconds: int = 120
     # 空闲 TTL 到点由 sweeper 关闭;关闭后的会话在内存里保留一段时间,
     # 让晚到的 SSE 连接仍能回放 ring buffer 与退出码。
     sandbox_shell_idle_seconds: int = 1800

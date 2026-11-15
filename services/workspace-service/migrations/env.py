@@ -12,6 +12,7 @@ from database.base import Base
 
 from workspace.core.config import Settings
 from workspace.models import sandbox as sandbox_models  # noqa: F401  注册 ORM
+from workspace.models import shell as shell_models  # noqa: F401  注册 ORM
 from workspace.models import workspace as workspace_models  # noqa: F401  注册 ORM
 
 config = context.config

@@ -183,6 +183,19 @@ class Settings(BaseAppSettings):
     memory_convention_max_chars: int = 2000
     memory_max_content_chars: int = 8000
     memory_max_entries_per_account: int = 2000
+    # 核心记忆(injection_mode=always)常驻注入的字符预算;0 = 关闭核心块。
+    memory_core_max_chars: int = 1200
+    # 写入前敏感信息过滤(API key/token/私钥/银行卡);关掉只建议在隔离环境。
+    memory_sensitive_filter_enabled: bool = True
+    # 新旧事实替代阈值:同 kind/同作用域且词面相似度 >= 该值的旧条目会被标为
+    # 失效并保留替代链;0 = 关闭(只累积不替代)。note/procedure 不参与。
+    memory_conflict_threshold: float = 0.8
+    # 自动抽取置信度低于该值时进人工复核队列而不是直接落库;0 = 关闭复核队列
+    # (保持既有"抽取即落库"行为)。模型未给 confidence 时按 0.5 计,
+    # 因此开启复核建议设 0.6 左右,让不确定的候选先等人工确认。
+    memory_review_confidence_threshold: float = 0.0
+    # 单个 run 在 1 小时内最多写入多少条记忆(0 = 不限);防模型刷屏/投毒。
+    memory_max_writes_per_run: int = 20
     # 0 = 不过期(只按容量与手动删除治理);>0 时写入时算 expires_at
     memory_default_ttl_days: int = 0
     # 记忆二期(P2):自动抽取/近重复巩固/周期清理。抽取需要 LLM 且会把对话
@@ -204,6 +217,24 @@ class Settings(BaseAppSettings):
     memory_embedding_provider: str = "local"
     memory_embedding_model: str = "bge-m3"
     memory_embedding_timeout_seconds: float = 10.0
+    # 检索重排(P3-C):MMR 多样性 lambda,1.0 = 关闭(纯相关性);越低越偏向
+    # 覆盖不同主题,避免同一句话的近重复条目占满召回预算。
+    memory_mmr_lambda: float = 0.7
+    # 重嵌入维护:单次 POST /memories/reembed 最多处理多少条(按批调用,
+    # 避免一次请求把账号全部历史向量都重算一遍)。
+    memory_reembed_batch: int = 200
+    # 记忆提供方(P3-C):local = 进程内表;remote = 外部 HTTP 记忆服务(自有契约);
+    # mem0 / zep = 厂商适配(见 services/memory_vendors.py)。远端不可用时注入
+    # 路径回退本地,不阻断对话。
+    memory_provider: str = "local"
+    memory_remote_base_url: str = ""
+    memory_remote_timeout_seconds: float = 10.0
+    # 厂商适配(mem0/Zep):API key 为空时装配会告警并回退本地;base_url 留空用
+    # 厂商默认地址(自建/代理时覆盖)。Zep 的账号即 user 图,Zep 侧不按工作区
+    # 过滤(工作区只写 metadata),需要隔离时的做法见 docs/design/memory.md 7.4。
+    memory_vendor_api_key: str = ""
+    memory_vendor_base_url: str = ""
+    memory_vendor_timeout_seconds: float = 10.0
     # 短期上下文压缩(§6.7):早期轮次折叠成摘要,原文仍保留(审计/回放不受影响)。
     # 阈值按估算 token 计(中文约 1 字/token),超过后把"最老的一批"折叠进摘要。
     context_compaction_enabled: bool = True
