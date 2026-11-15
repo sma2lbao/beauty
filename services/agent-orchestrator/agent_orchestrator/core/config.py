@@ -183,6 +183,19 @@ class Settings(BaseAppSettings):
     memory_convention_max_chars: int = 2000
     memory_max_content_chars: int = 8000
     memory_max_entries_per_account: int = 2000
+    # 核心记忆(injection_mode=always)常驻注入的字符预算;0 = 关闭核心块。
+    memory_core_max_chars: int = 1200
+    # 写入前敏感信息过滤(API key/token/私钥/银行卡);关掉只建议在隔离环境。
+    memory_sensitive_filter_enabled: bool = True
+    # 新旧事实替代阈值:同 kind/同作用域且词面相似度 >= 该值的旧条目会被标为
+    # 失效并保留替代链;0 = 关闭(只累积不替代)。note/procedure 不参与。
+    memory_conflict_threshold: float = 0.8
+    # 自动抽取置信度低于该值时进人工复核队列而不是直接落库;0 = 关闭复核队列
+    # (保持既有"抽取即落库"行为)。模型未给 confidence 时按 0.5 计,
+    # 因此开启复核建议设 0.6 左右,让不确定的候选先等人工确认。
+    memory_review_confidence_threshold: float = 0.0
+    # 单个 run 在 1 小时内最多写入多少条记忆(0 = 不限);防模型刷屏/投毒。
+    memory_max_writes_per_run: int = 20
     # 0 = 不过期(只按容量与手动删除治理);>0 时写入时算 expires_at
     memory_default_ttl_days: int = 0
     # 记忆二期(P2):自动抽取/近重复巩固/周期清理。抽取需要 LLM 且会把对话

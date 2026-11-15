@@ -27,10 +27,26 @@ export const SCOPE_LABELS: Record<MemoryScope, string> = {
   workspace: '工作区级',
 };
 
-/** 统计卡定义(后端 GET /memories/stats 的四个字段)。 */
+/** 记忆来源的中文名(未知来源原样展示)。 */
+export const SOURCE_LABELS: Record<string, string> = {
+  manual: '手动写入',
+  chat: '对话抽取',
+  run: '任务抽取',
+  tool: '工具写入',
+};
+
+/** 注入模式:always 表示条目常驻核心块。 */
+export const INJECTION_LABELS: Record<string, string> = {
+  retrieved: '按需召回',
+  always: '常驻注入',
+};
+
+/** 统计卡定义(后端 GET /memories/stats 的六个字段)。 */
 export const STAT_ITEMS = [
   { key: 'total', label: '记忆总数', hint: '账号内全部记忆' },
-  { key: 'active', label: '有效', hint: '未过期、可被检索' },
-  { key: 'pinned', label: '置顶', hint: '始终注入上下文' },
+  { key: 'active', label: '有效', hint: '未过期、未被替代' },
+  { key: 'pinned', label: '置顶', hint: '排序靠前' },
   { key: 'expired', label: '已过期', hint: '可清理' },
+  { key: 'superseded', label: '已失效', hint: '被新事实替代' },
+  { key: 'pending_reviews', label: '待复核', hint: '低置信度候选' },
 ] as const;

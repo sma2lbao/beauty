@@ -8,21 +8,28 @@ handler 只能拿到 args dict,账号/工作区/来源从 current_tool_context()
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common.errors import AppError
+from common.logging import get_logger
 from database.session import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from agent_orchestrator.repositories import MemoryRepository
 from agent_orchestrator.services.memory import (
+    MEMORY_INJECTION_MODES,
     MEMORY_KINDS,
     MEMORY_SCOPES,
     delete_memory,
     search_memories,
+    update_memory,
     write_memory,
 )
 from agent_orchestrator.services.tool_context import current_tool_context
 from agent_orchestrator.services.tools import ToolRisk, ToolSpec
+
+logger = get_logger(__name__)
 
 #: 工具参数里的查询/内容长度上限,防止模型把整篇文档塞进一次调用。
 _MAX_QUERY_CHARS = 2000
@@ -60,14 +67,23 @@ def _memory_source(context: Any) -> tuple[str, str | None]:
     return "tool", None
 
 
+def _int_arg(args: dict[str, Any], key: str) -> int | None:
+    """可选整数参数:缺失/非法返回 None(表示"不改这一项")。"""
+    value = args.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def build_memory_tools(
     session_factory: SessionFactory,
     *,
     max_content_chars: int = 8000,
     default_limit: int = 5,
     default_ttl_days: int = 0,
+    max_writes_per_source: int = 20,
 ) -> list[ToolSpec]:
-    """构造 memory_search/memory_write/memory_delete 三个工具。
+    """构造 memory_search/memory_write/memory_update/memory_delete 四个工具。
 
     handler 内用 session_scope 自建事务(工具不是 HTTP 请求,没有外层事务),
     因此写入/删除在工具返回时已经提交,后续步骤能立刻检索到。
@@ -121,6 +137,24 @@ def build_memory_tools(
         source_type, source_id = _memory_source(context)
         async with session_scope(session_factory) as session:
             try:
+                if max_writes_per_source > 0 and source_id:
+                    # 单次 run/对话限流:避免模型刷屏写入或投毒撑爆记忆库。
+                    recent = await MemoryRepository(session).count_recent_writes(
+                        context.account_id,
+                        source_id=source_id,
+                        since=datetime.now(UTC) - timedelta(hours=1),
+                    )
+                    if recent >= max_writes_per_source:
+                        logger.warning(
+                            "memory write rate limited",
+                            account_id=context.account_id,
+                            source_type=source_type,
+                            source_id=source_id,
+                            recent=recent,
+                        )
+                        return _error(
+                            "本会话写入记忆过于频繁,请先合并已有记忆或稍后再试"
+                        )
                 memory = await write_memory(
                     session,
                     context.account_id,
@@ -137,6 +171,51 @@ def build_memory_tools(
                 return _error(exc.message)
             memory_id = memory.id
         return json.dumps({"id": memory_id}, ensure_ascii=False)
+
+    async def memory_update(args: dict[str, Any]) -> str:
+        context = current_tool_context()
+        if context is None:
+            return _error("缺少工具上下文(账号),无法修改记忆")
+        memory_id = _string_arg(args, "memory_id", max_chars=64)
+        if not memory_id:
+            return _error("参数 memory_id 不能为空")
+        content = _string_arg(args, "content", max_chars=max_content_chars)
+        kind = _string_arg(args, "kind", max_chars=16)
+        pinned = args.get("pinned")
+        ttl_days = _int_arg(args, "ttl_days")
+        injection_mode = _string_arg(args, "injection_mode", max_chars=16)
+        if kind and kind not in MEMORY_KINDS:
+            return _error(f"未知记忆类型: {kind}")
+        if injection_mode and injection_mode not in MEMORY_INJECTION_MODES:
+            return _error(f"未知注入模式: {injection_mode}")
+        if not isinstance(pinned, bool):
+            pinned = None
+        if (
+            not content
+            and not kind
+            and pinned is None
+            and ttl_days is None
+            and not injection_mode
+        ):
+            return _error("至少提供一个要修改的字段")
+        async with session_scope(session_factory) as session:
+            try:
+                memory = await update_memory(
+                    session,
+                    context.account_id,
+                    memory_id,
+                    content=content or None,
+                    kind=kind or None,
+                    pinned=pinned,
+                    ttl_days=ttl_days,
+                    ttl_days_set=ttl_days is not None,
+                    injection_mode=injection_mode or None,
+                    max_content_chars=max_content_chars,
+                )
+            except AppError as exc:
+                return _error(exc.message)
+            memory_id = memory.id
+        return json.dumps({"updated": memory_id}, ensure_ascii=False)
 
     async def memory_delete(args: dict[str, Any]) -> str:
         context = current_tool_context()
@@ -185,7 +264,8 @@ def build_memory_tools(
                 "写入一条长期记忆。只记跨对话仍有价值的信息(稳定偏好、事实、"
                 "约定),不要记录一次性细节或敏感凭据;同主题先检索再决定是否重复写。"
                 "kind=procedure 的条目会在后续会话常驻注入(工作区约定),仅用户"
-                "明确要求固定做法时使用。"
+                "明确要求固定做法时使用;injection_mode=always 的记忆会常驻注入"
+                "(会占用上下文预算,谨慎使用)。疑似凭据/密钥的内容会被拒绝写入。"
             ),
             parameters={
                 "type": "object",
@@ -213,6 +293,51 @@ def build_memory_tools(
                 "additionalProperties": False,
             },
             handler=memory_write,
+            risk=ToolRisk.WRITE,
+        ),
+        ToolSpec(
+            name="memory_update",
+            description=(
+                "修改一条已有长期记忆(正文/类型/置顶/有效期/注入模式)。用户纠正"
+                "此前记下的信息时先搜索找到 id,再更新而不是重复写入;memory_id "
+                "来自 memory_search 的返回。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "记忆 id(memory_search 返回)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "新的记忆正文(不传则不改)",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": sorted(MEMORY_KINDS),
+                        "description": "新的记忆类型(不传则不改)",
+                    },
+                    "pinned": {
+                        "type": "boolean",
+                        "description": "是否置顶(不传则不改)",
+                    },
+                    "ttl_days": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650,
+                        "description": "0=永久,>0=N 天后过期(不传则不改)",
+                    },
+                    "injection_mode": {
+                        "type": "string",
+                        "enum": sorted(MEMORY_INJECTION_MODES),
+                        "description": "retrieved=按相关性召回,always=常驻注入",
+                    },
+                },
+                "required": ["memory_id"],
+                "additionalProperties": False,
+            },
+            handler=memory_update,
             risk=ToolRisk.WRITE,
         ),
         ToolSpec(

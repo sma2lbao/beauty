@@ -32,6 +32,12 @@ async def _recall_memory_block(
     看到 failed——所以这里吞异常只留 warning。
     """
     try:
+        core_rows = await memory_service.core_memories(
+            session, run.account_id, workspace_id=run.workspace_id
+        )
+        core = memory_service.core_block_from(
+            core_rows, max_chars=settings.memory_core_max_chars
+        )
         convention = await memory_service.convention_block(
             session,
             run.account_id,
@@ -48,8 +54,9 @@ async def _recall_memory_block(
                 workspace_id=run.workspace_id,
                 limit=settings.memory_recall_limit,
                 max_chars=settings.memory_recall_max_chars,
+                exclude_ids={row.id for row in core_rows},
             )
-        return "\n\n".join(part for part in (convention, recall) if part)
+        return "\n\n".join(part for part in (core, convention, recall) if part)
     except Exception as exc:  # noqa: BLE001 - 记忆故障不阻断执行
         logger.warning(
             "memory recall failed",

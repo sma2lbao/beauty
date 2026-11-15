@@ -65,6 +65,16 @@ async def _prepare_chat_context(
             summary, covered_until = result.summary, result.covered_until
     memory_block = ""
     if settings is not None and settings.memory_enabled:
+        # 先核心块(always),再程序性约定,最后按相关性召回;核心条目已注入
+        # 就不再进召回块,避免同一句话白占两份预算。
+        core_rows = await memory_service.core_memories(
+            session,
+            message.account_id,
+            workspace_id=conversation.workspace_id,
+        )
+        core = memory_service.core_block_from(
+            core_rows, max_chars=settings.memory_core_max_chars
+        )
         convention = await memory_service.convention_block(
             session,
             message.account_id,
@@ -78,8 +88,9 @@ async def _prepare_chat_context(
             workspace_id=conversation.workspace_id,
             limit=settings.memory_recall_limit,
             max_chars=settings.memory_recall_max_chars,
+            exclude_ids={row.id for row in core_rows},
         )
-        memory_block = "\n\n".join(part for part in (convention, recall) if part)
+        memory_block = "\n\n".join(part for part in (core, convention, recall) if part)
     return chat.ChatPromptContext(
         rows=history.filter_after(rows, covered_until),
         summary=summary,

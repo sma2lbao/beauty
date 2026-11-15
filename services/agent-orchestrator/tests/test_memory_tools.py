@@ -100,6 +100,51 @@ async def test_memory_write_uses_default_ttl(
     assert row.expires_at is not None
 
 
+async def test_memory_update_patches_fields_and_returns_id(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """memory_update 让模型就地纠正旧记忆,而不是重复写一条新的。"""
+    tools = _tools(factory)
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id="run-1")):
+        written = json.loads(
+            await tools["memory_write"].handler({"content": "用户偏好周报用表格"})
+        )
+        updated = json.loads(
+            await tools["memory_update"].handler(
+                {
+                    "memory_id": written["id"],
+                    "content": "用户偏好周报用列表",
+                    "kind": "preference",
+                    "pinned": True,
+                }
+            )
+        )
+    assert updated == {"updated": written["id"]}
+    async with session_scope(factory) as session:
+        row = await session.get(Memory, written["id"])
+    assert row is not None
+    assert row.content == "用户偏好周报用列表"
+    assert (row.kind, row.pinned) == ("preference", True)
+
+
+async def test_memory_write_is_rate_limited_per_source(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """单 run 写入限流:超过上限回错误而不是继续灌库(防投毒/刷屏)。"""
+    tools = {
+        tool.name: tool for tool in build_memory_tools(factory, max_writes_per_source=1)
+    }
+    with bind_tool_context(ToolContext(account_id=ACCOUNT, run_id="run-1")):
+        first = json.loads(
+            await tools["memory_write"].handler({"content": "第一条记忆"})
+        )
+        second = json.loads(
+            await tools["memory_write"].handler({"content": "第二条记忆"})
+        )
+    assert set(first) == {"id"}
+    assert "写入记忆过于频繁" in second["error"]
+
+
 async def test_memory_write_falls_back_to_chat_source(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -144,6 +189,18 @@ async def test_handlers_validate_arguments(
                 "需要工作区上下文",
             ),
             ("memory_delete", {}, "memory_id 不能为空"),
+            ("memory_update", {}, "memory_id 不能为空"),
+            (
+                "memory_update",
+                {"memory_id": "m-1", "kind": "unknown"},
+                "未知记忆类型",
+            ),
+            (
+                "memory_update",
+                {"memory_id": "m-1", "injection_mode": "sometimes"},
+                "未知注入模式",
+            ),
+            ("memory_update", {"memory_id": "m-1"}, "至少提供一个要修改的字段"),
         ]
         for name, args, needle in cases:
             payload = json.loads(await tools[name].handler(args))
@@ -204,9 +261,15 @@ async def test_tool_specs_declare_risk_and_schema(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tools = _tools(factory)
-    assert set(tools) == {"memory_search", "memory_write", "memory_delete"}
+    assert set(tools) == {
+        "memory_search",
+        "memory_write",
+        "memory_update",
+        "memory_delete",
+    }
     assert tools["memory_search"].risk is ToolRisk.READ
     assert tools["memory_write"].risk is ToolRisk.WRITE
+    assert tools["memory_update"].risk is ToolRisk.WRITE
     assert tools["memory_delete"].risk is ToolRisk.WRITE
     for tool in tools.values():
         assert tool.description

@@ -1,4 +1,4 @@
-"""长期记忆仓储:软删除 + 过期语义 + 后台清扫查询(按域拆分)。"""
+"""长期记忆仓储:软删除 + 过期/失效语义 + 复核队列 + 后台清扫查询。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from database.repository import AccountRepository
 from sqlalchemy import and_, or_, select, update
 
-from agent_orchestrator.models.memory import Memory
+from agent_orchestrator.models.memory import Memory, MemoryReview
 
 
 class MemoryRepository(AccountRepository[Memory]):
@@ -21,10 +21,12 @@ class MemoryRepository(AccountRepository[Memory]):
 
     @staticmethod
     def _active_criteria(now: datetime) -> list[Any]:
-        """ "仍然有效"的过滤条件:未软删,且未设置过期或尚未过期。"""
+        """ "仍然有效"的过滤条件:未软删、未过期、未被替代、已到生效时间。"""
         return [
             Memory.deleted_at.is_(None),
             or_(Memory.expires_at.is_(None), Memory.expires_at > now),
+            Memory.invalid_at.is_(None),
+            or_(Memory.valid_from.is_(None), Memory.valid_from <= now),
         ]
 
     async def list_active(
@@ -78,6 +80,120 @@ class MemoryRepository(AccountRepository[Memory]):
             )
         )
 
+    async def get_visible(self, account_id: str, memory_id: str) -> Memory | None:
+        """按 id 取未软删的记忆(含已过期/已失效):管理面要能查看替代链。"""
+        return await self.session.scalar(
+            self.scoped(
+                account_id,
+                Memory.id == memory_id,
+                Memory.deleted_at.is_(None),
+            )
+        )
+
+    async def list_visible(
+        self,
+        account_id: str,
+        *,
+        workspace_id: str | None = None,
+        kind: str | None = None,
+        source_type: str | None = None,
+        include_invalid: bool = False,
+        limit: int = 50,
+    ) -> list[Memory]:
+        """管理面列表:默认只列有效条目,include_invalid=True 时含失效条目。"""
+        criteria: list[Any] = []
+        now = datetime.now(UTC)
+        if not include_invalid:
+            criteria.extend(self._active_criteria(now))
+        else:
+            criteria.append(Memory.deleted_at.is_(None))
+        if workspace_id:
+            criteria.append(
+                or_(
+                    Memory.scope == "account",
+                    and_(
+                        Memory.scope == "workspace",
+                        Memory.workspace_id == workspace_id,
+                    ),
+                )
+            )
+        if kind:
+            criteria.append(Memory.kind == kind)
+        if source_type:
+            criteria.append(Memory.source_type == source_type)
+        return await self.list_scoped(
+            account_id,
+            *criteria,
+            limit=limit,
+            order_by=[Memory.pinned.desc(), Memory.updated_at.desc(), Memory.id.desc()],
+        )
+
+    async def list_core(
+        self,
+        account_id: str,
+        *,
+        workspace_id: str | None = None,
+        limit: int = 50,
+    ) -> list[Memory]:
+        """常驻注入的核心记忆:injection_mode=always,按 pinned/更新时间排序。"""
+        criteria = self._active_criteria(datetime.now(UTC))
+        criteria.append(Memory.injection_mode == "always")
+        # procedure 有独立的约定块,这里排除避免同一内容注入两次。
+        criteria.append(Memory.kind != "procedure")
+        if workspace_id:
+            criteria.append(
+                or_(
+                    Memory.scope == "account",
+                    and_(
+                        Memory.scope == "workspace",
+                        Memory.workspace_id == workspace_id,
+                    ),
+                )
+            )
+        else:
+            criteria.append(Memory.scope == "account")
+        return await self.list_scoped(
+            account_id,
+            *criteria,
+            limit=limit,
+            order_by=[Memory.pinned.desc(), Memory.updated_at.desc(), Memory.id.desc()],
+        )
+
+    async def supersede(
+        self,
+        account_id: str,
+        memory_ids: list[str],
+        *,
+        superseded_by: str,
+        now: datetime,
+    ) -> int:
+        """把旧条目标记为已失效并指向替代者(保留正文,不物理删)。"""
+        if not memory_ids:
+            return 0
+        result = await self.session.execute(
+            update(Memory)
+            .where(
+                Memory.account_id == account_id,
+                Memory.id.in_(memory_ids),
+                Memory.deleted_at.is_(None),
+                Memory.invalid_at.is_(None),
+            )
+            .values(invalid_at=now, superseded_by=superseded_by)
+        )
+        await self.session.flush()
+        return max(0, int(getattr(result, "rowcount", 0) or 0))
+
+    async def count_recent_writes(
+        self, account_id: str, *, source_id: str, since: datetime
+    ) -> int:
+        """某来源(通常是 run)在时间窗内的写入条数:用于单 run 写入限流。"""
+        return await self.count(
+            Memory.account_id == account_id,
+            Memory.source_id == source_id,
+            Memory.deleted_at.is_(None),
+            Memory.created_at >= since,
+        )
+
     async def soft_delete(self, account_id: str, memory_id: str) -> bool:
         """软删除:允许删除已过期但未清理的记忆;返回是否命中。"""
         memory = await self.session.scalar(
@@ -123,15 +239,28 @@ class MemoryRepository(AccountRepository[Memory]):
             Memory.expires_at.isnot(None),
             Memory.expires_at <= now,
         )
+        invalid = Memory.invalid_at.isnot(None)
+        valid_from_ok = or_(Memory.valid_from.is_(None), Memory.valid_from <= now)
         total = await self.count(account, not_deleted)
-        active = await self.count(account, not_deleted, alive)
-        pinned = await self.count(account, not_deleted, alive, Memory.pinned.is_(True))
+        active = await self.count(
+            account, not_deleted, alive, valid_from_ok, Memory.invalid_at.is_(None)
+        )
+        pinned = await self.count(
+            account,
+            not_deleted,
+            alive,
+            valid_from_ok,
+            Memory.invalid_at.is_(None),
+            Memory.pinned.is_(True),
+        )
         expired_count = await self.count(account, not_deleted, expired)
+        superseded = await self.count(account, not_deleted, invalid)
         return {
             "total": total,
             "active": active,
             "pinned": pinned,
             "expired": expired_count,
+            "superseded": superseded,
         }
 
     async def account_ids_with_active(self) -> list[str]:
@@ -147,3 +276,28 @@ class MemoryRepository(AccountRepository[Memory]):
             .order_by(Memory.account_id)
         )
         return list(rows.all())
+
+
+class MemoryReviewRepository(AccountRepository[MemoryReview]):
+    """低置信度候选复核队列。"""
+
+    model = MemoryReview
+    not_found_code = "memory.review_not_found"
+    not_found_message = "记忆复核项不存在"
+    id_detail_key = "review_id"
+
+    async def list_pending(
+        self, account_id: str, *, limit: int = 50
+    ) -> list[MemoryReview]:
+        return await self.list_scoped(
+            account_id,
+            MemoryReview.status == "pending",
+            limit=limit,
+            order_by=[MemoryReview.created_at.desc(), MemoryReview.id.desc()],
+        )
+
+    async def count_pending(self, account_id: str) -> int:
+        return await self.count(
+            MemoryReview.account_id == account_id,
+            MemoryReview.status == "pending",
+        )

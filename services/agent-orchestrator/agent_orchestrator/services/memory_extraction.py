@@ -34,7 +34,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.services import memory as memory_service
-from agent_orchestrator.services import post_commit
+from agent_orchestrator.services import memory_reviews, post_commit
 from agent_orchestrator.services.memory_extraction_prompt import (
     EXTRACTION_SYSTEM_PROMPT as EXTRACTION_SYSTEM_PROMPT,
 )
@@ -116,11 +116,17 @@ async def remember_candidates(
     max_entries: int = 2000,
     default_ttl_days: int = 0,
     dedupe_threshold: float = 0.9,
+    confidence_threshold: float = 0.0,
+    review_queue: bool = False,
+    conflict_threshold: float = 0.0,
 ) -> list[Memory]:
     """把候选写入长期记忆;与同账号/同工作区/同 kind 的活跃记忆近重复时跳过。
 
     去重只用词面相似,不调 embedding:这里比的是"是不是同一句话",而不是检索
     相关性;写入本身仍由 write_memory 统一做校验/限额/嵌入。
+
+    R7:review_queue=True 且候选置信度低于 confidence_threshold 时不落库,
+    改放复核队列(人工通过后才写入),避免低质量抽取污染长期记忆。
     """
     if not candidates:
         return []
@@ -152,6 +158,22 @@ async def remember_candidates(
             for other in known.get(key, ())
         ):
             continue
+        if review_queue and candidate.confidence < confidence_threshold:
+            await memory_reviews.queue_candidate(
+                session,
+                account_id,
+                content=candidate.content,
+                kind=kind,
+                scope=scope,
+                workspace_id=target_workspace,
+                confidence=candidate.confidence,
+                evidence_quote=candidate.evidence_quote,
+                source_type=source_type,
+                source_id=source_id,
+                dedupe_threshold=dedupe_threshold,
+            )
+            known.setdefault(key, []).append(tokens)
+            continue
         try:
             memory = await memory_service.write_memory(
                 session,
@@ -165,6 +187,8 @@ async def remember_candidates(
                 max_content_chars=max_content_chars,
                 max_entries=max_entries,
                 default_ttl_days=default_ttl_days,
+                confidence=candidate.confidence,
+                conflict_threshold=conflict_threshold,
             )
         except AppError as exc:
             # 单条候选非法(如 workspace 级缺 workspace_id)或额度满:跳过,
@@ -227,6 +251,13 @@ async def extract_from_messages(
         ),
         default_ttl_days=int(getattr(settings, "memory_default_ttl_days", 0) or 0),
         dedupe_threshold=float(getattr(settings, "memory_dedupe_threshold", 0.9)),
+        confidence_threshold=float(
+            getattr(settings, "memory_review_confidence_threshold", 0.0) or 0.0
+        ),
+        review_queue=bool(getattr(settings, "memory_review_confidence_threshold", 0.0)),
+        conflict_threshold=float(
+            getattr(settings, "memory_conflict_threshold", 0.0) or 0.0
+        ),
     )
 
 

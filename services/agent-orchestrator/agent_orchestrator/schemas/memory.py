@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 #: 记忆类型与作用域:与 services.memory 的常量保持同一份字面量。
 MemoryKind = Literal["note", "preference", "fact", "procedure"]
 MemoryScope = Literal["account", "workspace"]
+MemoryInjectionMode = Literal["retrieved", "always"]
 
 
 class MemoryCreate(BaseModel):
@@ -25,6 +26,25 @@ class MemoryCreate(BaseModel):
     workspace_id: str | None = Field(default=None, max_length=32)
     pinned: bool = False
     ttl_days: int | None = Field(default=None, ge=0, le=3650)
+    injection_mode: MemoryInjectionMode = "retrieved"
+
+
+class MemoryUpdate(BaseModel):
+    """局部更新记忆(PATCH);未提供的字段保持不变。
+
+    expected_updated_at 用于乐观并发:带上客户端读到的 updated_at,服务端发现
+    已被他人修改时返回 409,避免两端互相覆盖。ttl_days 只在显式出现时生效
+    (None 会清空过期时间?不——None 表示"维持现状",0 表示永久)。
+    """
+
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    kind: MemoryKind | None = None
+    scope: MemoryScope | None = None
+    workspace_id: str | None = Field(default=None, max_length=32)
+    pinned: bool | None = None
+    ttl_days: int | None = Field(default=None, ge=0, le=3650)
+    injection_mode: MemoryInjectionMode | None = None
+    expected_updated_at: datetime | None = None
 
 
 class MemorySearchRequest(BaseModel):
@@ -49,6 +69,11 @@ class MemoryRead(BaseModel):
     pinned: bool
     source_type: str
     source_id: str | None = None
+    injection_mode: str = "retrieved"
+    confidence: float = 1.0
+    valid_from: datetime | None = None
+    invalid_at: datetime | None = None
+    superseded_by: str | None = None
     expires_at: datetime | None = None
     last_accessed_at: datetime | None = None
     access_count: int
@@ -64,15 +89,56 @@ class MemorySearchResponse(BaseModel):
 
 
 class MemoryStatsRead(BaseModel):
-    """账号记忆计数。"""
+    """账号记忆计数(pending_reviews 是复核队列里的待处理条数)。"""
 
     total: int
     active: int
     pinned: int
     expired: int
+    superseded: int = 0
+    pending_reviews: int = 0
 
 
 class MemoryPurgeResult(BaseModel):
     """过期清理结果(软删标记条数)。"""
 
     purged: int
+
+
+class MemoryPurgeAllResult(BaseModel):
+    """账号记忆彻底删除结果(物理删除,不可恢复)。"""
+
+    memories: int
+    reviews: int
+
+
+class MemoryExport(BaseModel):
+    """账号记忆导出(可携带全部正文与元数据,用于迁移/备份)。"""
+
+    exported_at: datetime
+    memories: list[MemoryRead]
+
+
+class MemoryReviewRead(BaseModel):
+    """待复核候选(低置信度自动抽取);不返回 embedding。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workspace_id: str | None = None
+    scope: str
+    kind: str
+    content: str
+    confidence: float
+    evidence_quote: str | None = None
+    source_type: str
+    source_id: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MemoryReviewDecision(BaseModel):
+    """复核决定:可选备注;通过后按候选内容写入长期记忆。"""
+
+    note: str | None = Field(default=None, max_length=2000)

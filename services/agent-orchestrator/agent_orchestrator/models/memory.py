@@ -14,6 +14,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Integer,
     String,
     Text,
@@ -65,6 +66,47 @@ class Memory(UUIDMixin, AccountMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     access_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 事实时效(P3-B/R5):valid_from 之前不生效,invalid_at 之后视为已失效;
+    # 被替代的旧条目保留正文并指向新条目,形成可追溯的替代链(不物理删)。
+    valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    invalid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded_by: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    # 抽取置信度(0~1):低于阈值不自动落库,进复核队列;手工写入恒为 1。
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    # 注入模式:retrieved = 按查询相关性召回(默认);always = 每次请求常驻注入。
+    # procedure 仍走约定的专用常驻块,不在此列。
+    injection_mode: Mapped[str] = mapped_column(String(16), default="retrieved")
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class MemoryReview(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """低置信度抽取候选的复核队列(P3-B/R7)。
+
+    自动抽取产生的候选先落这里而不是直接写 memories:人工确认后才成为长期记忆。
+    队列只保存候选原文与证据,避免模型臆造的内容无声进入召回。
+    """
+
+    __tablename__ = "memory_reviews"
+
+    workspace_id: Mapped[str | None] = mapped_column(
+        String(32), index=True, nullable=True
+    )
+    scope: Mapped[str] = mapped_column(String(16), default="account")
+    kind: Mapped[str] = mapped_column(String(16), default="note")
+    content: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    # 抽取模型给出的对话原文依据(逐字引用),复核时用来判断真伪。
+    evidence_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(16), default="chat")
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    resolved_memory_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)

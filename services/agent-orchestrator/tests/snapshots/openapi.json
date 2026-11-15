@@ -1963,6 +1963,12 @@
             "title": "Content",
             "type": "string"
           },
+          "injection_mode": {
+            "default": "retrieved",
+            "enum": ["retrieved", "always"],
+            "title": "Injection Mode",
+            "type": "string"
+          },
           "kind": {
             "default": "note",
             "enum": ["note", "preference", "fact", "procedure"],
@@ -2010,6 +2016,42 @@
         "title": "MemoryCreate",
         "type": "object"
       },
+      "MemoryExport": {
+        "description": "账号记忆导出(可携带全部正文与元数据,用于迁移/备份)。",
+        "properties": {
+          "exported_at": {
+            "format": "date-time",
+            "title": "Exported At",
+            "type": "string"
+          },
+          "memories": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryRead"
+            },
+            "title": "Memories",
+            "type": "array"
+          }
+        },
+        "required": ["exported_at", "memories"],
+        "title": "MemoryExport",
+        "type": "object"
+      },
+      "MemoryPurgeAllResult": {
+        "description": "账号记忆彻底删除结果(物理删除,不可恢复)。",
+        "properties": {
+          "memories": {
+            "title": "Memories",
+            "type": "integer"
+          },
+          "reviews": {
+            "title": "Reviews",
+            "type": "integer"
+          }
+        },
+        "required": ["memories", "reviews"],
+        "title": "MemoryPurgeAllResult",
+        "type": "object"
+      },
       "MemoryPurgeResult": {
         "description": "过期清理结果(软删标记条数)。",
         "properties": {
@@ -2028,6 +2070,11 @@
           "access_count": {
             "title": "Access Count",
             "type": "integer"
+          },
+          "confidence": {
+            "default": 1.0,
+            "title": "Confidence",
+            "type": "number"
           },
           "content": {
             "title": "Content",
@@ -2053,6 +2100,23 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "injection_mode": {
+            "default": "retrieved",
+            "title": "Injection Mode",
+            "type": "string"
+          },
+          "invalid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalid At"
           },
           "kind": {
             "title": "Kind",
@@ -2093,10 +2157,33 @@
             "title": "Source Type",
             "type": "string"
           },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
           },
           "workspace_id": {
             "anyOf": [
@@ -2122,6 +2209,114 @@
           "updated_at"
         ],
         "title": "MemoryRead",
+        "type": "object"
+      },
+      "MemoryReviewDecision": {
+        "description": "复核决定:可选备注;通过后按候选内容写入长期记忆。",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "MemoryReviewDecision",
+        "type": "object"
+      },
+      "MemoryReviewRead": {
+        "description": "待复核候选(低置信度自动抽取);不返回 embedding。",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_quote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Quote"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "kind",
+          "content",
+          "confidence",
+          "source_type",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MemoryReviewRead",
         "type": "object"
       },
       "MemorySearchRequest": {
@@ -2189,7 +2384,7 @@
         "type": "object"
       },
       "MemoryStatsRead": {
-        "description": "账号记忆计数。",
+        "description": "账号记忆计数(pending_reviews 是复核队列里的待处理条数)。",
         "properties": {
           "active": {
             "title": "Active",
@@ -2199,8 +2394,18 @@
             "title": "Expired",
             "type": "integer"
           },
+          "pending_reviews": {
+            "default": 0,
+            "title": "Pending Reviews",
+            "type": "integer"
+          },
           "pinned": {
             "title": "Pinned",
+            "type": "integer"
+          },
+          "superseded": {
+            "default": 0,
+            "title": "Superseded",
             "type": "integer"
           },
           "total": {
@@ -2210,6 +2415,110 @@
         },
         "required": ["total", "active", "pinned", "expired"],
         "title": "MemoryStatsRead",
+        "type": "object"
+      },
+      "MemoryUpdate": {
+        "description": "局部更新记忆(PATCH);未提供的字段保持不变。\n\nexpected_updated_at 用于乐观并发:带上客户端读到的 updated_at,服务端发现\n已被他人修改时返回 409,避免两端互相覆盖。ttl_days 只在显式出现时生效\n(None 会清空过期时间?不——None 表示\"维持现状\",0 表示永久)。",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "maxLength": 8000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "expected_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Updated At"
+          },
+          "injection_mode": {
+            "anyOf": [
+              {
+                "enum": ["retrieved", "always"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Injection Mode"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": ["note", "preference", "fact", "procedure"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "enum": ["account", "workspace"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "ttl_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl Days"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "title": "MemoryUpdate",
         "type": "object"
       },
       "MessageCreate": {
@@ -6388,8 +6697,80 @@
       }
     },
     "/api/v1/memories": {
+      "delete": {
+        "description": "彻底删除账号全部记忆与复核队列(物理删除,不可恢复)。",
+        "operationId": "purge_all_memories_api_v1_memories_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryPurgeAllResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Purge All Memories",
+        "tags": ["memories"]
+      },
       "get": {
-        "description": "列出仍然有效的记忆;workspace_id 给定时含账号级 + 该工作区级两类。",
+        "description": "列出记忆;workspace_id 给定时含账号级 + 该工作区级两类。",
         "operationId": "list_memories_api_v1_memories_get",
         "parameters": [
           {
@@ -6428,6 +6809,23 @@
           },
           {
             "in": "query",
+            "name": "source_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Type"
+            }
+          },
+          {
+            "in": "query",
             "name": "q",
             "required": false,
             "schema": {
@@ -6441,6 +6839,16 @@
                 }
               ],
               "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_invalid",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Invalid",
+              "type": "boolean"
             }
           },
           {
@@ -6518,7 +6926,7 @@
         "tags": ["memories"]
       },
       "post": {
-        "description": "写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。\n\nttl_days=None 用部署默认有效期,0 表示永久,>0 表示 N 天;\n条数上限也取配置,避免 API 与后台抽取各用一套额度。",
+        "description": "写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。\n\nttl_days=None 用部署默认有效期,0 表示永久,>0 表示 N 天;\n条数上限也取配置,避免 API 与后台抽取各用一套额度。\n写入时按配置做敏感信息过滤与新旧事实替代。",
         "operationId": "create_memory_api_v1_memories_post",
         "parameters": [
           {
@@ -6590,6 +6998,70 @@
         "tags": ["memories"]
       }
     },
+    "/api/v1/memories/export": {
+      "get": {
+        "description": "导出账号全部记忆(含失效条目),用于迁移/备份/可携带性。",
+        "operationId": "export_memories_api_v1_memories_export_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Memories",
+        "tags": ["memories"]
+      }
+    },
     "/api/v1/memories/purge-expired": {
       "post": {
         "description": "把已过期记忆标记为删除(幂等,可重复调用)。",
@@ -6651,6 +7123,245 @@
           }
         },
         "summary": "Purge Expired Memories",
+        "tags": ["memories"]
+      }
+    },
+    "/api/v1/memories/reviews": {
+      "get": {
+        "description": "列出待复核候选(低置信度自动抽取);通过/拒绝后移出队列。",
+        "operationId": "list_memory_reviews_api_v1_memories_reviews_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryReviewRead"
+                  },
+                  "title": "Response List Memory Reviews Api V1 Memories Reviews Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Memory Reviews",
+        "tags": ["memories"]
+      }
+    },
+    "/api/v1/memories/reviews/{review_id}/approve": {
+      "post": {
+        "description": "通过复核:按候选内容写入长期记忆(敏感内容会被自动拒绝并留痕)。",
+        "operationId": "approve_memory_review_api_v1_memories_reviews__review_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryReviewDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Memory Review",
+        "tags": ["memories"]
+      }
+    },
+    "/api/v1/memories/reviews/{review_id}/reject": {
+      "post": {
+        "description": "拒绝复核候选:只留痕,不写入长期记忆。",
+        "operationId": "reject_memory_review_api_v1_memories_reviews__review_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "title": "Review Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryReviewDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Memory Review",
         "tags": ["memories"]
       }
     },
@@ -6974,6 +7685,158 @@
           }
         },
         "summary": "Delete Memory",
+        "tags": ["memories"]
+      },
+      "get": {
+        "description": "取单条记忆(含已失效,便于查看替代链);软删/跨账号 404。",
+        "operationId": "get_memory_api_v1_memories__memory_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "title": "Memory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory",
+        "tags": ["memories"]
+      },
+      "patch": {
+        "description": "局部更新记忆;未提供字段保持不变。\n\n乐观并发:带 expected_updated_at 时,若已被他人修改返回 409 memory.conflict。\nttl_days 只在显式出现时生效(0=永久,>0=N 天),避免漏传被误当作\"改成永久\"。",
+        "operationId": "update_memory_api_v1_memories__memory_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "title": "Memory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Memory",
         "tags": ["memories"]
       }
     },
