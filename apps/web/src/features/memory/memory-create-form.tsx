@@ -39,6 +39,8 @@ export function MemoryCreateForm({ model }: { model: MemoryModel }) {
     setPinned,
     ttlDays,
     setTtlDays,
+    injectionMode,
+    setInjectionMode,
     ttlError,
     canCreate,
     createMutation,
@@ -133,12 +135,20 @@ export function MemoryCreateForm({ model }: { model: MemoryModel }) {
               onChange={(event) => setTtlDays(event.target.value)}
             />
           </Field>
-          <div className="flex items-end pb-2">
+          <div className="flex flex-col justify-end gap-2 pb-2">
             <Checkbox
               id="memory-pinned"
               checked={pinned}
               onCheckedChange={(checked) => setPinned(checked)}
-              label="置顶(始终注入)"
+              label="置顶(排序靠前)"
+            />
+            <Checkbox
+              id="memory-always-inject"
+              checked={injectionMode === 'always'}
+              onCheckedChange={(checked) =>
+                setInjectionMode(checked ? 'always' : 'retrieved')
+              }
+              label="常驻注入(核心块)"
             />
           </div>
         </div>

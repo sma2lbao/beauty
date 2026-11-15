@@ -400,6 +400,11 @@ async def stream_sandbox_session(
         await _usable_sandbox(
             db, account_id, sandbox_id, provider, settings, shell_sessions
         )
+    # 订阅前先判归属:会话在别的实例上时给出明确 409,而不是回放空后静默结束;
+    # 持有实例已消失则由这里接管(provider 支持时输出接着往下走)
+    await shell_sessions.ensure(
+        account_id=account_id, sandbox_id=sandbox_id, session_id=session_id
+    )
     backlog, queue = shell_sessions.subscribe(
         account_id=account_id,
         sandbox_id=sandbox_id,

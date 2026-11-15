@@ -307,6 +307,21 @@ class LocalSandboxProvider:
             return pty_session
         return await self._open_pipe_shell(name, workdir, child_env)
 
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """本地 provider 的 shell 是宿主上的子进程,无法跨实例/重启接管。"""
+        raise UpstreamError(
+            "sandbox.provider_unsupported",
+            "local provider 无法接管已存在的 shell 会话",
+            details={"sandbox_name": name, "pid": pid},
+        )
+
     async def _open_pty_shell(
         self, name: str, workdir: Path, env: dict[str, str], cols: int, rows: int
     ) -> ShellSession | None:

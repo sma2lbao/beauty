@@ -82,7 +82,7 @@ npx nx release --dry-run                    # 发布流程预演(不落改动;�
 
 覆盖率阈值:Python 11 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / tool-service 82 / api-gateway 81);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
 
-CI(`.github/workflows/ci.yml`)共 9 job:setup / docs-check / security-audit / affected-js / python-lint×11 / python-test×11 / lock-check / alembic-check×6(真 Postgres)/ docker-build。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
+CI(`.github/workflows/ci.yml`)共 10 job:setup / docs-check / security-audit / affected-js / python-lint×11 / python-test×11 / lock-check / alembic-check×6(真 Postgres)/ docker-build / golden-run(R-33 端到端冒烟)。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
 
 ### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / tool-service / api-gateway)
 

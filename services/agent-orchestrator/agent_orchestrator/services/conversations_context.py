@@ -18,10 +18,10 @@ from agent_orchestrator.services import (
     chat,
     compaction,
     history,
+    memory_context,
     memory_extraction,
     post_commit,
 )
-from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services.compaction import CompactionResult
 from agent_orchestrator.services.conversations_queries import active_run
 from agent_orchestrator.services.llm import LLMClient
@@ -65,21 +65,14 @@ async def _prepare_chat_context(
             summary, covered_until = result.summary, result.covered_until
     memory_block = ""
     if settings is not None and settings.memory_enabled:
-        convention = await memory_service.convention_block(
-            session,
-            message.account_id,
-            workspace_id=conversation.workspace_id,
-            max_chars=settings.memory_convention_max_chars,
-        )
-        recall = await memory_service.recall_block(
+        # 统一顺序:核心块 → 程序性约定 → 相关性召回(与 run 执行路径同一实现)。
+        memory_block = await memory_context.prompt_memory_block(
             session,
             message.account_id,
             message.content,
             workspace_id=conversation.workspace_id,
-            limit=settings.memory_recall_limit,
-            max_chars=settings.memory_recall_max_chars,
+            settings=settings,
         )
-        memory_block = "\n\n".join(part for part in (convention, recall) if part)
     return chat.ChatPromptContext(
         rows=history.filter_after(rows, covered_until),
         summary=summary,

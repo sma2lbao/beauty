@@ -1,18 +1,14 @@
-"""P3 技能包:上传/校验/版本化/列表/删除 + run 创建时冻结快照(零网络)。
+"""P3 技能包:上传/校验/版本化/列表/删除(零网络)。
 
 对象存储走 FakeWorkspace(注入 WorkspaceClient 协议),zip 在测试内用 zipfile
-构造;run 快照直接读 sqlite 文件断言按契约必须落库的列。
+构造;fixture 由 tests/support/skill_packages.py 提供。run 创建时冻结快照与
+对话绑定见 test_skill_packages_runs.py。
 """
 
 from __future__ import annotations
 
-import io
 import json
-import sqlite3
-import zipfile
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from common.errors import AppError
@@ -21,79 +17,17 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.main import create_app
 from agent_orchestrator.services import skill_packages
 from tests.conftest import ACCOUNT, OTHER, FakeWorkspace, _settings, verifier
+from tests.support.skill_packages import (
+    BASE_MANIFEST,
+    SKILL_MD,
+    build_zip,
+    pkg_client,
+    plain_zip,
+    upload,
+    workspace,
+)
 
-SKILL_MD = "# 周报生成\n\n按模板整理本周日程。\n"
-BASE_MANIFEST: dict[str, Any] = {
-    "id": "team.weekly-report",
-    "version": "1.0.0",
-    "title": "周报生成",
-    "description": "整理本周日程并生成周报",
-    "entrypoint": ["python", "scripts/run.py"],
-    "runtime": "python",
-    "network": "deny",
-    "timeout_seconds": 120,
-    "tools": ["read"],
-}
-
-
-def build_zip(
-    files: dict[str, str | bytes],
-    *,
-    symlinks: dict[str, str] | None = None,
-    duplicate: list[str] | None = None,
-) -> bytes:
-    """测试内构造 zip;symlinks/duplicate 用于构造恶意/异常包。"""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, content in files.items():
-            archive.writestr(name, content)
-        for name in duplicate or []:
-            archive.writestr(name, "duplicate")
-        for name, target in (symlinks or {}).items():
-            info = zipfile.ZipInfo(name)
-            info.external_attr = 0o120777 << 16  # S_IFLNK
-            archive.writestr(info, target)
-    return buffer.getvalue()
-
-
-def plain_zip(
-    manifest: dict[str, Any] | None = BASE_MANIFEST,
-    **extra_files: str,
-) -> bytes:
-    files: dict[str, str | bytes] = {"SKILL.md": SKILL_MD}
-    if manifest is not None:
-        files["skill.json"] = json.dumps(manifest)
-    files.update(extra_files)
-    return build_zip(files)
-
-
-def upload(
-    client: TestClient,
-    data: bytes,
-    filename: str = "weekly-report.zip",
-    headers: dict[str, str] = ACCOUNT,
-):
-    return client.post(
-        "/api/v1/skills/packages",
-        files={"file": (filename, data, "application/zip")},
-        headers=headers,
-    )
-
-
-@pytest.fixture()
-def workspace() -> FakeWorkspace:
-    return FakeWorkspace()
-
-
-@pytest.fixture()
-def pkg_client(tmp_path: Path, workspace: FakeWorkspace) -> Iterator[TestClient]:
-    app = create_app(
-        _settings(tmp_path, "packages.db"),
-        workspace_client=workspace,
-        token_verifier=verifier(),
-    )
-    with TestClient(app) as client:
-        yield client
+__all__ = ["pkg_client", "workspace"]
 
 
 def test_upload_new_package(pkg_client: TestClient, workspace: FakeWorkspace) -> None:
@@ -317,120 +251,6 @@ def test_upload_requires_object_storage(tmp_path: Path) -> None:
     assert response.json()["code"] == "skill.storage_unavailable"
 
 
-def test_run_freezes_uploaded_skill_snapshot(
-    tmp_path: Path, workspace: FakeWorkspace
-) -> None:
-    app = create_app(
-        _settings(tmp_path, "run-skill.db"),
-        workspace_client=workspace,
-        token_verifier=verifier(),
-    )
-    with TestClient(app) as client:
-        package = upload(client, plain_zip()).json()
-        version = package["versions"][0]
-        response = client.post(
-            "/api/v1/runs",
-            json={
-                "title": "周报",
-                "goal": "生成周报",
-                "skill_id": "team.weekly-report",
-            },
-            headers=ACCOUNT,
-        )
-        assert response.status_code == 201, response.text
-        run = response.json()
-        assert run["skill_id"] == "team.weekly-report"
-        # 上传新版本:已建 run 的快照不能被改写
-        upload(client, plain_zip({**BASE_MANIFEST, "version": "2.0.0"}))
-
-    conn = sqlite3.connect(tmp_path / "run-skill.db")
-    try:
-        row = conn.execute(
-            "SELECT skill_id, skill_version_id, skill_object_key, skill_sha256, "
-            "skill_entrypoint, skill_runtime, skill_network, skill_timeout_seconds "
-            "FROM runs WHERE id = ?",
-            (run["id"],),
-        ).fetchone()
-    finally:
-        conn.close()
-    assert row[0] == "team.weekly-report"
-    assert row[1] == version["id"]
-    assert row[2] == workspace.puts[0]["key"]
-    assert row[3] == workspace.sha256
-    assert json.loads(row[4]) == ["python", "scripts/run.py"]
-    assert row[5] == "python"
-    assert row[6] == "deny"
-    assert row[7] == 120
-
-
-def test_undeclared_tools_is_unrestricted(
-    tmp_path: Path, workspace: FakeWorkspace
-) -> None:
-    """未声明 tools 不被物化成空表:API 返回 null、run 快照 skill_tools 为 NULL;
-
-    显式 ``tools: []`` 仍是"不用工具",接口与快照都保留空表(两者必须可区分)。
-    """
-    app = create_app(
-        _settings(tmp_path, "unrestricted.db"),
-        workspace_client=workspace,
-        token_verifier=verifier(),
-    )
-    undeclared = {key: value for key, value in BASE_MANIFEST.items() if key != "tools"}
-    explicit_none = {
-        key: value
-        for key, value in BASE_MANIFEST.items()
-        if key not in {"tools", "entrypoint"}
-    }
-    explicit_none.update(
-        {"id": "team.no-tools", "title": "不用工具的技能", "tools": []}
-    )
-    with TestClient(app) as client:
-        assert upload(client, plain_zip(undeclared)).status_code == 201
-        no_tools = upload(client, plain_zip(explicit_none), filename="no-tools.zip")
-        assert no_tools.status_code == 201, no_tools.text
-
-        skills = {
-            item["id"]: item
-            for item in client.get("/api/v1/skills", headers=ACCOUNT).json()
-        }
-        assert skills["team.weekly-report"]["tools"] is None
-        assert skills["team.no-tools"]["tools"] == []
-
-        run_ids = {}
-        for skill_id in ("team.weekly-report", "team.no-tools"):
-            response = client.post(
-                "/api/v1/runs",
-                json={"title": skill_id, "goal": "g", "skill_id": skill_id},
-                headers=ACCOUNT,
-            )
-            assert response.status_code == 201, response.text
-            run_ids[skill_id] = response.json()["id"]
-
-    conn = sqlite3.connect(tmp_path / "unrestricted.db")
-    try:
-        frozen = dict(
-            conn.execute(
-                "SELECT id, skill_tools FROM runs WHERE id IN (?, ?)",
-                (run_ids["team.weekly-report"], run_ids["team.no-tools"]),
-            ).fetchall()
-        )
-    finally:
-        conn.close()
-    # JSON 列:未声明落 JSON null(ORM 读回 None),显式空表落 []。
-    assert json.loads(frozen[run_ids["team.weekly-report"]]) is None
-    assert json.loads(frozen[run_ids["team.no-tools"]]) == []
-
-
-def test_run_with_unknown_skill_not_found(pkg_client: TestClient) -> None:
-    response = pkg_client.post(
-        "/api/v1/runs",
-        json={"title": "x", "goal": "g", "skill_id": "team.nope"},
-        headers=ACCOUNT,
-    )
-    assert response.status_code == 404
-    assert response.json()["code"] == "skill.not_found"
-
-
 def test_delete_package_removes_versions_and_objects(
     pkg_client: TestClient, workspace: FakeWorkspace
 ) -> None:
@@ -479,59 +299,3 @@ def test_packages_are_account_scoped(
         f"/api/v1/skills/packages/{package['id']}", headers=OTHER
     )
     assert deleted.status_code == 404
-
-
-def test_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
-    """对话任务路径与 run 创建共用 resolve_skill(上传包也可绑定)。"""
-    upload(pkg_client, plain_zip())
-    conversation = pkg_client.post(
-        "/api/v1/conversations", json={}, headers=ACCOUNT
-    ).json()
-    response = pkg_client.post(
-        f"/api/v1/conversations/{conversation['id']}/messages",
-        json={
-            "content": "生成周报",
-            "mode": "task",
-            "skill_id": "team.weekly-report",
-        },
-        headers=ACCOUNT,
-    )
-    assert response.status_code == 201, response.text
-    assert response.json()["run"]["skill_id"] == "team.weekly-report"
-
-    missing = pkg_client.post(
-        f"/api/v1/conversations/{conversation['id']}/messages",
-        json={"content": "x", "mode": "task", "skill_id": "team.nope"},
-        headers=ACCOUNT,
-    )
-    assert missing.status_code == 404
-    assert missing.json()["code"] == "skill.not_found"
-
-
-def test_stream_message_can_bind_uploaded_skill(pkg_client: TestClient) -> None:
-    """SSE 路径在开流前解析技能(未知 id 直接 404,不进流)。"""
-    upload(pkg_client, plain_zip())
-    conversation = pkg_client.post(
-        "/api/v1/conversations", json={}, headers=ACCOUNT
-    ).json()
-    with pkg_client.stream(
-        "POST",
-        f"/api/v1/conversations/{conversation['id']}/messages/stream",
-        json={
-            "content": "生成周报",
-            "mode": "task",
-            "skill_id": "team.weekly-report",
-        },
-        headers=ACCOUNT,
-    ) as response:
-        assert response.status_code == 200
-        text = response.read().decode()
-    assert "team.weekly-report" in text
-
-    with pkg_client.stream(
-        "POST",
-        f"/api/v1/conversations/{conversation['id']}/messages/stream",
-        json={"content": "x", "mode": "task", "skill_id": "team.nope"},
-        headers=ACCOUNT,
-    ) as response:
-        assert response.status_code == 404

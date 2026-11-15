@@ -124,8 +124,7 @@ export const queryKeys = {
    * adminCostSummaries 是前缀键,写操作/权限变化时可整体失效。
    */
   adminCostSummaries: ['admin-cost-summary'] as const,
-  adminCostSummary: (days: number) =>
-    ['admin-cost-summary', days] as const,
+  adminCostSummary: (days: number) => ['admin-cost-summary', days] as const,
 
   /** 模型与用量域。 */
   models: ['models'] as const,
@@ -147,9 +146,22 @@ export const queryKeys = {
    * 列表与检索把过滤维度拼进键,维度变化自然重查。
    */
   memories: ['memories'] as const,
-  memoryList: (kind?: string, workspaceId?: string) =>
-    ['memories', 'list', kind ?? '', workspaceId ?? ''] as const,
+  memoryList: (
+    kind?: string,
+    workspaceId?: string,
+    sourceType?: string,
+    includeInvalid?: boolean,
+  ) =>
+    [
+      'memories',
+      'list',
+      kind ?? '',
+      workspaceId ?? '',
+      sourceType ?? '',
+      includeInvalid ? 'invalid' : '',
+    ] as const,
   memoryStats: ['memories', 'stats'] as const,
+  memoryReviews: ['memories', 'reviews'] as const,
   memorySearch: (query: string, kind?: string, workspaceId?: string) =>
     ['memories', 'search', query, kind ?? '', workspaceId ?? ''] as const,
 

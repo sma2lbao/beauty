@@ -516,7 +516,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `api-gateway:8007
 
 ### 5.11 CI/CD 与 IaC
 
-**现状**：GitHub Actions 9 个 job（`.github/workflows/ci.yml`），无部署流水线；本地 compose 手工起。
+**现状**：GitHub Actions 10 个 job（`.github/workflows/ci.yml`，含 `golden-run` 端到端冒烟），无部署流水线；本地 compose 手工起。
 
 **改法**：
 
