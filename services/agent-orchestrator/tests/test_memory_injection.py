@@ -144,6 +144,11 @@ def test_memory_query_joins_goal_and_title() -> None:
     assert _memory_query(_run(goal="", title="")) == ""
 
 
+async def _no_core(*args: Any, **kwargs: Any) -> list[Any]:
+    """默认没有常驻核心记忆,让用例只观察约定/召回两段。"""
+    return []
+
+
 async def test_recall_memory_block_passes_scope_and_limits(monkeypatch) -> None:
     """召回按契约传账号/工作区/限额;查询词以目标为主、标题为辅。"""
     calls: list[dict[str, Any]] = []
@@ -162,6 +167,7 @@ async def test_recall_memory_block_passes_scope_and_limits(monkeypatch) -> None:
         )
         return f"\n\n{MEMORY_BLOCK}"
 
+    monkeypatch.setattr(run_execution_module.memory_service, "core_memories", _no_core)
     monkeypatch.setattr(
         run_execution_module.memory_service, "convention_block", fake_convention
     )
@@ -181,6 +187,7 @@ async def test_recall_memory_block_passes_scope_and_limits(monkeypatch) -> None:
             "workspace_id": "ws-1",
             "limit": 7,
             "max_chars": 1234,
+            "exclude_ids": set(),
         }
     ]
 
@@ -238,6 +245,7 @@ async def test_recall_memory_block_prepends_conventions(monkeypatch) -> None:
     async def fake_recall(session, account_id, query, **kwargs):
         return "相关长期记忆（按相关性，供参考）\n- [preference] 用户偏好简洁"
 
+    monkeypatch.setattr(run_execution_module.memory_service, "core_memories", _no_core)
     monkeypatch.setattr(
         run_execution_module.memory_service, "convention_block", fake_convention
     )
@@ -327,9 +335,15 @@ async def test_extras_include_memory_tools_when_enabled() -> None:
     extras = _StubContainer(_memory_settings())._extras_factory()
     specs = await extras("t-1")
     by_name = {spec.name: spec for spec in specs}
-    assert set(by_name) == {"memory_search", "memory_write", "memory_delete"}
+    assert set(by_name) == {
+        "memory_search",
+        "memory_write",
+        "memory_update",
+        "memory_delete",
+    }
     assert by_name["memory_search"].risk is ToolRisk.READ
     assert by_name["memory_write"].risk is ToolRisk.WRITE
+    assert by_name["memory_update"].risk is ToolRisk.WRITE
     assert by_name["memory_delete"].risk is ToolRisk.WRITE
 
 
@@ -382,6 +396,7 @@ async def test_container_builds_extras_factory_for_memory_only(tmp_path) -> None
     assert {spec.name for spec in specs} == {
         "memory_search",
         "memory_write",
+        "memory_update",
         "memory_delete",
     }
 

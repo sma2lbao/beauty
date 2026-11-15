@@ -66,6 +66,82 @@ async def _stop(task: asyncio.Task[None]) -> None:
         await task
 
 
+class _FakeConnection:
+    """只实现 advisory lock 路径用到的 scalar/commit/rollback。"""
+
+    def __init__(self, *, acquired: bool) -> None:
+        self.acquired = acquired
+        self.calls: list[str] = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def scalar(self, statement: Any) -> Any:
+        text = str(statement)
+        self.calls.append(text)
+        if "pg_try_advisory_lock" in text:
+            return self.acquired
+        if "pg_advisory_unlock" in text:
+            return True
+        return None
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class _FakeConnect:
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+
+    async def __aenter__(self) -> _FakeConnection:
+        return self._connection
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+
+class _FakeEngine:
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+
+    def connect(self) -> _FakeConnect:
+        return _FakeConnect(self._connection)
+
+
+async def test_advisory_lock_holds_and_releases_same_connection() -> None:
+    """锁必须在独占连接上拿,并在同一连接上解锁(不能被 session 提交换走)。"""
+    connection = _FakeConnection(acquired=True)
+    factory = SimpleNamespace(engine=_FakeEngine(connection))
+
+    async with memory_sweeper._advisory_lock(factory) as acquired:
+        assert acquired is True
+        assert connection.commits == 1
+        assert not any("pg_advisory_unlock" in call for call in connection.calls)
+
+    assert connection.commits == 2
+    assert any("pg_advisory_unlock" in call for call in connection.calls)
+
+
+async def test_advisory_lock_reports_contention_without_unlocking() -> None:
+    connection = _FakeConnection(acquired=False)
+    factory = SimpleNamespace(engine=_FakeEngine(connection))
+
+    async with memory_sweeper._advisory_lock(factory) as acquired:
+        assert acquired is False
+
+    assert connection.rollbacks == 1
+    assert not any("pg_advisory_unlock" in call for call in connection.calls)
+
+
+async def test_advisory_lock_requires_an_engine() -> None:
+    """没有 engine 时明确失败,不要静默退化成不设防的清扫。"""
+    with pytest.raises(RuntimeError):
+        async with memory_sweeper._advisory_lock(SimpleNamespace()):
+            pass
+
+
 # ---- 单轮 sweep ----
 
 
@@ -82,7 +158,12 @@ async def test_sweep_once_purges_expired_and_consolidates(factory: Any) -> None:
         await memory_service.write_memory(session, OTHER, content="另一个账号的记忆")
 
     totals = await memory_sweeper.sweep_once(factory)
-    assert totals == {"accounts": 2, "purged": 1, "consolidated": 1}
+    assert totals == {
+        "accounts": 2,
+        "purged": 1,
+        "consolidated": 1,
+        "skipped": 0,
+    }
 
     async with session_scope(factory) as session:
         account_stats = await memory_service.memory_stats(session, ACCOUNT)
@@ -104,7 +185,12 @@ async def test_sweep_once_can_skip_consolidation(factory: Any) -> None:
         )
 
     totals = await memory_sweeper.sweep_once(factory, consolidation_enabled=False)
-    assert totals == {"accounts": 1, "purged": 1, "consolidated": 0}
+    assert totals == {
+        "accounts": 1,
+        "purged": 1,
+        "consolidated": 0,
+        "skipped": 0,
+    }
 
     async with session_scope(factory) as session:
         stats = await memory_service.memory_stats(session, ACCOUNT)
@@ -142,6 +228,26 @@ async def test_sweep_once_isolates_account_failures(
     # 失败账号的事务已回滚(两条都还在),其他账号继续被处理
     assert account_stats["active"] == 2
     assert other_stats["active"] == 1
+
+
+async def test_sweep_once_skips_when_lock_is_held(factory: Any) -> None:
+    """同一时刻只允许一个清扫实例:锁被占时本轮直接跳过,不动数据。"""
+    async with session_scope(factory) as session:
+        expired = await memory_service.write_memory(
+            session, ACCOUNT, content="会过期的记忆", ttl_days=1
+        )
+        expired.expires_at = datetime.now(UTC) - timedelta(days=1)
+
+    guard = memory_sweeper._process_guard()
+    async with guard:
+        totals = await memory_sweeper.sweep_once(factory)
+
+    assert totals == {"accounts": 0, "purged": 0, "consolidated": 0, "skipped": 1}
+    async with session_scope(factory) as session:
+        stats = await memory_service.memory_stats(session, ACCOUNT)
+    # 跳过的这一轮没有清理任何东西,过期记录仍在(只是不再生效)
+    assert stats["total"] == 1
+    assert stats["expired"] == 1
 
 
 # ---- 循环启停 ----

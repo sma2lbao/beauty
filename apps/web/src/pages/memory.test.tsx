@@ -22,11 +22,20 @@ vi.mock('@/lib/memory-api', async () => {
     ...actual,
     memoryApi: {
       list: vi.fn(),
+      get: vi.fn(),
       search: vi.fn(),
       stats: vi.fn(),
       create: vi.fn(),
+      update: vi.fn(),
       remove: vi.fn(),
       purgeExpired: vi.fn(),
+      reviews: vi.fn(),
+      approveReview: vi.fn(),
+      rejectReview: vi.fn(),
+      exportAll: vi.fn(),
+      importAll: vi.fn(),
+      reembed: vi.fn(),
+      removeAll: vi.fn(),
     },
   };
 });
@@ -55,6 +64,11 @@ function makeMemory(overrides: Partial<Memory> = {}): Memory {
     pinned: false,
     source_type: 'manual',
     source_id: null,
+    injection_mode: 'retrieved',
+    confidence: 1,
+    valid_from: '2026-10-20T08:00:00+00:00',
+    invalid_at: null,
+    superseded_by: null,
     expires_at: null,
     last_accessed_at: null,
     access_count: 2,
@@ -99,12 +113,38 @@ beforeEach(() => {
     active: 0,
     pinned: 0,
     expired: 0,
+    superseded: 0,
+    pending_reviews: 0,
   });
   vi.mocked(memoryApi.list).mockResolvedValue([]);
   vi.mocked(memoryApi.search).mockResolvedValue({ query: '', hits: [] });
   vi.mocked(memoryApi.create).mockResolvedValue(makeMemory());
+  vi.mocked(memoryApi.update).mockResolvedValue(makeMemory());
   vi.mocked(memoryApi.remove).mockResolvedValue(undefined);
   vi.mocked(memoryApi.purgeExpired).mockResolvedValue({ purged: 0 });
+  vi.mocked(memoryApi.reviews).mockResolvedValue([]);
+  vi.mocked(memoryApi.approveReview).mockResolvedValue(makeMemory());
+  vi.mocked(memoryApi.rejectReview).mockResolvedValue(undefined);
+  vi.mocked(memoryApi.exportAll).mockResolvedValue({
+    exported_at: '2026-10-20T08:00:00+00:00',
+    memories: [],
+  });
+  vi.mocked(memoryApi.importAll).mockResolvedValue({
+    received: 0,
+    created: 0,
+    skipped_duplicate: 0,
+    skipped_invalid: 0,
+    dry_run: false,
+    errors: [],
+  });
+  vi.mocked(memoryApi.reembed).mockResolvedValue({
+    scanned: 0,
+    updated: 0,
+    skipped: 0,
+    model: 'local-hash-256',
+    dry_run: false,
+  });
+  vi.mocked(memoryApi.removeAll).mockResolvedValue({ memories: 0, reviews: 0 });
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
   vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(makeWorkspace());
 });
@@ -116,6 +156,8 @@ describe('MemoryPage', () => {
       active: 2,
       pinned: 1,
       expired: 1,
+      superseded: 0,
+      pending_reviews: 0,
     });
 
     renderPage();
@@ -192,6 +234,70 @@ describe('MemoryPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('重建向量:调用 /reembed 并展示结果', async () => {
+    vi.mocked(memoryApi.reembed).mockResolvedValue({
+      scanned: 4,
+      updated: 3,
+      skipped: 1,
+      model: 'bge-m3',
+      dry_run: false,
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '重建向量' }));
+
+    await waitFor(() => expect(memoryApi.reembed).toHaveBeenCalled());
+    expect(
+      await screen.findByText('已重建 3 条向量(扫描 4 条,模型 bge-m3)'),
+    ).toBeInTheDocument();
+  });
+
+  it('导入文件:读取导出 JSON 并提交 memories', async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(memoryApi.list).toHaveBeenCalled());
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    expect(input).not.toBeNull();
+    const payload = JSON.stringify({
+      exported_at: '2026-10-20T08:00:00+00:00',
+      memories: [{ content: '新导入的偏好', kind: 'preference' }],
+    });
+    fireEvent.change(input as HTMLInputElement, {
+      target: {
+        files: [new File([payload], 'memory.json', { type: 'application/json' })],
+      },
+    });
+
+    await waitFor(() =>
+      expect(memoryApi.importAll).toHaveBeenCalledWith([
+        { content: '新导入的偏好', kind: 'preference' },
+      ]),
+    );
+  });
+
+  it('导入文件不是合法 JSON 时提示错误', async () => {
+    vi.mocked(memoryApi.importAll).mockClear();
+    const { container } = renderPage();
+    await waitFor(() => expect(memoryApi.list).toHaveBeenCalled());
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    fireEvent.change(input as HTMLInputElement, {
+      target: {
+        files: [new File(['not-json'], 'bad.json', { type: 'application/json' })],
+      },
+    });
+
+    expect(
+      await screen.findByText('导入文件不是合法 JSON'),
+    ).toBeInTheDocument();
+    expect(memoryApi.importAll).not.toHaveBeenCalled();
+  });
+
   it('检索走 /search 并展示命中', async () => {
     vi.mocked(memoryApi.search).mockResolvedValue({
       query: '合同',
@@ -241,7 +347,7 @@ describe('MemoryPage', () => {
     fireEvent.change(screen.getByLabelText('有效期(天)'), {
       target: { value: '30' },
     });
-    fireEvent.click(screen.getByLabelText('置顶(始终注入)'));
+    fireEvent.click(screen.getByLabelText('置顶(排序靠前)'));
     fireEvent.click(screen.getByRole('button', { name: '写入记忆' }));
 
     await waitFor(() =>
@@ -252,6 +358,7 @@ describe('MemoryPage', () => {
         workspace_id: 'ws-1',
         pinned: true,
         ttl_days: 30,
+        injection_mode: 'retrieved',
       }),
     );
     await waitFor(() =>
@@ -280,6 +387,8 @@ describe('MemoryPage', () => {
       active: 1,
       pinned: 0,
       expired: 1,
+      superseded: 0,
+      pending_reviews: 0,
     });
     vi.mocked(memoryApi.purgeExpired).mockResolvedValue({ purged: 1 });
 
@@ -299,5 +408,77 @@ describe('MemoryPage', () => {
     renderPage();
 
     expect(await screen.findByText('记忆服务不可用')).toBeInTheDocument();
+  });
+
+  it('行内编辑保存走 PATCH 并带乐观并发时间戳', async () => {
+    vi.mocked(memoryApi.list).mockResolvedValue([makeMemory()]);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '编辑' }));
+    fireEvent.change(screen.getByLabelText('编辑记忆内容'), {
+      target: { value: '默认使用英文回复' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(memoryApi.update).toHaveBeenCalledWith('m1', {
+        content: '默认使用英文回复',
+        expected_updated_at: '2026-10-20T08:00:00+00:00',
+      }),
+    );
+  });
+
+  it('置顶按钮切换 pinned 并带乐观并发时间戳', async () => {
+    vi.mocked(memoryApi.list).mockResolvedValue([makeMemory()]);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '置顶' }));
+
+    await waitFor(() =>
+      expect(memoryApi.update).toHaveBeenCalledWith('m1', {
+        pinned: true,
+        expected_updated_at: '2026-10-20T08:00:00+00:00',
+      }),
+    );
+  });
+
+  it('复核队列通过后写入长期记忆', async () => {
+    vi.mocked(memoryApi.reviews).mockResolvedValue([
+      {
+        id: 'r1',
+        workspace_id: null,
+        scope: 'account',
+        kind: 'preference',
+        content: '每周五下午开周会',
+        confidence: 0.3,
+        evidence_quote: '以后每周五下午开周会',
+        source_type: 'chat',
+        source_id: 'c-1',
+        status: 'pending',
+        created_at: '2026-10-20T08:00:00+00:00',
+        updated_at: '2026-10-20T08:00:00+00:00',
+      },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText('每周五下午开周会')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '通过' }));
+
+    await waitFor(() =>
+      expect(memoryApi.approveReview).toHaveBeenCalledWith('r1'),
+    );
+  });
+
+  it('彻底删除需要二次确认', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '彻底删除' }));
+    expect(memoryApi.removeAll).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '确认彻底删除' }));
+    await waitFor(() => expect(memoryApi.removeAll).toHaveBeenCalled());
   });
 });
