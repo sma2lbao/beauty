@@ -461,7 +461,7 @@ CI 结论类证据必须附 run 链接 + 逐 job 结论表，不得只写「CI �
 | services/account-service    | account-service       | Python 服务 :8001 | FastAPI 用户/组织/配额/套餐 + 自建认证                          | 3609（36 文件）   | 39       |
 | services/workspace-service  | workspace-service     | Python 服务 :8005 | FastAPI 工作区/交付物/对象存储                                  | 2758（27 文件）   | 74       |
 | services/api-gateway        | api-gateway           | Python 服务 :8007 | FastAPI 同源 /api 门面                                          | 1160（16 文件）   | 23       |
-| tools/eslint-config         | @beauty/eslint-config | 共享工具包        | ESLint 9 flat config 工厂                                       | 0                 | 0        |
+| tools/eslint-config         | @beauty/eslint-config | 共享工具包        | ESLint 10 flat config 工厂                                      | 0                 | 0        |
 
 合计：Python 源码约 2.82 万行、pytest 697（103 个测试文件，collect 实测）；TS/TSX 源码 33319 行（236 文件）+ CSS 2226 行，vitest 446（74 文件，web 45 / desktop 10 / design 19）。
 

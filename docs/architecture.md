@@ -150,7 +150,7 @@ beauty-moon/
 │   ├── events/               #   事件信封 + 总线 + outbox（Python）
 │   └── design/               #   React 组件库（JS，bd- BEM + --bd-* 令牌）
 ├── tools/
-│   └── eslint-config/        # ESLint 9 flat config 工厂
+│   └── eslint-config/        # ESLint 10 flat config 工厂
 ├── scripts/                  # dev.sh / seed-local.sh / reset-local.sh / refactor-gate.sh
 ├── deploy/                   # docker-compose.yml（pg/redis）+ web/nginx.conf
 └── docs/                      # 文档（README.md 为索引）

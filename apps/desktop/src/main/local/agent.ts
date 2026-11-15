@@ -574,8 +574,10 @@ export class LocalAgent {
       });
     } catch (error) {
       assertNotCancelled(params.signal);
+      // preserve-caught-error:保留原始错误为 cause,便于追溯根因。
       throw new Error(
         `无法连接模型端点(${url}):${describeError(error)}。请检查设置里的 baseUrl、网络连接或本地模型是否已启动。`,
+        { cause: error },
       );
     }
 
@@ -645,7 +647,7 @@ export class LocalAgent {
     } catch (error) {
       assertNotCancelled(signal);
       await reader.cancel().catch(() => undefined);
-      throw new Error(`读取模型响应流失败:${describeError(error)}。`);
+      throw new Error(`读取模型响应流失败:${describeError(error)}。`, { cause: error });
     }
 
     return { content: state.content, toolCalls: state.toolCalls.filter((item) => item.name) };

@@ -35,7 +35,12 @@ export function react() {
         'react-hooks': reactHooks,
         'react-refresh': reactRefresh,
       },
-      settings: { react: { version: 'detect' } },
+      // 显式钉住 React 大版本,不用 'detect'。
+      // 原因:eslint-plugin-react 7.37 的 detectReactVersion 会调用
+      // context.getFilename(),而 ESLint 10 已移除该方法(升级即崩:
+      // "contextOrFilename.getFilename is not a function")。钉住版本可绕开该分支,
+      // 其余规则在 10 下实测正常。插件发布 ESLint 10 支持后改回 'detect'。
+      settings: { react: { version: '19.3' } },
       rules: {
         ...reactRecommended.rules,
         ...reactJsxRuntime.rules,
