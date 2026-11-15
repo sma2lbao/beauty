@@ -142,3 +142,64 @@ class MemoryReviewDecision(BaseModel):
     """复核决定:可选备注;通过后按候选内容写入长期记忆。"""
 
     note: str | None = Field(default=None, max_length=2000)
+
+
+class MemoryReembedRequest(BaseModel):
+    """重建向量请求:dry_run=True 只统计不写库,便于先看影响面。
+
+    limit 是本次最多处理的条数(默认取部署配置),分多次调用可渐进完成。
+    """
+
+    dry_run: bool = False
+    limit: int | None = Field(default=None, ge=1, le=2000)
+
+
+class MemoryReembedResult(BaseModel):
+    """重建向量结果:scanned 为扫描条数,updated 为实际重建条数。"""
+
+    scanned: int
+    updated: int
+    skipped: int = 0
+    model: str
+    dry_run: bool = False
+
+
+class MemoryImportItem(BaseModel):
+    """可导入的一条记忆:字段与导出格式对齐,额外字段(如 id)被忽略。"""
+
+    content: str = Field(min_length=1, max_length=8000)
+    kind: MemoryKind = "note"
+    scope: MemoryScope = "account"
+    workspace_id: str | None = Field(default=None, max_length=32)
+    pinned: bool = False
+    ttl_days: int = Field(default=0, ge=0, le=3650)
+    injection_mode: MemoryInjectionMode = "retrieved"
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_type: Literal["manual", "chat", "run", "tool"] = "manual"
+    source_id: str | None = Field(default=None, max_length=64)
+
+
+class MemoryImportRequest(BaseModel):
+    """批量导入请求:直接吃 GET /memories/export 的 memories 数组。"""
+
+    dry_run: bool = False
+    memories: list[MemoryImportItem] = Field(min_length=1, max_length=500)
+
+
+class MemoryImportError(BaseModel):
+    """被跳过的条目:按数组下标定位,code 与写入接口的错误码同口径。"""
+
+    index: int
+    code: str
+    message: str
+
+
+class MemoryImportResult(BaseModel):
+    """导入结果:近重复与非法条目分别计数,便于前端展示跳过原因。"""
+
+    received: int
+    created: int
+    skipped_duplicate: int
+    skipped_invalid: int
+    dry_run: bool = False
+    errors: list[MemoryImportError] = Field(default_factory=list)

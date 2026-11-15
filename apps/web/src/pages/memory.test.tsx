@@ -33,6 +33,8 @@ vi.mock('@/lib/memory-api', async () => {
       approveReview: vi.fn(),
       rejectReview: vi.fn(),
       exportAll: vi.fn(),
+      importAll: vi.fn(),
+      reembed: vi.fn(),
       removeAll: vi.fn(),
     },
   };
@@ -127,6 +129,21 @@ beforeEach(() => {
     exported_at: '2026-10-20T08:00:00+00:00',
     memories: [],
   });
+  vi.mocked(memoryApi.importAll).mockResolvedValue({
+    received: 0,
+    created: 0,
+    skipped_duplicate: 0,
+    skipped_invalid: 0,
+    dry_run: false,
+    errors: [],
+  });
+  vi.mocked(memoryApi.reembed).mockResolvedValue({
+    scanned: 0,
+    updated: 0,
+    skipped: 0,
+    model: 'local-hash-256',
+    dry_run: false,
+  });
   vi.mocked(memoryApi.removeAll).mockResolvedValue({ memories: 0, reviews: 0 });
   vi.mocked(workspaceApi.workspaces).mockResolvedValue([]);
   vi.mocked(workspaceApi.defaultWorkspace).mockResolvedValue(makeWorkspace());
@@ -215,6 +232,70 @@ describe('MemoryPage', () => {
     expect(
       await screen.findByRole('option', { name: '侧栏缓存工作区' }),
     ).toBeInTheDocument();
+  });
+
+  it('重建向量:调用 /reembed 并展示结果', async () => {
+    vi.mocked(memoryApi.reembed).mockResolvedValue({
+      scanned: 4,
+      updated: 3,
+      skipped: 1,
+      model: 'bge-m3',
+      dry_run: false,
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: '重建向量' }));
+
+    await waitFor(() => expect(memoryApi.reembed).toHaveBeenCalled());
+    expect(
+      await screen.findByText('已重建 3 条向量(扫描 4 条,模型 bge-m3)'),
+    ).toBeInTheDocument();
+  });
+
+  it('导入文件:读取导出 JSON 并提交 memories', async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(memoryApi.list).toHaveBeenCalled());
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    expect(input).not.toBeNull();
+    const payload = JSON.stringify({
+      exported_at: '2026-10-20T08:00:00+00:00',
+      memories: [{ content: '新导入的偏好', kind: 'preference' }],
+    });
+    fireEvent.change(input as HTMLInputElement, {
+      target: {
+        files: [new File([payload], 'memory.json', { type: 'application/json' })],
+      },
+    });
+
+    await waitFor(() =>
+      expect(memoryApi.importAll).toHaveBeenCalledWith([
+        { content: '新导入的偏好', kind: 'preference' },
+      ]),
+    );
+  });
+
+  it('导入文件不是合法 JSON 时提示错误', async () => {
+    vi.mocked(memoryApi.importAll).mockClear();
+    const { container } = renderPage();
+    await waitFor(() => expect(memoryApi.list).toHaveBeenCalled());
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[type="file"]',
+    );
+    fireEvent.change(input as HTMLInputElement, {
+      target: {
+        files: [new File(['not-json'], 'bad.json', { type: 'application/json' })],
+      },
+    });
+
+    expect(
+      await screen.findByText('导入文件不是合法 JSON'),
+    ).toBeInTheDocument();
+    expect(memoryApi.importAll).not.toHaveBeenCalled();
   });
 
   it('检索走 /search 并展示命中', async () => {

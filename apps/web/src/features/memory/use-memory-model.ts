@@ -9,6 +9,7 @@ import { isUnauthorized } from '@/lib/http';
 import {
   memoryApi,
   type Memory,
+  type MemoryImportItem,
   type MemoryInjectionMode,
   type MemoryKind,
   type MemoryScope,
@@ -194,6 +195,38 @@ export function useMemoryModel() {
     },
   });
 
+  const importMutation = useMutation({
+    mutationFn: (items: MemoryImportItem[]) => memoryApi.importAll(items),
+    onSuccess: async (result) => {
+      setNotice(
+        '已导入 ' +
+          result.created +
+          ' 条记忆(跳过重复 ' +
+          result.skipped_duplicate +
+          ' 条,非法 ' +
+          result.skipped_invalid +
+          ' 条)',
+      );
+      await refresh();
+    },
+  });
+
+  const reembedMutation = useMutation({
+    mutationFn: () => memoryApi.reembed(),
+    onSuccess: async (result) => {
+      setNotice(
+        '已重建 ' +
+          result.updated +
+          ' 条向量(扫描 ' +
+          result.scanned +
+          ' 条,模型 ' +
+          result.model +
+          ')',
+      );
+      await refresh();
+    },
+  });
+
   const exportMutation = useMutation({
     mutationFn: () => memoryApi.exportAll(),
     onSuccess: (result) => {
@@ -248,6 +281,8 @@ export function useMemoryModel() {
     purgeMutation.error,
     clearAllMutation.error,
     exportMutation.error,
+    importMutation.error,
+    reembedMutation.error,
   ].some(isUnauthorized);
   const mutationError =
     createMutation.error ??
@@ -255,7 +290,9 @@ export function useMemoryModel() {
     removeMutation.error ??
     purgeMutation.error ??
     clearAllMutation.error ??
-    exportMutation.error;
+    exportMutation.error ??
+    importMutation.error ??
+    reembedMutation.error;
 
   const stats = statsQuery.data;
   const memories = listQuery.data ?? [];
@@ -342,6 +379,8 @@ export function useMemoryModel() {
     purgeMutation,
     clearAllMutation,
     exportMutation,
+    importMutation,
+    reembedMutation,
     refresh,
   };
 }

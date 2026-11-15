@@ -82,6 +82,7 @@ def build_memory_tools(
     default_limit: int = 5,
     default_ttl_days: int = 0,
     max_writes_per_source: int = 20,
+    mmr_lambda: float = 0.7,
 ) -> list[ToolSpec]:
     """构造 memory_search/memory_write/memory_update/memory_delete 四个工具。
 
@@ -106,6 +107,7 @@ def build_memory_tools(
                     workspace_id=context.workspace_id,
                     limit=limit,
                     touch=True,
+                    mmr_lambda=mmr_lambda,
                 )
             except AppError as exc:
                 return _error(exc.message)

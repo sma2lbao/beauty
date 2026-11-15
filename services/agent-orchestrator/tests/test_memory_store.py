@@ -506,10 +506,10 @@ async def test_local_memory_provider_roundtrip(
     provider = memory_service.build_memory_provider()
     assert isinstance(provider, memory_service.LocalMemoryProvider)
     async with session_scope(factory) as session:
-        memory = await provider.remember(
+        # remember 返回记忆 id(远程 provider 只回 id,契约统一为 str)。
+        memory_id = await provider.remember(
             session, ACCOUNT, "用户偏好简洁回答", kind="preference"
         )
-        memory_id = memory.id
         assert "用户偏好简洁回答" in await provider.recall(session, ACCOUNT, "回答风格")
     async with session_scope(factory) as session:
         await provider.forget(session, ACCOUNT, memory_id)

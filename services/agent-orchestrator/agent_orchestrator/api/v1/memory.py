@@ -16,11 +16,13 @@
 - GET /memories/reviews:待复核候选(低置信度自动抽取);
 - POST /memories/reviews/{review_id}/approve|reject:通过(落库)或拒绝;
 - GET /memories/export:导出账号全部记忆(P3-B 可携带性);
+- POST /memories/import:批量导入(吃 export 的 memories 数组,近重复跳过、支持 dry_run);
+- POST /memories/reembed:按当前嵌入模型重建向量缺失/不一致的历史行;
 - DELETE /memories:彻底删除账号全部记忆与复核队列(需 confirm=true);
 - DELETE /memories/{id}:软删除,跨账号一律 404(不泄漏存在性)。
 
-注意路由顺序:/search、/stats、/purge-expired、/reviews、/export 必须先于
-/{memory_id} 声明,否则会被路径参数捕获。
+注意路由顺序:/search、/stats、/purge-expired、/reviews、/export、/import、
+/reembed 必须先于 /{memory_id} 声明,否则会被路径参数捕获。
 """
 
 from __future__ import annotations
@@ -37,10 +39,14 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.schemas.memory import (
     MemoryCreate,
     MemoryExport,
+    MemoryImportRequest,
+    MemoryImportResult,
     MemoryKind,
     MemoryPurgeAllResult,
     MemoryPurgeResult,
     MemoryRead,
+    MemoryReembedRequest,
+    MemoryReembedResult,
     MemoryReviewDecision,
     MemoryReviewRead,
     MemorySearchRequest,
@@ -200,6 +206,51 @@ async def export_memories(
         exported_at=datetime.now(UTC),
         memories=[MemoryRead.model_validate(item) for item in memories],
     )
+
+
+@router.post("/import", response_model=MemoryImportResult)
+async def import_memories(
+    payload: MemoryImportRequest,
+    session: DBSession,
+    account_id: AccountId,
+    settings: SettingsDep,
+) -> MemoryImportResult:
+    """批量导入记忆:迁移/恢复/外部导入;近重复跳过,支持 dry_run 预览。
+
+    导入是补数据而不是表达新事实,因此不触发新旧事实替代;敏感内容按配置拒绝。
+    """
+    result = await memory_service.import_memories(
+        session,
+        account_id,
+        [item.model_dump() for item in payload.memories],
+        dry_run=payload.dry_run,
+        max_content_chars=settings.memory_max_content_chars,
+        max_entries=settings.memory_max_entries_per_account,
+        dedupe_threshold=settings.memory_dedupe_threshold,
+        reject_sensitive=settings.memory_sensitive_filter_enabled,
+    )
+    return MemoryImportResult(**result)
+
+
+@router.post("/reembed", response_model=MemoryReembedResult)
+async def reembed_memories(
+    session: DBSession,
+    account_id: AccountId,
+    settings: SettingsDep,
+    payload: MemoryReembedRequest | None = None,
+) -> MemoryReembedResult:
+    """按当前嵌入提供方重建向量:换模型后恢复混合打分。
+
+    默认只处理一批(memory_reembed_batch),重复调用可渐进完成;dry_run 只统计。
+    """
+    body = payload or MemoryReembedRequest()
+    result = await memory_service.reembed_memories(
+        session,
+        account_id,
+        batch=body.limit or settings.memory_reembed_batch,
+        dry_run=body.dry_run,
+    )
+    return MemoryReembedResult(**result)
 
 
 @router.get("", response_model=list[MemoryRead])

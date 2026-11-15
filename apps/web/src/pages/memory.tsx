@@ -5,8 +5,10 @@
  * use-memory-reviews.ts;列表、检索、表单等子视图在 features/memory/ 下拆分。
  */
 import { Alert, Button } from '@beauty/design';
+import { useRef, useState } from 'react';
 
 import { PageHeader } from '@/components/console/ui';
+import type { MemoryImportItem } from '@/lib/memory-api';
 import { AuthBar } from '@/features/auth/auth-bar';
 import { MemoryCreateForm } from '@/features/memory/memory-create-form';
 import { MemoryListPanel } from '@/features/memory/memory-list-panel';
@@ -24,10 +26,32 @@ export function MemoryPage() {
     queryError,
     purgeMutation,
     exportMutation,
+    importMutation,
+    reembedMutation,
     clearAllMutation,
     confirmingClearAll,
     setConfirmingClearAll,
   } = model;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  /** 导入文件:接受导出格式(顶层 memories 数组)或裸数组,原样交给后端校验。 */
+  const importFile = async (file: File) => {
+    setImportError(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const items = Array.isArray(parsed)
+        ? parsed
+        : (parsed as { memories?: unknown }).memories;
+      if (!Array.isArray(items) || items.length === 0) {
+        setImportError('导入文件里没有 memories 数组');
+        return;
+      }
+      importMutation.mutate(items as MemoryImportItem[]);
+    } catch {
+      setImportError('导入文件不是合法 JSON');
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -44,6 +68,33 @@ export function MemoryPage() {
             >
               {exportMutation.isPending ? '导出中…' : '导出'}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importMutation.isPending}
+            >
+              {importMutation.isPending ? '导入中…' : '导入'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => reembedMutation.mutate()}
+              disabled={reembedMutation.isPending}
+            >
+              {reembedMutation.isPending ? '重建中…' : '重建向量'}
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void importFile(file);
+              }}
+            />
             <Button
               variant="outline"
               size="sm"
@@ -103,6 +154,12 @@ export function MemoryPage() {
                 </Button>
               </span>
             </span>
+          </Alert>
+        ) : null}
+
+        {importError ? (
+          <Alert variant="danger" className="mt-4">
+            {importError}
           </Alert>
         ) : null}
 

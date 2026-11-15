@@ -2036,6 +2036,170 @@
         "title": "MemoryExport",
         "type": "object"
       },
+      "MemoryImportError": {
+        "description": "被跳过的条目:按数组下标定位,code 与写入接口的错误码同口径。",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": ["index", "code", "message"],
+        "title": "MemoryImportError",
+        "type": "object"
+      },
+      "MemoryImportItem": {
+        "description": "可导入的一条记忆:字段与导出格式对齐,额外字段(如 id)被忽略。",
+        "properties": {
+          "confidence": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "content": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "injection_mode": {
+            "default": "retrieved",
+            "enum": ["retrieved", "always"],
+            "title": "Injection Mode",
+            "type": "string"
+          },
+          "kind": {
+            "default": "note",
+            "enum": ["note", "preference", "fact", "procedure"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "pinned": {
+            "default": false,
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "scope": {
+            "default": "account",
+            "enum": ["account", "workspace"],
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_type": {
+            "default": "manual",
+            "enum": ["manual", "chat", "run", "tool"],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "ttl_days": {
+            "default": 0,
+            "maximum": 3650.0,
+            "minimum": 0.0,
+            "title": "Ttl Days",
+            "type": "integer"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": ["content"],
+        "title": "MemoryImportItem",
+        "type": "object"
+      },
+      "MemoryImportRequest": {
+        "description": "批量导入请求:直接吃 GET /memories/export 的 memories 数组。",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "memories": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryImportItem"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Memories",
+            "type": "array"
+          }
+        },
+        "required": ["memories"],
+        "title": "MemoryImportRequest",
+        "type": "object"
+      },
+      "MemoryImportResult": {
+        "description": "导入结果:近重复与非法条目分别计数,便于前端展示跳过原因。",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryImportError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "received": {
+            "title": "Received",
+            "type": "integer"
+          },
+          "skipped_duplicate": {
+            "title": "Skipped Duplicate",
+            "type": "integer"
+          },
+          "skipped_invalid": {
+            "title": "Skipped Invalid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "received",
+          "created",
+          "skipped_duplicate",
+          "skipped_invalid"
+        ],
+        "title": "MemoryImportResult",
+        "type": "object"
+      },
       "MemoryPurgeAllResult": {
         "description": "账号记忆彻底删除结果(物理删除,不可恢复)。",
         "properties": {
@@ -2209,6 +2373,61 @@
           "updated_at"
         ],
         "title": "MemoryRead",
+        "type": "object"
+      },
+      "MemoryReembedRequest": {
+        "description": "重建向量请求:dry_run=True 只统计不写库,便于先看影响面。\n\nlimit 是本次最多处理的条数(默认取部署配置),分多次调用可渐进完成。",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "maximum": 2000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          }
+        },
+        "title": "MemoryReembedRequest",
+        "type": "object"
+      },
+      "MemoryReembedResult": {
+        "description": "重建向量结果:scanned 为扫描条数,updated 为实际重建条数。",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "scanned": {
+            "title": "Scanned",
+            "type": "integer"
+          },
+          "skipped": {
+            "default": 0,
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": ["scanned", "updated", "model"],
+        "title": "MemoryReembedResult",
         "type": "object"
       },
       "MemoryReviewDecision": {
@@ -7062,6 +7281,80 @@
         "tags": ["memories"]
       }
     },
+    "/api/v1/memories/import": {
+      "post": {
+        "description": "批量导入记忆:迁移/恢复/外部导入;近重复跳过,支持 dry_run 预览。\n\n导入是补数据而不是表达新事实,因此不触发新旧事实替代;敏感内容按配置拒绝。",
+        "operationId": "import_memories_api_v1_memories_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Memories",
+        "tags": ["memories"]
+      }
+    },
     "/api/v1/memories/purge-expired": {
       "post": {
         "description": "把已过期记忆标记为删除(幂等,可重复调用)。",
@@ -7123,6 +7416,87 @@
           }
         },
         "summary": "Purge Expired Memories",
+        "tags": ["memories"]
+      }
+    },
+    "/api/v1/memories/reembed": {
+      "post": {
+        "description": "按当前嵌入提供方重建向量:换模型后恢复混合打分。\n\n默认只处理一批(memory_reembed_batch),重复调用可渐进完成;dry_run 只统计。",
+        "operationId": "reembed_memories_api_v1_memories_reembed_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MemoryReembedRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryReembedResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reembed Memories",
         "tags": ["memories"]
       }
     },

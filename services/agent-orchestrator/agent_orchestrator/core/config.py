@@ -217,6 +217,17 @@ class Settings(BaseAppSettings):
     memory_embedding_provider: str = "local"
     memory_embedding_model: str = "bge-m3"
     memory_embedding_timeout_seconds: float = 10.0
+    # 检索重排(P3-C):MMR 多样性 lambda,1.0 = 关闭(纯相关性);越低越偏向
+    # 覆盖不同主题,避免同一句话的近重复条目占满召回预算。
+    memory_mmr_lambda: float = 0.7
+    # 重嵌入维护:单次 POST /memories/reembed 最多处理多少条(按批调用,
+    # 避免一次请求把账号全部历史向量都重算一遍)。
+    memory_reembed_batch: int = 200
+    # 记忆提供方(P3-C):local = 进程内表;remote = 外部 HTTP 记忆服务
+    # (mem0/Zep 等网关的薄适配层)。remote 不可用时注入路径回退本地。
+    memory_provider: str = "local"
+    memory_remote_base_url: str = ""
+    memory_remote_timeout_seconds: float = 10.0
     # 短期上下文压缩(§6.7):早期轮次折叠成摘要,原文仍保留(审计/回放不受影响)。
     # 阈值按估算 token 计(中文约 1 字/token),超过后把"最老的一批"折叠进摘要。
     context_compaction_enabled: bool = True

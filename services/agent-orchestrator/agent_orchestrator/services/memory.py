@@ -1,6 +1,6 @@
 """长期记忆服务:写入/检索/召回块/统计(可插拔语义嵌入,默认本地哈希)。
 
-检索分数 = 词面 n-gram 重合 + 向量余弦 + pinned/新近加权。向量由
+检索分数 = BM25 词面分 + 向量余弦 + pinned/新近加权,并可用 MMR 做多样性重排。向量由
 services.embeddings 提供:默认进程内哈希(零网络、测试可复现),配置
 gateway 后走 llm-gateway 的 /v1/embeddings,失败自动回退本地——记忆检索
 不该被嵌入服务抖动拖垮。召回块/工具/API 不感知 provider 差异。
@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from common.errors import AppError, ConflictError, NotFoundError
+from common.errors import AppError, ConflictError, NotFoundError, UpstreamError
 from common.logging import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,12 +24,18 @@ from agent_orchestrator.repositories import MemoryRepository, MemoryReviewReposi
 from agent_orchestrator.services.embeddings import (
     EMBEDDING_DIMENSIONS_LOCAL,
     EMBEDDING_MODEL_LOCAL,
+    EmbeddingUnavailable,
+    current_provider,
+    embed_many,
     embed_one,
     local_embedding,
 )
 from agent_orchestrator.services.embeddings import (
     tokenize as _tokenize,
 )
+
+if TYPE_CHECKING:  # 仅用于类型标注,避免 config 与 services 的导入环。
+    from agent_orchestrator.core.config import Settings
 
 #: 记忆作用域:account = 全账号可见(workspace_id 必须为空),workspace = 工作区内。
 MEMORY_SCOPES = frozenset({"account", "workspace"})
@@ -125,7 +132,11 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 def _lexical_overlap(query_tokens: set[str], content: str) -> float:
-    """词面重合度:集合余弦,范围 0~1(1 = 词元集合一致)。"""
+    """旧词面分:集合余弦,范围 0~1(1 = 词元集合一致)。
+
+    保留为 _score_memory 的单条直调口径与评测基线;检索主路径已改用
+    :func:`bm25_lexical_scores`(IDF 降低常见词权重、长度归一抑制长文偏置)。
+    """
     document_tokens = set(_tokenize(content))
     if not query_tokens or not document_tokens:
         return 0.0
@@ -135,24 +146,112 @@ def _lexical_overlap(query_tokens: set[str], content: str) -> float:
     return intersection / math.sqrt(len(query_tokens) * len(document_tokens))
 
 
+#: BM25 参数:k1 控制词频饱和速度,b 控制文档长度归一的强度(业界默认值)。
+_BM25_K1 = 1.2
+_BM25_B = 0.75
+
+
+def _token_counters(memories: Sequence[Memory]) -> dict[str, Counter[str]]:
+    """一次性算出候选集合的词频表:检索的 BM25 与 MMR 共用,避免重复切词。"""
+    return {memory.id: Counter(_tokenize(memory.content)) for memory in memories}
+
+
+def bm25_lexical_scores(
+    query_tokens: Sequence[str] | set[str],
+    memories: Sequence[Memory],
+    counters: dict[str, Counter[str]] | None = None,
+) -> dict[str, float]:
+    """BM25 词面分并按查询侧 IDF 权重归一到 0~1(1 = 查询词元全部命中且词频饱和)。
+
+    IDF 与平均文档长度都在**当前候选集内**统计:记忆检索的候选集是账号有效
+    记忆(上限 200 条),局部统计比全局语料更稳定,也不需要额外维护索引。
+    归一化让词面分量与向量分量可以继续按 0.65/0.35 融合,阈值语义不变;
+    分母只含候选集里出现过的查询词元(语料中不存在的词无人可命中)。
+    """
+    tokens = list(dict.fromkeys(query_tokens))
+    if not tokens or not memories:
+        return {}
+    term_counts = counters if counters is not None else _token_counters(memories)
+    document_frequency: Counter[str] = Counter()
+    lengths: dict[str, int] = {}
+    for memory in memories:
+        counts = term_counts[memory.id]
+        lengths[memory.id] = sum(counts.values())
+        document_frequency.update(counts.keys())
+    total_terms = sum(lengths.values())
+    average_length = total_terms / len(memories) if memories else 0.0
+    size = len(memories)
+    weights = {
+        token: math.log(
+            1.0
+            + (size - document_frequency.get(token, 0) + 0.5)
+            / (document_frequency.get(token, 0) + 0.5)
+        )
+        for token in tokens
+    }
+    # 只按"候选集内出现过"的查询词元归一:查询里可能有语料中根本不存在的词
+    # (新造词、错别字),它们无人可命中,计入分母只会整体压低分数、把相关
+    # 文档挤到阈值之下;真正该惩罚的是"候选集里存在却没匹配上"的词。
+    normalizer = (
+        sum(weight for token, weight in weights.items() if document_frequency[token])
+        or 1.0
+    )
+    scores: dict[str, float] = {}
+    for memory in memories:
+        counts = term_counts[memory.id]
+        length_ratio = (
+            1.0 - _BM25_B + _BM25_B * (lengths[memory.id] / average_length)
+            if average_length > 0
+            else 1.0
+        )
+        score = 0.0
+        for token in tokens:
+            frequency = counts.get(token, 0)
+            if frequency:
+                score += (
+                    weights[token]
+                    * (frequency * (_BM25_K1 + 1.0))
+                    / (frequency + _BM25_K1 * length_ratio)
+                )
+        # 词频饱和后单条可能略超 1(短文档),夹紧以保持分量口径稳定。
+        scores[memory.id] = min(1.0, score / normalizer)
+    return scores
+
+
+def _token_similarity(left: set[str], right: set[str]) -> float:
+    """词元集合余弦:MMR 的重叠度,1 = 完全重复。"""
+    if not left or not right:
+        return 0.0
+    return len(left & right) / math.sqrt(len(left) * len(right))
+
+
 def _score_memory(
     query_tokens: set[str],
     query_embedding: Sequence[float],
     memory: Memory,
     now: datetime,
+    *,
+    lexical: float | None = None,
 ) -> tuple[float, float]:
     """返回 (相关性, 排序分):相关性用于门槛过滤,排序分含 pinned/新近加成。
+
+    lexical 由检索路径预计算(BM25,候选集内归一);单独调用时退回旧词面口径,
+    便于断言单条打分而不必构造整个候选集。
 
     向量分量只在两侧维度一致时计入:换过嵌入模型后历史行与新查询的向量
     来自不同模型,截断算出的余弦看似合理却不可比,宁可只保留词面分量。
     """
-    lexical = _lexical_overlap(query_tokens, memory.content)
+    lexical_score = (
+        lexical
+        if lexical is not None
+        else _lexical_overlap(query_tokens, memory.content)
+    )
     stored_embedding = memory.embedding or []
     if stored_embedding and len(stored_embedding) == len(query_embedding):
         embedding = (_cosine(query_embedding, stored_embedding) + 1.0) / 2.0
     else:
         embedding = 0.0
-    relevance = _LEXICAL_WEIGHT * lexical + _EMBEDDING_WEIGHT * embedding
+    relevance = _LEXICAL_WEIGHT * lexical_score + _EMBEDDING_WEIGHT * embedding
     score = relevance
     if memory.pinned:
         score += _PINNED_BONUS
@@ -161,6 +260,47 @@ def _score_memory(
         age_days = max(0.0, (now - _as_utc(last_seen)).total_seconds() / 86400.0)
         score += _RECENCY_BONUS * (0.5 ** (age_days / 30.0))
     return relevance, score
+
+
+def _mmr_order(
+    scored: Sequence[tuple[float, float, Memory]],
+    *,
+    mmr_lambda: float,
+    counters: dict[str, Counter[str]],
+) -> list[tuple[float, Memory]]:
+    """按 MMR 贪心重排:lambda 越大越偏相关性,1.0 等价于纯相关性排序。
+
+    scored 需已按 (排序分降序, id 升序) 排好;重排只调整顺序、不增删条目,
+    字符预算与条数上限仍由调用方在重排后统一裁剪。
+    """
+    ordered: list[tuple[float, Memory]] = [
+        (score, memory) for _relevance, score, memory in scored
+    ]
+    if mmr_lambda >= 1.0 or len(ordered) <= 1:
+        return ordered
+    remaining = list(ordered)
+    selected: list[tuple[float, Memory]] = []
+    token_sets = {memory_id: set(counts) for memory_id, counts in counters.items()}
+    while remaining:
+        best_index = 0
+        best_value = float("-inf")
+        for index, (score, memory) in enumerate(remaining):
+            redundancy = max(
+                (
+                    _token_similarity(
+                        token_sets.get(memory.id, set()),
+                        token_sets.get(picked.id, set()),
+                    )
+                    for _picked_score, picked in selected
+                ),
+                default=0.0,
+            )
+            value = mmr_lambda * score - (1.0 - mmr_lambda) * redundancy
+            if value > best_value:
+                best_index = index
+                best_value = value
+        selected.append(remaining.pop(best_index))
+    return selected
 
 
 def _snippet(content: str) -> str:
@@ -524,12 +664,17 @@ async def search_memories(
     max_chars: int = 2000,
     touch: bool = False,
     exclude_ids: set[str] | None = None,
+    mmr_lambda: float = 0.7,
 ) -> list[Memory]:
     """按相关性检索有效记忆;touch=True 时命中后累加访问统计。
 
     只读查询(GET /memories/search、管理面预览)默认不写库;只有真正把结果
     注入上下文或交给模型工具时才 touch=True。先按字符预算挑选(避免召回块
     超长),再统一记一次访问统计;只 flush 不 commit,事务边界由调用方负责。
+
+    排序分(P3-C):BM25 词面分(候选集内 IDF/长度归一到 0~1)与向量余弦按
+    0.65/0.35 融合,再叠加 pinned/新近小加成;最后按 MMR 重排(mm_lambda
+    取 1.0 时关闭),避免近重复条目占满召回预算。
     """
     text = (query or "").strip()
     if not text or limit <= 0:
@@ -552,17 +697,25 @@ async def search_memories(
     query_tokens = set(_tokenize(text))
     # 查询向量与写入向量走同一个 provider;provider 不可用时自动回退本地哈希。
     query_embedding, _ = await embed_one(text)
-    scored: list[tuple[float, Memory]] = []
+    counters = _token_counters(candidates)
+    lexical_scores = bm25_lexical_scores(query_tokens, candidates, counters=counters)
+    scored: list[tuple[float, float, Memory]] = []
     for memory in candidates:
-        relevance, score = _score_memory(query_tokens, query_embedding, memory, now)
+        relevance, score = _score_memory(
+            query_tokens,
+            query_embedding,
+            memory,
+            now,
+            lexical=lexical_scores.get(memory.id, 0.0),
+        )
         if relevance < _MIN_RELEVANCE:
             continue
-        scored.append((score, memory))
-    scored.sort(key=lambda item: (-item[0], item[1].id))
+        scored.append((relevance, score, memory))
+    scored.sort(key=lambda item: (-item[1], item[2].id))
 
     hits: list[Memory] = []
     used_chars = 0
-    for _score, memory in scored:
+    for _score, memory in _mmr_order(scored, mmr_lambda=mmr_lambda, counters=counters):
         if len(hits) >= limit:
             break
         cost = len(memory.content) + 16
@@ -743,6 +896,250 @@ async def memory_stats(session: AsyncSession, account_id: str) -> dict[str, int]
     return stats
 
 
+#: 导入时用于近重复检测的既有记忆扫描上限(与账号默认额度同量级)。
+_IMPORT_SCAN_LIMIT = 2000
+#: 导入结果里保留的错误明细条数:前 50 条足够定位问题,避免响应体爆炸。
+_IMPORT_ERROR_LIMIT = 50
+
+
+async def reembed_memories(
+    session: AsyncSession,
+    account_id: str,
+    *,
+    batch: int = 200,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """按当前嵌入提供方重建"向量缺失/模型不一致"的记忆行。
+
+    换嵌入模型(例如本地哈希升级到 bge-m3)后,旧行与新查询的向量不同源,
+    检索会忽略向量分量只靠词面;重建后恢复混合打分。只更新 vector 与模型名,
+    不动 updated_at/access_count——重建是维护动作,不该让"记忆看起来刚改过"。
+    provider 不可用时原样报错(不回退本地):否则会把本地哈希向量写成
+    语义模型名,反而污染数据。
+    """
+    provider = current_provider()
+    repository = MemoryRepository(session)
+    rows = await repository.list_for_reembed(
+        account_id, model=provider.model, limit=max(1, batch)
+    )
+    result: dict[str, Any] = {
+        "scanned": len(rows),
+        "updated": 0,
+        "skipped": 0,
+        "model": provider.model,
+        "dry_run": dry_run,
+    }
+    if dry_run or not rows:
+        return result
+    try:
+        vectors, model = await embed_many(
+            [row.content for row in rows], fallback_local=False
+        )
+    except EmbeddingUnavailable as exc:
+        raise UpstreamError(
+            "memory.embedding_unavailable",
+            "嵌入服务暂不可用,请稍后重试",
+        ) from exc
+    updated = 0
+    for row, vector in zip(rows, vectors, strict=True):
+        if not vector:
+            continue
+        row.embedding = vector
+        row.embedding_model = model
+        updated += 1
+    await session.flush()
+    result["updated"] = updated
+    result["skipped"] = len(rows) - updated
+    logger.info(
+        "memories reembedded",
+        account_id=account_id,
+        scanned=len(rows),
+        updated=updated,
+        model=model,
+    )
+    return result
+
+
+def _import_dedupe_key(
+    kind: str, scope: str, workspace_id: str | None
+) -> tuple[str, str, str | None]:
+    """近重复判定只在同类型、同作用域、同工作区内比较。"""
+    return (kind, scope, workspace_id or None)
+
+
+def _validate_import_item(
+    item: Mapping[str, Any], *, reject_sensitive: bool
+) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
+    """校验一条导入项;返回 (规范化字段, 错误码+消息)。"""
+    content = str(item.get("content") or "").strip()
+    if not content:
+        return None, ("memory.empty", "记忆内容不能为空")
+    kind = str(item.get("kind") or "note")
+    if kind not in MEMORY_KINDS:
+        return None, ("memory.invalid_kind", f"未知记忆类型: {kind}")
+    scope = str(item.get("scope") or "account")
+    if scope not in MEMORY_SCOPES:
+        return None, ("memory.invalid_scope", f"未知记忆作用域: {scope}")
+    workspace_id = item.get("workspace_id")
+    workspace_id = str(workspace_id) if workspace_id else None
+    if scope == "workspace" and not workspace_id:
+        return None, ("memory.workspace_required", "工作区级记忆缺少 workspace_id")
+    if scope == "account":
+        workspace_id = None
+    injection_mode = str(item.get("injection_mode") or "retrieved")
+    if injection_mode not in MEMORY_INJECTION_MODES:
+        return None, ("memory.invalid_injection", f"未知注入模式: {injection_mode}")
+    if kind == _PROCEDURE_KIND and injection_mode == "always":
+        return None, (
+            "memory.invalid_injection",
+            "procedure 已有常驻约定块,不能重复设为 always 注入",
+        )
+    try:
+        confidence = float(item.get("confidence", 1.0))
+    except (TypeError, ValueError):
+        return None, ("memory.invalid_confidence", "置信度必须在 0~1 之间")
+    if not 0.0 <= confidence <= 1.0:
+        return None, ("memory.invalid_confidence", "置信度必须在 0~1 之间")
+    try:
+        ttl_days = int(item.get("ttl_days") or 0)
+    except (TypeError, ValueError):
+        return None, ("memory.invalid_ttl", "ttl_days 不能为负数")
+    if ttl_days < 0:
+        return None, ("memory.invalid_ttl", "ttl_days 不能为负数")
+    if reject_sensitive and find_sensitive(content) is not None:
+        return None, (
+            "memory.sensitive_rejected",
+            "记忆内容疑似包含敏感凭据,已拒绝写入",
+        )
+    source_type = str(item.get("source_type") or "manual")
+    if source_type not in MEMORY_SOURCE_TYPES:
+        return None, ("memory.invalid_source", f"未知记忆来源: {source_type}")
+    source_id = item.get("source_id")
+    return (
+        {
+            "content": content,
+            "kind": kind,
+            "scope": scope,
+            "workspace_id": workspace_id,
+            "pinned": bool(item.get("pinned", False)),
+            "ttl_days": ttl_days,
+            "injection_mode": injection_mode,
+            "confidence": confidence,
+            "source_type": source_type,
+            "source_id": str(source_id) if source_id else None,
+        },
+        None,
+    )
+
+
+async def import_memories(
+    session: AsyncSession,
+    account_id: str,
+    items: Sequence[Mapping[str, Any]],
+    *,
+    dry_run: bool = False,
+    max_content_chars: int = 8000,
+    max_entries: int = 2000,
+    dedupe_threshold: float = 0.9,
+    reject_sensitive: bool = True,
+) -> dict[str, Any]:
+    """批量导入记忆(迁移/恢复/外部导入);近重复与非法条目分别计数。
+
+    与普通写入的区别:导入是"补数据"而不是"表达新事实",所以不触发新旧替代
+    (conflict_threshold=0),重复内容直接跳过;dry_run=True 时不落库,只估算
+    会创建多少条、跳过多少条,便于前端先预览。
+    """
+    repository = MemoryRepository(session)
+    existing = await repository.list_visible(
+        account_id, include_invalid=False, limit=_IMPORT_SCAN_LIMIT
+    )
+    buckets: dict[tuple[str, str, str | None], list[str]] = {}
+    for row in existing:
+        buckets.setdefault(
+            _import_dedupe_key(row.kind, row.scope, row.workspace_id), []
+        ).append(row.content)
+
+    received = len(items)
+    created = 0
+    skipped_duplicate = 0
+    skipped_invalid = 0
+    errors: list[dict[str, Any]] = []
+
+    def _record_error(index: int, code: str, message: str) -> None:
+        if len(errors) < _IMPORT_ERROR_LIMIT:
+            errors.append({"index": index, "code": code, "message": message})
+
+    for index, item in enumerate(items):
+        fields, error = _validate_import_item(item, reject_sensitive=reject_sensitive)
+        if error is not None or fields is None:
+            skipped_invalid += 1
+            if error is not None:
+                _record_error(index, error[0], error[1])
+            continue
+        key = _import_dedupe_key(
+            fields["kind"], fields["scope"], fields["workspace_id"]
+        )
+        content = fields["content"]
+        if max_content_chars > 0 and len(content) > max_content_chars:
+            content = content[:max_content_chars]
+            fields["content"] = content
+        if any(
+            content_similarity(content, seen) >= dedupe_threshold
+            for seen in buckets.get(key, [])
+        ):
+            skipped_duplicate += 1
+            continue
+        if dry_run:
+            created += 1
+            buckets.setdefault(key, []).append(content)
+            continue
+        try:
+            memory = await write_memory(
+                session,
+                account_id,
+                content=content,
+                kind=fields["kind"],
+                scope=fields["scope"],
+                workspace_id=fields["workspace_id"],
+                source_type=fields["source_type"],
+                source_id=fields["source_id"],
+                pinned=fields["pinned"],
+                ttl_days=fields["ttl_days"],
+                max_content_chars=max_content_chars,
+                max_entries=max_entries,
+                injection_mode=fields["injection_mode"],
+                confidence=fields["confidence"],
+                # 导入不触发替代:批量补数据不该把已有事实标成失效。
+                conflict_threshold=0.0,
+                reject_sensitive=reject_sensitive,
+            )
+        except AppError as exc:
+            skipped_invalid += 1
+            _record_error(index, exc.code, exc.message)
+            continue
+        created += 1
+        buckets.setdefault(key, []).append(memory.content)
+
+    if not dry_run and created:
+        await session.flush()
+        logger.info(
+            "memories imported",
+            account_id=account_id,
+            received=received,
+            created=created,
+            skipped_duplicate=skipped_duplicate,
+            skipped_invalid=skipped_invalid,
+        )
+    return {
+        "received": received,
+        "created": created,
+        "skipped_duplicate": skipped_duplicate,
+        "skipped_invalid": skipped_invalid,
+        "dry_run": dry_run,
+        "errors": errors,
+    }
+
+
 class MemoryProvider(Protocol):
     """记忆提供方扩展点(P2):一期用 LocalMemoryProvider,后续可换 mem0/Zep。
 
@@ -774,7 +1171,7 @@ class MemoryProvider(Protocol):
         source_id: str | None = None,
         pinned: bool = False,
         ttl_days: int | None = None,
-    ) -> Memory: ...
+    ) -> str: ...
 
     async def forget(
         self, session: AsyncSession, account_id: str, memory_id: str
@@ -816,8 +1213,8 @@ class LocalMemoryProvider:
         source_id: str | None = None,
         pinned: bool = False,
         ttl_days: int | None = None,
-    ) -> Memory:
-        return await write_memory(
+    ) -> str:
+        memory = await write_memory(
             session,
             account_id,
             content=content,
@@ -829,6 +1226,7 @@ class LocalMemoryProvider:
             pinned=pinned,
             ttl_days=ttl_days,
         )
+        return memory.id
 
     async def forget(
         self, session: AsyncSession, account_id: str, memory_id: str
@@ -836,6 +1234,51 @@ class LocalMemoryProvider:
         await delete_memory(session, account_id, memory_id)
 
 
-def build_memory_provider() -> MemoryProvider:
-    """当前默认的记忆提供方;P2 换实现时只改这里。"""
-    return LocalMemoryProvider()
+#: 进程内默认提供方:未显式配置时复用同一个无状态实例。
+_DEFAULT_MEMORY_PROVIDER: MemoryProvider | None = None
+#: 容器装配的提供方:远程/自定义实现由启动期注册,读路径只读这一个入口。
+_memory_provider: MemoryProvider | None = None
+
+
+def configure_memory_provider(provider: MemoryProvider | None) -> None:
+    """注册当前提供方(容器装配调用);传 None 等价于复位到本地默认。"""
+    global _memory_provider
+    _memory_provider = provider
+
+
+def current_memory_provider() -> MemoryProvider:
+    """取当前提供方;未注册时返回本地实现(零网络兜底)。"""
+    global _DEFAULT_MEMORY_PROVIDER
+    if _memory_provider is not None:
+        return _memory_provider
+    if _DEFAULT_MEMORY_PROVIDER is None:
+        _DEFAULT_MEMORY_PROVIDER = LocalMemoryProvider()
+    return _DEFAULT_MEMORY_PROVIDER
+
+
+def reset_memory_provider() -> None:
+    """清空注册与默认单例(测试隔离用,生产不做热切换)。"""
+    global _DEFAULT_MEMORY_PROVIDER, _memory_provider
+    _DEFAULT_MEMORY_PROVIDER = None
+    _memory_provider = None
+
+
+def build_memory_provider(settings: Settings | None = None) -> MemoryProvider:
+    """按配置构造记忆提供方:默认本地,配置 remote 且给了地址才出网。
+
+    不传 settings 时保持旧行为返回本地实现——测试与脚本按此断言;
+    远程实现延迟导入,避免 services 模块之间的导入环。
+    """
+    if (
+        settings is None
+        or settings.memory_provider != "remote"
+        or not settings.memory_remote_base_url
+    ):
+        return LocalMemoryProvider()
+    from agent_orchestrator.services.memory_remote import RemoteMemoryProvider
+
+    return RemoteMemoryProvider(
+        settings.memory_remote_base_url,
+        timeout_seconds=settings.memory_remote_timeout_seconds,
+        internal_secret=settings.internal_auth_secret,
+    )

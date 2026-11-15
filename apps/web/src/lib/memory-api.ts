@@ -134,6 +134,39 @@ export type MemoryCreateInput = {
   injection_mode?: MemoryInjectionMode;
 };
 
+/** 批量导入单条:与后端 MemoryImportItem 对齐(可直接喂导出的 memories)。 */
+export type MemoryImportItem = {
+  content: string;
+  kind?: MemoryKind | string;
+  scope?: MemoryScope | string;
+  workspace_id?: string | null;
+  pinned?: boolean;
+  ttl_days?: number | null;
+  injection_mode?: MemoryInjectionMode | string;
+  confidence?: number;
+  source_type?: string;
+  source_id?: string | null;
+};
+
+/** 导入结果:近重复/非法条目分别计数,errors 最多保留前 50 条。 */
+export type MemoryImportResult = {
+  received: number;
+  created: number;
+  skipped_duplicate: number;
+  skipped_invalid: number;
+  dry_run: boolean;
+  errors: { index: number; code: string; message: string }[];
+};
+
+/** 重嵌入结果:按当前嵌入模型重建向量不一致/缺失的行。 */
+export type MemoryReembedResult = {
+  scanned: number;
+  updated: number;
+  skipped: number;
+  model: string;
+  dry_run: boolean;
+};
+
 /** 局部更新入参:字段名与后端 MemoryUpdate 逐字对齐。 */
 export type MemoryUpdateInput = {
   content?: string;
@@ -205,6 +238,16 @@ export const memoryApi = {
       { method: 'POST', body: JSON.stringify({ note: note ?? null }) },
     ),
   exportAll: () => http.request<MemoryExport>(`${MEMORIES_PATH}/export`),
+  importAll: (items: MemoryImportItem[], dryRun = false) =>
+    http.request<MemoryImportResult>(`${MEMORIES_PATH}/import`, {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun, memories: items }),
+    }),
+  reembed: (limit?: number) =>
+    http.request<MemoryReembedResult>(`${MEMORIES_PATH}/reembed`, {
+      method: 'POST',
+      body: JSON.stringify(limit === undefined ? {} : { limit }),
+    }),
   removeAll: () =>
     http.request<{ memories: number; reviews: number }>(
       `${MEMORIES_PATH}?confirm=true`,

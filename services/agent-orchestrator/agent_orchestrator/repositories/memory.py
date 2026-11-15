@@ -183,6 +183,26 @@ class MemoryRepository(AccountRepository[Memory]):
         await self.session.flush()
         return max(0, int(getattr(result, "rowcount", 0) or 0))
 
+    async def list_for_reembed(
+        self, account_id: str, *, model: str, limit: int = 200
+    ) -> list[Memory]:
+        """列出向量缺失或由别的嵌入模型产出的记忆行(重建向量用)。
+
+        只看未软删的行:已删除的数据不再参与检索,重建没有意义,也避免
+        给合规删除留下"复活"路径。按创建时间正序,便于分批推进。
+        """
+        return await self.list_scoped(
+            account_id,
+            Memory.deleted_at.is_(None),
+            or_(
+                Memory.embedding.is_(None),
+                Memory.embedding_model.is_(None),
+                Memory.embedding_model != model,
+            ),
+            limit=limit,
+            order_by=[Memory.created_at.asc(), Memory.id.asc()],
+        )
+
     async def count_recent_writes(
         self, account_id: str, *, source_id: str, since: datetime
     ) -> int:
