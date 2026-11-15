@@ -1955,7 +1955,7 @@
         "type": "object"
       },
       "MemoryCreate": {
-        "description": "写入记忆的请求体;ttl_days=0/None 表示不过期。",
+        "description": "写入记忆的请求体;ttl_days 不传=部署默认,0=永久,>0=N 天。",
         "properties": {
           "content": {
             "maxLength": 8000,
@@ -2122,6 +2122,51 @@
           "updated_at"
         ],
         "title": "MemoryRead",
+        "type": "object"
+      },
+      "MemorySearchRequest": {
+        "description": "检索请求体(POST /memories/search):命中会累加访问统计。",
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "enum": ["note", "preference", "fact", "procedure"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "limit": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": ["query"],
+        "title": "MemorySearchRequest",
         "type": "object"
       },
       "MemorySearchResponse": {
@@ -6473,7 +6518,7 @@
         "tags": ["memories"]
       },
       "post": {
-        "description": "写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。\n\nttl_days 未显式给(或给 0)时用部署配置的默认有效期(0 = 永久);\n条数上限也取配置,避免 API 与后台抽取各用一套额度。",
+        "description": "写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。\n\nttl_days=None 用部署默认有效期,0 表示永久,>0 表示 N 天;\n条数上限也取配置,避免 API 与后台抽取各用一套额度。",
         "operationId": "create_memory_api_v1_memories_post",
         "parameters": [
           {
@@ -6611,7 +6656,7 @@
     },
     "/api/v1/memories/search": {
       "get": {
-        "description": "按相关性检索长期记忆;无命中返回空列表(不报 404)。",
+        "description": "按相关性检索长期记忆;无命中返回空列表(不报 404)。\n\n只读接口:不累加 access_count,避免缓存/审计网关的重复 GET 污染访问统计。\n需要计数时用 POST /memories/search。",
         "operationId": "search_memories_api_v1_memories_search_get",
         "parameters": [
           {
@@ -6727,6 +6772,78 @@
           }
         },
         "summary": "Search Memories",
+        "tags": ["memories"]
+      },
+      "post": {
+        "description": "检索长期记忆并记录访问统计(供真实召回/工具调用复用同一契约)。",
+        "operationId": "search_memories_with_access_api_v1_memories_search_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemorySearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Memories With Access",
         "tags": ["memories"]
       }
     },

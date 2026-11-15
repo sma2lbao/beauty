@@ -4,7 +4,9 @@
 
 - `run_outcomes_total{service,status}`:run 终态计数;
 - `job_failures_total{service,kind}`:后台任务失败计数;
-- `llm_upstream_errors_total{service,provider,code}`:模型网关上游错误。
+- `llm_upstream_errors_total{service,provider,code}`:模型网关上游错误;
+- `memory_sweeps_total{service,outcome}` / `memory_sweep_items_total{service,action}` /
+  `memory_sweep_account_failures_total{service}`:记忆清扫轮次、处理量与单账号失败。
 
 `service` 标签统一走 `common.metrics.service_label`
 (显式值 > 日志上下文 > 装配时登记的默认值),后台任务也能打对标签。
@@ -30,6 +32,21 @@ llm_upstream_errors_total = Counter(
     "模型网关上游错误计数",
     ("service", "provider", "code"),
 )
+memory_sweeps_total = Counter(
+    "memory_sweeps_total",
+    "记忆清扫轮次计数",
+    ("service", "outcome"),
+)
+memory_sweep_items_total = Counter(
+    "memory_sweep_items_total",
+    "记忆清扫处理条目计数",
+    ("service", "action"),
+)
+memory_sweep_account_failures_total = Counter(
+    "memory_sweep_account_failures_total",
+    "记忆清扫单账号失败计数",
+    ("service",),
+)
 
 
 def observe_run_outcome(*, status: str, service: str | None = None) -> None:
@@ -40,6 +57,27 @@ def observe_run_outcome(*, status: str, service: str | None = None) -> None:
 def observe_job_failure(*, kind: str, service: str | None = None) -> None:
     """记录一次后台任务失败。"""
     job_failures_total.labels(service=service_label(service), kind=kind).inc()
+
+
+def observe_memory_sweep(
+    *,
+    outcome: str,
+    purged: int = 0,
+    consolidated: int = 0,
+    failed_accounts: int = 0,
+    service: str | None = None,
+) -> None:
+    """记录一轮记忆清扫的结局与处理量(outcome=completed/skipped/failed)。"""
+    label = service_label(service)
+    memory_sweeps_total.labels(service=label, outcome=outcome).inc()
+    if purged:
+        memory_sweep_items_total.labels(service=label, action="purged").inc(purged)
+    if consolidated:
+        memory_sweep_items_total.labels(service=label, action="consolidated").inc(
+            consolidated
+        )
+    if failed_accounts:
+        memory_sweep_account_failures_total.labels(service=label).inc(failed_accounts)
 
 
 def observe_llm_error(*, provider: str, code: str, service: str | None = None) -> None:

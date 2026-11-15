@@ -108,6 +108,7 @@ class ContainerAssemblyMixin:
                     factory,
                     max_content_chars=settings.memory_max_content_chars,
                     default_limit=settings.memory_recall_limit,
+                    default_ttl_days=settings.memory_default_ttl_days,
                 )
             # 上下文工程(§7.2):技能正文分页读取与 offload 结果回读都是只读
             # 工具,只对 run 上下文暴露——对话路径没有 run、也不会 offload,

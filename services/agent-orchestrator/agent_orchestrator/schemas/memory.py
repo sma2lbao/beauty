@@ -17,7 +17,7 @@ MemoryScope = Literal["account", "workspace"]
 
 
 class MemoryCreate(BaseModel):
-    """写入记忆的请求体;ttl_days=0/None 表示不过期。"""
+    """写入记忆的请求体;ttl_days 不传=部署默认,0=永久,>0=N 天。"""
 
     content: str = Field(min_length=1, max_length=8000)
     kind: MemoryKind = "note"
@@ -25,6 +25,15 @@ class MemoryCreate(BaseModel):
     workspace_id: str | None = Field(default=None, max_length=32)
     pinned: bool = False
     ttl_days: int | None = Field(default=None, ge=0, le=3650)
+
+
+class MemorySearchRequest(BaseModel):
+    """检索请求体(POST /memories/search):命中会累加访问统计。"""
+
+    query: str = Field(min_length=1, max_length=2000)
+    workspace_id: str | None = Field(default=None, max_length=32)
+    kind: MemoryKind | None = None
+    limit: int = Field(default=5, ge=1, le=20)
 
 
 class MemoryRead(BaseModel):

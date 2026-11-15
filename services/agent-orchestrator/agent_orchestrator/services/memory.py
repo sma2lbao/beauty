@@ -143,11 +143,13 @@ async def write_memory(
     source_id: str | None = None,
     pinned: bool = False,
     ttl_days: int | None = None,
+    default_ttl_days: int = 0,
     max_content_chars: int = 8000,
     max_entries: int = 2000,
 ) -> Memory:
     """写入一条长期记忆;参数非法或超账号上限抛 AppError(不静默截断语义)。
 
+    TTL 语义:None = 采用 default_ttl_days(部署默认),0 = 永久,>0 = N 天后过期。
     内容按 max_content_chars 截断(用户长文笔记不至于写失败),其余校验直接报错;
     条数上限只统计"仍然有效"的记忆,过期/软删的不占额度。
     """
@@ -166,6 +168,10 @@ async def write_memory(
         workspace_id = None
     if max_content_chars > 0 and len(text) > max_content_chars:
         text = text[:max_content_chars]
+    if ttl_days is None:
+        ttl_days = default_ttl_days
+    if ttl_days < 0:
+        raise AppError("memory.invalid_ttl", "ttl_days 不能为负数")
 
     repository = MemoryRepository(session)
     if max_entries > 0:
@@ -177,7 +183,7 @@ async def write_memory(
             )
 
     now = _utcnow()
-    expires_at = now + timedelta(days=ttl_days) if ttl_days and ttl_days > 0 else None
+    expires_at = now + timedelta(days=ttl_days) if ttl_days > 0 else None
     # 向量与模型名一起落库:换 provider 后历史行仍记得自己由哪个模型产出,
     # 检索侧遇到维度不一致会忽略向量分量而不是算出错误余弦。
     embedding, embedding_model = await embed_one(text)
@@ -237,11 +243,13 @@ async def search_memories(
     kind: str | None = None,
     limit: int = 5,
     max_chars: int = 2000,
+    touch: bool = False,
 ) -> list[Memory]:
-    """按相关性检索有效记忆;命中后累加 access_count/last_accessed_at。
+    """按相关性检索有效记忆;touch=True 时命中后累加访问统计。
 
-    先按字符预算挑选(避免召回块超长),再统一记一次访问统计;只 flush 不 commit,
-    事务边界仍由调用方(session_scope)负责。
+    只读查询(GET /memories/search、管理面预览)默认不写库;只有真正把结果
+    注入上下文或交给模型工具时才 touch=True。先按字符预算挑选(避免召回块
+    超长),再统一记一次访问统计;只 flush 不 commit,事务边界由调用方负责。
     """
     text = (query or "").strip()
     if not text or limit <= 0:
@@ -282,7 +290,7 @@ async def search_memories(
         hits.append(memory)
         used_chars += cost
 
-    if hits:
+    if touch and hits:
         for memory in hits:
             memory.access_count += 1
             memory.last_accessed_at = now
@@ -307,6 +315,7 @@ async def recall_block(
         workspace_id=workspace_id,
         limit=limit,
         max_chars=max_chars,
+        touch=True,
     )
     if not hits:
         return ""

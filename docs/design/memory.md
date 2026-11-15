@@ -1,36 +1,38 @@
 # 记忆模块设计（短期压缩 + 长期记忆）
 
-> 状态：设计稿（P1、P2 已落地） · 2026-10-25
+> 状态：设计稿（P1、P2 已落地；阶段 A 加固已落地） · 2026-11-15
 > 关联：[architecture.md](../architecture.md) §3 服务与职责、§6 数据与存储；[gap-2026-10/06-refresh-2026-10-25.md](../gap-2026-10/06-refresh-2026-10-25.md) 的 P1-1 / P1-9；[tool-service.md](./tool-service.md)（工具装配与审批口径）
 > 定位：本文是「记忆」模块的单一真源；架构层面的服务边界仍以 [architecture.md](../architecture.md) 为准，未完成排期以 [roadmap.md](../roadmap.md) 与 gap 册为准。
 
-路径约定：下文 `services/*.py`、`graph/*.py`、`core/*.py`、`models/*.py`、`api/v1/*.py`、`schemas/*.py`、`repositories.py` 均相对 `services/agent-orchestrator/agent_orchestrator/`；迁移相对 `services/agent-orchestrator/migrations/`；测试相对 `services/agent-orchestrator/tests/`。文中 `file.py:line` 为 2026-10-25 工作区快照，代码演进后以符号名检索为准。
+路径约定：下文 `services/*.py`、`graph/*.py`、`core/*.py`、`models/*.py`、`api/v1/*.py`、`schemas/*.py`、`repositories.py` 均相对 `services/agent-orchestrator/agent_orchestrator/`；迁移相对 `services/agent-orchestrator/migrations/`；测试相对 `services/agent-orchestrator/tests/`。文中 `file.py:line` 为 2026-11-15 工作区快照，代码演进后以符号名检索为准。
 
 ## 1. 摘要
 
-一句话：在 **agent-orchestrator 内**建三层记忆——**短期上下文压缩**（中文摘要落 `conversation_summaries`，原始消息不删，`run.compacted.v1` 事件可见）、**长期记忆**（`memories` 表 + 召回块注入 + 3 个 agent 工具 + 6 个管理 API + 自动抽取/巩固/定时清理 + 可插拔语义 embedding）、**Provider 扩展点**（`MemoryProvider`，P2 预留但尚未外接 mem0/Zep/Letta）。不新增服务、不引向量库；默认零网络本地打分（词面 n-gram + 本地哈希 256 维向量），可配置经 llm-gateway 的语义 embedding（失败自动回退本地）；所有读写都带账号隔离，工作区是可选二级隔离；前端 `/memory` 管理页已落地。
+一句话：在 **agent-orchestrator 内**建三层记忆——**短期上下文压缩**（中文摘要落 `conversation_summaries`，原始消息不删，`run.compacted.v1` 事件可见）、**长期记忆**（`memories` 表 + 召回块注入 + 3 个 agent 工具 + 7 个管理 API + 自动抽取/巩固/定时清理 + 可插拔语义 embedding）、**Provider 扩展点**（`MemoryProvider`，P2 预留但尚未外接 mem0/Zep/Letta）。不新增服务、不引向量库；默认零网络本地打分（词面 n-gram + 本地哈希 256 维向量），可配置经 llm-gateway 的语义 embedding（失败自动回退本地）；所有读写都带账号隔离，工作区是可选二级隔离；前端 `/memory` 管理页已落地。
 
-### 1.1 关键决策（D1–D17）
+### 1.1 关键决策（D1–D19）
 
-| #   | 决策                                                                                                                                                                                        | 理由 / 依据                                                                                                                  |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| D1  | 记忆能力留在 **agent-orchestrator**，不新建 memory-service                                                                                                                                  | 读写都发生在 chat/run 请求边界；跨服务拆分会增加延迟、事务与一致性成本。knowledge-service 是「文档知识库」，不是「对话沉淀」 |
-| D2  | 短期记忆 = **压缩摘要**，落 `conversation_summaries`；**原始消息不删**                                                                                                                      | 事件溯源与审计需要原文；摘要是可重建的投影。压缩只影响「喂给模型的窗口」，不影响历史数据                                     |
-| D3  | 压缩放在**请求边界**（`services/compaction.py`），不放图节点                                                                                                                                | 图一次 invoke 只发业务必要的模型请求；建 run 前压缩一次，执行图只读已落库摘要，避免 resume 重复压缩与重复计费                |
-| D4  | 压缩必须**可观测**：`run.compacted.v1` 事件；原生消息保留                                                                                                                                   | 不解释「模型为什么忘了前面」的上下文折叠不可接受。事件只进 run 事件流、不进 outbox（HTTP 与 job worker 两条路径口径一致）    |
-| D5  | 长期记忆用**数据库表**（`memories`），不用 notes 文件                                                                                                                                       | 多账号 SaaS 下文件系统不能做真源：无法账号隔离、审计、并发安全与合规删除；markdown 约定文件只在单机/单仓场景成立             |
-| D6  | 作用域只两档：`account` / `workspace`；workspace 级必须带 `workspace_id`，account 级强制 `workspace_id IS NULL`                                                                             | 召回规则可写成一条 SQL，避免「脏 scope」与歧义                                                                               |
-| D7  | 检索用本地确定性算法：词面 n-gram 0.65 + 哈希嵌入余弦 0.35 + pinned/recency 微调，相关性阈值 0.3；**零网络**                                                                                | P1 规模小（账号上限默认 2000 条有效记忆），词面已覆盖大部分偏好/约定；哈希向量只补「同实体不同措辞」少量召回，不承诺语义检索 |
-| D8  | 注入方式 = 召回块追加到 **system prompt**（chat 在 `CHAT_SYSTEM_PROMPT` 后；run 在 plan/execute/verify/deliver 四节点）；空块逐字不改变原提示词                                             | 不改消息历史结构、不动事件 schema；降级时行为与「没有记忆」完全一致                                                          |
-| D9  | 能力面 = **管理 API**（`/api/v1/memories`）+ **agent 工具**（`memory_search` READ、`memory_write` / `memory_delete` WRITE）                                                                 | 管理面要能审计、删除、统计（合规）；agent 要能自适应读写（用户说“记住…”就能落库）。两者共用同一服务层                        |
-| D10 | **失败降级**：压缩/召回任何异常只 `logger.warning`，返 `None`/空串，不阻断对话或 run                                                                                                        | 上下文增强是「锦上添花」，不是主流程依赖；与外部工具（MCP）的降级口径一致                                                    |
-| D11 | P1 **不做自动抽取/巩固/遗忘调度**：写入靠用户/工具显式调用，过期靠 TTL + `purge_expired`                                                                                                    | 自动抽取需要独立模型调用、质量评估集与防投毒设计；先把「可写 → 可召回 → 可解释」闭环跑通（P2 已扩展，见 D13/D14）            |
-| D12 | **Provider 扩展点** `MemoryProvider(recall/remember/forget)` + `LocalMemoryProvider`；P2 换外部记忆服务只改 `build_memory_provider()`                                                       | 不把外部服务 SDK 泄漏到图/工具/API；事务边界始终在调用侧（provider 不管事务）                                                |
-| D13 | **自动抽取双触发，均走提交后回调**：chat 每累计 N 条消息节流抽取；run 完成同样按同一 N 节流抽取，`outbox_enabled=true` 时才交给 `run.delivered.v1` 消费者；抽取失败只 warning、不回滚主流程 | 避免每条消息都调模型（成本/延迟）；提交后执行不增加响应延迟；outbox 不再是从路径的前置依赖（默认关闭也能沉淀）               |
-| D14 | **巩固/清理本地确定性**：sweeper 按账号独立事务执行 `purge_expired` + 近重复贪心聚类（阈值 0.92，保留 pinned/高频/最早，其余软删）；独立 asyncio 后台任务                                   | 零网络、可解释、可重放；跨账号失败隔离；不引向量聚类                                                                         |
-| D15 | **语义 embedding 可插拔**：默认 `local-hash-256`（零网络）；`provider=gateway` 时经 llm-gateway `/v1/embeddings`（默认 bge-m3、64 条分批、10s 超时）；失败回退本地并记录 `embedding_model`  | 能力可选、上线不依赖外部服务；换模型后旧记录因维度门禁自然退回词面打分，不产生错误分数（重嵌入迁移待做）                     |
-| D16 | 打分权重与注入预算保持 P1：词面 0.65 + 向量 0.35 + pinned/recency 微调，阈值 0.3；**向量分量仅维度一致时计入**                                                                              | 保留既有行为与可解释性；混存数据不污染分数；语义召回是增强不是前提                                                           |
-| D17 | 前端管理页复用 **6 个管理 API**（`/memory` 路由），不新增后端端点；所有读写仍走账号 + 工作区隔离                                                                                            | 管理闭环（统计/列表/检索/写入/删除/清理）无需新契约；权限沿用 JWT 账号 claim                                                 |
+| #   | 决策                                                                                                                                                                                                                                                 | 理由 / 依据                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| D1  | 记忆能力留在 **agent-orchestrator**，不新建 memory-service                                                                                                                                                                                           | 读写都发生在 chat/run 请求边界；跨服务拆分会增加延迟、事务与一致性成本。knowledge-service 是「文档知识库」，不是「对话沉淀」 |
+| D2  | 短期记忆 = **压缩摘要**，落 `conversation_summaries`；**原始消息不删**                                                                                                                                                                               | 事件溯源与审计需要原文；摘要是可重建的投影。压缩只影响「喂给模型的窗口」，不影响历史数据                                     |
+| D3  | 压缩放在**请求边界**（`services/compaction.py`），不放图节点                                                                                                                                                                                         | 图一次 invoke 只发业务必要的模型请求；建 run 前压缩一次，执行图只读已落库摘要，避免 resume 重复压缩与重复计费                |
+| D4  | 压缩必须**可观测**：`run.compacted.v1` 事件；原生消息保留                                                                                                                                                                                            | 不解释「模型为什么忘了前面」的上下文折叠不可接受。事件只进 run 事件流、不进 outbox（HTTP 与 job worker 两条路径口径一致）    |
+| D5  | 长期记忆用**数据库表**（`memories`），不用 notes 文件                                                                                                                                                                                                | 多账号 SaaS 下文件系统不能做真源：无法账号隔离、审计、并发安全与合规删除；markdown 约定文件只在单机/单仓场景成立             |
+| D6  | 作用域只两档：`account` / `workspace`；workspace 级必须带 `workspace_id`，account 级强制 `workspace_id IS NULL`                                                                                                                                      | 召回规则可写成一条 SQL，避免「脏 scope」与歧义                                                                               |
+| D7  | 检索用本地确定性算法：词面 n-gram 0.65 + 哈希嵌入余弦 0.35 + pinned/recency 微调，相关性阈值 0.3；**零网络**                                                                                                                                         | P1 规模小（账号上限默认 2000 条有效记忆），词面已覆盖大部分偏好/约定；哈希向量只补「同实体不同措辞」少量召回，不承诺语义检索 |
+| D8  | 注入方式 = 召回块追加到 **system prompt**（chat 在 `CHAT_SYSTEM_PROMPT` 后；run 在 plan/execute/verify/deliver 四节点）；空块逐字不改变原提示词                                                                                                      | 不改消息历史结构、不动事件 schema；降级时行为与「没有记忆」完全一致                                                          |
+| D9  | 能力面 = **管理 API**（`/api/v1/memories`）+ **agent 工具**（`memory_search` READ、`memory_write` / `memory_delete` WRITE）                                                                                                                          | 管理面要能审计、删除、统计（合规）；agent 要能自适应读写（用户说“记住…”就能落库）。两者共用同一服务层                        |
+| D10 | **失败降级**：压缩/召回任何异常只 `logger.warning`，返 `None`/空串，不阻断对话或 run                                                                                                                                                                 | 上下文增强是「锦上添花」，不是主流程依赖；与外部工具（MCP）的降级口径一致                                                    |
+| D11 | P1 **不做自动抽取/巩固/遗忘调度**：写入靠用户/工具显式调用，过期靠 TTL + `purge_expired`                                                                                                                                                             | 自动抽取需要独立模型调用、质量评估集与防投毒设计；先把「可写 → 可召回 → 可解释」闭环跑通（P2 已扩展，见 D13/D14）            |
+| D12 | **Provider 扩展点** `MemoryProvider(recall/remember/forget)` + `LocalMemoryProvider`；P2 换外部记忆服务只改 `build_memory_provider()`                                                                                                                | 不把外部服务 SDK 泄漏到图/工具/API；事务边界始终在调用侧（provider 不管事务）                                                |
+| D13 | **自动抽取双触发，均走提交后回调**：chat 每累计 N 条消息节流抽取；run 完成同样按同一 N 节流抽取，`outbox_enabled=true` 时才交给 `run.delivered.v1` 消费者；抽取失败只 warning、不回滚主流程                                                          | 避免每条消息都调模型（成本/延迟）；提交后执行不增加响应延迟；outbox 不再是从路径的前置依赖（默认关闭也能沉淀）               |
+| D14 | **巩固/清理本地确定性**：sweeper 按账号独立事务执行 `purge_expired` + 近重复贪心聚类（阈值 0.92，保留 pinned/高频/最早，其余软删）；独立 asyncio 后台任务                                                                                            | 零网络、可解释、可重放；跨账号失败隔离；不引向量聚类                                                                         |
+| D15 | **语义 embedding 可插拔**：默认 `local-hash-256`（零网络）；`provider=gateway` 时经 llm-gateway `/v1/embeddings`（默认 bge-m3、64 条分批、10s 超时）；失败回退本地并记录 `embedding_model`                                                           | 能力可选、上线不依赖外部服务；换模型后旧记录因维度门禁自然退回词面打分，不产生错误分数（重嵌入迁移待做）                     |
+| D16 | 打分权重与注入预算保持 P1：词面 0.65 + 向量 0.35 + pinned/recency 微调，阈值 0.3；**向量分量仅维度一致时计入**                                                                                                                                       | 保留既有行为与可解释性；混存数据不污染分数；语义召回是增强不是前提                                                           |
+| D17 | 前端管理页复用 **6 个既有管理 API**（`/memory` 路由）；阶段 A 另加 `POST /memories/search` 供需要计数的调用方，页面仍用 GET；所有读写仍走账号 + 工作区隔离                                                                                           | 管理闭环（统计/列表/检索/写入/删除/清理）无需新契约；权限沿用 JWT 账号 claim                                                 |
+| D18 | **TTL 三态**：`ttl_days=None`（未传）用部署默认 `memory_default_ttl_days`，`0` 表示永久，`>0` 表示 N 天；检索 **GET 只读**，只有真实召回（`recall_block`、`memory_search` 工具、`POST /memories/search`）才更新 `access_count`                       | 消除 schema 与 API 的语义冲突（显式 0 不再被部署默认覆盖）；读接口无副作用，缓存/审计网关可安全重放                          |
+| D19 | **清扫多副本单飞**：Postgres 用会话级 `pg_try_advisory_lock`（键 `0x4D454D53`），独占一条连接持有；SQLite 退化为进程内 `asyncio.Lock`；拿不到锁返回 `skipped=1`；新增 `memory_sweeps_total` 等 Prometheus 指标与 completed/skipped/failed 结构化日志 | 多副本部署时避免重复清扫；锁粒度是「整轮清扫」，单账号失败隔离与幂等语义不变                                                 |
 
 ### 1.2 分期
 
@@ -41,6 +43,7 @@
 | P2  | 自动抽取与巩固、语义 embedding、前端记忆管理页、定时清理任务（其余见下一行）                                | 已落地（2026-10-25） |
 | P2  | 复核后加固：自动抽取默认关（隐私）、提交后回调解耦响应路径与 outbox 依赖（`services/post_commit.py`）       | 已落地（2026-10-25） |
 | P2  | Provider 外接（mem0/Zep/Letta）、跨账号共享记忆（不提供）与可见性策略、防投毒增强、记忆质量评估集           | 未开始               |
+| A   | 加固：TTL 三态统一、检索读写分离、清扫多副本单飞与指标/审计日志                                             | 已落地（2026-11-15） |
 
 ## 2. 背景
 
@@ -62,13 +65,13 @@
 | 长期记忆   | `memories` 表（账号 + 可选工作区）；召回块注入 chat 与 run 四个节点                                                                                                                                                                                                                                                                                                                                             |
 | 程序性记忆 | `kind=procedure` 的记忆**常驻**注入 chat 与 run 四个节点（不按相关性过滤）；~~不做 AGENTS.md 文件注入（多账号无文件真源）~~ （2026-10-27 更新：宿主仓库文件仍不读；P1-F 已改为发现并注入**沙箱工作区** `/workspace` 的 AGENTS.md，见 [context-engineering.md](./context-engineering.md)）                                                                                                                       |
 | agent 工具 | `memory_search`（READ）/ `memory_write`（WRITE）/ `memory_delete`（WRITE），随 extras 同时进入 chat 与 run                                                                                                                                                                                                                                                                                                      |
-| 管理 API   | `/api/v1/memories` 6 个端点：列表/搜索/新建/删除/统计/清理过期                                                                                                                                                                                                                                                                                                                                                  |
-| 观测       | `run.compacted.v1`（压缩）；记忆工具调用落既有 `run.tool.called.v1`（run 路径）；自动抽取/清扫/embedding 回退只记结构化日志（§12）                                                                                                                                                                                                                                                                              |
+| 管理 API   | `/api/v1/memories` 7 个端点：列表/只读搜索/新建/删除/统计/清理过期/计数搜索（`POST /search`）                                                                                                                                                                                                                                                                                                                   |
+| 观测       | `run.compacted.v1`（压缩）；记忆工具调用落既有 `run.tool.called.v1`（run 路径）；自动抽取/embedding 回退只记结构化日志；清扫另有 completed/skipped/failed 日志与 Prometheus 指标（§12）                                                                                                                                                                                                                         |
 | 隔离       | 账号强隔离（`AccountRepository`）+ `workspace` 作用域；跨账号删除一律 404                                                                                                                                                                                                                                                                                                                                       |
 | 自动抽取   | **默认关闭**（隐私安全，需显式开）：chat 在回复落库后、run 在完成时都只登记**提交后回调**，由会话边界在事务提交后用独立短事务执行（不依赖 `outbox_enabled`；outbox 开启时 run 路径交给消费者）；均按 `memory_extraction_min_messages`（默认 6）节流；自动抽取仅接受 `note/preference/fact`（`procedure` 只能显式写入）；候选词面去重 0.9、单次 ≤5 条、transcript ≤1200 字符；默认 `scope=account`；失败静默降级 |
-| 巩固与清理 | 后台 sweeper（默认 3600s）按账号独立事务：过期 `purge_expired` + 近重复巩固（阈值 0.92；保留 pinned/高频/最早，其余软删）；`memory_consolidation_enabled` 可关                                                                                                                                                                                                                                                  |
+| 巩固与清理 | 后台 sweeper（默认 3600s）按账号独立事务：过期 `purge_expired` + 近重复巩固（阈值 0.92；保留 pinned/高频/最早，其余软删）；`memory_consolidation_enabled` 可关；多副本用 PG advisory lock 单飞（阶段 A）                                                                                                                                                                                                        |
 | 语义嵌入   | 默认 `local-hash-256`（零网络）；`memory_embedding_provider=gateway` 时经 llm-gateway `/v1/embeddings`（默认 bge-m3）；网关失败回退本地并记实际 model；混存维度不同只跑词面                                                                                                                                                                                                                                     |
-| 管理页     | apps/web `/memory`：统计卡、类型/工作区过滤、语义检索、写入、删除、清理过期；数据走既有 6 个管理 API                                                                                                                                                                                                                                                                                                            |
+| 管理页     | apps/web `/memory`：统计卡、类型/工作区过滤、语义检索、写入、删除、清理过期；数据走 6 个既有端点；需要计数的检索可调 `POST /memories/search`                                                                                                                                                                                                                                                                    |
 
 ### 2.3 边界与约束
 
@@ -179,7 +182,7 @@
 | `source_id`                         | String(64), nullable                 | 来源对象 id（chat 会话 id / run id 等）                                             |
 | `pinned`                            | Boolean, default false               | 置顶；只影响排序加权，**不豁免 TTL**                                                |
 | `expires_at`                        | DateTime(tz), nullable               | TTL；空 = 不过期                                                                    |
-| `last_accessed_at` / `access_count` | DateTime / Integer                   | 召回命中时更新（recency 加权与使用度观测）                                          |
+| `last_accessed_at` / `access_count` | DateTime / Integer                   | 真实召回命中时更新（仅 `touch=True`；recency 加权与使用度观测）                     |
 | `deleted_at`                        | DateTime(tz), nullable               | 软删；过期不物理删，只置此列（泄漏面更小 + 可审计）                                 |
 
 ### 6.3 作用域与类型语义
@@ -197,9 +200,9 @@
 
 - **写入**：`content` strip 后为空 → 400 `memory.empty`；kind/scope/source_type 非法 → 对应 400；`scope=workspace` 且缺 `workspace_id` → 400 `memory.workspace_required`。
 - **容量**：`max_entries > 0` 时，有效记忆数（`counts()["active"]`）≥ 上限 → 400 `memory.limit_reached`；过期/软删不占额度。
-- **TTL**：`ttl_days > 0` 时写 `expires_at = now + ttl_days`；读路径（`_active_criteria`）过滤已过期条目；`purge_expired` 把过期条目置 `deleted_at`（软删，返回标记条数）。
+- **TTL**：三态——`ttl_days=None`（未传）用部署默认 `memory_default_ttl_days`；`0` 表示永久；`>0` 写 `expires_at = now + ttl_days`。读路径（`_active_criteria`）过滤已过期条目；`purge_expired` 把过期条目置 `deleted_at`（软删，返回标记条数）。负数 → 400 `memory.invalid_ttl`。
 - **删除**：`DELETE /memories/{id}` → 软删；不存在或跨账号 → 404 `memory.not_found`（不泄漏存在性）。无恢复 API（后续可加）。
-- **访问统计**：检索命中后 `access_count += 1`、`last_accessed_at = now`，只 `flush` 不 `commit`（事务边界由 `session_scope` 负责）。
+- **访问统计**：只有真实召回（`recall_block`、`memory_search` 工具、`POST /memories/search`）命中后 `access_count += 1`、`last_accessed_at = now`，只 `flush` 不 `commit`（事务边界由 `session_scope` 负责）；`GET /memories/search` 与列表不写访问统计。
 
 ### 6.5 向量口径（Provider 可插拔）
 
@@ -219,18 +222,18 @@
 
 ### 7.1 函数（`services/memory.py`）
 
-| 函数                    | 签名要点                                                                                                                                 | 语义                                                                               |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `write_memory`          | `(session, account_id, *, content, kind, scope, workspace_id, source_type, source_id, pinned, ttl_days, max_content_chars, max_entries)` | 校验 + 截断 + 容量检查 + 向量（Provider 生成，失败回退本地），返回 `Memory`        |
-| `list_memories`         | `(session, account_id, *, workspace_id, kind, q, limit)`                                                                                 | 管理面列表；`q` 非空时按词面重合二次过滤                                           |
-| `search_memories`       | `(session, account_id, query, *, workspace_id, kind, limit, max_chars)`                                                                  | 打分召回（阈值 0.3；query 向量由 Provider 生成），按字符预算挑选，命中更新访问统计 |
-| `recall_block`          | `(session, account_id, query, *, workspace_id, limit, max_chars)`                                                                        | 把命中拼成可注入 system prompt 的中文块；无命中返回空串                            |
-| `convention_block`      | `(session, account_id, *, workspace_id, max_chars)`                                                                                      | 取 `kind=procedure` 拼成常驻约定块；无条目/预算 0 返回空串                         |
-| `delete_memory`         | `(session, account_id, memory_id)`                                                                                                       | 软删；不存在/跨账号 → `NotFoundError(memory.not_found)`                            |
-| `purge_expired`         | `(session, account_id)`                                                                                                                  | 标记过期条目为软删，返回条数                                                       |
-| `memory_stats`          | `(session, account_id)`                                                                                                                  | `{total, active, pinned, expired}`                                                 |
-| `embed_text`            | `(text) -> list[float]`                                                                                                                  | 本地哈希向量（§6.5；同步兜底/测试用）                                              |
-| `build_memory_provider` | `() -> MemoryProvider`                                                                                                                   | 当前返回 `LocalMemoryProvider`；P2 在此切换外部实现                                |
+| 函数                    | 签名要点                                                                                                                                                   | 语义                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `write_memory`          | `(session, account_id, *, content, kind, scope, workspace_id, source_type, source_id, pinned, ttl_days, default_ttl_days, max_content_chars, max_entries)` | 校验 + 截断 + 容量检查 + TTL 三态解析（None=部署默认/0=永久/>0=N 天）+ 向量（Provider 生成，失败回退本地），返回 `Memory` |
+| `list_memories`         | `(session, account_id, *, workspace_id, kind, q, limit)`                                                                                                   | 管理面列表；`q` 非空时按词面重合二次过滤                                                                                  |
+| `search_memories`       | `(session, account_id, query, *, workspace_id, kind, limit, max_chars, touch)`                                                                             | 打分召回（阈值 0.3；query 向量由 Provider 生成），按字符预算挑选；默认只读，`touch=True` 时命中更新访问统计               |
+| `recall_block`          | `(session, account_id, query, *, workspace_id, limit, max_chars)`                                                                                          | 把命中拼成可注入 system prompt 的中文块；无命中返回空串                                                                   |
+| `convention_block`      | `(session, account_id, *, workspace_id, max_chars)`                                                                                                        | 取 `kind=procedure` 拼成常驻约定块；无条目/预算 0 返回空串                                                                |
+| `delete_memory`         | `(session, account_id, memory_id)`                                                                                                                         | 软删；不存在/跨账号 → `NotFoundError(memory.not_found)`                                                                   |
+| `purge_expired`         | `(session, account_id)`                                                                                                                                    | 标记过期条目为软删，返回条数                                                                                              |
+| `memory_stats`          | `(session, account_id)`                                                                                                                                    | `{total, active, pinned, expired}`                                                                                        |
+| `embed_text`            | `(text) -> list[float]`                                                                                                                                    | 本地哈希向量（§6.5；同步兜底/测试用）                                                                                     |
+| `build_memory_provider` | `() -> MemoryProvider`                                                                                                                                     | 当前返回 `LocalMemoryProvider`；P2 在此切换外部实现                                                                       |
 
 ### 7.2 检索打分
 
@@ -251,6 +254,7 @@
 | `memory.invalid_source`     | 400  | 内部 source_type 非法（仅服务层显式传参时可能触发） |
 | `memory.workspace_required` | 400  | workspace 级记忆缺 `workspace_id`                   |
 | `memory.limit_reached`      | 400  | 有效记忆数达到账号上限                              |
+| `memory.invalid_ttl`        | 400  | `ttl_days` 为负数                                   |
 | `memory.not_found`          | 404  | 删除不存在/已删/跨账号的记忆（`details.memory_id`） |
 
 错误统一由业务异常处理器渲染为 `{"code","message","details"}`（`packages/common/common/errors.py:16-37`：`AppError` 默认 400、`NotFoundError` 404）。
@@ -285,34 +289,37 @@ class MemoryProvider(Protocol):
 ### 7.7 巩固与周期清理（`services/memory_sweeper.py`）
 
 - `consolidate(session, account_id, *, workspace_id=None, threshold=0.92, limit=500)`：取有效记忆后按 kind + 工作区（account 级归 None）分组；组内按 `_keep_priority`（pinned 优先 → `access_count` 高 → `created_at` 早 → id 小）排序贪心聚类，相似度 ≥ 阈值并入簇；每簇保留优先者，其余**软删**（`deleted_at=now`）；pinned 永不删；返回软删条数。
-- `sweep_once(session_factory, *, consolidation_enabled=True, threshold=0.92)`：先取 `account_ids_with_active()`，再逐账号独立 `session_scope` 执行 `purge_expired` +（可选）`consolidate`；单账号异常 warning 后继续；返回 `{accounts, purged, consolidated}`。
-- `sweeper_loop(container)`：`interval = memory_sweep_interval_seconds`（默认 3600；<=0 或 `session_factory` 缺失直接退出）；`CancelledError` 重抛、其它异常 warning 后继续。容器 `start`（`container.py:527`）在 `memory_enabled && interval > 0` 时 `asyncio.create_task(..., name="orchestrator-memory-sweeper")`，`stop` 时 cancel 并 await。
-- 部署注意：每个进程各自启动 sweeper（无分布式锁、无独立 worker）；多副本会重复扫，操作本身幂等（软删/巩固重复执行不破坏数据）；要唯一执行需外部调度（P2 未做）。
+- `sweep_once(session_factory, *, consolidation_enabled=True, threshold=0.92)`：先取 `account_ids_with_active()`，再逐账号独立 `session_scope` 执行 `purge_expired` +（可选）`consolidate`；单账号异常 warning 并计入 `failed_accounts` 后继续；返回 `{accounts, purged, consolidated, skipped}`。
+- **多副本单飞**：Postgres 通过 `session_factory.engine.connect()` 独占一条连接，取会话级 `pg_try_advisory_lock(0x4D454D53)` 后 commit（锁随连接保留），整个清扫期间不归还该连接，结束时在同一连接上 `pg_advisory_unlock` 再 commit；拿不到锁直接返回 `{accounts:0, purged:0, consolidated:0, skipped:1}` 并记 `memory sweep skipped`。不用普通 `AsyncSession` 是因为 session 提交/回滚后连接可能归还连接池，unlock 会落到另一条连接；连接关闭时（引擎 `NullPool`）也会自动释放锁。SQLite/其他后端退化为进程内 `asyncio.Lock`（按事件循环重建，跨测试安全），同进程并发同样跳过。
+- `sweeper_loop(container)`：`interval = memory_sweep_interval_seconds`（默认 3600；<=0 或 `session_factory` 缺失直接退出）；`CancelledError` 重抛、其它异常 `observe_memory_sweep(outcome="failed")` + warning 后继续。容器 `start`（`container.py:300-301`）在 `memory_enabled && interval > 0` 时 `asyncio.create_task(..., name="orchestrator-memory-sweeper")`，`stop`（`container.py:325-329`）时 cancel 并 await。
+- 指标与审计：完成记 `memory_sweeps_total{outcome="completed"}`、`memory_sweep_items_total{action="purged|consolidated"}`、`memory_sweep_account_failures_total`；跳过记 `outcome="skipped"`；异常记 `outcome="failed"`。结构化日志 `memory sweep completed/skipped/failed` 带 `backend/accounts/purged/consolidated/failed_accounts`。
+- 部署注意：PG 多副本单飞；SQLite 只有进程内锁（多进程仍会重复扫，操作幂等）。要跨库唯一执行需外部调度（不在本期）。
 
 ## 8. API 契约
 
 前缀 `/api/v1`（`main.py:125`），路由文件 `api/v1/memory.py`，队列/依赖为 `get_session` + `get_account_id`（账号来自 JWT claim，前端不传账号头）。
 
-| 方法   | 路径                             | 关键参数                                                                                 | 返回                                                       |
-| ------ | -------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| GET    | `/api/v1/memories/search`        | `query` 必填 1–2000；`workspace_id`；`kind`；`limit` 1–20（默认 5）                      | 200 `{query, hits:[MemoryRead]}`；无命中返回空数组，不 404 |
-| GET    | `/api/v1/memories`               | `workspace_id`；`kind`；`q` ≤200；`limit` 1–200（默认 50）                               | 200 `[MemoryRead]`                                         |
-| POST   | `/api/v1/memories`               | body `MemoryCreate`（content ≤8000、kind、scope、workspace_id、pinned、ttl_days 0–3650） | 201 `MemoryRead`                                           |
-| DELETE | `/api/v1/memories/{memory_id}`   | —                                                                                        | 204；不存在/跨账号 404 `memory.not_found`                  |
-| GET    | `/api/v1/memories/stats`         | —                                                                                        | 200 `{total, active, pinned, expired}`                     |
-| POST   | `/api/v1/memories/purge-expired` | —                                                                                        | 200 `{purged}`（幂等）                                     |
+| 方法   | 路径                             | 关键参数                                                                                                        | 返回                                                       |
+| ------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| GET    | `/api/v1/memories/search`        | `query` 必填 1–2000；`workspace_id`；`kind`；`limit` 1–20（默认 5）                                             | 200 `{query, hits:[MemoryRead]}`；**只读**，不更新访问统计 |
+| POST   | `/api/v1/memories/search`        | body `MemorySearchRequest`（`query` 1–2000、`workspace_id`、`kind`、`limit` 1–20）                              | 200 `{query, hits:[MemoryRead]}`；命中更新 `access_count`  |
+| GET    | `/api/v1/memories`               | `workspace_id`；`kind`；`q` ≤200；`limit` 1–200（默认 50）                                                      | 200 `[MemoryRead]`                                         |
+| POST   | `/api/v1/memories`               | body `MemoryCreate`（content ≤8000、kind、scope、workspace_id、pinned、ttl_days 0–3650；不传=部署默认，0=永久） | 201 `MemoryRead`                                           |
+| DELETE | `/api/v1/memories/{memory_id}`   | —                                                                                                               | 204；不存在/跨账号 404 `memory.not_found`                  |
+| GET    | `/api/v1/memories/stats`         | —                                                                                                               | 200 `{total, active, pinned, expired}`                     |
+| POST   | `/api/v1/memories/purge-expired` | —                                                                                                               | 200 `{purged}`（幂等）                                     |
 
 `MemoryRead` 不返回 `embedding`（避免暴露内部向量与体积）；`kind`/`scope` 用枚举校验，非法值由 FastAPI 返回 422。
 
 **路由顺序**：`/search`、`/stats`、`/purge-expired` 必须声明在 `/{memory_id}` **之前**，否则会被路径参数捕获成 404/422（文件内有注释提醒）。
 
-P2 **未新增端点**：记忆管理页（`/memory`）直接复用上表 6 个端点；自动抽取/巩固/清理都是服务端后台行为，不暴露新的 HTTP 契约。
+阶段 A **新增 `POST /memories/search`**：与 GET 同参数、同返回，但会更新访问统计（供真实召回/计费/审计使用）；记忆管理页（`/memory`）仍复用既有 6 个端点（GET 搜索），自动抽取/巩固/清理仍不暴露新的 HTTP 契约。
 
 ## 9. 工具契约（`services/memory_tools.py`）
 
 | 工具            | risk  | 参数                                         | 返回                                 | 说明                                                                     |
 | --------------- | ----- | -------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
-| `memory_search` | READ  | `query`（≤2000）、`limit`（≤20，默认取配置） | `{"hits":[{"id","kind","content"}]}` | 召回当前账号（+当前工作区）记忆；无命中空数组                            |
+| `memory_search` | READ  | `query`（≤2000）、`limit`（≤20，默认取配置） | `{"hits":[{"id","kind","content"}]}` | 召回当前账号（+当前工作区）记忆；命中更新访问统计；无命中空数组          |
 | `memory_write`  | WRITE | `content`、`kind`、`scope`、`pinned`         | `{"id"}`                             | 只记跨对话仍有价值的信息；`kind=procedure` 常驻注入；source 由上下文推断 |
 | `memory_delete` | WRITE | `memory_id`                                  | `{"deleted"}`                        | 用户明确要求或记忆被证伪时才调用                                         |
 
@@ -346,44 +353,44 @@ P2 **未新增端点**：记忆管理页（`/memory`）直接复用上表 6 个�
 
 前缀 `AGENT_ORCHESTRATOR__`（`core/config.py:19`）；默认值如下，`0`/`false` 表示关闭或不过期。表中从 `memory_auto_extract_enabled` 起的 11 项为 P2 新增（自动抽取 5、巩固/清扫 3、语义嵌入 3），其余为 P1 配置。
 
-| 配置                               | 默认        | 生效点                                                                                                                 | 接线状态                                                       |
-| ---------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `memory_enabled`                   | true        | chat 召回（`conversations.py:183`）、run 起图召回（`run_execution.py:189`）、工具装配（`container_assemblies.py:102`） | 已接线                                                         |
-| `memory_recall_limit`              | 5           | 两处召回 + 工具默认 limit                                                                                              | 已接线                                                         |
-| `memory_recall_max_chars`          | 2000        | 两处召回字符预算                                                                                                       | 已接线                                                         |
-| `memory_convention_max_chars`      | 2000        | chat 与 run 两处常驻约定块预算（`services/memory.py: convention_block`），0 = 关闭                                     | 已接线                                                         |
-| `memory_max_content_chars`         | 8000        | 透传给 `build_memory_tools` 与自动抽取；服务默认同为 8000                                                              | 部分接线                                                       |
-| `memory_max_entries_per_account`   | 2000        | 自动抽取路径（`remember_candidates` 传入）；API/工具仍用服务默认                                                       | **部分接线**（自动抽取路径生效；API/工具仍用服务默认 2000）    |
-| `memory_default_ttl_days`          | 0（不过期） | —                                                                                                                      | **未接线**（API/工具显式传 `ttl_days` 才生效）                 |
-| `memory_embedding_dimensions`      | 256         | —                                                                                                                      | **未接线**（本地固定 256；gateway 维度随模型，此配置暂不参与） |
-| `memory_auto_extract_enabled`      | false       | chat/run 自动抽取总开关（**默认关**，隐私敏感；仍受 `memory_enabled` 约束；run 路径不依赖 outbox）                     | 已接线                                                         |
-| `memory_extraction_min_messages`   | 6           | chat 路径每累计 N 条消息触发一次抽取；<=0 关闭                                                                         | 已接线                                                         |
-| `memory_extraction_max_items`      | 5           | 单次抽取最多写入条数                                                                                                   | 已接线                                                         |
-| `memory_extraction_max_chars`      | 1200        | 抽取 transcript 字符预算（单条消息另限 400 字）                                                                        | 已接线                                                         |
-| `memory_dedupe_threshold`          | 0.9         | 写入前与已有记忆的词面去重阈值                                                                                         | 已接线                                                         |
-| `memory_consolidation_enabled`     | true        | sweeper 是否执行近重复巩固                                                                                             | 已接线                                                         |
-| `memory_consolidation_threshold`   | 0.92        | 巩固聚类相似度阈值                                                                                                     | 已接线（仅 `memory_consolidation_enabled`）                    |
-| `memory_sweep_interval_seconds`    | 3600        | sweeper 周期；<=0 关闭后台任务                                                                                         | 已接线                                                         |
-| `memory_embedding_provider`        | local       | `local` / `gateway`；未知值静默回退 local                                                                              | 已接线                                                         |
-| `memory_embedding_model`           | bge-m3      | gateway 提供方请求的模型名                                                                                             | 已接线（仅 gateway）                                           |
-| `memory_embedding_timeout_seconds` | 10          | gateway 请求超时（秒）                                                                                                 | 已接线（仅 gateway）                                           |
-| `context_compaction_enabled`       | true        | chat 路径压缩 + 任务路径建 run 前压缩                                                                                  | 已接线                                                         |
-| `context_compact_threshold_tokens` | 6000        | `compact_history` 阈值（估算 token）                                                                                   | 已接线                                                         |
-| `context_keep_recent_messages`     | 8           | 折叠时保留的最近消息条数                                                                                               | 已接线                                                         |
-| `context_summary_max_chars`        | 2000        | 摘要最大字符                                                                                                           | 已接线                                                         |
+| 配置                               | 默认        | 生效点                                                                                                                 | 接线状态                                                    |
+| ---------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `memory_enabled`                   | true        | chat 召回（`conversations.py:183`）、run 起图召回（`run_execution.py:189`）、工具装配（`container_assemblies.py:102`） | 已接线                                                      |
+| `memory_recall_limit`              | 5           | 两处召回 + 工具默认 limit                                                                                              | 已接线                                                      |
+| `memory_recall_max_chars`          | 2000        | 两处召回字符预算                                                                                                       | 已接线                                                      |
+| `memory_convention_max_chars`      | 2000        | chat 与 run 两处常驻约定块预算（`services/memory.py: convention_block`），0 = 关闭                                     | 已接线                                                      |
+| `memory_max_content_chars`         | 8000        | 透传给 `build_memory_tools` 与自动抽取；服务默认同为 8000                                                              | 部分接线                                                    |
+| `memory_max_entries_per_account`   | 2000        | 自动抽取路径（`remember_candidates` 传入）；API/工具仍用服务默认                                                       | **部分接线**（自动抽取路径生效；API/工具仍用服务默认 2000） |
+| `memory_default_ttl_days`          | 0（不过期） | API 创建、`memory_write` 工具、自动抽取三条写路径统一传入                                                              | 已接线（显式 `ttl_days=0` 表示永久，不被默认值覆盖）        |
+| `memory_auto_extract_enabled`      | false       | chat/run 自动抽取总开关（**默认关**，隐私敏感；仍受 `memory_enabled` 约束；run 路径不依赖 outbox）                     | 已接线                                                      |
+| `memory_extraction_min_messages`   | 6           | chat 路径每累计 N 条消息触发一次抽取；<=0 关闭                                                                         | 已接线                                                      |
+| `memory_extraction_max_items`      | 5           | 单次抽取最多写入条数                                                                                                   | 已接线                                                      |
+| `memory_extraction_max_chars`      | 1200        | 抽取 transcript 字符预算（单条消息另限 400 字）                                                                        | 已接线                                                      |
+| `memory_dedupe_threshold`          | 0.9         | 写入前与已有记忆的词面去重阈值                                                                                         | 已接线                                                      |
+| `memory_consolidation_enabled`     | true        | sweeper 是否执行近重复巩固                                                                                             | 已接线                                                      |
+| `memory_consolidation_threshold`   | 0.92        | 巩固聚类相似度阈值                                                                                                     | 已接线（仅 `memory_consolidation_enabled`）                 |
+| `memory_sweep_interval_seconds`    | 3600        | sweeper 周期；<=0 关闭后台任务                                                                                         | 已接线                                                      |
+| `memory_embedding_provider`        | local       | `local` / `gateway`；未知值静默回退 local                                                                              | 已接线                                                      |
+| `memory_embedding_model`           | bge-m3      | gateway 提供方请求的模型名                                                                                             | 已接线（仅 gateway）                                        |
+| `memory_embedding_timeout_seconds` | 10          | gateway 请求超时（秒）                                                                                                 | 已接线（仅 gateway）                                        |
+| `context_compaction_enabled`       | true        | chat 路径压缩 + 任务路径建 run 前压缩                                                                                  | 已接线                                                      |
+| `context_compact_threshold_tokens` | 6000        | `compact_history` 阈值（估算 token）                                                                                   | 已接线                                                      |
+| `context_keep_recent_messages`     | 8           | 折叠时保留的最近消息条数                                                                                               | 已接线                                                      |
+| `context_summary_max_chars`        | 2000        | 摘要最大字符                                                                                                           | 已接线                                                      |
 
 ## 12. 观测与运维
 
 - 事件 `run.compacted.v1`：`{summary_chars, covered_messages, tokens_before, tokens_after}`，`record_outbox=False`（纯展示类事件，只进 run 事件流供 SSE/排查；两条建 run 路径口径一致）。
 - 记忆工具调用（run 路径）落既有 `run.tool.called.v1`；chat 路径无 run，工具调用只出现在 SSE `tool` 帧，不落 run 事件表。
 - **自动抽取日志**（结构化 event key）：`memory auto extraction failed`（chat 失败降级）、`run memory extraction failed` / `run memory extract throttled` / `run memories extracted`（提交后回调：失败降级/节流跳过/成功带 count）、`run_memories_extracted`（outbox 消费者成功）、`memory_extract_failed` / `memory_extract_bad_event`（outbox 消费者失败/坏事件）、`memory extraction llm failed` / `memory candidate skipped`（抽取器内部）、`post-commit callback failed`（任一提交后副作用失败，含非记忆回调）。
-- **清扫日志**：`memory sweep failed`（单账号失败，带 account_id）、`memory sweep iteration failed`（轮询异常后继续）。
+- **清扫日志**：`memory sweep completed`（backend/accounts/purged/consolidated/failed_accounts/skipped）、`memory sweep skipped`（拿不到锁，reason=lock_held）、`memory sweep failed`（单账号失败，带 account_id）、`memory sweep iteration failed`（轮询异常后继续）。
 - **嵌入日志**：`embedding provider unavailable, fallback to local hash`（网关失败回退，带 provider/error）。
-- 当前**没有**独立 `memory.*` 业务事件（审计/指标事件仍属待办，见 §16）；以上均为进程日志，不进事件流/outbox。
+- 当前**没有**独立 `memory.*` 业务事件（`memory.*` 事件流仍属待办，见 §16）；清扫已有 Prometheus 指标（下条），其余为进程日志，不进事件流/outbox。
+- **清扫指标**（`agent_orchestrator/metrics.py`）：`memory_sweeps_total{service,outcome}`（completed/skipped/failed）、`memory_sweep_items_total{service,action}`（purged/consolidated，非零才计）、`memory_sweep_account_failures_total{service}`。
 - 运维端点：`GET /memories/stats`、`POST /memories/purge-expired`；容量按账号上限拒绝新写入（400 `memory.limit_reached`）。
-- 周期性运维：后台 sweeper 每 `memory_sweep_interval_seconds`（默认 3600s）按账号执行过期清理 +（可选）巩固；`memory_sweep_interval_seconds <= 0` 时不启动后台任务，仍可显式调 `purge-expired`。
+- 周期性运维：后台 sweeper 每 `memory_sweep_interval_seconds`（默认 3600s）按账号执行过期清理 +（可选）巩固；PG 多副本用 advisory lock 单飞，拿不到锁的进程记 `skipped`；`memory_sweep_interval_seconds <= 0` 时不启动后台任务，仍可显式调 `purge-expired`。
 - **成本与可用性注意**：①自动抽取**默认关闭**（隐私），显式开启后按累计消息数节流（chat 与 run 同一 N 口径，每累计 N 条一次小模型调用），抽取在提交后回调里执行、不占响应延迟、也不依赖 outbox；关 `memory_auto_extract_enabled` 时 run 消费者也不注册、回调直接跳过；②`memory_embedding_provider=gateway` 依赖 llm-gateway `/v1/embeddings` 与 bge-m3 可用性——网关不可用时自动回退本地（只 warning），但单次调用会先等满 timeout（默认 10s）；③`memory_enabled=false` 时召回/工具/自动抽取/sweeper 全部关闭，等同「无记忆」，不影响对话与 run。
-- 建议指标（未实现）：有效记忆数、抽取成功/失败次数（`run_memories_extracted` 与 warning 计数）、sweeper `{purged, consolidated}`、embedding fallback 次数、召回命中率（`access_count` 增长）、压缩触发次数、召回块平均字符数。
+- 已实现指标：清扫 `{outcome, purged, consolidated, failed_accounts}`（见上）。仍未实现：有效记忆数、抽取成功/失败次数（`run_memories_extracted` 与 warning 计数）、embedding fallback 次数、召回命中率（`access_count` 增长）、压缩触发次数、召回块平均字符数。
 
 ## 13. 与既有能力分工
 
@@ -413,42 +420,41 @@ P2 **未新增端点**：记忆管理页（`/memory`）直接复用上表 6 个�
 
 ## 15. 测试
 
-| 文件                              | 行数 | 覆盖                                                                                                                                                                 |
-| --------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/test_compaction.py`        | 332  | 摘要器输入/输出截断、空输出报错、阈值/条数跳过、折叠落库、covered 累加、降级                                                                                         |
-| `tests/test_context_history.py`   | 124  | 摘要注入位置、单条截断、空摘要忽略、`filter_after` 边界                                                                                                              |
-| `tests/test_memory_extraction.py` | 535  | 抽取解析容错/候选归一与去重、`remember_candidates` 去重/限额/工作区分隔、`extract_from_messages` 开关与预算、`consolidate` 优先级/账号+工作区隔离                    |
-| `tests/test_memory_sweeper.py`    | 225  | 逐账号 purge+consolidate、账号失败隔离、interval<=0/无 session 工厂跳过、异常续跑、任务可取消                                                                        |
-| `tests/test_memory_embedding.py`  | 367  | LocalHash 确定性、gateway 批量/错误映射、回退策略、configure/reset/build、写入与检索取向量、维度不一致忽略                                                           |
-| `tests/test_memory_p2_wiring.py`  | 464  | 容器装配 embedding provider、outbox 消费者注册开关、run 交付抽取（含节流）、chat 节流触发、sweeper 启停、提交后回调（run 完成抽取/outbox 让位/失败隔离）、抽取默认关 |
-| `tests/test_memory_store.py`      | 473  | 向量确定性/零向量、摘要 upsert、写入校验/截断/TTL/容量、账号+工作区列表、搜索/pinned/无关过滤、软删/404、过期/purge、Provider roundtrip、程序性约定常驻块            |
-| `tests/test_memory_tools.py`      | 195  | 写读 roundtrip、source 回退、缺上下文、参数校验、软删/缺失、账号隔离、无命中空数组、spec risk/schema                                                                 |
-| `tests/test_memory_api.py`        | 202  | CRUD/过滤/校验错误/账号隔离/purge 端点                                                                                                                               |
-| `tests/test_memory_chat.py`       | 142  | chat prompt 注入顺序（memory 在 reference_note 前）、空场景、无 context 回退                                                                                         |
-| `tests/test_memory_injection.py`  | 450  | 四节点追加、空块不变、查询词、约定+召回拼接、起图边界开关、extras 开关、ToolContext 工作区                                                                           |
-| `tests/test_run_compact_event.py` | 73   | 建 run 带 compaction 时发 `run.compacted.v1`，不带则不发                                                                                                             |
+| 文件                              | 行数 | 覆盖                                                                                                                                                                                      |
+| --------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/test_compaction.py`        | 332  | 摘要器输入/输出截断、空输出报错、阈值/条数跳过、折叠落库、covered 累加、降级                                                                                                              |
+| `tests/test_context_history.py`   | 124  | 摘要注入位置、单条截断、空摘要忽略、`filter_after` 边界                                                                                                                                   |
+| `tests/test_memory_extraction.py` | 535  | 抽取解析容错/候选归一与去重、`remember_candidates` 去重/限额/工作区分隔、`extract_from_messages` 开关与预算、`consolidate` 优先级/账号+工作区隔离                                         |
+| `tests/test_memory_sweeper.py`    | 255  | 逐账号 purge+consolidate、账号失败隔离、锁占用时 skipped、interval<=0/无 session 工厂跳过、异常续跑、任务可取消                                                                           |
+| `tests/test_metrics.py`           | 104  | 清扫 outcome/items/失败计数注册与自增，既有 run/job/LLM 计数器                                                                                                                            |
+| `tests/test_memory_embedding.py`  | 367  | LocalHash 确定性、gateway 批量/错误映射、回退策略、configure/reset/build、写入与检索取向量、维度不一致忽略                                                                                |
+| `tests/test_memory_p2_wiring.py`  | 464  | 容器装配 embedding provider、outbox 消费者注册开关、run 交付抽取（含节流）、chat 节流触发、sweeper 启停、提交后回调（run 完成抽取/outbox 让位/失败隔离）、抽取默认关                      |
+| `tests/test_memory_store.py`      | 511  | 向量确定性/零向量、摘要 upsert、写入校验/截断/TTL 三态（含负数）/容量、账号+工作区列表、搜索只读与 touch 计数/pinned/无关过滤、软删/404、过期/purge、Provider roundtrip、程序性约定常驻块 |
+| `tests/test_memory_tools.py`      | 215  | 写读 roundtrip（含默认 TTL、命中计数）、source 回退、缺上下文、参数校验、软删/缺失、账号隔离、无命中空数组、spec risk/schema                                                              |
+| `tests/test_memory_api.py`        | 213  | CRUD/过滤/校验错误/账号隔离/purge 端点、GET 搜索只读 vs POST 搜索计数、TTL 显式 0=永久                                                                                                    |
+| `tests/test_memory_chat.py`       | 142  | chat prompt 注入顺序（memory 在 reference_note 前）、空场景、无 context 回退                                                                                                              |
+| `tests/test_memory_injection.py`  | 450  | 四节点追加、空块不变、查询词、约定+召回拼接、起图边界开关、extras 开关、ToolContext 工作区                                                                                                |
+| `tests/test_run_compact_event.py` | 73   | 建 run 带 compaction 时发 `run.compacted.v1`，不带则不发                                                                                                                                  |
 
 ## 16. 已知差距与未来工作
 
-**P2 已知差距（截至 2026-10-25）**
+**已知差距（截至 2026-11-15，阶段 A 后）**
 
 - **无 AGENTS.md/CLAUDE.md 文件注入**：多账号服务没有可写的仓库文件真源，程序性记忆仍用 `kind=procedure` 的 DB 约定条目表达（§10.3）。（2026-10-27 更新：宿主仓库文件仍不读；P1-F 已改为发现并注入**沙箱工作区** `/workspace` 的 AGENTS.md，见 [context-engineering.md](./context-engineering.md)）
 - **无 mem0/Zep/Letta 外接适配器**：`MemoryProvider` 接口保留，`build_memory_provider()` 仍返回 `LocalMemoryProvider`；外接还缺数据驻留/账号隔离评估与契约测试。
 - **自动抽取质量无评估集**：依赖抽取模型；Prompt 仅约束「稳定偏好/事实/流程」，无抽检与质量指标；失败静默降级（只 warning）。
 - **投毒防护仅基础**：固定注入块标题、标注「供参考」、不参与决策、来源可审计（`source_type/source_id`）、可删除；未做敏感信息过滤、来源可信度分级、跨账号共享审批流；account 级记忆账号内可见（账号即单人边界），无 user scope/分组权限。
 - **混存 embedding 模型无迁移**：换 provider/模型后旧记录维度不同，语义分量被门禁忽略（退回词面），无自动重嵌入/回填脚本。
-- **无 `memory.*` 审计事件/指标**：抽取/清扫/回退只有进程日志，没有事件流与指标面板。
-- **sweeper 与抽取的容量边界**：`consolidate` 每轮每账号 `limit=500`，超出留给下一轮；多副本部署每个进程都会启动 sweeper（无分布式锁，靠操作幂等）。
+- **无 `memory.*` 事件流**：抽取/清扫/回退只有进程日志；清扫已有 Prometheus 指标（D19），其余无指标面板。
+- **sweeper 与抽取的容量边界**：`consolidate` 每轮每账号 `limit=500`，超出留给下一轮；PG 多副本已用 advisory lock 单飞，SQLite 多进程仍会重复扫（操作幂等）。
 - **前端管理页仅增删查**：无编辑/置顶切换/来源过滤；TTL 只支持 0–3650 天。
-- **P1 遗留**：3 个配置仍未完全接线（`memory_default_ttl_days`、`memory_embedding_dimensions` 不生效；`memory_max_entries_per_account` 仅抽取路径生效）；chat extras 不受只读裁剪；压缩模型调用发生在请求边界、未计入 run usage；execute 阶段空正文时仍无 delta。
+- **P1 遗留**：`memory_max_entries_per_account` 仅自动抽取路径生效（API/工具仍用服务默认 2000）；chat extras 不受只读裁剪；压缩模型调用发生在请求边界、未计入 run usage；execute 阶段空正文时仍无 delta。
 - **自动抽取的延迟/成本残留**：非流式 chat 与 run 完成均已改为提交后回调（响应/run 提交不再等 LLM），流式在 `done` 帧之后；残留：回调在同一进程内串行执行，极端情况下多个回调排队会延后抽取，不阻塞响应；无 per-conversation watermark，事件重投或多 run 仍可能重复抽取（记忆去重兜重复数据，但 LLM 成本不省）。
 - **run 路径抽取已有默认通道（无 outbox）**：run 完成默认走提交后回调；`outbox_enabled=true` 时交给 `run.delivered.v1` 消费者（避免双重抽取）。残留：多副本部署时只有执行该 run 的进程会触发回调，这符合"谁完成谁沉淀"的语义。
 - **隐私默认值已调安全侧**：`memory_auto_extract_enabled` 默认 `false`（需显式开启）；开启后默认 `scope=account`（跨工作区可见）——仍无 UI 披露、无 user scope（账号即单人边界）；需要更小影响面时用 workspace 级 scope。
-- **TTL 语义漂移**：schema 注释「`ttl_days=0/None` 表示不过期」与 API「0 → 部署默认 `memory_default_ttl_days`」不一致；部署默认 >0 时显式 0 无法覆盖，前端「留空=永久」文案不成立，待统一语义。
 - **outbox 抽取失败静默**：异常后仍标记 processed（防死循环），无 failed 留痕/人工重放；与 knowledge 消费者 raise 策略不一致。
-- **读接口带写副作用**：`GET /memories/search` 命中会写 `access_count`，缓存/审计网关需注意。
 
-**后续候选**：Provider 外接（mem0/Zep/Letta，含数据驻留与账号隔离评估）→ 跨账号共享记忆（不计划）与可见性策略 → 防投毒增强（敏感信息过滤/可信度/审批流）→ 记忆质量评估集与抽取抽检 → `memory.*` 审计事件与指标 → 前端编辑/置顶/来源过滤 → 换模型重嵌入迁移工具 → `memory_default_ttl_days`/`memory_embedding_dimensions` 接线。
+**后续候选**：Provider 外接（mem0/Zep/Letta，含数据驻留与账号隔离评估）→ 跨账号共享记忆（不计划）与可见性策略 → 防投毒增强（敏感信息过滤/可信度/审批流）→ 记忆质量评估集与抽取抽检 → `memory.*` 审计事件与指标 → 前端编辑/置顶/来源过滤 → 换模型重嵌入迁移工具。
 
 ## 17. 参考
 

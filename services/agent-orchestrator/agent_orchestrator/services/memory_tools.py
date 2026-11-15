@@ -65,6 +65,7 @@ def build_memory_tools(
     *,
     max_content_chars: int = 8000,
     default_limit: int = 5,
+    default_ttl_days: int = 0,
 ) -> list[ToolSpec]:
     """构造 memory_search/memory_write/memory_delete 三个工具。
 
@@ -88,6 +89,7 @@ def build_memory_tools(
                     query,
                     workspace_id=context.workspace_id,
                     limit=limit,
+                    touch=True,
                 )
             except AppError as exc:
                 return _error(exc.message)
@@ -129,6 +131,7 @@ def build_memory_tools(
                     source_type=source_type,
                     source_id=source_id,
                     pinned=bool(args.get("pinned")),
+                    default_ttl_days=default_ttl_days,
                 )
             except AppError as exc:
                 return _error(exc.message)

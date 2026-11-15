@@ -114,6 +114,7 @@ async def remember_candidates(
     source_id: str | None = None,
     max_content_chars: int = 8000,
     max_entries: int = 2000,
+    default_ttl_days: int = 0,
     dedupe_threshold: float = 0.9,
 ) -> list[Memory]:
     """把候选写入长期记忆;与同账号/同工作区/同 kind 的活跃记忆近重复时跳过。
@@ -163,6 +164,7 @@ async def remember_candidates(
                 source_id=source_id,
                 max_content_chars=max_content_chars,
                 max_entries=max_entries,
+                default_ttl_days=default_ttl_days,
             )
         except AppError as exc:
             # 单条候选非法(如 workspace 级缺 workspace_id)或额度满:跳过,
@@ -223,6 +225,7 @@ async def extract_from_messages(
         max_entries=int(
             getattr(settings, "memory_max_entries_per_account", 2000) or 2000
         ),
+        default_ttl_days=int(getattr(settings, "memory_default_ttl_days", 0) or 0),
         dedupe_threshold=float(getattr(settings, "memory_dedupe_threshold", 0.9)),
     )
 

@@ -79,6 +79,25 @@ async def test_memory_write_and_search_roundtrip(
     # run 上下文优先作为来源;工作区级记忆落在 ctx.workspace_id 下
     assert (row.source_type, row.source_id) == ("run", "run-1")
     assert (row.scope, row.workspace_id) == ("workspace", "ws-1")
+    # 工具检索是真实召回,应累加访问统计
+    assert row.access_count == 1
+
+
+async def test_memory_write_uses_default_ttl(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """工具写入不暴露 ttl_days,统一采用装配时传入的部署默认有效期。"""
+    tools = {
+        tool.name: tool for tool in build_memory_tools(factory, default_ttl_days=5)
+    }
+    with bind_tool_context(ToolContext(account_id=ACCOUNT)):
+        written = json.loads(
+            await tools["memory_write"].handler({"content": "默认会过期的记忆"})
+        )
+    async with session_scope(factory) as session:
+        row = await session.get(Memory, written["id"])
+    assert row is not None
+    assert row.expires_at is not None
 
 
 async def test_memory_write_falls_back_to_chat_source(

@@ -3,8 +3,9 @@
 契约:
 
 - GET /memories:生效中的记忆列表(可按工作区/类型过滤,q 做词面过滤);
-- POST /memories:写一条记忆(默认账号级;ttl_days>0 时到期自动不可见);
-- GET /memories/search:相关性检索(命中会累加访问统计);
+- POST /memories:写一条记忆(默认账号级;ttl_days 不传=部署默认,0=永久,>0=N 天后过期);
+- GET /memories/search:只读相关性检索(不写访问统计,供管理面预览);
+- POST /memories/search:检索并累加访问统计(真实召回/工具场景);
 - GET /memories/stats:total/active/pinned/expired 计数;
 - POST /memories/purge-expired:清理过期记忆(软删),返回条数;
 - DELETE /memories/{memory_id}:软删除,跨账号一律 404(不泄漏存在性)。
@@ -27,6 +28,7 @@ from agent_orchestrator.schemas.memory import (
     MemoryKind,
     MemoryPurgeResult,
     MemoryRead,
+    MemorySearchRequest,
     MemorySearchResponse,
     MemoryStatsRead,
 )
@@ -50,7 +52,11 @@ async def search_memories(
     kind: KindQuery = None,
     limit: Annotated[int, Query(ge=1, le=20)] = 5,
 ) -> MemorySearchResponse:
-    """按相关性检索长期记忆;无命中返回空列表(不报 404)。"""
+    """按相关性检索长期记忆;无命中返回空列表(不报 404)。
+
+    只读接口:不累加 access_count,避免缓存/审计网关的重复 GET 污染访问统计。
+    需要计数时用 POST /memories/search。
+    """
     hits = await memory_service.search_memories(
         session,
         account_id,
@@ -61,6 +67,28 @@ async def search_memories(
     )
     return MemorySearchResponse(
         query=query,
+        hits=[MemoryRead.model_validate(hit) for hit in hits],
+    )
+
+
+@router.post("/search", response_model=MemorySearchResponse)
+async def search_memories_with_access(
+    payload: MemorySearchRequest,
+    session: DBSession,
+    account_id: AccountId,
+) -> MemorySearchResponse:
+    """检索长期记忆并记录访问统计(供真实召回/工具调用复用同一契约)。"""
+    hits = await memory_service.search_memories(
+        session,
+        account_id,
+        payload.query,
+        workspace_id=payload.workspace_id,
+        kind=payload.kind,
+        limit=payload.limit,
+        touch=True,
+    )
+    return MemorySearchResponse(
+        query=payload.query,
         hits=[MemoryRead.model_validate(hit) for hit in hits],
     )
 
@@ -115,10 +143,9 @@ async def create_memory(
 ) -> MemoryRead:
     """写入一条记忆;内容为空/类型非法/超条数上限由统一错误模型返回。
 
-    ttl_days 未显式给(或给 0)时用部署配置的默认有效期(0 = 永久);
+    ttl_days=None 用部署默认有效期,0 表示永久,>0 表示 N 天;
     条数上限也取配置,避免 API 与后台抽取各用一套额度。
     """
-    ttl_days = payload.ttl_days or settings.memory_default_ttl_days
     memory = await memory_service.write_memory(
         session,
         account_id,
@@ -127,7 +154,8 @@ async def create_memory(
         scope=payload.scope,
         workspace_id=payload.workspace_id,
         pinned=payload.pinned,
-        ttl_days=ttl_days,
+        ttl_days=payload.ttl_days,
+        default_ttl_days=settings.memory_default_ttl_days,
         max_entries=settings.memory_max_entries_per_account,
     )
     return MemoryRead.model_validate(memory)

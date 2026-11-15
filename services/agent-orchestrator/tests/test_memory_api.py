@@ -70,6 +70,15 @@ def test_create_list_search_delete(client: TestClient) -> None:
     ).json()
     assert search["query"] == "简洁回答"
     assert [hit["id"] for hit in search["hits"]] == [memory["id"]]
+    # GET 只读:预览检索不能污染访问统计(缓存/审计网关会重复 GET)
+    assert search["hits"][0]["access_count"] == 0
+
+    touched = client.post(
+        f"{PREFIX}/search", json={"query": "简洁回答"}, headers=ACCOUNT
+    )
+    assert touched.status_code == 200
+    assert [hit["id"] for hit in touched.json()["hits"]] == [memory["id"]]
+    assert client.get(PREFIX, headers=ACCOUNT).json()[0]["access_count"] == 1
 
     stats = client.get(f"{PREFIX}/stats", headers=ACCOUNT).json()
     assert stats == {"total": 1, "active": 1, "pinned": 0, "expired": 0}
@@ -126,6 +135,8 @@ def test_validation_and_business_errors(client: TestClient) -> None:
     assert bad_scope.status_code == 422
     missing_query = client.get(f"{PREFIX}/search", headers=ACCOUNT)
     assert missing_query.status_code == 422
+    empty_query = client.post(f"{PREFIX}/search", json={"query": ""}, headers=ACCOUNT)
+    assert empty_query.status_code == 422
     missing_workspace = client.post(
         PREFIX, json={"content": "x", "scope": "workspace"}, headers=ACCOUNT
     )
@@ -197,6 +208,6 @@ def test_create_uses_settings_limits_and_default_ttl(tmp_path: Path) -> None:
         assert second.json()["code"] == "memory.limit_reached"
 
         client.delete(f"{PREFIX}/{first['id']}", headers=ACCOUNT)
-        # 显式 0 表示"不单独设期限",仍按默认有效期而非永久
+        # 显式 0 表示永久,不再被部署默认值覆盖
         third = _create(client, content="第三条", ttl_days=0)
-        assert third["expires_at"] is not None
+        assert third["expires_at"] is None

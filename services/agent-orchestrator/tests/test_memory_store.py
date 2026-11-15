@@ -148,8 +148,25 @@ async def test_write_memory_ttl_only_sets_future_expiry(
         permanent = await memory_service.write_memory(
             session, ACCOUNT, content="永久记忆", ttl_days=0
         )
+        defaulted = await memory_service.write_memory(
+            session,
+            ACCOUNT,
+            content="默认有效期记忆",
+            default_ttl_days=30,
+        )
+        overridden = await memory_service.write_memory(
+            session,
+            ACCOUNT,
+            content="显式有效期记忆",
+            ttl_days=3,
+            default_ttl_days=30,
+        )
     assert temporary.expires_at is not None
     assert permanent.expires_at is None
+    # None = 部署默认;显式值优先于默认值
+    assert defaulted.expires_at is not None
+    assert overridden.expires_at is not None
+    assert overridden.expires_at < defaulted.expires_at
 
 
 async def test_write_memory_rejects_invalid_input(
@@ -161,6 +178,7 @@ async def test_write_memory_rejects_invalid_input(
         ({"content": "x", "scope": "team"}, "memory.invalid_scope"),
         ({"content": "x", "source_type": "api"}, "memory.invalid_source"),
         ({"content": "x", "scope": "workspace"}, "memory.workspace_required"),
+        ({"content": "x", "ttl_days": -1}, "memory.invalid_ttl"),
     ]
     for kwargs, code in cases:
         with pytest.raises(AppError) as excinfo:
@@ -257,7 +275,17 @@ async def test_search_memories_returns_relevant_hit_and_marks_access(
     async with session_scope(factory) as session:
         stored = await MemoryRepository(session).get_active(ACCOUNT, relevant_id)
         assert stored is not None
-        # 命中要落访问统计,后续可以用新近/频次做加权
+        # 只读检索默认不写访问统计(管理面预览/缓存重复 GET 不污染频次)
+        assert stored.access_count == 0
+    # 只有真实召回路径(touch=True)才落访问统计,供新近/频次加权
+    async with session_scope(factory) as session:
+        hits = await memory_service.search_memories(
+            session, ACCOUNT, "简洁回答", touch=True
+        )
+        assert [hit.id for hit in hits] == [relevant_id]
+    async with session_scope(factory) as session:
+        stored = await MemoryRepository(session).get_active(ACCOUNT, relevant_id)
+        assert stored is not None
         assert stored.access_count == 1
         assert stored.last_accessed_at is not None
 
