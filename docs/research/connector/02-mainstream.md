@@ -159,13 +159,13 @@
 
 ## 5. 附：本仓库现状对照（写结论时的取证）
 
-| 已有能力                                                                                                                          | 位置                                                                                              | 与本调研的关系                                              |
+| 已有能力 | 位置 | 与本调研的关系 |
 | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------- | --------------------- |
-| 连接表：`UniqueConstraint("tenant_id","provider","account")`、`status` active/revoked/expired、`credentials` JSON                 | `services/connector-service/connector/models/connections.py`                                      | 对应 2.9 的「连接层」，缺 `expires_at` 与归属 principal     |
-| 信封加密：`{"v":"1","ciphertext":"fernet:<token>"}`，`SecretBox`，历史明文回退，错误码 `connector.credentials_unreadable`         | `services/connector-service/connector/core/crypto.py`                                             | 对应 2.3 的「应用层信封加密」，缺 KMS 与 key rotation       |
-| 密钥配置 `CONNECTOR__CREDENTIAL_SECRET`（默认值 `dev-connector-secret-change-me`）                                                | `services/connector-service/connector/core/config.py`                                             | 生产必须换 KMS/随机长密钥（README 已注明）                  |
-| 读端点无凭证字段、跨租户 404、撤销软状态 + 409 `connector.invalid_state`                                                          | `services/connector-service/connector/api/v1/connections.py`、`connector/services/connections.py` | 对应 2.7 的撤销与「凭证只进不出」                           |
-| 工具契约：`ToolRisk` read/write/destructive、`ToolKind` function/interaction、`ExecutorKind` sandbox/http/none、`{"ok":...}` 信封 | `packages/common/common/tools.py`                                                                 | 第 5 条借鉴的落点                                           |
+| 连接表：`UniqueConstraint("tenant_id","provider","account")`、`status` active/revoked/expired、`credentials` JSON | `services/connector-service/connector/models/connections.py` | 对应 2.9 的「连接层」，缺 `expires_at` 与归属 principal |
+| 信封加密：`{"v":"1","ciphertext":"fernet:<token>"}`，`SecretBox`，历史明文回退，错误码 `connector.credentials_unreadable` | `services/connector-service/connector/core/crypto.py` | 对应 2.3 的「应用层信封加密」，缺 KMS 与 key rotation |
+| 密钥配置 `CONNECTOR__CREDENTIAL_SECRET`（默认值 `dev-connector-secret-change-me`） | `services/connector-service/connector/core/config.py` | 生产必须换 KMS/随机长密钥（README 已注明） |
+| 读端点无凭证字段、跨租户 404、撤销软状态 + 409 `connector.invalid_state` | `services/connector-service/connector/api/v1/connections.py`、`connector/services/connections.py` | 对应 2.7 的撤销与「凭证只进不出」 |
+| 工具契约：`ToolRisk` read/write/destructive、`ToolKind` function/interaction、`ExecutorKind` sandbox/http/none、`{"ok":...}` 信封 | `packages/common/common/tools.py` | 第 5 条借鉴的落点 |
 | per-tenant/per-connector/per-tool 的 `auto                                                                                        | confirm                                                                                           | deny` 审批、`mcp**<server>**<tool>`命名、调用写`run_events` | `docs/architecture.md` §11.2 | 第 5 条借鉴的落地机制 |
 
 ## 6. 来源清单（均于 2026-11-03 访问）

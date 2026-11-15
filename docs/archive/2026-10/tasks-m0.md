@@ -415,16 +415,16 @@
 
 ### 4.2 后端新增/变更端点
 
-| 服务               | 端点                                                     | 说明             |
+| 服务 | 端点 | 说明 |
 | ------------------ | -------------------------------------------------------- | ---------------- | ---------- |
-| account-service    | `GET /v1/auth/oauth/{provider}/start                     | callback`        | 社交 OAuth |
-| account-service    | `GET /v1/usage/summary`、`POST /v1/usage/events`（内部） | 用量读写         |
-| account-service    | `PUT/GET/DELETE /v1/credentials/byok`（内部）            | BYOK 占位        |
-| agent-orchestrator | `PATCH/DELETE /api/v1/conversations/{id}`                | 重命名/归档/软删 |
-| agent-orchestrator | `GET /api/v1/conversations?cursor&q&archived`            | 搜索/分页        |
-| agent-orchestrator | `POST /api/v1/runs/{id}/cancel`（如需）                  | 取消 job         |
-| llm-gateway        | `GET /v1/models`                                         | 模型列表         |
-| workspace-service  | `POST /v1/workspaces/{id}/attachments` 等                | 附件             |
+| account-service | `GET /v1/auth/oauth/{provider}/start                     | callback` | 社交 OAuth |
+| account-service | `GET /v1/usage/summary`、`POST /v1/usage/events`（内部） | 用量读写 |
+| account-service | `PUT/GET/DELETE /v1/credentials/byok`（内部） | BYOK 占位 |
+| agent-orchestrator | `PATCH/DELETE /api/v1/conversations/{id}` | 重命名/归档/软删 |
+| agent-orchestrator | `GET /api/v1/conversations?cursor&q&archived` | 搜索/分页 |
+| agent-orchestrator | `POST /api/v1/runs/{id}/cancel`（如需） | 取消 job |
+| llm-gateway | `GET /v1/models` | 模型列表 |
+| workspace-service | `POST /v1/workspaces/{id}/attachments` 等 | 附件 |
 
 ### 4.3 数据表（新增）
 

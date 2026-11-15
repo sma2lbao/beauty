@@ -85,14 +85,14 @@
 
 ### 1.4 表 4｜协议与标准基线（生态，而非产品）
 
-| 协议／标准   | 解决什么                       | 2026-10 状态（A）                                                                                                  | 对 beauty-moon 的位置                                            |
-| ------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| 协议／标准   | 解决什么                      | 2026-10 状态（A）                                                                                                  | 对 beauty-moon 的位置                                            |
+| ------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | MCP          | 模型↔工具／数据               | 规范 **2026-07-28**：无状态、自包含请求 + 每请求能力协商；server 侧 Tools/Resources/Prompts；Roots/Sampling 已弃用 | 已有 client + server，但形态是「有状态会话」，未对齐新规范       |
-| A2A          | 不透明 agent 之间的互操作      | v1.0，已加入 Linux Foundation 的 Agentic AI Foundation；Agent Card／Task 生命周期／多租户                          | 尚无；多 agent 场景的对外接口候选                                |
+| A2A          | 不透明 agent 之间的互操作     | v1.0，已加入 Linux Foundation 的 Agentic AI Foundation；Agent Card／Task 生命周期／多租户                          | 尚无；多 agent 场景的对外接口候选                                |
 | AG-UI        | agent 后端↔用户前端的事件协议 | 开源，含 Events／Interrupts／State／Subagents／Generative UI／Reasoning 事件族                                     | 前端事件（meta/delta/done）是自研，可与之对照补齐中断/子代理事件 |
 | ACP          | 编辑器/宿主↔agent 进程        | OpenHands 1.27 把 Claude Code／Codex／Gemini CLI／Pi／OpenCode 作为 ACP provider 接入；Goose 用 ACP 复用订阅       | harness 可插拔的关键：loop 与 UI/编排解耦                        |
-| Agent Skills | 「怎么用某能力」的可分发包装   | agentskills.io 开放标准；Claude Code、Codex、Qwen Code、mem0、Browser Use、microsandbox 均以 skill 分发接入        | 已有 Skills 上传包，但缺 SKILL.md 渐进加载与跨工具格式           |
-| AGENTS.md    | 仓库约定的注入面               | agents.md 自述 60k+ 开源项目采用；Codex／OpenCode／Cline(.clinerules) 同构                                         | 无仓库约定文件的发现与注入链路                                   |
+| Agent Skills | 「怎么用某能力」的可分发包装  | agentskills.io 开放标准；Claude Code、Codex、Qwen Code、mem0、Browser Use、microsandbox 均以 skill 分发接入        | 已有 Skills 上传包，但缺 SKILL.md 渐进加载与跨工具格式           |
+| AGENTS.md    | 仓库约定的注入面              | agents.md 自述 60k+ 开源项目采用；Codex／OpenCode／Cline(.clinerules) 同构                                         | 无仓库约定文件的发现与注入链路                                   |
 
 ## 2. 逐产品要点（3–6 条，带来源）
 

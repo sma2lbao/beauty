@@ -51,9 +51,9 @@
 | Agent 反问                               | ❌                  | ask_user_question                        | M1         | ui-user-questions         |
 | 后台任务面板                             | ❌                  | 任务列表/终止（依赖 job 表）             | M1         | ui-jobs                   |
 | 文件树 / 文件预览                        | ❌                  | 只读文件树 + 预览（不执行）              | M1         | ui-sidebar-files          |
-| 终端面板                                 | ⏸                  | 依赖 sandbox 决策                        | M1（条件） | ui-sidebar-terminal       |
+| 终端面板                                 | ⏸                   | 依赖 sandbox 决策                        | M1（条件） | ui-sidebar-terminal       |
 | Diff 评审                                | ⚠️ 统一 Diff        | 逐文件/行评论/应用                       | M1         | ui-deliverables           |
-| 预览 URL                                 | ⏸                  | 依赖 sandbox 决策                        | M1（条件） | ui-sidebar-browser        |
+| 预览 URL                                 | ⏸                   | 依赖 sandbox 决策                        | M1（条件） | ui-sidebar-browser        |
 | 产物卡片（图片/PDF/Office）              | ❌ 文本/Diff        | Markdown/图片先做；PDF/Office 待对象存储 | M0/M2      | ui-deliverables           |
 | 执行轨迹                                 | ⚠️ 简化执行面板     | 完整轨迹 + 事件检索                      | M2         | ui-trajectory             |
 | 子代理/Agent 团队                        | ❌                  | 子会话/团队任务板                        | M4         | ui-subagent / agent-team  |
@@ -71,9 +71,9 @@
 | ----------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------- |
 | Sandbox（隔离/执行/预览）                 | ✅ P1 底座 + P2 stdio MCP + P3 技能包                       | microsandbox provider；终端/预览后置；P4 出网/计量                        | M1 前                |
 | GitHub 集成                               | ❌                                                          | GitHub App + 只读仓库/分支/PR                                             | M1                   |
-| 文件系统工具（read/write/edit/glob/grep） | ⏸ 依赖 sandbox                                             | 先只读+补丁建议；执行后置                                                 | M1（条件）           |
-| Shell / 终端                              | ⏸ 依赖 sandbox                                             | 决策后实施                                                                | M1（条件）           |
-| Git 工具（status/diff/commit/branch/PR）  | ⏸ 依赖 sandbox                                             | 只读 diff 先做；写操作后置                                                | M1（条件）           |
+| 文件系统工具（read/write/edit/glob/grep） | ⏸ 依赖 sandbox                                              | 先只读+补丁建议；执行后置                                                 | M1（条件）           |
+| Shell / 终端                              | ⏸ 依赖 sandbox                                              | 决策后实施                                                                | M1（条件）           |
+| Git 工具（status/diff/commit/branch/PR）  | ⏸ 依赖 sandbox                                              | 只读 diff 先做；写操作后置                                                | M1（条件）           |
 | 工具注册表 + 权限策略                     | ⚠️ 7 个硬编码工具                                           | Tool Registry + auto/confirm/deny                                         | M1                   |
 | Skills                                    | ✅ 内置 + 上传包（P3）                                      | 审核/灰度/市场 P4；首批 coding/office 内置技能                            | M1/M2                |
 | MCP Client                                | ✅ HTTP + stdio（P2）                                       | 租户配置、命名空间、审批；stdio 在沙箱内运行                              | M1（GitHub 优先）/M3 |
@@ -89,11 +89,11 @@
 | 知识库 rerank/引用/自动摄取               | ⚠️ 仅向量 top-k                                             | rerank + citation + 事件摄取                                              | M2                   |
 | 队列 / 长任务                             | ❌                                                          | PG job 表 + worker（不引入 Temporal）                                     | M0                   |
 | 用量/配额/BYOK                            | ❌ 仅 quota 字段                                            | usage_ledger + 配额执行 + BYOK                                            | M0/M3                |
-| 订阅/支付                                 | ⏸ Stripe 暂缓                                              | Free 档 + 手动开通；自助支付后置                                          | M3 后置              |
+| 订阅/支付                                 | ⏸ Stripe 暂缓                                               | Free 档 + 手动开通；自助支付后置                                          | M3 后置              |
 | 观测                                      | ⚠️ 结构化日志                                               | Sentry 官方 + traceId；Langfuse 暂缓                                      | M0/M4                |
 | 部署                                      | ⚠️ compose 仅 PG/Redis                                      | Dockerfile + Vercel + 云 PG/Redis（SaaS）；Linux VM + systemd（内网）     | M0（内网后续）       |
 | 邮件实时推送                              | ❌                                                          | Pub/Sub / Graph webhook / IMAP IDLE                                       | M2                   |
-| 内网/离线部署（无外网启动）               | ⚠️ 当前代码默认 SQLite/本地嵌入可离线跑，BFF/模型地址未打通 | Linux VM + systemd + Nginx + HTTP + SQLite + 内网模型 api_base + 断网验收 | **⏸ 暂缓（M0-13）** |
+| 内网/离线部署（无外网启动）               | ⚠️ 当前代码默认 SQLite/本地嵌入可离线跑，BFF/模型地址未打通 | Linux VM + systemd + Nginx + HTTP + SQLite + 内网模型 api_base + 断网验收 | **⏸ 暂缓（M0-13）**  |
 
 ---
 
@@ -127,22 +127,22 @@
 > coding 内置技能仍只交付「只读代码分析 + 补丁建议」；FS/Git/终端工具待 M1-05/06/07，不承诺
 > 终端/预览。
 
-| ID    | 任务                                                                   | 端             | 验收标准                           | 依赖  | 规模 |
-| ----- | ---------------------------------------------------------------------- | -------------- | ---------------------------------- | ----- | ---- |
-| M1-00 | 沙箱替代决策与 spike：microsandbox / Fly Machines / 自建 gVisor runner | 架构           | 决策：microsandbox + provider 抽象 | —     | S    |
-| M1-01 | Sandbox 实现（按 M1-00 结论）                                          | Service        | P1 底座 + P2/P3 执行已落地         | M1-00 | L    |
-| M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                                | Service        | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
-| M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                       | Service        | 按类型加载工具集；只读文件树       | M1-02 | M    |
-| M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                            | Service        | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |
+| ID    | 任务                                                                   | 端            | 验收标准                           | 依赖  | 规模 |
+| ----- | ---------------------------------------------------------------------- | ------------- | ---------------------------------- | ----- | ---- |
+| M1-00 | 沙箱替代决策与 spike：microsandbox / Fly Machines / 自建 gVisor runner | 架构          | 决策：microsandbox + provider 抽象 | —     | S    |
+| M1-01 | Sandbox 实现（按 M1-00 结论）                                          | Service       | P1 底座 + P2/P3 执行已落地         | M1-00 | L    |
+| M1-02 | GitHub App + 只读仓库/分支/文件/PR 读取                                | Service       | 连接仓库；文件读取；不落前端令牌   | M0-05 | M    |
+| M1-03 | Workspace 抽象（repo/mailbox/docs/kb）+ 文件 API                       | Service       | 按类型加载工具集；只读文件树       | M1-02 | M    |
+| M1-04 | 只读代码分析 + 补丁建议（GitHub API + LLM）                            | Service       | 产出 patch/diff 与说明；不执行代码 | M1-02 | M    |
 | M1-05 | FS 工具（read/write/edit/glob/grep）                                   | ⏸ Service     | 依赖 M1-01；路径逃逸拦截           | M1-01 | M    |
 | M1-06 | Shell/终端 + 后台任务                                                  | ⏸ Service     | 依赖 M1-01；危险命令确认           | M1-01 | M    |
 | M1-07 | Git 工具 + 快照回滚/PR                                                 | ⏸ Service     | 依赖 M1-01/02                      | M1-01 | M    |
-| M1-08 | 文件树 + 终端 + 后台任务 UI                                            | Web            | 只读文件树先做；终端随 M1-06       | M1-03 | M    |
-| M1-09 | Diff review UI（逐文件/行评论/应用）                                   | Web            | 大 diff 虚拟滚动；评论可提交       | M1-04 | M    |
+| M1-08 | 文件树 + 终端 + 后台任务 UI                                            | Web           | 只读文件树先做；终端随 M1-06       | M1-03 | M    |
+| M1-09 | Diff review UI（逐文件/行评论/应用）                                   | Web           | 大 diff 虚拟滚动；评论可提交       | M1-04 | M    |
 | M1-10 | 预览 URL                                                               | ⏸ Service/Web | 依赖 M1-01；TTL/鉴权               | M1-01 | M    |
-| M1-11 | 权限策略：per-tool/connector/tenant                                    | Service/Web    | 设置页可调档；审计可见             | M1-04 | M    |
-| M1-12 | Coding Skills：审查/问答/补丁建议（执行类后置）                        | Service        | 每个技能有 schema 与交付物         | M1-04 | M    |
-| M1-13 | Plan/Todo/Goal/ask_user_question + 上下文压缩/token 预算               | Service/Web    | 计划可编辑；Todo 实时；超预算终止  | —     | L    |
+| M1-11 | 权限策略：per-tool/connector/tenant                                    | Service/Web   | 设置页可调档；审计可见             | M1-04 | M    |
+| M1-12 | Coding Skills：审查/问答/补丁建议（执行类后置）                        | Service       | 每个技能有 schema 与交付物         | M1-04 | M    |
+| M1-13 | Plan/Todo/Goal/ask_user_question + 上下文压缩/token 预算               | Service/Web   | 计划可编辑；Todo 实时；超预算终止  | —     | L    |
 
 ### M2 Office + 体验（4–6 周）
 
@@ -175,7 +175,7 @@
 | M3-08 | 用量/配额/BYOK（Stripe 暂缓）             | Service/Web | Free 额度生效；BYOK 不扣 credits；超限 402 | M0-11    | M    |
 | M3-09 | 限流/防滥用（Redis/进程内降级）           | Service/Web | 租户/IP/Key 三级                           | M3-01    | M    |
 | M3-10 | 文档站/SDK（TS/Python）/示例              | Web/Site    | 5 分钟跑通 quickstart                      | M3-02/04 | M    |
-| M3-11 | 订阅/支付（Stripe 后置）                  | Service/Web | 自助升级/发票                              | M3-08    | ⏸   |
+| M3-11 | 订阅/支付（Stripe 后置）                  | Service/Web | 自助升级/发票                              | M3-08    | ⏸    |
 
 ### M4 规模化
 

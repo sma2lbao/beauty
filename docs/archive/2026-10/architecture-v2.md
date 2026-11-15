@@ -13,21 +13,21 @@
 
 ## 0. 最终选型（本轮拍板）
 
-| 领域              | 生产                                                    | 开发环境                                     | 本期状态                                              |
-| ----------------- | ------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------- |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）           | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 实施                                               |
-| Redis             | **云 Redis，提供 URL**                                  | **本地 Redis**                               | ✅ 实施（限流/锁/短期缓存；不作为关键队列）           |
+| 领域              | 生产                                                    | 开发环境                                     | 本期状态                                             |
+| ----------------- | ------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）           | **本地 SQLite**（`AUTO_CREATE_TABLES=true`） | ✅ 实施                                              |
+| Redis             | **云 Redis，提供 URL**                                  | **本地 Redis**                               | ✅ 实施（限流/锁/短期缓存；不作为关键队列）          |
 | 对象存储          | **暂不引入**                                            | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）   |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**             | 同左（SQLite 下用文件/内存 worker）          | ✅ 实施；Temporal / Inngest **暂不做**                |
-| 沙箱              | **microsandbox provider（P1）**                         | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.1）     |
-| 身份              | **沿用自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 实施；Logto **不用**                               |
-| 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                          |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**             | 同左（SQLite 下用文件/内存 worker）          | ✅ 实施；Temporal / Inngest **暂不做**               |
+| 沙箱              | **microsandbox provider（P1）**                         | 本地 microsandbox / fake provider            | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.1）    |
+| 身份              | **沿用自建 account-service**（邮箱+密码，补社交 OAuth） | 同左（token 模式兜底）                       | ✅ 实施；Logto **不用**                              |
+| 可观测            | **Sentry 官方服务** + 结构化日志                        | 同左（本地日志）                             | ✅ 实施；Langfuse **暂不做**                         |
 | 支付              | **不做 Stripe**                                         | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额 + BYOK，订阅后续 |
 | 事务邮件          | **暂不做 Resend**                                       | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                 |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）               | 本地 Vite                                    | ✅ 实施                                               |
-| BFF               | **FastAPI 服务**（同域 `/api`）                         | 本地 uvicorn                                 | ✅ 实施                                               |
-| LLM 推理          | **继续用 API**（litellm 网关）                          | 本地/API                                     | ✅ 实施                                               |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）            | 本地 Next dev                                | ✅ 实施                                               |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）               | 本地 Vite                                    | ✅ 实施                                              |
+| BFF               | **FastAPI 服务**（同域 `/api`）                         | 本地 uvicorn                                 | ✅ 实施                                              |
+| LLM 推理          | **继续用 API**（litellm 网关）                          | 本地/API                                     | ✅ 实施                                              |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）            | 本地 Next dev                                | ✅ 实施                                              |
 | 多区域 / 数据驻留 | 不做                                                    | —                                            | ⏸ 后续                                               |
 
 ### 0.1 两种部署形态（同一套代码）
@@ -62,7 +62,7 @@
 | 008 | 计费：usage ledger + Free 配额 + BYOK    | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接                                     |
 | 009 | MCP Server + Client                      | ✅ 采用（M3）          | 开放平台核心                                             |
 | 010 | Tool Registry + Skill + Workspace 类型   | ✅ 采用                | coding/办公共用运行时                                    |
-| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                | 当前只要求本地启动；方案见 §10.3，恢复时再实施           |
+| 011 | 内网/离线部署可启动                      | ⏸ 暂缓                 | 当前只要求本地启动；方案见 §10.3，恢复时再实施           |
 
 ---
 
