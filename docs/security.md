@@ -46,6 +46,10 @@
 - 三个 ecosystem 周更（github-actions / npm / pip），已分组（dev 与 prod 分组、patch/minor 自动、major 手工评估），
   配置见 `.github/dependabot.yml`。
 - dependabot PR 同样过全部门禁（lint/test/build/security-audit）。
+- **major 批量落地**：Actions 版本与工具链 major（eslint/prettier/pytest/ruff/vite…）不逐个 PR 验证，
+  统一合成一个提交在主分支应用并重生成 lockfile，理由：分支基于旧 main 会与已推进的锁文件冲突，
+  逐个跑 35 job 全量 CI 既慢又容易互相覆盖；一次改动只需一次全量验证（2026-11-15 的
+  Actions 一批与 npm/pip 三批即按此办理，见提交 d0e8e92、87f2688、3864c58、c2b29bc）。
 
 ## 5. 报告漏洞
 
