@@ -145,3 +145,19 @@ class SandboxProvider(Protocol):
     ) -> ShellSession:
         """在沙箱内开一个持久交互式 shell;起不来抛 `sandbox.provider_error`。"""
         ...
+
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """接管沙箱里**已经存在**的 shell 进程(跨实例/重启后恢复)。
+
+        pid 是原先 `open_shell` 返回的会话在 provider 侧的进程号;provider 不支持
+        重连时必须抛 `sandbox.provider_unsupported`,让上层把会话标记为失联,
+        而不是假装还在管。
+        """
+        ...

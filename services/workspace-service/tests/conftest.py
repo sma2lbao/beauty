@@ -45,10 +45,12 @@ class FakeShellSession:
 
     tty = True
 
-    def __init__(self, *, cwd: str, cols: int, rows: int) -> None:
+    def __init__(self, *, cwd: str, cols: int, rows: int, pid: int = 0) -> None:
         self.cwd = cwd
         self.cols = cols
         self.rows = rows
+        # provider 侧进程号:会话登记表用它做跨实例接管
+        self.pid = pid
         self.written: list[bytes] = []
         self.exit_code: int | None = None
         self.closed = False
@@ -118,6 +120,10 @@ class FakeSandboxProvider:
         self.shells: list[FakeShellSession] = []
         self.shell_calls: list[dict[str, Any]] = []
         self.fail_shell = False
+        # 接管记录:attach_shell 的入参(验证换实例后按 pid 重连)
+        self.attach_calls: list[dict[str, Any]] = []
+        self.fail_attach = False
+        self._next_pid = 1000
 
     async def create(self, spec: SandboxSpec) -> None:
         if self.fail_create:
@@ -167,9 +173,33 @@ class FakeSandboxProvider:
         self.shell_calls.append(
             {"name": name, "cwd": cwd, "env": env, "cols": cols, "rows": rows}
         )
-        shell = FakeShellSession(cwd=cwd or "", cols=cols, rows=rows)
+        self._next_pid += 1
+        shell = FakeShellSession(
+            cwd=cwd or "", cols=cols, rows=rows, pid=self._next_pid
+        )
         self.shells.append(shell)
         return shell
+
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = 120,
+        rows: int = 32,
+    ) -> FakeShellSession:
+        """按 pid 重新挂上既有会话(模拟 e2b `pty.connect`)。
+
+        失败也先记一次调用:真实 provider 是"连上了但对方拒绝",测试要能
+        区分"根本没尝试"和"尝试了但失败"。
+        """
+        self.attach_calls.append({"name": name, "pid": pid, "cols": cols, "rows": rows})
+        if self.fail_attach:
+            raise UpstreamError("sandbox.provider_error", "模拟接管失败")
+        for shell in self.shells:
+            if shell.pid == pid:
+                return shell
+        raise UpstreamError("sandbox.provider_error", "模拟会话已不存在")
 
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         self.files.setdefault(name, {})[path] = data

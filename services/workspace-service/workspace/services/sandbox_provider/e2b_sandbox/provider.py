@@ -304,6 +304,40 @@ class E2bSandboxProvider:
             ) from exc
         return E2bShellSession(sandbox, handle, name=name, queue=queue)
 
+    async def attach_shell(
+        self,
+        name: str,
+        pid: int,
+        *,
+        cols: int = DEFAULT_SHELL_COLS,
+        rows: int = DEFAULT_SHELL_ROWS,
+    ) -> ShellSession:
+        """按 pid 重挂到沙箱里还活着的 pty(换实例/重启后接管会话)。
+
+        `pty.connect` 只重挂数据通道、不新起进程:pid 已经不存在时它会失败,
+        由上层把会话标记失联,而不是假装还在管。
+        """
+        sdk = _import_e2b()
+        sandbox = await self._resolve(name)
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+        async def on_data(chunk: bytes) -> None:
+            await queue.put(bytes(chunk))
+
+        try:
+            # timeout=0:长驻 shell,不因流空闲超时断开(与 open_shell 一致)
+            handle = await sandbox.pty.connect(pid, on_data, timeout=0)
+        except Exception as exc:
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "沙箱内的 shell 会话已不存在,无法接管",
+                details=_error_details(name, exc),
+            ) from exc
+        # 终端尺寸是 best-effort:重连后按登记表里的尺寸对齐
+        with suppress(Exception):
+            await sandbox.pty.resize(pid, _pty_size(sdk, cols, rows))
+        return E2bShellSession(sandbox, handle, name=name, queue=queue)
+
     async def write_file(self, name: str, path: str, data: bytes) -> None:
         sandbox = await self._resolve(name)
         try:

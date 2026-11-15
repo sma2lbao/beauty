@@ -19,6 +19,7 @@ from workspace.api.health import health_router
 from workspace.api.v1.router import api_router
 from workspace.core.config import Settings
 from workspace.models import sandbox as sandbox_models  # noqa: F401  注册 ORM 元数据
+from workspace.models import shell as shell_models  # noqa: F401
 from workspace.models import workspace as workspace_models  # noqa: F401
 from workspace.services.sandbox import reap_expired
 from workspace.services.sandbox_provider import (
@@ -28,6 +29,7 @@ from workspace.services.sandbox_provider import (
 from workspace.services.shell_sessions import (
     ShellSessionManager,
     build_shell_session_manager,
+    build_shell_session_registry,
 )
 
 logger = structlog.get_logger(__name__)
@@ -101,10 +103,13 @@ async def _startup(app: FastAPI) -> None:
             "仅限本地/单账号可信环境,生产请用 microsandbox"
         )
 
-    # 持久 shell 会话(#2):进程内管理器
+    # 持久 shell 会话(#2):进程内会话表 + 落库的归属登记(跨实例可见)
     shell_sessions: ShellSessionManager | None = app.state.shell_sessions
     if shell_sessions is None:
-        shell_sessions = build_shell_session_manager(settings)
+        registry = build_shell_session_registry(app.state.session_factory, settings)
+        shell_sessions = build_shell_session_manager(
+            settings, registry=registry, provider=provider
+        )
     app.state.shell_sessions = shell_sessions
 
     # 过期回收 + shell 会话回收:后台任务,失败不阻塞启动;shutdown 取消

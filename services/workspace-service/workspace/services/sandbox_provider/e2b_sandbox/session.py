@@ -38,6 +38,11 @@ class E2bShellSession:
         self._watcher = asyncio.create_task(self._watch())
 
     @property
+    def pid(self) -> int:
+        """pty 进程号(写进会话登记表,用于换实例后 `pty.connect` 接管)。"""
+        return int(self._handle.pid)
+
+    @property
     def exit_code(self) -> int | None:
         return self._exit_code
 

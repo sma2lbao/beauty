@@ -44,6 +44,7 @@
 | [docs/design/langfuse-observability.md](./design/langfuse-observability.md)   | Langfuse 观测接入（纯 OTel 写入/属性映射/span 模型/自托管 compose 观测 profile/分期路线）                                                                                                                                                     | Lead       | 观测栈变化时               |
 | [docs/design/model-routing.md](./design/model-routing.md)                     | 模型路由契约(P1-G):选择/fallback/结构化输出/多模态                                                                                                                                                                                            | Lead       | 模型路由契约变化时         |
 | [docs/design/connector.md](./design/connector.md)                             | 连接器平台设计（平台架构/OAuth 与凭证托管/实施清单;支持 OAuth 与静态令牌两种连接方式;**当前无内置 provider**;Notion 经官方 MCP 接入,`/connectors` 为 MCP 预设一键授权 +「我的 MCP 服务」区(MCP 唯一入口;`/mcp` 仅兼容直链),写操作对话内确认） | Lead       | 连接器契约或实施进度变化时 |
+| [docs/design/persistent-shell.md](./design/persistent-shell.md)               | 持久 shell 的跨实例归属与接管（P1-L/M2 后半：`shell_sessions` 表/所有者租约/原子认领/provider 重连/孤儿回收/错误契约/残余）                                                                                                                   | Lead       | 会话归属或接管语义变化时   |
 | [docs/research/connector/](./research/connector/)                             | 连接器调研（WorkBuddy 对标/主流方案/飞书与 Notion 接入）                                                                                                                                                                                      | Lead       | 调研结论变化时             |
 | [docs/gap-2026-11/](./gap-2026-11/)                                           | 能力缺口复核（**最新真源**，2026-11-09 基线 8576485，2026-11-10 更新）                                                                                                                                                                        | Lead       | 缺口状态变化时             |
 | [docs/gap-2026-10/](./gap-2026-10/)                                           | 历史缺口池（2026-10 快照，含市场矩阵与审计分册；结论以 gap-2026-11 为准）                                                                                                                                                                     | Lead       | 只留痕、不追加结论         |
@@ -81,6 +82,7 @@
 - 事件分类学（thread/turn/item、plan 一等 item、`/items` 投影） → [design/event-taxonomy.md](./design/event-taxonomy.md)（唯一）
 - 公网搜索工具（web_search 契约 / 提供方适配 / 出口校验） → [design/web-search.md](./design/web-search.md)（唯一）
 - 后台任务工具（job_start/job_output/job_kill / 沙箱作业目录 / lazy 超时） → [design/background-jobs.md](./design/background-jobs.md)（唯一）
+- 持久 shell 的跨实例归属（归属表 / 所有者租约 / 原子认领 / 接管与孤儿回收） → [design/persistent-shell.md](./design/persistent-shell.md)（唯一）
 - 子代理委派契约（run 树/工具面/生命周期/用量） → [design/subagents.md](./design/subagents.md)（唯一）
 - 模型路由契约（per-run 选择/fallback/结构化输出/多模态） → [design/model-routing.md](./design/model-routing.md)（唯一）
 - 评测与成本看板（eval harness 用例/断言/基线 / 平台成本聚合口径） → [design/eval-and-cost-dashboard.md](./design/eval-and-cost-dashboard.md)（唯一）
