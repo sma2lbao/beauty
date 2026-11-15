@@ -1,19 +1,4 @@
-"""E2B 云沙箱实现:microVM 跑在 E2B 控制面,支持官方云与兼容 E2B 的厂商。
-
-与 `microsandbox` provider 的差异:
-
-- 沙箱不在宿主运行,SDK 通过 HTTPS/envd 远程操作(异步 `AsyncSandbox`);
-- `exec` 由 SDK 拼成 `/bin/bash -lc <cmd>`,argv 先经 `shlex.join` 转义;
-- CPU/内存由 E2B 模板决定,`SandboxSpec.cpus/memory_mb` 仅记录、不下发;
-- 名称 → `sandbox_id` 映射缓存在进程内,进程重启后用 metadata 过滤从控制面
-  查回,保证 exec/destroy 在重启后仍可用;
-- 持久 shell 用 `sandbox.pty`(真 PTY),输出经回调进内存队列。
-
-兼容厂商(如阿里云 Agent Sandbox 极速版)只换 `E2B_API_KEY`/`E2B_DOMAIN`
-即可,代码路径完全一致。
-
-SDK 惰性导入:测试 monkeypatch 的正是本模块的 `_import_e2b`。
-"""
+"""E2B 沙箱 provider:创建/查回/执行/文件与目录/销毁。"""
 
 from __future__ import annotations
 
@@ -22,14 +7,13 @@ import os
 import shlex
 import time
 from contextlib import suppress
-from datetime import datetime
 from pathlib import PurePosixPath
 from types import ModuleType
 from typing import Any
 
 from common.errors import AppError, NotFoundError, UpstreamError
 
-from .protocols import (
+from workspace.services.sandbox_provider.protocols import (
     DEFAULT_EXEC_TIMEOUT_SECONDS,
     DEFAULT_MAX_OUTPUT_BYTES,
     DEFAULT_SHELL_COLS,
@@ -39,149 +23,18 @@ from .protocols import (
     SandboxSpec,
     ShellSession,
 )
-from .utils import _error_details, _truncate_text
+from workspace.services.sandbox_provider.utils import _error_details, _truncate_text
 
-# 沙箱名称/账号写进 E2B metadata:重启后按名字查回 sandbox_id 的唯一依据。
-_META_NAME = "beauty_sandbox_name"
-_META_ACCOUNT = "beauty_account_id"
-# 控制面列沙箱时的每页大小与最多翻页数(按 metadata 精确过滤,通常一页命中)
-_LIST_PAGE_SIZE = 50
-_LIST_MAX_PAGES = 10
-_ENTRY_KINDS = {"file": "file", "dir": "dir", "symlink": "symlink"}
-
-
-def _import_e2b() -> ModuleType:
-    """惰性导入 e2b:未安装时给出明确的 502 错误码。"""
-    try:
-        import e2b
-    except ImportError as exc:  # pragma: no cover - 依赖已声明,仅防御性兜底
-        raise UpstreamError(
-            "sandbox.provider_unavailable",
-            "e2b SDK 未安装,无法提供 E2B 云沙箱运行时",
-        ) from exc
-    return e2b
-
-
-def _entry_path(entry: Any, parent: str) -> str:
-    """条目在沙箱内的绝对路径;SDK 偶尔只回相对路径,按列举目录归一。"""
-    raw = str(getattr(entry, "path", "") or "")
-    if not raw or ".." in PurePosixPath(raw).parts:
-        return ""
-    candidate = raw if raw.startswith("/") else f"{parent.rstrip('/')}/{raw}"
-    normalized = PurePosixPath(candidate).as_posix()
-    return normalized if normalized.startswith("/") else ""
-
-
-def _entry_kind(entry: Any) -> str:
-    """FileType 枚举/字符串 → 契约 kind;未知取值一律 other(不猜)。"""
-    raw = getattr(entry, "type", None)
-    key = str(getattr(raw, "value", raw) or "").lower()
-    return _ENTRY_KINDS.get(key, "other")
-
-
-def _entry_size(entry: Any) -> int:
-    return max(0, int(getattr(entry, "size", 0) or 0))
-
-
-def _entry_modified(entry: Any) -> float | None:
-    value = getattr(entry, "modified_time", None)
-    if isinstance(value, datetime):
-        return value.timestamp()
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _pty_size(sdk: ModuleType, cols: int, rows: int) -> Any:
-    """PtySize 不在 e2b 顶层导出;测试假模块可直接提供 `PtySize`。"""
-    size_cls = getattr(sdk, "PtySize", None)
-    if size_cls is None:  # pragma: no cover - 真 SDK 的兜底路径
-        from e2b.sandbox.commands.command_handle import PtySize as size_cls
-    return size_cls(cols=cols, rows=rows)
-
-
-class E2bShellSession:
-    """`sandbox.pty` 上的持久交互式 shell(真 TTY)。
-
-    输出由 pty 的 on_data 回调写入 `asyncio.Queue`;会话结束时 watcher 塞
-    `None` 作为 EOF 标记,读端据此返回 None。
-    """
-
-    tty = True
-
-    def __init__(
-        self,
-        sandbox: Any,
-        handle: Any,
-        *,
-        name: str,
-        queue: asyncio.Queue[bytes | None],
-    ) -> None:
-        self._sandbox = sandbox
-        self._handle = handle
-        self._name = name
-        self._queue = queue
-        self._closed = False
-        self._eof = False
-        self._exit_code: int | None = None
-        self._watcher = asyncio.create_task(self._watch())
-
-    @property
-    def exit_code(self) -> int | None:
-        return self._exit_code
-
-    async def _watch(self) -> None:
-        """等 pty 进程退出;正常/异常退出都只记录退出码,不向上抛。"""
-        try:
-            result = await self._handle.wait()
-            code = getattr(result, "exit_code", None)
-            if code is not None:
-                self._exit_code = int(code)
-        except BaseException as exc:  # noqa: BLE001 - 退出码是可选信息
-            code = getattr(exc, "exit_code", None)
-            if code is not None:
-                self._exit_code = int(code)
-        finally:
-            self._eof = True
-            with suppress(Exception):
-                self._queue.put_nowait(None)
-
-    async def read(self) -> bytes | None:
-        if self._eof and self._queue.empty():
-            return None
-        chunk = await self._queue.get()
-        if chunk is None:
-            self._eof = True
-            return None
-        return chunk
-
-    async def write(self, data: bytes) -> None:
-        if self._closed or self._eof:
-            raise UpstreamError("sandbox.session_closed", "shell 会话已结束,无法再写入")
-        try:
-            await self._sandbox.pty.send_stdin(self._handle.pid, data)
-        except Exception as exc:
-            raise UpstreamError(
-                "sandbox.session_closed",
-                "shell 会话已结束,无法再写入",
-                details=_error_details(self._name, exc),
-            ) from exc
-
-    async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        self._eof = True
-        with suppress(Exception):
-            await self._sandbox.pty.kill(self._handle.pid)
-        self._watcher.cancel()
-        with suppress(BaseException):
-            await self._watcher
-        with suppress(Exception):
-            self._queue.put_nowait(None)
+from .constants import _LIST_MAX_PAGES, _LIST_PAGE_SIZE, _META_ACCOUNT, _META_NAME
+from .helpers import (
+    _entry_kind,
+    _entry_modified,
+    _entry_path,
+    _entry_size,
+    _import_e2b,
+    _pty_size,
+)
+from .session import E2bShellSession
 
 
 class E2bSandboxProvider:
