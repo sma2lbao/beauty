@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_orchestrator.models.memory import Memory
 from agent_orchestrator.services import memory as memory_service
 from agent_orchestrator.services.embeddings import EmbeddingUnavailable
+from agent_orchestrator.services.memory import store as memory_store
 from agent_orchestrator.services.memory_remote import (
     MemoryProviderUnavailable,
     RemoteMemoryProvider,
@@ -96,7 +97,8 @@ async def test_reembed_reports_unavailable_embedding(
     async def _unavailable(texts: list[str], **_: object):
         raise EmbeddingUnavailable("down")
 
-    monkeypatch.setattr(memory_service, "embed_many", _unavailable)
+    # embed_many 由 store 子模块直接调用,替换门面属性不影响那里的查找。
+    monkeypatch.setattr(memory_store, "embed_many", _unavailable)
     async with session_scope(factory) as session:
         with pytest.raises(AppError) as caught:
             await memory_service.reembed_memories(session, ACCOUNT)
