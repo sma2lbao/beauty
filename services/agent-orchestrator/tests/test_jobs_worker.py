@@ -108,6 +108,7 @@ def test_worker_plans_and_approves_run(tmp_path: Path) -> None:
         completed = wait_status("completed")
         assert completed["status"] == "completed"
 
+
 def test_renew_lease_extends_and_is_scoped_to_holder(tmp_path: Path) -> None:
     """续租只对仍持锁的 worker 生效,并推迟租约到期时间。"""
     app = _app(tmp_path, jobs_enabled=False)
@@ -132,9 +133,7 @@ def test_renew_lease_extends_and_is_scoped_to_holder(tmp_path: Path) -> None:
 
             later = now + timedelta(seconds=30)
             assert (
-                await repo.renew_lease(
-                    job.id, "worker-1", lease_seconds=60, now=later
-                )
+                await repo.renew_lease(job.id, "worker-1", lease_seconds=60, now=later)
                 is True
             )
             refreshed = await session.get(Job, job.id)
@@ -211,9 +210,7 @@ def test_finish_failure_requeues_then_marks_failed(tmp_path: Path) -> None:
                 is False
             )
             assert (
-                await repo.finish_failure(
-                    job.id, "worker-1", error="boom", now=now
-                )
+                await repo.finish_failure(job.id, "worker-1", error="boom", now=now)
                 is True
             )
             refreshed = await session.get(Job, job.id)
@@ -269,9 +266,7 @@ def test_heartbeat_renews_lease_until_stopped(tmp_path: Path) -> None:
             session_factory=factory,
         )
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            jobs_worker._heartbeat_loop(container, job.id, stop)
-        )
+        task = asyncio.create_task(jobs_worker._heartbeat_loop(container, job.id, stop))
         try:
             await asyncio.sleep(1.4)
             async with session_scope(factory) as session:
@@ -319,4 +314,3 @@ def test_heartbeat_exits_when_lease_lost(tmp_path: Path) -> None:
         await factory.engine.dispose()
 
     asyncio.run(scenario())
-

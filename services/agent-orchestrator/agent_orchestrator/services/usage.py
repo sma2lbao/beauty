@@ -147,9 +147,7 @@ class UsageReporter:
         """是否已装配 session 工厂(report 走 outbox 而不是直连)。"""
         return self._session_factory is not None
 
-    def attach_session_factory(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def attach_session_factory(self, factory: async_sessionmaker[AsyncSession]) -> None:
         """由 container 在 session 工厂就绪后装配;此后 report 改走 outbox。"""
         self._session_factory = factory
 
@@ -243,14 +241,10 @@ class UsageReporter:
             )
         except Exception as exc:  # noqa: BLE001 - 转成投递错误,让 outbox 记失败重试
             observe_job_failure(kind="usage_delivery")
-            raise UsageDeliveryError(
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
+            raise UsageDeliveryError(f"{type(exc).__name__}: {exc}") from exc
         if resp.status_code >= 400:
             observe_job_failure(kind="usage_delivery")
-            raise UsageDeliveryError(
-                f"http {resp.status_code}: {resp.text[:200]}"
-            )
+            raise UsageDeliveryError(f"http {resp.status_code}: {resp.text[:200]}")
 
     def _headers(self, account_id: str) -> dict[str, str]:
         return {

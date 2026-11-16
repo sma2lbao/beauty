@@ -218,6 +218,7 @@ async def message_has_images(
     rows = await AttachmentRepository(session).list_for_message(account_id, message_id)
     return any(row.content_type in IMAGE_TYPES for row in rows)
 
+
 #: 默认多模态预算(P1-G §7;Settings 里同名配置可覆盖)
 DEFAULT_IMAGE_MAX_COUNT = 4
 DEFAULT_IMAGE_MAX_BYTES = 5_242_880

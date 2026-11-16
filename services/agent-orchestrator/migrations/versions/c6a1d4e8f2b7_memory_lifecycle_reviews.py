@@ -55,9 +55,7 @@ def upgrade() -> None:
             "ix_memories_superseded_by", ["superseded_by"], unique=False
         )
     # 存量记忆视为自创建起有效;已有失效语义的行不受影响(新列刚加,全为 NULL)。
-    op.execute(
-        "UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL"
-    )
+    op.execute("UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL")
     op.create_table(
         "memory_reviews",
         sa.Column("id", sa.String(length=32), nullable=False),
@@ -68,9 +66,7 @@ def upgrade() -> None:
         ),
         sa.Column("kind", sa.String(length=16), nullable=False, server_default="note"),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column(
-            "confidence", sa.Float(), nullable=False, server_default="0.0"
-        ),
+        sa.Column("confidence", sa.Float(), nullable=False, server_default="0.0"),
         sa.Column("evidence_quote", sa.Text(), nullable=True),
         sa.Column(
             "source_type", sa.String(length=16), nullable=False, server_default="chat"

@@ -48,6 +48,8 @@ if TYPE_CHECKING:  # 仅用于类型标注,避免 services 层与工具层的导
     ToolkitFactory = Callable[[str], ToolRegistry]
     #: 外部工具(MCP/skill_run)工厂:按账号现取,与 run 执行图共用
     ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
+
+
 def _schedule_usage_report(
     session: AsyncSession, account_id: str, samples: list[usage_service.UsageSample]
 ) -> bool:
