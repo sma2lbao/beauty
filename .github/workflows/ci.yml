@@ -496,12 +496,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=web
 
   # ------------------------------------------------------------------
-  # Job 10/10：golden-run——R-33 黄金 run 端到端冒烟（进程内 ASGI、零网络、脚本化 FakeLLM）
-  # 本地等价：bash scripts/golden-run/golden-run.sh
-  # 断言 REST/SSE 契约、run 状态机、交付物字节与 sqlite 落库；无需模型/Docker/Postgres/Redis。
+  # Job 10/10：e2e——黄金 run 端到端冒烟（R-33）+ eval 行为回归
+  # 本地等价：bash scripts/golden-run/golden-run.sh / bash scripts/eval/eval.sh
+  # 第一步断言 REST/SSE 契约、run 状态机、交付物字节与 sqlite 落库；第二步跑 3 个
+  # 评测套件并与 evals/baseline.json 比对（事件集/工具集/token drift）。两步都是
+  # 进程内 ASGI + 脚本化 FakeLLM + 零网络，无需模型/Docker/Postgres/Redis。
   # ------------------------------------------------------------------
-  golden-run:
-    name: golden-run (e2e smoke)
+  e2e:
+    name: e2e (golden-run + eval)
     runs-on: ubuntu-latest
     needs: setup
     steps:
@@ -527,3 +529,8 @@ jobs:
       - name: Golden run (R-33)
         # 失败时脚本打印 9 阶段表并以 1 退出；--keep 只在本地排障时用。
         run: bash scripts/golden-run/golden-run.sh
+
+      - name: Eval harness (behavior drift vs baseline)
+        # 退出码 0 = 全通过且无 drift；1 = 有用例失败；2 = 仅与基线 drift
+        # （人工确认行为变化合理后再 --update-baseline，别在 CI 里自动更新）。
+        run: bash scripts/eval/eval.sh

@@ -283,6 +283,6 @@ GET /v1/admin/cost/summary?days=30（网关 /api/account/v1/admin/cost/summary�
 
 ### 7.5 残余
 
-- eval 未接 CI（需 `--update-baseline` 人工维护）、token 为估算、`TestClient` 同进程不覆盖真实网络与多进程；无 live 模型评测。
+- eval 已接 CI（2026-11-16：`.github/workflows/ci.yml` 的 `e2e` job 第二步跑 `scripts/eval/eval.sh`；基线仍需 `--update-baseline` 人工维护）、token 为估算、`TestClient` 同进程不覆盖真实网络与多进程；无 live 模型评测。
 - 成本聚合读 `usage_events` 全表（无 `created_at` 索引）、topN 在服务层排序、无缓存；无请求级/工具级成本下钻、无预算告警/预测。
 - 按天条形为纯 `div`（不引图表库）；`top_accounts` 的 email 查不到时回退账号 id 前缀。
