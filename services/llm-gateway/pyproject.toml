@@ -9,7 +9,7 @@ dependencies = [
     "common",
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
-    "litellm>=1.105.0",
+    "litellm>=1.109.1",
     "uvicorn>=0.53.0",
 ]
 
