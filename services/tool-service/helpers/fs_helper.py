@@ -5,7 +5,9 @@
 {ok:false,error:{...}} 且 exit 0;只有未预期异常才 exit 1。
 
 约定:所有路径都是工作区(BM_WORKSPACE_ROOT,默认 /workspace)内的相对路径;
-helper 自己再做一次 realpath + 拒绝名单校验,不信任上游校验结果(纵深防御)。
+写成 `/workspace/...` 的绝对形式也接受(offload 信封给的就是这个形态,模型会照抄
+回喂),按前缀归一化成相对路径;其余绝对路径与 `~` 一律拒绝。helper 自己再做一次
+realpath + 拒绝名单校验,不信任上游校验结果(纵深防御)。
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 WORKSPACE_ROOT = os.path.realpath(os.environ.get("BM_WORKSPACE_ROOT") or "/workspace")
+#: 绝对路径可用的前缀:真实工作区根,以及模型在提示里看到的虚拟 `/workspace`。
+WORKSPACE_PREFIXES = tuple(dict.fromkeys((WORKSPACE_ROOT, "/workspace")))
 MAX_GREP_FILE_BYTES_FALLBACK = 2 * 1024 * 1024
 MAX_TEXT_BYTES_FALLBACK = 8 * 1024 * 1024
 #: 服务端 unified diff 的字符上限;超出截断,并置 patch_truncated=true。
@@ -66,6 +70,35 @@ def _raw_parts(raw: str) -> list[str]:
     return [part for part in raw.replace("\\", "/").split("/") if part]
 
 
+def _workspace_relative(raw: str) -> str:
+    """把工作区绝对路径归一化成相对路径,其余绝对路径仍拒绝。
+
+    offload 信封、list_dir 摘要里给出的是 `/workspace/x` 这种绝对路径,模型下一轮
+    往往照抄;若这里一律拒绝,大结果就永远读不回来(env 里的 rootfs 目录也接
+    受 `/workspace` 这个虚拟前缀,便于工具侧在本地临时目录上复现同一套行为)。
+    """
+
+    if not raw.startswith("/"):
+        if raw.startswith("~"):
+            raise ToolFailure(
+                "tool.invalid_path",
+                "path 必须是工作区内的路径",
+                "用相对路径,或以 /workspace/ 开头",
+            )
+        return raw
+    normalized = os.path.normpath(raw)
+    for prefix in WORKSPACE_PREFIXES:
+        if normalized == prefix:
+            return "."
+        if normalized.startswith(prefix + "/"):
+            return normalized[len(prefix) + 1 :]
+    raise ToolFailure(
+        "tool.invalid_path",
+        "path 必须是工作区内的路径",
+        "用相对路径,或以 /workspace/ 开头",
+    )
+
+
 def resolve_path(
     raw: Any, policy: dict[str, Any], *, for_write: bool = False
 ) -> tuple[str, str, list[str]]:
@@ -85,12 +118,7 @@ def resolve_path(
         raise ToolFailure(
             "tool.path_too_long", "path 超过长度上限", f"上限 {max_bytes} 字节"
         )
-    if raw.startswith("/") or raw.startswith("~"):
-        raise ToolFailure(
-            "tool.invalid_path",
-            "path 必须是工作区内的相对路径",
-            "不要以 / 或 ~ 开头",
-        )
+    raw = _workspace_relative(raw)
     raw_parts = _raw_parts(raw)
     if ".." in raw_parts:
         raise ToolFailure(
@@ -264,8 +292,11 @@ def tool_read(arguments: dict[str, Any], policy: dict[str, Any]) -> dict[str, An
         raise ToolFailure("tool.not_found", "文件不存在")
     limit = int(arguments.get("limit") or policy.get("default_read_lines") or 200)
     max_lines = int(policy.get("max_read_lines") or 2000)
-    if limit < 1 or limit > max_lines:
-        raise ToolFailure("tool.invalid_args", f"limit 必须在 1..{max_lines} 之间")
+    if limit < 1:
+        raise ToolFailure("tool.invalid_args", "limit 必须 ≥ 1")
+    # 模型常按「整份文件」估行数(如 9000),直接拒绝会让它卡在同一个坑里;
+    # 超限clamp 到硬上限即可——真正的载荷还有 max_read_chars 兜底。
+    limit = min(limit, max_lines)
     offset = int(arguments.get("offset") or 1)
     if offset < 1:
         raise ToolFailure("tool.invalid_args", "offset 从 1 开始")

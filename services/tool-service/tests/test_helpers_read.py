@@ -80,6 +80,24 @@ def test_read_resolves_symlink_inside_workspace(workspace: Path) -> None:
     assert result["content"] == NUMBERED_HELLO
 
 
+def test_read_clamps_limit_above_hard_cap(workspace: Path) -> None:
+    """模型按整份文件估行数(如 9000)不该报错:clamp 到硬上限,载荷还有字符预算兜底。"""
+
+    result = ok_result(workspace, "read", {"path": "a.txt", "limit": 9000})
+    assert result["limit"] == 2000
+    assert result["returned_lines"] == 2
+
+
+def test_read_accepts_workspace_absolute_path(workspace: Path) -> None:
+    """接受 /workspace/... 绝对路径(offload 信封会回喂这种路径)。"""
+
+    result = ok_result(workspace, "read", {"path": "/workspace/a.txt"})
+    assert result["path"] == "a.txt"
+    assert result["content"] == NUMBERED_HELLO
+    # 前缀本身映射成工作区根(目录 → 复用既有的 is_directory 分支)
+    assert error_code(workspace, "read", {"path": "/workspace"}) == "tool.is_directory"
+
+
 @pytest.mark.parametrize(
     ("path", "code"),
     [
@@ -106,7 +124,6 @@ def test_read_rejects_file_above_size_limit(workspace: Path) -> None:
     "arguments",
     [
         {"path": "a.txt", "limit": -1},
-        {"path": "a.txt", "limit": 2001},
         {"path": "a.txt", "offset": -2},
         {"path": "a.txt", "max_line_chars": 10},
         {"path": 1},
