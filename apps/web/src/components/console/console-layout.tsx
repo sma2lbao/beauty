@@ -18,7 +18,7 @@ import { useCommandPaletteShortcut } from '@/features/command-palette/use-comman
 import { useAccountRole } from '@/features/auth/use-account-role';
 import { MOBILE_NAV_ITEMS } from '@/features/sidebar/nav-data';
 import { visibleNavItems } from '@/features/sidebar/nav-state';
-import { useRunStatusNotifications } from '@/lib/run-status-watcher';
+import { useNotificationStream } from '@/lib/notification-stream';
 import { useUiStore } from '@/stores/ui-store';
 
 export function ConsoleLayout() {
@@ -32,9 +32,9 @@ export function ConsoleLayout() {
   const mobileNavItems = visibleNavItems(MOBILE_NAV_ITEMS, isAdmin);
   // 命令面板挂在布局层:任何页面、侧栏隐藏时都能用 ⌘K 打开。
   useCommandPaletteShortcut();
-  // 通知(M0 交互面):全局状态探测(runs 轮询 diff)+ toast 视口挂在布局层,
-  // 保证侧栏隐藏/页面切换时通知不中断;通知中心入口在侧栏账户区与移动端顶栏。
-  useRunStatusNotifications();
+  // 通知(P1-J):SSE 只做缓存失效与 toast,列表/未读来自服务端;挂在布局层,
+  // 保证侧栏隐藏/页面切换时不断流,通知中心入口在侧栏账户区与移动端顶栏。
+  useNotificationStream();
   return (
     <div className="flex h-svh overflow-hidden bg-ha-bg text-ha-text-body">
       {!sidebarVisible ? (

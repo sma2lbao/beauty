@@ -92,6 +92,12 @@ export const queryKeys = {
   hooks: ['hooks'] as const,
 
   /**
+   * 站内通知域(P1-J):['notifications'] 列表键(含未读数)。
+   * 已读/全部已读与 SSE 推送都按该前缀失效,落回服务端状态后重取。
+   */
+  notifications: ['notifications'] as const,
+
+  /**
    * 管理台域(P0-7):列表键把过滤维度拼进键(维度变→自动重查);
    * adminAccounts / adminAuditLogs 是域级前缀键,写操作后统一失效。
    */

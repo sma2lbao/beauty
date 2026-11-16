@@ -1,6 +1,9 @@
 /**
  * 通知中心:铃铛 + 未读角标 + 下拉面板(最近通知/全部已读)。
- * 点击通知项跳转 to 地址;Escape/外点关闭;焦点回到铃铛(基础 a11y)。
+ *
+ * P1-J 通知持久化:列表与未读数来自服务端(use-notifications-model),
+ * 点击单条回写已读;页面关掉也不会丢未读。
+ * 点击通知项跳转 to_path;Escape/外点关闭;焦点回到铃铛(基础 a11y)。
  *
  * 两种挂载形态(面板展开方向由形态决定,避免被视口/侧栏边界裁切):
  * - `icon`(默认):顶栏/移动端顶栏的小铃铛,面板在下方右对齐;
@@ -11,19 +14,20 @@ import { Bell, CheckCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import {
-  unreadCount,
-  useNotificationsStore,
-  type AppNotification,
-} from '@/stores/notifications-store';
-import { relativeTime, runStatusTone } from '@/lib/presentation';
+import { useNotificationsModel } from '@/features/notifications/use-notifications-model';
+import type {
+  AppNotification,
+  NotificationTone,
+} from '@/lib/notifications-api';
+import { relativeTime } from '@/lib/presentation';
 import { cn } from '@/lib/utils';
 
-/** 通知时间(相对)——presentation.relativeTime 吃 ISO 字符串,这里转一下。 */
-function notificationTime(issuedAt: number): string {
-  const iso = new Date(issuedAt).toISOString();
-  return relativeTime(iso);
-}
+const TONE_DOT: Record<NotificationTone, string> = {
+  success: 'bg-ha-success',
+  warning: 'bg-ha-warning',
+  danger: 'bg-ha-danger',
+  info: 'bg-ha-info',
+};
 
 function NotificationRow({
   notification,
@@ -46,28 +50,20 @@ function NotificationRow({
         aria-hidden
         className={cn(
           'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-          unread
-            ? notification.tone === 'success'
-              ? 'bg-ha-success'
-              : notification.tone === 'warning'
-                ? 'bg-ha-warning'
-                : notification.tone === 'danger'
-                  ? 'bg-ha-danger'
-                  : 'bg-ha-info'
-            : 'bg-transparent',
+          unread ? TONE_DOT[notification.tone] : 'bg-transparent',
         )}
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[12px] leading-5 text-ha-text">
           {notification.title}
         </span>
-        {notification.description ? (
+        {notification.body ? (
           <span className="block truncate text-[11px] leading-4 text-ha-faint">
-            {notification.description}
+            {notification.body}
           </span>
         ) : null}
         <span className="block text-[10px] leading-4 text-ha-dim">
-          {notificationTime(notification.issuedAt)}
+          {relativeTime(notification.created_at)}
         </span>
       </span>
     </button>
@@ -90,10 +86,8 @@ export function NotificationCenter({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bellRef = useRef<HTMLButtonElement | null>(null);
   const navigate = useNavigate();
-  const notifications = useNotificationsStore((state) => state.notifications);
-  const readCursor = useNotificationsStore((state) => state.readCursor);
-  const markAllRead = useNotificationsStore((state) => state.markAllRead);
-  const unread = unreadCount({ notifications, readCursor });
+  const { items, unreadCount, isLoading, markRead, markAllRead } =
+    useNotificationsModel();
 
   useEffect(() => {
     if (!open) return;
@@ -121,10 +115,10 @@ export function NotificationCenter({
 
   const openNotification = (notification: AppNotification) => {
     setOpen(false);
-    markAllRead();
-    if (notification.to) {
-      navigate(notification.to);
+    if (notification.read_at === null) {
+      markRead(notification.id);
     }
+    navigate(notification.to_path ?? '/runs');
   };
 
   return (
@@ -132,7 +126,7 @@ export function NotificationCenter({
       <button
         ref={bellRef}
         type="button"
-        aria-label={unread > 0 ? `通知(${unread} 条未读)` : '通知'}
+        aria-label={unreadCount > 0 ? `通知(${unreadCount} 条未读)` : '通知'}
         aria-expanded={open}
         title="通知"
         onClick={() => setOpen((value) => !value)}
@@ -144,7 +138,7 @@ export function NotificationCenter({
       >
         <Bell className="h-4 w-4 shrink-0" />
         {bar ? <span className="truncate text-[13px]">通知</span> : null}
-        {unread > 0 ? (
+        {unreadCount > 0 ? (
           <span
             aria-hidden
             className={cn(
@@ -152,7 +146,7 @@ export function NotificationCenter({
               bar ? 'ml-auto' : 'absolute -right-0.5 -top-0.5',
             )}
           >
-            {unread > 9 ? '9+' : unread}
+            {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         ) : null}
       </button>
@@ -173,7 +167,7 @@ export function NotificationCenter({
             <span className="text-[12px] font-medium text-ha-text">通知</span>
             <button
               type="button"
-              onClick={markAllRead}
+              onClick={() => markAllRead()}
               className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] text-ha-faint transition-colors hover:text-ha-text"
             >
               <CheckCheck className="h-3 w-3" />
@@ -188,16 +182,16 @@ export function NotificationCenter({
                 : 'max-h-80 overflow-y-auto',
             )}
           >
-            {notifications.length === 0 ? (
+            {items.length === 0 ? (
               <p className="px-2.5 py-6 text-center text-[12px] text-ha-dim">
-                还没有通知。
+                {isLoading ? '加载中…' : '还没有通知。'}
               </p>
             ) : (
-              notifications.map((notification) => (
+              items.map((notification) => (
                 <NotificationRow
                   key={notification.id}
                   notification={notification}
-                  unread={notification.issuedAt > readCursor}
+                  unread={notification.read_at === null}
                   onOpen={openNotification}
                 />
               ))
@@ -208,6 +202,3 @@ export function NotificationCenter({
     </div>
   );
 }
-
-// runStatusTone 仅作类型对齐保留引用(通知 tone 与 run 状态色一致),防止将来改色不同步。
-void runStatusTone;

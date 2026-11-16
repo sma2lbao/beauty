@@ -69,6 +69,9 @@ from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.memory_sweeper import (
     start_sweeper as start_memory_sweeper,
 )
+from agent_orchestrator.services.notifications import (
+    start_sweeper as start_notification_sweeper,
+)
 from agent_orchestrator.services.run_timeout_sweeper import (
     start_sweeper as start_run_timeout_sweeper,
 )
@@ -164,6 +167,8 @@ class AppContainer(
         self.run_timeout_task: asyncio.Task[None] | None = None
         self.memory_sweep_task: asyncio.Task[None] | None = None
         self.alert_sweep_task: asyncio.Task[None] | None = None
+        # 通知持久化:run 状态变化 → notifications 表(关掉页面也留未读)
+        self.notification_sweep_task: asyncio.Task[None] | None = None
         self.settings = settings
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
@@ -311,6 +316,12 @@ class AppContainer(
         # 主动告警:纯运维后台任务,只读库;间隔 <= 0 关闭 sweeper
         if settings.alerts_enabled and settings.alerts_sweep_interval_seconds > 0:
             self.alert_sweep_task = start_alert_sweeper(self)
+        # 通知持久化:只写本服务库,独立于 web 端是否在线
+        if (
+            settings.notifications_enabled
+            and settings.notifications_sweep_interval_seconds > 0
+        ):
+            self.notification_sweep_task = start_notification_sweeper(self)
 
     # ------------------------------------------------------------------ 关闭
 
@@ -344,6 +355,11 @@ class AppContainer(
             with suppress(asyncio.CancelledError):
                 await self.alert_sweep_task
             self.alert_sweep_task = None
+        if self.notification_sweep_task is not None:
+            self.notification_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.notification_sweep_task
+            self.notification_sweep_task = None
         for name, closer in reversed(self._closers):
             try:
                 await closer()

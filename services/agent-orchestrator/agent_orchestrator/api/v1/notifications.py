@@ -1,110 +1,73 @@
-"""通知流端点(P1-9b):按账号推送 run 状态变化。
+"""通知端点:未读清单 + 已读 + SSE 增量流(P1-9b / 通知持久化)。
 
-设计:
-- **服务端只做"变化探测"**,不引入新表:每轮扫描 updated_at 落在活跃窗口内的
-  run,与前一轮快照 diff,只推**状态真正变化**且属于"需要提醒"的那几档;
-- 客户端携带 Last-Event-ID 游标:游标是单调递增的序号,断线重连从游标之后继续;
-- 首次连接只建基线,不推历史(与前端 watcher 行为一致,避免刷新弹一堆旧通知)。
+通知的**写入**在后台 sweeper(services/notifications.py 的 sweep_once):它扫最近
+变化的 run,幂等落 notifications 表,所以关掉页面再回来也能看到未读清单。这里只读:
 
-为什么不做成持久化的通知表:当前诉求是"页面开着也能跨标签页/跨会话及时提醒",
-事件本身已经在 run_events 里可回放,通知只是它的一个"提醒投影"。
-真需要"关页面也能收"时(系统通知/桌面推送),再落 notifications 表接 outbox。
+- GET /notifications:通知列表(未读+已读,时间倒序,游标分页);
+- POST /notifications/{id}/read:单条已读;
+- POST /notifications/read-all:全部已读;
+- GET /notifications/stream:SSE 增量尾巴;带 Last-Event-ID 时从游标之后回放,
+  断线重连不漏(旧实现不回放,因为通知当时只是内存 diff)。
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator
-from typing import Annotated, Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent_orchestrator.api.deps import get_account_id, get_container
 from agent_orchestrator.core.config import Settings
-from agent_orchestrator.core.sse import comment_frame, event_id_frame
-from agent_orchestrator.services.notifications import scan_changed
+from agent_orchestrator.schemas.notifications import (
+    NotificationList,
+    NotificationRead,
+    NotificationReadAll,
+)
+from agent_orchestrator.services import notifications as notifications_service
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
-#: 需要提醒的终态/人工介入态(与前端 watcher 的 NOTIFY_ON 保持同一口径)
-NOTIFY_STATUSES = frozenset(
-    {
-        "awaiting_approval",
-        "awaiting_confirmation",
-        "completed",
-        "failed",
-        "blocked",
-    }
-)
+
+@router.get("", response_model=NotificationList)
+async def list_notifications(
+    request: Request,
+    account_id: Annotated[str, Depends(get_account_id)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    before: Annotated[str | None, Query()] = None,
+) -> NotificationList:
+    """账号内通知列表(最新在前);before 传上一页的 next_cursor。"""
+    factory = _session_factory(request)
+    return NotificationList.model_validate(
+        await notifications_service.list_notifications(
+            factory, account_id, limit=limit, before=before
+        )
+    )
 
 
-def notification_for(run: Any) -> dict[str, Any] | None:
-    """run → 通知载荷;不需要提醒的状态返回 None。"""
-    if run.status not in NOTIFY_STATUSES:
-        return None
-    return {
-        "run_id": run.id,
-        "conversation_id": run.conversation_id,
-        "title": run.title,
-        "goal": run.goal,
-        "status": run.status,
-        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
-    }
+@router.post("/{notification_id}/read", response_model=NotificationRead)
+async def mark_notification_read(
+    request: Request,
+    notification_id: str,
+    account_id: Annotated[str, Depends(get_account_id)],
+) -> NotificationRead:
+    """标记单条已读;不存在或不属于本账号一律 404。"""
+    factory = _session_factory(request)
+    return NotificationRead.model_validate(
+        await notifications_service.mark_read(factory, account_id, notification_id)
+    )
 
 
-def diff_notifications(
-    previous: dict[str, str], runs: list[Any]
-) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    """快照 diff:返回(新快照, 需要推送的通知列表)。
-
-    - 首次见到某 run:只建基线(不推),避免连上就刷历史;
-    - 状态变化且落在 NOTIFY_STATUSES:推;
-    - 同一状态重复扫描不推(防抖)。
-    """
-    next_snapshot: dict[str, str] = {}
-    out: list[dict[str, Any]] = []
-    for run in runs:
-        next_snapshot[run.id] = run.status
-        previous_status = previous.get(run.id)
-        if previous_status is None:
-            continue  # 基线
-        if previous_status == run.status:
-            continue
-        payload = notification_for(run)
-        if payload is not None:
-            out.append(payload)
-    return next_snapshot, out
-
-
-async def notification_stream(
-    factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    account_id: str,
-) -> AsyncIterator[str]:
-    """账号级通知流:首帧建立基线,之后只推状态变化。"""
-    snapshot: dict[str, str] = {}
-    seq = 0
-    idle_polls = 0
-    first = True
-    while True:
-        runs = await scan_changed(factory, account_id, settings)
-        if first:
-            snapshot = {run.id: run.status for run in runs}
-            first = False
-            yield comment_frame("ready")
-            await asyncio.sleep(settings.notifications_poll_interval_seconds)
-            continue
-        snapshot, notifications = diff_notifications(snapshot, runs)
-        for payload in notifications:
-            seq += 1
-            yield event_id_frame(seq, "run.status_changed.v1", payload)
-        if not notifications:
-            idle_polls += 1
-            if idle_polls % settings.sse_keepalive_polls == 0:
-                yield comment_frame("keep-alive")
-        await asyncio.sleep(settings.notifications_poll_interval_seconds)
+@router.post("/read-all", response_model=NotificationReadAll)
+async def mark_all_notifications_read(
+    request: Request,
+    account_id: Annotated[str, Depends(get_account_id)],
+) -> NotificationReadAll:
+    """把账号内未读通知全部置为已读。"""
+    factory = _session_factory(request)
+    return NotificationReadAll.model_validate(
+        await notifications_service.mark_all_read(factory, account_id)
+    )
 
 
 @router.get("/stream")
@@ -113,17 +76,20 @@ async def stream_notifications(
     account_id: Annotated[str, Depends(get_account_id)],
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
-    """订阅账号内 run 状态变化(SSE)。
-
-    Last-Event-ID 当前只用于兼容重连语义(服务端不做回放:通知是提醒投影,
-    漏掉一条事件等价于多一次轮询,客户端会从 /runs 列表补齐真实状态)。
-    """
-    del last_event_id
+    """订阅账号内新通知(SSE);Last-Event-ID 是事件 id(游标),服务端据此回放。"""
     container = get_container(request)
     assert container.session_factory is not None
     settings: Settings = container.settings
     return StreamingResponse(
-        notification_stream(container.session_factory, settings, account_id),
+        notifications_service.notification_stream(
+            container.session_factory, settings, account_id, last_event_id
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _session_factory(request: Request):
+    container = get_container(request)
+    assert container.session_factory is not None
+    return container.session_factory

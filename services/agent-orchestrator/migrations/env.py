@@ -21,6 +21,9 @@ from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
 from agent_orchestrator.models import hook as hook_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import memory as memory_models  # noqa: F401  注册 ORM
+from agent_orchestrator.models import (  # noqa: F401  注册 ORM
+    notification as notification_models,
+)
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM
 from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
 

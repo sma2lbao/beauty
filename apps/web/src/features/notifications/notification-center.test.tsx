@@ -1,101 +1,173 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NotificationCenter } from './notification-center';
-import { useNotificationsStore } from '@/stores/notifications-store';
+import {
+  notificationsApi,
+  type AppNotification,
+  type NotificationList,
+} from '@/lib/notifications-api';
+
+vi.mock('@/lib/notifications-api', () => ({
+  notificationsApi: {
+    list: vi.fn(),
+    markRead: vi.fn(),
+    markAllRead: vi.fn(),
+  },
+}));
+
+const list = vi.mocked(notificationsApi.list);
+const markRead = vi.mocked(notificationsApi.markRead);
+const markAllRead = vi.mocked(notificationsApi.markAllRead);
+
+function notification(
+  overrides: Partial<AppNotification> = {},
+): AppNotification {
+  return {
+    id: 'n1',
+    kind: 'run.status',
+    title: '任务已完成',
+    body: '整理周报',
+    tone: 'success',
+    to_path: '/runs',
+    run_id: 'r1',
+    conversation_id: null,
+    payload: {},
+    created_at: '2026-11-16T12:00:00+00:00',
+    read_at: null,
+    ...overrides,
+  };
+}
+
+function page(items: AppNotification[]): NotificationList {
+  return {
+    items,
+    unread_count: items.filter((item) => item.read_at === null).length,
+    next_cursor: null,
+  };
+}
+
+function renderCenter(variant?: 'icon' | 'bar') {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <NotificationCenter variant={variant} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 describe('NotificationCenter', () => {
   beforeEach(() => {
-    useNotificationsStore.getState().reset();
-    localStorage.clear();
+    vi.clearAllMocks();
+    markAllRead.mockResolvedValue({ updated: 0 });
+    markRead.mockResolvedValue(notification({ read_at: 'now' }));
   });
 
-  it('无通知时铃铛无角标,面板提示空态', () => {
-    render(
-      <MemoryRouter>
-        <NotificationCenter />
-      </MemoryRouter>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: '通知' }));
-    expect(screen.getByText('还没有通知。')).toBeInTheDocument();
-  });
-
-  it('未读数展示角标,点开面板可见通知项,全部已读清零角标', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    const store = useNotificationsStore.getState();
-    store.push({ tone: 'success', title: '任务已完成', ttlMs: 0 });
-    vi.spyOn(Date, 'now').mockReturnValue(2_000);
-    store.push({
-      tone: 'danger',
-      title: '任务失败',
-      description: '整理周报',
-      ttlMs: 0,
-    });
-    render(
-      <MemoryRouter>
-        <NotificationCenter />
-      </MemoryRouter>,
-    );
+  it('无通知时铃铛无角标,面板提示空态', async () => {
+    list.mockResolvedValue(page([]));
+    renderCenter();
     expect(
-      screen.getByRole('button', { name: '通知(2 条未读)' }),
+      await screen.findByRole('button', { name: '通知' }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '通知(2 条未读)' }));
+    fireEvent.click(screen.getByRole('button', { name: '通知' }));
+    expect(await screen.findByText('还没有通知。')).toBeInTheDocument();
+  });
+
+  it('未读数来自服务端,点全部已读后角标清零', async () => {
+    list
+      .mockResolvedValueOnce(
+        page([
+          notification({
+            id: 'n2',
+            title: '任务失败',
+            body: '',
+            tone: 'danger',
+          }),
+          notification({ id: 'n1' }),
+        ]),
+      )
+      .mockResolvedValue(
+        page([
+          notification({
+            id: 'n2',
+            title: '任务失败',
+            body: '',
+            tone: 'danger',
+            read_at: 'now',
+          }),
+          notification({ id: 'n1', read_at: 'now' }),
+        ]),
+      );
+    renderCenter();
+
+    const bell = await screen.findByRole('button', {
+      name: '通知(2 条未读)',
+    });
+    fireEvent.click(bell);
     expect(screen.getByText('任务已完成')).toBeInTheDocument();
     expect(screen.getByText('任务失败')).toBeInTheDocument();
     expect(screen.getByText('整理周报')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '全部已读' }));
-    expect(screen.getByRole('button', { name: '通知' })).toBeInTheDocument();
+    await waitFor(() => expect(markAllRead).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '通知' })).toBeInTheDocument(),
+    );
   });
 
-  it('点击通知项关闭面板并标记已读', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    useNotificationsStore
-      .getState()
-      .push({ tone: 'success', title: '任务已完成', to: '/runs', ttlMs: 0 });
-    render(
-      <MemoryRouter>
-        <NotificationCenter />
-      </MemoryRouter>,
+  it('点击通知项关闭面板、回写已读并跳转 to_path', async () => {
+    list.mockResolvedValue(page([notification()]));
+    renderCenter();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '通知(1 条未读)' }),
     );
-    fireEvent.click(screen.getByRole('button', { name: '通知(1 条未读)' }));
     fireEvent.click(screen.getByRole('button', { name: /任务已完成/ }));
-    expect(screen.getByRole('button', { name: '通知' })).toBeInTheDocument();
+
     expect(
       screen.queryByRole('dialog', { name: '通知面板' }),
     ).not.toBeInTheDocument();
-    expect(useNotificationsStore.getState().readCursor).toBe(1_000);
+    // mutate 在微任务里才调用 mutationFn,断言要给一拍
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith('n1'));
   });
 
-  it('bar 形态(侧栏底部整行入口)同样能展开面板', () => {
-    useNotificationsStore
-      .getState()
-      .push({ tone: 'warning', title: '侧栏通知', ttlMs: 0 });
-    render(
-      <MemoryRouter>
-        <NotificationCenter variant="bar" />
-      </MemoryRouter>,
+  it('已读通知点击不再回写已读', async () => {
+    list.mockResolvedValue(page([notification({ read_at: 'now' })]));
+    renderCenter();
+
+    fireEvent.click(await screen.findByRole('button', { name: '通知' }));
+    fireEvent.click(screen.getByRole('button', { name: /任务已完成/ }));
+
+    expect(markRead).not.toHaveBeenCalled();
+  });
+
+  it('bar 形态(侧栏底部整行入口)同样能展开面板', async () => {
+    list.mockResolvedValue(
+      page([notification({ title: '侧栏通知', tone: 'warning' })]),
     );
-    expect(screen.getByText('通知')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '通知(1 条未读)' }));
+    renderCenter('bar');
+
+    expect(await screen.findByText('通知')).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole('button', { name: '通知(1 条未读)' }),
+    );
     expect(
-      screen.getByRole('dialog', { name: '通知面板' }),
+      await screen.findByRole('dialog', { name: '通知面板' }),
     ).toBeInTheDocument();
     expect(screen.getByText('侧栏通知')).toBeInTheDocument();
   });
 
-  it('Escape 关闭面板并把焦点还给铃铛', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    useNotificationsStore
-      .getState()
-      .push({ tone: 'info', title: 'x', ttlMs: 0 });
-    render(
-      <MemoryRouter>
-        <NotificationCenter />
-      </MemoryRouter>,
-    );
-    const bell = screen.getByRole('button', { name: '通知(1 条未读)' });
+  it('Escape 关闭面板并把焦点还给铃铛', async () => {
+    list.mockResolvedValue(page([notification({ title: 'x' })]));
+    renderCenter();
+
+    const bell = await screen.findByRole('button', { name: '通知(1 条未读)' });
     fireEvent.click(bell);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(

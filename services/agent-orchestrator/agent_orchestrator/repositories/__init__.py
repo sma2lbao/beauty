@@ -65,6 +65,9 @@ from agent_orchestrator.repositories.memory import (
 from agent_orchestrator.repositories.message import (
     MessageRepository as MessageRepository,
 )
+from agent_orchestrator.repositories.notification import (
+    NotificationRepository as NotificationRepository,
+)
 from agent_orchestrator.repositories.run import RunRepository as RunRepository
 from agent_orchestrator.repositories.summary import (
     ConversationSummaryRepository as ConversationSummaryRepository,

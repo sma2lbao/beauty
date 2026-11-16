@@ -104,6 +104,9 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     # 主动告警:默认关——后台 sweeper 会在每个用例的库里空转,且端点注册属于
     # 装配行为;告警用例自己显式开启(tests/test_alerts.py)。
     "alerts_enabled": False,
+    # 通知持久化:默认关——后台 sweeper 会在每个用例的库里空转,把需要关注的
+    # run 状态写成通知行,污染既有用例的库状态;通知用例自己显式开启。
+    "notifications_enabled": False,
     "hooks_allow_http": False,
 }
 

@@ -62,6 +62,27 @@ class RunRepository(AccountRepository[Run]):
             order_by=[Run.updated_at.desc(), Run.id.desc()],
         )
 
+    async def list_notifiable_changed(
+        self,
+        since: datetime,
+        *,
+        statuses: tuple[str, ...],
+        limit: int = 200,
+    ) -> list[Run]:
+        """跨账号扫描最近进入"需要提醒"状态的 run(通知持久化 sweeper 用)。
+
+        这是**系统维护查询**(后台任务没有请求账号上下文,不能按账号过滤),
+        与 list_stale_interrupts 同口径;逐 run 写入通知时仍回到 run.account_id
+        的作用域。按 updated_at 正序,保证 limit 截断时先写更早的变化。
+        """
+        statement = (
+            select(Run)
+            .where(Run.updated_at >= since, Run.status.in_(statuses))
+            .order_by(Run.updated_at, Run.id)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
+
     async def list_stale_interrupts(
         self,
         now: datetime,

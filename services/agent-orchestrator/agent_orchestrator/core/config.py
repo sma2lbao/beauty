@@ -42,6 +42,11 @@ class Settings(BaseAppSettings):
     notifications_poll_interval_seconds: float = 2.0
     notifications_lookback_seconds: int = 120  # 只看最近 N 秒内有状态变更的 run
     notifications_batch_limit: int = 100
+    # 通知持久化:后台 sweeper 把需要关注的 run 状态幂等落 notifications 表,
+    # 关掉页面也能看到未读清单;间隔 <= 0 时只读表、不再写入(测试默认关)。
+    notifications_enabled: bool = True
+    notifications_sweep_interval_seconds: float = 30.0
+    notifications_retention_days: int = 30  # 只清已读旧行,未读是待办不自动删
     # 主动告警(docs/design/alerting.md):后台 sweeper 周期评估阈值规则,
     # 状态切换落 alerts 表并打 warning 日志(有 Sentry DSN 时一并上报)。
     # 判定只读本服务库;间隔 <= 0 关闭 sweeper。阈值默认值是按当前部署规模
