@@ -30,10 +30,12 @@ CONTENT_TYPE = "text/markdown"
 SUFFIX = ".md"
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
-# 交付物来源:报告由交付阶段合成,skill/mcp 是技能或工具落下的真实文件
+# 交付物来源:报告由交付阶段合成;skill/mcp 是技能或工具落下的真实文件;
+# sandbox 是执行期写进 /workspace、交付阶段回读登记的成品(见 sandbox_artifacts)
 ARTIFACT_REPORT_SOURCE = "report"
 ARTIFACT_SKILL_SOURCE = "skill"
 ARTIFACT_MCP_SOURCE = "mcp"
+ARTIFACT_SANDBOX_SOURCE = "sandbox"
 
 _MAX_FILENAME = 200
 _MAX_TITLE = 200

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from common.auth import JwtVerifier
 
+from agent_orchestrator.context.sandbox_files import SandboxWorkspaceFiles
+from agent_orchestrator.services import sandbox_artifacts
 from agent_orchestrator.services.artifacts import build_store
 from agent_orchestrator.services.embeddings import (
     build_embedding_provider,
@@ -102,6 +104,17 @@ class DepsAssemblyMixin:
             )
             self._closers.append(("sandbox client", sandbox.aclose))
         self._publish("sandbox_client", sandbox)
+
+        # 交付阶段回收沙箱成品(§7 扩展):与 hooks 同范式装进程级读取器,
+        # 交付函数不必逐层传参;沙箱不可用时保持 None,回收自然跳过。
+        sandbox_artifacts.configure(
+            SandboxWorkspaceFiles(
+                sandbox,
+                ttl_seconds=settings.context_sandbox_ttl_seconds,
+            )
+            if sandbox is not None
+            else None
+        )
 
         # stdio MCP 沙箱池:沙箱客户端就绪后装配;两个开关都开才建池
         pool = self.mcp_stdio_pool

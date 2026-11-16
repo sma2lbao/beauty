@@ -51,10 +51,15 @@ from agent_orchestrator.graph.ports import (
     append_hook_note,
     build_hook_payload,
 )
+from agent_orchestrator.graph.reply_clean import strip_tool_markup
 from agent_orchestrator.graph.runtime import runtime_from_config
 from agent_orchestrator.graph.state import RunGraphState
 
-MAX_TOOL_ROUNDS = 5  # execute 内 function-calling 轮次上限(读→查→截图→收束)
+# execute 内 function-calling 轮次上限(读→查→写→自检→收束)。
+# 5 轮太紧:真实的"写文件"任务常在 read/list_dir/write/exec 自检之间就耗尽,
+# 剩下的轮次不够,模型只能把成品塞进正文;提到 12 只是放宽上限,
+# 模型提前收敛时循环照常 break,不多花 token。
+MAX_TOOL_ROUNDS = 12
 MAX_CONFIRM_CYCLES = 3  # 写操作人工确认轮次上限(防确认循环)
 
 
@@ -348,11 +353,13 @@ def make_execute_node(
         if exhausted and records:
             # 轮次用尽仍在要工具:再给一次"不带工具"的收束调用,把已拿到的
             # 工具结果收敛成正文;否则下游只能拿到空正文,误报成"没读到内容"。
-            content = await _text_reply(
-                llm, messages, phase=delta.PHASE_EXECUTE, runtime=runtime
+            content = strip_tool_markup(
+                await _text_reply(
+                    llm, messages, phase=delta.PHASE_EXECUTE, runtime=runtime
+                )
             )
         else:
-            content = reply.content if reply is not None else ""
+            content = strip_tool_markup(reply.content if reply is not None else "")
             if content:
                 # function-calling 的收口走的是 complete,不是 _text_reply 的
                 # 流式调用;这里补报一次最终正文(§6.3),让"有工具"的 run

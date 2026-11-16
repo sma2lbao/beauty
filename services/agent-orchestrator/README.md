@@ -224,7 +224,8 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
 
 - 交付物(§7):一个 run 可以有**多件**交付物(`run_artifacts` 已去唯一约束)。
   deliver 合成的成品报告是一件(`source=report`),技能产物每个文件一件
-  (`source=skill`),工具产出的外链文件每件一个(`source=mcp`,见下);
+  (`source=skill`),工具产出的外链文件每件一个(`source=mcp`,见下),执行期写进
+  工作区的可运行成品每件一个(`source=sandbox`,见下);
   取件 `GET /runs/{id}/artifacts`(列表)/ `GET /runs/{id}/artifacts/{id}/download`
   (原始字节 + 附件头;旧的 `GET /runs/{id}/artifact` 仍返回主交付物文本,兼容保留);
   事件 `run.delivered.v1` 记 `artifact_ids` 与逐件的 source/filename/content_type/
@@ -243,6 +244,16 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `TIMEOUT_SECONDS`(20s);私网与回环地址直接拒绝(SSRF)、不跟随重定向、
   `Content-Disposition` 的 `filename*` 优先取名;抓取失败如实记进
   `run.delivered.v1` 的 `download_errors`,**不拖垮交付**(报告照常落库);
+- 沙箱成品回收(§7):执行期用 `write` 写进沙箱 `/workspace` 的**可运行成品**
+  (小游戏/网页 `.html`、`.svg`、`.png/.jpg/.gif/.webp`、`.pdf`)在交付阶段被读回
+  宿主,登记为 `source=sandbox` 的独立交付物——否则「写个贪吃蛇」交付给用户的只有
+  一段 Markdown,HTML 永远留在沙箱里。实现见 `services/sandbox_artifacts.py`:
+  路径取自工具审计记录的 `paths`(只认成功调用),相对路径补成 `/workspace/...`,
+  `..` 与工作区外绝对路径一律拒绝;读取作用域与工具侧同口径(`scope_key_for`,
+  会话优先、否则按 run)。约束:需要 `SANDBOX_ENABLED=true` 且文件工具可用
+  (`TOOL_SERVICE_ENABLED=true`),未装配沙箱时整体跳过;单件上限 5MB、每 run 按
+  `ARTIFACT_DOWNLOAD_MAX_FILES` 限件;同一路径用 `source_url` 去重(重放不重复落件);
+  读不到/超限记进 `run.delivered.v1` 的 `sandbox_errors`,不拖垮交付;
 - outbox 运维面:`GET /outbox/events`(可按 `status` 过滤)、`GET /outbox/stats`、
   `POST /outbox/events/{id}/retry`、`POST /outbox/retry-failed`——失败事件可见、
   可人工重放(重放回 pending 并清零尝试数;下次投递成功才清 `last_error`);

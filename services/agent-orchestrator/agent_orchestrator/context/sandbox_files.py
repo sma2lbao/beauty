@@ -110,13 +110,22 @@ class SandboxWorkspaceFiles:
         self._ids[cache_key] = info.id
         return info.id
 
-    async def read_text(self, account_id: str, scope_key: str, path: str) -> str | None:
-        """读文本文件;不存在/不可读/解码失败一律返回 None(调用方降级)。"""
+    async def read_bytes(
+        self, account_id: str, scope_key: str, path: str
+    ) -> bytes | None:
+        """读原始字节(交付阶段回收成品用);读失败一律 None,由调用方决定降级。"""
 
         try:
             sandbox_id = await self._sandbox_id(account_id, scope_key)
-            data = await self.sandbox.read_file(account_id, sandbox_id, path)
+            return await self.sandbox.read_file(account_id, sandbox_id, path)
         except Exception:  # noqa: BLE001 - 读失败降级为"没有文件"
+            return None
+
+    async def read_text(self, account_id: str, scope_key: str, path: str) -> str | None:
+        """读文本文件;不存在/不可读/解码失败一律返回 None(调用方降级)。"""
+
+        data = await self.read_bytes(account_id, scope_key, path)
+        if data is None:
             return None
         return data.decode("utf-8", errors="replace")
 

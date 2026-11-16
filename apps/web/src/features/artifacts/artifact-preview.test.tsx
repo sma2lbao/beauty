@@ -48,6 +48,28 @@ describe('ArtifactPreview', () => {
     expect(screen.getByText(/请下载后查看/)).toBeInTheDocument();
   });
 
+  it('HTML 成品用沙箱 iframe 直接跑起来', () => {
+    render(
+      <ArtifactPreview
+        artifact={{
+          title: '贪吃蛇',
+          kind: 'html',
+          filename: 'snake.html',
+          content_type: 'text/html',
+          content: '<!doctype html><h1>贪吃蛇</h1>',
+        }}
+      />,
+    );
+
+    const frame = screen.getByTitle('贪吃蛇');
+    expect(frame).toHaveAttribute('srcdoc', '<!doctype html><h1>贪吃蛇</h1>');
+    // 不给 allow-same-origin:页面脚本拿不到父窗口的存储与鉴权态
+    expect(frame).toHaveAttribute(
+      'sandbox',
+      'allow-scripts allow-forms allow-popups allow-modals',
+    );
+  });
+
   it('渲染 Markdown', () => {
     render(
       <ArtifactPreview

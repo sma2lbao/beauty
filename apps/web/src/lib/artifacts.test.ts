@@ -31,7 +31,17 @@ describe('artifact helpers', () => {
     expect(isMarkdownArtifact('diff')).toBe(false);
     expect(artifactContentType('markdown')).toBe('text/markdown');
     expect(artifactContentType('diff')).toBe('text/x-patch');
-    expect(artifactContentType('html')).toBe('text/plain');
+    expect(artifactContentType('html')).toBe('text/html');
+
+    const html = {
+      title: 'snake.html',
+      kind: 'html',
+      content: '<html></html>',
+    };
+    expect(artifactContentType(html)).toBe('text/html');
+    expect(artifactExtension(html)).toBe('html');
+    expect(artifactFileName(html)).toBe('snake.html');
+    expect(isTextArtifact(html)).toBe(true);
 
     const image = { title: '截图', kind: 'image', content: PNG };
     expect(artifactExtension(image)).toBe('png');

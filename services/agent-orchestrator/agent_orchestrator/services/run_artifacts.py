@@ -1,15 +1,17 @@
-"""run 交付物:报告件落库、工具外链抓取、工作区镜像与取件(§7)。"""
+"""run 交付物:报告件落库、工具外链抓取、沙箱成品回收、工作区镜像与取件(§7)。"""
 
 from __future__ import annotations
 
+import posixpath
 from typing import Any
 
 from common.artifacts import ArtifactStore
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.context.sandbox_files import scope_key_for
 from agent_orchestrator.models.runs import Run, RunArtifact
 from agent_orchestrator.repositories import ArtifactRepository
-from agent_orchestrator.services import artifacts
+from agent_orchestrator.services import artifacts, sandbox_artifacts
 from agent_orchestrator.services.file_capture import FileDownloader, extract_file_urls
 from agent_orchestrator.services.run_events import append_event
 from agent_orchestrator.services.workspace import Workspace
@@ -79,6 +81,71 @@ async def _capture_tool_files(
                 store=store,
                 source=artifacts.ARTIFACT_MCP_SOURCE,
                 source_url=ref.url,
+            )
+        )
+    return rows, errors
+
+
+async def _capture_sandbox_files(
+    session: AsyncSession,
+    run: Run,
+    records: list[dict[str, Any]],
+    store: ArtifactStore | None,
+    *,
+    max_files: int,
+) -> tuple[list[RunArtifact], list[dict[str, str]]]:
+    """沙箱里本次写出的成品 → 独立交付物(§7 扩展)。
+
+    路径来自工具审计记录的 paths(write/edit 成功信封带 path),不需要再扫目录;
+    scope 与 tool-service 同口径(context/sandbox_files.py:scope_key_for),因此
+    这里读的就是工具写进去的那个工作区。同一路径用 source_url 去重(路径不是
+    URL,但同为"来源"标识,且不会与 http(s) 链接撞键):重放与追加执行不会
+    重复落件。单件读不到/超限只留痕,不拖垮交付。
+    """
+    reader = sandbox_artifacts.current()
+    if reader is None or max_files <= 0:
+        return [], []
+    targets = sandbox_artifacts.capture_targets(records, max_files=max_files)
+    if not targets:
+        return [], []
+    scope_key = scope_key_for(
+        run.account_id,
+        conversation_id=run.conversation_id,
+        run_id=run.id,
+    )
+    repo = ArtifactRepository(session)
+    rows: list[RunArtifact] = []
+    errors: list[dict[str, str]] = []
+    for target in targets:
+        if (
+            await repo.find_by_source_url(run.account_id, run.id, target.path)
+            is not None
+        ):
+            continue
+        data = await reader.read_bytes(run.account_id, scope_key, target.path)
+        if data is None:
+            errors.append({"path": target.path, "error": "沙箱内读取失败"})
+            continue
+        if len(data) > sandbox_artifacts.MAX_BYTES:
+            errors.append(
+                {
+                    "path": target.path,
+                    "error": f"超过单件上限 {sandbox_artifacts.MAX_BYTES} 字节",
+                }
+            )
+            continue
+        rows.append(
+            await artifacts.persist_file_artifact(
+                session,
+                run,
+                filename=target.filename,
+                content_type=target.content_type,
+                kind=target.kind,
+                data=data,
+                store=store,
+                title=posixpath.splitext(target.filename)[0] or target.filename,
+                source=artifacts.ARTIFACT_SANDBOX_SOURCE,
+                source_url=target.path,
             )
         )
     return rows, errors
@@ -169,16 +236,21 @@ async def _deliver_artifacts(
     downloader: FileDownloader | None,
     max_files: int,
 ) -> RunArtifact:
-    """交付阶段:落报告 → 抓取工具产出文件 → 镜像工作区 → 一条 run.delivered.v1。
+    """交付阶段:落报告 → 抓取工具外链 → 回收沙箱成品 → 镜像工作区 → 一条事件。
 
-    多件交付物(run_artifacts 一行一件,source 区分 report/skill/mcp);
-    报告件不再覆盖既有行——技能产物与报告各自成件。
+    多件交付物(run_artifacts 一行一件,source 区分 report/skill/mcp/sandbox);
+    报告件不再覆盖既有行——技能产物、外链文件、沙箱成品与报告各自成件。
+    报告仍是主件(取件/知识库/旧 `/artifact` 契约都按 report 优先),沙箱成品是
+    附加件:前端列表与下载都能拿到,但不会改变既有主件语义。
     """
     report = await artifacts.persist_artifact(session, run, artifact, store)
-    files, download_errors = await _capture_tool_files(
+    tool_files, download_errors = await _capture_tool_files(
         session, run, records, store, downloader, max_files=max_files
     )
-    rows = [report, *files]
+    sandbox_files, sandbox_errors = await _capture_sandbox_files(
+        session, run, records, store, max_files=max_files
+    )
+    rows = [report, *tool_files, *sandbox_files]
     mirrored_ids, mirror_errors = await _mirror_artifacts(
         session, run, rows, store, workspace
     )
@@ -198,6 +270,8 @@ async def _deliver_artifacts(
         payload["workspace_artifact_ids"] = mirrored_ids
     if mirror_errors:
         payload["workspace_errors"] = mirror_errors
+    if sandbox_errors:
+        payload["sandbox_errors"] = sandbox_errors
     await append_event(session, run, "run.delivered.v1", payload)
     return report
 

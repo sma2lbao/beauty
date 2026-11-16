@@ -28,6 +28,7 @@ from agent_orchestrator.graph.ports import (
     append_hook_note,
     build_hook_payload,
 )
+from agent_orchestrator.graph.reply_clean import strip_tool_markup
 from agent_orchestrator.graph.tool_results import (
     is_tool_error,
     parse_tool_error,
@@ -42,7 +43,7 @@ from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services.llm import LLMClient, ToolCall
 from agent_orchestrator.services.tools import ToolRisk
 
-MAX_CHAT_TOOL_ROUNDS = 5  # 对话内 function-calling 轮次上限
+MAX_CHAT_TOOL_ROUNDS = 5  # 对话内 function-calling 轮次上限(只读工具,够用)
 
 #: tool 帧的 decision 文案(与执行图审计语义一致;前端归并 approved/confirmed)。
 _DECISION_TEXT = {
@@ -349,7 +350,7 @@ async def run_tool_loop(
             reply = await llm.complete(messages, tools=schemas)
             text, calls = reply.content, reply.tool_calls
             if not calls:
-                yield "content", reply.content
+                yield "content", strip_tool_markup(reply.content)
                 return
             last_text = text or last_text
         messages.append(_assistant_tool_message(text, calls))
@@ -371,7 +372,7 @@ async def run_tool_loop(
         return
     reply = await llm.complete(messages)
     last_text = reply.content or last_text
-    yield "content", last_text
+    yield "content", strip_tool_markup(last_text)
 
 
 async def answer(

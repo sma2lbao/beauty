@@ -1,5 +1,6 @@
 """execute 阶段 function-calling:工具结果回喂、轮次上限与错误回喂。"""
 
+from agent_orchestrator.graph.nodes import MAX_TOOL_ROUNDS
 from agent_orchestrator.services.llm import LLMReply, ToolCall
 from tests.conftest import (
     ACCOUNT,
@@ -81,11 +82,7 @@ def test_execute_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
     fake = FakeLLM(
         [
             "# 执行计划(LLM)",
-            tool_reply,
-            tool_reply,
-            tool_reply,
-            tool_reply,
-            tool_reply,
+            *([tool_reply] * MAX_TOOL_ROUNDS),
             "已读取:4 个画板",
             '{"summary": "验收通过", "verdicts": {"日程已整理": true}}',
             "# 交付物",
@@ -98,11 +95,11 @@ def test_execute_tool_rounds_cap_forces_final_answer(tmp_path) -> None:
         run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
 
-        # 第 6 次调用(index 6)是收束调用:没有下发工具
-        assert fake.tools_seen[6] is None
+        # 紧跟 MAX_TOOL_ROUNDS 轮工具后的那次调用是收束调用:没有下发工具
+        assert fake.tools_seen[MAX_TOOL_ROUNDS + 1] is None
         events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
         tool_events = [e for e in events if e["type"] == "run.tool.called.v1"]
-        assert len(tool_events) == 5
+        assert len(tool_events) == MAX_TOOL_ROUNDS
         completed = next(e for e in events if e["type"] == "run.completed.v1")
         assert completed["payload"]["results"][0] == "已读取:4 个画板"
         assert "未给出结论" not in str(completed["payload"]["results"])

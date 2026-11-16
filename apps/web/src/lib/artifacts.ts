@@ -8,7 +8,8 @@
  * 后通过 `src` 传入 `ArtifactPreview`。
  */
 
-const IMAGE_MIME = /^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i;
+const IMAGE_MIME =
+  /^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i;
 
 /** 常见 MIME → 下载扩展名(后端没给 filename 时用)。 */
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -128,7 +129,7 @@ export function artifactContentType(artifact: ArtifactLike | string): string {
   if (isMarkdownArtifact(normalized)) return 'text/markdown';
   if (normalized === 'diff' || normalized === 'patch') return 'text/x-patch';
   if (normalized === 'json') return 'application/json';
-  if (normalized === 'html') return 'text/plain';
+  if (normalized === 'html') return 'text/html';
   return 'text/plain';
 }
 
