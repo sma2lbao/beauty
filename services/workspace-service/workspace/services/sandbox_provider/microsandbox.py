@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 from contextlib import suppress
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from common.errors import AppError, NotFoundError, UpstreamError
@@ -137,6 +138,21 @@ class MicroShellSession:
                 await self._sink.close()
 
 
+#: 沙箱内工作区路径:文件工具与 exec 的 cwd 都以它为根
+WORKSPACE_MOUNT_PATH = "/workspace"
+
+
+def _unsafe_dir_name(name: str) -> bool:
+    """沙箱名要当宿主目录名用:挡住空/隐藏/带分隔符的值,防越界。"""
+    return (
+        not name
+        or name.startswith(".")
+        or "/" in name
+        or "\\" in name
+        or name != os.path.basename(name)
+    )
+
+
 class MicrosandboxProvider:
     """microsandbox 0.7.x 实现:detached 创建 + 按名重连执行。
 
@@ -154,14 +170,65 @@ class MicrosandboxProvider:
         max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
         default_exec_timeout_seconds: int = DEFAULT_EXEC_TIMEOUT_SECONDS,
         msb_home: str = "",
+        workspace_root: str = "",
     ) -> None:
         self._max_output_bytes = max_output_bytes
         self._default_exec_timeout_seconds = default_exec_timeout_seconds
         self._msb_home = msb_home
+        self._workspace_root = workspace_root
         # 必须在 SDK 惰性导入前设置:runtime home 默认 ~/.microsandbox,
         # 容器/受限环境下需要指向可写目录(显式环境变量优先,不覆盖)
         if msb_home:
             os.environ.setdefault("MSB_HOME", msb_home)
+
+    def _workspace_dir(self, name: str) -> Path:
+        """沙箱私有 `/workspace` 的宿主目录。
+
+        没有显式配置根目录时落在 MSB_HOME 旁的 `workspaces/` 下;沙箱名由
+        服务生成(`bm-<hex>`),天然可做目录名。每个沙箱一份,互不可见——
+        共享同一目录会让模型读到别的 run/别的账号留下的文件。
+        """
+        if _unsafe_dir_name(name):
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "沙箱名不能用作工作区目录名",
+                details={"sandbox_name": name},
+            )
+        root = self._workspace_root
+        if not root:
+            home = self._msb_home or os.path.join(
+                os.path.expanduser("~"), ".microsandbox"
+            )
+            root = os.path.join(home, "workspaces")
+        return Path(root) / name
+
+    def _workspace_volumes(self, sdk: Any, name: str) -> dict[str, Any]:
+        """给新沙箱挂一份空的私有工作区,返回 SDK 的 `volumes=` 入参。"""
+        directory = self._workspace_dir(name)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise UpstreamError(
+                "sandbox.provider_error",
+                "创建沙箱工作区目录失败",
+                details={"sandbox_name": name, "error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+        # 宿主路径必须真实化:msb 拒绝经过符号链接的挂载源(/var、/tmp 在
+        # macOS 上都是软链),会报 InvalidConfigError。
+        return {
+            WORKSPACE_MOUNT_PATH: sdk.MountConfig(
+                kind=sdk.MountKind.BIND, bind=os.path.realpath(directory)
+            )
+        }
+
+    def _discard_workspace_dir(self, name: str) -> None:
+        """删掉宿主侧工作区:运行时只管挂载,目录必须我们自己回收。"""
+        if _unsafe_dir_name(name):
+            return
+        try:
+            shutil.rmtree(self._workspace_dir(name), ignore_errors=True)
+        except UpstreamError:  # pragma: no cover - 名字已在上面的守卫挡掉
+            return
 
     async def create(self, spec: SandboxSpec) -> None:
         sdk = _import_sdk()
@@ -180,6 +247,8 @@ class MicrosandboxProvider:
                 memory=spec.memory_mb,
                 network=network,
                 detached=True,
+                # 每个沙箱一份私有 /workspace:跨沙箱/跨账号不共享文件
+                volumes=self._workspace_volumes(sdk, spec.name),
                 # 双保险:绝对寿命与空闲寿命都由运行时兜底回收
                 max_duration=float(spec.ttl_seconds),
                 idle_timeout=float(spec.ttl_seconds),
@@ -207,6 +276,7 @@ class MicrosandboxProvider:
                 await sandbox.stop()
             with suppress(Exception):
                 await sdk.Sandbox.remove(spec.name)
+            self._discard_workspace_dir(spec.name)
             raise UpstreamError(
                 "sandbox.provider_error",
                 "创建沙箱后 detach 失败,已回收",
@@ -421,7 +491,9 @@ class MicrosandboxProvider:
         try:
             handle = await sdk.Sandbox.get(name)
         except sdk.SandboxNotFoundError:
-            return  # 幂等:运行时已不存在
+            # 幂等:运行时已不存在,但宿主工作区可能残留,一并清理
+            self._discard_workspace_dir(name)
+            return
         except Exception as exc:
             raise UpstreamError(
                 "sandbox.provider_error",
@@ -441,3 +513,4 @@ class MicrosandboxProvider:
         # destroy 已移除运行时;某些版本会残留持久索引,remove 兜底
         with suppress(sdk.SandboxNotFoundError):
             await sdk.Sandbox.remove(name)
+        self._discard_workspace_dir(name)

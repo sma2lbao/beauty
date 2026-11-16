@@ -308,6 +308,27 @@ class FakeSandboxApi:
             raise self._sdk.remove_error
 
 
+class FakeMountKind:
+    BIND = "bind"
+
+
+class FakeMountConfig:
+    """记录 provider 传下来的挂载项:只关心 kind 与宿主 bind 路径。"""
+
+    def __init__(self, *, kind: str, bind: str | None = None, **extra: Any) -> None:
+        self.kind = kind
+        self.bind = bind
+        self.extra = extra
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FakeMountConfig):
+            return NotImplemented
+        return (self.kind, self.bind) == (other.kind, other.bind)
+
+    def __repr__(self) -> str:
+        return f"FakeMountConfig(kind={self.kind!r}, bind={self.bind!r})"
+
+
 class FakeNetworkProfile:
     PUBLIC = "public"
 
@@ -339,6 +360,8 @@ class FakeSdk:
     ExecEvent = FakeExecEvent
     Stdin = FakeStdin
     NetworkProfile = FakeNetworkProfile
+    MountKind = FakeMountKind
+    MountConfig = FakeMountConfig
 
     def __init__(self) -> None:
         self.network_none = object()

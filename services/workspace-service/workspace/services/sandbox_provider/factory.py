@@ -22,6 +22,7 @@ def build_sandbox_provider(settings: Settings) -> SandboxProvider:
             max_output_bytes=settings.sandbox_max_output_bytes,
             default_exec_timeout_seconds=settings.sandbox_exec_timeout_seconds,
             msb_home=settings.sandbox_msb_home,
+            workspace_root=settings.sandbox_workspace_root,
         )
     if settings.sandbox_provider == "e2b":
         return E2bSandboxProvider(

@@ -55,6 +55,10 @@ class Settings(BaseAppSettings):
     # microsandbox runtime home(空 = 用 SDK 默认 ~/.microsandbox);
     # 部署时必须指向可写目录,且 runtime 需要能访问 OCI registry
     sandbox_msb_home: str = ""
+    # 每个 microVM 的 /workspace 挂到宿主上的私有目录根:空 = <msb_home>/workspaces。
+    # 必须每沙箱一份(不能共享),否则模型会读到上一轮/别的账号留下的文件;
+    # destroy 时由 provider 连带删除。
+    sandbox_workspace_root: str = ""
     # E2B 云沙箱(provider=e2b):microVM 跑在 E2B 控制面。官方云与兼容 E2B 的
     # 厂商(如阿里云 Agent Sandbox 极速版)走同一套代码,只换 Key / Domain;
     # API Key 建议用环境变量 E2B_API_KEY 注入,不要写进仓库文件。

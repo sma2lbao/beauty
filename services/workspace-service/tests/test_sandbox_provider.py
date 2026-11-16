@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from common.errors import UpstreamError
 
@@ -14,9 +17,11 @@ from tests.support.sandbox_provider import (
 from workspace.services.sandbox_provider import MicrosandboxProvider
 
 
-async def test_create_passes_sdk_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_passes_sdk_shape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     sdk = _use_fake_sdk(monkeypatch)
-    provider = MicrosandboxProvider()
+    provider = MicrosandboxProvider(workspace_root=str(tmp_path))
 
     await provider.create(
         _spec(cpus=1.6, memory_mb=768, image="alpine", ttl_seconds=900)
@@ -35,23 +40,61 @@ async def test_create_passes_sdk_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert call["idle_timeout"] == 900.0
 
 
+async def test_create_mounts_private_workspace_per_sandbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """每个沙箱一份私有 /workspace:跨沙箱/跨账号看不到彼此的文件。"""
+    sdk = _use_fake_sdk(monkeypatch)
+    provider = MicrosandboxProvider(workspace_root=str(tmp_path))
+
+    await provider.create(_spec(name="bm-one"))
+    await provider.create(_spec(name="bm-two"))
+
+    first = sdk.created[0]["volumes"]
+    second = sdk.created[1]["volumes"]
+    assert set(first) == {"/workspace"}
+    assert first["/workspace"].kind == sdk.MountKind.BIND
+    # 挂载源必须真实化:msb 拒绝经过符号链接的宿主路径
+    assert first["/workspace"].bind == os.path.realpath(tmp_path / "bm-one")
+    assert second["/workspace"].bind == os.path.realpath(tmp_path / "bm-two")
+    assert (tmp_path / "bm-one").is_dir()
+    assert (tmp_path / "bm-two").is_dir()
+
+
+async def test_create_workspace_dir_failure_is_provider_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """工作区目录建不出来要立刻 502,不能继续建一个没有私有工作区的沙箱。"""
+    sdk = _use_fake_sdk(monkeypatch)
+    blocker = tmp_path / "root"
+    blocker.write_text("not a dir", encoding="utf-8")
+
+    with pytest.raises(UpstreamError) as exc_info:
+        await MicrosandboxProvider(workspace_root=str(blocker)).create(_spec())
+
+    assert exc_info.value.code == "sandbox.provider_error"
+    assert sdk.created == []
+
+
 async def test_create_public_network_is_public_only(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """public 只能放公网:不能用 allow_all(会连宿主/私网),必须走 PUBLIC profile。"""
     sdk = _use_fake_sdk(monkeypatch)
-    await MicrosandboxProvider().create(_spec(network="public"))
+    await MicrosandboxProvider(workspace_root=str(tmp_path)).create(
+        _spec(network="public")
+    )
     assert sdk.created[0]["network"] is sdk.network_public
     assert sdk.profile_calls == [(FakeNetworkProfile.PUBLIC,)]
 
 
 async def test_create_detaches_returned_handle(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """create 的句柄仍 owns_lifecycle,必须 detach 才能活过进程/句柄释放。"""
     sdk = _use_fake_sdk(monkeypatch)
 
-    await MicrosandboxProvider().create(_spec())
+    await MicrosandboxProvider(workspace_root=str(tmp_path)).create(_spec())
 
     assert len(sdk.created) == 1
     assert sdk.detach_calls == ["bm-abc"]
@@ -59,19 +102,21 @@ async def test_create_detaches_returned_handle(
 
 
 async def test_create_detach_failure_cleans_up_and_raises(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """detach 失败不能算创建成功:best-effort 回收并抛 provider_error。"""
     sdk = _use_fake_sdk(monkeypatch)
     sdk.detach_error = RuntimeError("detach boom")
 
     with pytest.raises(UpstreamError) as exc_info:
-        await MicrosandboxProvider().create(_spec())
+        await MicrosandboxProvider(workspace_root=str(tmp_path)).create(_spec())
 
     assert exc_info.value.code == "sandbox.provider_error"
     assert "RuntimeError" in exc_info.value.details["error"]
     assert sdk.stop_calls == ["bm-abc"]
     assert sdk.removed == ["bm-abc"]
+    # 工作区目录随失败回收,不留孤儿
+    assert not (tmp_path / "bm-abc").exists()
 
 
 async def test_exec_passes_argv_and_default_timeout(

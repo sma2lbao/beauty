@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from common.errors import NotFoundError, UpstreamError
@@ -86,6 +87,35 @@ async def test_destroy_calls_destroy_and_remove(
     assert sdk.removed == ["bm-abc"]
 
 
+async def test_destroy_removes_private_workspace_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """挂载目录不由运行时回收,销毁沙箱必须连带删掉宿主工作区。"""
+    sdk = _use_fake_sdk(monkeypatch)
+    provider = MicrosandboxProvider(workspace_root=str(tmp_path))
+
+    await provider.create(_spec())
+    assert (tmp_path / "bm-abc").is_dir()
+
+    await provider.destroy("bm-abc")
+
+    assert sdk.destroy_calls == [("bm-abc", True)]
+    assert not (tmp_path / "bm-abc").exists()
+
+
+async def test_destroy_removes_workspace_dir_when_runtime_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """运行时已被回收时仍要清宿主目录,否则目录会越积越多。"""
+    sdk = _use_fake_sdk(monkeypatch)
+    sdk.get_error = SandboxNotFoundError("gone")
+    (tmp_path / "bm-abc").mkdir()
+
+    await MicrosandboxProvider(workspace_root=str(tmp_path)).destroy("bm-abc")
+
+    assert not (tmp_path / "bm-abc").exists()
+
+
 async def test_destroy_is_idempotent_when_sandbox_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,13 +144,15 @@ async def test_destroy_suppresses_remove_not_found(
     "error_class", [RuntimeNotInstalledError, RuntimeIncompleteError]
 )
 async def test_create_runtime_errors_map_to_unavailable(
-    monkeypatch: pytest.MonkeyPatch, error_class: type[FakeSdkError]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error_class: type[FakeSdkError],
 ) -> None:
     sdk = _use_fake_sdk(monkeypatch)
     sdk.create_error = error_class("runtime missing")
 
     with pytest.raises(UpstreamError) as exc_info:
-        await MicrosandboxProvider().create(_spec())
+        await MicrosandboxProvider(workspace_root=str(tmp_path)).create(_spec())
 
     assert exc_info.value.code == "sandbox.provider_unavailable"
 

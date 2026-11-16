@@ -157,6 +157,7 @@ dev 显式失败)。
 | `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                                                                                                            |
 | `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                                                                                                                 |
 | `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                                                                                                          |
+| `SANDBOX_WORKSPACE_ROOT`("")                                            | 每沙箱私有 `/workspace` 的宿主根目录(空= `<MSB_HOME>/workspaces`);每个沙箱一个 `<root>/<name>/`,destroy/过期回收时删除                                                  |
 | `SANDBOX_E2B_API_KEY`(None)                                             | 仅 `provider=e2b`:控制面 Key(留空回退环境变量 `E2B_API_KEY`;不要写进仓库)                                                                                         |
 | `SANDBOX_E2B_DOMAIN`(None)                                              | 仅 `provider=e2b`:控制面域名(留空回退 `E2B_DOMAIN`;阿里云极速版填 `<region>.sandbox.aliyuncs.com`)                                                                |
 | `SANDBOX_E2B_TEMPLATE`("")                                              | 仅 `provider=e2b`:默认模板名(空= `base`;`image` 非 `python` 时优先用 `image` 当模板名)                                                                            |
@@ -286,6 +287,23 @@ data: {"seq": 2, "code": "sandbox.session_error", "message": "..."}
   (microVM TTL / 宿主进程组)清理;
 - **回放不是持久化**:ring buffer 只保留最近 64KB,且只存在于存活实例的内存里;
   断线太久或实例重启后不可回放。
+
+### microsandbox:每沙箱私有 `/workspace`
+
+创建 microVM 时先按沙箱名在宿主建一份私有目录(`<SANDBOX_WORKSPACE_ROOT>/<sandbox_name>`;
+未配置根时是 `<MSB_HOME>/workspaces/<sandbox_name>`),再以 bind mount 挂到沙箱内
+`/workspace`:
+
+- **沙箱之间、账号之间互不可见**:上一轮 run 写下的 `snake.html` 不会出现在下一个沙箱里。
+  共享同一目录既会让交付物串味(读到别人的半成品),也会让跨账号读到彼此的文件;
+- 挂载源按 `realpath` 传入:msb 拒绝经过符号链接的宿主路径(`/var`、`/tmp` 在 macOS
+  上是软链,直接传会报 `InvalidConfigError`);
+- 目录由服务自己回收:运行时只管挂载,`Sandbox.remove`/TTL 到期都不会删宿主目录,
+  所以 `destroy`(含「运行时已不存在」的幂等分支)与 detach 失败回滚都会 `rmtree` 它,
+  回收器的过期清理走同一条路径;
+- 目录建不出来时创建沙箱直接 `502 sandbox.provider_error`,不会退化成一个共享
+  `/workspace` 的沙箱;
+- 部署:根目录所在磁盘按「沙箱数 × 单沙箱体积」预留,并确保服务进程有写权限。
 
 ### E2B provider(外置 microVM)
 
