@@ -235,6 +235,8 @@ method, route, status, duration_ms, error_code?
 | `llm_upstream_errors_total`      | counter   | provider, code                   | llm-gateway                                                                                      |
 | `llm_tokens_total`               | counter   | model, direction                 | llm-gateway 响应使用量（input=提示 / output=补全）                                               |
 | `llm_request_duration_seconds`   | histogram | provider, model                  | llm-gateway（complete 与 stream 收尾各记一次）                                                   |
+| `alerts_fired_total`             | counter   | service, code, severity          | orchestrator 告警 sweeper（§9.3）                                                                |
+| `alerts_resolved_total`          | counter   | service, code                    | 同上                                                                                             |
 
 ### 9.2 追踪（OTel）
 
@@ -248,6 +250,29 @@ method, route, status, duration_ms, error_code?
 - 开关：`<SERVICE>__TRACING_ENABLED=false` 完全关闭（不建 provider、不插桩）。
 - 注意：FastAPI 原生 telemetry 自带 `metrics`/`logs` 能力；本仓库指标仍以 `/internal/metrics` 为准（Prometheus），OTel 侧未接 meter/logger provider，保持单一口径。
 - Langfuse 接入（P3，Phase 1/2 已实施）：**只有 agent-orchestrator 与 llm-gateway 直连 Langfuse**（`<SERVICE>__LANGFUSE_ENABLED=true` + 同一项目密钥）；其余服务（api-gateway/account/connector/knowledge/tool/workspace）`LANGFUSE_ENABLED=false`，其中 **api-gateway 保留 `TRACING_ENABLED=true`**——只为建 span、注入/续传 `traceparent`，网关的通用 HTTP span **不上报 Langfuse**。因此一次 UI 对话的 trace 根是真实业务服务的 span（orchestrator 的 `METHOD /api/v1/...`，`run {run_id}` 挂其下），而不是网关的 catch-all span；这样不丢业务语义、也省掉大量无业务含义的网关事件。两个上报服务的导出优先级为 **Collector > Langfuse 直连 > 通用 `<SERVICE>__OTLP_ENDPOINT`**（Collector 见设计文档 §9.2），orchestrator 图节点与 llm-gateway 的 `chat {model}` 调用分别出 span/generation。**deepseek 成本已由网关 ingested cost 补齐**（litellm 本地价目表，generation span 写 `cost_details`；Cloud 托管价目表不含 deepseek，但 ingested 优先，见设计文档 §9.1）。属性映射、自托管 compose、采样与脱敏见 [design/langfuse-observability.md](./design/langfuse-observability.md)。
+
+### 9.3 主动告警（2026-11 落地）
+
+**状态：已实施**（`services/agent-orchestrator/agent_orchestrator/services/alerts.py`），设计见 [design/alerting.md](./design/alerting.md)。
+
+部署里没有 Prometheus、Alertmanager 和 Loki（`deploy/docker-compose.yml` 只有服务自身、otel-collector、postgres、nginx），所以只写规则文件等于加一份没人执行的配置。判定因此放进**拥有 runs/jobs/outbox 数据的进程**里：告警 sweeper 只读本服务库、零网络，规则命中后同时走三条出口——结构化 warning 日志、`common.sentry.capture_alert`（配了 DSN 才发）、Prometheus 计数器。
+
+- 存储：`alerts` 表是 **append-only 事件流**（无 `account_id`，运维级），当前状态 = 每个 `code` 的最新一行；只在「未触发 → 触发」和「触发 → 不再触发」时各写一行，不会每轮刷屏。
+- 去重：唯一约束 `uq_alerts_code_status_bucket`（`code`、`status`、`bucket` 三列，`bucket = epoch_seconds // alerts_cooldown_seconds`）。多副本同时评估时冲突的一方整轮放弃写入并记 `alert sweep lost dedupe race`——判定各自重算过，不漏报。
+- 读取面：`GET /internal/alerts`（与 `/internal/metrics` 同一令牌口径：`X-Metrics-Token` 或 `Authorization: Bearer`，不符按 404），返回 `{"firing": [...], "resolved": [...]}`；`alerts_enabled=false` 时端点不注册。
+- 保留期：已恢复的记录保留 `alerts_retention_days`（默认 30 天）后清理；**firing 不自动删**（它是一条待办）。
+- 规则（阈值全部可在 `<SERVICE>__` 前缀下改）：
+
+| code             | 条件                                                                                      | 级别     |
+| ---------------- | ----------------------------------------------------------------------------------------- | -------- |
+| outbox_failed    | `outbox_events.status=failed` 条数 > 0                                                    | critical |
+| outbox_backlog   | `status=pending` 且 `available_at` 早于「现在 − alerts_outbox_backlog_seconds」的条数 > 0 | warning  |
+| run_stuck        | `runs.status=running` 且 `updated_at` 早于「现在 − alerts_run_stuck_seconds」的条数 > 0   | critical |
+| run_failure_rate | 窗口内终态样本 ≥ alerts_failure_min_samples 且失败占比 ≥ alerts_failure_rate              | warning  |
+| job_failures     | 窗口内 `jobs.status=failed` 条数 ≥ alerts_job_failure_threshold                           | warning  |
+
+- 指标：`alerts_fired_total{code,severity}`、`alerts_resolved_total{code}`（orchestrator 进程），可与日志、Sentry 事件对账。
+- 已知边界：**只有 orchestrator 有规则**——account-service 的用量投递失败、llm-gateway 的上游错误率等跨服务信号，要么等各服务自己的 sweeper，要么由外层监控聚合指标判定；未来上 Prometheus 时这套判定仍是单一真源，只需把 `/internal/alerts` 或相关指标接到 Alertmanager。
 
 ---
 
@@ -305,6 +330,8 @@ P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost �
 
 ## 12. 检索与告警建议
 
+进程内阈值规则已落地（§9.3：outbox 失败/积压、run 卡死与失败率、job 失败），由 orchestrator 的 sweeper 执行并写 `alerts` 表；下面这张表是**指标侧**的长期方向——接入 Prometheus/Alertmanager 后由外层聚合判定，与 §9.3 的规则不重复。
+
 - 排障入口：浏览器 Network 里的 `X-Request-ID` → 在日志平台 `request_id="..."` 过滤 → 得到跨服务时间线。
 - 常用查询：`event=http_request AND status>=500`；`event=http_request_slow`；`event=job_finished AND level=error`；`event=upstream_error`；`run_id="..."`（任务全生命周期）。
 - 告警草案（阈值待压测后定）：
@@ -339,3 +366,5 @@ P3 进展：llm-gateway 的 `chat {model}` generation span（含 ingested cost �
 - [x] 网关代理路径每次上游调用一条 `proxy_call`（`upstream`/`route`/`method`/`status`/`duration_ms`/`stream`），`http_upstream_requests_total`/`http_upstream_duration_seconds` 可按 `upstream`+`route` 聚合
 - [x] Nginx `/api/` 的 access log 带 `$http_x_request_id`/`$upstream_addr`/`$upstream_status`/`$upstream_response_time`/`$request_time`（静态复核：本机无网络拉不到 nginx 镜像，未跑 `nginx -t`）
 - [x] Langfuse 只接收 agent-orchestrator 与 llm-gateway 的 span：网关与其余服务 `LANGFUSE_ENABLED=false`、`TRACING_ENABLED=true`，trace 根是业务服务 span
+- [x] `alerts_enabled=true` 时 `GET /internal/alerts` 需令牌（不符按 404）；规则状态切换每个 `code` 只写一行（唯一约束 `code+status+bucket` 去重）
+- [x] 告警 firing/resolved 同时出 warning/info 日志、`alerts_fired_total`/`alerts_resolved_total` 指标与（配 DSN 时）Sentry 事件

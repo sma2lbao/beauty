@@ -132,6 +132,15 @@ def _authorized(request: Request, token: str) -> bool:
     return bool(supplied) and hmac.compare_digest(supplied, token)
 
 
+def token_authorized(request: Request, token: str) -> bool:
+    """运维端点(`/internal/*`)共用的令牌校验口径。
+
+    同一条规则必须只有一个实现:两套口径迟早跑偏(一边带 Bearer 能过、另一边
+    不能),排查时又极难发现。各端点自己决定"配了 token 才校验"。
+    """
+    return _authorized(request, token)
+
+
 def install_metrics_endpoint(app: Any, settings: BaseAppSettings) -> bool:
     """挂载 `/internal/metrics`;`metrics_enabled=false` 时不注册。
 
@@ -143,7 +152,7 @@ def install_metrics_endpoint(app: Any, settings: BaseAppSettings) -> bool:
 
     @app.get(METRICS_PATH, include_in_schema=False)
     async def metrics(request: Request) -> Response:
-        if token and not _authorized(request, token):
+        if token and not token_authorized(request, token):
             return Response(
                 content="Not Found", status_code=404, media_type="text/plain"
             )

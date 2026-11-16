@@ -13,6 +13,7 @@ from database.base import Base
 from events import outbox as outbox_models  # noqa: F401  注册 outbox/幂等表
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.models import alert as alert_models  # noqa: F401
 from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM(含对话表)
     conversations as conversations_models,

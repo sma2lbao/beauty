@@ -47,6 +47,18 @@ memory_sweep_account_failures_total = Counter(
     "记忆清扫单账号失败计数",
     ("service",),
 )
+# 告警(docs/design/alerting.md):只记状态切换的次数,当前是否 firing 看
+# `/internal/alerts`——指标不适合表达"当前状态"。
+alerts_fired_total = Counter(
+    "alerts_fired_total",
+    "告警进入 firing 的次数",
+    ("service", "code", "severity"),
+)
+alerts_resolved_total = Counter(
+    "alerts_resolved_total",
+    "告警恢复次数",
+    ("service", "code"),
+)
 
 
 def observe_run_outcome(*, status: str, service: str | None = None) -> None:
@@ -78,6 +90,20 @@ def observe_memory_sweep(
         )
     if failed_accounts:
         memory_sweep_account_failures_total.labels(service=label).inc(failed_accounts)
+
+
+def observe_alert_fired(
+    *, code: str, severity: str, service: str | None = None
+) -> None:
+    """记录一次告警进入 firing(同一规则持续触发只在上报时计数,见 sweep 去重)。"""
+    alerts_fired_total.labels(
+        service=service_label(service), code=code, severity=severity
+    ).inc()
+
+
+def observe_alert_resolved(*, code: str, service: str | None = None) -> None:
+    """记录一次告警恢复。"""
+    alerts_resolved_total.labels(service=service_label(service), code=code).inc()
 
 
 def observe_llm_error(*, provider: str, code: str, service: str | None = None) -> None:

@@ -53,6 +53,9 @@ from agent_orchestrator.core.container_tools import ToolsAssemblyMixin
 from agent_orchestrator.graph.builder import build_run_graph
 from agent_orchestrator.graph.ports import ToolkitPort
 from agent_orchestrator.services import hooks as hooks_service
+from agent_orchestrator.services.alerts import (
+    start_sweeper as start_alert_sweeper,
+)
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
@@ -160,6 +163,7 @@ class AppContainer(
         # P1-C:run 执行超时 sweeper(独立于中断超时,按总时长兜底 failed)
         self.run_timeout_task: asyncio.Task[None] | None = None
         self.memory_sweep_task: asyncio.Task[None] | None = None
+        self.alert_sweep_task: asyncio.Task[None] | None = None
         self.settings = settings
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
@@ -225,6 +229,11 @@ class AppContainer(
         setup_logging(settings)
         # Sentry(P1)与 /internal/metrics(P2):DSN 为空/开关关闭时都是 no-op
         install_observability(self._app, settings)
+        # 告警读取面(docs/design/alerting.md §4):关掉时端点不注册 = 404。
+        # 惰性导入:api 层(app.deps)反向依赖本模块,顶层导入会成环。
+        from agent_orchestrator.api.internal import install_alerts_endpoint
+
+        install_alerts_endpoint(self._app, settings)
         self._publish("skills", load_skills(settings.skills_dir or None))
 
         await self._assemble_auth()
@@ -299,6 +308,9 @@ class AppContainer(
         # 记忆清扫:过期清理 + 相似记忆巩固,独立于 job worker(纯运维后台任务)
         if settings.memory_enabled and settings.memory_sweep_interval_seconds > 0:
             self.memory_sweep_task = start_memory_sweeper(self)
+        # 主动告警:纯运维后台任务,只读库;间隔 <= 0 关闭 sweeper
+        if settings.alerts_enabled and settings.alerts_sweep_interval_seconds > 0:
+            self.alert_sweep_task = start_alert_sweeper(self)
 
     # ------------------------------------------------------------------ 关闭
 
@@ -327,6 +339,11 @@ class AppContainer(
             with suppress(asyncio.CancelledError):
                 await self.memory_sweep_task
             self.memory_sweep_task = None
+        if self.alert_sweep_task is not None:
+            self.alert_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.alert_sweep_task
+            self.alert_sweep_task = None
         for name, closer in reversed(self._closers):
             try:
                 await closer()

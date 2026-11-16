@@ -101,6 +101,9 @@ _SETTINGS_DEFAULTS: dict[str, Any] = {
     # P1-B 应用级 hooks:默认关——开了会按账号配置发真实 HTTP 到 webhook
     # (禁网门禁下会变成 SocketBlockedError);hooks 用例自己显式开启。
     "hooks_enabled": False,
+    # 主动告警:默认关——后台 sweeper 会在每个用例的库里空转,且端点注册属于
+    # 装配行为;告警用例自己显式开启(tests/test_alerts.py)。
+    "alerts_enabled": False,
     "hooks_allow_http": False,
 }
 

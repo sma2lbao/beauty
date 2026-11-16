@@ -111,6 +111,23 @@ def before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] |
     return event
 
 
+def capture_alert(*, code: str, summary: str, severity: str = "warning") -> None:
+    """上报一条运维告警到 Sentry;未初始化(DSN 为空)时是完全 no-op。
+
+    走 `capture_message` 而不是异常:告警是"状态变了",不是崩溃栈。`code` 与
+    `severity` 进 tag,便于在 Sentry 里按规则过滤/静音;`fingerprint` 用 code,
+    避免同一规则的多次触发被拆成无数个 issue。
+    """
+    if not sentry_sdk.is_initialized():
+        return
+    sentry_sdk.capture_message(
+        summary,
+        level="error" if severity == "critical" else "warning",
+        tags={"alert_code": code, "alert_severity": severity},
+        fingerprint=["alert", code],
+    )
+
+
 def init_sentry(settings: BaseAppSettings, **options: Any) -> bool:
     """按配置初始化 Sentry;返回是否真正启用(DSN 为空则 no-op)。"""
     if not settings.sentry_dsn:
