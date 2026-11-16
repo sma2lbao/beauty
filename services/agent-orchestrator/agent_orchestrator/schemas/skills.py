@@ -5,6 +5,11 @@ SkillManifest 同时服务两条来源:
 - builtin:仓库 skills/*.json(随代码版本化),新增字段全部有默认值,旧 JSON 兼容;
 - uploaded:用户上传 zip 归一化后的 manifest(source=uploaded,带 package_id/
   version_id 与 has_scripts)。
+
+历史上有 permissions / triggers 两个字段:声明了语义但没有任何消费方(技能
+只看显式 skill_id 选中,工具裁剪由 tools 表达,脚本能力在 SkillVersionRead 的
+runtime / network)。2026-11 已删除,避免 manifest 里出现"看起来能配、实际不生效"
+的开关。
 """
 
 from __future__ import annotations
@@ -30,11 +35,9 @@ class SkillManifest(BaseModel):
     #: 二者必须可区分——run 会把该值冻结进 ``skill_tools``,执行/计划节点按
     #: ``is not None`` 判断是否裁剪工具。
     tools: list[str] | None = None
-    permissions: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20000)
     input_schema: dict[str, Any] = Field(default_factory=dict)
     deliverables: list[SkillDeliverable] = Field(default_factory=list)
-    triggers: list[str] = Field(default_factory=list)
     # --- P3 上传包扩展:内置 manifest 无这些字段,默认值保证旧 JSON 兼容 ---
     source: Literal["builtin", "uploaded"] = "builtin"
     has_scripts: bool = False

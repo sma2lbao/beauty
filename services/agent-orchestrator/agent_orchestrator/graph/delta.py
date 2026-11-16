@@ -5,8 +5,9 @@
 落库与分发在 services 层的图调用边界完成。
 
 未注入 sink(单测直跑节点、无 worker 的场景)时上报静默丢弃,节点行为因此与
-"不流式"完全一致。进程级 ``configure`` 仅剩**静态配置兼容层**(main.py 在
-create_app 里按 settings 固定一次),sink 本身不再走进程级上下文变量。
+"不流式"完全一致。开关与攒批口径不落在本模块:services 层的图调用边界按启动配置
+(Settings)构造 sink,本模块只保留常量与投影器——进程级 ``configure`` 兼容层已删除
+(R-29)。
 """
 
 from __future__ import annotations
@@ -43,46 +44,3 @@ class DeltaProjector:
         """上报一段正文增量:无 sink 或空串时 no-op(绝不改变执行结果)。"""
         if self.sink is not None and text:
             await self.sink.push(text, phase)
-
-
-@dataclass(frozen=True, slots=True)
-class _StreamingConfig:
-    """进程级静态配置(整对象替换,不做逐字段全局赋值)。"""
-
-    enabled: bool = False
-    flush_chars: int = DEFAULT_FLUSH_CHARS
-    flush_seconds: float = DEFAULT_FLUSH_SECONDS
-
-
-_config = _StreamingConfig()
-
-
-def configure(
-    *,
-    enabled: bool,
-    flush_chars: int = DEFAULT_FLUSH_CHARS,
-    flush_seconds: float = DEFAULT_FLUSH_SECONDS,
-) -> None:
-    """进程级静态配置(create_app 按 settings 调一次;未配置即关闭)。
-
-    TODO(R-29): main.py 的装配迁到显式注入后删除本兼容层。
-    """
-    global _config
-    _config = _StreamingConfig(
-        enabled=enabled,
-        flush_chars=max(1, flush_chars),
-        flush_seconds=max(0.0, flush_seconds),
-    )
-
-
-def enabled() -> bool:
-    """正文增量通道是否启用(services 层的图调用边界据此决定建不建 sink)。"""
-    return _config.enabled
-
-
-def flush_chars() -> int:
-    return _config.flush_chars
-
-
-def flush_seconds() -> float:
-    return _config.flush_seconds

@@ -23,11 +23,9 @@ export type SkillManifest = {
   workspace_type: string;
   /** 工具白名单:null=技能未声明(不限制);[]=显式声明不用工具 */
   tools: string[] | null;
-  permissions: Record<string, string>;
   system_prompt: string;
   input_schema: Record<string, unknown>;
   deliverables: SkillDeliverable[];
-  triggers: string[];
   /** 来源标注;旧版服务可能不返回,前端按内置处理 */
   source?: SkillSource;
   /** 技能包是否含 scripts/(含脚本需沙箱执行) */

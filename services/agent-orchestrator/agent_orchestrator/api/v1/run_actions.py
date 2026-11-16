@@ -126,6 +126,7 @@ async def approve_run(
         jobs_enabled=settings.jobs_enabled,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return RunRead.model_validate(run)
 
@@ -227,6 +228,7 @@ async def confirm_run(
         jobs_enabled=settings.jobs_enabled,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return RunRead.model_validate(run)
 
@@ -257,6 +259,7 @@ async def answer_run(
         jobs_enabled=settings.jobs_enabled,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return RunAnswerRead(run=RunRead.model_validate(run), accepted=True)
 
@@ -289,6 +292,7 @@ async def rewind_run(
         workspace=workspace,
         downloader=downloader,
         max_download_files=settings.artifact_download_max_files,
+        settings=settings,
     )
     return RunRead.model_validate(run)
 

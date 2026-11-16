@@ -65,6 +65,52 @@ def test_tool_specs_namespace_and_handler(monkeypatch) -> None:
     asyncio.run(scenario())
 
 
+def test_tools_cache_stale_only_when_over_ttl() -> None:
+    """缓存过期只按时间戳与 TTL 判定:没工具/没测过都不算过期,朴素时间按 UTC。"""
+    from datetime import UTC, datetime, timedelta
+
+    from agent_orchestrator.models.mcp import MCPServer
+    from agent_orchestrator.services import mcp as mcp_service
+
+    now = datetime(2026, 11, 16, 12, tzinfo=UTC)
+    base: dict = {
+        "account_id": "t",
+        "name": "Demo Server",
+        "url": "http://mcp.local/mcp",
+        "enabled": True,
+        "tools_cache": [{"name": "echo"}],
+    }
+
+    def server(**overrides) -> MCPServer:
+        return MCPServer(**{**base, **overrides})
+
+    assert mcp_service._tools_cache_stale(server(), now) is False
+    assert (
+        mcp_service._tools_cache_stale(
+            server(last_checked_at=now - timedelta(days=6)), now
+        )
+        is False
+    )
+    assert (
+        mcp_service._tools_cache_stale(
+            server(last_checked_at=now - timedelta(days=8)), now
+        )
+        is True
+    )
+    assert (
+        mcp_service._tools_cache_stale(
+            server(last_checked_at=(now - timedelta(days=8)).replace(tzinfo=None)), now
+        )
+        is True
+    )
+    assert (
+        mcp_service._tools_cache_stale(
+            server(tools_cache=[], last_checked_at=now - timedelta(days=30)), now
+        )
+        is False
+    )
+
+
 def test_tool_handler_401_returns_structured_error_and_marks(monkeypatch) -> None:
     """调用期 401:回喂结构化错误(不执行),并尽力上报落 last_status。"""
     import asyncio

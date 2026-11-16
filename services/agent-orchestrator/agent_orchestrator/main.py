@@ -27,7 +27,6 @@ from agent_orchestrator.api.mcp_server import router as mcp_server_router
 from agent_orchestrator.api.v1.router import api_router
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.core.container import AppContainer, ToolkitFactory
-from agent_orchestrator.graph import delta
 from agent_orchestrator.models import approval as approval_models  # noqa: F401
 from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对话表)
     conversations as conversations_models,
@@ -126,13 +125,6 @@ def create_app(
         oauth_introspector=oauth_introspector,
     )
     container.install()
-
-    # 正文增量流是进程级通道配置(节点→services 的 sink),按启动时的 settings 固定
-    delta.configure(
-        enabled=container.settings.run_delta_streaming,
-        flush_chars=container.settings.run_delta_flush_chars,
-        flush_seconds=container.settings.run_delta_flush_seconds,
-    )
     return app
 
 

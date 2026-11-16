@@ -18,6 +18,7 @@ from common.logging import get_logger
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.models.runs import PARENT_KIND_FORK, Run
 from agent_orchestrator.repositories import JobRepository, RunRepository
@@ -100,6 +101,7 @@ async def rewind_run(
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings,
 ) -> Run:
     """从 checkpoint 回退重跑(§6):终态 → running,同一线程继续。
 
@@ -152,7 +154,7 @@ async def rewind_run(
     try:
         with bind_run_llm(session, run), _tool_context(run):
             async with (
-                _delta_stream(session, run) as projector,
+                _delta_stream(session, run, settings) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(session, run, step_projector) as item_projector,
                 _usage_boundary(session, run),

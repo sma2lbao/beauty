@@ -19,6 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     QUESTION_ANSWERED_EVENT,
@@ -117,6 +118,7 @@ async def answer_run(
     from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings,
 ) -> Run:
     """回答/放弃挂起的交互式提问(设计 §10.5)。
 
@@ -188,7 +190,7 @@ async def answer_run(
     try:
         with bind_run_llm(session, run), _tool_context(run):
             async with (
-                _delta_stream(session, run) as projector,
+                _delta_stream(session, run, settings) as projector,
                 _step_stream(session, run) as step_projector,
                 _usage_boundary(session, run),
             ):

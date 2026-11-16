@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import RunEventRepository
 from agent_orchestrator.schemas.runs import RunStatus
@@ -54,6 +55,7 @@ async def approve_run(
     from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings,
 ) -> Run:
     run = await require_run(session, account_id, run_id)
     if from_job:
@@ -77,7 +79,7 @@ async def approve_run(
     try:
         with bind_run_llm(session, run), _tool_context(run):
             async with (
-                _delta_stream(session, run) as projector,
+                _delta_stream(session, run, settings) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(session, run, step_projector) as item_projector,
                 _usage_boundary(session, run),
@@ -162,6 +164,7 @@ async def confirm_run(
     from_job: bool = False,
     downloader: FileDownloader | None = None,
     max_download_files: int = 10,
+    settings: Settings,
 ) -> Run:
     """危险操作确认(§6.2):awaiting_confirmation → 放行执行 / 拒绝跳过,图继续。
 
@@ -203,7 +206,7 @@ async def confirm_run(
     try:
         with bind_run_llm(session, run), _tool_context(run):
             async with (
-                _delta_stream(session, run) as projector,
+                _delta_stream(session, run, settings) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(session, run, step_projector) as item_projector,
                 _usage_boundary(session, run),

@@ -198,6 +198,7 @@ def test_rewind_with_jobs_enqueues_rewind_job(tmp_path) -> None:
                     run_id,
                     checkpoint_id,
                     jobs_enabled=True,
+                    settings=settings,
                 )
                 job = await session.scalar(select(Job).where(Job.run_id == run.id))
                 assert job is not None

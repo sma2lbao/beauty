@@ -189,7 +189,7 @@ async def _invoke_plan(
         # 正文增量通道也在这个边界绑定(节点只上报,落库在这里)
         with bind_run_llm(session, run), _tool_context(run):
             async with (
-                _delta_stream(session, run) as projector,
+                _delta_stream(session, run, settings) as projector,
                 _step_stream(session, run) as step_projector,
                 _item_stream(
                     session, run, step_projector, thread_id=plan_thread_id

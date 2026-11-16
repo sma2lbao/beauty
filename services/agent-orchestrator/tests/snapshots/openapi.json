@@ -3888,13 +3888,6 @@
             ],
             "title": "Package Id"
           },
-          "permissions": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Permissions",
-            "type": "object"
-          },
           "source": {
             "default": "builtin",
             "enum": ["builtin", "uploaded"],
@@ -3926,13 +3919,6 @@
               }
             ],
             "title": "Tools"
-          },
-          "triggers": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Triggers",
-            "type": "array"
           },
           "version": {
             "default": "1.0.0",

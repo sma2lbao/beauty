@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime, timedelta
 
 from common.errors import ConflictError, NotFoundError
 from common.logging import get_logger
@@ -66,6 +67,11 @@ from agent_orchestrator.services.tools import ToolRisk, ToolSpec
 
 logger = get_logger(__name__)
 
+#: tools_cache 只由 /test 刷新(P2:run 前不重新 list,冷启动代价高)。
+#: 超过这个时长没复测,装配时告警一次:远端工具集可能已变(新增/改名/改风险注解),
+#: 而缓存里的描述与 annotations 会被当作事实用于风险分级。
+TOOLS_CACHE_TTL = timedelta(days=7)
+
 #: 对外保留的实现(历史调用方/测试按 mcp.<name> 取用);实现细节已移入 mcp_runtime。
 #: 下划线名的几项是 mcp_runtime 的机制函数,仅测试直取,不对外。
 __all__ = [
@@ -114,6 +120,16 @@ def _tool_risk(server: MCPServer, tool: MCPToolRead) -> ToolRisk:
     return ToolRisk.DANGER
 
 
+def _tools_cache_stale(server: MCPServer, now: datetime) -> bool:
+    """缓存是否已过期:没有工具或从未测过都不算过期(没有可陈旧的东西)。"""
+    checked = server.last_checked_at
+    if not server.tools_cache or checked is None:
+        return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=UTC)
+    return now - checked > TOOLS_CACHE_TTL
+
+
 async def tool_specs(
     session: AsyncSession,
     account_id: str,
@@ -126,8 +142,10 @@ async def tool_specs(
 ) -> list[ToolSpec]:
     """把已测试/启用的 MCP server 工具并入 ToolRegistry(命名空间隔离)。
 
-    tools_cache 只由 test 端点刷新:P2 不在每次 run 前重新 list(冷启动代价高);
-    P4 再做 tools_cache 的哈希校验(TODO)。
+    tools_cache 只由 test 端点刷新:P2 不在每次 run 前重新 list(冷启动代价高)。
+    缓存过期(超过 TOOLS_CACHE_TTL 未复测)时装配不改行为、只告警——重新 list 要
+    网络往返,恰好是 P2 要省的开销;而"哈希校验"只能发现有人直接改了数据库行,
+    那一步已经越过威胁边界(能改行的人也能改工具描述),所以不做,只留时间戳告警。
 
     server_ids 非空 = 用户显式引用了这些 server(§6.7):只装配它们;
     None / 空序列维持现状(全部已启用的 server)。
@@ -139,7 +157,18 @@ async def tool_specs(
         wanted = set(server_ids)
         servers = [server for server in servers if server.id in wanted]
     specs: list[ToolSpec] = []
+    now = datetime.now(UTC)
     for server in servers:
+        if _tools_cache_stale(server, now):
+            logger.warning(
+                "MCP tools_cache 已过期,建议在设置页重新测试",
+                server=server.name,
+                last_checked_at=(
+                    server.last_checked_at.isoformat()
+                    if server.last_checked_at is not None
+                    else None
+                ),
+            )
         stdio = (server.transport or TRANSPORT_HTTP) == TRANSPORT_STDIO
         if stdio and pool is None:
             logger.warning(

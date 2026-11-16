@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from events.envelope import EventEnvelope
 from sqlalchemy import select
@@ -22,6 +22,9 @@ from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run, RunEvent
 from agent_orchestrator.repositories import MessageRepository, RunEventRepository
 from agent_orchestrator.schemas.runs import RunStatus
+
+if TYPE_CHECKING:
+    from agent_orchestrator.core.config import Settings
 
 
 async def append_event(
@@ -91,11 +94,13 @@ class _RunDeltaSink:
     事件,轮询回放也扛不住。
     """
 
-    def __init__(self, session: AsyncSession, run: Run) -> None:
+    def __init__(self, session: AsyncSession, run: Run, settings: Settings) -> None:
         self._session = session
         self._run = run
-        self._flush_chars = delta.flush_chars()
-        self._flush_seconds = delta.flush_seconds()
+        # 攒批口径与开关都从本次调用的启动配置来(不再读进程级全局):
+        # 同一进程里不同 app 实例(测试/多租户装配)各有各的 settings。
+        self._flush_chars = max(1, settings.run_delta_flush_chars)
+        self._flush_seconds = max(0.0, settings.run_delta_flush_seconds)
         self._buffer: list[str] = []
         self._phase = delta.PHASE_EXECUTE
         self._chars = 0
@@ -136,17 +141,18 @@ class _RunDeltaSink:
 
 @asynccontextmanager
 async def _delta_stream(
-    session: AsyncSession, run: Run
+    session: AsyncSession, run: Run, settings: Settings
 ) -> AsyncIterator[delta.DeltaProjector]:
     """图调用边界:构造本次 run 的正文增量投影器(未开启时为空投影器)。
 
     投影器经 graph invocation config 显式注入节点(不再用 ContextVar 绑定),
-    图内节点只上报、落库与提交仍在这里完成。
+    图内节点只上报、落库与提交仍在这里完成。开关与攒批口径取自本次调用的
+    settings(进程级 configure 兼容层已删,R-29)。
     """
-    if not delta.enabled():
+    if not settings.run_delta_streaming:
         yield delta.DeltaProjector()
         return
-    sink = _RunDeltaSink(session, run)
+    sink = _RunDeltaSink(session, run, settings)
     # 开跑前的写入(计划/放行/指令消费)先落库:增量事件才有独立的可见时刻,
     # 也避免同一 session 里未提交的旧事务挡住 flush 提交。
     await session.commit()

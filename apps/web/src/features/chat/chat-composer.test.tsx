@@ -188,11 +188,9 @@ describe('ChatPage 技能', () => {
         description: 'x',
         workspace_type: 'local',
         tools: [],
-        permissions: {},
         system_prompt: 'x',
         input_schema: {},
         deliverables: [],
-        triggers: [],
       },
     ]);
     renderPage('/?conversation=c1');

@@ -73,6 +73,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             container.workspace_client,
             emit_approved=False,
             from_job=True,
+            settings=container.settings,
             **common,
         )
         return
@@ -88,6 +89,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             container.workspace_client,
             emit_confirmation=False,
             from_job=True,
+            settings=container.settings,
             **common,
         )
         return
@@ -109,6 +111,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             workspace=container.workspace_client,
             emit_answered=False,
             from_job=True,
+            settings=container.settings,
             **common,
         )
         return
@@ -124,6 +127,7 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             workspace=container.workspace_client,
             emit_rewound=False,
             from_job=True,
+            settings=container.settings,
             **common,
         )
         return
