@@ -178,6 +178,12 @@ class Settings(BaseAppSettings):
     subagent_summary_max_chars: int = 4000
     subagent_task_max_chars: int = 4000
     subagent_max_tools: int = 12
+    # 异步等待(L2,subagents.md §6.1):父 run 停在 awaiting_subagent 等子 run
+    # 终态唤醒。子 run 超过这个时长仍未终态时由等待 sweeper 取消子 run(级联
+    # 取消)并唤醒父 run;0 = 不限时(只能靠取消或漏唤醒补偿收尾)。
+    subagent_wait_timeout_seconds: float = 3600.0
+    # 等待 sweeper 的扫描间隔:<= 0 关闭(测试与不需要补偿的部署可关)。
+    subagent_wait_sweep_interval_seconds: float = 30.0
     # 工具(架构 §8):execute 走 function-calling 调各能力提供方(文档/知识库;
     # 代码类工具由 tool-service 提供,见下方的 tool_service_enabled)
     tools_enabled: bool = False

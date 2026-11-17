@@ -195,6 +195,7 @@ class RunRepository(AccountRepository[Run]):
         grace 以 updated_at 为准:执行中的增量提交会推进它,因此"静默超过
         grace"才可能意味着进程已经不在了。
         """
+
         cutoff = now - timedelta(seconds=max(grace_seconds, 0))
         statement = (
             select(Run)
@@ -202,6 +203,22 @@ class RunRepository(AccountRepository[Run]):
                 Run.status.in_((RunStatus.PLANNING.value, RunStatus.RUNNING.value)),
                 Run.updated_at < cutoff,
             )
+            .order_by(Run.updated_at, Run.id)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
+
+    async def list_awaiting_subagents(self, limit: int = 50) -> list[Run]:
+        """扫描停在 awaiting_subagent 的父 run(子代理等待 sweeper 用,§6.1)。
+
+        跨账号系统维护查询(同 list_orphaned_executions):漏唤醒补偿要看子 run
+        是否已全部终态,等待超时要看子 run 的创建时间,所以只取候选、由调用方
+        逐步复核。
+        """
+
+        statement = (
+            select(Run)
+            .where(Run.status == RunStatus.AWAITING_SUBAGENT.value)
             .order_by(Run.updated_at, Run.id)
             .limit(limit)
         )

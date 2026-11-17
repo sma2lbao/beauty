@@ -81,6 +81,9 @@ from agent_orchestrator.services.run_timeout_sweeper import (
 from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skill_runner import SkillRunner
 from agent_orchestrator.services.skills import load_skills
+from agent_orchestrator.services.subagent_wait_sweeper import (
+    start_sweeper as start_subagent_wait_sweeper,
+)
 from agent_orchestrator.services.tool_client import (
     ToolClient,
 )
@@ -170,6 +173,8 @@ class AppContainer(
         self.run_timeout_task: asyncio.Task[None] | None = None
         # P1-C:崩溃续跑 sweeper(执行中但已无进程推进的 run → recover 续跑)
         self.run_recovery_task: asyncio.Task[None] | None = None
+        # L2:子代理等待 sweeper(漏唤醒补偿 + 等待超时级联取消)
+        self.subagent_wait_task: asyncio.Task[None] | None = None
         self.memory_sweep_task: asyncio.Task[None] | None = None
         self.alert_sweep_task: asyncio.Task[None] | None = None
         # 通知持久化:run 状态变化 → notifications 表(关掉页面也留未读)
@@ -318,6 +323,13 @@ class AppContainer(
             # 崩溃续跑(P1-C §8):执行中却已无进程推进的 run,接回 checkpoint
             if settings.run_recovery_sweep_interval_seconds > 0:
                 self.run_recovery_task = start_run_recovery_sweeper(self)
+            # 子代理等待(L2 §6.1):漏唤醒补偿与等待超时都依赖唤醒 job,故同样
+            # 只在 jobs 开启时启动
+            if (
+                settings.subagent_enabled
+                and settings.subagent_wait_sweep_interval_seconds > 0
+            ):
+                self.subagent_wait_task = start_subagent_wait_sweeper(self)
         # 记忆清扫:过期清理 + 相似记忆巩固,独立于 job worker(纯运维后台任务)
         if settings.memory_enabled and settings.memory_sweep_interval_seconds > 0:
             self.memory_sweep_task = start_memory_sweeper(self)
@@ -358,6 +370,11 @@ class AppContainer(
             with suppress(asyncio.CancelledError):
                 await self.run_recovery_task
             self.run_recovery_task = None
+        if self.subagent_wait_task is not None:
+            self.subagent_wait_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.subagent_wait_task
+            self.subagent_wait_task = None
         if self.memory_sweep_task is not None:
             self.memory_sweep_task.cancel()
             with suppress(asyncio.CancelledError):

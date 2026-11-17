@@ -177,11 +177,41 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
 - 同一回合既有待确认写又有 spawn:写确认优先,该批 `pending_subagents` 被丢弃(子 run 仍会
   跑完,但回执不回到父上下文);
 - spawn 被账号审批策略设为 confirm 时从 `tool_exec` 执行,不进 `subagent_wait`(异步等待不生效);
-- 子 run 停在 `awaiting_*`(需人工)不唤醒父 run;子 run 崩溃或唤醒丢失 → 父 run 永久
-  `awaiting_subagent`,需 sweeper 兜(未落);
+- 子 run 停在 `awaiting_*`(需人工)不唤醒父 run;唤醒丢失由 §6.2 的等待 sweeper 兜(漏唤醒
+  补偿 + 超时级联取消),但**父 run 恢复后不会再等**:超时是终局,父 run 拿 cancelled 回执继续;
 - 父 run 在 `running` 中途崩溃由 recover 兜,恢复后可能重复 interrupt 回到 `awaiting_subagent`;
-- 等待没有超时上限:子 run 的 `timeout_seconds` 只约束 spawn 内联模式,异步模式靠子 run 自身
-  的 job 失败/取消收尾。
+- 子 run 的 `timeout_seconds` 只约束 spawn 内联模式;异步模式的时限由 §6.2 的
+  `subagent_wait_timeout_seconds` 在**等待方**计时。
+
+## 6.2 等待超时与漏唤醒补偿(L2 ④,2026-11-17)
+
+`services/subagent_wait_sweeper.py` 每 `subagent_wait_sweep_interval_seconds`(默认 30s)扫一轮
+`awaiting_subagent` 的父 run,**只在 `jobs_enabled` 时启动**(没有 job 队列就没人消费唤醒):
+
+1. **漏唤醒补偿**:子 run 已全部终态,但父 run 没有任何 live job(`JobRepository.
+has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一条 `subagent` job
+   (`dedupe=False`)。典型现场:子 run 终态提交后进程崩,`notify_parent` 的入队随事务一起丢。
+2. **等待超时**:仍有非终态子 run,且**最老**子 run 的 `created_at` 距今超过
+   `subagent_wait_timeout_seconds`(默认 3600s;`<= 0` 不限时)→ 对每个非终态子 run 调
+   `cancel_run(..., WAIT_TIMEOUT_REASON)`,再复核一次 live job,没有则补一条唤醒 job。
+   父 run 拿到 `cancelled` 回执后继续(不是永久挂起)。
+
+**为什么超时从等待方发起**:异步模式下子 run 是一条独立 job,没有谁在它身上计时;`cancel_run`
+已负责取消其排队 job、落 `run.cancelled.v1`、通知工具侧放弃等待(§9.5),但仍**不打断**已在沙箱
+执行的 argv。级联取消是「放弃等待」而不是「杀掉子 run 的进程」。
+
+**幂等**:`resume_subagent` 先把父 run 改 `running` 再续图,重复唤醒直接返回;因此 sweeper 可以
+放心重排。取消 N 个子 run 时 `cancel_run` 内部的 `notify_parent` 已各入队一次,末尾的
+`has_live_for_run` 复核保证不再多补。
+
+**残余**
+
+- sweeper 与 worker 有竞态窗口:扫到「无 live job」到入队之间,原唤醒 job 可能刚好被写入
+  (重复唤醒无害);
+- 超时判据用最老子 run 的 `created_at`,不看父子链路是否真在等(父 run 若因别的原因长时间
+  停在 `awaiting_subagent`,同样会被判超时);
+- `subagent_wait_timeout_seconds <= 0` 时只做漏唤醒补偿,等太久仍只能靠人工取消;
+- sweeper 每轮跨账号全表扫 `awaiting_subagent`(与崩溃续跑 sweeper 同口径),量大时需要索引。
 
 ## 7. 事件与过程项(P1-D 分类学)
 
@@ -273,6 +303,9 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
 - `tests/test_subagents_async.py`(L2):ack 识别契约、等待节点 interrupt 载荷与回执形态、
   队列化(spawn 只入子 run 的 plan job)、唤醒条件(父 `awaiting_subagent` 才入队)、
   子 run 未全终态时不推进、全终态时 resume 载荷顺序与 item 终态补写;
+- `tests/test_subagent_wait_sweeper.py`(L2 ④):漏唤醒补偿(子全终态 + 无 live job → 重排
+  `subagent` job)、已有 live job 不重复入队、未超时不打扰在飞子 run、超时级联取消子 run 且父 run
+  拿到唤醒、父 run 不在等待态与没有子 run 时跳过;
 - `tests/snapshots/openapi.json` 重生成(新端点 + RunRead 字段);
 - 前端 `run-item-timeline.test.tsx`(subagent 卡片)、`run-detail.test.tsx`
   (子代理面板)、`runs-api.test.ts`(subagents/usage);
@@ -283,8 +316,8 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
 ## 14. 后续
 
 - 子代理可选更便宜模型(per-run 选择已随 P1-G 落地;子代理当前沿用父 run 模型);
-- 异步等待的收尾:`awaiting_subagent` 的 sweeper(漏唤醒/子 run 崩溃兜底)、spawn 走确认闸时
-  的等待路径、同批 spawn 与写确认并存的回执保留(§6.1 残余);
+- 异步等待的收尾:spawn 走确认闸时的等待路径、同批 spawn 与写确认并存的回执保留
+  (§6.1 残余;漏唤醒与等待超时已由 §6.2 的 sweeper 收口);
 - 多子代理并发编排的调度策略(当前只做「全终态才继续」);
 - 命名子代理注册表(可复用的 agent 模板与权限包);
 - AG-UI `Subagents` 事件族映射与跨端渲染。
