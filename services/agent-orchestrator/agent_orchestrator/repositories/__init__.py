@@ -33,6 +33,12 @@ from agent_orchestrator.repositories.constants import (
 )
 from agent_orchestrator.repositories.constants import QUEUED as QUEUED
 from agent_orchestrator.repositories.constants import (
+    SUBAGENT_RESUMED_EVENT as SUBAGENT_RESUMED_EVENT,
+)
+from agent_orchestrator.repositories.constants import (
+    SUBAGENT_WAITING_EVENT as SUBAGENT_WAITING_EVENT,
+)
+from agent_orchestrator.repositories.constants import (
     TOOL_CALLED_EVENT as TOOL_CALLED_EVENT,
 )
 from agent_orchestrator.repositories.conversation import (

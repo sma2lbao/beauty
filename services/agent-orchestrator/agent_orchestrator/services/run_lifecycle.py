@@ -50,6 +50,9 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
     # 崩溃续跑(内部动作,不作为 API 暴露,见 docs/design/recovery.md §8):执行中
     # 的 run 由图 checkpoint 续跑;不可续时退化为新 attempt 的重新规划。
     "recover": frozenset({RunStatus.PLANNING, RunStatus.RUNNING}),
+    # 异步子代理唤醒(L2,docs/design/subagents.md):父 run 停在 awaiting_subagent
+    # 时由 subagent job 恢复图;子代理未全部终态时动作只做一次检查后收手。
+    "subagent": frozenset({RunStatus.AWAITING_SUBAGENT}),
     # 取消(P0-2/S6):非终态都可取消。running/planning 是协作式——节点边界与
     # 执行期外呼都会让路(见 graph/cancellation.py);已发到沙箱的命令不打断,
     # 执行边界回来读库发现 cancelled 后跳过终态覆盖(见 _apply_graph_result)。
@@ -61,6 +64,7 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
             RunStatus.AWAITING_APPROVAL,
             RunStatus.AWAITING_CONFIRMATION,
             RunStatus.AWAITING_INPUT,
+            RunStatus.AWAITING_SUBAGENT,
             RunStatus.BLOCKED,
         }
     ),

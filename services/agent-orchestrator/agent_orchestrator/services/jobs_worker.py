@@ -37,7 +37,7 @@ WORKER_ID = f"local-{os.getpid()}"
 # 这些 job 的前置状态会被崩溃时的增量提交写坏(planning/running),此时重放只会在
 # 状态守卫上 409;改道去从 checkpoint 续跑(§8)。answer/rewind 不在此列——API 侧
 # 合法地把状态先推到 running 再入队,拦截会丢掉 Command(resume) 语义。
-_SUPERSEDABLE_KINDS = frozenset({"plan", "approve", "confirm", "resume"})
+_SUPERSEDABLE_KINDS = frozenset({"plan", "approve", "confirm", "resume", "subagent"})
 
 
 async def _dispatch(container: AppContainer, session, job: Job) -> None:
@@ -182,6 +182,21 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             workspace=container.workspace_client,
             settings=container.settings,
             context=container.context_pipeline,
+            **common,
+        )
+        return
+    if kind == "subagent":
+        # 异步子代理唤醒(L2):子 run 已到终态,父 run 从 awaiting_subagent 恢复;
+        # 仍有子代理在飞时这里只做一次检查就收手(下一次唤醒再来)
+        await runs_service.resume_subagent(
+            session,
+            graph,
+            job.account_id,
+            job.run_id,
+            container.artifact_store,
+            container.workspace_client,
+            from_job=True,
+            settings=container.settings,
             **common,
         )
         return

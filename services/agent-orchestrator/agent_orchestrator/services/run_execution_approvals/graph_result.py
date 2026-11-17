@@ -11,11 +11,12 @@ from agent_orchestrator import metrics
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     QUESTION_REQUIRED_EVENT,
+    SUBAGENT_WAITING_EVENT,
     TOOL_CALLED_EVENT,
     RunEventRepository,
 )
 from agent_orchestrator.schemas.runs import RunStatus
-from agent_orchestrator.services import memory_extraction, run_scores
+from agent_orchestrator.services import memory_extraction, run_scores, subagent_wake
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.run_artifacts import (
     _deliver_artifacts,
@@ -83,6 +84,18 @@ async def _apply_graph_result(
                 },
             )
             return run
+        if payload.get("kind") == "subagent_wait":
+            # 异步子代理(L2):父 run 挂起等子代理终态,不占 worker。
+            # 子 run 落终态时 services.subagent_wake 入队 subagent job 唤醒。
+            run.status = RunStatus.AWAITING_SUBAGENT.value
+            run.rounds = values.get("rounds", 0)
+            await append_event(
+                session,
+                run,
+                SUBAGENT_WAITING_EVENT,
+                {"children": payload.get("children") or []},
+            )
+            return run
         # 危险操作待人工确认:停在 awaiting_confirmation,等 POST /confirm
         run.status = RunStatus.AWAITING_CONFIRMATION.value
         run.rounds = values.get("rounds", 0)
@@ -128,6 +141,8 @@ async def _apply_graph_result(
         )
         await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
         await run_scores.record_rule_score(session, run, completed=False)
+        # 子 run 失败也要唤醒父 run(L2):回执带失败原因,父 run 决定降级/重排
+        await subagent_wake.notify_parent(session, run)
         return run
     run.status = RunStatus.COMPLETED.value
     metrics.observe_run_outcome(status=RunStatus.COMPLETED.value)
@@ -149,4 +164,6 @@ async def _apply_graph_result(
     # 提交后抽取(P1-3):run 完成写入进程内回调,由会话边界提交成功后执行;
     # outbox 开启时交给 outbox 消费者,这里只登记不等待
     memory_extraction.schedule_run_extraction(session, run)
+    # 子 run 完成 → 唤醒挂起的父 run(L2);父 run 不在等待时静默 no-op
+    await subagent_wake.notify_parent(session, run)
     return run

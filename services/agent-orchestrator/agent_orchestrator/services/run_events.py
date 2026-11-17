@@ -465,6 +465,10 @@ async def _fail_run(
 
     await run_scores.record_rule_score(session, run, completed=False)
     await _append_assistant_message(session, run, f"执行失败:{run.status_reason}")
+    # 子 run 崩了也要叫醒父 run(L2):父 run 拿到失败回执,而不是永久挂起
+    from agent_orchestrator.services import subagent_wake
+
+    await subagent_wake.notify_parent(session, run)
 
 
 async def list_events(

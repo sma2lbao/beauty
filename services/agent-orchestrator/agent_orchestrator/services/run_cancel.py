@@ -99,4 +99,9 @@ async def cancel_run(
     metrics.observe_run_outcome(status=RunStatus.CANCELLED.value)
     # 终态已落库再看工具服务:通知失败也不回滚取消(尽力而为的旁路)。
     await _notify_tool_cancel(run.account_id, run.id)
+    # 被取消的子 run 也要唤醒父 run(L2):父 run 拿回执继续往下走,而不是
+    # 永久停在 awaiting_subagent;取消的是父 run 时这里自然 no-op。
+    from agent_orchestrator.services import subagent_wake
+
+    await subagent_wake.notify_parent(session, run)
     return run

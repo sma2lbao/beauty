@@ -41,6 +41,10 @@ from agent_orchestrator.graph.nodes.messages import (
     _todos_update,
     _tool_message,
 )
+from agent_orchestrator.graph.nodes.subagent_wait import (
+    PENDING_KEY,
+    pending_spawn_ack,
+)
 from agent_orchestrator.graph.nodes.toolkit import _load_toolkit
 from agent_orchestrator.graph.plan_nodes import _text_reply
 from agent_orchestrator.graph.ports import (
@@ -117,6 +121,8 @@ def make_execute_node(
         records: list[dict[str, Any]] = []
         reply: ToolReplyPort | None = None
         latest_todos: list[dict[str, str]] | None = None
+        # L2:本回合入队(未内联等待)的子代理,交给 subagent_wait 节点挂起等待
+        pending_subagents: list[dict[str, Any]] = []
         exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
             # S3:每轮开工前问一次取消——模型调用是多秒级阻塞,不在这里问就会
@@ -378,11 +384,24 @@ def make_execute_node(
                     ),
                 )
                 output = append_hook_note(output, post)
+                ack = pending_spawn_ack(output)
+                if ack is not None:
+                    pending_subagents.append(ack)
                 messages.append(_tool_message(call.id, output))
             if pending:
+                # 写操作确认优先(见 route_after_execute):子代理已入队但不在这里
+                # 等待,回执交给下一次唤醒——本回合先把手上的写操作问清楚
                 return {
                     "tool_history": messages[len(base) :],
                     "pending_writes": pending,
+                    "tool_calls": records,
+                    **_todos_state(latest_todos),
+                }
+            if pending_subagents:
+                # L2:父 run 就此挂起等子代理终态,不占 worker(docs/design/subagents.md)
+                return {
+                    "tool_history": messages[len(base) :],
+                    PENDING_KEY: pending_subagents,
                     "tool_calls": records,
                     **_todos_state(latest_todos),
                 }

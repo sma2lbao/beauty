@@ -26,6 +26,7 @@ from agent_orchestrator.graph.nodes import (
     make_deliver_node,
     make_execute_node,
     make_plan_node,
+    make_subagent_wait_node,
     make_tool_exec_node,
     make_verify_node,
 )
@@ -49,14 +50,23 @@ def route_after_gate(state: RunGraphState) -> str:
 
 
 def route_after_execute(state: RunGraphState) -> str:
-    """有待答问题 → 提问闸;有写操作 → 确认闸;否则进入验收(§10.3/§6.2)。
+    """排序:待答问题 → 待确认写 → 待等子代理 → 验收(§10.3/§6.2/L2)。
 
     提问优先于写操作确认:本回合既没执行任何工具,也没收集待确认写操作
     (execute 命中 interaction 调用时其余调用一律不执行)。
+
+    写操作确认优先于子代理等待:待确认的两条写操作还没拿到 tool 消息,
+    如果先去等子代理,恢复后模型补全时会看到"assistant 消息里有未应答的
+    tool_calls"——OpenAI 协议下直接 400。子代理已入队但本回合不等待的
+    情况见 docs/design/subagents.md 的残余一节。
     """
     if state.get("pending_question"):
         return "ask_gate"
-    return "confirm_gate" if state.get("pending_writes") else "verify"
+    if state.get("pending_writes"):
+        return "confirm_gate"
+    if state.get("pending_subagents"):
+        return "subagent_wait"
+    return "verify"
 
 
 def route_after_confirm(state: RunGraphState) -> str:
@@ -109,6 +119,8 @@ def build_run_graph(
         ),
     )
     builder.add_node("ask_gate", make_ask_gate_node())
+    # 异步子代理(L2):父 run 在这里 interrupt 等子代理终态,不占 worker
+    builder.add_node("subagent_wait", make_subagent_wait_node())
     builder.add_node("confirm_gate", confirm_gate_node)
     builder.add_node(
         "tool_exec",
@@ -136,11 +148,18 @@ def build_run_graph(
     builder.add_conditional_edges(
         "execute",
         route_after_execute,
-        {"ask_gate": "ask_gate", "confirm_gate": "confirm_gate", "verify": "verify"},
+        {
+            "ask_gate": "ask_gate",
+            "confirm_gate": "confirm_gate",
+            "subagent_wait": "subagent_wait",
+            "verify": "verify",
+        },
     )
     # 提问闸恢复后回 execute:答案已作为 tool-role 消息写进 tool_history,
     # 模型下一轮自然看到(而不是重新执行工具或重发提问)。
     builder.add_edge("ask_gate", "execute")
+    # 子代理回执以 user 消息写进 tool_history,回 execute 继续本任务(L2)
+    builder.add_edge("subagent_wait", "execute")
     builder.add_conditional_edges(
         "confirm_gate",
         route_after_confirm,

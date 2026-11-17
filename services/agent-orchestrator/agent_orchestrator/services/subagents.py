@@ -31,6 +31,7 @@ from agent_orchestrator.graph import items
 from agent_orchestrator.models.runs import PARENT_KIND_SUBAGENT, Run
 from agent_orchestrator.repositories import RunEventRepository, RunRepository
 from agent_orchestrator.schemas.runs import RunStatus, RunUsageTotals, SubagentRead
+from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services import usage_events
 from agent_orchestrator.services.items import (
     append_item_event,
@@ -339,6 +340,12 @@ async def spawn_subagent(
     # 子 run 行与其 created 事件必须对执行会话可见,故先提交再起任务。
     await session.commit()
 
+    if settings.jobs_enabled:
+        # L2 异步委派:子 run 进 job 队列,父 run 不在这里阻塞等——
+        # 等的是 subagent_wait 节点(不占 worker),子 run 终态时
+        # services/subagent_wake 入队 subagent job 唤醒父 run。
+        return await _spawn_async(session, parent, child, request)
+
     task = asyncio.create_task(
         _execute_child(
             factory,
@@ -391,6 +398,35 @@ async def spawn_subagent(
         store=store,
         settings=settings,
     )
+
+
+async def _spawn_async(
+    session: AsyncSession, parent: Run, child: Run, request: _Request
+) -> dict[str, Any]:
+    """异步委派(L2):子 run 入队即返回,等待交给 subagent_wait 节点。
+
+    回执里的 pending=True 是 graph 与 services 之间的契约
+    (graph.nodes.subagent_wait.pending_spawn_ack):execute 看到它才知道
+    这一回合要挂起等子代理,而不是把"已入队"当成普通工具结果继续往下跑。
+    """
+
+    await jobs_service.enqueue(
+        session,
+        parent.account_id,
+        "plan",
+        child.id,
+        payload={"parent_run_id": parent.id},
+        dedupe=False,
+    )
+    return {
+        "ok": True,
+        "pending": True,
+        "subagent_run_id": child.id,
+        "status": child.status,
+        "title": request.title,
+        "summary": "",
+        "note": "子代理已入队运行;父任务挂起等待,子代理结束后自动继续",
+    }
 
 
 async def list_subagents(

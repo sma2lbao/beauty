@@ -12,6 +12,7 @@ export type RunStatus =
   | 'running'
   | 'awaiting_confirmation'
   | 'awaiting_input'
+  | 'awaiting_subagent'
   | 'blocked'
   | 'completed'
   | 'failed'

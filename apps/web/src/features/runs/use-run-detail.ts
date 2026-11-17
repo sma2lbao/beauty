@@ -20,6 +20,7 @@ const CANCELLABLE: readonly RunStatus[] = [
   'awaiting_approval',
   'awaiting_confirmation',
   'awaiting_input',
+  'awaiting_subagent',
   'blocked',
 ];
 

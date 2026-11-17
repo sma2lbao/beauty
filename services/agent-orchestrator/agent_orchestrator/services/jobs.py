@@ -26,6 +26,9 @@ KINDS = frozenset(
         # 崩溃续跑(§8):状态已停在 planning/running,worker 从最近的图 checkpoint
         # 继续跑;由 run 恢复 sweeper 入队,或把失效的旧动作 job 改道而来
         "recover",
+        # 异步子代理唤醒(L2):子 run 到终态时入队,把父 run 从
+        # awaiting_subagent 恢复(子代理未全部终态时只做一次检查)
+        "subagent",
     }
 )
 
@@ -39,18 +42,24 @@ async def enqueue(
     payload: dict[str, Any] | None = None,
     max_attempts: int = 3,
     priority: int | None = None,
+    dedupe: bool = True,
 ) -> Job:
     """同一 run 同类 job 已在队列时复用,避免连点重复执行。
 
     priority(P1-C):不传则从 run 复制(建 run 时的调度优先级);调用方显式给值时
     以调用方为准(如运维手动提升)。run 不存在时按 0 处理。
+
+    dedupe(L2):子代理唤醒必须关掉——两个子 run 几乎同时到终态时如果合并成
+    一条 job,worker 可能在后一个子 run 提交前就检查完,把这次唤醒吃掉;
+    "唤醒到的 job 先到先跑、后到的发现全部终态再恢复"靠内容检查,不靠合并。
     """
     if kind not in KINDS:
         raise ValueError(f"unknown job kind: {kind}")
     repo = JobRepository(session)
-    existing = await repo.find_queued(account_id, kind, run_id)
-    if existing is not None:
-        return existing
+    if dedupe:
+        existing = await repo.find_queued(account_id, kind, run_id)
+        if existing is not None:
+            return existing
     if priority is None:
         run = await RunRepository(session).get_for_account(account_id, run_id)
         priority = run.priority if run is not None else 0

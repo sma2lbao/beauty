@@ -104,6 +104,11 @@ extras 工厂)
 
 ## 6. 生命周期
 
+两种模式:`jobs_enabled=False`(测试/进程内)走下面的内联执行;`jobs_enabled=True` 走 §6.1 的
+异步等待。
+
+**内联模式**
+
 ```
 校验参数/上限
   → 建子 run(继承 account/workspace/mcp;conversation=None;agent_* 落列)
@@ -134,6 +139,50 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
 **待人工**:子 run 停在审批/确认/提问时**立即返回**,不阻塞父 run;子 run 在
 `/runs` 与父级「子代理」面板可见,人工处理后可重试/续跑。
 
+## 6.1 异步等待模式(L2,2026-11-17)
+
+`jobs_enabled=True`(生产形态)时,spawn 不再内联跑子 run:子 run 的 `plan` 入 job 队列后
+spawn 立刻返回 ack,父 run 在 `subagent_wait` 节点挂起;子 run 终态时由事件唤醒父 run 继续。
+
+**为什么必须「先挂起」**:`jobs_worker.start_worker` 只起**一个**消费者任务;若父 run 仍占着
+worker 等子 run,子 run 的 `plan` job 永远没人取 → 自锁。因此队列化、等待节点、唤醒三件事
+必须同时落地,不能只做第一步。
+
+**流程**
+
+```
+spawn(jobs_enabled) → 子 run 落 run.created.v1 → 入队 plan job(dedupe=False) → 返回 ack
+execute 节点识别 ack(pending=true + subagent_run_id)→ 收集 pending_subagents
+批次结束 → route_after_execute 走 subagent_wait(写确认仍优先)→ interrupt({kind:"subagent_wait"})
+  → graph_result:run.status=awaiting_subagent + run.subagent.waiting.v1
+子 run 终态 → subagent_wake.notify_parent(父仍 awaiting_subagent 才生效)→ 入队 subagent job
+worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全终态则
+  Command(resume={kind:"subagent_wait", children:[...]}) → 回执追加为 user 消息 → 图继续
+```
+
+**关键语义**
+
+- **回执用 user 角色消息**:spawn 的 ack 已占用该 `tool_call_id`,再补一条同 id 的 `tool`
+  消息会违反 OpenAI 消息协议;回执因此是「[子代理结果回执]」开头的 user 消息,并同时落
+  `subagent_notices` 供回放。
+- **唤醒幂等**:`notify_parent` 只在父 run 处于 `awaiting_subagent` 时入队;`resume_subagent`
+  先把状态改 `running` 并落 `run.subagent.resumed.v1`,后续同 run 的唤醒 `from_job` 直接返回。
+- **不得去重**:`enqueue(..., dedupe=False)`——两个子 run 同时终态时,`find_queued` 合并成一条
+  会让 worker 在后一个子 run 提交前检查完而吃掉唤醒(父 run 永久挂起)。
+- **同批多 spawn**:一批里多个 spawn 一起进 `pending_subagents`,全部子 run 终态才继续
+  (没有「任一完成即继续」的策略)。
+
+**残余(如实)**
+
+- 同一回合既有待确认写又有 spawn:写确认优先,该批 `pending_subagents` 被丢弃(子 run 仍会
+  跑完,但回执不回到父上下文);
+- spawn 被账号审批策略设为 confirm 时从 `tool_exec` 执行,不进 `subagent_wait`(异步等待不生效);
+- 子 run 停在 `awaiting_*`(需人工)不唤醒父 run;子 run 崩溃或唤醒丢失 → 父 run 永久
+  `awaiting_subagent`,需 sweeper 兜(未落);
+- 父 run 在 `running` 中途崩溃由 recover 兜,恢复后可能重复 interrupt 回到 `awaiting_subagent`;
+- 等待没有超时上限:子 run 的 `timeout_seconds` 只约束 spawn 内联模式,异步模式靠子 run 自身
+  的 job 失败/取消收尾。
+
 ## 7. 事件与过程项(P1-D 分类学)
 
 - **父级**只新增一类过程项:`run.item.v1` `kind="subagent"`;
@@ -149,6 +198,9 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
   `run.step.v1`、`token.delta.v1` 都落在同一 thread、`turn_id=child_run_id`。
 - 不新增父级 gate 事件:父子关系由 `runs.parent_run_id` + item `data.child_run_id`
   双向可达,回放可重建完整过程。
+- **run 级**两个新事件:`run.subagent.waiting.v1`(payload `children`:`[{child_run_id,title}]`,
+  父 run 进入 `awaiting_subagent` 时落)与 `run.subagent.resumed.v1`(payload `children`:`[child_run_id]`,
+  全部子 run 终态、父 run 重新 `running` 时落);两者 `record_outbox=False`,与过程项同为本地投影;
 - `event-taxonomy.md` 同步:§4 增 `subagent` 行,§7 增发射点。
 
 ## 8. API
@@ -218,6 +270,9 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
   完整 spawn(completed/failed/awaiting)、超时取消、子 run 取消、
   父 run 取消连带、摘要截断、用量事件与 `GET /usage` 汇总、
   `GET /subagents` 列表与 summary、item `kind=subagent` 生命周期与 thread/turn;
+- `tests/test_subagents_async.py`(L2):ack 识别契约、等待节点 interrupt 载荷与回执形态、
+  队列化(spawn 只入子 run 的 plan job)、唤醒条件(父 `awaiting_subagent` 才入队)、
+  子 run 未全终态时不推进、全终态时 resume 载荷顺序与 item 终态补写;
 - `tests/snapshots/openapi.json` 重生成(新端点 + RunRead 字段);
 - 前端 `run-item-timeline.test.tsx`(subagent 卡片)、`run-detail.test.tsx`
   (子代理面板)、`runs-api.test.ts`(subagents/usage);
@@ -228,6 +283,8 @@ item 失败 `data.reason="cancelled"`;父 run 被取消 → 连带取消子 run(
 ## 14. 后续
 
 - 子代理可选更便宜模型(per-run 选择已随 P1-G 落地;子代理当前沿用父 run 模型);
-- 异步子 run / 并发编排(worker + 事件树实时增量);
+- 异步等待的收尾:`awaiting_subagent` 的 sweeper(漏唤醒/子 run 崩溃兜底)、spawn 走确认闸时
+  的等待路径、同批 spawn 与写确认并存的回执保留(§6.1 残余);
+- 多子代理并发编排的调度策略(当前只做「全终态才继续」);
 - 命名子代理注册表(可复用的 agent 模板与权限包);
 - AG-UI `Subagents` 事件族映射与跨端渲染。

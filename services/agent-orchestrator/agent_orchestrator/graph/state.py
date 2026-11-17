@@ -54,6 +54,11 @@ class RunGraphState(TypedDict, total=False):
     hooks: list[dict[str, Any]]
     tool_history: list[dict[str, Any]]  # 工具对话历史(execute ↔ tool_exec 间传递)
     pending_writes: list[dict[str, Any]]  # 待人工确认的写操作(§6.2)
+    # 异步子代理(L2,docs/design/subagents.md):execute 收到 spawn 的入队回执后
+    # 置待等待项,subagent_wait 是唯一 interrupt 点;回执以 user 消息写回
+    # tool_history。缺省=无待等待项(旧 checkpoint 兼容,.get 读)。
+    pending_subagents: list[dict[str, Any]]
+    subagent_notices: list[dict[str, Any]]  # 最近一次唤醒带回的子代理回执
     writes_approved: bool  # 确认闸的判定结果
     confirm_cycles: Annotated[int, add]  # 确认轮次(上限见 nodes.MAX_CONFIRM_CYCLES)
     # 交互提问(docs/design/tool-service.md §10.2):execute 遇到 interaction 工具

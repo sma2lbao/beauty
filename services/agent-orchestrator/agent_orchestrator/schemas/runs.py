@@ -20,6 +20,9 @@ class RunStatus(StrEnum):
     # 交互提问(docs/design/tool-service.md §10.2):模型已提问、run 停在 ask_gate
     # 等用户回答;只能 answer(取消亦可),DB 列 String(32) 无需迁移。
     AWAITING_INPUT = "awaiting_input"
+    # 异步子代理(L2):父 run 已把子代理排进队列并挂起,子 run 到终态后
+    # 由 subagent job 唤醒;可取消,DB 列 String(32) 无需迁移。
+    AWAITING_SUBAGENT = "awaiting_subagent"
     BLOCKED = "blocked"
     # 取消(P0-2):任意非终态都可取消;执行中的图调用不强制打断,
     # 执行边界回来时读到 cancelled 就不再覆盖终态(协作式取消)。

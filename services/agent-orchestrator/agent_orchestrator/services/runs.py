@@ -53,6 +53,7 @@ from agent_orchestrator.services.run_recovery import (
     rewind_run,
 )
 from agent_orchestrator.services.run_steps import list_steps
+from agent_orchestrator.services.run_subagent_resume import resume_subagent
 from agent_orchestrator.services.subagents import list_subagents
 from agent_orchestrator.services.todos import list_todos
 from agent_orchestrator.services.usage_events import run_usage
@@ -81,6 +82,7 @@ __all__ = [
     "reject_run",
     "require_run",
     "resume_run",
+    "resume_subagent",
     "retry_run",
     "rewind_run",
     "run_usage",
