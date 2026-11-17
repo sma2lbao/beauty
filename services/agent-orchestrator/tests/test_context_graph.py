@@ -153,6 +153,7 @@ class _FakeToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         self.executed.append(name)
         return self.output

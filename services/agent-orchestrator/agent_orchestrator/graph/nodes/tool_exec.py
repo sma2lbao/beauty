@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from agent_orchestrator.graph import items
+from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.audit import (
     DECISION_APPROVED,
     DECISION_HOOK_DENIED,
@@ -123,10 +124,21 @@ def make_tool_exec_node(
                     item_kind, item_span = _tool_item_begin(
                         runtime, name, arguments, node="tool_exec"
                     )
+                idempotency_key = tool_idempotency_key(
+                    run_id=state.get("run_id"),
+                    node="tool_exec",
+                    tool_name=name,
+                    arguments=arguments,
+                    risk=str(risk),
+                )
                 try:
                     # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
                     output = await toolkit.execute(
-                        name, arguments, tool_call_id=call_id, approved=True
+                        name,
+                        arguments,
+                        tool_call_id=call_id,
+                        approved=True,
+                        idempotency_key=idempotency_key,
                     )
                 except Exception as exc:
                     _tool_item_fail(runtime, item_span, name, arguments, exc)

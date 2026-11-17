@@ -342,7 +342,9 @@ apps/web ──SSE/HTTP──▶ api-gateway(:8007) ──▶ agent-orchestrator
         │  POST /v1/tools/read:execute   (Bearer 账号 JWT)
         ▼
 [tool-service]
-  5. 校验 tool_call_id 幂等（(account_id,tool_call_id) 唯一）→ 命中则直接回旧结果
+  5. 幂等查重：先按调用方稳定键 idempotency_key（(account_id,idempotency_key)
+     唯一，仅写操作），没有则回落 tool_call_id（(account_id,tool_call_id)
+     唯一）→ 命中则直接回旧结果
   6. ToolDescriptor 查 catalog → 参数校验（common.tools.validate_arguments）
   7. 解析执行器：sandbox → workspace POST /v1/sandboxes:ensure {scope_key="conv:<id>"} → POST /{sandbox}/exec (argv python3 -c <helper>, stdin=JSON)
   8. 规范化结果信封（截断元数据/耗时/路径）
@@ -402,7 +404,8 @@ class ToolDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class ToolExecuteRequest:
-    tool_call_id: str                  # 幂等键（模型给的 call id 或 orchestrator 生成）
+    tool_call_id: str                  # 本次调用 id（模型 call id 或 orchestrator 生成）
+    idempotency_key: str | None = None # 跨 attempt 稳定键（仅写操作），缺省回落 tool_call_id
     arguments: dict[str, Any]
     run_id: str | None = None
     conversation_id: str | None = None
@@ -1098,7 +1101,8 @@ Content-Type: application/json
 CREATE TABLE tool_calls (
 id VARCHAR(32) PRIMARY KEY, -- UUID hex
 account_id VARCHAR(32) NOT NULL,
-tool_call_id VARCHAR(128) NOT NULL, -- 模型/编排侧幂等键
+tool_call_id VARCHAR(128) NOT NULL, -- 本次调用 id（模型生成，重放后会变）
+idempotency_key VARCHAR(96) NULL, -- 跨 attempt 稳定键，仅 WRITE/DESTRUCTIVE
 run_id VARCHAR(32) NULL,
 conversation_id VARCHAR(32) NULL,
 tool_name VARCHAR(64) NOT NULL,
@@ -1117,13 +1121,15 @@ sha256_before CHAR(64) NULL,
 sha256_after CHAR(64) NULL,
 sandbox_id VARCHAR(128) NULL,
 created_at TIMESTAMP NOT NULL,
-CONSTRAINT uq_tool_calls_account_call UNIQUE (account_id, tool_call_id)
+CONSTRAINT uq_tool_calls_account_call UNIQUE (account_id, tool_call_id),
+CONSTRAINT uq_tool_calls_account_idempotency UNIQUE (account_id, idempotency_key)
 );
 CREATE INDEX ix_tool_calls_run ON tool_calls (account_id, run_id, created_at);
 CREATE INDEX ix_tool_calls_tool ON tool_calls (account_id, tool_name, created_at);
 ```
 
-- 写工具在**执行前**先 `INSERT` 一行（`ok=false`，状态未完成），执行成功后 `UPDATE`；唯一约束兜底并发重放。若更偏好「一次写」，可用 PG `INSERT ... ON CONFLICT DO NOTHING` + 二次查询，SQLite 用 `INSERT OR IGNORE`（db 层已兼容两库）。
+- 现状是**执行完成后**落一行审计（`ok`/`error_code`/`duration_ms`…），唯一约束兜底的是**提交期**并发：后到者回滚并按已存在记录回放首次结果。注意这不是执行期预留——同键并发请求仍可能各执行一次副作用，崩溃发生在审计行落库之前时重试也会再执行一次（见 §16.1 R6 增补的残余）。若要做执行期预留，可先 `INSERT` 一行 `ok=false` 占位、执行完 `UPDATE`（PG `INSERT ... ON CONFLICT DO NOTHING` + 二次查询，SQLite `INSERT OR IGNORE`），但要额外处理「占位中」的并发读。
+- 幂等键（2026-11-17）：`tool_call_id` 只是「本次调用 id」，崩溃恢复/图重放后模型会重新生成；`idempotency_key` 才是跨 attempt 稳定的「同一次副作用」标识，由 orchestrator 对 WRITE/DESTRUCTIVE 生成 `orch1:sha256(run_id|node|tool_name|规范化参数)`（`agent_orchestrator/graph/idempotency.py`）。查重顺序：有 stable key 先按键、否则回落 `tool_call_id`；`(account_id, idempotency_key)` 唯一且 NULL 互不冲突，旧客户端不传即保持原语义。**取舍**：同一 run 内同参同工具的两次写会被判为一次重放（代价是多轮写同一文件同一内容时第二次不执行，写工具本身幂等或内容相同则无影响）。
 - 保留期：dev 不限；生产 P2 加清理作业（默认 30 天），不放进本期。
 - 仓储：`tool_service/repositories.py` 的 `ToolCallRepository(AccountRepository)`，遵循「仓储不提交」约定。
 
@@ -1800,6 +1806,8 @@ run.tool.called.v1 的 type 与语义不变（仍由 orchestrator 在 \_apply_gr
 | R14 | 计数文案散落（18 处版本、10 个项目、5 个库、7 服务）         | 低     | 门禁脚本报错或文档数字过期                                 | 一次性按 13.2 第 15–16 步的清单 grep 全仓（含 CI 注释、dev.sh、AGENTS、README、architecture、local-dev、roadmap）                                         | 全部计数脚本通过                                        |
 | R15 | 数据保留与清理策略缺失                                       | 低     | tool_calls 无限增长                                        | tool_call_retention_days=30 的清理 job（P1 末）+ 索引支持按时间删                                                                                         | 清理 job 集成测试                                       |
 
+> **2026-11-17 增补（R6）**：图执行路径的写工具幂等已从「按 `tool_call_id`」升级为「按调用方稳定键」——崩溃恢复/图重放后模型会重新生成 `tool_call_id`，只有 `idempotency_key`（`run + 节点 + 工具 + 规范化参数`）跨 attempt 不变，已落审计的写副作用因此不会被重复执行。链路见 §5.3 步骤 5、§6.1 DTO、§11.1 表结构。**残余**：对话直答 / 确认端点 / MCP 直调三条非图路径尚未传稳定键（仍靠 `tool_call_id`）；rewind 仍无外部副作用台账与二次确认（`services/run_recovery.py` 自述）；去重发生在审计行提交之后，崩溃恰在落库前时重试仍会再执行一次（无执行期预留）。
+
 ### 16.2 开放问题
 
 已拍板的问题（记录结论，不再讨论）：
@@ -1907,6 +1915,8 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 | interaction 工具 | 无副作用、必须由 orchestrator 图中断执行的工具（当前仅 ask_question）         |
 | 信封             | 工具结果统一 JSON：{"ok":true,...} 或 {"ok":false,"error":{...}}              |
 | 双路径           | TOOL_SERVICE_ENABLED 为 true/false 时 orchestrator 的两套工具装配             |
+
+> **2026-11-17 术语增补**：`tool_call_id` 只是「本次调用 id」（重放后会变）；`idempotency_key` 才是同一次副作用的跨 attempt 标识，仅 WRITE/DESTRUCTIVE 由 orchestrator 生成，缺省时 tool-service 回落 `tool_call_id` 去重。
 
 ---
 

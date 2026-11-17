@@ -126,10 +126,12 @@ async def execute_tool(
     settings: SettingsDep,
     connector: ConnectorDep,
 ) -> JSONResponse:
-    """执行工具;tool_call_id 是幂等键(同参重放、异参 409)。
+    """执行工具;幂等键同参重放、异参 409。
 
-    执行前依次做:单 run 调用次数/写配额兜底、读前置校验(P1);
-    这些拒绝也是模型可见的工具错误(HTTP 200 + ok=false),并照样落审计。
+    查重顺序:idempotency_key(调用方的稳定键,崩溃恢复后 tool_call_id 会变)
+    优先,没有则回落 tool_call_id(旧客户端行为不变)。执行前依次做:单 run
+    调用次数/写配额兜底、读前置校验(P1);这些拒绝也是模型可见的工具错误
+    (HTTP 200 + ok=false),并照样落审计。
     """
 
     descriptor = find_descriptor(name)
@@ -143,9 +145,9 @@ async def execute_tool(
         raise NotFoundError("tool.not_found", f"工具 {name} 不存在或未启用")
     repository = ToolCallRepository(session)
     digest = arguments_digest(body.arguments)
-    existing = await repository.find_by_call_id(account_id, body.tool_call_id)
+    existing = await _find_existing(repository, account_id, body)
     if existing is not None:
-        return _replay_response(existing, digest)
+        return _replay_response(existing, digest, body)
     # 防御性风险下限:WRITE/DESTRUCTIVE 没有 approved=true 一律 403。
     # orchestrator 只在审批策略自动放行或人工确认后才传 approved=true。
     if descriptor.risk in (ToolRisk.WRITE, ToolRisk.DESTRUCTIVE) and not body.approved:
@@ -187,6 +189,7 @@ async def execute_tool(
         record = ToolCall(
             account_id=account_id,
             tool_call_id=body.tool_call_id,
+            idempotency_key=body.idempotency_key,
             run_id=body.run_id,
             conversation_id=body.conversation_id,
             **columns,
@@ -195,12 +198,12 @@ async def execute_tool(
         try:
             await session.commit()
         except IntegrityError:
-            # 并发同 tool_call_id:后到者回滚并按已存在记录重放
+            # 并发同键(稳定键或 tool_call_id):后到者回滚并按已存在记录重放
             await session.rollback()
-            existing = await repository.find_by_call_id(account_id, body.tool_call_id)
+            existing = await _find_existing(repository, account_id, body)
             if existing is None:
                 raise
-            return _replay_response(existing, digest)
+            return _replay_response(existing, digest, body)
     return JSONResponse(outcome.response.envelope())
 
 
@@ -363,26 +366,52 @@ def _normalize_path(value: Any) -> str | None:
     return text or None
 
 
-def _replay_response(existing: ToolCall, digest: str) -> JSONResponse:
-    """同一 tool_call_id 的第二次请求:参数一致则原样重放,否则 409。"""
+async def _find_existing(
+    repository: ToolCallRepository, account_id: str, body: ToolExecuteBody
+) -> ToolCall | None:
+    """按幂等键找已执行记录:稳定键优先,再回落 tool_call_id。"""
+
+    if body.idempotency_key:
+        existing = await repository.find_by_idempotency_key(
+            account_id, body.idempotency_key
+        )
+        if existing is not None:
+            return existing
+    return await repository.find_by_call_id(account_id, body.tool_call_id)
+
+
+def _replay_response(
+    existing: ToolCall, digest: str, body: ToolExecuteBody
+) -> JSONResponse:
+    """同一逻辑调用的第二次请求:参数一致则原样重放,否则 409。"""
 
     if existing.arguments_sha256 != digest:
         raise ConflictError(
             "tool.idempotency_conflict",
-            "同一 tool_call_id 的参数与首次调用不一致",
-            details={"tool_call_id": existing.tool_call_id},
+            "同一幂等键的参数与首次调用不一致",
+            details={
+                "tool_call_id": existing.tool_call_id,
+                "idempotency_key": existing.idempotency_key,
+            },
         )
     error: ToolError | None = None
     result: dict[str, Any] | None = None
+    # 稳定键命中时 tool_call_id 可能已换(崩溃恢复后模型重新生成),提示按
+    # 逻辑调用而不是按 id 讲,避免用户以为"另一个调用被去重"。
+    label = (
+        "该逻辑调用"
+        if body.idempotency_key and body.idempotency_key == existing.idempotency_key
+        else "该 tool_call_id"
+    )
     if existing.ok:
         result = {
             "replayed": True,
-            "note": "该 tool_call_id 已执行成功,本次未重复执行",
+            "note": f"{label} 已执行成功,本次未重复执行",
         }
     else:
         error = ToolError(
             code=existing.error_code or "tool.replayed",
-            message="该 tool_call_id 已执行失败,本次未重复执行",
+            message=f"{label} 已执行失败,本次未重复执行",
             retryable=False,
         )
     response = ToolExecuteResponse(

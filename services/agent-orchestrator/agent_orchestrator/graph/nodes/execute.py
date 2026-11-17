@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from agent_orchestrator.graph import delta, items
+from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.ask import (
     MAX_ASK_CYCLES,
     _build_pending_question,
@@ -294,12 +295,22 @@ def make_execute_node(
                         runtime, call.name, call.arguments, node="execute"
                     )
                 started = time.perf_counter()
+                # S1:写操作的幂等键跨 attempt 稳定(不含会重新生成的 call id),
+                # 崩溃恢复后同一次副作用只发生一次。
+                idempotency_key = tool_idempotency_key(
+                    run_id=state.get("run_id"),
+                    node="execute",
+                    tool_name=call.name,
+                    arguments=call.arguments,
+                    risk=risk,
+                )
                 try:
                     output = await toolkit.execute(
                         call.name,
                         call.arguments,
                         tool_call_id=getattr(call, "id", None),
                         approved=True,
+                        idempotency_key=idempotency_key,
                     )
                 except Exception as exc:
                     _tool_item_fail(runtime, item_span, call.name, call.arguments, exc)

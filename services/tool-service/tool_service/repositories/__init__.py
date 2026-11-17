@@ -53,6 +53,15 @@ class ToolCallRepository(AccountRepository[ToolCall]):
             self.scoped(account_id, ToolCall.tool_call_id == tool_call_id)
         )
 
+    async def find_by_idempotency_key(
+        self, account_id: str, idempotency_key: str
+    ) -> ToolCall | None:
+        """按调用方稳定幂等键取审计行（崩溃恢复重放用）。"""
+
+        return await self.session.scalar(
+            self.scoped(account_id, ToolCall.idempotency_key == idempotency_key)
+        )
+
     async def require_by_call_id(self, account_id: str, tool_call_id: str) -> ToolCall:
         """按业务幂等键取审计行;不存在(或跨账号)一律 404。"""
 
@@ -159,6 +168,7 @@ def to_read(entity: ToolCall, *, include_patch: bool = False) -> ToolCallRead:
     return ToolCallRead(
         id=entity.id,
         tool_call_id=entity.tool_call_id,
+        idempotency_key=entity.idempotency_key,
         run_id=entity.run_id,
         conversation_id=entity.conversation_id,
         connection_id=entity.connection_id,

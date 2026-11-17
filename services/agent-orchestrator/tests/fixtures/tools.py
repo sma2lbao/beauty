@@ -217,8 +217,18 @@ class FakeInteractionToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
-        self.executed.append((name, {"arguments": arguments, "approved": approved}))
+        self.executed.append(
+            (
+                name,
+                {
+                    "arguments": arguments,
+                    "approved": approved,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        )
         return json.dumps(
             {
                 "ok": False,

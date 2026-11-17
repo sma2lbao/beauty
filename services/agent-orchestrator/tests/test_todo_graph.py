@@ -87,6 +87,7 @@ class _TodoToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = True,
+        idempotency_key: str | None = None,
     ) -> str:
         self.executed.append(name)
         return self.envelope

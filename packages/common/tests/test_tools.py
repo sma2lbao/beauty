@@ -135,6 +135,7 @@ class TestToolExecuteRequest:
         payload = request.to_payload()
         assert "conversation_id" not in payload
         assert "timeout_seconds" not in payload
+        assert "idempotency_key" not in payload
         assert ToolExecuteRequest.from_payload(payload) == request
 
     def test_roundtrip_all_fields(self) -> None:
@@ -146,6 +147,7 @@ class TestToolExecuteRequest:
             workspace_id="ws_1",
             sandbox_scope="conv:conv_1",
             timeout_seconds=5.0,
+            idempotency_key="orch1:" + "0" * 64,
         )
         assert ToolExecuteRequest.from_payload(request.to_payload()) == request
 

@@ -79,6 +79,75 @@ def test_execute_conflicting_arguments_is_409(client: TestClient) -> None:
     assert body["details"]["tool_call_id"] == "call-1"
 
 
+STABLE_KEY = "orch1:" + "a" * 64
+
+
+def test_execute_dedupes_by_stable_key_across_regenerated_call_ids(
+    client: TestClient, sandbox_provider: FakeSandboxProvider
+) -> None:
+    """崩溃恢复后模型换了 tool_call_id，稳定键仍认出是同一次副作用。"""
+
+    first = _execute(
+        client,
+        {
+            "tool_call_id": "call-1",
+            "idempotency_key": STABLE_KEY,
+            "arguments": {"path": "a.txt"},
+        },
+    )
+    second = _execute(
+        client,
+        {
+            "tool_call_id": "call-2",
+            "idempotency_key": STABLE_KEY,
+            "arguments": {"path": "a.txt"},
+        },
+    )
+
+    assert first.status_code == 200
+    assert first.json()["idempotent_replay"] is False
+    body = second.json()
+    assert body["ok"] is True
+    assert body["idempotent_replay"] is True
+    assert body["replayed"] is True
+    # 回放回显首次的调用 id（模型这次生成的是 call-2）
+    assert body["tool_call_id"] == "call-1"
+    assert body["note"].startswith("该逻辑调用")
+    assert len(sandbox_provider.exec_calls) == 1
+
+    # 审计行带上稳定键，运维能按它把重放前后的两次调用串起来
+    detail = client.get("/v1/tool-calls/call-1", headers=ACCOUNT)
+    assert detail.status_code == 200
+    assert detail.json()["idempotency_key"] == STABLE_KEY
+
+
+def test_execute_conflicting_arguments_for_stable_key_is_409(
+    client: TestClient,
+) -> None:
+    _execute(
+        client,
+        {
+            "tool_call_id": "call-1",
+            "idempotency_key": STABLE_KEY,
+            "arguments": {"path": "a.txt"},
+        },
+    )
+
+    resp = _execute(
+        client,
+        {
+            "tool_call_id": "call-2",
+            "idempotency_key": STABLE_KEY,
+            "arguments": {"path": "b.txt"},
+        },
+    )
+
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["code"] == "tool.idempotency_conflict"
+    assert body["details"]["idempotency_key"] == STABLE_KEY
+
+
 def test_execute_failed_envelope_is_replayed(
     client: TestClient, sandbox_provider: FakeSandboxProvider
 ) -> None:

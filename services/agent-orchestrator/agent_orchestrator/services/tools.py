@@ -167,14 +167,16 @@ class ToolRegistry:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         """执行注册表里的工具;本机注册表没有幂等/审批语义。
 
-        tool_call_id/approved 是 graph 端口(P1)的通用关键字:内置工具的实现
-        在 tool-service 侧,本机注册表只兼容签名——接收并忽略,旧行为不变。
+        tool_call_id/approved/idempotency_key 是 graph 端口的通用关键字:内置
+        工具的实现都在 tool-service 侧,本机注册表只兼容签名——接收并忽略,
+        旧行为不变。
         """
 
-        del tool_call_id, approved
+        del tool_call_id, approved, idempotency_key
         spec = self._specs.get(name)
         if spec is None:
             return _error(f"未知工具:{name}")

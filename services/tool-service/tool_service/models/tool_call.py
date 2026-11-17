@@ -33,11 +33,21 @@ class ToolCall(UUIDMixin, AccountMixin, Base):
         UniqueConstraint(
             "account_id", "tool_call_id", name="uq_tool_calls_account_call"
         ),
+        # 调用方算的稳定键：崩溃恢复后 tool_call_id 会变，靠它认出"同一次
+        # 副作用"。NULL 在 Postgres/SQLite 里互不冲突，旧写入不受影响。
+        UniqueConstraint(
+            "account_id", "idempotency_key", name="uq_tool_calls_account_idempotency"
+        ),
         Index("ix_tool_calls_run", "account_id", "run_id", "created_at"),
         Index("ix_tool_calls_tool", "account_id", "tool_name", "created_at"),
     )
 
     tool_call_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    # orchestrator 侧 "run + 节点 + 工具 + 规范化参数" 的稳定键（仅写操作）；
+    # 为空表示调用方没提供，查重回落 tool_call_id。
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(96), nullable=True, default=None
+    )
     run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     conversation_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True, default=None

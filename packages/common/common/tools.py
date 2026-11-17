@@ -156,7 +156,12 @@ class ToolDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class ToolExecuteRequest:
-    """一次工具执行请求；tool_call_id 是幂等键。"""
+    """一次工具执行请求。
+
+    tool_call_id 是模型给的调用 id（同一 attempt 内幂等）；idempotency_key 是
+    调用方按"run + 节点 + 工具 + 规范化参数"算出的稳定键——崩溃恢复后模型会
+    重新生成 tool_call_id，只有稳定键能让同一次写操作跨 attempt 去重。
+    """
 
     tool_call_id: str
     arguments: dict[str, Any]
@@ -166,6 +171,7 @@ class ToolExecuteRequest:
     sandbox_scope: str | None = None
     timeout_seconds: float | None = None
     approved: bool = False
+    idempotency_key: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """序列化为 wire dict（省略值为 None 的可选字段）。"""
@@ -180,6 +186,7 @@ class ToolExecuteRequest:
             "workspace_id",
             "sandbox_scope",
             "timeout_seconds",
+            "idempotency_key",
         ):
             value = getattr(self, key)
             if value is not None:
@@ -204,6 +211,7 @@ class ToolExecuteRequest:
             sandbox_scope=_opt_str(payload, "sandbox_scope"),
             timeout_seconds=float(timeout) if timeout is not None else None,
             approved=bool(payload.get("approved", False)),
+            idempotency_key=_opt_str(payload, "idempotency_key"),
         )
 
 

@@ -76,14 +76,23 @@ class HybridToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         if _contains(self._base, name):
             return await self._base.execute(
-                name, arguments, tool_call_id=tool_call_id, approved=approved
+                name,
+                arguments,
+                tool_call_id=tool_call_id,
+                approved=approved,
+                idempotency_key=idempotency_key,
             )
         if _contains(self._extra, name):
             return await self._extra.execute(
-                name, arguments, tool_call_id=tool_call_id, approved=approved
+                name,
+                arguments,
+                tool_call_id=tool_call_id,
+                approved=approved,
+                idempotency_key=idempotency_key,
             )
         return _error_envelope(
             "tool.not_found",

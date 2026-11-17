@@ -9,6 +9,8 @@ from common.tools import ToolDescriptor
 from pydantic import BaseModel, ConfigDict, Field
 
 TOOL_CALL_ID_MAX = 128
+#: 调用方算的稳定幂等键（"orch1:" + 64 位十六进制 = 70），留出余量。
+TOOL_IDEMPOTENCY_KEY_MAX = 96
 CONTEXT_ID_MAX = 32
 SCOPE_KEY_MAX = 96
 EXECUTE_TIMEOUT_MAX = 600
@@ -25,6 +27,11 @@ class ToolExecuteBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_call_id: str = Field(min_length=1, max_length=TOOL_CALL_ID_MAX)
+    # 可选：跨 attempt 稳定的幂等键。有它就按键查重（崩溃恢复后模型会换
+    # tool_call_id），没有就沿用 tool_call_id（旧客户端行为不变）。
+    idempotency_key: str | None = Field(
+        default=None, min_length=1, max_length=TOOL_IDEMPOTENCY_KEY_MAX
+    )
     arguments: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = Field(default=None, max_length=CONTEXT_ID_MAX)
     conversation_id: str | None = Field(default=None, max_length=CONTEXT_ID_MAX)
@@ -83,6 +90,8 @@ class ToolCallRead(BaseModel):
 
     id: str
     tool_call_id: str
+    # 调用方稳定幂等键；null 表示按 tool_call_id 去重（旧客户端）。
+    idempotency_key: str | None = None
     run_id: str | None = None
     conversation_id: str | None = None
     # 连接器工具解析到的连接 id(内置工具为 null)。

@@ -179,6 +179,7 @@ class RemoteToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         """执行工具;契约同旧 ToolRegistry:永不向图抛异常。
 
@@ -225,6 +226,7 @@ class RemoteToolkit:
             # 审批凭据完全由调用方决定(执行图:策略 auto 或人工确认后传
             # True;对话路径恒 False,写工具由服务端风险下限兜底)。
             approved=approved,
+            idempotency_key=idempotency_key,
         )
         timeout = descriptor.timeout_seconds + self._timeout_grace
         try:

@@ -73,9 +73,14 @@ class FakeToolkit:
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         return await self._registry.execute(
-            name, arguments, tool_call_id=tool_call_id, approved=approved
+            name,
+            arguments,
+            tool_call_id=tool_call_id,
+            approved=approved,
+            idempotency_key=idempotency_key,
         )
 
 

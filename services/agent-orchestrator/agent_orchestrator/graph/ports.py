@@ -123,11 +123,14 @@ class ToolkitPort(Protocol):
         *,
         tool_call_id: str | None = None,
         approved: bool = False,
+        idempotency_key: str | None = None,
     ) -> str:
         """执行一次工具调用(失败以错误信封回喂,不向图抛异常)。
 
         - tool_call_id:模型给出的调用 id,用于服务端幂等与审计关联;
           缺省由实现生成一个;
+        - idempotency_key:跨 attempt 稳定的幂等键(有 run 的写操作才有),
+          崩溃恢复后同一逻辑调用重放而不是重跑;只读调用不传;
         - approved:审批流程已放行(策略 auto 或人工确认之后),**不等于**
           人工确认本身——对话路径/只读调用不传,执行图里确认后的写操作才传
           True,服务端据此校验写操作的风险下限。
