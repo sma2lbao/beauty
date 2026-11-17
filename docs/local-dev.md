@@ -28,6 +28,7 @@ npm install
 
 ```sh
 npm run dev            # 七个业务服务 + API 网关 + Vite SPA
+npm run dev -- --force # 同上,但先回收本仓库遗留的旧服务进程(上次异常退出/手动 nohup 起的)
 npm run dev:site       # 额外启动 Next.js 官网(:3000)
 npm run dev:status     # 只检查健康状态
 npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic head(dev 启动前会自动执行)
@@ -36,6 +37,7 @@ npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic
 脚本行为:
 
 - 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
+- 脚本只记得**本次运行**拉起的进程:上次异常退出(终端被杀、手动 `nohup` 起的服务)会留下占端口的孤儿,之后每次启动都只能「跳过」,页面看着正常、跑的却是旧代码;`--force` 会按 `lsof` 的 cwd/可执行文件路径确认归属,只回收 cwd 在本仓库内的 `uvicorn`/`vite`,别的项目或 IDE 起的进程一律不动;
 - 缺 .env 自动创建;
 - 启动前把 6 个带 alembic 迁移的服务的库(默认 compose Postgres)推到 head(见 §7.1),失败则中止启动;
 - 服务日志在 .cache/dev/\*.log;

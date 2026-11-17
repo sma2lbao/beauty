@@ -10,6 +10,7 @@
 #   scripts/dev.sh --site       # 额外启动 Next.js 官网(:3000)
 #   scripts/dev.sh --no-web     # 只启动 Python 服务
 #   scripts/dev.sh --status     # 只检查健康状态
+#   scripts/dev.sh --force      # 启动前回收本仓库遗留的旧服务进程(上次异常退出/手动 nohup 起的)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,6 +33,7 @@ SERVICES=(
 MODE="start"
 WITH_WEB=1
 WITH_SITE=0
+FORCE=0
 PIDS=()
 
 for arg in "$@"; do
@@ -39,8 +41,9 @@ for arg in "$@"; do
     --status) MODE="status" ;;
     --no-web) WITH_WEB=0 ;;
     --site) WITH_SITE=1 ;;
+    --force|--restart) FORCE=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -87,6 +90,34 @@ port_pid() {
       echo "(lsof 不可用,端口被占)"
     fi
   fi
+}
+
+# 回收「本仓库拉起的」遗留服务进程(--force 才用):只认 cwd/可执行文件落在本仓库
+# 内的进程;别的项目或 IDE 起的进程一律不动,只提示占用。
+reclaim_port() {
+  local port="$1" pid cwd exe i
+  pid="$(port_pid "$port")"
+  case "$pid" in
+    ""|*lsof*) return 1 ;;
+  esac
+  command -v lsof >/dev/null 2>&1 || return 1
+  # 归属判定用 lsof 看 cwd / 可执行文件路径:ps 在受限环境(agent 沙箱等)会被拒绝,
+  # 而 cwd 落在本仓库内就足以说明是本仓库拉起的服务,不会误杀别的项目。
+  cwd="$(lsof -nP -p "$pid" -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+  exe="$(lsof -nP -p "$pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+  case "$cwd" in
+    "$ROOT"|"$ROOT"/*) ;;
+    *) case "$exe" in "$ROOT"/*) ;; *) return 1 ;; esac ;;
+  esac
+  kill "$pid" 2>/dev/null || return 1
+  # uvicorn 优雅关停通常 1s 内退出;超时补 KILL,否则端口仍被占、启动照样被跳过
+  for i in $(seq 1 10); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.3
+  done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  echo "  已回收 :$port 上的旧实例(pid $pid)"
+  return 0
 }
 
 healthy() {
@@ -203,6 +234,16 @@ if ! bash "$ROOT/scripts/migrate-local.sh"; then
   exit 1
 fi
 
+# --force:先回收上次遗留的服务进程。dev.sh 只记住**本次运行**拉起的 pid,
+# 上次异常退出(终端被杀、或手动 nohup 起的服务)会留下占端口却不由本脚本
+# 管理的孤儿;之后每次启动都只能「跳过」,页面/日志看着正常,实际跑的是旧代码。
+if [ "$FORCE" = "1" ]; then
+  for port in 8001 8002 8003 8004 8005 8006 8007 8008 5173; do
+    reclaim_port "$port" || true
+  done
+  if [ "$WITH_SITE" = "1" ]; then reclaim_port 3000 || true; fi
+fi
+
 # 本脚本记录已启动的端口(区分"我们启动的"与"外部占用的")。
 # 用空格分隔字符串而非关联数组:macOS 自带 bash 3.2 无 declare -A,
 # 在 set -e 下会直接中止脚本。
@@ -220,7 +261,7 @@ for spec in "${SERVICES[@]}"; do
     if [ "$is_started" = "1" ]; then
       echo "⚠️  $name 的 :$port 是本脚本先前启动的实例,跳过"
     else
-      echo "⚠️  $name 端口 :$port 已被外部进程(pid $existing)占用,跳过(不属于本脚本,不会清理)"
+      echo "⚠️  $name 端口 :$port 已被外部进程(pid $existing)占用,跳过(不属于本脚本,不会清理;若是本仓库旧实例,用 --force 回收)"
     fi
     continue
   fi
