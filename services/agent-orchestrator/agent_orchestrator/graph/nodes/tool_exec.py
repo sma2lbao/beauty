@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from agent_orchestrator.graph import items
+from agent_orchestrator.graph.cancellation import raise_if_cancelled
 from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.audit import (
     DECISION_APPROVED,
@@ -99,6 +100,9 @@ def make_tool_exec_node(
                 _tool_item_denied(runtime, name, arguments, record, node="tool_exec")
                 messages.append(_tool_message(str(call.get("id") or ""), output))
                 continue
+            # S3:每次写操作前问一次取消——已取消的 run 不再发起新的副作用,
+            # 已开始的这一次让它跑完(边界内不劈半)
+            await raise_if_cancelled(runtime)
             started = time.perf_counter()
             offload_record: Mapping[str, Any] | None = None
             if toolkit is None:

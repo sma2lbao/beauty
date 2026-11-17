@@ -11,6 +11,7 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.cancellation import RunCancelled
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import RunEventRepository
 from agent_orchestrator.schemas.runs import RunStatus
@@ -18,6 +19,9 @@ from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm_binding import bind_run_llm
+from agent_orchestrator.services.run_cancellation import (
+    settle_cancelled,
+)
 from agent_orchestrator.services.run_events import (
     _append_assistant_message,
     _delta_stream,
@@ -92,8 +96,17 @@ async def approve_run(
                                 "instructions": instructions,
                             }
                         ),
-                        config=_config(run, projector, step_projector, item_projector),
+                        config=_config(
+                            run,
+                            projector,
+                            step_projector,
+                            item_projector,
+                            session=session,
+                        ),
                     )
+    except RunCancelled:
+        # S3:取消在节点边界生效,终态已由取消方写好,这里只刷新并收手
+        return await settle_cancelled(session, run, stage="execute")
     except Exception as exc:
         await _fail_run(session, run, exc, stage="execute")
         return run
@@ -220,8 +233,16 @@ async def confirm_run(
                                 "instructions": instructions,
                             }
                         ),
-                        config=_config(run, projector, step_projector, item_projector),
+                        config=_config(
+                            run,
+                            projector,
+                            step_projector,
+                            item_projector,
+                            session=session,
+                        ),
                     )
+    except RunCancelled:
+        return await settle_cancelled(session, run, stage="confirm")
     except Exception as exc:
         await _fail_run(session, run, exc, stage="confirm")
         return run

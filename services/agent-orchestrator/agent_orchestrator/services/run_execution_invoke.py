@@ -199,7 +199,13 @@ async def _invoke_plan(
                 with run_trace(run):
                     values = await graph.ainvoke(
                         state,
-                        config=_config(run, projector, step_projector, item_projector),
+                        config=_config(
+                            run,
+                            projector,
+                            step_projector,
+                            item_projector,
+                            session=session,
+                        ),
                     )
     except Exception as exc:
         await append_item_event(

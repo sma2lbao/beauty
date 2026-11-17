@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.cancellation import RunCancelled
 from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.models.runs import PARENT_KIND_FORK, Run
 from agent_orchestrator.repositories import JobRepository, RunRepository
@@ -34,6 +35,9 @@ from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm_binding import bind_run_llm
+from agent_orchestrator.services.run_cancellation import (
+    settle_cancelled,
+)
 from agent_orchestrator.services.run_checkpoints import (
     checkpoint_id_of,
     find_checkpoint,
@@ -93,9 +97,13 @@ def _rewind_config(
     projector: object | None = None,
     step_projector: object | None = None,
     item_projector: object | None = None,
+    *,
+    session: AsyncSession | None = None,
 ) -> dict[str, object]:
     """在图配置上钉住起点 checkpoint(其余 configurable 与常规执行一致)。"""
-    config = _config(run, projector, step_projector, item_projector)  # type: ignore[arg-type]
+    config = _config(  # type: ignore[arg-type]
+        run, projector, step_projector, item_projector, session=session
+    )
     configurable = config.setdefault("configurable", {})
     configurable["checkpoint_id"] = checkpoint_id
     return config
@@ -208,8 +216,16 @@ async def recover_run(
                 with run_trace(run):
                     values = await graph.ainvoke(
                         None,
-                        config=_config(run, projector, step_projector, item_projector),
+                        config=_config(
+                            run,
+                            projector,
+                            step_projector,
+                            item_projector,
+                            session=session,
+                        ),
                     )
+    except RunCancelled:
+        return await settle_cancelled(session, run, stage="recover")
     except Exception as exc:
         await _fail_run(session, run, exc, stage="recover")
         return run
@@ -388,8 +404,11 @@ async def rewind_run(
                             projector,
                             step_projector,
                             item_projector,
+                            session=session,
                         ),
                     )
+    except RunCancelled:
+        return await settle_cancelled(session, run, stage="rewind")
     except Exception as exc:
         await _fail_run(session, run, exc, stage="rewind")
         return run

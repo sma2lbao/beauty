@@ -1,11 +1,19 @@
-"""run 取消(P0-2):非终态 → cancelled,协作式收手。
+"""run 取消(P0-2):非终态 → cancelled,在下一个节点边界真正停下。
 
 取消语义:
 - 状态立刻落 cancelled 并记 run.cancelled.v1,前端/SSE 立即看到终态;
 - 还在排队的 job 直接置 cancelled,不再被 worker 领取;
-- 已 running 的图调用**不强制打断**——节点是纯函数,拿不到会话也不该抛中断;
-  执行边界回来时读库发现 cancelled,跳过终态覆盖(见 _apply_graph_result)。
-  极端竞态(取消与完成同一时刻)仍可能让已算出的结果先落库,残留风险属 P0-3。
+- 已 running 的图调用在**下一个安全边界**被打断(S3,design/recovery.md §9):
+  节点入口、每次模型调用前、每次工具执行前都会问一次取消探针
+  (services/run_cancellation.RunCancellationProbe,读的是库里的 status),
+  已取消则抛 graph.cancellation.RunCancelled,图在两次副作用之间停下——不会
+  把一次工具调用劈成两半;已发生的写由 S1 稳定幂等键兜底,重放不二次生效;
+- 执行边界回来时读库发现 cancelled,跳过终态覆盖(见 _apply_graph_result 与
+  run_events._fail_run 的 is_superseded),取消方写的 status_reason 不被覆盖;
+- 跨进程同样成立:探针每次查库,不依赖进程内信号;进程内也不走旁路信号。
+
+极端竞态(取消恰好落在一次工具调用执行中)仍可能让这一次调用跑完,但不会
+再有下一次;残留风险属"取消的边界粒度",不是重复副作用。
 """
 
 from __future__ import annotations

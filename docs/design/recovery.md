@@ -127,7 +127,7 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 
 ## 7. 非目标与残余
 
-- 不做"在飞图调用的强制中断"（LangGraph 节点是纯函数，强制取消会破坏状态一致性；协作式收尾已足够）。
+- 不做"在飞图调用的强制中断"：取消在**安全边界**生效（节点入口、模型调用前、工具调用前，见 §9），不劈半一次工具调用；已发生的写由稳定幂等键兜底（[tool-service.md](tool-service.md) §5.3）。
 - 不做"跨 attempts 的检查点回退"（checkpoint 只属于某个线程；需要跨线程搬运时用 fork）。
 - 检查点列表不分页游标（`limit` + `before` 后续再加），不回传完整图状态（避免大 payload 与内部字段泄漏）。
 - 超时扫描多副本下依赖条件更新去重，允许极端竞态下一轮重复记 warning（不会重复记 `run.timeout.v1`，因为更新未命中即跳过）。
@@ -169,3 +169,35 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 - `awaiting_*` 不恢复：那是合法休眠，不是崩溃现场，由 interrupt sweeper 按超时处理。
 - retry 派生新 run 不受保护：崩溃发生在 retry 建 run 与新 job 之间时，子 run 停在 pending（无 checkpoint），sweeper 只扫 planning/running，这类需人工重跑。
 - 对话直答/确认端点等非图路径不涉及续跑。
+
+## 9. 取消在节点边界生效（S3，2026-11-17）
+
+### 9.1 此前为什么不打断
+
+旧实现只把 `runs.status` 写成 `cancelled` 并清掉排队 job（`services/run_cancel.py`）；正在执行的图完全不知道，会跑完当前节点乃至整条链路，直到下一次状态迁移撞上 `require_transition` 才暴露。用户在界面上点了取消，模型和工具还在烧 token。
+
+### 9.2 实现：库里状态是唯一信号
+
+- **不引入进程内事件**：取消可能来自另一个进程/副本（API 与 worker 分进程部署），所以探针直接查库。
+- graph 侧新端口 `CancellationPort`（`graph/ports.py`，默认 `_NullCancellation` 恒假）+ `graph/cancellation.py` 的 `raise_if_cancelled(runtime)` → 抛 `RunCancelled`。问的时机只在安全边界：节点入口（`graph/steps.py` 的 `instrument_node`）、每轮模型调用前与每次写工具执行前（`graph/nodes/execute.py`）、每次工具调用前（`graph/nodes/tool_exec.py`）。**不在一次工具调用中途打断**：写要么已发生要么没发生，已发生的由 S1 稳定幂等键保证重放不重跑。
+- services 侧 `RunCancellationProbe(session, run_id)`（`services/run_cancellation.py`）每次直接 `select(Run.status)`，命中 `cancelled` 后记忆；只读一次/边界。`_config(..., session=...)` 统一装配探针与边界提交（见 §9.3），各执行入口（plan/answer/approve/confirm/recover/rewind）都传执行会话。
+- 终止处理：落点各自 `except RunCancelled` → `settle_cancelled(session, run, stage=...)`，只 refresh 并返回，**不写 failed、不覆盖取消方写好的 `status_reason`**；普通异常路径的 `_fail_run` 也被 `is_superseded` 挡住。worker 的 `process_one` 另有兜底分支（`job stopped by cancellation` + `mark_succeeded`），避免 job 被当成失败反复重试。
+
+### 9.3 边界提交（关键约束）
+
+取消方要能写进 `runs.status`，执行方就不能整段图持着未提交事务：SQLite 是库级写锁，Postgres 下执行方若改过同一行也会阻塞。实测这一条就是 S3 首版的拦路虎——取消请求在 `UPDATE runs` 上等锁 500（`database is locked`）。
+
+因此新增 `BoundaryPort`（`graph/ports.py`，默认空实现）+ `services/run_boundary.py` 的 `SessionBoundary`：`instrument_node` 在**每个节点开工前** `commit`，顺序是「边界提交 → 取消探针 → 节点体」。
+
+- 与 checkpoint 的分工：checkpoint 记「图走到哪」（可续跑）；边界提交让事件/过程项/状态对别的事务可见（取消才看得见、审计才读得到）。
+- `database/session.py` 的 `async_sessionmaker(engine, expire_on_commit=False)` 保证提交不会让 `run` 等 ORM 属性过期；`run_events.py` 的 `_delta_stream`/`_item_stream` 早已中途 commit，这里只是把同一做法推广到节点边界。
+- 代价：节点之间的部分进展先落库，节点失败时这些行不回滚（与既有增量投影一致，不是新引入的语义）。
+
+### 9.4 测试与残余
+
+`tests/test_cancel_interrupt.py`：3 个节点级用例（恒真/恒假探针 + `instrument_node` 包装，断言 `RunCancelled` 抛在节点体之前）+ 1 个集成用例（blocking FakeLLM，plan→approve→图在模型调用中挂住→另一会话取消→放行后断言 run 仍 `cancelled`、没有再落 `run.failed.v1`/`run.completed.v1`、模型调用次数停在 2）。
+
+- **粒度是边界**：一次很长的模型/工具调用不会被劈开，取消在下一个检查点生效（对用户是秒级到一次调用时长）。
+- 每个边界一次 `SELECT`；要压成本只能加短 TTL 缓存，代价是取消延迟。
+- `graph.aupdate_state` 的配置不带会话（不跑节点），将来若在 aupdate_state 里跑节点需要补。
+- 取消与 recover 并发：`recover_run` 只接 `planning/running`，已取消的 run 不会被接回；但两者与 rewind 的交互仍靠状态机而非互斥。

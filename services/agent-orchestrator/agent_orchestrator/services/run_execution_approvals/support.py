@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.graph import delta
 from agent_orchestrator.graph.items import ItemProjector
@@ -15,6 +18,8 @@ from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import approval as approval_service
 from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services import usage as usage_service
+from agent_orchestrator.services.run_boundary import SessionBoundary
+from agent_orchestrator.services.run_cancellation import RunCancellationProbe
 from agent_orchestrator.services.tool_context import ToolContext, bind_tool_context
 from agent_orchestrator.services.tools import ToolRegistry, ToolRisk
 
@@ -89,17 +94,28 @@ def _config(
     projector: delta.DeltaProjector | None = None,
     step_projector: StepProjector | None = None,
     item_projector: ItemProjector | None = None,
+    *,
+    session: AsyncSession | None = None,
 ) -> dict[str, Any]:
     """graph 线程标识 + 本次调用的运行期依赖(端口/增量/步骤/过程项投影器显式注入)。
 
     同一 run 的每次 blocked→resume 周期一个新线程;运行期依赖随调用传递,
-    节点不再读进程级上下文变量。
+    节点不再读进程级上下文变量。给了执行会话(S3)就同时装上取消探针与
+    节点边界提交:节点开工前把上一段变化落库,取消方在另一个连接上才写得
+    进去,探针随后读到的就是"已取消"。只做 aupdate_state 的调用不传会话。
     """
+    ports = _GRAPH_PORTS
+    if session is not None:
+        ports = replace(
+            ports,
+            cancel=RunCancellationProbe(session, run.id),
+            boundary=SessionBoundary(session),
+        )
     return {
         "configurable": {
             "thread_id": _thread_id(run),
             GRAPH_RUNTIME_KEY: GraphRuntime(
-                ports=_GRAPH_PORTS,
+                ports=ports,
                 delta=projector or delta.DeltaProjector(),
                 steps=step_projector or StepProjector(),
                 items=item_projector or ItemProjector(),

@@ -1,8 +1,8 @@
 """图节点步骤采集(07-run-step-model.md S1)。
 
 节点是纯函数、不落库:这里只记录每个节点的起止与终态(span),由 services 层
-在每次 ``graph.ainvoke`` 边界统一落成 ``run.step.v1`` 事件——步骤身份与时间线
-是事件投影(``GET /api/v1/runs/{id}/steps``),不改表、不动迁移。
+在节点结束即落成 ``run.step.v1`` 事件(S4),``graph.ainvoke`` 边界再兜底一次——
+步骤身份与时间线是事件投影(``GET /api/v1/runs/{id}/steps``),不改表、不动迁移。
 """
 
 from __future__ import annotations
@@ -107,6 +107,16 @@ class StepProjector:
         span.status = status
         self._sink.push(span)
 
+    async def flush(self) -> None:
+        """把已结束的 span 立刻交给 sink 落库(S4:步骤随节点结束就可见)。
+
+        sink 提供 flush 时才做(services 层实现成 append_event + commit);
+        没有 sink 或普通收集器时 no-op,调用边界的终态落库仍然兜底。
+        """
+        flusher = getattr(self._sink, "flush", None)
+        if flusher is not None:
+            await flusher()
+
 
 def _result_status(result: Any) -> str:
     """节点结果里的终态:只有 fail_node 会把 final_status 标成 failed/blocked。"""
@@ -130,9 +140,11 @@ def instrument_node(
     @functools.wraps(node)
     async def wrapper(state: Any, config: Any = None) -> Any:
         # 局部 import:graph.runtime 依赖本模块的 StepProjector,顶层互引会成环
+        from agent_orchestrator.graph.cancellation import raise_if_cancelled
         from agent_orchestrator.graph.runtime import runtime_from_config
 
-        projector = runtime_from_config(config).steps
+        runtime = runtime_from_config(config)
+        projector = runtime.steps
         span = projector.begin(name, phase)
         run_id = state.get("run_id") if isinstance(state, Mapping) else None
         account_id = state.get("account_id") if isinstance(state, Mapping) else None
@@ -162,9 +174,20 @@ def instrument_node(
                 ),
             )
             try:
+                # 节点边界先提交(S3):执行方整段不提交时,取消方在另一个连接上
+                # 写不进去;落库后取消探针读到的就是最新状态
+                await runtime.ports.boundary.before_node()
+                # 再问一次取消:信号在两次节点之间到达时,下一个节点不再开工
+                # (节点内部的循环还会在每次模型/工具调用前再问)
+                await raise_if_cancelled(runtime)
                 result = await node(state, config)
             except BaseException as exc:
-                projector.finish(span, "failed")
+                # 取消不是节点失败:如实标 cancelled,run 终态由取消方写
+                projector.finish(
+                    span,
+                    "cancelled" if type(exc).__name__ == "RunCancelled" else "failed",
+                )
+                await projector.flush()
                 langfuse.apply_attributes(
                     otel_span,
                     {
@@ -177,6 +200,8 @@ def instrument_node(
                 otel_span.set_status(Status(StatusCode.ERROR, str(exc)))
                 raise
             projector.finish(span, _result_status(result))
+            # S4:节点一结束就把步骤落库,前端/SSE 不必等整段图跑完
+            await projector.flush()
             return result
 
     return wrapper

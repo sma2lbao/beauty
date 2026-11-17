@@ -138,6 +138,42 @@ class ToolkitPort(Protocol):
         ...
 
 
+class CancellationPort(Protocol):
+    """取消探针(design/recovery.md §9):节点边界问"这个 run 还该继续吗"。
+
+    实现由 services 层提供(查 run.status),graph 侧只消费布尔结论;
+    未注入时用 _NullCancellation,恒为否。
+    """
+
+    async def is_cancelled(self) -> bool: ...
+
+
+class _NullCancellation:
+    """默认实现:未注入取消探针时恒为"未取消"。"""
+
+    async def is_cancelled(self) -> bool:
+        return False
+
+
+class BoundaryPort(Protocol):
+    """节点边界栅(design/recovery.md §9):节点开工前把上一段变化落库。
+
+    取消信号写在库里的 run.status 上;执行方若整段图都不提交,取消方在另一个
+    连接上就永远写不进去(SQLite 库级写锁、PG 行锁皆然)。边界提交让"取消"
+    在两次节点之间可被看见,也是崩溃后 checkpoint 之外唯一已确认的进展。
+    默认实现不做事(调用方自己没有事务可管)。
+    """
+
+    async def before_node(self) -> None: ...
+
+
+class _NullBoundary:
+    """默认实现:不提交。"""
+
+    async def before_node(self) -> None:
+        return None
+
+
 class UsagePort(Protocol):
     """run 级 token 预算闸(无采集器/未配置时由实现自行 no-op)。"""
 
@@ -315,5 +351,9 @@ class GraphPorts:
     usage: UsagePort = field(default_factory=_NullUsage)
     approval: ApprovalPort = field(default_factory=RiskDefaultApproval)
     hooks: HookPort = field(default_factory=_NullHooks)
+    #: 取消探针:节点在安全边界问"还该继续吗"(见 graph/cancellation.py)。
+    cancel: CancellationPort = field(default_factory=_NullCancellation)
+    #: 节点边界提交:节点开工前把上一段变化落库(见 design/recovery.md §9)。
+    boundary: BoundaryPort = field(default_factory=_NullBoundary)
     #: 仅 extras、无基础工具时用来合并;None 表示装配方未提供(遇到即报错)。
     empty_toolkit: EmptyToolkitFactory | None = None

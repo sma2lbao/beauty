@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from events.envelope import EventEnvelope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,8 @@ from agent_orchestrator.models.conversations import ChatMessage
 from agent_orchestrator.models.runs import Run, RunEvent
 from agent_orchestrator.repositories import MessageRepository, RunEventRepository
 from agent_orchestrator.schemas.runs import RunStatus
+
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from agent_orchestrator.core.config import Settings
@@ -164,13 +167,30 @@ async def _delta_stream(
 
 
 class _RunStepSink:
-    """图调用期间的步骤 span 收集器:调用边界统一落成 run.step.v1。"""
+    """步骤 span 收集器:节点一结束就落成 run.step.v1(S4),调用边界兜底。"""
 
-    def __init__(self) -> None:
+    def __init__(self, session: AsyncSession, run: Run) -> None:
+        self._session = session
+        self._run = run
         self.spans: list[steps.StepSpan] = []
 
     def push(self, span: steps.StepSpan) -> None:
         self.spans.append(span)
+
+    async def flush(self) -> None:
+        """把已结束的 span 立刻落库并提交:SSE/轮询不必等整段图跑完。
+
+        步骤是观测面:落库故障记 warning 但不让节点因此失败(节点里的副作用
+        已经发生了,把它标成 failed 只会误导)。退出时 _step_stream 还会再兜底
+        落一次(那时 spans 已被清空,通常是 no-op)。
+        """
+        if not self.spans:
+            return
+        try:
+            await _flush_steps(self._session, self._run, self)
+            await self._session.commit()
+        except Exception:  # noqa: BLE001
+            logger.warning("step flush failed", run_id=self._run.id, exc_info=True)
 
 
 async def _flush_steps(session: AsyncSession, run: Run, sink: _RunStepSink) -> None:
@@ -226,12 +246,12 @@ async def _step_rounds(session: AsyncSession, run: Run) -> dict[str, int]:
 async def _step_stream(
     session: AsyncSession, run: Run
 ) -> AsyncIterator[steps.StepProjector]:
-    """图调用边界:采集节点步骤(异常退出也落库,失败 span 已带失败状态)。
+    """采集节点步骤:节点结束即落库(S4),退出时兜底(异常也落,失败 span 带失败状态)。
 
     退出顺序保证"步骤 → 终态":本上下文先于调用方的 except 兜底执行,
     所以 run.failed.v1 一定排在失败步骤之后。
     """
-    sink = _RunStepSink()
+    sink = _RunStepSink(session, run)
     projector = steps.StepProjector(
         sink,
         run_id=run.id,

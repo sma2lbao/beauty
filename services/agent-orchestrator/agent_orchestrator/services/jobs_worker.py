@@ -18,6 +18,7 @@ from common.logging import bind_request_context, clear_request_context
 from database.session import session_scope
 
 from agent_orchestrator import metrics
+from agent_orchestrator.graph.cancellation import RunCancelled
 from agent_orchestrator.models.runs import Job
 from agent_orchestrator.repositories import JobRepository, RunRepository
 from agent_orchestrator.services import runs as runs_service
@@ -272,6 +273,17 @@ async def process_one(container: AppContainer) -> bool:
                 await _dispatch(container, session, job)
             # 事务已提交:执行 run 完成等提交后副作用(记忆抽取),失败不影响 job
             await drain_after_commit(session)
+        except RunCancelled:
+            # S3:取消在图的节点边界生效,run 终态已由取消方写好;当前 job 是
+            # 合法收尾(不是失败),按成功结账,避免失败重试再派生一次执行。
+            logger.info("job stopped by cancellation", job_id=job_id)
+            async with session_scope(factory) as session:
+                finished = await JobRepository(session).mark_succeeded(
+                    job_id, WORKER_ID
+                )
+            if not finished:
+                logger.warning("job finalize skipped; lease lost", job_id=job_id)
+            return True
         except Exception as exc:  # noqa: BLE001 - worker 必须兜住所有失败
             logger.exception("job failed", job_id=job_id)
             async with session_scope(factory) as session:

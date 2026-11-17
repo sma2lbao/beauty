@@ -20,6 +20,7 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.core.config import Settings
+from agent_orchestrator.graph.cancellation import RunCancelled
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import (
     QUESTION_ANSWERED_EVENT,
@@ -30,6 +31,9 @@ from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.llm_binding import bind_run_llm
+from agent_orchestrator.services.run_cancellation import (
+    settle_cancelled,
+)
 from agent_orchestrator.services.run_events import (
     _delta_stream,
     _fail_run,
@@ -204,8 +208,15 @@ async def answer_run(
                                 "reason": payload["reason"],
                             }
                         ),
-                        config=_config(run, projector, step_projector),
+                        config=_config(
+                            run,
+                            projector,
+                            step_projector,
+                            session=session,
+                        ),
                     )
+    except RunCancelled:
+        return await settle_cancelled(session, run, stage="answer")
     except Exception as exc:
         await _fail_run(session, run, exc, stage="answer")
         return run

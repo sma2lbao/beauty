@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from agent_orchestrator.graph import delta, items
+from agent_orchestrator.graph.cancellation import raise_if_cancelled
 from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.ask import (
     MAX_ASK_CYCLES,
@@ -114,6 +115,9 @@ def make_execute_node(
         latest_todos: list[dict[str, str]] | None = None
         exhausted = True
         for _ in range(MAX_TOOL_ROUNDS):
+            # S3:每轮开工前问一次取消——模型调用是多秒级阻塞,不在这里问就会
+            # 让已取消的 run 多跑完一整轮工具
+            await raise_if_cancelled(runtime)
             runtime.ports.usage.check_budget()
             reply = await llm.complete(messages, tools=schemas)
             if not reply.tool_calls:
@@ -294,6 +298,9 @@ def make_execute_node(
                     item_kind, item_span = _tool_item_begin(
                         runtime, call.name, call.arguments, node="execute"
                     )
+                # S3:工具执行前再问一次——写操作一旦开始就让它跑完(边界内不劈半),
+                # 但已取消的 run 不该再发起新的副作用
+                await raise_if_cancelled(runtime)
                 started = time.perf_counter()
                 # S1:写操作的幂等键跨 attempt 稳定(不含会重新生成的 call id),
                 # 崩溃恢复后同一次副作用只发生一次。
