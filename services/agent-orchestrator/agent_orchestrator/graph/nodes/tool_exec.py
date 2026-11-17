@@ -7,10 +7,15 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 from agent_orchestrator.graph import items
-from agent_orchestrator.graph.cancellation import raise_if_cancelled
+from agent_orchestrator.graph.cancellation import (
+    RunCancelled,
+    guarded,
+    raise_if_cancelled,
+)
 from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.audit import (
     DECISION_APPROVED,
@@ -137,13 +142,22 @@ def make_tool_exec_node(
                 )
                 try:
                     # 人工确认已放行:approved=True 是服务端写操作的风险凭据。
-                    output = await toolkit.execute(
-                        name,
-                        arguments,
-                        tool_call_id=call_id,
-                        approved=True,
-                        idempotency_key=idempotency_key,
+                    # S6:执行期轮询取消,已取消就放弃等待这次写的结果。
+                    # partial 在定义时就绑定循环变量(B023:start 推迟调用)
+                    output = await guarded(
+                        runtime,
+                        partial(
+                            toolkit.execute,
+                            name,
+                            arguments,
+                            tool_call_id=call_id,
+                            approved=True,
+                            idempotency_key=idempotency_key,
+                        ),
                     )
+                except RunCancelled:
+                    # 取消不是工具失败(同 execute 节点):过程项不标 failed
+                    raise
                 except Exception as exc:
                     _tool_item_fail(runtime, item_span, name, arguments, exc)
                     raise

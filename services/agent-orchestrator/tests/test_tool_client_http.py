@@ -81,6 +81,52 @@ def _client(handler: Handler, *, token_provider: Any = None) -> ToolClient:
     )
 
 
+def test_cancel_tools_posts_run_id_and_returns_count() -> None:
+    """S6:取消通知打到 /v1/tool-calls:cancel,原样带回被标记条数。"""
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> Any:
+        seen.append(request)
+        return httpx.Response(200, json={"cancelled": 2})
+
+    async def main() -> int:
+        client = _client(handler)
+        try:
+            return await client.cancel_tools("t-1", "run-9")
+        finally:
+            await client.aclose()
+
+    assert asyncio.run(main()) == 2
+    assert len(seen) == 1
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/v1/tool-calls:cancel"
+    assert json.loads(seen[0].content) == {"run_id": "run-9"}
+
+
+def test_cancel_tools_maps_unreachable_and_bad_payload() -> None:
+    """取消是旁路:传输故障与非法响应分别映射成两种上游错误码。"""
+
+    def unreachable(request: httpx.Request) -> Any:
+        raise httpx.ConnectError("boom", request=request)
+
+    def bad(request: httpx.Request) -> Any:
+        return httpx.Response(200, json={"cancelled": "nope"})
+
+    async def code(handler: Handler) -> str:
+        client = _client(handler)
+        try:
+            await client.cancel_tools("t-1", "run-9")
+        except UpstreamError as exc:
+            return exc.code
+        finally:
+            await client.aclose()
+        return ""
+
+    assert asyncio.run(code(unreachable)) == UNREACHABLE_CODE
+    assert asyncio.run(code(bad)) == UPSTREAM_ERROR_CODE
+
+
 def _server(
     catalog: dict[str, Any],
     exec_handler: Handler | None = None,

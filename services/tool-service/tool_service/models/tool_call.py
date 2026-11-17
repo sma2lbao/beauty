@@ -18,11 +18,22 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 DEFAULT_ARGUMENTS_CHARS = 2000
+
+# ---- 执行期状态（S6：执行期预留） -----------------------------------------
+#: 预留行已落库、执行方还在跑；此时同键请求收到 409 tool.call_in_progress。
+STATUS_RUNNING = "running"
+#: 终态三选一：成功、失败（含参数/配额拒绝）、被取消。
+STATUS_SUCCEEDED = "succeeded"
+STATUS_FAILED = "failed"
+STATUS_CANCELLED = "cancelled"
+TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELLED})
 
 
 class ToolCall(UUIDMixin, AccountMixin, Base):
@@ -62,6 +73,24 @@ class ToolCall(UUIDMixin, AccountMixin, Base):
     tool_version: Mapped[str] = mapped_column(String(16), nullable=False, default="1")
     risk: Mapped[str] = mapped_column(String(16), nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    # 先插 running 预留行再执行，终态只结算一次；旧数据由 server_default 标成
+    # succeeded（迁移前只有执行完才落行，语义一致）。
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=STATUS_SUCCEEDED,
+        server_default=text("'succeeded'"),
+    )
+    # 预留租约到期时间：执行方崩溃后行会停在 running，租约过期允许别的请求抢占。
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    # 取消方（orchestrator）置位；执行方轮询到后放弃等待并结算成 cancelled。
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # 成功信封的 result 原样留存（只对带稳定幂等键的调用），重放时回真实内容。
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     arguments: Mapped[str] = mapped_column(Text, nullable=False, default="")
     arguments_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

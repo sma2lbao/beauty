@@ -13,7 +13,10 @@ from tool_service.schemas.tools import (
     LIST_LIMIT_MAX,
     ToolCallListRead,
     ToolCallRead,
+    ToolCancelBody,
+    ToolCancelRead,
 )
+from tool_service.services.reservation import request_cancel
 
 router = APIRouter(prefix="/tool-calls", tags=["tool-calls"])
 
@@ -62,6 +65,27 @@ async def list_tool_calls(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post(":cancel", response_model=ToolCancelRead)
+async def cancel_tool_calls(
+    body: ToolCancelBody,
+    session: SessionDep,
+    account_id: AccountDep,
+) -> ToolCancelRead:
+    """给在飞调用置取消标记(S6);执行方在轮询间隔内放弃等待并结算 cancelled。
+
+    只标记 status=running 的行:终态行取消没有意义,排队中的请求还没落行。
+    已发到沙箱的命令不会被打断,本服务只是不再等它的结果(要真停用 job_kill)。
+    """
+
+    cancelled = await request_cancel(
+        session,
+        account_id=account_id,
+        run_id=body.run_id,
+        tool_call_id=body.tool_call_id,
+    )
+    return ToolCancelRead(cancelled=cancelled)
 
 
 @router.get("/{tool_call_id}", response_model=ToolCallRead)

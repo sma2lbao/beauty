@@ -202,10 +202,21 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 
 `tests/test_cancel_interrupt.py`：3 个节点级用例（恒真/恒假探针 + `instrument_node` 包装，断言 `RunCancelled` 抛在节点体之前）+ 1 个集成用例（blocking FakeLLM，plan→approve→图在模型调用中挂住→另一会话取消→放行后断言 run 仍 `cancelled`、没有再落 `run.failed.v1`/`run.completed.v1`、模型调用次数停在 2）。
 
-- **粒度是边界**：一次很长的模型/工具调用不会被劈开，取消在下一个检查点生效（对用户是秒级到一次调用时长）。
+- **粒度是边界**：S3 时一次很长的模型/工具调用不会被劈开，取消在下一个检查点才生效（对用户是秒级到一次调用时长）；S6 起执行期外呼也可以放弃等待（见 §9.5），但仍不会打断沙箱里已经跑起来的命令。
 - 每个边界一次 `SELECT`；要压成本只能加短 TTL 缓存，代价是取消延迟。
 - `graph.aupdate_state` 的配置不带会话（不跑节点），将来若在 aupdate_state 里跑节点需要补。
 - 取消与 recover 并发：`recover_run` 只接 `planning/running`，已取消的 run 不会被接回；但两者与 rewind 的交互仍靠状态机而非互斥。
+
+### 9.5 执行期也能放弃等待（S6，2026-11-17）
+
+S3 只在节点边界问状态，所以「一次很长的模型调用/工具调用」期间取消要等它自己结束；如果工具真的卡住（模型网关不返回、沙箱命令长时间跑），取消就没意义了。
+
+- **`graph/cancellation.py` 的 `guarded(runtime, start, *, poll_interval=GUARD_POLL_SECONDS)`**：把外呼包成 `asyncio.ensure_future(start())`（`start` 是零参可调用，避免未 await 协程告警），用 `asyncio.wait({task}, timeout=poll_interval)` 分片等待；每片之间问一次探针（默认 0.25s），已取消就 `task.cancel()` 并抛 `RunCancelled`，正常完成则返回 `task.result()`，其他异常原样抛出（**不吞**）。
+- **覆盖点**（都是"可能长时间不返回的外呼"）：`graph/nodes/execute.py` 的 `llm.complete(...)` 与 `toolkit.execute(...)`、`graph/nodes/tool_exec.py` 的 `toolkit.execute(...)`、`graph/plan_nodes.py` 的 `_text_reply`（非流式 `complete` 与流式每次 `anext`）。
+- **两级协作**：orchestrator 放弃等待之后，tool-service 那边还在跑。所以 `cancel_run` 会顺带通知 tool-service（`ToolClient.cancel_tools` → `POST /v1/tool-calls:cancel`），把该 run 下 `status=running` 的审计行标 `cancel_requested`；tool-service 执行期间按 `cancel_poll_seconds` 轮询这个标记，看到就放弃等待、把行落 `status=cancelled` 并回 `tool.cancelled` 信封。通知是**旁路**：`configure_tool_cancel` 注入，`NOTIFY_TIMEOUT_SECONDS=2.0`，超时或异常只 `logger.warning`，绝不让取消失败。
+- **探针用独立短连接读**（`services/run_cancellation.py` 的 `RunCancellationProbe`）：执行期的轮询与执行本身并行，若复用执行会话，每次 `SELECT` 都会在执行会话上留下一个未结束的读事务——SQLite 下读事务持 SHARED、取消方持 RESERVED，两边 commit 互等，直接撞成 `database is locked`，随后同一会话的后续语句连环 `PendingRollbackError`，一个观测面失败会把整个 job 打死。探针因此按 `session.bind` 另开 `AsyncSession`、读完即关；读失败（锁冲突/抖动）只记 warning 并按"尚未取消"处理，下一次轮询或下一个节点边界会再看。
+- **失败不扩散**：`_RunStepSink.flush` 的兜底 except 在连接级错误（`PendingRollbackError` / `OperationalError` / `InterfaceError` / `DisconnectionError`）上回滚会话（`_reset_if_invalid`），否则"步骤落库失败"会顺带毒化整个 job 的会话；业务错误不回滚，仍由调用方处理。工具调用期间的取消不算工具失败，`execute`/`tool_exec` 节点对 `RunCancelled` 显式放行，过程项不会被打上 failed。
+- **残余**：① 沙箱里已经起的命令不会被打断（`argv` 层面无信号通道），只能等它自己结束或超时；② 同步阻塞在事件循环线程里的调用（例如某些同步 HTTP 库）`task.cancel()` 打不断，只能等它返回；③ 没有 fencing——原执行者若只是"慢"而非"死"，它与接管者可能各写一次（租约机制只缩小窗口，不消除）。
 
 ## 10. 回退前的外部副作用台账（S5，2026-11-17）
 

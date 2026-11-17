@@ -42,6 +42,11 @@ class Settings(ServiceSettings):
     max_writes_per_run: int = 50
     max_write_bytes_per_run: int = 5 * 1024 * 1024
     max_tool_calls_per_run: int = 60
+    # S6:执行期预留。预留行落 running 并带租约;租约时长必须显著大于单次调用
+    # 的超时上限(EXECUTE_TIMEOUT_MAX=600s),否则长调用会被误判成崩溃而抢占。
+    # 执行方按 cancel_poll_seconds 轮询取消标记,过小会放大数据库读压力。
+    reservation_lease_seconds: float = 900.0
+    cancel_poll_seconds: float = 0.5
     # P3:fetch 只读抓取公网文本(http/https);内网/回环/链路本地地址一律拒绝。
     # 会发起外部 I/O,因此属于 NETWORK_SWITCHES:测试默认钉成 False(零网络)。
     fetch_enabled: bool = False

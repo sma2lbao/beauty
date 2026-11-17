@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_orchestrator.graph import delta
+from agent_orchestrator.graph.cancellation import guarded
 from agent_orchestrator.graph.ports import (
     LLMPort,
 )
@@ -34,9 +35,15 @@ async def _text_reply(
     """
     runtime.ports.usage.check_budget()
     if not runtime.delta.active() or not hasattr(llm, "stream"):
-        return (await llm.complete(messages)).content
+        return (await guarded(runtime, lambda: llm.complete(messages))).content
+    # 流式时"等下一段"本身也可能卡住(首 token 前),所以每段都过一次 guard
+    iterator = llm.stream(messages).__aiter__()
     parts: list[str] = []
-    async for piece in llm.stream(messages):
+    while True:
+        try:
+            piece = await guarded(runtime, lambda: anext(iterator))
+        except StopAsyncIteration:
+            break
         parts.append(piece)
         await runtime.delta.emit_text(piece, phase)
     return "".join(parts)

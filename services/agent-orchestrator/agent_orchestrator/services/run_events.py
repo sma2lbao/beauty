@@ -15,6 +15,12 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from events.envelope import EventEnvelope
 from sqlalchemy import select
+from sqlalchemy.exc import (
+    DisconnectionError,
+    InterfaceError,
+    OperationalError,
+    PendingRollbackError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator import metrics
@@ -189,8 +195,34 @@ class _RunStepSink:
         try:
             await _flush_steps(self._session, self._run, self)
             await self._session.commit()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.warning("step flush failed", run_id=self._run.id, exc_info=True)
+            # 连接被判定失效后,同一会话后续的每条语句都会抛 PendingRollback。
+            # 这里回滚让会话重新可用,否则"观测面落库失败"会顺带把整个 job 打死。
+            await _reset_if_invalid(self._session, exc)
+
+
+#: 连接级错误:出现这些之后同一会话的后续语句都会连环失败,必须回滚复位。
+_CONNECTION_ERRORS = (
+    PendingRollbackError,
+    OperationalError,
+    InterfaceError,
+    DisconnectionError,
+)
+
+
+async def _reset_if_invalid(session: AsyncSession, exc: BaseException) -> None:
+    """连接失效(锁冲突/断连)后回滚会话,避免后续语句连环 PendingRollback。
+
+    只对连接级错误回滚:业务错误(比如约束冲突)保持在调用方手里,不在这里
+    悄悄丢掉待提交状态。
+    """
+    if not isinstance(exc, _CONNECTION_ERRORS):
+        return
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001 - 回滚失败也没别的补救手段
+        logger.warning("session rollback after flush failure failed", exc_info=True)
 
 
 async def _flush_steps(session: AsyncSession, run: Run, sink: _RunStepSink) -> None:

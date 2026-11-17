@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from common.tools import ToolDescriptor
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 TOOL_CALL_ID_MAX = 128
 #: 调用方算的稳定幂等键（"orch1:" + 64 位十六进制 = 70），留出余量。
@@ -100,6 +100,10 @@ class ToolCallRead(BaseModel):
     tool_version: str
     risk: str
     decision: str
+    # running=预留着还没回结果(执行中或执行方已崩溃而租约未过期);
+    # succeeded/failed/cancelled 是终态(S6)。
+    status: str = "succeeded"
+    cancel_requested: bool = False
     ok: bool
     error_code: str | None = None
     duration_ms: int
@@ -125,3 +129,24 @@ class ToolCallListRead(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ToolCancelBody(BaseModel):
+    """POST /v1/tool-calls:cancel 的请求体:按 run 或按单次调用取消。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = Field(default=None, max_length=CONTEXT_ID_MAX)
+    tool_call_id: str | None = Field(default=None, max_length=TOOL_CALL_ID_MAX)
+
+    @model_validator(mode="after")
+    def _require_one(self) -> ToolCancelBody:
+        if self.run_id is None and self.tool_call_id is None:
+            raise ValueError("run_id 与 tool_call_id 至少给一个")
+        return self
+
+
+class ToolCancelRead(BaseModel):
+    """取消请求的结果:标记了多少条在飞调用(0 表示没有可取消的)。"""
+
+    cancelled: int

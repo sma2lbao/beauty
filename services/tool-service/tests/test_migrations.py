@@ -82,6 +82,8 @@ def test_tool_calls_unique_constraint_and_indexes(tmp_path: Path) -> None:
     assert {"patch", "lines_added", "lines_removed", "patch_truncated"} <= columns
     # C2.4:连接器审计列必须随迁移落到真实库(create_all 测不出来)。
     assert "connection_id" in columns
+    # S6:执行期预留列(status 有 server_default,老行标成 succeeded)。
+    assert {"status", "lease_until", "cancel_requested", "result_json"} <= columns
 
 
 def test_background_jobs_table_and_indexes(tmp_path: Path) -> None:

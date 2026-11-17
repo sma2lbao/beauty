@@ -85,6 +85,27 @@ def failure_outcome(
     )
 
 
+def reservation_columns(
+    descriptor: ToolDescriptor, arguments: dict[str, Any], *, decision: str
+) -> dict[str, Any]:
+    """预留行能先填的静态列(S6):身份/参数摘要/风险/决定。
+
+    执行期预留要在「执行之前」就插入一行,此时还没有 outcome;这些列与
+    audit_columns 的前六项完全同源,避免两处各拼一遍 JSON 与摘要。
+    """
+
+    return {
+        "tool_name": descriptor.name,
+        "tool_version": descriptor.version,
+        "risk": str(descriptor.risk),
+        "decision": decision,
+        "arguments": json.dumps(arguments, ensure_ascii=False, sort_keys=True)[
+            :ARGUMENTS_AUDIT_CHARS
+        ],
+        "arguments_sha256": arguments_digest(arguments),
+    }
+
+
 def audit_columns(
     outcome: ExecutionOutcome,
     context: ExecutionContext,
@@ -92,21 +113,14 @@ def audit_columns(
     *,
     decision: str,
 ) -> dict[str, Any]:
-    """把执行结果映射成 tool_calls 表的列(调用方负责 insert)。"""
+    """把执行结果映射成 tool_calls 表的列(调用方负责 insert/settle)。"""
 
     response = outcome.response
     result = response.result or {}
     error = response.error
     patch = outcome.patch
     return {
-        "tool_name": outcome.descriptor.name,
-        "tool_version": outcome.descriptor.version,
-        "risk": str(outcome.descriptor.risk),
-        "decision": decision,
-        "arguments": json.dumps(arguments, ensure_ascii=False, sort_keys=True)[
-            :ARGUMENTS_AUDIT_CHARS
-        ],
-        "arguments_sha256": arguments_digest(arguments),
+        **reservation_columns(outcome.descriptor, arguments, decision=decision),
         "ok": response.ok,
         "error_code": error.code if error is not None else None,
         "duration_ms": response.duration_ms,

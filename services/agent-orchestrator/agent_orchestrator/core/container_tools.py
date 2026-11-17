@@ -8,6 +8,7 @@ from functools import partial
 
 from agent_orchestrator.services import hooks as hooks_service
 from agent_orchestrator.services import mcp_runtime
+from agent_orchestrator.services import run_cancel as run_cancel_service
 from agent_orchestrator.services.documents import DocumentLibrary
 from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.mcp_client import configure_url_guard
@@ -58,6 +59,15 @@ class ToolsAssemblyMixin:
             )
             self._closers.append(("tool client", tool_client.aclose))
         self._publish("tool_client", tool_client)
+        # 取消要能通知到工具服务(S6):编排器取消自己那次等待后,工具服务侧按
+        # 这个标记同样不再等结果。进程级配置,按容器重置;假客户端(测试注入)
+        # 没有该方法时写回 None,避免上一个容器的装配泄漏到下一个。
+        cancel_tools = getattr(tool_client, "cancel_tools", None)
+        run_cancel_service.configure_tool_cancel(
+            (lambda account_id, run_id: cancel_tools(account_id, run_id))
+            if callable(cancel_tools)
+            else None
+        )
 
         toolkit_factory = self.toolkit_factory
         knowledge: KnowledgeClient | None = None

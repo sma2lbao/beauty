@@ -9,7 +9,11 @@ import time
 from typing import Any
 
 from agent_orchestrator.graph import delta, items
-from agent_orchestrator.graph.cancellation import raise_if_cancelled
+from agent_orchestrator.graph.cancellation import (
+    RunCancelled,
+    guarded,
+    raise_if_cancelled,
+)
 from agent_orchestrator.graph.idempotency import tool_idempotency_key
 from agent_orchestrator.graph.nodes.ask import (
     MAX_ASK_CYCLES,
@@ -119,7 +123,10 @@ def make_execute_node(
             # 让已取消的 run 多跑完一整轮工具
             await raise_if_cancelled(runtime)
             runtime.ports.usage.check_budget()
-            reply = await llm.complete(messages, tools=schemas)
+            # S6:模型补全可能跑几十秒,执行期也轮询取消探针,已取消就放弃等待
+            reply = await guarded(
+                runtime, lambda: llm.complete(messages, tools=schemas)
+            )
             if not reply.tool_calls:
                 exhausted = False
                 break
@@ -312,13 +319,24 @@ def make_execute_node(
                     risk=risk,
                 )
                 try:
-                    output = await toolkit.execute(
-                        call.name,
-                        call.arguments,
-                        tool_call_id=getattr(call, "id", None),
-                        approved=True,
-                        idempotency_key=idempotency_key,
+                    # S6:工具执行期间同样轮询取消;tool-service 侧收到取消标记
+                    # 后会放弃等待(services/run_cancel.py 的通知),两边不必共用连接
+                    output = await guarded(
+                        runtime,
+                        # 绑定默认值:guard 可能在循环推进后才调用 start(B023)
+                        lambda call=call, idempotency_key=idempotency_key: (
+                            toolkit.execute(
+                                call.name,
+                                call.arguments,
+                                tool_call_id=getattr(call, "id", None),
+                                approved=True,
+                                idempotency_key=idempotency_key,
+                            )
+                        ),
                     )
+                except RunCancelled:
+                    # 取消不是工具失败:过程项不标 failed,收尾交给图的调用边界
+                    raise
                 except Exception as exc:
                     _tool_item_fail(runtime, item_span, call.name, call.arguments, exc)
                     raise

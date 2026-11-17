@@ -136,6 +136,32 @@ class ToolClient:
                 tool_call_id=request.tool_call_id,
             )
 
+    async def cancel_tools(self, account_id: str, run_id: str) -> int:
+        """通知 tool-service 放弃该 run 的在飞工具调用(S6)。
+
+        只标记 ``status=running`` 的审计行,执行方轮询到标记后放弃等待;已经发到
+        沙箱的命令不会被打断(那是另一回事,见 tool-service 的取消端点)。返回
+        被标记的条数。取消是尽力而为的旁路,调用方(run_cancel)自己吞异常。
+        """
+
+        headers: dict[str, str] = {"content-type": "application/json"}
+        headers.update(await self._auth_headers(account_id))
+        try:
+            response = await self._client.post(
+                "/v1/tool-calls:cancel", json={"run_id": run_id}, headers=headers
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                UNREACHABLE_CODE, f"tool-service 不可达: {type(exc).__name__}"
+            ) from exc
+        payload = _decode_json(response, expected="工具取消")
+        cancelled = payload.get("cancelled")
+        if not isinstance(cancelled, int):
+            raise UpstreamError(
+                UPSTREAM_ERROR_CODE, "tool-service 取消响应 cancelled 非法"
+            )
+        return cancelled
+
     async def list_tool_calls(
         self,
         account_id: str,

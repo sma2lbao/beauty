@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Annotated, Any
 
 from common.errors import ConflictError, NotFoundError, PermissionDeniedError
@@ -25,7 +27,14 @@ from tool_service.api.deps import (
     get_tool_runner,
 )
 from tool_service.core.config import Settings
-from tool_service.models.tool_call import ToolCall
+from tool_service.models.tool_call import (
+    STATUS_CANCELLED,
+    STATUS_FAILED,
+    STATUS_RUNNING,
+    STATUS_SUCCEEDED,
+    TERMINAL_STATUSES,
+    ToolCall,
+)
 from tool_service.repositories import FileReadRepository, ToolCallRepository
 from tool_service.schemas.tools import (
     ToolDescriptorRead,
@@ -47,9 +56,22 @@ from tool_service.services.execution import (
     failure_outcome,
     finish_tool_span,
     is_available,
+    reservation_columns,
     tool_span,
 )
 from tool_service.services.quota import check_total_calls, check_write_quota
+from tool_service.services.reservation import (
+    CANCELLED_CODE,
+    CANCELLED_MESSAGE,
+    IN_PROGRESS_CODE,
+    IN_PROGRESS_MESSAGE,
+    ToolCallCancelled,
+    await_with_cancel,
+    cancel_requested,
+    lease_deadline,
+    settle,
+    takeover,
+)
 from tool_service.services.sandbox import scope_key_for
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -146,15 +168,28 @@ async def execute_tool(
     repository = ToolCallRepository(session)
     digest = arguments_digest(body.arguments)
     existing = await _find_existing(repository, account_id, body)
-    if existing is not None:
+    if existing is not None and existing.status in TERMINAL_STATUSES:
         return _replay_response(existing, digest, body)
     # 防御性风险下限:WRITE/DESTRUCTIVE 没有 approved=true 一律 403。
     # orchestrator 只在审批策略自动放行或人工确认后才传 approved=true。
+    # 放在抢占之前:抢占会重新持有租约,再 403 就留下一条无人释放的 running 行。
     if descriptor.risk in (ToolRisk.WRITE, ToolRisk.DESTRUCTIVE) and not body.approved:
         raise PermissionDeniedError(
             "tool.confirmation_required",
             f"工具 {descriptor.name} 需要人工确认后才能执行",
         )
+    decision = "approved" if body.approved else "auto"
+    lease_until = lease_deadline(settings.reservation_lease_seconds)
+    record_id: str | None = None
+    if existing is not None:
+        # 只剩 running 一种可能(终态上面已重放):租约过期则抢占重试,
+        # 没过期说明另一次调用正在执行,回 409 让调用方稍后按同键再试。
+        if existing.arguments_sha256 != digest:
+            raise _conflict(existing)
+        if await takeover(session, existing.id, lease_until=lease_until):
+            record_id = existing.id
+        else:
+            raise _in_progress(existing)
     context = ExecutionContext(
         account_id=account_id,
         tool_call_id=body.tool_call_id,
@@ -175,35 +210,88 @@ async def execute_tool(
         outcome, internal_arguments = await _preflight(
             session, settings, descriptor, context, body.arguments
         )
-        if outcome is None:
-            outcome = await runner.execute(
-                context,
-                descriptor.name,
-                body.arguments,
-                internal_arguments=internal_arguments,
+        if outcome is not None:
+            # 配额/读前置拒绝:没有执行,直接落终态行(不预留、不占租约)。
+            columns = audit_columns(outcome, context, body.arguments, decision=decision)
+            finish_tool_span(span, columns=columns, ok=False)
+            replay = await _finish_without_execution(
+                session,
+                repository,
+                record_id,
+                account_id=account_id,
+                body=body,
+                descriptor=descriptor,
+                decision=decision,
+                columns=columns,
+                status=STATUS_FAILED,
+                digest=digest,
+            )
+            return replay or JSONResponse(outcome.response.envelope())
+        if record_id is None:
+            record_id, replay = await _reserve(
+                session,
+                repository,
+                account_id=account_id,
+                body=body,
+                descriptor=descriptor,
+                decision=decision,
+                lease_until=lease_until,
+                digest=digest,
+            )
+            if replay is not None:
+                return replay
+        try:
+            outcome = await await_with_cancel(
+                lambda: runner.execute(
+                    context,
+                    descriptor.name,
+                    body.arguments,
+                    internal_arguments=internal_arguments,
+                ),
+                probe=lambda: cancel_requested(session, record_id),
+                poll_interval=settings.cancel_poll_seconds,
             )
             await _remember_read(session, descriptor, context, body, outcome)
-        decision = "approved" if body.approved else "auto"
-        columns = audit_columns(outcome, context, body.arguments, decision=decision)
-        finish_tool_span(span, columns=columns, ok=columns["ok"])
-        record = ToolCall(
-            account_id=account_id,
-            tool_call_id=body.tool_call_id,
-            idempotency_key=body.idempotency_key,
-            run_id=body.run_id,
-            conversation_id=body.conversation_id,
-            **columns,
-        )
-        session.add(record)
-        try:
-            await session.commit()
-        except IntegrityError:
-            # 并发同键(稳定键或 tool_call_id):后到者回滚并按已存在记录重放
-            await session.rollback()
-            existing = await _find_existing(repository, account_id, body)
-            if existing is None:
-                raise
-            return _replay_response(existing, digest, body)
+            columns = audit_columns(outcome, context, body.arguments, decision=decision)
+            finish_tool_span(span, columns=columns, ok=columns["ok"])
+            status = STATUS_SUCCEEDED if outcome.response.ok else STATUS_FAILED
+            await settle(
+                session,
+                record_id,
+                status=status,
+                columns=columns,
+                result_json=_stored_result(outcome),
+            )
+        except ToolCallCancelled:
+            # 取消是模型可见的工具错误(HTTP 200 + ok=false),不是 API 错误:
+            # 模型需要知道"这次没跑完,别再等结果",而不是收到 409 去重试。
+            outcome = failure_outcome(
+                descriptor,
+                context,
+                CANCELLED_CODE,
+                CANCELLED_MESSAGE,
+                retryable=True,
+            )
+            columns = audit_columns(outcome, context, body.arguments, decision=decision)
+            finish_tool_span(span, columns=columns, ok=False)
+            await settle(session, record_id, status=STATUS_CANCELLED, columns=columns)
+            return JSONResponse(outcome.response.envelope())
+        except BaseException:
+            # 执行抛异常(不是工具失败信封):先把预留行结掉,别让它挂到租约过期,
+            # 否则同键重试会被 409 挡住;异常本身照旧冒泡(500)。
+            columns = audit_columns(
+                failure_outcome(
+                    descriptor,
+                    context,
+                    "tool.internal_error",
+                    "工具执行时发生内部错误",
+                ),
+                context,
+                body.arguments,
+                decision=decision,
+            )
+            await settle(session, record_id, status=STATUS_FAILED, columns=columns)
+            raise
     return JSONResponse(outcome.response.envelope())
 
 
@@ -380,20 +468,144 @@ async def _find_existing(
     return await repository.find_by_call_id(account_id, body.tool_call_id)
 
 
+async def _reserve(
+    session: AsyncSession,
+    repository: ToolCallRepository,
+    *,
+    account_id: str,
+    body: ToolExecuteBody,
+    descriptor: ToolDescriptor,
+    decision: str,
+    lease_until: datetime,
+    digest: str,
+) -> tuple[str, JSONResponse | None]:
+    """插一条 running 预留行并提交;并发同键时回滚成重放/409。
+
+    提交后才开始执行:唯一约束现在由「预留」承担,同键第二次请求会在
+    执行开始前就 409 tool.call_in_progress,而不是执行完再撞约束。
+    """
+
+    record = ToolCall(
+        account_id=account_id,
+        tool_call_id=body.tool_call_id,
+        idempotency_key=body.idempotency_key,
+        run_id=body.run_id,
+        conversation_id=body.conversation_id,
+        status=STATUS_RUNNING,
+        lease_until=lease_until,
+        cancel_requested=False,
+        **reservation_columns(descriptor, body.arguments, decision=decision),
+    )
+    session.add(record)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing = await _find_existing(repository, account_id, body)
+        if existing is None:
+            raise
+        if existing.status in TERMINAL_STATUSES:
+            return "", _replay_response(existing, digest, body)
+        if existing.arguments_sha256 != digest:
+            raise _conflict(existing) from None
+        raise _in_progress(existing) from None
+    return str(record.id), None
+
+
+async def _finish_without_execution(
+    session: AsyncSession,
+    repository: ToolCallRepository,
+    record_id: str | None,
+    *,
+    account_id: str,
+    body: ToolExecuteBody,
+    descriptor: ToolDescriptor,
+    decision: str,
+    columns: dict[str, Any],
+    status: str,
+    digest: str,
+) -> JSONResponse | None:
+    """执行前就被拒绝(配额/读前置):结掉已抢到的预留行,或直接落终态行。
+
+    返回非 None 表示并发请求先落了记录,应按它重放。
+    """
+
+    if record_id is not None:
+        await settle(session, record_id, status=status, columns=columns)
+        return None
+    record = ToolCall(
+        account_id=account_id,
+        tool_call_id=body.tool_call_id,
+        idempotency_key=body.idempotency_key,
+        run_id=body.run_id,
+        conversation_id=body.conversation_id,
+        status=status,
+        **columns,
+    )
+    session.add(record)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        existing = await _find_existing(repository, account_id, body)
+        if existing is None:
+            raise
+        return _replay_response(existing, digest, body)
+    return None
+
+
+def _conflict(existing: ToolCall) -> ConflictError:
+    """同键异参:409 idempotency_conflict(与首次记录对照)。"""
+
+    return ConflictError(
+        "tool.idempotency_conflict",
+        "同一幂等键的参数与首次调用不一致",
+        details={
+            "tool_call_id": existing.tool_call_id,
+            "idempotency_key": existing.idempotency_key,
+        },
+    )
+
+
+def _in_progress(existing: ToolCall) -> ConflictError:
+    """同键仍在执行:409,带租约到期时间让调用方知道要等多久。"""
+
+    lease = existing.lease_until
+    return ConflictError(
+        IN_PROGRESS_CODE,
+        IN_PROGRESS_MESSAGE,
+        details={
+            "tool_call_id": existing.tool_call_id,
+            "idempotency_key": existing.idempotency_key,
+            "status": existing.status,
+            "lease_until": lease.isoformat() if lease is not None else None,
+        },
+    )
+
+
+def _stored_result(outcome: ExecutionOutcome) -> str | None:
+    """成功调用的结果快照(重放时回原结果而不是空壳);失败不留结果。"""
+
+    result = outcome.response.result
+    if not outcome.response.ok or not result:
+        return None
+    try:
+        return json.dumps(result, ensure_ascii=False)
+    except (TypeError, ValueError):  # pragma: no cover - 结果本就来自 JSON
+        return None
+
+
 def _replay_response(
     existing: ToolCall, digest: str, body: ToolExecuteBody
 ) -> JSONResponse:
-    """同一逻辑调用的第二次请求:参数一致则原样重放,否则 409。"""
+    """同一逻辑调用的第二次请求:参数一致则原样重放,否则 409。
+
+    有结果快照(result_json,2026-11-17 起)时回真实结果,让重放对模型可读;
+    老记录没有快照,退回「已执行,未重复执行」的说明。
+    """
 
     if existing.arguments_sha256 != digest:
-        raise ConflictError(
-            "tool.idempotency_conflict",
-            "同一幂等键的参数与首次调用不一致",
-            details={
-                "tool_call_id": existing.tool_call_id,
-                "idempotency_key": existing.idempotency_key,
-            },
-        )
+        raise _conflict(existing)
     error: ToolError | None = None
     result: dict[str, Any] | None = None
     # 稳定键命中时 tool_call_id 可能已换(崩溃恢复后模型重新生成),提示按
@@ -403,8 +615,16 @@ def _replay_response(
         if body.idempotency_key and body.idempotency_key == existing.idempotency_key
         else "该 tool_call_id"
     )
-    if existing.ok:
+    stored = _stored_result_of(existing)
+    if existing.status == STATUS_CANCELLED:
+        error = ToolError(
+            code=CANCELLED_CODE,
+            message=f"{label} 已被取消,本次未执行",
+            retryable=True,
+        )
+    elif existing.ok:
         result = {
+            **(stored or {}),
             "replayed": True,
             "note": f"{label} 已执行成功,本次未重复执行",
         }
@@ -415,7 +635,7 @@ def _replay_response(
             retryable=False,
         )
     response = ToolExecuteResponse(
-        ok=existing.ok,
+        ok=existing.status != STATUS_CANCELLED and existing.ok,
         result=result,
         error=error,
         truncated=existing.truncated,
@@ -424,3 +644,16 @@ def _replay_response(
         idempotent_replay=True,
     )
     return JSONResponse(response.envelope())
+
+
+def _stored_result_of(existing: ToolCall) -> dict[str, Any] | None:
+    """读回结果快照;解析失败按没有快照处理(重放文案仍可用)。"""
+
+    raw = existing.result_json
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:  # pragma: no cover - 只有写坏的行才会触发
+        return None
+    return value if isinstance(value, dict) else None

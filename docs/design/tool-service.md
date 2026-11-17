@@ -344,12 +344,17 @@ apps/web ──SSE/HTTP──▶ api-gateway(:8007) ──▶ agent-orchestrator
 [tool-service]
   5. 幂等查重：先按调用方稳定键 idempotency_key（(account_id,idempotency_key)
      唯一，仅写操作），没有则回落 tool_call_id（(account_id,tool_call_id)
-     唯一）→ 命中则直接回旧结果
-  6. ToolDescriptor 查 catalog → 参数校验（common.tools.validate_arguments）
-  7. 解析执行器：sandbox → workspace POST /v1/sandboxes:ensure {scope_key="conv:<id>"} → POST /{sandbox}/exec (argv python3 -c <helper>, stdin=JSON)
-  8. 规范化结果信封（截断元数据/耗时/路径）
-  9. 落 tool_calls（ok/error_code/duration_ms/sha256…）
- 10. 返回 {"ok":true,...}
+     唯一）→ 命中终态行直接回旧结果（有 result_json 就回原结果）；命中
+     running 行则看租约：未过期回 409 tool.call_in_progress，已过期原子抢占
+  6. ToolDescriptor 查 catalog → 配额/读前置预检（拒绝不预留，直接落终态行）
+     → 参数校验（common.tools.validate_arguments）
+  7. 落 running 预留行（status/lease_until/arguments_sha256），唯一约束在此兜
+     并发：插入撞键就回滚，按第 5 步同一套分派重来
+  8. 解析执行器：sandbox → workspace POST /v1/sandboxes:ensure {scope_key="conv:<id>"} → POST /{sandbox}/exec (argv python3 -c <helper>, stdin=JSON)
+     执行期间按 cancel_poll_seconds 轮询 cancel_requested，看到标记就放弃等待
+  9. 规范化结果信封（截断元数据/耗时/路径），更新同一行：
+     status=succeeded/failed/cancelled + 审计列 + result_json
+ 10. 返回 {"ok":true,...}（被取消时是 200 的工具错误信封 tool.cancelled）
         │
         ▼
 [orchestrator]
@@ -452,9 +457,10 @@ def validate_arguments(schema: dict, args: dict) -> list[ToolError]:
 | POST | `/v1/tools/{name}:execute`      | 执行工具                                        | `{"ok":true,...}` 或 `{"ok":false,"error":{...}}`（HTTP 200） |
 | GET  | `/v1/tool-calls`                | 审计查询（account 内，按 run_id/tool/时间过滤） | 分页列表                                                      |
 | GET  | `/v1/tool-calls/{tool_call_id}` | 单条审计                                        | `tool_calls` 行                                               |
+| POST | `/v1/tool-calls:cancel`         | 取消通知（`{run_id}` 或 `{tool_call_id}`）      | `{"cancelled":n}`（只标记 running 行，不打断沙箱命令）        |
 | GET  | `/healthz` / `/readyz`          | 存活/就绪（service-kit 标准）                   | `{"status":"ok"}`                                             |
 
-HTTP 状态码约定：**工具执行错误一律 200**（错误是模型可见的数据，不是 API 失败）；401/403 仅鉴权与防御性确认；404 未知工具；422 请求体结构非法；409 幂等冲突（同 `tool_call_id` 不同参数）；503 下游不可用（`tool.upstream_unavailable`）。
+HTTP 状态码约定：**工具执行错误一律 200**（错误是模型可见的数据，不是 API 失败，**包括被取消**的 `tool.cancelled`）；401/403 仅鉴权与防御性确认；404 未知工具；422 请求体结构非法；409 幂等冲突（同键不同参数 `tool.idempotency_conflict`）与「同键正在执行」（`tool.call_in_progress`，details 带 `lease_until`）；503 下游不可用（`tool.upstream_unavailable`）。
 
 ### 6.3 catalog 结构（代码内真源）
 
@@ -497,7 +503,9 @@ CATALOG: tuple[ToolDescriptor, ...] = (
 | `tool.edit_no_match` / `tool.edit_ambiguous`                        | 替换目标不存在/不唯一                          | 是             | 否              |
 | `tool.bad_pattern` / `tool.pattern_too_long`                        | 正则/glob 非法                                 | 是             | 否              |
 | `tool.budget_exceeded`                                              | 超出 per-run 限额                              | 否             | 视情况          |
-| `tool.timeout` / `tool.cancelled`                                   | 超时/取消                                      | 超时可重试     | 否              |
+| `tool.timeout`                                                      | 执行超时                                       | 可重试         | 否              |
+| `tool.cancelled`                                                    | 该调用被取消通知放弃等待（重放已取消行也回它） | 是             | 否              |
+| `tool.call_in_progress`                                             | 同键调用正在执行（409，API 层）                | 是             | 否              |
 | `tool.io_error`                                                     | 宿主/沙箱 IO 错误                              | 可重试一次     | 是              |
 | `tool.upstream_unavailable`                                         | 下游不可用（503）                              | 是             | 是              |
 | `tool.fetch_blocked`                                                | fetch 目标被拒（非公网/不在允许列表/解析失败） | 视情况         | 否              |
@@ -878,15 +886,15 @@ tool-service workspace-service
 
 ### 8.4 超时、取消、并发、幂等、配额
 
-| 主题 | 设计                                                                                                                                                                                                              |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 超时 | `asyncio.wait_for(handler, descriptor.timeout_seconds or settings.tool_timeout_seconds)`；超时清理 tmp 文件；`tool.timeout` 带 `hint`（缩小范围重试）                                                             |
-| 取消 | 协作式：orchestrator `cancel_run` 只改库（`run_cancel.py`），执行边界回来看状态丢弃结果；tool-service 不感知取消，靠超时兜底（单次 ≤30s）                                                                         |
-| 并发 | 单 run 内串行（现状）；同一消息多个只读 tool_calls 由 orchestrator P1 并行（`asyncio.gather`，按 tool_call_id 回填）。tool-service 侧无共享可变状态，天然可并发                                                   |
-| 幂等 | `(account_id, tool_call_id)` 唯一；重复请求且参数一致 → 返回首次结果并标 `idempotent_replay:true`；参数不一致 → 409 `tool.idempotency_conflict`                                                                   |
-| 重试 | 只读工具允许 orchestrator 重试 1 次（仍用同一 tool_call_id，命中幂等）；写工具**不自动重试**                                                                                                                      |
-| 配额 | `MAX_TOOL_CALLS_PER_RUN=60`、写字节/次数上限：tool-service 侧按 `(account_id, run_id)` 计数（DB 聚合 + 内存窗口），超限 `tool.budget_exceeded`；与 run 级 LLM token 配额（orchestrator `run_token_budget`）是两层 |
-| 审计 | 每次执行落一行 `tool_calls`（§11.1），含 arguments 摘要（截断 2,000 字符）、ok/error_code/duration_ms/result_chars/truncated/paths/sha256_before/sha256_after                                                     |
+| 主题 | 设计                                                                                                                                                                                                                                                                                                                                                             |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 超时 | `asyncio.wait_for(handler, descriptor.timeout_seconds or settings.tool_timeout_seconds)`；超时清理 tmp 文件；`tool.timeout` 带 `hint`（缩小范围重试）                                                                                                                                                                                                            |
+| 取消 | 协作式两级（2026-11-17）：orchestrator `cancel_run` 改库并通知 tool-service 把该 run 的 running 行标 `cancel_requested`；两边各自放弃等待（编排器 `graph.cancellation.guarded` 轮询探针，tool-service 按 `cancel_poll_seconds` 轮询标记），被取消的调用落 `status=cancelled` 并回 `tool.cancelled` 信封；已发到沙箱的命令不打断，靠超时兜底                      |
+| 并发 | 单 run 内串行（现状）；同一消息多个只读 tool_calls 由 orchestrator P1 并行（`asyncio.gather`，按 tool_call_id 回填）。tool-service 侧无共享可变状态，天然可并发                                                                                                                                                                                                  |
+| 幂等 | **执行期预留**（2026-11-17）：先落 `status=running` 行再执行，执行完更新同一行；同键且租约未过期 → 409 `tool.call_in_progress`，租约过期或 `abandoned` → 原子抢占重跑。终态重放：有 `result_json` 回原结果（再叠 `replayed`/`note`），参数不一致 → 409 `tool.idempotency_conflict`，已取消 → `tool.cancelled`；键先看 `idempotency_key`、无则回落 `tool_call_id` |
+| 重试 | 只读工具允许 orchestrator 重试 1 次（仍用同一 tool_call_id，命中幂等）；写工具**不自动重试**                                                                                                                                                                                                                                                                     |
+| 配额 | `MAX_TOOL_CALLS_PER_RUN=60`、写字节/次数上限：tool-service 侧按 `(account_id, run_id)` 计数（DB 聚合 + 内存窗口），超限 `tool.budget_exceeded`；与 run 级 LLM token 配额（orchestrator `run_token_budget`）是两层                                                                                                                                                |
+| 审计 | 每次执行落一行 `tool_calls`（§11.1），含 arguments 摘要（截断 2,000 字符）、ok/error_code/duration_ms/result_chars/truncated/paths/sha256_before/sha256_after                                                                                                                                                                                                    |
 
 ## 9. 安全模型
 
@@ -1120,6 +1128,10 @@ paths TEXT NULL, -- JSON array（相对路径）
 sha256_before CHAR(64) NULL,
 sha256_after CHAR(64) NULL,
 sandbox_id VARCHAR(128) NULL,
+status VARCHAR(16) NOT NULL DEFAULT 'succeeded', -- running|succeeded|failed|cancelled|abandoned
+lease_until TIMESTAMP NULL, -- 预留租约；过期可被同键请求抢占
+cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, -- 取消通知标记（执行方轮询）
+result_json TEXT NULL, -- 成功结果的原始信封，供重放回原结果
 created_at TIMESTAMP NOT NULL,
 CONSTRAINT uq_tool_calls_account_call UNIQUE (account_id, tool_call_id),
 CONSTRAINT uq_tool_calls_account_idempotency UNIQUE (account_id, idempotency_key)
@@ -1128,7 +1140,7 @@ CREATE INDEX ix_tool_calls_run ON tool_calls (account_id, run_id, created_at);
 CREATE INDEX ix_tool_calls_tool ON tool_calls (account_id, tool_name, created_at);
 ```
 
-- 现状是**执行完成后**落一行审计（`ok`/`error_code`/`duration_ms`…），唯一约束兜底的是**提交期**并发：后到者回滚并按已存在记录回放首次结果。注意这不是执行期预留——同键并发请求仍可能各执行一次副作用，崩溃发生在审计行落库之前时重试也会再执行一次（见 §16.1 R6 增补的残余）。若要做执行期预留，可先 `INSERT` 一行 `ok=false` 占位、执行完 `UPDATE`（PG `INSERT ... ON CONFLICT DO NOTHING` + 二次查询，SQLite `INSERT OR IGNORE`），但要额外处理「占位中」的并发读。
+- **执行期预留（2026-11-17，迁移 `0007_tool_call_reservation`）**：执行前先落一行 `status=running` 的预留行（带 `lease_until`），执行完更新同一行——同键并发请求这时撞的不是"提交期"，而是"执行期"：后到者要么 409 `tool.call_in_progress`，要么在租约过期后原子抢占接管。好处是崩溃在审计行提交之前（含进程被杀）时，租约到期后可以安全重跑，而不会重复执行副作用。`result_json` 让终态重放能回原结果，而不是只给一句"已执行过"。实现见 `tool_service/services/reservation.py`（`lease_deadline`/`takeover`/`request_cancel`/`settle`/`await_with_cancel`）。
 - 幂等键（2026-11-17）：`tool_call_id` 只是「本次调用 id」，崩溃恢复/图重放后模型会重新生成；`idempotency_key` 才是跨 attempt 稳定的「同一次副作用」标识，由 orchestrator 对 WRITE/DESTRUCTIVE 生成 `orch1:sha256(run_id|node|tool_name|规范化参数)`（`agent_orchestrator/graph/idempotency.py`）。查重顺序：有 stable key 先按键、否则回落 `tool_call_id`；`(account_id, idempotency_key)` 唯一且 NULL 互不冲突，旧客户端不传即保持原语义。**取舍**：同一 run 内同参同工具的两次写会被判为一次重放（代价是多轮写同一文件同一内容时第二次不执行，写工具本身幂等或内容相同则无影响）。
 - 保留期：dev 不限；生产 P2 加清理作业（默认 30 天），不放进本期。
 - 仓储：`tool_service/repositories.py` 的 `ToolCallRepository(AccountRepository)`，遵循「仓储不提交」约定。
@@ -1179,6 +1191,8 @@ CREATE INDEX ix_file_reads_run ON file_reads (account_id, run_id, path);
 | ------------------ | ------------------------------ | ----------------------------------------------------------------- |
 | `beauty_tool`      | 首个迁移：`tool_calls`（P0）   | `initdb` 增库 + `migrate` 作业增一步 + `AUTO_CREATE_TABLES=false` |
 | `beauty_tool`      | 第二个迁移：`file_reads`（P1） | 与 P1 写工具同期上线；`alembic check` 必须通过                    |
+| `beauty_tool`      | `0006_tool_call_idempotency`   | 稳定幂等键列 + 唯一约束（2026-11-17）                             |
+| `beauty_tool`      | `0007_tool_call_reservation`   | 执行期预留四列（status/lease_until/cancel_requested/result_json） |
 | `beauty_workspace` | `sandboxes.scope_key`          | 现有 4 个迁移之后新增一个                                         |
 | 其余               | 无                             | —                                                                 |
 
@@ -1806,7 +1820,9 @@ run.tool.called.v1 的 type 与语义不变（仍由 orchestrator 在 \_apply_gr
 | R14 | 计数文案散落（18 处版本、10 个项目、5 个库、7 服务）         | 低     | 门禁脚本报错或文档数字过期                                 | 一次性按 13.2 第 15–16 步的清单 grep 全仓（含 CI 注释、dev.sh、AGENTS、README、architecture、local-dev、roadmap）                                         | 全部计数脚本通过                                        |
 | R15 | 数据保留与清理策略缺失                                       | 低     | tool_calls 无限增长                                        | tool_call_retention_days=30 的清理 job（P1 末）+ 索引支持按时间删                                                                                         | 清理 job 集成测试                                       |
 
-> **2026-11-17 增补（R6）**：图执行路径的写工具幂等已从「按 `tool_call_id`」升级为「按调用方稳定键」——崩溃恢复/图重放后模型会重新生成 `tool_call_id`，只有 `idempotency_key`（`run + 节点 + 工具 + 规范化参数`）跨 attempt 不变，已落审计的写副作用因此不会被重复执行。链路见 §5.3 步骤 5、§6.1 DTO、§11.1 表结构。**残余**：对话直答 / 确认端点 / MCP 直调三条非图路径尚未传稳定键（仍靠 `tool_call_id`）；rewind 的外部副作用由 orchestrator 侧台账 + 显式确认兜（2026-11-17，`run.side_effects_present` 409，见 [recovery.md](./recovery.md) §10），tool-service 不参与；去重发生在审计行提交之后，崩溃恰在落库前时重试仍会再执行一次（无执行期预留）。
+> **2026-11-17 增补（R6 执行期预留与取消）**：幂等从「提交期去重」推进到「执行期预留」——执行前先落 `status=running` + `lease_until` 的预留行，执行完更新同一行；同键且租约未过期 → 409 `tool.call_in_progress`（details 带 `lease_until`），租约过期 → 原子抢占重跑。崩溃在落库前（含进程被杀）不再必然重放副作用：租约到期后接管一次即可。`result_json` 让终态重放回原结果。取消也接通了：`POST /v1/tool-calls:cancel` 标记 `cancel_requested`，执行方按 `cancel_poll_seconds` 轮询后放弃等待，落 `status=cancelled` 并回 200 的 `tool.cancelled` 错误信封（工具错误是模型可见数据，不当 API 失败）。**残余**：① 已发到沙箱的 argv 不会被打断（只能等它们自己结束或超时）；② 租约过期抢占假定"原执行者已死或不再写"，极端情况下两边可能各执行一次（无 fencing token）；③ 三条非图路径仍未传稳定键，因此也用不上预留去重；④ `abandoned` 状态已建模但暂无写入方（留给运维/清扫作业）。
+>
+> **2026-11-17 增补（R6）**：图执行路径的写工具幂等已从「按 `tool_call_id`」升级为「按调用方稳定键」——崩溃恢复/图重放后模型会重新生成 `tool_call_id`，只有 `idempotency_key`（`run + 节点 + 工具 + 规范化参数`）跨 attempt 不变，已落审计的写副作用因此不会被重复执行。链路见 §5.3 步骤 5、§6.1 DTO、§11.1 表结构。**残余**：对话直答 / 确认端点 / MCP 直调三条非图路径尚未传稳定键（仍靠 `tool_call_id`）；rewind 的外部副作用由 orchestrator 侧台账 + 显式确认兜（2026-11-17，`run.side_effects_present` 409，见 [recovery.md](./recovery.md) §10），tool-service 不参与；去重发生在审计行提交之后（当时的残余，同日由下一条增补消除）。
 
 ### 16.2 开放问题
 
@@ -1862,6 +1878,8 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 | TOOL_EXEC_TIMEOUT_SECONDS         | 30（orchestrator）/ 60（沙箱 exec） | 两级超时             |
 | TOOL_CALL_RETENTION_DAYS          | 30                                  | tool_calls 清理      |
 | QUESTION_TIMEOUT_SECONDS          | 900                                 | 提问超时（0 关闭）   |
+| TOOL__RESERVATION_LEASE_SECONDS   | 900                                 | 预留租约默认值       |
+| TOOL__CANCEL_POLL_SECONDS         | 0.5                                 | 取消标记轮询间隔     |
 
 ### 17.2 文件清单
 
@@ -1916,6 +1934,7 @@ docs/gap-2026-10/06-refresh-2026-10-25.md 列出的 P0/P1 差距里，本设计�
 | 信封             | 工具结果统一 JSON：{"ok":true,...} 或 {"ok":false,"error":{...}}              |
 | 双路径           | TOOL_SERVICE_ENABLED 为 true/false 时 orchestrator 的两套工具装配             |
 
+> **2026-11-17 术语增补（预留行）**：`status=running` 的那一行是**执行期预留**，不是审计结果——它表示"这个逻辑调用（按 key）正在被某个执行者持有"，`lease_until` 是持有凭证的租约期限，`cancel_requested` 是取消方的旁路信号（执行者轮询，不是强制中断），`result_json` 是成功后留给重放用的原始信封。
 > **2026-11-17 术语增补**：`tool_call_id` 只是「本次调用 id」（重放后会变）；`idempotency_key` 才是同一次副作用的跨 attempt 标识，仅 WRITE/DESTRUCTIVE 由 orchestrator 生成，缺省时 tool-service 回落 `tool_call_id` 去重。
 
 ---

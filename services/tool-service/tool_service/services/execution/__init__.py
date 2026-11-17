@@ -56,6 +56,7 @@ from tool_service.services.execution.outcome import (
     audit_columns,
     failure_outcome,
     normalize_interaction,
+    reservation_columns,
 )
 from tool_service.services.execution.runner import ToolRunner
 from tool_service.services.execution.tool_span import finish_tool_span, tool_span
@@ -85,6 +86,7 @@ __all__ = [
     "audit_columns",
     "failure_outcome",
     "normalize_interaction",
+    "reservation_columns",
     # 私有名:原 execution.py 内部使用,测试/审计映射直接引用,一并重导出
     "_bytes_written",
     "_clip_exec_stream",
