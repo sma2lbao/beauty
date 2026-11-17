@@ -97,6 +97,11 @@ class Settings(BaseAppSettings):
     # jobs_enabled 且 > 0 时启动。
     run_timeout_seconds: int = 0
     run_timeout_sweep_interval_seconds: float = 30.0
+    # 崩溃续跑(P1-C,见 docs/design/recovery.md §8):执行中(planning/running)但
+    # 已静默超过 grace 秒、且没有 live job 的 run,由 sweeper 入队 recover 从最近
+    # 的图 checkpoint 续跑。interval <= 0 关闭 sweeper(默认开启,依赖 jobs_enabled)。
+    run_recovery_grace_seconds: int = 60
+    run_recovery_sweep_interval_seconds: float = 30.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
     # MCP Client(M1 本地版):允许账号配置第三方 MCP server

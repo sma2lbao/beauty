@@ -47,7 +47,11 @@ from agent_orchestrator.services.run_lifecycle import (
     queue_instruction,
     require_run,
 )
-from agent_orchestrator.services.run_recovery import fork_run, rewind_run
+from agent_orchestrator.services.run_recovery import (
+    fork_run,
+    recover_run,
+    rewind_run,
+)
 from agent_orchestrator.services.run_steps import list_steps
 from agent_orchestrator.services.subagents import list_subagents
 from agent_orchestrator.services.todos import list_todos
@@ -73,6 +77,7 @@ __all__ = [
     "list_todos",
     "plan_run",
     "queue_instruction",
+    "recover_run",
     "reject_run",
     "require_run",
     "resume_run",

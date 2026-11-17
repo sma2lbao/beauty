@@ -1,4 +1,10 @@
-"""run 恢复语义(P1-C,见 docs/design/recovery.md §6/§7):回退重跑与分叉。
+"""run 恢复语义(P1-C,见 docs/design/recovery.md §6/§7/§8):续跑、回退重跑与分叉。
+
+recover:执行中途进程崩溃后,从该 run 最近的 checkpoint 继续跑(attempts 不变,
+线程不变)。崩溃时"状态已推进到 planning/running"可能已随增量提交落库,而正在
+执行的 job 事务回滚——重领旧 job 按原动作只会在状态守卫上 409,所以这里不重放
+动作,直接把图从 checkpoint 拉起来跑完。没有 checkpoint 时才退化为新 attempt
+的重新规划(旧行为)。
 
 rewind:把已终态(completed/failed/cancelled/blocked)的 run 拉回 running,从指定
 checkpoint 继续跑**同一条**线程(attempts 不变)。它不重置已经发生的外部副作用
@@ -11,6 +17,7 @@ fork:以父 run 为模板新起一条 run(状态 pending),可选择性把父 che
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from common.artifacts import ArtifactStore
 from common.errors import ConflictError
@@ -18,6 +25,7 @@ from common.logging import get_logger
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.config import Settings
 from agent_orchestrator.graph.state import RunGraphState
 from agent_orchestrator.models.runs import PARENT_KIND_FORK, Run
@@ -45,6 +53,7 @@ from agent_orchestrator.services.run_execution_approvals import (
     _interrupt_payload,
     _tool_context,
 )
+from agent_orchestrator.services.run_execution_invoke import _invoke_plan
 from agent_orchestrator.services.run_lifecycle import (
     MAX_TITLE,
     mark_started,
@@ -62,6 +71,12 @@ CHECKPOINT_NOT_FOUND_CODE = "run.checkpoint_not_found"
 CHECKPOINT_NOT_FOUND_MESSAGE = "checkpoint 不存在或不属于当前 run"
 FORK_TITLE_SUFFIX = "（分叉）"
 REWIND_EVENT = "run.rewind.v1"
+#: 崩溃续跑:resumed 表示从 checkpoint 接着跑;fallback="plan" 表示没有 checkpoint,
+#: 退化为新 attempt 的重新规划
+RECOVER_EVENT = "run.recovered.v1"
+#: 只有"执行中"的 run 才需要续跑:其余状态要么尚未起图(pending/awaiting_*),
+#: 要么已有明确归属(终态、被取消)
+RECOVERABLE_STATUSES = frozenset({RunStatus.PLANNING.value, RunStatus.RUNNING.value})
 
 
 def _checkpoint_conflict(run: Run, checkpoint_id: str) -> ConflictError:
@@ -84,6 +99,211 @@ def _rewind_config(
     configurable = config.setdefault("configurable", {})
     configurable["checkpoint_id"] = checkpoint_id
     return config
+
+
+async def recover_run(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    account_id: str,
+    run_id: str,
+    *,
+    jobs_enabled: bool = False,
+    from_job: bool = True,
+    store: ArtifactStore | None = None,
+    workspace: Workspace | None = None,
+    downloader: FileDownloader | None = None,
+    max_download_files: int = 10,
+    settings: Settings,
+    context: ContextPipeline | None = None,
+) -> Run:
+    """从最近 checkpoint 续跑一个"执行中"的 run(崩溃恢复,§8)。
+
+    from_job 时状态已由崩溃前的执行推成 planning/running,worker 只负责把图
+    拉起来跑完;状态已被推进(或被取消/超时收尾)则本 job 无事可做,直接返回。
+
+    三种现场:
+    - 图停在人工闸口(tasks 带 interrupt):状态没来得及落库,按既有闸口语义补落,
+      不重跑已中断的节点;
+    - 图已跑完(next 为空):进程死在结果落库前,直接用快照 values 投影终态;
+    - 图还有下一步(next 非空):ainvoke(None) 从 checkpoint 续跑。
+
+    没有任何 checkpoint 时退化为"新 attempt 重新规划":崩溃发生在第一次落
+    checkpoint 之前,没有可续的进度。
+    """
+    run = await require_run(session, account_id, run_id)
+    from_status = run.status
+    if from_status not in RECOVERABLE_STATUSES:
+        if from_job:
+            return run
+        require_transition(run, "recover")
+    snapshot = await graph.aget_state(thread_config(run))
+    values: dict[str, Any] = dict(getattr(snapshot, "values", None) or {})
+    next_nodes = [str(node) for node in (getattr(snapshot, "next", None) or ())]
+    checkpoint_id = checkpoint_id_of(snapshot) if snapshot is not None else None
+    if snapshot is None or (not next_nodes and not values):
+        return await _recover_without_checkpoint(
+            session,
+            graph,
+            run,
+            from_status=from_status,
+            account_id=account_id,
+            jobs_enabled=jobs_enabled,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_download_files=max_download_files,
+            settings=settings,
+            context=context,
+        )
+    interrupts = tuple(
+        interrupt
+        for task in (getattr(snapshot, "tasks", None) or ())
+        for interrupt in (getattr(task, "interrupts", None) or ())
+    )
+    resumed = bool(next_nodes) and not interrupts
+    await append_event(
+        session,
+        run,
+        RECOVER_EVENT,
+        {
+            "attempt": run.attempts,
+            "from_status": from_status,
+            "checkpoint_id": checkpoint_id,
+            "next": next_nodes,
+            "resumed": resumed,
+            "fallback": None,
+        },
+    )
+    if interrupts:
+        # 图停在闸口但状态未落库:把 interrupt 补进 values,交给既有闸口语义
+        values["__interrupt__"] = interrupts
+        return await _settle_recovered_run(
+            session,
+            run,
+            values,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_download_files=max_download_files,
+        )
+    if not next_nodes:
+        # 图已跑完,只是结果没落库:快照 values 就是终态
+        return await _settle_recovered_run(
+            session,
+            run,
+            values,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_download_files=max_download_files,
+        )
+    try:
+        with bind_run_llm(session, run), _tool_context(run):
+            async with (
+                _delta_stream(session, run, settings) as projector,
+                _step_stream(session, run) as step_projector,
+                _item_stream(session, run, step_projector) as item_projector,
+                _usage_boundary(session, run),
+            ):
+                with run_trace(run):
+                    values = await graph.ainvoke(
+                        None,
+                        config=_config(run, projector, step_projector, item_projector),
+                    )
+    except Exception as exc:
+        await _fail_run(session, run, exc, stage="recover")
+        return run
+    return await _settle_recovered_run(
+        session,
+        run,
+        values,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+    )
+
+
+async def _recover_without_checkpoint(
+    session: AsyncSession,
+    graph: CompiledStateGraph,
+    run: Run,
+    *,
+    from_status: str,
+    account_id: str,
+    jobs_enabled: bool,
+    store: ArtifactStore | None,
+    workspace: Workspace | None,
+    downloader: FileDownloader | None,
+    max_download_files: int,
+    settings: Settings,
+    context: ContextPipeline | None,
+) -> Run:
+    """没有可续的 checkpoint:新 attempt 从计划重跑(旧语义,显式记 fallback)。"""
+    run.attempts += 1
+    run.status = RunStatus.PENDING.value
+    run.status_reason = None
+    await append_event(
+        session,
+        run,
+        RECOVER_EVENT,
+        {
+            "attempt": run.attempts,
+            "from_status": from_status,
+            "checkpoint_id": None,
+            "next": [],
+            "resumed": False,
+            "fallback": "plan",
+        },
+    )
+    if jobs_enabled:
+        await jobs_service.enqueue(session, account_id, "plan", run.id)
+        return run
+    await _invoke_plan(
+        session,
+        graph,
+        run,
+        store=store,
+        workspace=workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+        settings=settings,
+        context=context,
+    )
+    return run
+
+
+async def _settle_recovered_run(
+    session: AsyncSession,
+    run: Run,
+    values: dict[str, Any],
+    *,
+    store: ArtifactStore | None,
+    workspace: Workspace | None,
+    downloader: FileDownloader | None,
+    max_download_files: int,
+) -> Run:
+    """续跑结果的收尾:计划闸中断与普通终态各走既有语义。"""
+    interrupt = _interrupt_payload(values)
+    if interrupt.get("kind") == "plan":
+        run.plan_markdown = values.get("plan_markdown") or run.plan_markdown or ""
+        run.status = RunStatus.AWAITING_APPROVAL.value
+        await append_event(
+            session,
+            run,
+            "run.planned.v1",
+            {"attempt": run.attempts, "recovered": True},
+        )
+        return run
+    return await _apply_graph_result(
+        session,
+        run,
+        values,
+        store,
+        workspace,
+        downloader=downloader,
+        max_download_files=max_download_files,
+    )
 
 
 async def rewind_run(

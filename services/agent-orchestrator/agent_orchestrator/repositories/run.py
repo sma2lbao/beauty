@@ -180,3 +180,29 @@ class RunRepository(AccountRepository[Run]):
             if (moment - started).total_seconds() >= timeout:
                 due.append(run)
         return due
+
+    async def list_orphaned_executions(
+        self,
+        now: datetime,
+        *,
+        grace_seconds: int,
+        limit: int = 100,
+    ) -> list[Run]:
+        """扫描"执行中"但可能已无进程在跑的 run(崩溃续跑 sweeper 用,§8)。
+
+        跨账号的系统维护查询(同 list_stale_interrupts);是否为真的孤儿还要由
+        调用方用 job 租约复核——这里只按状态与静默时长取候选,避免长查询。
+        grace 以 updated_at 为准:执行中的增量提交会推进它,因此"静默超过
+        grace"才可能意味着进程已经不在了。
+        """
+        cutoff = now - timedelta(seconds=max(grace_seconds, 0))
+        statement = (
+            select(Run)
+            .where(
+                Run.status.in_((RunStatus.PLANNING.value, RunStatus.RUNNING.value)),
+                Run.updated_at < cutoff,
+            )
+            .order_by(Run.updated_at, Run.id)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))

@@ -23,6 +23,9 @@ KINDS = frozenset(
         "answer",
         # 回退重跑(P1-C):API 侧已推进状态,worker 从 checkpoint 继续跑后续节点
         "rewind",
+        # 崩溃续跑(§8):状态已停在 planning/running,worker 从最近的图 checkpoint
+        # 继续跑;由 run 恢复 sweeper 入队,或把失效的旧动作 job 改道而来
+        "recover",
     }
 )
 

@@ -72,6 +72,9 @@ from agent_orchestrator.services.memory_sweeper import (
 from agent_orchestrator.services.notifications import (
     start_sweeper as start_notification_sweeper,
 )
+from agent_orchestrator.services.run_recovery_sweeper import (
+    start_sweeper as start_run_recovery_sweeper,
+)
 from agent_orchestrator.services.run_timeout_sweeper import (
     start_sweeper as start_run_timeout_sweeper,
 )
@@ -165,6 +168,8 @@ class AppContainer(
         self.interrupt_task: asyncio.Task[None] | None = None
         # P1-C:run 执行超时 sweeper(独立于中断超时,按总时长兜底 failed)
         self.run_timeout_task: asyncio.Task[None] | None = None
+        # P1-C:崩溃续跑 sweeper(执行中但已无进程推进的 run → recover 续跑)
+        self.run_recovery_task: asyncio.Task[None] | None = None
         self.memory_sweep_task: asyncio.Task[None] | None = None
         self.alert_sweep_task: asyncio.Task[None] | None = None
         # 通知持久化:run 状态变化 → notifications 表(关掉页面也留未读)
@@ -310,6 +315,9 @@ class AppContainer(
             # run 执行超时(P1-C):生效超时为 0(默认)时不启动,避免空转
             if settings.run_timeout_seconds > 0:
                 self.run_timeout_task = start_run_timeout_sweeper(self)
+            # 崩溃续跑(P1-C §8):执行中却已无进程推进的 run,接回 checkpoint
+            if settings.run_recovery_sweep_interval_seconds > 0:
+                self.run_recovery_task = start_run_recovery_sweeper(self)
         # 记忆清扫:过期清理 + 相似记忆巩固,独立于 job worker(纯运维后台任务)
         if settings.memory_enabled and settings.memory_sweep_interval_seconds > 0:
             self.memory_sweep_task = start_memory_sweeper(self)
@@ -345,6 +353,11 @@ class AppContainer(
             with suppress(asyncio.CancelledError):
                 await self.run_timeout_task
             self.run_timeout_task = None
+        if self.run_recovery_task is not None:
+            self.run_recovery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.run_recovery_task
+            self.run_recovery_task = None
         if self.memory_sweep_task is not None:
             self.memory_sweep_task.cancel()
             with suppress(asyncio.CancelledError):

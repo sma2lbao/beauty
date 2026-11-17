@@ -76,6 +76,35 @@ class JobRepository(AccountRepository[Job]):
             cancelled += 1
         return cancelled
 
+    async def has_live_for_run(
+        self,
+        account_id: str,
+        run_id: str,
+        now: datetime,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> bool:
+        """该 run 是否还有"真正在跑或即将再跑"的 job(崩溃续跑的并发闸)。
+
+        live 口径:queued(含退避待重试,它仍会再尝试)或 running 且租约未过期。
+        租约过期的 running 是崩溃残留,不算 live——续跑正是要接管它。
+        """
+        criteria = [
+            Job.run_id == run_id,
+            or_(
+                Job.status == "queued",
+                and_(
+                    Job.status == "running",
+                    Job.lease_until.is_not(None),
+                    Job.lease_until >= now,
+                ),
+            ),
+        ]
+        if exclude_job_id is not None:
+            criteria.append(Job.id != exclude_job_id)
+        statement = select(Job.id).where(self.model.account_id == account_id, *criteria)
+        return await self.session.scalar(statement.limit(1)) is not None
+
     async def claim_next(
         self, worker_id: str, now: datetime, lease_seconds: int
     ) -> Job | None:

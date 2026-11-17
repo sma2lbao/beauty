@@ -19,19 +19,24 @@ from database.session import session_scope
 
 from agent_orchestrator import metrics
 from agent_orchestrator.models.runs import Job
-from agent_orchestrator.repositories import JobRepository
+from agent_orchestrator.repositories import JobRepository, RunRepository
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.post_commit import (
     PostCommitRuntime,
     bind_runtime,
     drain_after_commit,
 )
+from agent_orchestrator.services.run_recovery import RECOVERABLE_STATUSES
 
 if TYPE_CHECKING:
     from agent_orchestrator.core.container import AppContainer
 
 logger = structlog.get_logger(__name__)
 WORKER_ID = f"local-{os.getpid()}"
+# 这些 job 的前置状态会被崩溃时的增量提交写坏(planning/running),此时重放只会在
+# 状态守卫上 409;改道去从 checkpoint 续跑(§8)。answer/rewind 不在此列——API 侧
+# 合法地把状态先推到 running 再入队,拦截会丢掉 Command(resume) 语义。
+_SUPERSEDABLE_KINDS = frozenset({"plan", "approve", "confirm", "resume"})
 
 
 async def _dispatch(container: AppContainer, session, job: Job) -> None:
@@ -43,6 +48,39 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
         "downloader": container.artifact_downloader,
         "max_download_files": container.settings.artifact_download_max_files,
     }
+    if kind in _SUPERSEDABLE_KINDS and job.attempts > 1:
+        # 崩溃续跑(§8):这条 job 已被领取过(attempts>1)却死在执行中途,run 状态随
+        # 增量提交停在 planning/running。该动作的前置状态不可能再满足,重放只会 409,
+        # 于是改从最近的 checkpoint 续跑。首次领取(attempts==1)不能改道——API 侧
+        # approve/confirm 也是先把状态推到 running 再入队,那是正常的待执行现场。
+        run = await RunRepository(session).get_for_account(job.account_id, job.run_id)
+        if run is not None and run.status in RECOVERABLE_STATUSES:
+            if await JobRepository(session).has_live_for_run(
+                job.account_id,
+                job.run_id,
+                datetime.now(UTC),
+                exclude_job_id=job.id,
+            ):
+                # 另一条 job 正持有该 run 的租约,别和它抢同一条图线程
+                logger.info(
+                    "job superseded by live job",
+                    job_id=job.id,
+                    run_id=job.run_id,
+                )
+                return
+            await runs_service.recover_run(
+                session,
+                graph,
+                job.account_id,
+                job.run_id,
+                from_job=True,
+                store=container.artifact_store,
+                workspace=container.workspace_client,
+                settings=container.settings,
+                context=container.context_pipeline,
+                **common,
+            )
+            return
     if kind in {"plan", "resume", "retry"}:
         action = {
             "plan": runs_service.plan_run,
@@ -128,6 +166,21 @@ async def _dispatch(container: AppContainer, session, job: Job) -> None:
             emit_rewound=False,
             from_job=True,
             settings=container.settings,
+            **common,
+        )
+        return
+    if kind == "recover":
+        # 崩溃续跑(§8):sweeper 入队或旧动作改道,从最近的 checkpoint 接着跑
+        await runs_service.recover_run(
+            session,
+            graph,
+            job.account_id,
+            job.run_id,
+            from_job=True,
+            store=container.artifact_store,
+            workspace=container.workspace_client,
+            settings=container.settings,
+            context=container.context_pipeline,
             **common,
         )
         return

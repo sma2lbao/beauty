@@ -47,6 +47,9 @@ TRANSITIONS: dict[str, frozenset[RunStatus]] = {
             RunStatus.BLOCKED,
         }
     ),
+    # 崩溃续跑(内部动作,不作为 API 暴露,见 docs/design/recovery.md §8):执行中
+    # 的 run 由图 checkpoint 续跑;不可续时退化为新 attempt 的重新规划。
+    "recover": frozenset({RunStatus.PLANNING, RunStatus.RUNNING}),
     # 取消(P0-2):非终态都可取消。running/planning 是协作式——已发出的图调用
     # 不被打断,执行边界回来读库发现 cancelled 后跳过终态覆盖(见 _apply_graph_result)。
     "cancel": frozenset(

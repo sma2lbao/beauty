@@ -114,9 +114,9 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 
 ### 5.3 状态机与事件汇总
 
-新增动作：`timeout`（非终态 → failed，sweeper 专用）、`rewind`（`completed|failed|cancelled|blocked` → running）；`fork` 不改源 run，不查 `TRANSITIONS`。
-新增事件类型：`run.timeout.v1`、`run.rewind.v1`；`run.created.v1` 载荷扩展 `forked_from`。
-新增 job kind：`rewind`。
+新增动作：`timeout`（非终态 → failed，sweeper 专用）、`rewind`（`completed|failed|cancelled|blocked` → running）、`recover`（`planning|running` → 续跑收尾，内部动作，见 §8）；`fork` 不改源 run，不查 `TRANSITIONS`。
+新增事件类型：`run.timeout.v1`、`run.rewind.v1`、`run.recovered.v1`；`run.created.v1` 载荷扩展 `forked_from`。
+新增 job kind：`rewind`、`recover`。
 
 ## 6. 测试与验收
 
@@ -131,3 +131,41 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 - 不做"跨 attempts 的检查点回退"（checkpoint 只属于某个线程；需要跨线程搬运时用 fork）。
 - 检查点列表不分页游标（`limit` + `before` 后续再加），不回传完整图状态（避免大 payload 与内部字段泄漏）。
 - 超时扫描多副本下依赖条件更新去重，允许极端竞态下一轮重复记 warning（不会重复记 `run.timeout.v1`，因为更新未命中即跳过）。
+
+## 8. 崩溃续跑（recover，2026-11-17）
+
+### 8.1 断点在哪
+
+图执行过程中 run 状态会随增量投影提前提交：`services/run_events.py` 的 `_delta_stream` 进入与每批 flush、`_item_stream` 进入都 `commit`。所以进程崩溃时，run 可能已落库为 `planning/running`，而正在执行的 job 所在事务回滚——队列里那条 job 记录也随之消失。旧 job 若被租约超时后重领，按原动作（plan/approve/confirm/resume）重放必然被 `require_transition` 拒成 409，重试耗尽后 job 落 failed，run 永久挂在执行中（超时 sweeper 默认关闭，兜不住）。
+
+### 8.2 `recover_run`
+
+`services/run_recovery.recover_run(session, graph, account_id, run_id, *, from_job=True, jobs_enabled=False, ...)`：
+
+1. 状态必须是 `planning/running`（`RECOVERABLE_STATUSES`）。`from_job` 时若已不是这两个状态就直接返回（期间被取消/超时/另一条恢复收尾）；API 路径则 409 `run.invalid_state`。
+2. `graph.aget_state(thread_config(run))` 取最近 checkpoint；线程仍是 `run.id#attempts`，**attempts 不变**。
+3. 按现场分三路：
+   - **tasks 带 interrupt**：图停在人工闸口但状态没落库。不重跑已中断的节点，把 interrupt 塞回 values 交给 `_settle_recovered_run`（计划闸 → `awaiting_approval` + `run.planned.v1 {recovered: true}`；提问闸 → `awaiting_input`）。
+   - **`next` 为空**：图已跑完、只是结果没落库。直接用快照 values 投影终态，不再调模型。
+   - **`next` 非空**：`ainvoke(None, config)` 从 checkpoint 继续；投影上下文与 rewind 相同（delta/step/item/usage），异常走 `_fail_run(stage=recover)`。
+4. **没有 checkpoint**（崩在第一次落 checkpoint 之前）：退化为新 attempt 重新规划（`attempts += 1`、`pending`、记 `fallback: plan`），与旧 `resume` 语义一致。
+5. 每次都落 `run.recovered.v1`：`{attempt, from_status, checkpoint_id, next, resumed, fallback}`。`resumed=false` 表示没执行图（闸口补落 / 快照收尾 / 无 checkpoint 退化）。
+
+### 8.3 两条触发
+
+- **worker 改道**：`jobs_worker._dispatch` 对 `plan/approve/confirm/resume` 且 `job.attempts > 1`（已被领取过一次、说明执行中崩过）的 job，先看 run 状态；若已停在 `planning/running`，该动作的前置状态确实被崩溃写坏，重放只会在 409，于是改调 `recover_run(from_job=True)`。**首次领取不能改道**：API 侧 approve/confirm 也是先把状态推到 `running` 再入队，那是正常的待执行现场。若还有别的 live job（queued，或 running 且租约未过期）持有该 run，则本 job 直接返回（日志 `job superseded by live job`），避免两条 job 抢同一条图线程。
+  - `answer`/`rewind` 不拦截：API 侧合法地把状态先推到 running 再入队，拦截会丢掉 `Command(resume)` 语义。
+- **sweeper**：`services/run_recovery_sweeper.py` 每 `run_recovery_sweep_interval_seconds`（默认 30s，<=0 关闭）扫「`planning/running` 且 `updated_at` 早于 `run_recovery_grace_seconds`（默认 60s）且 `has_live_for_run` 为假」的 run，入队 kind `recover`。它覆盖「job 丢了没人重领」「job 重试耗尽已 failed」的情形。与超时 sweeper 的分工：这里只把执行接回正轨，不判失败。
+
+### 8.4 配置与状态机
+
+- 新增配置（`core/config.py`，`AGENT_ORCHESTRATOR__` 前缀）：`run_recovery_grace_seconds=60`、`run_recovery_sweep_interval_seconds=30.0`（interval<=0 关闭 sweeper，默认随 `jobs_enabled` 启动）。
+- `TRANSITIONS` 新增内部动作 `recover`（`planning|running` 起步，不暴露 API）；`KINDS` 新增 `recover`；新增事件 `run.recovered.v1`。
+- 复用既有租约语义：`JobRepository.has_live_for_run(account_id, run_id, now, exclude_job_id=...)` 把「queued」与「running 且 `lease_until >= now`」视为 live；租约过期的 running 不算 live（与 `claim_next` 的回收口径一致）。
+
+### 8.5 残余
+
+- **没有 fencing**：恢复的进程若与其实还活着的原进程并发，会在同一线程上各跑一遍（grace + live job 检查只把窗口压小，不是互斥）。多副本下「查 live job」与租约过期之间存在竞态。
+- `awaiting_*` 不恢复：那是合法休眠，不是崩溃现场，由 interrupt sweeper 按超时处理。
+- retry 派生新 run 不受保护：崩溃发生在 retry 建 run 与新 job 之间时，子 run 停在 pending（无 checkpoint），sweeper 只扫 planning/running，这类需人工重跑。
+- 对话直答/确认端点等非图路径不涉及续跑。
