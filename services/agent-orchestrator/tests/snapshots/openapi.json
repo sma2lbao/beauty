@@ -963,6 +963,11 @@
       "ForkRequest": {
         "description": "分叉(P1-C §7):新起一条 run 线程,可选择性种入父 checkpoint 的状态。",
         "properties": {
+          "acknowledge_side_effects": {
+            "default": false,
+            "title": "Acknowledge Side Effects",
+            "type": "boolean"
+          },
           "checkpoint_id": {
             "anyOf": [
               {
@@ -3208,6 +3213,11 @@
       "RewindRequest": {
         "description": "回退重跑(P1-C §6):从指定 checkpoint 起复用同一线程继续执行。",
         "properties": {
+          "acknowledge_side_effects": {
+            "default": false,
+            "title": "Acknowledge Side Effects",
+            "type": "boolean"
+          },
           "checkpoint_id": {
             "maxLength": 128,
             "minLength": 1,
@@ -3948,6 +3958,49 @@
           }
         },
         "title": "RunUsageTotals",
+        "type": "object"
+      },
+      "SideEffectRead": {
+        "description": "一次已发起的外部写(rewind/fork 前的台账,S5)。",
+        "properties": {
+          "arguments": {
+            "title": "Arguments",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          }
+        },
+        "required": ["seq", "name", "risk", "decision", "ok", "arguments"],
+        "title": "SideEffectRead",
         "type": "object"
       },
       "SkillDeliverable": {
@@ -11007,6 +11060,83 @@
           }
         },
         "summary": "Create Run Score",
+        "tags": ["runs"]
+      }
+    },
+    "/api/v1/runs/{run_id}/side-effects": {
+      "get": {
+        "description": "该 run 已发起的外部写(S5 台账):rewind/fork 前拿来给用户看全量明细。",
+        "operationId": "list_run_side_effects_api_v1_runs__run_id__side_effects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SideEffectRead"
+                  },
+                  "title": "Response List Run Side Effects Api V1 Runs  Run Id  Side Effects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Run Side Effects",
         "tags": ["runs"]
       }
     },

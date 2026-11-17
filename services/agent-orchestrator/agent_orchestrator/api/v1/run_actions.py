@@ -36,9 +36,11 @@ from agent_orchestrator.schemas.runs import (
     RunAnswerRequest,
     RunRead,
     RunStatus,
+    SideEffectRead,
 )
 from agent_orchestrator.services import runs as runs_service
 from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.run_side_effects import list_side_effects
 from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -287,6 +289,7 @@ async def rewind_run(
         run_id,
         body.checkpoint_id,
         reason=body.reason,
+        acknowledge_side_effects=body.acknowledge_side_effects,
         jobs_enabled=settings.jobs_enabled,
         store=store,
         workspace=workspace,
@@ -313,8 +316,20 @@ async def fork_run(
         run_id,
         checkpoint_id=body.checkpoint_id,
         title=body.title,
+        acknowledge_side_effects=body.acknowledge_side_effects,
     )
     return RunRead.model_validate(run)
+
+
+@router.get("/{run_id}/side-effects", response_model=list[SideEffectRead])
+async def list_run_side_effects(
+    run_id: str,
+    session: DBSession,
+    account_id: AccountId,
+) -> list[SideEffectRead]:
+    """该 run 已发起的外部写(S5 台账):rewind/fork 前拿来给用户看全量明细。"""
+    effects = await list_side_effects(session, account_id, run_id)
+    return [SideEffectRead.model_validate(effect) for effect in effects]
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)

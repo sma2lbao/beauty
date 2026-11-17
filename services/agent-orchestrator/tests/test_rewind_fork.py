@@ -82,6 +82,8 @@ def test_rewind_completed_run_to_plan_checkpoint(tmp_path) -> None:
             "checkpoint_id": checkpoint["checkpoint_id"],
             "from_status": "completed",
             "reason": "重跑",
+            # 台账汇总:这个 run 没有写工具,所以回退不需要确认
+            "side_effects": {"count": 0, "tools": []},
         }
 
         # 再放行 → 只补跑后续节点,计划节点不再调用模型

@@ -112,6 +112,8 @@ class RewindRequest(BaseModel):
 
     checkpoint_id: str = Field(min_length=1, max_length=128)
     reason: str | None = Field(default=None, max_length=2000)
+    #: S5:该 run 已发生写操作时必须显式确认(外部副作用不会被回滚)
+    acknowledge_side_effects: bool = Field(default=False)
 
 
 class ForkRequest(BaseModel):
@@ -119,6 +121,22 @@ class ForkRequest(BaseModel):
 
     checkpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     title: str | None = Field(default=None, min_length=1, max_length=200)
+    #: S5:带 checkpoint 种入(=会重放父 run 节点)时,父 run 有写操作必须确认
+    acknowledge_side_effects: bool = Field(default=False)
+
+
+class SideEffectRead(BaseModel):
+    """一次已发起的外部写(rewind/fork 前的台账,S5)。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    seq: int
+    tool_call_id: str | None = None
+    name: str
+    risk: str
+    decision: str
+    ok: bool
+    arguments: str
 
 
 class RunEventRead(BaseModel):

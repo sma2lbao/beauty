@@ -65,6 +65,11 @@ from agent_orchestrator.services.run_lifecycle import (
     require_transition,
 )
 from agent_orchestrator.services.run_quota import _usage_boundary
+from agent_orchestrator.services.run_side_effects import (
+    SideEffect,
+    require_acknowledged,
+    side_effect_summary,
+)
 from agent_orchestrator.services.run_trace import run_trace
 from agent_orchestrator.services.workspace import Workspace
 
@@ -330,6 +335,7 @@ async def rewind_run(
     checkpoint_id: str,
     reason: str | None = None,
     *,
+    acknowledge_side_effects: bool = False,
     jobs_enabled: bool = False,
     emit_rewound: bool = True,
     from_job: bool = False,
@@ -357,6 +363,17 @@ async def rewind_run(
             await _fail_run(session, run, conflict, stage="rewind")
             return run
         raise conflict
+    # S5:回退会重放 checkpoint 之后的节点,已发生的外部写无法回滚(参数变了
+    # 就是新的写)。发起方未显式确认时直接拒绝,并把台账摘要放进 409 details。
+    effects: list[SideEffect] = []
+    if not from_job:
+        effects = await require_acknowledged(
+            session,
+            account_id,
+            run.id,
+            acknowledge=acknowledge_side_effects,
+            action="rewind",
+        )
     from_status = run.status
     if not from_job:
         # 排队中的旧 job(例如上一轮的 plan/confirm)已无意义,直接作废
@@ -376,6 +393,7 @@ async def rewind_run(
                 "checkpoint_id": checkpoint_id,
                 "from_status": from_status,
                 "reason": reason,
+                "side_effects": side_effect_summary(effects),
             },
         )
     if jobs_enabled:
@@ -533,9 +551,23 @@ async def fork_run(
     *,
     checkpoint_id: str | None = None,
     title: str | None = None,
+    acknowledge_side_effects: bool = False,
 ) -> Run:
-    """以父 run 为模板新建 run(§7);源 run 状态不限,也不被改动。"""
+    """以父 run 为模板新建 run(§7);源 run 状态不限,也不被改动。
+
+    带 checkpoint 种入时子 run 会重放父 run 在该快照之后的节点:父 run 已发生的
+    外部写不会被子线程的幂等键命中(键含 run_id),所以同样要求显式确认(S5)。
+    """
     parent = await require_run(session, account_id, run_id)
+    effects: list[SideEffect] = []
+    if checkpoint_id:
+        effects = await require_acknowledged(
+            session,
+            account_id,
+            parent.id,
+            acknowledge=acknowledge_side_effects,
+            action="fork",
+        )
     child = _fork_child(parent, _fork_title(parent, title))
     await RunRepository(session).add(child)
     payload: dict[str, object] = {
@@ -547,6 +579,7 @@ async def fork_run(
     }
     if checkpoint_id:
         payload["checkpoint_id"] = checkpoint_id
+        payload["side_effects"] = side_effect_summary(effects)
     await append_event(session, child, "run.created.v1", payload)
     if checkpoint_id:
         await _seed_fork_state(graph, parent, child, checkpoint_id)

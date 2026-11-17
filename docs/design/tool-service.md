@@ -1806,7 +1806,7 @@ run.tool.called.v1 的 type 与语义不变（仍由 orchestrator 在 \_apply_gr
 | R14 | 计数文案散落（18 处版本、10 个项目、5 个库、7 服务）         | 低     | 门禁脚本报错或文档数字过期                                 | 一次性按 13.2 第 15–16 步的清单 grep 全仓（含 CI 注释、dev.sh、AGENTS、README、architecture、local-dev、roadmap）                                         | 全部计数脚本通过                                        |
 | R15 | 数据保留与清理策略缺失                                       | 低     | tool_calls 无限增长                                        | tool_call_retention_days=30 的清理 job（P1 末）+ 索引支持按时间删                                                                                         | 清理 job 集成测试                                       |
 
-> **2026-11-17 增补（R6）**：图执行路径的写工具幂等已从「按 `tool_call_id`」升级为「按调用方稳定键」——崩溃恢复/图重放后模型会重新生成 `tool_call_id`，只有 `idempotency_key`（`run + 节点 + 工具 + 规范化参数`）跨 attempt 不变，已落审计的写副作用因此不会被重复执行。链路见 §5.3 步骤 5、§6.1 DTO、§11.1 表结构。**残余**：对话直答 / 确认端点 / MCP 直调三条非图路径尚未传稳定键（仍靠 `tool_call_id`）；rewind 仍无外部副作用台账与二次确认（`services/run_recovery.py` 自述）；去重发生在审计行提交之后，崩溃恰在落库前时重试仍会再执行一次（无执行期预留）。
+> **2026-11-17 增补（R6）**：图执行路径的写工具幂等已从「按 `tool_call_id`」升级为「按调用方稳定键」——崩溃恢复/图重放后模型会重新生成 `tool_call_id`，只有 `idempotency_key`（`run + 节点 + 工具 + 规范化参数`）跨 attempt 不变，已落审计的写副作用因此不会被重复执行。链路见 §5.3 步骤 5、§6.1 DTO、§11.1 表结构。**残余**：对话直答 / 确认端点 / MCP 直调三条非图路径尚未传稳定键（仍靠 `tool_call_id`）；rewind 的外部副作用由 orchestrator 侧台账 + 显式确认兜（2026-11-17，`run.side_effects_present` 409，见 [recovery.md](./recovery.md) §10），tool-service 不参与；去重发生在审计行提交之后，崩溃恰在落库前时重试仍会再执行一次（无执行期预留）。
 
 ### 16.2 开放问题
 

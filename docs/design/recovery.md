@@ -92,23 +92,24 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 
 ### 5.1 rewind（同 run 原地回退）
 
-`POST /v1/runs/{id}/rewind`，载荷 `{checkpoint_id, reason?}`：
+`POST /v1/runs/{id}/rewind`，载荷 `{checkpoint_id, reason?, acknowledge_side_effects?}`：
 
 1. `TRANSITIONS["rewind"] = {completed, failed, cancelled, blocked}`（运行中/待审批的 run 必须先 `cancel`，避免与在飞的图调用并发写状态）。
 2. 取消该 run 未领取的 job；`status=running`，清 `status_reason`；**attempts 不变**（线程不变，才能从该检查点续跑）。
-3. 记 `run.rewind.v1`：`{checkpoint_id, from_status, reason}`。
-4. `jobs_enabled` → 入队 kind `rewind`（`KINDS` 加一项），payload `{checkpoint_id}`；否则同步执行后 `_apply_graph_result`。
-5. worker 执行：`graph.ainvoke(None, config=_config(run) + {"configurable": {"checkpoint_id": ...}})`，失败走 `_fail_run(stage="rewind")`。
-6. 归属校验：checkpoint 必须属于当前线程 `run.id#attempts`，否则 409 `run.checkpoint_not_found`。
+3. 已发生写工具调用且未传 `acknowledge_side_effects=true` → 409 `run.side_effects_present`（台账见 §10）。
+4. 记 `run.rewind.v1`：`{checkpoint_id, from_status, reason, side_effects}`。
+5. `jobs_enabled` → 入队 kind `rewind`（`KINDS` 加一项），payload `{checkpoint_id}`；否则同步执行后 `_apply_graph_result`。
+6. worker 执行：`graph.ainvoke(None, config=_config(run) + {"configurable": {"checkpoint_id": ...}})`，失败走 `_fail_run(stage="rewind")`。
+7. 归属校验：checkpoint 必须属于当前线程 `run.id#attempts`，否则 409 `run.checkpoint_not_found`。
 
 **语义已验证**（LangGraph 本地 spike）：同一 `thread_id` 上带 `checkpoint_id` 调 `ainvoke(None, config)` 只重跑该检查点之后的节点，不从头重来。
 
 ### 5.2 fork（从任意检查点派生新 run）
 
-`POST /v1/runs/{id}/fork`，载荷 `{checkpoint_id?, title?}` → `201 RunRead`：
+`POST /v1/runs/{id}/fork`，载荷 `{checkpoint_id?, title?, acknowledge_side_effects?}` → `201 RunRead`（给了 `checkpoint_id` 且父 run 有写工具调用时同样受 §10 的 409 闸约束）：
 
 - 新 run：`parent_run_id=id`、`parent_kind="fork"`（`models/runs.py` 加常量）、`status=pending`，继承 `goal/acceptance_criteria/skill 快照/mcp_server_ids/model/conversation_id/workspace_id` 与 `plan_markdown`（与 retry 同构），`priority/timeout_seconds` 沿用父 run。
-- 不复制事件、交付物、用量（新 run 新时间线，与 retry 一致）；`run.created.v1` 载荷加 `{forked_from, checkpoint_id?}`。
+- 不复制事件、交付物、用量（新 run 新时间线，与 retry 一致）；`run.created.v1` 载荷加 `{forked_from, checkpoint_id?, side_effects?}`。
 - 给了 `checkpoint_id` 时做状态种入：`aget_state(父 config + checkpoint_id)` 取 `values`，`aupdate_state(子 config, values, as_node=<前置节点>)`。前置节点 = 目标状态的历史上一条的 `next[0]`（`next` 不唯一时**降级为输入继承**并记 warning）。**已验证**：`as_node` 决定从哪个节点的后继继续，`as_node="a"` 时只跑 `b→c`。
 - 覆盖 `title` 可选（默认 `"{父标题}（分叉）"`）；源 run 状态不限（只读父状态，不改源 run）。
 
@@ -124,10 +125,14 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 - C2：检查点列表（有/无历史、limit 边界、账号隔离 404、runnable 标记）；不影响既有 1049+ 用例。
 - C3：rewind 后只跑后续节点（注入可观测 stub）、状态机非法迁移 409、线程归属校验；fork 继承字段、事件载荷、状态种入（`as_node` 路径）与降级路径。
 - 前端：C1 建 run 表单 + 详情超时/优先级；C2/C3 检查点页签与两个动作按钮；`/runs` 列表超时徽标。
+- S1（11-17）：两次 attempt 同工具同参只执行一次（`tests/test_tool_idempotency.py`）。
+- S3/S4（11-17）：取消在节点边界抛 `RunCancelled`、步骤在 `ainvoke` 边界前即可见（`tests/test_cancel_interrupt.py`、`tests/test_live_steps.py`）。
+- S5（11-17）：台账只列写工具（失败写也计）、未确认 rewind/fork 409 且不重跑、确认后事件载荷带 `side_effects` 汇总（`tests/test_rewind_side_effects.py`）。
 
 ## 7. 非目标与残余
 
 - 不做"在飞图调用的强制中断"：取消在**安全边界**生效（节点入口、模型调用前、工具调用前，见 §9），不劈半一次工具调用；已发生的写由稳定幂等键兜底（[tool-service.md](tool-service.md) §5.3）。
+- 不做回退的**副作用补偿**：只做台账 + 显式确认（§10），真正的撤销执行器后续再说。
 - 不做"跨 attempts 的检查点回退"（checkpoint 只属于某个线程；需要跨线程搬运时用 fork）。
 - 检查点列表不分页游标（`limit` + `before` 后续再加），不回传完整图状态（避免大 payload 与内部字段泄漏）。
 - 超时扫描多副本下依赖条件更新去重，允许极端竞态下一轮重复记 warning（不会重复记 `run.timeout.v1`，因为更新未命中即跳过）。
@@ -201,3 +206,41 @@ AND coalesce(started_at, created_at) + 生效超时 <= now
 - 每个边界一次 `SELECT`；要压成本只能加短 TTL 缓存，代价是取消延迟。
 - `graph.aupdate_state` 的配置不带会话（不跑节点），将来若在 aupdate_state 里跑节点需要补。
 - 取消与 recover 并发：`recover_run` 只接 `planning/running`，已取消的 run 不会被接回；但两者与 rewind 的交互仍靠状态机而非互斥。
+
+## 10. 回退前的外部副作用台账（S5，2026-11-17）
+
+### 10.1 为什么回退不是无损的
+
+rewind/fork 回退的是**图状态**，不是世界状态：检查点之后已经调用过的写工具（写文件、改 Notion 页面、发消息）不会再被撤销。重跑时：
+
+- 图执行路径的重复写由稳定幂等键挡住——键是 `sha256(run_id|node|tool_name|规范化参数)`，同参重放返回原结果；
+- 但**参数变了就是新的外部写**（用户回退往往就是为了改方案，参数必然会变）；
+- fork 换 `run_id`，幂等键整体换新，子 run 的写一定重新执行。
+
+所以回退前必须让调用方知道「这个 run 已经写过东西」，并且要求它显式确认。
+
+### 10.2 台账：只读投影，不新增表
+
+`services/run_side_effects.py`：
+
+- `list_side_effects(session, account_id, run_id)` 读 `run.tool.called.v1` 事件，保留 `risk in {write, danger}` 的调用（`WRITE_RISKS`）。**失败/超时/interrupt 的写也算**：工具可能在返回前就已经改了外部状态，没拿到 ok 不等于没发生。
+- 每条投影成 `SideEffect(seq, tool_call_id, name, risk, decision, ok, arguments)`，`arguments` 截到 200 字符（`MAX_ARGUMENTS_CHARS`），对外明细最多 20 条（`MAX_DETAILS`）。
+- 只读：事件表是唯一事实源，不引额外写路径，也不需要迁移。
+
+### 10.3 闸：409 与显式确认
+
+`require_acknowledged(session, account_id, run_id, *, acknowledge, action)`：有写且 `acknowledge=False` → `ConflictError("run.side_effects_present", details={run_id, action, count, tools, side_effects})`。
+
+- 挂点：`rewind_run`（checkpoint 校验通过后、状态迁移前，只挡 API 路径 `from_job=False`；worker 重入时已确认过）与 `fork_run`（仅当给了 `checkpoint_id`——不带检查点的 fork 不重跑父 run 节点，是无损的）。
+- 请求体加 `acknowledge_side_effects: bool = False`（`RewindRequest`/`ForkRequest`）。
+- 确认后把汇总写进事件载荷供审计：`run.rewind.v1` payload 增加 `side_effects: {count, tools}`；带检查点的 `run.created.v1` 同样。
+- 新读端点 `GET /v1/runs/{id}/side-effects` → `list[SideEffectRead]`，前端可以在回退弹窗里先列出来。
+
+### 10.4 测试与残余
+
+`tests/test_rewind_side_effects.py`：台账只列写（读不计、失败写也计）；未确认 rewind → 409 且**状态不变、图没重跑**（`len(fake.calls)` 不涨）；确认后 200 且事件载荷带汇总；无写时不用确认；带检查点的 fork 同样要确认、不带检查点的 fork 直接 201。
+
+- 残余：确认是**知会**不是**补偿**，真正的撤销/补偿执行器（记前镜像、跑回滚动作）不在本期。
+- 台账只覆盖图执行路径；对话直答、确认端点、MCP 直调三条非图路径的写不进台账（它们本来也没传稳定幂等键）。
+- rewind 之后用户改计划导致的新写无法预防——闸只能保证「用户知道自己在重放写过东西的 run」。
+- 前端：`/runs` 详情抽屉尚未接确认弹窗（后端契约已就绪）。
