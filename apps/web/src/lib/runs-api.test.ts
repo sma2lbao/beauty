@@ -362,6 +362,49 @@ describe('runsApi', () => {
     });
   });
 
+  it('回退带 acknowledge_side_effects(S5)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'r1', status: 'pending' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runsApi.rewind('r1', {
+      checkpoint_id: 'ck1',
+      acknowledge_side_effects: true,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/runs/r1/rewind');
+    expect(JSON.parse(init.body as string)).toEqual({
+      checkpoint_id: 'ck1',
+      acknowledge_side_effects: true,
+    });
+  });
+
+  it('副作用台账走 /side-effects', async () => {
+    const effect = {
+      seq: 1,
+      tool_call_id: 'call-1',
+      name: 'files.write',
+      risk: 'write',
+      decision: 'auto',
+      ok: true,
+      arguments: '{"path":"/work/a.md"}',
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [effect],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const list = await runsApi.sideEffects('r1');
+
+    expect(list).toEqual([effect]);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe('/api/v1/runs/r1/side-effects');
+  });
+
   it('分叉走 /fork 并返回新 run', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

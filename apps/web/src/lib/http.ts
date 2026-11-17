@@ -15,12 +15,23 @@ import { traceparentHeader } from '@/lib/telemetry';
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * 错误体里的 details(可选):409 这类需要展示明细的契约会带
+   * (如回退前的副作用台账 run.side_effects_present)。
+   */
+  readonly details?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -82,17 +93,20 @@ async function sendWithRetry(
 async function throwResponseError(response: Response): Promise<never> {
   let code = 'request_failed';
   let message = `请求失败(${response.status})`;
+  let details: Record<string, unknown> | undefined;
   try {
     const body = (await response.json()) as {
       code?: string;
       message?: string;
+      details?: Record<string, unknown>;
     };
     code = body.code ?? code;
     message = body.message ?? message;
+    details = body.details;
   } catch {
     // 非 JSON 错误体:保留兜底文案
   }
-  throw new ApiError(response.status, code, message);
+  throw new ApiError(response.status, code, message, details);
 }
 
 /**

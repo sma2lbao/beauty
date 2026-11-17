@@ -308,6 +308,8 @@ export async function runsModuleMock() {
       approve: vi.fn(),
       reject: vi.fn(),
       confirm: vi.fn(),
+      // 停止执行(S3):footer「停止执行」直接取消当前 run
+      cancel: vi.fn(),
       answerRunQuestion: vi.fn(),
       // 审批前编辑计划(interaction-closure §3)
       updatePlan: vi.fn(async () => ({

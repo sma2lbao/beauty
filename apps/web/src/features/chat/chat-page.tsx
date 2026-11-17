@@ -177,6 +177,7 @@ export function ChatPage() {
               busy={actions.busy}
               onApprove={actions.approve}
               onConfirm={actions.confirmDanger}
+              onCancel={actions.cancelRun}
               onToggleArtifact={toggleArtifact}
             />
           }

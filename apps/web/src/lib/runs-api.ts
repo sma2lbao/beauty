@@ -26,6 +26,7 @@ import type {
   RunAnswerPayload,
   RunAnswerAccepted,
   RunCheckpoint,
+  RunSideEffect,
   RewindInput,
   ForkInput,
   Artifact,
@@ -131,8 +132,9 @@ export const runsApi = {
       body: JSON.stringify(body),
     }),
   /**
-   * 协作式取消:落 cancelled 终态并撤掉排队中的 job;执行中的图不会被强杀,
-   * 结果在下一个执行边界被丢弃。终态(completed/failed/cancelled)调用回 409。
+   * 协作式取消:落 cancelled 终态并撤掉排队中的 job。执行中的那次节点会跑完
+   * (已发出的工具调用不打断),下一个节点边界抛 RunCancelled 停下(S3);
+   * 终态(completed/failed/cancelled)调用回 409。
    */
   cancel: (runId: string, reason?: string) =>
     http.request<Run>(`/api/v1/runs/${runId}/cancel`, {
@@ -169,6 +171,12 @@ export const runsApi = {
     http.request<RunCheckpoint[]>(
       `/api/v1/runs/${runId}/checkpoints?limit=${limit}`,
     ),
+  /**
+   * 回退前的外部副作用台账(S5):只读投影 run.tool.called.v1 里的写工具调用。
+   * 空数组合法(还没写过外部状态);rewind/fork 带写未确认会 409 同一份明细。
+   */
+  sideEffects: (runId: string) =>
+    http.request<RunSideEffect[]>(`/api/v1/runs/${runId}/side-effects`),
   /** 回退到检查点(P1-C):仅终态可回退,运行中需先 cancel;409 见 checkpoint 错误文案。 */
   rewind: (runId: string, body: RewindInput) =>
     http.request<Run>(`/api/v1/runs/${runId}/rewind`, {

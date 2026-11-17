@@ -24,6 +24,7 @@ import type {
   RunTodoItem,
   RunUsage,
   RunScore,
+  RunSideEffect,
   Subagent,
 } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
@@ -51,6 +52,7 @@ vi.mock('@/lib/runs-api', () => ({
     resume: vi.fn(),
     cancel: vi.fn(),
     checkpoints: vi.fn(),
+    sideEffects: vi.fn(),
     rewind: vi.fn(),
     fork: vi.fn(),
     artifacts: vi.fn(),
@@ -129,10 +131,21 @@ const zeroUsage: RunUsage = {
 
 const forkedRun: Run = { ...baseRun, id: 'run-2', status: 'pending' };
 
+const writeEffect: RunSideEffect = {
+  seq: 3,
+  tool_call_id: 'call-1',
+  name: 'files.write',
+  risk: 'write',
+  decision: 'auto',
+  ok: true,
+  arguments: '{"path":"/work/login.md","content":"## 结论"}',
+};
+
 interface DetailOptions {
   run?: Partial<Run>;
   onSelectRun?: (runId: string) => void;
   checkpoints?: RunCheckpoint[];
+  sideEffects?: RunSideEffect[];
 }
 
 function renderDetail(options: DetailOptions = {}) {
@@ -153,6 +166,7 @@ function renderDetail(options: DetailOptions = {}) {
   vi.mocked(runsApi.checkpoints).mockResolvedValue(
     options.checkpoints ?? checkpoints,
   );
+  vi.mocked(runsApi.sideEffects).mockResolvedValue(options.sideEffects ?? []);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -262,6 +276,53 @@ describe('RunDetail 检查点页签', () => {
         /检查点不存在或不属于当前 run\(可能已被清理\),请刷新列表后重试。/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it('有外部写时台账可见,勾选知悉前确认按钮禁用', async () => {
+    renderDetail({ sideEffects: [writeEffect] });
+    await openCheckpointsTab();
+    const row = await screen.findByTestId('run-checkpoint-ck-1');
+
+    fireEvent.click(within(row).getByRole('button', { name: /回退到此/ }));
+    const notice = await screen.findByTestId('run-side-effects-notice');
+    expect(notice).toHaveTextContent('已经发起 1 次外部写');
+    expect(notice).toHaveTextContent('files.write');
+    expect(notice).toHaveTextContent('已执行');
+
+    const confirm = screen.getByRole('button', { name: '确认回退' });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAttribute('title', '请先勾选「我已知悉」');
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(confirm).toBeEnabled();
+
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(runsApi.rewind).toHaveBeenCalledWith('run-1', {
+        checkpoint_id: 'ck-1',
+        acknowledge_side_effects: true,
+      }),
+    );
+  });
+
+  it('分叉弹窗同样拦未确认的外部写', async () => {
+    renderDetail({ sideEffects: [writeEffect] });
+    await openCheckpointsTab();
+    const row = await screen.findByTestId('run-checkpoint-ck-1');
+
+    fireEvent.click(within(row).getByRole('button', { name: '分叉' }));
+    expect(await screen.findByTestId('run-side-effects-notice')).toBeInTheDocument();
+    const confirm = screen.getByRole('button', { name: '确认分叉' });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(runsApi.fork).toHaveBeenCalledWith('run-1', {
+        checkpoint_id: 'ck-1',
+        acknowledge_side_effects: true,
+      }),
+    );
   });
 
   it('概览展示超时配置与超时失败徽标/原因', async () => {

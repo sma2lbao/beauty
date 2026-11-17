@@ -234,7 +234,8 @@ rewind/fork 回退的是**图状态**，不是世界状态：检查点之后已�
 - 挂点：`rewind_run`（checkpoint 校验通过后、状态迁移前，只挡 API 路径 `from_job=False`；worker 重入时已确认过）与 `fork_run`（仅当给了 `checkpoint_id`——不带检查点的 fork 不重跑父 run 节点，是无损的）。
 - 请求体加 `acknowledge_side_effects: bool = False`（`RewindRequest`/`ForkRequest`）。
 - 确认后把汇总写进事件载荷供审计：`run.rewind.v1` payload 增加 `side_effects: {count, tools}`；带检查点的 `run.created.v1` 同样。
-- 新读端点 `GET /v1/runs/{id}/side-effects` → `list[SideEffectRead]`，前端可以在回退弹窗里先列出来。
+- 新读端点 `GET /v1/runs/{id}/side-effects` → `list[SideEffectRead]`，前端在回退/分叉弹窗里先列出来。
+- 前端（11-17 已接，`apps/web`）：弹窗打开时取台账（`queryKeys.runSideEffects`，只在弹窗打开时 `enabled`），有写就列出「工具 + 已执行/未成功 + 参数摘要」并要求勾选「我已知悉,仍要继续」，未勾选时确认按钮 `disabled`；提交时只在勾选后带 `acknowledge_side_effects: true`。台账没取到、或提交期又冒出新写，则用 409 的 `details.side_effects` 回填明细（`sideEffectsFromError`）并翻成中文提示。
 
 ### 10.4 测试与残余
 
@@ -243,4 +244,4 @@ rewind/fork 回退的是**图状态**，不是世界状态：检查点之后已�
 - 残余：确认是**知会**不是**补偿**，真正的撤销/补偿执行器（记前镜像、跑回滚动作）不在本期。
 - 台账只覆盖图执行路径；对话直答、确认端点、MCP 直调三条非图路径的写不进台账（它们本来也没传稳定幂等键）。
 - rewind 之后用户改计划导致的新写无法预防——闸只能保证「用户知道自己在重放写过东西的 run」。
-- 前端：`/runs` 详情抽屉尚未接确认弹窗（后端契约已就绪）。
+- 前端只做「知会 + 拦截」：勾选不落库（审计以事件载荷里的 `side_effects` 为准），也没有补偿入口。

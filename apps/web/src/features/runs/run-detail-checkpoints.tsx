@@ -4,7 +4,7 @@
  * 回退只对 runnable 且 run 处于终态的检查点开放(后端状态机要求);
  * 两件写操作都走二次确认弹窗,原因/标题可选,错误就地中文提示。
  */
-import { Field, Input } from '@beauty/design';
+import { Checkbox, Field, Input } from '@beauty/design';
 import { GitBranch, RefreshCw, RotateCcw } from 'lucide-react';
 
 import { ConsoleDialog } from '@/components/console/dialog';
@@ -16,7 +16,8 @@ import {
   ToneBadge,
 } from '@/components/console/ui';
 import { relativeTime } from '@/lib/presentation';
-import type { Run, RunCheckpoint } from '@/lib/runs-api';
+import { summarizeArguments } from '@/lib/presentation/tools';
+import type { Run, RunCheckpoint, RunSideEffect } from '@/lib/runs-api';
 
 import {
   REWINDABLE_RUN_STATUSES,
@@ -107,7 +108,10 @@ export function RunDetailCheckpointsPanel({
             <ConsoleButton
               variant="primary"
               size="md"
-              disabled={model.rewindPending}
+              disabled={model.rewindPending || model.rewindBlocked}
+              title={
+                model.rewindBlocked ? '请先勾选「我已知悉」' : undefined
+              }
               onClick={model.confirmRewind}
             >
               {model.rewindPending ? '回退中…' : '确认回退'}
@@ -119,6 +123,13 @@ export function RunDetailCheckpointsPanel({
           <p className="font-mono text-[11px] text-ha-dim">
             目标检查点:{model.rewindTarget?.checkpoint_id}
           </p>
+          <SideEffectNotice
+            effects={model.sideEffects}
+            loading={model.sideEffectsLoading}
+            error={model.sideEffectsError}
+            acknowledged={model.acknowledgeSideEffects}
+            onAcknowledgeChange={model.setAcknowledgeSideEffects}
+          />
           <Field label="回退原因(可选)" htmlFor="run-rewind-reason">
             <Input
               id="run-rewind-reason"
@@ -148,7 +159,8 @@ export function RunDetailCheckpointsPanel({
             <ConsoleButton
               variant="primary"
               size="md"
-              disabled={model.forkPending}
+              disabled={model.forkPending || model.forkBlocked}
+              title={model.forkBlocked ? '请先勾选「我已知悉」' : undefined}
               onClick={model.confirmFork}
             >
               {model.forkPending ? '分叉中…' : '确认分叉'}
@@ -160,6 +172,13 @@ export function RunDetailCheckpointsPanel({
           <p className="font-mono text-[11px] text-ha-dim">
             源检查点:{model.forkTarget?.checkpoint_id}
           </p>
+          <SideEffectNotice
+            effects={model.sideEffects}
+            loading={model.sideEffectsLoading}
+            error={model.sideEffectsError}
+            acknowledged={model.acknowledgeSideEffects}
+            onAcknowledgeChange={model.setAcknowledgeSideEffects}
+          />
           <Field label="新 run 标题(可选)" htmlFor="run-fork-title">
             <Input
               id="run-fork-title"
@@ -243,5 +262,81 @@ function CheckpointRow({
         </ConsoleButton>
       </div>
     </li>
+  );
+}
+
+/**
+ * 回退/分叉前的副作用台账(S5)。
+ *
+ * 后端只在 run 有外部写时要求确认,这里先列清楚「写过什么」再让人勾选:
+ * 回退不会撤销写,同参调用按稳定幂等键重放、异参就是新的写。
+ * 台账读不到时不假装没写——提示读取失败,提交期仍由后端 409 拦截。
+ */
+function SideEffectNotice({
+  effects,
+  loading,
+  error,
+  acknowledged,
+  onAcknowledgeChange,
+}: {
+  effects: RunSideEffect[];
+  loading: boolean;
+  error: unknown;
+  acknowledged: boolean;
+  onAcknowledgeChange: (next: boolean) => void;
+}) {
+  if (loading) {
+    return <p className="text-[12px] text-ha-muted">正在检查外部副作用…</p>;
+  }
+  if (error) {
+    return (
+      <p role="alert" className="text-[12px] leading-5 text-ha-warning">
+        外部副作用台账读取失败:
+        {checkpointErrorMessage(error, '提交时仍会拦截未确认的写操作。')}
+      </p>
+    );
+  }
+  if (effects.length === 0) {
+    return null;
+  }
+  return (
+    <div
+      data-testid="run-side-effects-notice"
+      className="rounded-md border border-ha-warning-border bg-ha-warning-bg px-2.5 py-2"
+    >
+      <p className="text-[12px] font-semibold text-ha-warning">
+        这个 run 已经发起 {effects.length} 次外部写
+      </p>
+      <p className="mt-1 text-[12px] leading-5 text-ha-warning">
+        回退/分叉重跑会再次执行这些节点:同参数调用按幂等键重放,参数变了就是一次新的写;
+        已发生的写不会回滚。
+      </p>
+      <ul className="mt-2 space-y-1">
+        {effects.map((effect) => (
+          <li
+            key={effect.seq + '-' + effect.name}
+            className="flex flex-wrap items-center gap-1.5"
+          >
+            <ToneBadge tone={effect.risk === 'danger' ? 'danger' : 'warning'}>
+              {effect.risk === 'danger' ? 'DANGER' : 'WRITE'}
+            </ToneBadge>
+            <Mono>{effect.name}</Mono>
+            <Mono>{effect.ok ? '已执行' : '未成功'}</Mono>
+            {effect.arguments ? (
+              <span className="font-mono text-[11px] text-ha-faint">
+                {summarizeArguments(effect.arguments)}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2">
+        <Checkbox
+          checked={acknowledged}
+          onCheckedChange={onAcknowledgeChange}
+          label="我已知悉,仍要继续(写操作可能重复执行)"
+        />
+      </div>
+    </div>
   );
 }

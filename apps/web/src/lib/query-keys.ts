@@ -31,6 +31,8 @@ export const queryKeys = {
   runArtifacts: (runId: string) => ['run-artifacts', runId] as const,
   /** 图检查点列表(P1-C):['run-checkpoints', runId];rewind/fork 后失效。 */
   runCheckpoints: (runId: string) => ['run-checkpoints', runId] as const,
+  /** 回退前的外部副作用台账(S5):['run-side-effects', runId];回退弹窗打开时取。 */
+  runSideEffects: (runId: string) => ['run-side-effects', runId] as const,
   runArtifactPreview: (runId: string, previewId: string | null | undefined) =>
     ['run-artifact-preview', runId, previewId] as const,
 

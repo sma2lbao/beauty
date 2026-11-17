@@ -274,7 +274,7 @@ export function DangerConfirmCard({
 }
 
 /**
- * 右侧执行面板 footer 的就地动作:按 run 状态给放行/确认/查看成品/暂停。
+ * 右侧执行面板 footer 的就地动作:按 run 状态给放行/确认/查看成品/停止。
  * 没有匹配状态时不渲染(null)。
  */
 export function RunFooterAction({
@@ -283,6 +283,7 @@ export function RunFooterAction({
   busy,
   onApprove,
   onConfirm,
+  onCancel,
   onToggleArtifact,
 }: {
   run?: Run;
@@ -290,6 +291,8 @@ export function RunFooterAction({
   busy: boolean;
   onApprove: (runId: string) => void;
   onConfirm: (runId: string, decision: 'approve' | 'reject') => void;
+  /** 停止执行(POST /v1/runs/{id}/cancel):当前节点跑完后不再继续。 */
+  onCancel: (runId: string) => void;
   onToggleArtifact: () => void;
 }): ReactNode {
   if (status === 'awaiting_approval' && run) {
@@ -323,15 +326,16 @@ export function RunFooterAction({
       </ConsoleButton>
     );
   }
-  if (status === 'running') {
+  if (status === 'running' && run) {
     return (
       <ConsoleButton
         variant="secondary"
         size="sm"
-        disabled
-        title="暂停能力暂未开放"
+        disabled={busy}
+        title="停在当前节点之后:已发出的工具调用会完成,不再继续后续节点"
+        onClick={() => onCancel(run.id)}
       >
-        暂停执行
+        停止执行
       </ConsoleButton>
     );
   }

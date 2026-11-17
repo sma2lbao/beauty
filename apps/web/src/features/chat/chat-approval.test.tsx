@@ -277,6 +277,23 @@ describe('ChatPage 消息、审批与交付物', () => {
     );
   });
 
+  it('执行中:停止执行调用 cancel(S3 取消在节点边界生效)', async () => {
+    vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'running' }));
+    renderPage('/?conversation=c1');
+
+    const stops = await screen.findAllByRole('button', { name: '停止执行' });
+    expect(stops[0]).toBeEnabled();
+    expect(stops[0]).toHaveAttribute(
+      'title',
+      '停在当前节点之后:已发出的工具调用会完成,不再继续后续节点',
+    );
+    fireEvent.click(stops[0]);
+
+    await waitFor(() =>
+      expect(runsApi.cancel).toHaveBeenCalledWith('run-1', '用户停止执行'),
+    );
+  });
+
   it('完成后按需列出全部交付物文件', async () => {
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     vi.mocked(runsApi.artifacts).mockResolvedValue([

@@ -90,16 +90,35 @@ export type RunCheckpoint = {
   summary: RunCheckpointSummary;
 };
 
+/**
+ * 一次已发起的外部写(S5 副作用台账):GET /v1/runs/{id}/side-effects 的元素。
+ * 只含 WRITE/DANGER 风险的工具调用,失败的也算(写可能已经发生)。
+ */
+export type RunSideEffect = {
+  seq: number;
+  tool_call_id: string | null;
+  name: string;
+  risk: string;
+  decision: string;
+  ok: boolean;
+  /** 参数预览(后端截到 200 字)。 */
+  arguments: string;
+};
+
 /** 回退请求(P1-C):reason 可选,后端只留痕不参与执行。 */
 export type RewindInput = {
   checkpoint_id: string;
   reason?: string;
+  /** S5:该 run 已发生外部写时必须显式确认(否则 409 run.side_effects_present)。 */
+  acknowledge_side_effects?: boolean;
 };
 
 /** 分叉请求(P1-C):checkpoint_id 省略 = 从当前线程末端分叉。 */
 export type ForkInput = {
   checkpoint_id?: string;
   title?: string;
+  /** S5:带 checkpoint 种入(=会重放父 run 节点)时,父 run 有写必须确认。 */
+  acknowledge_side_effects?: boolean;
 };
 
 export type RunEvent = {

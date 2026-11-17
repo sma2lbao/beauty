@@ -36,6 +36,12 @@ export function useChatActions(activeRunId: string | null) {
     decision: 'approve' | 'reject',
     grant?: ApprovalGrant,
   ) => action.mutate(() => runsApi.confirm(runId, decision, undefined, grant));
+  /**
+   * 停止执行(POST /v1/runs/{id}/cancel):停在当前节点之后(S3),
+   * 已发出的工具调用会跑完,不再继续后续节点;成功后 run 与会话列表失效。
+   */
+  const cancelRun = (runId: string) =>
+    action.mutate(() => runsApi.cancel(runId, '用户停止执行'));
   /** 回答/跳过挂起提问(ask_question):成功后失效 run 与会话列表。 */
   const answerQuestion = async (
     runId: string,
@@ -94,6 +100,7 @@ export function useChatActions(activeRunId: string | null) {
     approve,
     rejectPlan,
     confirmDanger,
+    cancelRun,
     answerQuestion,
     updateModel,
     savePlan,
