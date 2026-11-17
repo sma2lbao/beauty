@@ -389,14 +389,18 @@ def make_execute_node(
                     pending_subagents.append(ack)
                 messages.append(_tool_message(call.id, output))
             if pending:
-                # 写操作确认优先(见 route_after_execute):子代理已入队但不在这里
-                # 等待,回执交给下一次唤醒——本回合先把手上的写操作问清楚
-                return {
+                # 写操作确认优先(见 route_after_execute):本回合先把手上的写操作
+                # 问清楚。同回合已入队的子代理回执不能在这里丢——确认闸之后
+                # (tool_exec / 拒绝分支)仍会读 pending_subagents 去等待节点。
+                update: dict[str, Any] = {
                     "tool_history": messages[len(base) :],
                     "pending_writes": pending,
                     "tool_calls": records,
                     **_todos_state(latest_todos),
                 }
+                if pending_subagents:
+                    update[PENDING_KEY] = pending_subagents
+                return update
             if pending_subagents:
                 # L2:父 run 就此挂起等子代理终态,不占 worker(docs/design/subagents.md)
                 return {

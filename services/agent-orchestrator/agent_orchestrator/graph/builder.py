@@ -55,10 +55,11 @@ def route_after_execute(state: RunGraphState) -> str:
     提问优先于写操作确认:本回合既没执行任何工具,也没收集待确认写操作
     (execute 命中 interaction 调用时其余调用一律不执行)。
 
-    写操作确认优先于子代理等待:待确认的两条写操作还没拿到 tool 消息,
+    写操作确认优先于子代理等待:待确认的写操作还没拿到 tool 消息,
     如果先去等子代理,恢复后模型补全时会看到"assistant 消息里有未应答的
-    tool_calls"——OpenAI 协议下直接 400。子代理已入队但本回合不等待的
-    情况见 docs/design/subagents.md 的残余一节。
+    tool_calls"——OpenAI 协议下直接 400。同回合已入队的子代理不会因此丢:
+    execute 把回执一并写进 pending_subagents,确认闸之后(见
+    route_after_confirm / route_after_tool_exec)再去等待节点。
     """
     if state.get("pending_question"):
         return "ask_gate"
@@ -70,8 +71,19 @@ def route_after_execute(state: RunGraphState) -> str:
 
 
 def route_after_confirm(state: RunGraphState) -> str:
-    """放行 → 执行写操作;拒绝 → 直接验收(§6.2)。"""
-    return "tool_exec" if state.get("writes_approved") else "verify"
+    """放行 → 执行写操作;拒绝 → 验收,但已入队的子代理仍要等待(§6.2/L2)。"""
+    if state.get("writes_approved"):
+        return "tool_exec"
+    return "subagent_wait" if state.get("pending_subagents") else "verify"
+
+
+def route_after_tool_exec(state: RunGraphState) -> str:
+    """确认后的写操作跑完 → 有待等子代理就去等,否则回工具循环(L2)。
+
+    待等子代理可能来自两处:execute 同回合已入队的那批(回执随状态带过来),
+    或刚被人工确认执行的写操作本身就是 spawn_subagent。
+    """
+    return "subagent_wait" if state.get("pending_subagents") else "execute"
 
 
 def route_after_verify(state: RunGraphState) -> str:
@@ -163,9 +175,17 @@ def build_run_graph(
     builder.add_conditional_edges(
         "confirm_gate",
         route_after_confirm,
-        {"tool_exec": "tool_exec", "verify": "verify"},
+        {
+            "tool_exec": "tool_exec",
+            "subagent_wait": "subagent_wait",
+            "verify": "verify",
+        },
     )
-    builder.add_edge("tool_exec", "execute")
+    builder.add_conditional_edges(
+        "tool_exec",
+        route_after_tool_exec,
+        {"subagent_wait": "subagent_wait", "execute": "execute"},
+    )
     builder.add_conditional_edges(
         "verify",
         route_after_verify,

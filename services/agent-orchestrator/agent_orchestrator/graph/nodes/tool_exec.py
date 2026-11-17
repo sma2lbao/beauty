@@ -35,6 +35,10 @@ from agent_orchestrator.graph.nodes.messages import (
     _todos_update,
     _tool_message,
 )
+from agent_orchestrator.graph.nodes.subagent_wait import (
+    PENDING_KEY,
+    pending_spawn_ack,
+)
 from agent_orchestrator.graph.nodes.toolkit import _load_toolkit
 from agent_orchestrator.graph.ports import (
     HOOK_EVENT_POST_TOOL_USE,
@@ -72,6 +76,9 @@ def make_tool_exec_node(
             toolkit = toolkit.restricted(allowed)
         records: list[dict[str, Any]] = []
         latest_todos: list[dict[str, str]] | None = None
+        # L2:同回合 execute 已入队的子代理回执(写确认之前就 spawn 的那批),
+        # 确认完成后连同本节点新产生的回执一起交给 subagent_wait 等待。
+        pending_subagents = list(state.get(PENDING_KEY) or [])
         for call in pending:
             name = str(call.get("name") or "")
             arguments = str(call.get("arguments") or "{}")
@@ -194,6 +201,11 @@ def make_tool_exec_node(
                 ),
             )
             output = append_hook_note(output, post)
+            # 人工确认的写操作本身也可能是 spawn_subagent:回执同样要留到
+            # 等待节点,否则父 run 会带着"已入队但不等待"的子代理继续跑。
+            ack = pending_spawn_ack(output)
+            if ack is not None:
+                pending_subagents.append(ack)
             messages.append(_tool_message(str(call.get("id") or ""), output))
         return {
             "tool_history": messages[len(base) :],
@@ -201,6 +213,7 @@ def make_tool_exec_node(
             "writes_approved": False,
             "tool_calls": records,
             "confirm_cycles": 1,
+            PENDING_KEY: pending_subagents,
             **_todos_state(latest_todos),
         }
 

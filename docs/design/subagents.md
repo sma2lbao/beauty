@@ -153,7 +153,8 @@ worker 等子 run,子 run 的 `plan` job 永远没人取 → 自锁。因此队�
 ```
 spawn(jobs_enabled) → 子 run 落 run.created.v1 → 入队 plan job(dedupe=False) → 返回 ack
 execute 节点识别 ack(pending=true + subagent_run_id)→ 收集 pending_subagents
-批次结束 → route_after_execute 走 subagent_wait(写确认仍优先)→ interrupt({kind:"subagent_wait"})
+批次结束 → route_after_execute 走 subagent_wait;若同回合还有待确认写则先进 confirm_gate,
+  确认后由 route_after_confirm/tool_exec 转回 subagent_wait(§6.3)→ interrupt({kind:"subagent_wait"})
   → graph_result:run.status=awaiting_subagent + run.subagent.waiting.v1
 子 run 终态 → subagent_wake.notify_parent(父仍 awaiting_subagent 才生效)→ 入队 subagent job
 worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全终态则
@@ -171,12 +172,12 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
   会让 worker 在后一个子 run 提交前检查完而吃掉唤醒(父 run 永久挂起)。
 - **同批多 spawn**:一批里多个 spawn 一起进 `pending_subagents`,全部子 run 终态才继续
   (没有「任一完成即继续」的策略)。
+- **写确认与 spawn 并存**:同回合两者都有时写确认优先,但回执不再丢——`execute` 同时返回
+  `pending_writes` 与 `pending_subagents`,确认后 `tool_exec` 收下 spawn 的 ack 再转
+  `subagent_wait`(§6.3)。
 
 **残余(如实)**
 
-- 同一回合既有待确认写又有 spawn:写确认优先,该批 `pending_subagents` 被丢弃(子 run 仍会
-  跑完,但回执不回到父上下文);
-- spawn 被账号审批策略设为 confirm 时从 `tool_exec` 执行,不进 `subagent_wait`(异步等待不生效);
 - 子 run 停在 `awaiting_*`(需人工)不唤醒父 run;唤醒丢失由 §6.2 的等待 sweeper 兜(漏唤醒
   补偿 + 超时级联取消),但**父 run 恢复后不会再等**:超时是终局,父 run 拿 cancelled 回执继续;
 - 父 run 在 `running` 中途崩溃由 recover 兜,恢复后可能重复 interrupt 回到 `awaiting_subagent`;
@@ -212,6 +213,43 @@ has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一�
   停在 `awaiting_subagent`,同样会被判超时);
 - `subagent_wait_timeout_seconds <= 0` 时只做漏唤醒补偿,等太久仍只能靠人工取消;
 - sweeper 每轮跨账号全表扫 `awaiting_subagent`(与崩溃续跑 sweeper 同口径),量大时需要索引。
+
+## 6.3 写确认与确认闸下的等待回路(2026-11-18)
+
+§6.1 初版留了两个静默降级:同回合「待确认写 + spawn」时 spawn 回执被丢弃;spawn 被账号
+审批策略设为 `confirm` 时从 `tool_exec` 执行、根本不进等待节点。两者都不是报错,而是
+**异步等待悄悄退化成同步孤儿**——子 run 照跑,父 run 却永远收不到回执。修法是把「回执」与
+「确认」解耦成可并存的载荷,并在确认闸两侧都补上回等待节点的边:
+
+1. `execute` 的写确认分支(`graph/nodes/execute.py`)不再只返回 `pending_writes`:同回合
+   已识别的 spawn 回执一起写进 `pending_subagents`,所以进确认闸时回执已经落在 state 里。
+2. `tool_exec`(`graph/nodes/tool_exec.py`)进入时先继承 `state[PENDING_KEY]`,逐条执行确认后
+   的调用,凡输出能解析成 spawn ack(`pending_spawn_ack`)就追加;返回时**显式**给出
+   `pending_subagents`(空列表也写),用新值覆盖旧 state,避免上一批回执被重复消费。
+3. 路由(`graph/builder.py`)新增 `route_after_tool_exec`:有回执去 `subagent_wait`,否则回
+   `execute` 继续下一轮工具调用;`route_after_confirm` 从「批准→tool_exec,否则→verify」
+   改为「批准→tool_exec;拒绝但有回执→subagent_wait;否则→verify」——**拒绝写操作不该连带
+   丢掉已入队的子代理**,子 run 已经在跑,父 run 应当等它的回执而不是直接进 verify。
+
+于是四条路径都收敛到 `subagent_wait`:纯 spawn(execute 直接路由)、写+spawn(确认后)、
+spawn 走 confirm 策略(确认后经 tool_exec)、以及拒绝写但仍有 spawn(confirm 直接路由)。
+
+**语义取舍**
+
+- 回执的收集点是「spawn 工具的输出」而不是「调用意图」:确认被拒时 `tool_exec` 不会执行该
+  调用,自然也不产生回执——所以只有**已执行**的 spawn 才会被等待,拒绝后的 spawn 不会留下
+  悬空等待。
+- `pending_subagents` 只增不减,直到 `subagent_wait` 节点消费并清空;跨两个节点传递依赖
+  LangGraph 的 state 合并,所以两边都必须显式返回该键(缺键会让旧值以「未变」语义保留,
+  这正是初版丢回执的机制之一)。
+
+**残余**
+
+- 一次确认后仍可能有后续工具轮次继续 spawn(最多 `MAX_TOOL_ROUNDS=12`),这些新回执与旧回执
+  一起等;**全部**子 run 终态才继续,没有「先到先续」;
+- `subagent_wait` 只有一个中断点,确认与等待发生在同一 turn 的不同 interrupt 上,前端需按
+  `kind` 区分 `confirm` 与 `subagent_wait` 两种待办(当前 `awaiting_confirmation` /
+  `awaiting_subagent` 已是两个状态,故不冲突)。
 
 ## 7. 事件与过程项(P1-D 分类学)
 
@@ -306,6 +344,10 @@ has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一�
 - `tests/test_subagent_wait_sweeper.py`(L2 ④):漏唤醒补偿(子全终态 + 无 live job → 重排
   `subagent` job)、已有 live job 不重复入队、未超时不打扰在飞子 run、超时级联取消子 run 且父 run
   拿到唤醒、父 run 不在等待态与没有子 run 时跳过;
+- `tests/test_subagent_wait_routing.py`(§6.3):`execute` 同回合 danger+spawn 时两种载荷并存、
+  `tool_exec` 从确认后的 spawn 输出收 ack 并与 state 里旧回执合并、`route_after_tool_exec` 与
+  `route_after_confirm` 三种状态的路由、两条 e2e(写+spawn 同回合确认后落 `awaiting_subagent`、
+  spawn 走 confirm 策略确认后才落 `awaiting_subagent` 且确认前 `/subagents` 为空);
 - `tests/snapshots/openapi.json` 重生成(新端点 + RunRead 字段);
 - 前端 `run-item-timeline.test.tsx`(subagent 卡片)、`run-detail.test.tsx`
   (子代理面板)、`runs-api.test.ts`(subagents/usage);
@@ -316,8 +358,6 @@ has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一�
 ## 14. 后续
 
 - 子代理可选更便宜模型(per-run 选择已随 P1-G 落地;子代理当前沿用父 run 模型);
-- 异步等待的收尾:spawn 走确认闸时的等待路径、同批 spawn 与写确认并存的回执保留
-  (§6.1 残余;漏唤醒与等待超时已由 §6.2 的 sweeper 收口);
 - 多子代理并发编排的调度策略(当前只做「全终态才继续」);
 - 命名子代理注册表(可复用的 agent 模板与权限包);
 - AG-UI `Subagents` 事件族映射与跨端渲染。
