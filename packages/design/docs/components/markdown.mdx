@@ -1,0 +1,93 @@
+import { Markdown } from '@beauty/design';
+
+# Markdown 富文本
+
+消息、计划、产物正文的统一渲染:GFM 表格与任务列表、代码块轻量高亮、链接外跳、HTML 清洗。
+
+## 何时使用
+
+- 渲染模型输出、说明文档这类「作者不受控」的 Markdown 正文;
+- 需要流式输出:半截代码块、未闭合表格都不会崩,尾部可以挂光标;
+- 只是几行固定文案时不要用:直接写 JSX,别为一个段落引入 Markdown 解析链。
+
+## 基础用法
+
+<div className="bd-demo">
+  <Markdown
+    content={[
+      '# 周报',
+      '',
+      '- 日程已汇总',
+      '- **上线** 已确认',
+      '',
+      '| 项目 | 状态 |',
+      '| --- | --- |',
+      '| 周报 | 完成 |',
+      '',
+      '[文档](https://example.com)',
+    ].join('\n')}
+  />
+</div>
+
+```tsx
+import { Markdown } from '@beauty/design';
+
+<Markdown content={content} />;
+```
+
+## 代码块
+
+围栏代码块按语言做单遍扫描高亮,支持 JS/TS/JSON/Python/Bash;
+未知语言原样渲染,不猜也不强套配色:
+
+<div className="bd-demo">
+  <Markdown
+    content={[
+      String.fromCharCode(96).repeat(3) + 'ts',
+      'const session = await resolve(req); // 注释',
+      String.fromCharCode(96).repeat(3),
+    ].join('\n')}
+  />
+</div>
+
+高亮只分四类语义色:关键字、字符串、注释、数字。颜色取自 `--bd-info`、
+`--bd-success`、`--bd-warning` 与 `--bd-muted-foreground`,不内置主题色板。
+
+## 流式输出
+
+`streaming` 打开时,空内容显示「正在回答…」,有内容则在文末追加呼吸光标:
+
+```tsx
+<Markdown content={content} streaming />
+```
+
+光标只在 `streaming` 时出现,结束时记得关掉——静止的光标会被误读成「还在生成」。
+
+## 安全
+
+- 不渲染 raw HTML:脚本、`<iframe>`、事件属性都进不来;
+- 链接协议白名单:只放行 `http(s)`、`mailto:`、锚点与站内绝对路径,
+  `javascript:` 之类的 href 直接丢掉;
+- 外链自动加 `target="_blank"` 与 `rel="noopener noreferrer"`。
+
+## 按需引入
+
+Markdown 的依赖链(react-markdown / remark-gfm / rehype-sanitize)比基础组件重,
+只消费按钮、表格的宿主不应被迫打包它们。这两个场景分别有子入口:
+
+```ts
+import { Markdown } from '@beauty/design/markdown'; // 走最小依赖面
+import { Button } from '@beauty/design';
+```
+
+## API
+
+### MarkdownProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>` 的 `className`。
+
+| 属性        | 说明                           | 类型      | 默认值  |
+| ----------- | ------------------------------ | --------- | ------- |
+| `content`   | Markdown 源码                  | `string`  | —       |
+| `className` | 追加到根节点的类名             | `string`  | —       |
+| `streaming` | 流式输出:空内容占位 + 尾部光标 | `boolean` | `false` |

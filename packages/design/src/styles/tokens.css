@@ -68,6 +68,10 @@
   /* 展示衬线:只给品牌字标用(界面正文一律无衬线) */
   --bd-font-display:
     Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
+  /* 代码块底色:与 --bd-secondary 区分开一层,Markdown 的 pre 与 Diff 用 */
+  --bd-code-bg: #f7f7f7;
+  --bd-code-foreground: #171717;
+
   /* 等宽:状态标签、编号、Kbd 这类元信息用 */
   --bd-font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
@@ -105,6 +109,9 @@
   --bd-success: #3ecf8e;
   --bd-warning: #f5a623;
   --bd-info: #3291ff;
+
+  --bd-code-bg: #0a0a0a;
+  --bd-code-foreground: #ededed;
 
   --bd-logo-moon: #ffefc6;
   --bd-logo-text: #ededed;

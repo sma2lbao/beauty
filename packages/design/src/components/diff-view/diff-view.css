@@ -1,0 +1,101 @@
+/**
+ * Diff / 代码查看器。
+ *
+ * 增删行底色取语义色阶(--bd-success-bg / --bd-destructive-bg),
+ * 文字用同一语义色的实色,保证在 14% 底上可读;hunk 与上下文用中性灰阶。
+ * 行高固定 20px、行距 3px,行号列等宽,连续多行时左边不会跳。
+ */
+
+.bd-diff {
+  font-family: var(--bd-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.bd-diff--inline {
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-diff__row,
+.bd-diff__cell {
+  display: flex;
+  align-items: flex-start;
+  min-height: 1.625rem;
+  padding: 0.1875rem 0.75rem;
+  white-space: pre;
+}
+
+.bd-diff__row {
+  width: max-content;
+  min-width: 100%;
+}
+
+.bd-diff__gutter {
+  flex-shrink: 0;
+  width: 2.25rem;
+  padding-right: 0.75rem;
+  color: color-mix(in oklab, var(--bd-muted-foreground) 70%, transparent);
+  font-size: 0.6875rem;
+  text-align: right;
+  user-select: none;
+}
+
+.bd-diff__text,
+.bd-code__text {
+  min-width: 0;
+  flex: 1;
+}
+
+.bd-diff__row--hunk {
+  background: var(--bd-accent);
+  color: var(--bd-muted-foreground);
+}
+
+.bd-diff__row--add {
+  background: var(--bd-success-bg);
+  color: var(--bd-success);
+}
+
+.bd-diff__row--del {
+  background: var(--bd-destructive-bg);
+  color: var(--bd-destructive);
+}
+
+.bd-diff__row--context {
+  color: var(--bd-muted-foreground);
+}
+
+.bd-diff--split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.bd-diff__side {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bd-diff__side--right {
+  border-left: 1px solid var(--bd-border);
+}
+
+.bd-code {
+  overflow-x: auto;
+  color: var(--bd-foreground);
+  font-family: var(--bd-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.bd-code__row {
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  min-width: 100%;
+  padding: 0.1875rem 0.75rem;
+  white-space: pre;
+}
+
+.bd-code__row:hover {
+  background: color-mix(in oklab, var(--bd-secondary) 60%, transparent);
+}

@@ -12,11 +12,13 @@
 @import '../components/card/card.css';
 @import '../components/checkbox/checkbox.css';
 @import '../components/dialog/dialog.css';
+@import '../components/diff-view/diff-view.css';
 @import '../components/dropdown-menu/dropdown-menu.css';
 @import '../components/empty/empty.css';
 @import '../components/field/field.css';
 @import '../components/input/input.css';
 @import '../components/kbd/kbd.css';
+@import '../components/markdown/markdown.css';
 @import '../components/radio/radio.css';
 @import '../components/select/select.css';
 @import '../components/skeleton/skeleton.css';

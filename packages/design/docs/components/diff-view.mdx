@@ -1,0 +1,110 @@
+import { CodePreview, DiffRows, DiffViewer } from '@beauty/design';
+
+# DiffViewer 差异查看
+
+把 unified diff 渲染成增删行,或把普通文件渲染成带行号的代码预览。
+
+## 何时使用
+
+- 展示工具改动、代码评审结果这类「带 +/- 的文本」;
+- 需要并排对照前后两版时切 `view="split"`;
+- 只是让一段代码可读时用 `CodePreview`,不要为了好看伪造 diff:
+  正文里没有 `@@` / `---` / `+++` 标记就老实回退成代码预览。
+
+## 基础用法
+
+`DiffViewer` 自己判断内容是 diff 还是普通文本,一个组件覆盖两种场景:
+
+<div className="bd-demo">
+  <DiffViewer
+    content={[
+      '@@ -12,3 +12,3 @@ sessionGuard',
+      '-const session = req.cookies?.sid;',
+      '+const session = await resolveSession(req);',
+      ' return next();',
+    ].join('\n')}
+    numbers="double"
+  />
+</div>
+
+```tsx
+import { DiffViewer } from '@beauty/design';
+
+<DiffViewer content={diff} numbers="double" />;
+```
+
+## 并排对照
+
+`view="split"` 把连续的删除/新增配对到同一行,适合窄改动、短行代码;
+长行代码用默认的 inline,避免两侧都横向滚动:
+
+<div className="bd-demo">
+  <DiffViewer
+    content={['@@ -1,2 +1,2 @@', '-a = 1', '+a = 2', ' b = 3'].join('\n')}
+    view="split"
+  />
+</div>
+
+## 行号
+
+`numbers` 三档:`none`(默认,消息流里最省横向空间)、`single`(只显示一行号)、
+`double`(前后两列行号,适合评审):
+
+<div className="bd-demo">
+  <DiffRows
+    rows={[
+      { kind: 'hunk', text: '@@ -1 +1 @@', oldLine: null, newLine: null },
+      { kind: 'del', text: '-旧值', oldLine: 1, newLine: null },
+      { kind: 'add', text: '+新值', oldLine: null, newLine: 1 },
+    ]}
+    numbers="double"
+  />
+</div>
+
+## 代码预览
+
+`CodePreview` 不做 diff 解析,只按行编号;`numbers={false}` 时退化成纯文本块:
+
+<div className="bd-demo">
+  <CodePreview
+    content={"export const port = 8007;\nexport const host = '0.0.0.0';"}
+  />
+</div>
+
+## 解析工具
+
+需要自己算增删行数或做别的排布时,直接用纯函数,不必渲染组件:
+
+```ts
+import { diffStats, parseUnifiedDiff, sideBySide } from '@beauty/design';
+
+diffStats(diff); // { added: 1, removed: 1 };不是 diff 时为 null
+parseUnifiedDiff(diff); // DiffRow[] | null
+sideBySide(rows); // SideBySideRow[]:左右配对
+```
+
+## 可访问性
+
+- 行号是装饰信息(读屏逐行念数字只会干扰),固定 `aria-hidden="true"`;
+- 增删靠颜色区分,同时保留 `+` / `-` 前缀字符:色觉差异用户也能读懂;
+- 窄容器里横向滚动交给外层,组件本身不改字号、不缩行高。
+
+## API
+
+### DiffViewerProps
+
+| 属性        | 说明                     | 类型                             | 默认值   |
+| ----------- | ------------------------ | -------------------------------- | -------- |
+| `content`   | diff 或普通代码文本      | `string`                         | —        |
+| `view`      | inline 单列 / split 双列 | `'inline' \| 'split'`            | `inline` |
+| `numbers`   | 行号档位                 | `'none' \| 'single' \| 'double'` | `none`   |
+| `className` | 追加到根节点的类名       | `string`                         | —        |
+
+### DiffRowsProps / SideBySideRowsProps / CodePreviewProps
+
+| 属性        | 说明                | 类型                                           | 默认值 |
+| ----------- | ------------------- | ---------------------------------------------- | ------ |
+| `rows`      | 已解析的行          | `readonly DiffRow[]`(并排为 `SideBySideRow[]`) | —      |
+| `content`   | 代码文本            | `string`                                       | —      |
+| `numbers`   | 行号档位 / 是否显示 | `'none' \| 'single' \| 'double'` / `boolean`   | `true` |
+| `className` | 追加到根节点的类名  | `string`                                       | —      |

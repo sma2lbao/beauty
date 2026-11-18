@@ -12,7 +12,9 @@ import {
   CardHeader,
   CardTitle,
   Checkbox,
+  CodePreview,
   Dialog,
+  DiffRows,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -26,9 +28,11 @@ import {
   Field,
   Input,
   Kbd,
+  Markdown,
   Radio,
   RadioGroup,
   Select,
+  SideBySideRows,
   Skeleton,
   Space,
   Spin,
@@ -65,6 +69,10 @@ const SLOTS = [
   'status-text',
   'status-badge',
   'status-pill',
+  'markdown',
+  'diff-rows',
+  'diff-split',
+  'code-preview',
   'button',
   'card',
   'field',
@@ -188,6 +196,34 @@ describe('类名契约', () => {
         <StatusPill tone="info" size="md">
           运行中
         </StatusPill>
+        <Markdown content={'# 标题\n\n正文 **加粗**'} />
+        <DiffRows
+          rows={[
+            { kind: 'add', text: '+新增', oldLine: null, newLine: 2 },
+            { kind: 'del', text: '-删除', oldLine: 2, newLine: null },
+          ]}
+          numbers="double"
+        />
+        <SideBySideRows
+          rows={[
+            {
+              kind: 'context',
+              left: {
+                kind: 'context',
+                text: ' 上下文',
+                oldLine: 1,
+                newLine: 1,
+              },
+              right: {
+                kind: 'context',
+                text: ' 上下文',
+                oldLine: 1,
+                newLine: 1,
+              },
+            },
+          ]}
+        />
+        <CodePreview content="export const a = 1;" />
         <Empty
           description="暂无数据"
           actions={<Button size="sm">刷新</Button>}

@@ -63,6 +63,28 @@ export type { InputProps, InputSize } from './components/input/index.js';
 
 export { Kbd } from './components/kbd/index.js';
 
+export {
+  CodePreview,
+  DiffRows,
+  DiffViewer,
+  SideBySideRows,
+  diffStats,
+  parseUnifiedDiff,
+  sideBySide,
+} from './components/diff-view/index.js';
+export type {
+  CodePreviewProps,
+  DiffRow,
+  DiffRowKind,
+  DiffRowsProps,
+  DiffViewerProps,
+  SideBySideRow,
+  SideBySideRowsProps,
+} from './components/diff-view/index.js';
+
+export { Markdown } from './components/markdown/index.js';
+export type { MarkdownProps } from './components/markdown/index.js';
+
 export { Checkbox } from './components/checkbox/index.js';
 export type { CheckboxProps } from './components/checkbox/index.js';
 
