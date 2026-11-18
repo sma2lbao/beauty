@@ -20,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 # 生命周期:creating(已落库、运行时创建中)→ running → stopped;失败置 failed。
 SANDBOX_STATUSES = ("creating", "running", "stopped", "failed")
 
-# 幂等键长度(设计 §11.2):conv:<conversation_id> / run:<run_id>,最长 96
+# 幂等键长度(设计 §11.2):conversation:<conversation_id> / run:<run_id>,最长 96
 SCOPE_KEY_MAX_LENGTH = 96
 # 账号内唯一索引名(迁移里同名创建,alembic check 依赖它对齐)
 ACCOUNT_SCOPE_INDEX = "uq_sandboxes_account_scope"

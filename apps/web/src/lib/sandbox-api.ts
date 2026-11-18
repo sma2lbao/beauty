@@ -1,7 +1,7 @@
 /**
  * 会话沙箱的数据层:workspace-service 的 /v1/sandboxes 契约。
  *
- * 会话页的「文件 / 终端」两个页签都靠这里:先按会话找沙箱(scope_key=conv:<id>),
+ * 会话页的「文件 / 终端」两个页签都靠这里:先按会话找沙箱(scope_key=conversation:<id>),
  * 再列文件树、读文件、在沙箱里跑命令。环境变量与 workspace-api 一致:
  * `VITE_WORKSPACE_API_URL` 留空走同源(Vite dev 把 `/workspace-api` 代理到 :8005)。
  *
@@ -23,7 +23,7 @@ export type SandboxInfo = {
   id: string;
   name: string;
   status: string;
-  /** 归属键:conv:<conversationId> / run:<runId>。 */
+  /** 归属键:conversation:<conversationId> / run:<runId>。 */
   scopeKey: string | null;
   workspaceId: string;
   runId: string | null;
@@ -179,13 +179,21 @@ function bytesToText(bytes: Uint8Array): string | null {
   }
 }
 
-/** 列沙箱;scopeKey 形如 conv:<id> / run:<id>(由后端按归属过滤)。 */
+/** 列沙箱;scopeKey 形如 conversation:<id> / run:<id>(由后端按归属过滤)。 */
 export async function listSandboxes(scopeKey?: string): Promise<SandboxInfo[]> {
   const query = scopeKey
     ? `?${new URLSearchParams({ scope_key: scopeKey }).toString()}`
     : '';
   const rows = await http.request<RawSandbox[]>(`${SANDBOXES}${query}`);
   return (rows ?? []).map(toSandboxInfo);
+}
+
+/**
+ * 会话沙箱归属键:必须与 tool-service `scope_key_for` 的写法逐字一致
+ * (`conversation:<conversation_id>`),否则按 scope_key 过滤会永远查不到行。
+ */
+export function conversationScopeKey(conversationId: string): string {
+  return `conversation:${conversationId}`;
 }
 
 /**
@@ -197,7 +205,7 @@ export async function listSandboxes(scopeKey?: string): Promise<SandboxInfo[]> {
 export async function conversationSandbox(
   conversationId: string,
 ): Promise<SandboxInfo | null> {
-  const scopeKey = `conv:${conversationId}`;
+  const scopeKey = conversationScopeKey(conversationId);
   const sandboxes = await listSandboxes(scopeKey);
   return (
     sandboxes.find(

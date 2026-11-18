@@ -26,7 +26,7 @@ MAX_BASE64_CHARS = 16_000_000
 # 文件树列举:深度与条目数硬上限(服务层按这两个值再截断一次)
 MAX_TREE_DEPTH = 4
 MAX_TREE_ENTRIES = 500
-# ensure 幂等键(设计 §11.2):conv:<conversation_id> / run:<run_id>,最长 96
+# ensure 幂等键(设计 §11.2):conversation:<conversation_id> / run:<run_id>,最长 96
 MAX_SCOPE_KEY_LENGTH = 96
 SCOPE_KEY_PATTERN = r"^[a-z0-9:_-]+$"
 
@@ -51,7 +51,7 @@ class SandboxCreate(BaseModel):
 class SandboxEnsure(SandboxCreate):
     """幂等 ensure 请求:scope_key 是账号内幂等键(P0-05)。
 
-    tool-service 每次工具调用都带同一个 scope_key(conv:<id> / run:<id>),
+    tool-service 每次工具调用都带同一个 scope_key(conversation:<id> / run:<id>),
     服务端按 (account_id, scope_key) get-or-create,多副本并发也只保留一行。
     """
 

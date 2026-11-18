@@ -16,7 +16,7 @@ const sandbox: SandboxInfo = {
   id: 'sb-1',
   name: 'conv-1',
   status: 'running',
-  scopeKey: 'conv:conv-1',
+  scopeKey: 'conversation:conv-1',
   workspaceId: 'ws-1',
   runId: null,
   createdAt: '2026-10-01T00:00:00Z',

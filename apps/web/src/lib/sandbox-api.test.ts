@@ -37,7 +37,7 @@ describe('sandboxApi', () => {
         id: 'sb-1',
         name: 'conv-1',
         status: 'running',
-        scope_key: 'conv:conv-1',
+        scope_key: 'conversation:conv-1',
         workspace_id: 'ws-1',
         run_id: null,
         created_at: '2026-10-01T00:00:00Z',
@@ -55,7 +55,7 @@ describe('sandboxApi', () => {
     });
     expect(sandbox).toMatchObject({
       id: 'sb-1',
-      scopeKey: 'conv:conv-1',
+      scopeKey: 'conversation:conv-1',
       workspaceId: 'ws-1',
       runId: null,
       status: 'running',
@@ -65,18 +65,35 @@ describe('sandboxApi', () => {
   it('按 scope_key 精确过滤', async () => {
     const fetchMock = mockFetch(200, []);
 
-    await listSandboxes('conv:conv-1');
+    await listSandboxes('conversation:conv-1');
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      '/workspace-api/v1/sandboxes?scope_key=conv%3Aconv-1',
+      '/workspace-api/v1/sandboxes?scope_key=conversation%3Aconv-1',
     );
+  });
+
+  it('按会话找沙箱时用后端写入的 conversation: 前缀', async () => {
+    const fetchMock = mockFetch(200, [
+      {
+        id: 'sb-1',
+        status: 'running',
+        scope_key: 'conversation:conv-1',
+      },
+    ]);
+
+    const sandbox = await conversationSandbox('conv-1');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/workspace-api/v1/sandboxes?scope_key=conversation%3Aconv-1',
+    );
+    expect(sandbox?.id).toBe('sb-1');
   });
 
   it('会话沙箱只认归属正确且 running 的那个', async () => {
     mockFetch(200, [
-      { id: 'sb-old', status: 'expired', scope_key: 'conv:conv-1' },
-      { id: 'sb-other', status: 'running', scope_key: 'conv:other' },
-      { id: 'sb-1', status: 'running', scope_key: 'conv:conv-1' },
+      { id: 'sb-old', status: 'expired', scope_key: 'conversation:conv-1' },
+      { id: 'sb-other', status: 'running', scope_key: 'conversation:other' },
+      { id: 'sb-1', status: 'running', scope_key: 'conversation:conv-1' },
     ]);
 
     const sandbox = await conversationSandbox('conv-1');
@@ -85,7 +102,9 @@ describe('sandboxApi', () => {
   });
 
   it('没有运行中的沙箱时返回 null,不猜', async () => {
-    mockFetch(200, [{ id: 'sb-old', status: 'expired', scope_key: 'conv:conv-1' }]);
+    mockFetch(200, [
+      { id: 'sb-old', status: 'expired', scope_key: 'conversation:conv-1' },
+    ]);
 
     expect(await conversationSandbox('conv-1')).toBeNull();
   });

@@ -350,7 +350,7 @@ apps/web ──SSE/HTTP──▶ api-gateway(:8007) ──▶ agent-orchestrator
      → 参数校验（common.tools.validate_arguments）
   7. 落 running 预留行（status/lease_until/arguments_sha256），唯一约束在此兜
      并发：插入撞键就回滚，按第 5 步同一套分派重来
-  8. 解析执行器：sandbox → workspace POST /v1/sandboxes:ensure {scope_key="conv:<id>"} → POST /{sandbox}/exec (argv python3 -c <helper>, stdin=JSON)
+  8. 解析执行器：sandbox → workspace POST /v1/sandboxes:ensure {scope_key="conversation:<id>"} → POST /{sandbox}/exec (argv python3 -c <helper>, stdin=JSON)
      执行期间按 cancel_poll_seconds 轮询 cancel_requested，看到标记就放弃等待
   9. 规范化结果信封（截断元数据/耗时/路径），更新同一行：
      status=succeeded/failed/cancelled + 审计列 + result_json
@@ -415,7 +415,7 @@ class ToolExecuteRequest:
     run_id: str | None = None
     conversation_id: str | None = None
     workspace_id: str | None = None
-    sandbox_scope: str | None = None   # 缺省="conv:<conversation_id>" 或 "run:<run_id>"
+    sandbox_scope: str | None = None   # 缺省="conversation:<conversation_id>" 或 "run:<run_id>"
     timeout_seconds: float | None = None
     approved: bool = False             # 仅 destructive/write 需要；由 orchestrator 审批闸写入
 
@@ -852,7 +852,7 @@ tool-service 自身**无状态**，不缓存 sandbox id：每次工具调用先 
 ```text
 tool-service workspace-service
 │ POST /v1/sandboxes:ensure │
-│ {scope_key:"conv:42", kind:"microsandbox", │ 按 (account_id, scope_key) 查
+│ {scope_key:"conversation:42", kind:"microsandbox", │ 按 (account_id, scope_key) 查
 │ ttl_seconds:1800, cpus:1, memory_mb:1024} │ 无则 create（并发靠唯一约束）
 │◀──────────── {"sandbox":{...},"created":false}│
 │ POST /v1/sandboxes/{id}/exec │
@@ -867,8 +867,10 @@ tool-service workspace-service
 1. **helper 脚本是常量源码，不含任何模型数据**：模型参数只经 `stdin` 传入，避免 argv 注入与命令长度限制；沙箱 provider 的 `exec` 本就 **argv 不经 shell**（`workspace/services/sandbox_provider.py` 协议注释）。
 2. **同一套 helper 也用于 host 模式测试**：`FsBackend` 抽象（`SandboxFs` / `HostJail`），参数化测试保证两条路径错误码与截断语义一致。
 3. 错误映射：`exit_code != 0` 时解析 stdout 的 `{"ok":false,"error":{...}}`；解析失败 → `tool.io_error`（附 `exit_code`，不回传 stderr 原文，防泄漏宿主路径）。沙箱 provider 的 `sandbox.exec_timeout` → `tool.timeout`；`sandbox.unreachable`/`sandbox.upstream_error` → `tool.upstream_unavailable`（503）。
-4. **scope_key 规则**：优先 `conv:<conversation_id>`（对话级复用，符合 architecture §8.2 的「按对话级复用」）；无 conversation 时 `run:<run_id>`；都没有 → 拒绝 `tool.invalid_args`（不允许匿名共享沙箱）。
+4. **scope_key 规则**：优先 `conversation:<conversation_id>`（对话级复用，符合 architecture §8.2 的「按对话级复用」）；无 conversation 时 `run:<run_id>`；都没有 → 拒绝 `tool.invalid_args`（不允许匿名共享沙箱）。
 5. 沙箱内工作区固定 `/workspace`；**不允许**工具参数指定沙箱外路径（jail 在 helper 内二次校验，双保险）。
+
+> **跨服务契约（2026-11-18 修正）**：这串字符是「服务端写、前端按它查」的同一条键——`services/tool-service/tool_service/services/sandbox.py` 的 `SCOPE_CONVERSATION_PREFIX`、`services/agent-orchestrator/agent_orchestrator/context/sandbox_files.py` 的同名常量与 `apps/web/src/lib/sandbox-api.ts` 的 `conversationScopeKey()` 必须逐字一致。2026-10-25 起前端写的是 `conv:`、落库却是 `conversation:`，会话页「文件 / 终端」因此一直显示「没有运行中的沙箱」；11-18 已统一成 `conversation:` 并加回归测试。
 
 ### 8.2 HTTP 执行器
 
@@ -1171,13 +1173,13 @@ CREATE INDEX ix_file_reads_run ON file_reads (account_id, run_id, path);
 
 **为什么必须加**：工具执行要求「同一对话/同一 run 的文件系统连续」，而工具服务无状态、多副本；必须让 workspace-service 提供「按 scope 幂等 get-or-create」。
 
-| 变更 | 内容                                                                                                                                                                                                                                          |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ORM  | `SandboxInstance` 加 `scope_key: Mapped[str \| None] = mapped_column(String(96), nullable=True)` + 唯一约束 `(account_id, scope_key)`（PG 部分唯一索引；SQLite 用 `UniqueConstraint`）                                                        |
-| 业务 | `ensure_sandbox(session, account_id, *, scope_key, spec)`：查 `(account_id, scope_key)` → 命中且 running 返回；命中但 stopped/expired → 重建并更新行；未命中 → 走现有 create 逻辑；`IntegrityError` 时回滚重查（并发创建兜底）                |
-| API  | `POST /v1/sandboxes:ensure`（201/200）body `{scope_key, kind?, image?, cpus?, memory_mb?, network?, ttl_seconds?}` → `{sandbox: SandboxInfo, created: bool}`；`scope_key` 格式约定 `conv:<id>` / `run:<id>`（长度 ≤96，字符集 `[a-z:_0-9-]`） |
-| 迁移 | 新增一个 alembic 版本（`services/workspace-service/migrations/versions/*_sandbox_scope_key.py`）；`alembic check` 必须通过                                                                                                                    |
-| 兼容 | 现有 `POST /v1/sandboxes` 不变（`scope_key` 可空）；orchestrator 现有沙箱客户端不受影响                                                                                                                                                       |
+| 变更 | 内容                                                                                                                                                                                                                                                  |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ORM  | `SandboxInstance` 加 `scope_key: Mapped[str \| None] = mapped_column(String(96), nullable=True)` + 唯一约束 `(account_id, scope_key)`（PG 部分唯一索引；SQLite 用 `UniqueConstraint`）                                                                |
+| 业务 | `ensure_sandbox(session, account_id, *, scope_key, spec)`：查 `(account_id, scope_key)` → 命中且 running 返回；命中但 stopped/expired → 重建并更新行；未命中 → 走现有 create 逻辑；`IntegrityError` 时回滚重查（并发创建兜底）                        |
+| API  | `POST /v1/sandboxes:ensure`（201/200）body `{scope_key, kind?, image?, cpus?, memory_mb?, network?, ttl_seconds?}` → `{sandbox: SandboxInfo, created: bool}`；`scope_key` 格式约定 `conversation:<id>` / `run:<id>`（长度 ≤96，字符集 `[a-z:_0-9-]`） |
+| 迁移 | 新增一个 alembic 版本（`services/workspace-service/migrations/versions/*_sandbox_scope_key.py`）；`alembic check` 必须通过                                                                                                                            |
+| 兼容 | 现有 `POST /v1/sandboxes` 不变（`scope_key` 可空）；orchestrator 现有沙箱客户端不受影响                                                                                                                                                               |
 
 ### 11.3 不新增的表
 
