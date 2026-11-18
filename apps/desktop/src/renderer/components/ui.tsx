@@ -5,22 +5,21 @@
  * 按钮 h28~36、面板 radius 8~12、状态色只在小面积(状态点/标签)出现。
  * 颜色一律走 --ha-* 映射出的 Tailwind 颜色类(bg-ha-panel 等),不写内联色值。
  *
- * 状态基元(StatusDot/StatusText/ToneBadge/StatusPill/EmptyPanel)与 cn
- * 已收敛到 @beauty/console-ui:这里 re-export 保持应用内 '@/components/ui'
- * 引用面不变,只保留桌面端特有的面板/按钮/图标底座。
+ * 状态基元(StatusDot/StatusText/ToneBadge/StatusPill)直接复用 @beauty/design;
+ * 这里 re-export 保持应用内 '@/components/ui' 引用面不变,只保留桌面端
+ * 特有的面板/按钮/图标底座。桌面端没有控制台空态的需求,EmptyPanel 不再转发。
  */
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
 export {
-  EmptyPanel,
+  StatusBadge as ToneBadge,
   StatusDot,
   StatusPill,
   StatusText,
-  ToneBadge,
-} from '@beauty/console-ui';
-export type { Tone } from '@beauty/console-ui';
+} from '@beauty/design';
+export type { Tone } from '@beauty/design';
 
 /* ── 面板 ─────────────────────────────────────────────────────────────── */
 

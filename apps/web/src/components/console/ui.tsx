@@ -5,15 +5,16 @@
  * - 尺寸/圆角/边框/字重都对齐 ardot 设计稿(按钮 h28~36、面板 radius 8~12);
  * - 状态色只来自 @/lib/presentation 的 tone,页面不写死色值;
  * - 与 @beauty/design 的分工(R-26):Button/Dialog/Table/DropdownMenu 与
- *   状态基元(Status*)、Avatar、Kbd 一律用组件库/console-ui,本文件只做
- *   「控制台 prop 名 → 组件库 prop」的薄适配,并保留面板、页头、页签这些
- *   控制台外壳专属排版;不再自建按钮/对话框/状态色的视觉与行为。
+ *   状态基元(Status*)、Avatar、Kbd 一律用组件库,本文件只做
+ *   「控制台 prop 名 → 组件库 prop」的薄适配,并保留面板、页头、页签、空态
+ *   这些控制台外壳专属排版;不再自建按钮/对话框/状态色的视觉与行为。
  */
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 
 import { Button, StatusBadge, StatusPill } from '@beauty/design';
-import { EmptyPanel, StatusDot } from '@beauty/console-ui';
+
+import { EmptyPanel } from '@/components/console/empty-panel';
 
 import type {
   ConsoleButtonSize,
@@ -23,9 +24,9 @@ import { RUN_STATUS_LABELS, runStatusTone } from '@/lib/presentation';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
 
-/** 状态基元与空态:实现分别在 @beauty/design / @beauty/console-ui,这里沿用旧导出名 */
-export { EmptyPanel, StatusDot };
-export { Avatar, Kbd } from '@beauty/design';
+/** 状态基元与空态:前者来自 @beauty/design,EmptyPanel 是控制台自有排版(见 empty-panel.tsx) */
+export { EmptyPanel };
+export { Avatar, Kbd, StatusDot } from '@beauty/design';
 
 /* ── 面板 ─────────────────────────────────────────────────────────────── */
 

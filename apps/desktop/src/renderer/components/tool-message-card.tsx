@@ -10,8 +10,8 @@ import { useState } from 'react';
 
 import type { ChatMessage } from '@shared/contract';
 
-import type { Tone } from '@beauty/console-ui';
-import { StatusDot, StatusText } from '@beauty/console-ui';
+import type { Tone } from '@beauty/design';
+import { StatusDot, StatusText } from '@beauty/design';
 
 import { cn } from '@/lib/utils';
 

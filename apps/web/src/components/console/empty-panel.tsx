@@ -1,23 +1,13 @@
 /**
- * 状态基元:状态点、状态文字、语义标签、状态胶囊、空态。
+ * 控制台空态:图标 + 标题 + 说明 + 动作。
  *
- * StatusDot / StatusText / ToneBadge / StatusPill 的实现已收敛到
- * @beauty/design 的 Status 组件族(普通 CSS + bd-tone-* 语义类),
- * 这里按旧名称再导出,调用方(web / desktop)的 import 与 props 不变;
- * EmptyPanel 是控制台面板排版,组件库的 Empty 是通用空态,故留在本包。
+ * 排版是控制台面板语言(--ha-* 令牌 + 虚线边框),组件库的 Empty 是通用空态,
+ * 所以这份留在 web 自己维护;其它应用需要同样的观感时按各自令牌实现。
  */
 import type { ReactNode } from 'react';
 
-import { cn } from './cn.js';
+import { cn } from '@/lib/utils';
 
-export {
-  StatusBadge as ToneBadge,
-  StatusDot,
-  StatusPill,
-  StatusText,
-} from '@beauty/design';
-
-/** 空态:图标 + 标题 + 说明 + 动作。 */
 export function EmptyPanel({
   icon,
   title,

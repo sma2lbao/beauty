@@ -43,9 +43,6 @@
   ],
   "references": [
     {
-      "path": "../../packages/console-ui"
-    },
-    {
       "path": "../../packages/design"
     }
   ]

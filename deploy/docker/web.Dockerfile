@@ -38,7 +38,7 @@ ENV VITE_AUTH_MODE=${VITE_AUTH_MODE} \
 WORKDIR /app
 
 # npm workspaces 的 npm ci 需要全部 workspace 的 package.json(根 package-lock.json 已锁定),
-# 这里复制整个 apps/packages/tools,同时拿到 @beauty/design、@beauty/console-ui 源码
+# 这里复制整个 apps/packages/tools,同时拿到 @beauty/design 源码
 # (仓库内走 @beauty/source 条件直接消费 src/,无需先 build 组件库)。
 COPY package.json package-lock.json ./
 COPY apps ./apps
@@ -60,7 +60,7 @@ RUN find /app/apps /app/packages -name '.env' -delete \
 
 RUN npm ci --no-audit --no-fund
 
-# 走 nx(与本地/CI 同一条构建链):apps/web 的 build 依赖 @beauty/design 与 @beauty/console-ui 的
+# 走 nx(与本地/CI 同一条构建链):apps/web 的 build 依赖 @beauty/design 的
 # dist 类型声明(tsconfig references),单独 npm run build 会报 TS6305;nx.json 的
 # targetDefaults.build.dependsOn=["^build"] 保证先构建上游库。产物 apps/web/dist。
 ENV NX_DAEMON=false

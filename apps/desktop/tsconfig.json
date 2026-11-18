@@ -24,9 +24,6 @@
   "references": [
     {
       "path": "../../packages/design"
-    },
-    {
-      "path": "../../packages/console-ui"
     }
   ]
 }

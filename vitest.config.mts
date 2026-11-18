@@ -25,12 +25,6 @@ import { defineConfig } from 'vitest/config';
 export const thresholds = {
   '@beauty/web': { lines: 84, functions: 78, branches: 74, statements: 82 },
   '@beauty/design': { lines: 91, functions: 98, branches: 86, statements: 88 },
-  '@beauty/console-ui': {
-    lines: 85,
-    functions: 66,
-    branches: 75,
-    statements: 84,
-  },
   '@beauty/site': { lines: 97, functions: 95, branches: 96, statements: 97 },
   '@beauty/blog': { lines: 85, functions: 85, branches: 75, statements: 85 },
   '@beauty/desktop (renderer)': {
