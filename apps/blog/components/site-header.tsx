@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { BrandTile } from '@/components/brand';
 import { blogConfig } from '@/blog.config';
 
 export function SiteHeader() {
@@ -7,12 +8,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-ha-border/80 bg-ha-bg/85 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-6 px-5 sm:px-8">
         <Link href="/" className="group flex items-center gap-2.5">
-          <span
-            aria-hidden
-            className="grid size-7 place-items-center rounded-md bg-ha-accent font-serif text-[15px] leading-none text-white shadow-[0_0_24px_rgba(94,106,210,0.35)]"
-          >
-            月
-          </span>
+          <BrandTile size={28} />
           <span className="font-serif text-[17px] tracking-[-0.01em] text-ha-text">
             学习笔记
           </span>
