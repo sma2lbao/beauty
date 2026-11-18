@@ -15,7 +15,14 @@ type LinkPhase = 'idle' | 'connected' | 'reconnecting' | 'closed';
  *
  * 状态按 runId 绑定:切换 run 时旧连接的事件不会串到新 run。
  */
-export function useRunEvents(runId: string | null) {
+/**
+ * `options.includeSteps` 打开后服务端连 run.step.v1 一起推(会话工作台用:
+ * 步骤与清单随事件即时渲染,不再轮询事件投影读模型);默认 false。
+ */
+export function useRunEvents(
+  runId: string | null,
+  options: { includeSteps?: boolean } = {},
+) {
   const [feed, setFeed] = useState<{
     runId: string | null;
     events: RunEvent[];
@@ -56,6 +63,7 @@ export function useRunEvents(runId: string | null) {
         await streamRunEvents(runId as string, {
           signal: controller.signal,
           lastEventId,
+          includeSteps: options.includeSteps,
           onOpen: () => {
             attempt = 0;
             setLink({ runId, phase: 'connected' });
@@ -90,12 +98,14 @@ export function useRunEvents(runId: string | null) {
         clearTimeout(retryTimer);
       }
     };
-  }, [runId]);
+  }, [runId, options.includeSteps]);
 
   const events = feed.runId === runId ? feed.events : [];
   return {
     events,
     connected: link.runId === runId && link.phase === 'connected',
     reconnecting: link.runId === runId && link.phase === 'reconnecting',
+    /** 服务端发完 stream.end 正常收尾(不是断线):调用方据此刻收尾刷新一次。 */
+    ended: link.runId === runId && link.phase === 'closed',
   };
 }

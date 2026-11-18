@@ -62,13 +62,25 @@ async def event_stream(
     account_id: str,
     run_id: str,
     after: int,
+    *,
+    include_steps: bool = False,
 ) -> AsyncIterator[str]:
-    """先重放 after 之后的事件,再轮询增量;run 终态后发 stream.end 收尾。"""
+    """先重放 after 之后的事件,再轮询增量;run 终态后发 stream.end 收尾。
+
+    `include_steps=True` 时连 run.step.v1 一起推(会话工作台据此渲染步骤面板,
+    不再轮询 GET /runs/{id}/steps);默认仍滤掉,审计视图不被节点噪声淹没。
+    """
     last_seq = after
     idle_polls = 0
     while True:
         async with session_scope(factory) as session:
-            events = await list_events(session, account_id, run_id, after=last_seq)
+            events = await list_events(
+                session,
+                account_id,
+                run_id,
+                after=last_seq,
+                include_steps=include_steps,
+            )
             run = await require_run(session, account_id, run_id)
         for event in events:
             last_seq = event.seq

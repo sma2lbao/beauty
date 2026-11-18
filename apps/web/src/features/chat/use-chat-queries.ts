@@ -15,10 +15,14 @@ import {
   RUN_STATUS_LABELS,
   eventLine,
   isRunTerminal,
+  lastPlanEventSeq,
+  lastStatusEventSeq,
   liveRunText,
   pendingWritesFrom,
   questionStateFrom,
   runStatusTone,
+  stepsFrom,
+  todosFrom,
   toolCallsFrom,
 } from '@/lib/presentation';
 import { queryKeys } from '@/lib/query-keys';
@@ -118,53 +122,71 @@ export function useChatQueries(activeConversationId: string | null) {
   const activeRunId =
     manualRunId ?? conversationQuery.data?.active_run_id ?? null;
 
+  // 事件流订阅:会话工作台把步骤事件也订上(include_steps),步骤/清单随之即时到达。
+  const { events, connected, reconnecting, ended } = useRunEvents(activeRunId, {
+    includeSteps: true,
+  });
+  // 事件即投影:步骤与清单本来就是 run 事件的读模型,连上 SSE 后不必再拉端点。
+  const eventSteps = stepsFrom(events);
+  const eventTodos = todosFrom(events);
+  const toolCalls = toolCallsFrom(events);
+
   const runQuery = useQuery({
     queryKey: queryKeys.run(activeRunId as string),
     queryFn: () => runsApi.get(activeRunId as string),
     enabled: Boolean(activeRunId),
+    // 状态变化都有事件:SSE 在管时靠「状态类事件 → 失效」驱动,只有没连上才退回
+    // 2s 轮询兜底。
     refetchInterval: (query) => {
+      if (connected) return false;
       const data = query.state.data as Run | undefined;
       return data && isRunTerminal(data.status) ? false : 2000;
     },
   });
-  const { events, connected, reconnecting } = useRunEvents(activeRunId);
-  const toolCalls = toolCallsFrom(events);
+
+  // 计划正文在进入 awaiting_approval 时才落库(首帧是空串);它只会因规划完成/
+  // 编辑/重规划而变,都有事件,所以只取一次 + 事件失效,不再 1.5s 轮询。
   const planQuery = useQuery({
     queryKey: queryKeys.plan(activeRunId as string),
     queryFn: () => runsApi.getPlan(activeRunId as string),
     enabled: Boolean(activeRunId),
     retry: false,
-    // 计划正文是在 planning 结束、进入 awaiting_approval 时才落库的:
-    // 首帧在 planning 阶段取到的是空串,若只取一次,审批卡片就只剩外壳。
-    // 随 run 轮询(终态即停),状态一翻就能拿到真正的计划。
-    refetchInterval: () =>
-      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
-        ? false
-        : 1500,
-  });
-  // 步骤投影不进事件流,单独按 run 拉;终态后不再变,停轮询。
-  const stepsQuery = useQuery({
-    queryKey: queryKeys.runSteps(activeRunId as string),
-    queryFn: () => runsApi.steps(activeRunId as string),
-    enabled: Boolean(activeRunId),
-    retry: false,
-    refetchInterval: () =>
-      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
-        ? false
-        : 1500,
   });
 
-  // 任务清单投影:与步骤同频轮询,终态后停;旧 run/没调用过 todo 工具时为空数组。
-  const todosQuery = useQuery({
-    queryKey: queryKeys.runTodos(activeRunId as string),
-    queryFn: () => runsApi.todos(activeRunId as string),
-    enabled: Boolean(activeRunId),
+  // 步骤/清单读模型只在「SSE 没连上」时兜底(首帧、断线重连中):断线必须回落,
+  // 否则网络抖动时界面就冻住了;连上后一个读模型请求都不发,终态也不再轮询。
+  const fallbackStepsQuery = useQuery({
+    queryKey: queryKeys.runSteps(activeRunId as string),
+    queryFn: () => runsApi.steps(activeRunId as string),
+    enabled: Boolean(activeRunId) && !connected,
     retry: false,
     refetchInterval: () =>
-      runQuery.data === undefined || isRunTerminal(runQuery.data.status)
-        ? false
-        : 1500,
+      !connected &&
+      (runQuery.data === undefined || !isRunTerminal(runQuery.data.status))
+        ? 1500
+        : false,
   });
+  const fallbackTodosQuery = useQuery({
+    queryKey: queryKeys.runTodos(activeRunId as string),
+    queryFn: () => runsApi.todos(activeRunId as string),
+    enabled: Boolean(activeRunId) && !connected,
+    retry: false,
+    refetchInterval: () =>
+      !connected &&
+      (runQuery.data === undefined || !isRunTerminal(runQuery.data.status))
+        ? 1500
+        : false,
+  });
+  // 事件里有投影就以事件为准;连上但投影为空(还没产生步骤/清单)时保留兜底快照
+  // ——步骤只增不减,旧快照是它的前缀。
+  const steps =
+    connected && eventSteps.length > 0
+      ? eventSteps
+      : (fallbackStepsQuery.data ?? eventSteps);
+  const todos =
+    connected && eventTodos.revision > 0
+      ? eventTodos.todos
+      : (fallbackTodosQuery.data?.todos ?? eventTodos.todos);
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
 
@@ -257,18 +279,33 @@ export function useChatQueries(activeConversationId: string | null) {
     selectWorkspace(conversationWorkspaceId, { keepConversation: true });
   }, [conversationWorkspaceId, activeWorkspaceId, selectWorkspace, workspaces]);
 
-  // run 状态一变(尤其 planning→awaiting_approval)就重取计划:
-  // 计划正文与「等待审批」是同一事务写入的,状态翻了而缓存里还是规划期的空串,
-  // 审批卡片就会只剩外壳(轮询兜底之外再补一次即时失效)。
-  const prevPlanStatusRef = useRef<RunStatus | null>(null);
+  // 状态类事件一到就重取 run(替代 2s 轮询)。高频投影类事件(步骤/过程项/
+  // 工具调用/正文增量…)不算,否则事件流会变成请求流。
+  const statusSeq = lastStatusEventSeq(events);
   useEffect(() => {
-    const previous = prevPlanStatusRef.current;
-    prevPlanStatusRef.current = status;
-    if (!activeRunId || previous === null || previous === status) return;
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.plan(activeRunId),
-    });
-  }, [status, activeRunId, queryClient]);
+    if (!activeRunId || statusSeq === 0) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.run(activeRunId) });
+  }, [statusSeq, activeRunId, queryClient]);
+
+  // 计划与「等待审批」是同一事务写入的:事件到了就重取计划,审批卡片不会只剩外壳。
+  const planSeq = lastPlanEventSeq(events);
+  useEffect(() => {
+    if (!activeRunId || planSeq === 0) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.plan(activeRunId) });
+  }, [planSeq, activeRunId, queryClient]);
+
+  // stream.end:服务端发完最后一条事件就收尾了,这里补一次刷新(状态终值、
+  // 落库的 assistant 消息、会话标题),不依赖下一条事件来触发。
+  useEffect(() => {
+    if (!activeRunId || !ended) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.run(activeRunId) });
+    if (activeConversationId) {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.conversationMessages(activeConversationId),
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    }
+  }, [ended, activeRunId, activeConversationId, queryClient]);
 
   // run 进终态时补一次失效:落库的 assistant 消息/会话标题要刷新出来
   const prevStatusRef = useRef<RunStatus | null>(null);
@@ -334,8 +371,8 @@ export function useChatQueries(activeConversationId: string | null) {
     connected,
     reconnecting,
     toolCalls,
-    steps: stepsQuery.data ?? [],
-    todos: todosQuery.data?.todos ?? [],
+    steps,
+    todos,
     subagents: subagentsQuery.data ?? [],
     plan: planQuery.data,
     liveRun,

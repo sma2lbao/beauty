@@ -9967,7 +9967,7 @@
     },
     "/api/v1/runs/{run_id}/events/stream": {
       "get": {
-        "description": "SSE 事件流:浏览器断线重连自动带 Last-Event-ID,从 seq 游标续传。",
+        "description": "SSE 事件流:浏览器断线重连自动带 Last-Event-ID,从 seq 游标续传。\n\n`include_steps=1` 连步骤事件(run.step.v1)一起推:会话工作台订阅它来渲染\n步骤与清单,不再按 1.5s 轮询 /steps、/todos 这些事件投影读模型。",
         "operationId": "stream_run_events_api_v1_runs__run_id__events_stream_get",
         "parameters": [
           {
@@ -9977,6 +9977,16 @@
             "schema": {
               "title": "Run Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_steps",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Steps",
+              "type": "boolean"
             }
           },
           {

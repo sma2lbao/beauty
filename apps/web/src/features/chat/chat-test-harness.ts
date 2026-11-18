@@ -116,6 +116,12 @@ export function setRunEvents(events: RunEvent[]): void {
   currentEvents = events;
 }
 
+/** 模拟 SSE 未连上(首帧/断线):数据层据此回落到读模型端点轮询。 */
+let streamConnected = true;
+export function setRunStreamConnected(value: boolean): void {
+  streamConnected = value;
+}
+
 /** 把当前地址渲染出来,供「切工作区后 URL 是否保留 new=1」这类断言使用。 */
 export function LocationProbe() {
   const location = useLocation();
@@ -158,6 +164,7 @@ export function typeAndSend(text: string): void {
 export async function setupChatTest(): Promise<void> {
   vi.clearAllMocks();
   setRunEvents([]);
+  setRunStreamConnected(true);
   const { conversationsApi, streamMessage } =
     await import('@/lib/conversations-api');
   const { mcpApi } = await import('@/lib/mcp-api');
@@ -327,6 +334,10 @@ export async function runsModuleMock() {
 
 export function useRunEventsModuleMock() {
   return {
-    useRunEvents: () => ({ events: getRunEvents(), connected: true }),
+    useRunEvents: () => ({
+      events: getRunEvents(),
+      connected: streamConnected,
+      ended: false,
+    }),
   };
 }

@@ -291,15 +291,27 @@ async def stream_run_events(
     request: Request,
     account_id: AccountId,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    include_steps: bool = False,
 ) -> StreamingResponse:
-    """SSE 事件流:浏览器断线重连自动带 Last-Event-ID,从 seq 游标续传。"""
+    """SSE 事件流:浏览器断线重连自动带 Last-Event-ID,从 seq 游标续传。
+
+    `include_steps=1` 连步骤事件(run.step.v1)一起推:会话工作台订阅它来渲染
+    步骤与清单,不再按 1.5s 轮询 /steps、/todos 这些事件投影读模型。
+    """
     container = get_container(request)
     assert container.session_factory is not None
     settings: Settings = container.settings
     after = parse_last_event_id(last_event_id)
     await ensure_stream_target(container.session_factory, account_id, run_id)
     return StreamingResponse(
-        _event_stream(container.session_factory, settings, account_id, run_id, after),
+        _event_stream(
+            container.session_factory,
+            settings,
+            account_id,
+            run_id,
+            after,
+            include_steps=include_steps,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

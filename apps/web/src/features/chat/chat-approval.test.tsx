@@ -157,6 +157,12 @@ describe('ChatPage 消息、审批与交付物', () => {
       status: 'awaiting_approval',
       plan_markdown: '# 重取回来的计划',
     });
+    // 计划正文由 run.planned.v1 事件驱动失效(不再按状态轮询/失效),
+    // 所以这里同时投一条规划完成事件,和真实 SSE 到达的顺序一致。
+    setRunEvents([event(1, 'run.planned.v1', { attempt: 1 })]);
+    vi.mocked(runsApi.get).mockResolvedValue(
+      makeRun({ status: 'awaiting_approval' }),
+    );
     await act(async () => {
       queryClient.setQueryData(
         queryKeys.run('run-1'),

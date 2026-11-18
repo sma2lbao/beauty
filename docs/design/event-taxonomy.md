@@ -194,3 +194,39 @@ AG-UI 适配层留到后续(见 §9)。
 | UI 能按 item 展开/折叠  | `run-item-timeline.tsx` 每项折叠结果、展开结构化 data;run 详情新增「运行项」   |
 | plan 修改落新 item 版本 | `item_id="<run>:plan:<version>"` + `data.version/supersedes`;编辑产生新版本    |
 | 事件可回放重建完整过程  | `run.item.v1` append-only、进 `/events` 与 SSE;`/items` 投影可还原每项生命周期 |
+
+## 11. 会话读模型来源与轮询口径(2026-11-18)
+
+会话工作台(`apps/web/src/features/chat/use-chat-queries.ts`)原先对同一个 run 同时开着
+四个 1.5–2s 轮询(`/runs/{id}` 2s、`/plan`、`/steps`、`/todos` 各 1.5s),叠加 SSE 与侧栏 5s
+列表,一个 run 运行中约 2.7 req/s。这一节记录收敛后的口径。
+
+### 11.1 服务端:步骤可选进流
+
+- `GET /v1/runs/{id}/events/stream?include_steps=1` 让 `run.step.v1` 也进 SSE
+  (默认 `false`,审计视图与既有 4 个「step 不进事件回放」断言不变);
+- `sse_poll_interval_seconds` 默认 0.5 → 1.0:前端已事件驱动,该值只决定事件到浏览器的延迟,
+  0.5 等于每秒两次打库;
+- `list_events` 的过滤逻辑未动:默认仍 `event.type != "run.step.v1"`。
+
+### 11.2 前端:投影优先、断线回落
+
+| 数据         | 连上(事件驱动)                                        | 未连上(回落)            |
+| ------------ | ----------------------------------------------------- | ----------------------- |
+| 步骤 `steps` | `stepsFrom(events)`(投影,含 `cancelled`)              | `GET /steps` 1.5s       |
+| 清单 `todos` | `todosFrom(events)`(取最后一条全量 payload)           | `GET /todos` 1.5s       |
+| 计划 `plan`  | 只在 `run.planned.v1`/`run.plan.edited.v1` 时失效重取 | 打开时取一次 + 事件失效 |
+| run 状态     | `lastStatusEventSeq` 变化即失效重取(过滤噪声事件)     | `GET /runs/{id}` 2s     |
+
+- 噪声事件(`run.step.v1`/`run.item.v1`/`run.tool.called.v1`/`token.delta.v1`/usage、score、
+  todo、context、compaction、fallback 等)不触发 run 失效,避免每帧都重拉;
+- SSE 正常收尾(`ended`)时统一刷新一次 run、消息列表与会话列表;
+- **断线必须回落轮询**:`connected === false` 才启用读模型查询,否则断网后界面就是死的。
+
+结果是运行中页面只剩侧栏列表 5s 常驻(约 0.2 req/s),SSE 1s 一次服务端查库。
+
+### 11.3 残余
+
+- 抽屉(`/runs` 详情,`use-run-detail.ts`)仍按 1.5–2s 轮询 6 个端点,本轮未动;
+- `/steps`、`/todos` 端点仍是「读整份事件表再投影」,run 越长越贵;
+- `subagents` 在 `awaiting_subagent` 时仍 1.5s 轮询(见 [subagents.md](./subagents.md) §6)。

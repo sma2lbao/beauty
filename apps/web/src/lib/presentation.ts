@@ -11,3 +11,4 @@ export * from './presentation/pending-writes';
 export * from './presentation/tools';
 export * from './presentation/diff';
 export * from './presentation/question';
+export * from './presentation/projections';

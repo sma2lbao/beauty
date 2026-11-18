@@ -117,7 +117,7 @@
 
 - `/healthz`、`/readyz` 的访问日志降为 `debug`（prod 默认 info，等于不打）；探针失败（5xx）仍升级为 `warning`。
 - SSE 长连接：只在**建立/关闭**打两行（`sse_opened`/`sse_closed`，带 `channel`、`duration_ms`、`frames`），心跳帧不打。
-- 轮询型接口（run 状态 2s、通知 5s）按请求照常记 `http_request`，但运营侧告警不基于此口径（避免被轮询放大）。
+- 轮询型接口（会话读模型兜底 1.5s、侧栏列表 5s）按请求照常记 `http_request`，但运营侧告警不基于此口径（避免被轮询放大）；会话工作台的 run 状态已改事件驱动（[design/event-taxonomy.md](./design/event-taxonomy.md) §11），常态只有 SSE 每 1s 一次的查库。
 - 高频 debug（缓存命中、工具轮次）默认关；本地排障用 `LOG_LEVEL=DEBUG`。
 - 量级预算：每请求 1 行 ≈ 0.5–1 KB；SSE 每连接 2 行；单实例 10 rps 时 < 1 GB/月，可接受。
 

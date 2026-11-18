@@ -472,14 +472,25 @@ async def _fail_run(
 
 
 async def list_events(
-    session: AsyncSession, account_id: str, run_id: str, after: int = 0
+    session: AsyncSession,
+    account_id: str,
+    run_id: str,
+    after: int = 0,
+    *,
+    include_steps: bool = False,
 ) -> list[RunEvent]:
     """事件回放:按 seq 升序(§6.3,SSE 断线重放与审计共用);after 为续传游标。
 
-    run.step.v1 是步骤视图(S1)的底层记录,不进用户事件回放——步骤时间线
+    run.step.v1 是步骤视图(S1)的底层记录,默认不进用户事件回放——步骤时间线
     统一走 GET /runs/{id}/steps,避免事件流被每节点一条的噪声淹没。
+
+    `include_steps=True` 给会话工作台用:步骤要在「事件到达时」就出现,而前端
+    读模型的 1.5s 轮询属于重复请求(步骤本来就是事件投影)。S4 之后步骤按节点
+    边界落库,订阅方拿到的就是增量的、有序的步骤事件。
     """
     events = await RunEventRepository(session).list_for_run(
         account_id, run_id, after=after
     )
+    if include_steps:
+        return events
     return [event for event in events if event.type != steps.EVENT_TYPE]

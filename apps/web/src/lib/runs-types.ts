@@ -130,11 +130,13 @@ export type RunEvent = {
 };
 
 /**
- * 一个执行步骤(架构 §6.3):来自 `GET /runs/{id}/steps` 的内存投影。
+ * 一个执行步骤(架构 §6.3):`run.step.v1` 事件的内存投影。
  *
- * 后端把每个 graph 节点的执行起止与结果固化成 `run.step.v1` 事件,但该事件
- * 不进用户事件流/SSE(避免噪声),所以步骤要按 run 单独拉取。字段比工具调用
- * 粗一级:node/phase/尝试次数/轮次/耗时,是排障时定位到「哪一段」的锚点。
+ * 后端把每个 graph 节点的执行起止与结果固化成 `run.step.v1` 事件(节点边界落库)。
+ * 默认它不进用户事件回放(避免审计流被节点噪声淹没),步骤时间线走
+ * `GET /runs/{id}/steps`;会话工作台订阅 SSE 时带 `include_steps=1`,
+ * 于是直接消费事件流里的同一条投影(`lib/presentation/projections.ts`)。
+ * 字段比工具调用粗一级:node/phase/尝试次数/轮次/耗时,是排障时定位到「哪一段」的锚点。
  */
 export type RunStep = {
   /** run 内事件序号,升序即步骤顺序。 */
@@ -151,8 +153,16 @@ export type RunStep = {
   duration_ms: number | null;
 };
 
-/** 步骤状态:运行中只在进程内的采集器里出现,落库后是终值。 */
-export type StepStatus = 'running' | 'completed' | 'failed' | 'blocked';
+/**
+ * 步骤状态:运行中只在进程内的采集器里出现,落库后是终值。
+ * `cancelled` 是 S3 之后的新终值:节点被取消打断时如实标记,不算失败。
+ */
+export type StepStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled';
 
 /**
  * 过程项分类(P1-D 事件分类学,契约见 docs/design/event-taxonomy.md §4):

@@ -74,6 +74,28 @@ def test_stream_replays_and_closes_on_terminal(client: TestClient) -> None:
     assert events[-1][2] == {"status": "completed"}
 
 
+def test_stream_include_steps_pushes_step_events(client: TestClient) -> None:
+    """会话工作台带 include_steps=1:步骤事件随流推送,前端不再轮询 /steps。"""
+    run_id = _completed_run(client)
+    with client.stream(
+        "GET",
+        f"/api/v1/runs/{run_id}/events/stream?include_steps=1",
+        headers=ACCOUNT,
+    ) as response:
+        assert response.status_code == 200
+        text = b"".join(response.iter_raw()).decode()
+    events = _parse_sse(text)
+    types = [e[1] for e in events]
+    assert "run.step.v1" in types
+    step = next(e for e in events if e[1] == "run.step.v1")
+    # SSE 的 data 是整条事件(与 GET /runs/{id}/events 同形),步骤字段在 payload 里
+    payload = (step[2] or {}).get("payload", {})
+    assert {"step_id", "node", "status"} <= set(payload)
+    # 默认(不带查参)仍然滤掉步骤事件:审计视图不被节点噪声淹没
+    default_types = [e[1] for e in _parse_sse(_read_stream(client, run_id))]
+    assert "run.step.v1" not in default_types
+
+
 def test_stream_resumes_from_last_event_id(client: TestClient) -> None:
     run_id = _completed_run(client)
     replay = _parse_sse(_read_stream(client, run_id))

@@ -231,7 +231,12 @@ export function mergeEvents(
   return [...current, incoming].sort((left, right) => left.seq - right.seq);
 }
 
-/** 订阅 run 的 SSE 事件流;`signal` 中断即断开连接。 */
+/**
+ * 订阅 run 的 SSE 事件流;`signal` 中断即断开连接。
+ *
+ * `includeSteps` 让服务端连同 `run.step.v1` 一起推(默认滤掉、走 /steps 读模型)。
+ * 会话工作台开着它,步骤与清单就能随事件到达即时渲染,不再按 1.5s 轮询投影端点。
+ */
 export async function streamRunEvents(
   runId: string,
   handlers: {
@@ -241,10 +246,13 @@ export async function streamRunEvents(
     onEnd?: () => void;
     /** 断线重连游标:上一次收到的最大 seq,作为 Last-Event-ID。 */
     lastEventId?: number | null;
+    /** 是否连同步骤事件(run.step.v1)一起订阅;默认 false,与审计视图一致。 */
+    includeSteps?: boolean;
     signal?: AbortSignal;
   },
 ): Promise<void> {
-  await connectSse(`${BASE}/api/v1/runs/${runId}/events/stream`, {
+  const query = handlers.includeSteps ? '?include_steps=1' : '';
+  await connectSse(`${BASE}/api/v1/runs/${runId}/events/stream${query}`, {
     lastEventId: handlers.lastEventId,
     signal: handlers.signal,
     onOpen: handlers.onOpen,

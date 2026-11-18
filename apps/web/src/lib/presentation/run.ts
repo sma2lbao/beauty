@@ -55,6 +55,7 @@ export const STEP_STATUS_LABELS: Record<string, string> = {
   completed: '完成',
   failed: '失败',
   blocked: '阻塞',
+  cancelled: '已取消',
 };
 
 /**
