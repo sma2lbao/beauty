@@ -256,3 +256,53 @@ rewind/fork 回退的是**图状态**，不是世界状态：检查点之后已�
 - 台账只覆盖图执行路径；对话直答、确认端点、MCP 直调三条非图路径的写不进台账（它们本来也没传稳定幂等键）。
 - rewind 之后用户改计划导致的新写无法预防——闸只能保证「用户知道自己在重放写过东西的 run」。
 - 前端只做「知会 + 拦截」：勾选不落库（审计以事件载荷里的 `side_effects` 为准），也没有补偿入口。
+
+## 11. 停服兜底（2026-11-18）
+
+### 11.1 现象与根因
+
+门禁跑全量时偶发卡在 `with TestClient(app)` 退场（`starlette/testclient.py` 的
+`wait_shutdown`），日志冻结、pytest 不超时；faulthandler 转储显示全进程只剩事件循环线程空闲在
+`select`、worker 线程阻塞在 `queue.get`，**没有任何 aiosqlite/DB 线程**——说明关闭在等一个永不
+完成的 `await`，不是慢 I/O。
+
+根因是 `AppContainer.stop()` 对每条资源都是**无超时**的 `await`：8 个后台任务逐个
+`cancel()` + `await task`，再逐个 `await closer()`，最后 `await self._stack.aclose()`。
+任何一个任务/资源如果不响应取消（或它的 `finally` 里又等了一件永不发生的事），stop 就会
+无限期挂住，进程与测试一起卡死。这类阻塞原本没有任何日志，排查只能靠转储线程栈。
+
+### 11.2 做法
+
+- 任务清单收敛为模块常量 `_STOP_TASKS`（worker / interrupt / run_timeout / run_recovery /
+  subagent_wait / memory_sweep / alert_sweep / notification_sweep），stop 循环 cancel 后交给
+  `_stop_task(name, task)`。
+- `_stop_task` 用 `asyncio.wait({task}, timeout=settings.stop_timeout_seconds)`：
+  **不用** `await task` / `asyncio.wait_for`——超时后不再等被取消方完成，对方吞掉
+  `CancelledError` 也不会把 stop 一起挂住；超时只记 `logger.warning("stop timed out",
+resource=..., timeout=...)`。任务本身异常记 `"stop task failed"`（关闭期不抛）。
+- 资源走 `_close_resource(name, closer)`：把 closer 包成独立 task（任务名
+  `stop-<resource>`），同款超时；超时记 `"close timed out"` 后 cancel 并放手，
+  异常记 `"close failed"`。`_stack.aclose()` 也按资源名 `resource stack` 走同一路径。
+- 顺序不变：仍严格逆序（任务 → closer 逆序 → AsyncExitStack），超时只是允许跳过。
+
+### 11.3 配置与诊断
+
+`core/config.py` 新增 `stop_timeout_seconds: float = 5.0`（env
+`AGENT_ORCHESTRATOR__STOP_TIMEOUT_SECONDS`）。正常关闭远快于此值（测试里 0.5s 超时的正常路径
+仍然秒关）；调大只在有「慢但会自己结束」的关闭动作时才有意义。
+
+日志里出现 `stop timed out` / `close timed out` 时，`resource` 字段就是卡住的那一条
+（任务属性名、`db engine`/`knowledge client`/`resource stack`），这是下次排查的入口。
+
+### 11.4 测试与残余
+
+`tests/test_container_stop_timeout.py`：① 挂住的后台任务（`asyncio.Event().wait()`）让
+`with TestClient(app)` 在 2s 内退出；② 挂住的 closer 不阻塞其余 closer（记录方仍被调到）；
+③ 无挂住的正常路径用 0.5s 超时仍然秒关（不误报）。
+
+- 残余：超时后放弃等待的任务在关闭窗口内可能仍持有连接、写库（DB 引擎随后 dispose），
+  这类「关闭期残余写入」没有强制隔离。
+- 兜底只解决「挂住」与「定位」，不解决「为什么会挂住」——真凶（例如某个客户端在
+  `aclose` 里等对端）需要按日志的 resource 名另查。
+- 其它服务（tool-service/api-gateway 等）的 lifespan 仍是无超时 await；本条的机制若要
+  复用，应上移到 `common` 再各服务接入（本期不动，避免跨服务改动面）。

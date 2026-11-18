@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from common.artifacts import ArtifactStore
@@ -93,6 +93,18 @@ from agent_orchestrator.services.tools import (
 from agent_orchestrator.services.workspace import Workspace
 
 logger = get_logger(__name__)
+
+# 关闭时要逆序取消的后台任务(stop() 按此顺序 cancel + 等退出)
+_STOP_TASKS = (
+    "worker_task",
+    "interrupt_task",
+    "run_timeout_task",
+    "run_recovery_task",
+    "subagent_wait_task",
+    "memory_sweep_task",
+    "alert_sweep_task",
+    "notification_sweep_task",
+)
 
 ToolkitFactory = Callable[[str], ToolkitPort]
 
@@ -350,50 +362,48 @@ class AppContainer(
         # MCP 出站校验配置是进程级全局:关停复位,避免同进程的下个容器继承
         reset_url_guard()
         hooks_service.reset_hooks()
-        if self.worker_task is not None:
-            self.worker_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.worker_task
-            self.worker_task = None
-        if self.interrupt_task is not None:
-            self.interrupt_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.interrupt_task
-            self.interrupt_task = None
-        if self.run_timeout_task is not None:
-            self.run_timeout_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.run_timeout_task
-            self.run_timeout_task = None
-        if self.run_recovery_task is not None:
-            self.run_recovery_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.run_recovery_task
-            self.run_recovery_task = None
-        if self.subagent_wait_task is not None:
-            self.subagent_wait_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.subagent_wait_task
-            self.subagent_wait_task = None
-        if self.memory_sweep_task is not None:
-            self.memory_sweep_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.memory_sweep_task
-            self.memory_sweep_task = None
-        if self.alert_sweep_task is not None:
-            self.alert_sweep_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.alert_sweep_task
-            self.alert_sweep_task = None
-        if self.notification_sweep_task is not None:
-            self.notification_sweep_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.notification_sweep_task
-            self.notification_sweep_task = None
+        for attr in _STOP_TASKS:
+            task = getattr(self, attr)
+            if task is None:
+                continue
+            task.cancel()
+            await self._stop_task(attr, task)
+            setattr(self, attr, None)
         for name, closer in reversed(self._closers):
-            try:
-                await closer()
-            except Exception as exc:  # noqa: BLE001 - 关闭失败不能拖垮其余资源
-                logger.warning("close failed", resource=name, error=str(exc))
+            await self._close_resource(name, closer)
         self._closers.clear()
-        await self._stack.aclose()
+        await self._close_resource("resource stack", self._stack.aclose)
+
+    async def _stop_task(self, name: str, task: asyncio.Task[None]) -> None:
+        """等后台任务退出;超时只记警告并放手,关闭不因单个任务无限挂住。
+
+        用 asyncio.wait 而非 await/wait_for:超时后不再等被取消方完成,
+        对方吞掉 CancelledError 也不会把 stop() 一起挂住。
+        """
+        timeout = self.settings.stop_timeout_seconds
+        _, pending = await asyncio.wait({task}, timeout=timeout)
+        if pending:
+            logger.warning("stop timed out", resource=name, timeout=timeout)
+            return
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("stop task failed", resource=name, error=str(exc))
+
+    async def _close_resource(
+        self, name: str, closer: Callable[[], Awaitable[None]]
+    ) -> None:
+        """关闭单个资源(DB 引擎/knowledge 客户端/AsyncExitStack);共用关闭超时。"""
+        timeout = self.settings.stop_timeout_seconds
+        task = asyncio.create_task(closer(), name=f"stop-{name}")
+        _, pending = await asyncio.wait({task}, timeout=timeout)
+        if pending:
+            task.cancel()
+            logger.warning("close timed out", resource=name, timeout=timeout)
+            return
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("close failed", resource=name, error=str(exc))

@@ -102,6 +102,10 @@ class Settings(BaseAppSettings):
     # 的图 checkpoint 续跑。interval <= 0 关闭 sweeper(默认开启,依赖 jobs_enabled)。
     run_recovery_grace_seconds: int = 60
     run_recovery_sweep_interval_seconds: float = 30.0
+    # 关闭兜底(AppContainer.stop,见 docs/design/recovery.md §11):单个后台任务/
+    # 资源关闭最多等这么久。超时只记一条 warning 并放手——避免一个永不完成的
+    # await 让进程/测试退出无限挂住;正常关闭远快于此值。
+    stop_timeout_seconds: float = 5.0
     # Skill manifest 目录(M0 本地:仓库 skills/;为空时自动定位仓库根)
     skills_dir: str = ""
     # MCP Client(M1 本地版):允许账号配置第三方 MCP server
