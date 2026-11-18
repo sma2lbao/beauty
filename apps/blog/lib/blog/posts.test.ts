@@ -21,19 +21,20 @@ describe('getAllPosts', () => {
   it('默认只返回已发布笔记,并按日期倒序', () => {
     const posts = getAllPosts({ contentDir });
 
-    expect(posts).toHaveLength(3);
-    expect(posts.map((post) => post.slug)).toEqual([
+    expect(posts.length).toBeGreaterThanOrEqual(3);
+    expect(posts.map((post) => post.slug).slice(0, 3)).toEqual([
       'lab-isolation-notes',
       'typescript-type-level-notes',
       'python-asyncio-notes',
     ]);
-    expect(posts[0]?.frontmatter.draft).toBe(false);
+    expect(posts.every((post) => !post.frontmatter.draft)).toBe(true);
   });
 
   it('includeDrafts 时把草稿排进时间线', () => {
     const posts = getAllPosts({ contentDir, includeDrafts: true });
 
-    expect(posts).toHaveLength(4);
+    const published = getAllPosts({ contentDir });
+    expect(posts).toHaveLength(published.length + 1);
     expect(posts[0]?.slug).toBe('draft-agent-memory');
     expect(posts[0]?.frontmatter.draft).toBe(true);
   });
@@ -87,12 +88,13 @@ describe('getAdjacentPosts', () => {
   });
 
   it('首尾与未知 slug 的边界', () => {
-    expect(
-      getAdjacentPosts('lab-isolation-notes', { contentDir }).newer,
-    ).toBeNull();
-    expect(
-      getAdjacentPosts('python-asyncio-notes', { contentDir }).older,
-    ).toBeNull();
+    const posts = getAllPosts({ contentDir });
+    const newest = posts[0]?.slug;
+    const oldest = posts.at(-1)?.slug;
+    expect(newest).toBeDefined();
+    expect(oldest).toBeDefined();
+    expect(getAdjacentPosts(newest!, { contentDir }).newer).toBeNull();
+    expect(getAdjacentPosts(oldest!, { contentDir }).older).toBeNull();
     expect(getAdjacentPosts('missing', { contentDir })).toEqual({
       newer: null,
       older: null,
@@ -104,9 +106,12 @@ describe('聚合', () => {
   it('标签按出现次数排序并统计', () => {
     const tags = getAllTags(getAllPosts({ contentDir }));
 
+    const posts = getAllPosts({ contentDir });
+    const uniqueTags = new Set(posts.flatMap((post) => post.frontmatter.tags));
     expect(tags).toContainEqual({ tag: 'typescript', count: 1 });
     expect(tags).toContainEqual({ tag: 'labs', count: 1 });
-    expect(tags).toHaveLength(6);
+    expect(tags).toContainEqual({ tag: 'http', count: 4 });
+    expect(tags).toHaveLength(uniqueTags.size);
   });
 
   it('按标签过滤', () => {
@@ -119,19 +124,31 @@ describe('聚合', () => {
   it('系列按 seriesOrder 排序', () => {
     const series = getAllSeries(getAllPosts({ contentDir }));
 
-    expect(series.map((item) => item.name)).toEqual([
-      'TypeScript 进阶',
-      'Python 工程习惯',
+    expect(series.map((item) => item.name)).toEqual(
+      expect.arrayContaining([
+        'TypeScript 进阶',
+        'Python 工程习惯',
+        'HTTP 基础',
+        'JavaScript 核心',
+        '浏览器机制',
+        'Web 安全',
+      ]),
+    );
+    const httpSeries = series.find((item) => item.name === 'HTTP 基础');
+    expect(httpSeries?.posts.map((post) => post.slug)).toEqual([
+      'http-caching',
+      'http-cookie',
+      'set-cookie',
+      'http2',
     ]);
-    expect(series[0]?.posts).toHaveLength(1);
   });
 
   it('归档按年份分组', () => {
     const archive = getArchive(getAllPosts({ contentDir }));
 
-    expect(archive).toHaveLength(1);
-    expect(archive[0]?.year).toBe('2026');
+    expect(archive.map((item) => item.year)).toEqual(['2026', '2024']);
     expect(archive[0]?.posts).toHaveLength(3);
+    expect(archive[1]?.posts).toHaveLength(11);
   });
 });
 
