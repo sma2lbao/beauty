@@ -34,6 +34,11 @@ NETWORK_SWITCHES: tuple[str, ...] = (
     "langfuse_enabled",
 )
 
+#: 可选的网络出入口(URL 型);Settings 声明了才钉 None。
+#: Nx 会把服务目录的 `.env` 注入任务环境,本机联调时用户填的 REDIS_URL 等
+#: 会漏进测试进程——不钉住的话限流/缓存会真的连外部服务(零网络防线失守)。
+NETWORK_OUTLETS: tuple[str, ...] = ("redis_url",)
+
 
 def sqlite_url(tmp_path: Path, name: str = "test.db") -> str:
     """每用例独立 sqlite 文件库的 DSN(临时目录由 pytest tmp_path 提供)。"""
@@ -62,6 +67,9 @@ def build_settings(
     if zero_network:
         values.update(
             {switch: False for switch in NETWORK_SWITCHES if switch in fields}
+        )
+        values.update(
+            {outlet: None for outlet in NETWORK_OUTLETS if outlet in fields}
         )
     values.update(overrides)
     return settings_cls(**values)
