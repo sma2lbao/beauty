@@ -1,0 +1,150 @@
+---
+title: 'SQL 条件表达式'
+description: 'CASE、COALESCE、NULLIF 等条件表达式的写法与示例。'
+date: '2024-04-22'
+tags: ['sql', '条件表达式']
+series: 'SQL 基础'
+seriesOrder: 2
+---
+
+CASE、COALESCE、NULLIF 等条件表达式的语法与示例；不同数据库的实现细节可能略有差异。
+
+## CASE
+
+CASE 表达式是一种通用的条件表达式，类似于其它编程语言中的 if/else 语句。
+
+CASE 子句可以用于任何表达式可以存在的地方。condition 是一个返回 boolean 的表达式。如果条件的结果为真，那么 CASE 表达式的结果就是符合条件的 result，并且不再处理剩余的 CASE 表达式。如果条件的结果为假，那么以相同方式搜寻任何随后的 WHEN 子句。如果没有 WHEN condition 为真， 那么表达式的结果就是在 ELSE 子句里的 result。 如果省略了 ELSE 子句且没有匹配的条件，结果为 NULL 。
+
+### 语法
+
+```sql
+CASE WHEN condition THEN result
+     [WHEN ...]
+     [ELSE result]
+END
+```
+
+### 示例
+
+所有 result 表达式的数据的类型都必须可以转换成单一的输出类型。
+
+```sql
+SELECT * FROM test;
+
+ a
+---
+ 1
+ 2
+ 3
+
+
+SELECT a,
+       CASE WHEN a=1 THEN 'one'
+            WHEN a=2 THEN 'two'
+            ELSE 'other'
+       END
+    FROM test;
+
+ a | case
+---+-------
+ 1 | one
+ 2 | two
+ 3 | other
+```
+
+下面这个"简单的"CASE 表达式是上面的通用形式的一个特殊的变种：
+
+```sql
+CASE expression
+    WHEN value THEN result
+    [WHEN ...]
+    [ELSE result]
+END
+```
+
+先计算 expression 的值，然后与每个 WHEN 子句里声明的 value 表达式对比，直到找到一个相等的。 如果没有找到匹配的，则返回在 ELSE 子句里的 result (或者 NULL)。这个类似于 C 里的 switch 语句。
+
+上面的例子可以用简单 CASE 语法来写：
+
+```sql
+SELECT a,
+       CASE a WHEN 1 THEN 'one'
+              WHEN 2 THEN 'two'
+              ELSE 'other'
+       END
+    FROM test;
+
+ a | case
+---+-------
+ 1 | one
+ 2 | two
+ 3 | other
+```
+
+CASE 表达式并不计算任何对于判断结果并不需要的子表达式。比如， 下面是一个可以避免被零除的方法：
+
+```sql
+SELECT ... WHERE CASE WHEN x <> 0 THEN y/x > 1.5 ELSE false END;
+```
+
+---
+
+## COALESCE
+
+COALESCE 返回它的第一个非 NULL 的参数值。如果所有参数都是 null 那么返回 null。 它常用于在显示数据时用缺省值替换 NULL 。
+
+### 语法
+
+```sql
+COALESCE(value [, ...])
+```
+
+### 示例
+
+```sql
+SELECT COALESCE(description, short_description, '(none)') ...
+```
+
+如果 description 非空那么返回它，否则如果 short_description 非空则返回它， 否则返回(none)。
+
+和 CASE 表达式一样，COALESCE 只计算需要用来判断结果的参数； 也就是说，在第一个非空参数右边的参数不会被计算。 这个符合 SQL 标准的函数提供了与某些其它数据库系统中的 NVL 和 IFNULL 类似的功能。
+
+---
+
+## NULLIF
+
+### 语法
+
+```sql
+NULLIF(value1, value2)
+```
+
+### 示例
+
+当且仅当 value1 等于 value2 时， NULLIF 才返回 null 。否则它返回 value1。 这些可以用于执行上面给出的 COALESCE 例子的反例：
+
+```sql
+SELECT NULLIF(value, '(none)') ...
+```
+
+在这个例子中，如果 value 是(none)那么返回 null，否则返回 value。
+
+---
+
+## GREATEST 和 LEAST
+
+GREATEST 和 LEAST 函数从一个任意数字表达式的列表里选取最大或者最小的数值。 这些表达式必须都可以转换成一个普通的数据类型，它将会是结果类型。
+
+列表中的 NULL 值将被忽略。只有所有表达式的结果都是 NULL 的时候，结果才会是 NULL 。
+
+### 语法
+
+```sql
+GREATEST(value [, ...])
+```
+
+```sql
+LEAST(value [, ...])
+```
+
+> 请注意 GREATEST 和 LEAST 都不是 SQL 标准，但却是很常见的扩展。 某些其他的数据库在任意一个参数为 NULL 时返回 NULL，而不是所有参数都是 NULL 时。

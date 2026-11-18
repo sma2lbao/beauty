@@ -1,0 +1,100 @@
+---
+title: 'TypeScript 工具类型实现'
+description: '用条件类型实现 Exclude、Pick、Omit、Parameters、ReturnType 等内置工具类型。'
+date: '2024-02-01'
+tags: ['typescript', '工具类型']
+series: 'TypeScript 进阶'
+seriesOrder: 2
+---
+
+下面用条件类型重写常用的内置工具类型，便于理解它们的行为；实际项目应直接使用 TypeScript 内置版本。
+
+## 常用类型实现
+
+```ts
+/**
+ * 从 T 中剔除可以赋值给U的类型
+ */
+export type _Exclude<T, U> = T extends U ? never : T;
+
+/**
+ * 从 T 中提取可以赋值给U的类型
+ */
+export type _Extract<T, U> = T extends U ? T : never;
+
+/**
+ * 用于将 T 类型的所有属性设置为可选状态
+ */
+export type _Partial<T> = {
+  [P in keyof T]?: T[P];
+};
+
+/**
+ * 将 T 中所有属性都变为只读
+ */
+export type _Readonly<T> = {
+  readonly [P in keyof T]: T[P];
+};
+
+/**
+ * 用于将 T 类型的所有属性设置为必选状态
+ */
+export type _Required<T> = {
+  [P in keyof T]-?: T[P];
+};
+
+/**
+ * 从 T 类型中提取部分属性，作为新的返回类型。
+ */
+export type _Pick<T, K extends keyof T> = {
+  [P in K]: T[P];
+};
+
+/**
+ * 用于从 T 类型中，排除部分属性
+ *
+ * _Pick<T, _Exclude<keyof T, K>>
+ */
+export type _Omit<T, K extends keyof T> = {
+  [P in _Exclude<keyof T, K>]: T[P];
+};
+
+/**
+ * 接收两个泛型，K 必须可以是可以赋值给 string | number | symbol 的类型，通过 in 操作符对 K 进行遍历，每一个属性的类型都必须是 T 类型
+ */
+export type _Record<K extends string | number | symbol, T> = {
+  [P in K]: T;
+};
+
+/**
+ * 从 T 中剔除 null、undefined、never 类型，不会剔除 void、unknow 类型
+ */
+export type _NonNullable<T> = T extends null | undefined ? never : T;
+
+/**
+ * 获取 class 构造函数的返回类型
+ */
+export type _InstanceType<T extends new (...args: any) => any> = T extends new (
+  ...args: any
+) => infer R
+  ? R
+  : any;
+
+/**
+ * 获取函数的参数类型组成的 元组
+ */
+export type _Parameters<T extends (...args: any) => any> = T extends (
+  ...args: infer P
+) => any
+  ? P
+  : any;
+
+/**
+ * 获取函数的返回值类型
+ */
+export type _ReturnType<T extends (...args: any) => any> = T extends (
+  ...args: any
+) => infer R
+  ? R
+  : never;
+```

@@ -108,9 +108,14 @@ describe('聚合', () => {
 
     const posts = getAllPosts({ contentDir });
     const uniqueTags = new Set(posts.flatMap((post) => post.frontmatter.tags));
-    expect(tags).toContainEqual({ tag: 'typescript', count: 1 });
-    expect(tags).toContainEqual({ tag: 'labs', count: 1 });
-    expect(tags).toContainEqual({ tag: 'http', count: 4 });
+    const countTag = (tag: string) =>
+      posts.filter((post) => post.frontmatter.tags.includes(tag)).length;
+    expect(tags).toContainEqual({
+      tag: 'typescript',
+      count: countTag('typescript'),
+    });
+    expect(tags).toContainEqual({ tag: 'labs', count: countTag('labs') });
+    expect(tags).toContainEqual({ tag: 'http', count: countTag('http') });
     expect(tags).toHaveLength(uniqueTags.size);
   });
 
@@ -132,6 +137,7 @@ describe('聚合', () => {
         'JavaScript 核心',
         '浏览器机制',
         'Web 安全',
+        'SQL 基础',
       ]),
     );
     const httpSeries = series.find((item) => item.name === 'HTTP 基础');
@@ -146,9 +152,14 @@ describe('聚合', () => {
   it('归档按年份分组', () => {
     const archive = getArchive(getAllPosts({ contentDir }));
 
+    const posts = getAllPosts({ contentDir });
     expect(archive.map((item) => item.year)).toEqual(['2026', '2024']);
-    expect(archive[0]?.posts).toHaveLength(3);
-    expect(archive[1]?.posts).toHaveLength(11);
+    expect(archive[0]?.posts).toHaveLength(
+      posts.filter((post) => post.frontmatter.date.startsWith('2026')).length,
+    );
+    expect(archive[1]?.posts).toHaveLength(
+      posts.filter((post) => post.frontmatter.date.startsWith('2024')).length,
+    );
   });
 });
 
