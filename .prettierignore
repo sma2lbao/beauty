@@ -12,6 +12,8 @@ apps/blog/out
 apps/*/next-env.d.ts
 # Vitest 覆盖率报告等测试产物
 test-output
+# 一次性案例实验室:独立工具链,不参与主仓格式化
+/labs
 package-lock.json
 # pytest 缓存目录自带嵌套 .gitignore,prettier 不读取嵌套 ignore,需在此显式忽略
 .pytest_cache

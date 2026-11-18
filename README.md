@@ -45,7 +45,9 @@ beauty-moon/
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名
 │   ├── site/                   # Next.js 官网（静态导出）
+│   ├── blog/                   # Next.js 学习博客（MDX 内容、标签/系列/归档、RSS，静态导出）
 │   └── desktop/                # Electron 桌面应用：本地电脑模式（本机会话 / 文件 / 命令 / 本地 Agent）
+├── labs/                       # 一次性案例实验室（整体 gitignored；独立依赖/锁文件，不参与主仓构建）
 ├── packages/
 │   ├── common/                 # Python 共享库：统一错误模型 / 配置 / 日志 / JWT 鉴权基座
 │   ├── database/               # Python 共享库：Base/mixin、Repository、UoW、session

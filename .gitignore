@@ -16,6 +16,8 @@ apps/blog/out/
 # scripts/check-workspace.sh 的生成物检查把它们列入例外清单 —— 不要加入 ignore。
 # Rspress 文档站构建产物（packages/design/rspress.config.ts 的 outDir）
 doc_build
+# 一次性案例实验室（P2 围栏）:整体忽略,案例依赖/锁文件/产物不进入主仓
+/labs/
 
 # dependencies
 node_modules

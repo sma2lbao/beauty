@@ -1,2 +1,6 @@
 apps/site/.next
 apps/site/out
+apps/blog/.next
+apps/blog/out
+# 一次性案例实验室:不参与项目推断、缓存与依赖图
+labs

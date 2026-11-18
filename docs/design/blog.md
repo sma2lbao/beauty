@@ -1,6 +1,6 @@
 # 学习博客与案例实验室设计
 
-> 状态：已定稿（2026-11-18）；P0 已落地（`apps/blog` 骨架、列表/详情、标签/系列/归档、RSS/sitemap），P1–P3 待排期 · 范围：独立博客应用、一次性案例项目隔离；评论后置
+> 状态：已定稿（2026-11-18）；P0–P2 已落地（`apps/blog` 骨架与页面、`labs/` 围栏与 `check-labs.sh`），P3 待排期 · 范围：独立博客应用、一次性案例项目隔离；评论后置
 > 关联：[architecture.md](../architecture.md)、[hybrid-deployment.md](./hybrid-deployment.md)、[local-dev.md](../local-dev.md)、[observability.md](../observability.md)、[tool-service.md](./tool-service.md)（服务骨架参照）
 > 定位：本文是「博客 + 案例实验室」的单一设计稿。评论只保留未来契约，不在本期实施；架构层面的服务边界仍以 [architecture.md](../architecture.md) 为准。
 
@@ -348,6 +348,8 @@ node -e "const p=require('./package.json'); if((p.workspaces||[]).some(w=>w.star
 ```
 
 任一条失败即 CI 红；这样「临时放进去忘了清」会在合并前暴露。
+
+> 实现：`scripts/check-labs.sh` 已按上述断言落地，并作为 `scripts/check-workspace.sh` 的检查 4/4 接入 CI 的 docs-check job（`labs/` 不存在时跳过 Nx 图检查以保持本地速度）。
 
 ### 6.5 生命周期
 
