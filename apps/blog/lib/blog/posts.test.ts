@@ -22,11 +22,8 @@ describe('getAllPosts', () => {
     const posts = getAllPosts({ contentDir });
 
     expect(posts.length).toBeGreaterThanOrEqual(3);
-    expect(posts.map((post) => post.slug).slice(0, 3)).toEqual([
-      'lab-isolation-notes',
-      'typescript-type-level-notes',
-      'python-asyncio-notes',
-    ]);
+    const dates = posts.map((post) => post.frontmatter.date);
+    expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
     expect(posts.every((post) => !post.frontmatter.draft)).toBe(true);
   });
 
@@ -79,12 +76,14 @@ describe('getPostBySlug', () => {
 
 describe('getAdjacentPosts', () => {
   it('按时间线给出更新/更早的邻居', () => {
-    const adjacent = getAdjacentPosts('typescript-type-level-notes', {
-      contentDir,
-    });
+    const posts = getAllPosts({ contentDir });
+    const index = posts.findIndex(
+      (post) => post.slug === 'typescript-type-level-notes',
+    );
+    const adjacent = getAdjacentPosts(posts[index]!.slug, { contentDir });
 
-    expect(adjacent.newer?.slug).toBe('lab-isolation-notes');
-    expect(adjacent.older?.slug).toBe('python-asyncio-notes');
+    expect(adjacent.newer?.slug).toBe(posts[index - 1]?.slug);
+    expect(adjacent.older?.slug).toBe(posts[index + 1]?.slug);
   });
 
   it('首尾与未知 slug 的边界', () => {
@@ -153,13 +152,16 @@ describe('聚合', () => {
     const archive = getArchive(getAllPosts({ contentDir }));
 
     const posts = getAllPosts({ contentDir });
-    expect(archive.map((item) => item.year)).toEqual(['2026', '2024']);
-    expect(archive[0]?.posts).toHaveLength(
-      posts.filter((post) => post.frontmatter.date.startsWith('2026')).length,
-    );
-    expect(archive[1]?.posts).toHaveLength(
-      posts.filter((post) => post.frontmatter.date.startsWith('2024')).length,
-    );
+    const years = [
+      ...new Set(posts.map((post) => post.frontmatter.date.slice(0, 4))),
+    ].sort((a, b) => b.localeCompare(a));
+    expect(archive.map((item) => item.year)).toEqual(years);
+    for (const item of archive) {
+      expect(item.posts).toHaveLength(
+        posts.filter((post) => post.frontmatter.date.startsWith(item.year))
+          .length,
+      );
+    }
   });
 });
 
