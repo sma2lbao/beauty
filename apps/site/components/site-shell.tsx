@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 
 import { BrandLockup } from '@/components/brand/logo';
-import { appUrl } from '@/components/link';
+import { GithubLink } from '@/components/github-link';
+import { ECOSYSTEM_LINKS, appUrl } from '@/components/link';
 
 const NAV = [
   { href: '/', label: '首页' },
@@ -24,7 +25,7 @@ export function SiteShell({
   return (
     <div className="min-h-svh bg-ha-bg text-ha-text-body">
       <header className="border-b border-ha-border">
-        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-6 px-5 sm:px-10 lg:px-16">
+        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-2 px-5 sm:gap-6 sm:px-10 lg:px-16">
           <a href="/" aria-label="beauty moon 官网首页">
             <BrandLockup size={26} textClassName="text-[16px]" />
           </a>
@@ -42,12 +43,15 @@ export function SiteShell({
               </a>
             ))}
           </nav>
-          <a
-            href={appUrl('/login')}
-            className="inline-flex h-8 items-center rounded-md bg-ha-accent px-3 text-[12px] font-medium text-white transition-colors hover:bg-[#6b77e2]"
-          >
-            进入控制台
-          </a>
+          <div className="flex items-center gap-3">
+            <GithubLink />
+            <a
+              href={appUrl('/login')}
+              className="inline-flex h-8 items-center whitespace-nowrap rounded-md bg-ha-accent px-3 text-[12px] font-medium text-white transition-colors hover:bg-[#6b77e2]"
+            >
+              进入控制台
+            </a>
+          </div>
         </div>
       </header>
 
@@ -67,23 +71,46 @@ export function SiteShell({
       <footer className="border-t border-ha-border">
         <div className="mx-auto flex max-w-[1440px] flex-col gap-4 px-5 py-8 text-[12px] text-ha-dim sm:flex-row sm:items-center sm:justify-between sm:px-10 lg:px-16">
           <span>beauty moon · 把 AI Agent 接进工作流</span>
-          <nav aria-label="页脚" className="flex flex-wrap gap-5">
-            {NAV.map((item) => (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+            <nav aria-label="页脚" className="flex flex-wrap gap-5">
+              {NAV.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="transition-colors hover:text-ha-text-2"
+                >
+                  {item.label}
+                </a>
+              ))}
               <a
-                key={item.href}
-                href={item.href}
+                href={appUrl('/login')}
                 className="transition-colors hover:text-ha-text-2"
               >
-                {item.label}
+                控制台
               </a>
-            ))}
-            <a
-              href={appUrl('/login')}
-              className="transition-colors hover:text-ha-text-2"
-            >
-              控制台
-            </a>
-          </nav>
+            </nav>
+            <span
+              aria-hidden="true"
+              className="hidden h-3 w-px bg-ha-border-strong sm:block"
+            />
+            <nav aria-label="更多站点" className="flex flex-wrap gap-5">
+              {ECOSYSTEM_LINKS.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={item.domain}
+                  className="inline-flex items-baseline gap-1.5 transition-colors hover:text-ha-text-2"
+                >
+                  {item.label}
+                  <span className="font-mono text-[11px] text-ha-faint">
+                    {item.domain}
+                  </span>
+                </a>
+              ))}
+            </nav>
+          </div>
         </div>
       </footer>
     </div>

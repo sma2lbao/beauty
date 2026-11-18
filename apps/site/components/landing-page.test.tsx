@@ -6,7 +6,12 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { APP_URL, appUrl } from '@/components/link';
+import {
+  APP_URL,
+  ECOSYSTEM_LINKS,
+  GITHUB_URL,
+  appUrl,
+} from '@/components/link';
 
 import { LandingPage } from './landing-page';
 
@@ -44,5 +49,25 @@ describe('landing CTA', () => {
   it('APP_URL 拼接:前导斜杠不产生双斜杠', () => {
     const base = APP_URL.replace(/\/$/, '');
     expect(appUrl('/login')).toBe(base + '/login');
+  });
+
+  it('页头 GitHub 图标指向源码仓库并在新窗口打开', () => {
+    render(<LandingPage />);
+    const github = screen.getByRole('link', { name: 'GitHub 源码仓库' });
+    expect(github.getAttribute('href')).toBe(GITHUB_URL);
+    expect(github.getAttribute('target')).toBe('_blank');
+    // target="_blank" 必须配 rel,避免 window.opener 反向控制
+    expect(github.getAttribute('rel')).toBe('noreferrer');
+  });
+
+  it('页脚列出博客与设计文档子站,并标注域名', () => {
+    render(<LandingPage />);
+    for (const site of ECOSYSTEM_LINKS) {
+      const link = screen.getByRole('link', { name: new RegExp(site.label) });
+      expect(link.getAttribute('href')).toBe(site.href);
+      expect(link.getAttribute('target')).toBe('_blank');
+      // 域名是用户要看到的「相关链接」的一部分,不做隐藏
+      expect(link.textContent).toContain(site.domain);
+    }
   });
 });

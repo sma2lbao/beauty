@@ -13,6 +13,26 @@ export const APP_URL =
     ? 'https://app.beautymoon.cn'
     : 'http://localhost:5173');
 
+/** 源码仓库:页头图标入口,新窗口打开。 */
+export const GITHUB_URL = 'https://github.com/sma2lbao/beauty';
+
+/**
+ * 周边站点:独立子域 + 独立 Vercel 项目,官网只做外链、不做反代
+ * (见 docs/design/blog.md:博客用子域,不占官网 /blog)。
+ */
+export const ECOSYSTEM_LINKS = [
+  {
+    href: 'https://blog.beautymoon.cn',
+    label: '学习博客',
+    domain: 'blog.beautymoon.cn',
+  },
+  {
+    href: 'https://design.beautymoon.cn',
+    label: '组件文档',
+    domain: 'design.beautymoon.cn',
+  },
+] as const;
+
 const APP_PATH_PREFIXES = [
   '/login',
   '/runs',

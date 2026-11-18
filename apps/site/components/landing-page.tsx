@@ -13,9 +13,10 @@ import {
   Sparkles,
   Terminal,
 } from 'lucide-react';
-import { Link } from '@/components/link';
+import { Link, ECOSYSTEM_LINKS } from '@/components/link';
 
 import { BrandLockup } from '@/components/brand/logo';
+import { GithubLink } from '@/components/github-link';
 import { consoleButtonClass } from '@/components/console/button-class';
 import { cn } from '@/lib/utils';
 
@@ -101,7 +102,7 @@ export function LandingPage() {
   return (
     <div className="min-h-svh bg-ha-bg text-ha-text-body">
       <header className="border-b border-ha-border">
-        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-6 px-5 sm:px-10 lg:px-16">
+        <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-2 px-5 sm:gap-6 sm:px-10 lg:px-16">
           <Link to="/landing" aria-label="beauty moon 官网首页">
             <BrandLockup size={26} textClassName="text-[16px]" />
           </Link>
@@ -119,18 +120,13 @@ export function LandingPage() {
               </a>
             ))}
           </nav>
-          <div className="flex items-center gap-4">
-            <Link
-              to="/login"
-              className="text-[13px] font-medium text-ha-text-2 transition-colors hover:text-ha-text"
-            >
-              登录
-            </Link>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <GithubLink className="h-[34px] w-[34px]" />
             <Link
               to="/login"
               className={cn(
                 consoleButtonClass({ variant: 'primary', size: 'md' }),
-                'h-[34px] px-4',
+                'h-[34px] whitespace-nowrap px-3 sm:px-4',
               )}
             >
               免费开始使用
@@ -302,7 +298,7 @@ export function LandingPage() {
 
       <footer>
         <div className="mx-auto max-w-[1440px] px-5 sm:px-10 lg:px-16">
-          <div className="flex flex-col gap-10 py-12 md:flex-row md:gap-24">
+          <div className="flex flex-col gap-10 py-12 lg:flex-row lg:gap-24">
             <div className="flex w-full max-w-[320px] flex-col gap-3">
               <BrandLockup size={22} textClassName="text-[15px]" />
               <p className="text-[13px] leading-[22px] text-ha-dim">
@@ -310,7 +306,7 @@ export function LandingPage() {
                 工作台。编排、执行、观测、评审,一站完成。
               </p>
             </div>
-            <div className="grid flex-1 grid-cols-2 gap-8">
+            <div className="grid flex-1 grid-cols-2 gap-8 sm:grid-cols-3">
               {FOOTER_COLUMNS.map((column) => (
                 <div key={column.title} className="flex flex-col gap-3">
                   <span className="text-[13px] font-semibold text-ha-text">
@@ -327,6 +323,28 @@ export function LandingPage() {
                   ))}
                 </div>
               ))}
+              <div className="flex flex-col gap-3">
+                <span className="text-[13px] font-semibold text-ha-text">
+                  更多站点
+                </span>
+                {ECOSYSTEM_LINKS.map((item) => (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={item.domain}
+                    className="group flex w-fit flex-col gap-0.5"
+                  >
+                    <span className="text-[13px] text-ha-muted transition-colors group-hover:text-ha-text-2">
+                      {item.label}
+                    </span>
+                    <span className="font-mono text-[11px] text-ha-faint transition-colors group-hover:text-ha-dim">
+                      {item.domain}
+                    </span>
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
           <div className="flex flex-col gap-2 border-t border-ha-border py-5 sm:flex-row sm:items-center sm:justify-between">
