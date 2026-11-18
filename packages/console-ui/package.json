@@ -33,9 +33,6 @@
   "dependencies": {
     "@beauty/design": "*",
     "clsx": "^2.1.1",
-    "react-markdown": "^10.1.0",
-    "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0",
     "tslib": "^2.9.1"
   },

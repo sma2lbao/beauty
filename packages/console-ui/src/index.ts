@@ -7,7 +7,8 @@
  * 语义色(tone)与状态基元(StatusDot/StatusText/ToneBadge/StatusPill)
  * 的实现在 @beauty/design,本包按控制台旧名称再导出,换实现不换调用点。
  *
- * Markdown 渲染依赖较重,单独走 "@beauty/console-ui/markdown" 子入口。
+ * diff/代码查看与 Markdown 的实现也在 @beauty/design,本包按旧路径再导出;
+ * Markdown 依赖较重,单独走 "@beauty/console-ui/markdown" 子入口。
  */
 export * from './cn.js';
 export * from './tone.js';

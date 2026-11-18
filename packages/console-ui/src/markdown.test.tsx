@@ -61,15 +61,15 @@ describe('Markdown', () => {
       />,
     );
 
-    expect(container.querySelector('.text-ha-accent-soft')?.textContent).toBe(
-      'const',
-    );
-    expect(container.querySelector('.text-ha-success')?.textContent).toBe(
-      "'hi'",
-    );
-    expect(container.querySelector('.text-ha-faint')?.textContent).toContain(
-      '// note',
-    );
+    expect(
+      container.querySelector('.bd-markdown__token--keyword')?.textContent,
+    ).toBe('const');
+    expect(
+      container.querySelector('.bd-markdown__token--string')?.textContent,
+    ).toBe("'hi'");
+    expect(
+      container.querySelector('.bd-markdown__token--comment')?.textContent,
+    ).toContain('// note');
   });
 
   it('未知语言代码块原样渲染,不产生高亮片段', () => {
@@ -77,7 +77,7 @@ describe('Markdown', () => {
     const { container } = render(
       <Markdown content={[fence + 'sql', 'select 1;', fence].join('\n')} />,
     );
-    expect(container.querySelector('.text-ha-accent-soft')).toBeNull();
+    expect(container.querySelector('.bd-markdown__token--keyword')).toBeNull();
     expect(container.textContent).toContain('select 1;');
   });
 });
