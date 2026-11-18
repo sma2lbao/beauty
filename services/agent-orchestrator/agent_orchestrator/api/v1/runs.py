@@ -55,9 +55,13 @@ from agent_orchestrator.services.run_stream import (
 from agent_orchestrator.services.run_stream import (
     event_stream as _event_stream,
 )
+from agent_orchestrator.services.runs_stream import parse_runs_cursor
+from agent_orchestrator.services.runs_stream import (
+    runs_stream as _runs_stream,
+)
 from agent_orchestrator.services.skills import SkillRegistry
 
-__all__ = ["_event_stream", "router"]
+__all__ = ["_event_stream", "_runs_stream", "router"]
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -117,6 +121,35 @@ async def list_runs(
     """账号内 run 列表,最新在前(控制台首页)。"""
     runs = await runs_service.list_runs(session, account_id, limit)
     return [RunRead.model_validate(run) for run in runs]
+
+
+@router.get("/stream")
+async def stream_runs(
+    request: Request,
+    account_id: AccountId,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+) -> StreamingResponse:
+    """账号级 run 状态流(SSE):推送每个 run 的最新摘要,前端 upsert 进列表缓存。
+
+    游标是 `(updated_at, id)` 复合键,断线重连带 Last-Event-ID 续传;没有游标时
+    从最近 60s 的变更开始(覆盖"拉列表 → 建流"之间漏掉的窗口)。
+
+    必须声明在 `/{run_id}` 之前:FastAPI 按注册顺序匹配,否则 `/stream` 会被当成
+    某个 run 的 id(变成 404 run.not_found)。
+    """
+    container = get_container(request)
+    assert container.session_factory is not None
+    cursor = parse_runs_cursor(last_event_id)
+    return StreamingResponse(
+        _runs_stream(
+            container.session_factory,
+            container.settings,
+            account_id,
+            cursor,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{run_id}", response_model=RunRead)

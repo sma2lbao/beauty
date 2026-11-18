@@ -224,9 +224,59 @@ AG-UI 适配层留到后续(见 §9)。
 - **断线必须回落轮询**:`connected === false` 才启用读模型查询,否则断网后界面就是死的。
 
 结果是运行中页面只剩侧栏列表 5s 常驻(约 0.2 req/s),SSE 1s 一次服务端查库。
+侧栏这 5s 已由 §12 的账号级状态流取代(连上即停,未连上 30s 兜底),因此上面表格里的
+「run 状态」在 `/runs` 看板与侧栏侧也一并事件化了。
 
 ### 11.3 残余
 
 - 抽屉(`/runs` 详情,`use-run-detail.ts`)仍按 1.5–2s 轮询 6 个端点,本轮未动;
 - `/steps`、`/todos` 端点仍是「读整份事件表再投影」,run 越长越贵;
 - `subagents` 在 `awaiting_subagent` 时仍 1.5s 轮询(见 [subagents.md](./subagents.md) §6)。
+
+## 12. 账号级任务状态流(2026-11-18)
+
+会话内单个 run 有 SSE(§11),但**账号级没有事件源**:侧栏状态点与 `/runs` 看板共用的
+`['runs']` 列表只能 5s 轮询(`GET /api/v1/runs?limit=50`)。通知流也救不了:它只覆盖
+`NOTIFY_STATUSES`(审批/确认/提问/终态),不含 `planning`/`running`,且收到帧只失效
+`['notifications']`。这一节记录新增的账号级订阅。
+
+### 12.1 服务端:`GET /api/v1/runs/stream`
+
+- 帧:`id: <updated_at.isoformat()>|<run_id>`、`event: run.state.v1`、
+  `data: {"cursor": "<同 id>", "run": <RunRead>}`;先发 `: ready`,空闲每
+  `sse_keepalive_polls` 发 `: keep-alive`;
+- 游标是 `(updated_at, id)` 复合键(同毫秒多行靠 id 定序),查询
+  `RunRepository.list_changed_after(account_id, updated_at, run_id, limit=200)`;
+  没有游标时从最近 60s 的变更开始,覆盖「拉列表 → 建流」之间漏掉的那段;
+- 游标非法 → 建流之前 400 `sse.bad_cursor`(不是流里报错);
+- **必须声明在 `/{run_id}` 之前**:FastAPI 按注册顺序匹配,否则 `/stream` 会被当成某个 run 的 id;
+  `tests/test_runs_stream.py` 用 OpenAPI 的 paths 顺序钉住这一点(本版 FastAPI 把
+  `include_router` 收成 `_IncludedRouter`,`app.routes` 上看不到扁平 path);
+- 账号级长连接,**不发 `stream.end`**(客户端断开即结束)。
+
+实现:`services/runs_stream.py`(`runs_stream`/`parse_runs_cursor`/`encode_runs_cursor`)、
+`core/sse.py::cursor_event_frame`、`api/v1/runs.py::stream_runs`。
+
+### 12.2 前端:推送写缓存,30s 兜底
+
+| 数据            | 连上(推送)                                | 未连上(回落)    |
+| --------------- | ----------------------------------------- | --------------- |
+| `['runs']` 列表 | `upsertRun` 按 id 合并进缓存(新 run 前插) | `GET /runs` 30s |
+
+- 帧里带整份摘要(与 `GET /runs/{id}` 同形),**直接落缓存**:若收到变化再拉列表,就等于把
+  定时轮询换成事件触发的轮询,请求数不减;
+- 列表/详情缓存**未加载时不凭空写入**(否则 `useQuery` 会以为数据已就绪、再也不拉全量);
+- 断线指数退避 1s→30s 重连,带最后一帧的 `Last-Event-ID` 续传;连接状态经
+  `useSyncExternalStore` 暴露(模块级单例),侧栏(`use-sidebar-model.ts`)与看板
+  (`use-runs-model.ts`)据此把 `refetchInterval` 从 5000 改成 `connected ? false : 30_000`;
+- 挂在 `ConsoleLayout`(与通知流同层):侧栏可隐藏,挂在侧栏里会随卸载断流。
+
+结果:空闲期账号级零请求,运行中只剩 1s 的 SSE 查库与兜底外的按需失效。
+
+### 12.3 残余
+
+- 扫描式推送不是事件总线:状态变化到帧有 `sse_poll_interval_seconds`(1s)级延迟;
+  `runs.updated_at` 无索引(账号内行数小时可接受,量级大后需补复合索引 + 迁移);
+- 每个标签页一条账号级连接(后续可用 `BroadcastChannel` 复用);
+- 通知流仍值得保留:它负责 toast 与通知中心失效,与状态流职责不同;
+- 列表兜底 30s 仍在:半开连接(不报错但收不到帧)只能靠兜底纠正。

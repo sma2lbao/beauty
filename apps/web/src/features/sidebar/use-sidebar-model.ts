@@ -19,6 +19,7 @@ import { conversationsApi } from '@/lib/conversations-api';
 import { queryKeys } from '@/lib/query-keys';
 import type { Run } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
+import { useRunsStreamStatus } from '@/lib/runs-stream';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
 
 export function useSidebarModel() {
@@ -60,10 +61,13 @@ export function useSidebarModel() {
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
   });
 
+  // 账号级状态流已连上时列表由推送维护,只保留 30s 兜底(防漏帧/半开连接);
+  // 未连上(首屏/断网/重连中)仍按兜底间隔拉,不能用 false 把 UI 变成死的。
+  const runsStream = useRunsStreamStatus();
   const runsQuery = useQuery({
     queryKey: queryKeys.runs,
     queryFn: runsApi.list,
-    refetchInterval: 5000,
+    refetchInterval: runsStream.connected ? false : 30_000,
   });
   const accountQuery = useQuery({
     queryKey: queryKeys.authAccount,

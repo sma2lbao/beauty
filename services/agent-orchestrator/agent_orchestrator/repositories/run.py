@@ -62,6 +62,29 @@ class RunRepository(AccountRepository[Run]):
             order_by=[Run.updated_at.desc(), Run.id.desc()],
         )
 
+    async def list_changed_after(
+        self,
+        account_id: str,
+        updated_at: datetime,
+        run_id: str,
+        limit: int = 200,
+    ) -> list[Run]:
+        """复合游标 (updated_at, id) 之后的变更(账号级状态流用),按变更时间正序。
+
+        为什么不用 `updated_at >= since`:流要的是"只看新变化",用 >= 会在同一
+        时间戳上反复重放同一批行、游标推不动;复合游标按 (时间, id) 严格递增,
+        同毫秒写入的多行也不重不漏。
+        """
+        return await self.list_scoped(
+            account_id,
+            or_(
+                Run.updated_at > updated_at,
+                and_(Run.updated_at == updated_at, Run.id > run_id),
+            ),
+            limit=limit,
+            order_by=[Run.updated_at, Run.id],
+        )
+
     async def list_notifiable_changed(
         self,
         since: datetime,

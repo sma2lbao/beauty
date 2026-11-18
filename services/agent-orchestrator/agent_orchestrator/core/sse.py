@@ -38,6 +38,16 @@ def event_id_frame(seq: int, event_type: str, data: dict[str, Any]) -> str:
     return f"id: {seq}\nevent: {event_type}\ndata: {payload}\n\n"
 
 
+def cursor_event_frame(cursor: str, event_type: str, data: dict[str, Any]) -> str:
+    """带字符串游标的具名事件帧:账号级状态流用 (updated_at, id) 复合游标。
+
+    SSE 的 id 字段是字符串,事件流的 seq 是整数——两者语义相同(断线续传的
+    位置),类型不同;客户端一律原样回传 Last-Event-ID。
+    """
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"id: {cursor}\nevent: {event_type}\ndata: {payload}\n\n"
+
+
 def run_event_frame(event: RunEvent) -> str:
     """一条 run 事件 → SSE 帧(契约:游标 = seq,data 用 schema 的 JSON 序列化)。"""
     data = RunEventRead.model_validate(event).model_dump_json()

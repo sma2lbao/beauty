@@ -1,5 +1,5 @@
 /**
- * 任务编排看板的数据与视图状态:run 列表(轮询 5s)、新建任务变更、
+ * 任务编排看板的数据与视图状态:run 列表(状态流推送 + 30s 兜底)、新建任务变更、
  * 筛选/新建弹窗开关与草稿字段,以及按列分组的派生结果。
  * 视图组件只消费这里,不再各自发请求。
  */
@@ -8,6 +8,7 @@ import { useState } from 'react';
 
 import { BOARD_COLUMNS, isRunQuiescent } from '@/lib/presentation';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
+import { useRunsStreamStatus } from '@/lib/runs-stream';
 import { useRunBoardStore } from '@/stores/run-board-store';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -57,10 +58,12 @@ export function useRunsModel() {
   const [priority, setPriority] = useState('0');
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // 与侧栏共用 ['runs'] 缓存:状态流连上时不再定时拉,30s 兜底防漏帧/半开连接。
+  const runsStream = useRunsStreamStatus();
   const runsQuery = useQuery({
     queryKey: queryKeys.runs,
     queryFn: runsApi.list,
-    refetchInterval: 5000,
+    refetchInterval: runsStream.connected ? false : 30_000,
   });
   const createMutation = useMutation({
     mutationFn: () =>

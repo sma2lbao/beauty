@@ -9168,6 +9168,84 @@
         "tags": ["runs"]
       }
     },
+    "/api/v1/runs/stream": {
+      "get": {
+        "description": "账号级 run 状态流(SSE):推送每个 run 的最新摘要,前端 upsert 进列表缓存。\n\n游标是 `(updated_at, id)` 复合键,断线重连带 Last-Event-ID 续传;没有游标时\n从最近 60s 的变更开始(覆盖\"拉列表 → 建流\"之间漏掉的窗口)。\n\n必须声明在 `/{run_id}` 之前:FastAPI 按注册顺序匹配,否则 `/stream` 会被当成\n某个 run 的 id(变成 404 run.not_found)。",
+        "operationId": "stream_runs_api_v1_runs_stream_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Account-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Account-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Runs",
+        "tags": ["runs"]
+      }
+    },
     "/api/v1/runs/{run_id}": {
       "get": {
         "operationId": "get_run_api_v1_runs__run_id__get",
