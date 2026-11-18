@@ -1,30 +1,31 @@
 /**
- * 控制台通用 UI 原语:面板、按钮、状态标签、页头、页签。
+ * 控制台通用 UI 原语:面板、按钮、页头、页签与状态展示。
  *
  * 这些是「设计稿语言」的零件,集中在一处而不是散落在页面里:
  * - 尺寸/圆角/边框/字重都对齐 ardot 设计稿(按钮 h28~36、面板 radius 8~12);
  * - 状态色只来自 @/lib/presentation 的 tone,页面不写死色值;
- * - 与 @beauty/design 的分工(R-26):Button/Dialog 等交互原语一律用组件库,
- *   本文件只做「控制台 prop 名 → 组件库 prop」的薄适配,并补面板、状态标签等
- *   控制台特有的展示件;不再自建按钮/对话框的视觉与行为。
+ * - 与 @beauty/design 的分工(R-26):Button/Dialog/Table/DropdownMenu 与
+ *   状态基元(Status*)、Avatar、Kbd 一律用组件库/console-ui,本文件只做
+ *   「控制台 prop 名 → 组件库 prop」的薄适配,并保留面板、页头、页签这些
+ *   控制台外壳专属排版;不再自建按钮/对话框/状态色的视觉与行为。
  */
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 
-import { Button } from '@beauty/design';
+import { Button, StatusBadge, StatusPill } from '@beauty/design';
+import { EmptyPanel, StatusDot } from '@beauty/console-ui';
 
 import type {
   ConsoleButtonSize,
   ConsoleButtonVariant,
 } from '@/components/console/button-class';
-import type { Tone } from '@/lib/presentation';
-import {
-  RUN_STATUS_LABELS,
-  runStatusTone,
-  toneClasses,
-} from '@/lib/presentation';
+import { RUN_STATUS_LABELS, runStatusTone } from '@/lib/presentation';
 import type { RunStatus } from '@/lib/runs-api';
 import { cn } from '@/lib/utils';
+
+/** 状态基元与空态:实现分别在 @beauty/design / @beauty/console-ui,这里沿用旧导出名 */
+export { EmptyPanel, StatusDot };
+export { Avatar, Kbd } from '@beauty/design';
 
 /* ── 面板 ─────────────────────────────────────────────────────────────── */
 
@@ -79,52 +80,8 @@ export function ConsoleButton({
 
 /* ── 状态标签 / 圆点 ─────────────────────────────────────────────────── */
 
-export function StatusDot({
-  tone = 'neutral',
-  pulse = false,
-  className,
-}: {
-  tone?: Tone;
-  pulse?: boolean;
-  className?: string;
-}) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'inline-block h-[7px] w-[7px] shrink-0 rounded-full',
-        toneClasses(tone).dot,
-        pulse && 'animate-pulse',
-        className,
-      )}
-    />
-  );
-}
-
-export function ToneBadge({
-  tone = 'neutral',
-  mono = true,
-  className,
-  children,
-}: {
-  tone?: Tone;
-  mono?: boolean;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-5 shrink-0 items-center rounded-[5px] px-2 leading-none',
-        mono ? 'font-mono text-[11px]' : 'text-[11px] font-medium',
-        toneClasses(tone).soft,
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
+/** 语义标签:默认等宽(状态/编号),旧名保留,实现在组件库 StatusBadge */
+export { StatusBadge as ToneBadge };
 
 export function RunStatusBadge({
   status,
@@ -134,13 +91,13 @@ export function RunStatusBadge({
   className?: string;
 }) {
   return (
-    <ToneBadge tone={runStatusTone(status)} className={className}>
+    <StatusBadge tone={runStatusTone(status)} className={className}>
       {RUN_STATUS_LABELS[status]}
-    </ToneBadge>
+    </StatusBadge>
   );
 }
 
-/** 运行状态胶囊:状态点 + 文案(顶栏用)。 */
+/** 运行状态胶囊:状态点 + 文案(顶栏用),md 高度与标题基线对齐。 */
 export function RunStatusPill({
   status,
   className,
@@ -150,17 +107,14 @@ export function RunStatusPill({
 }) {
   const tone = runStatusTone(status);
   return (
-    <span
-      className={cn(
-        'inline-flex h-[30px] items-center gap-[7px] rounded-md border px-[10px] text-[12px] font-medium',
-        toneClasses(tone).outline,
-        toneClasses(tone).text,
-        className,
-      )}
+    <StatusPill
+      tone={tone}
+      size="md"
+      pulse={tone === 'info'}
+      className={className}
     >
-      <StatusDot tone={tone} pulse={tone === 'info'} />
       {RUN_STATUS_LABELS[status]}
-    </span>
+    </StatusPill>
   );
 }
 
@@ -238,40 +192,6 @@ export function ConsoleTabs<T extends string>({
   );
 }
 
-/* ── 空态 ─────────────────────────────────────────────────────────────── */
-
-export function EmptyPanel({
-  icon,
-  title,
-  description,
-  action,
-  className,
-}: {
-  icon?: ReactNode;
-  title: ReactNode;
-  description?: ReactNode;
-  action?: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        'flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-ha-border px-6 py-12 text-center',
-        className,
-      )}
-    >
-      {icon ? <div className="text-ha-ghost">{icon}</div> : null}
-      <p className="text-[13px] font-medium text-ha-text-2">{title}</p>
-      {description ? (
-        <p className="max-w-sm text-[12px] leading-5 text-ha-dim">
-          {description}
-        </p>
-      ) : null}
-      {action}
-    </div>
-  );
-}
-
 /* ── 小零件 ───────────────────────────────────────────────────────────── */
 
 export function Mono({
@@ -285,38 +205,6 @@ export function Mono({
     <span className={cn('font-mono text-[11px] text-ha-dim', className)}>
       {children}
     </span>
-  );
-}
-
-export function Avatar({
-  name,
-  size = 28,
-  className,
-}: {
-  name?: string | null;
-  size?: number;
-  className?: string;
-}) {
-  const initial = (name?.trim().charAt(0) || '访').toUpperCase();
-  return (
-    <span
-      aria-hidden="true"
-      style={{ width: size, height: size }}
-      className={cn(
-        'inline-grid shrink-0 place-items-center rounded-full bg-[#2a2d35] font-mono text-[11px] font-medium text-ha-muted',
-        className,
-      )}
-    >
-      {initial}
-    </span>
-  );
-}
-
-export function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded-[4px] border border-ha-border-strong bg-ha-panel-2 px-1.5 py-0.5 font-mono text-[10px] text-ha-muted">
-      {children}
-    </kbd>
   );
 }
 

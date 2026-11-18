@@ -69,6 +69,8 @@
   --bd-success: #13ddc4;
   --bd-warning: #ffb454;
   --bd-info: #2ea7ff;
+  /* 头像底色:比 --bd-muted 再亮一档,否则在面板上看不出圆形轮廓 */
+  --bd-avatar-bg: #2a2d35;
   /* 品牌资产:月面沿用 @beauty/design 的暗色令牌(品牌月光米),产品名墨色跟随控制台标题色 */
   --bd-logo-text: var(--bd-card-foreground);
   --bd-font-sans:
