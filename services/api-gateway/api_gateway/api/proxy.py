@@ -64,6 +64,14 @@ _EXT = {
     "image/gif": "gif",
 }
 
+#: SSE 流的请求级超时:关闭读超时,避免上游空闲被网关默认 30s 读超时切断。
+#: Agent 侧 keep-alive 要攒够 sse_keepalive_polls 次空轮询才发一帧(约 30s),
+#: 与全局 30s 读超时正好压线,长期静默的流会被网关中途掐断(日志见
+#: `httpcore.ReadTimeout`),前端随后重连并重复建立连接。
+_STREAM_TIMEOUT: dict[str, float | None] = httpx.Timeout(
+    connect=5.0, read=None, write=30.0, pool=5.0
+).as_dict()
+
 
 @dataclass(frozen=True, slots=True)
 class Upstream:
@@ -384,6 +392,7 @@ async def _proxy_stream(
         params=request.query_params,
         content=await request.body(),
         headers=headers,
+        extensions={"timeout": _STREAM_TIMEOUT},
     )
     began = time.perf_counter()
     try:
@@ -409,6 +418,7 @@ async def _proxy_stream(
             upstream.url,
             params=request.query_params,
             headers=_headers(request, state),
+            extensions={"timeout": _STREAM_TIMEOUT},
         )
         began = time.perf_counter()
         proxied = await client.send(upstream_request, stream=True)

@@ -122,6 +122,25 @@ def test_proxy_streams_sse_by_path_without_accept(client: TestClient) -> None:
     assert "ready" in response.text
 
 
+def test_proxy_stream_uses_no_read_timeout() -> None:
+    """SSE 流关闭读超时:否则静默超过网关默认 30s 的流会被网关中途切断。"""
+    seen: dict[str, dict[str, float | None]] = {}
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        key = "stream" if request.url.path.endswith("/stream") else "plain"
+        seen[key] = dict(request.extensions["timeout"])
+        return upstream_handler(request)
+
+    app = create_app(settings(), transport=httpx.MockTransport(recording))
+    with TestClient(app) as client:
+        login(client)
+        assert client.get("/api/v1/notifications/stream").status_code == 200
+        assert client.get("/api/v1/runs").status_code == 200
+
+    assert seen["stream"]["read"] is None
+    assert seen["plain"]["read"] == 30.0
+
+
 def test_proxy_forwards_request_id_and_traceparent() -> None:
     """观测链路:入站 request_id/traceparent 透传给下游,并在响应头回写。"""
     seen: list[httpx.Request] = []
