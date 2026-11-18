@@ -229,7 +229,7 @@ AG-UI 适配层留到后续(见 §9)。
 
 ### 11.3 残余
 
-- 抽屉(`/runs` 详情,`use-run-detail.ts`)仍按 1.5–2s 轮询 6 个端点,本轮未动;
+- 抽屉(`/runs` 详情,`use-run-detail.ts`)已由 §13 事件化(2026-11-18),不再 6 个轮询;
 - `/steps`、`/todos` 端点仍是「读整份事件表再投影」,run 越长越贵;
 - `subagents` 在 `awaiting_subagent` 时仍 1.5s 轮询(见 [subagents.md](./subagents.md) §6)。
 
@@ -280,3 +280,46 @@ AG-UI 适配层留到后续(见 §9)。
 - 每个标签页一条账号级连接(后续可用 `BroadcastChannel` 复用);
 - 通知流仍值得保留:它负责 toast 与通知中心失效,与状态流职责不同;
 - 列表兜底 30s 仍在:半开连接(不报错但收不到帧)只能靠兜底纠正。
+
+## 13. 详情抽屉读模型事件化(2026-11-18)
+
+`/runs` 详情抽屉(`apps/web/src/features/runs/use-run-detail.ts`)原先对同一个 run 开着
+6 个 1.5–2s 轮询:`GET /runs/{id}` 2s、`/steps`、`/items`、`/todos`、`/subagents`、`/usage`
+各 1.5s。§11 把会话页收敛后,这里是前端最重的一处轮询。这一节记录收敛口径。
+
+### 13.1 前提:抽屉要的读模型都已在事件流里
+
+- `run.step.v1` 默认被 `list_events` 滤掉,开 `include_steps=1` 才进 SSE(§11.1);
+- `run.item.v1`、`run.todo.updated.v1`、`run.usage.v1`、`run.subagent.waiting.v1`、
+  `run.subagent.resumed.v1` **本来就在**流里,只是前端此前没从事件里取;
+- `run.item.v1` 的服务端投影 `items.py::list_items` 是纯折叠:按 `item_id` 首次出现定序,
+  静态字段取首帧,`phase`/`status`/`finished_at`/`duration_ms` 取最新,`data` 按 key 浅合并。
+  纯函数、不查库 ⇒ 客户端可以同规则折叠,不必多拉 `/items`。
+
+### 13.2 前端:投影优先、断线回落、事件失效
+
+| 数据               | 连上(事件驱动)                                  | 未连上(回落,均 1.5s)           |
+| ------------------ | ----------------------------------------------- | ------------------------------ |
+| 步骤 `steps`       | `stepsFrom(events)`                             | `GET /steps`                   |
+| 过程项 `items`     | `itemsFrom(events)`(与 `list_items` 同规则折叠) | `GET /items`                   |
+| 清单 `todos`       | `todosFrom(events)`                             | `GET /todos`                   |
+| run 状态           | `lastStatusEventSeq` 变化即失效(过滤噪声事件)   | `GET /runs/{id}` 2s            |
+| 计划/指令          | `run.planned.v1`/`run.plan.edited.v1` 失效重取  | 打开时取一次                   |
+| 用量 `usage`       | `lastUsageEventSeq` 变化即失效                  | 打开时取一次                   |
+| 子代理 `subagents` | `subagent.waiting.v1`/`resumed.v1` 失效         | 仅 `awaiting_subagent` 时 1.5s |
+
+- 投影函数在 `apps/web/src/lib/presentation/projections.ts`(`stepsFrom`/`todosFrom`/
+  `itemsFrom`/`lastUsageEventSeq`/`lastSubagentEventSeq`),与服务端投影对拍
+  (`apps/web/src/lib/presentation/projections.test.ts`);
+- 回落查询 `enabled: !connected && !ended`,run 终态后连 1.5s 也不开;
+- `ended` 时统一失效 run/计划/指令/步骤/过程项/清单/子代理/用量,补齐收尾那一帧。
+
+结果是连上时抽屉对同一 run **零轮询**,只有全局 1s 的 SSE 查库;断线才回到 1.5s 兜底。
+
+### 13.3 残余
+
+- 客户端折叠规则必须与服务端 `items.py::list_items` 保持一致,改一处要同时改
+  `apps/web/src/lib/presentation/projections.ts`(测试对拍只在字段层面,不覆盖新增字段);
+- 断线兜底仍是「读整份事件表再投影」的端点(`/steps`、`/items`、`/todos`),run 越长越贵;
+- 抽屉的 checkpoints/side-effects/artifacts 仍是按需拉取,未纳入事件驱动(变化频率低);
+- 子代理清单在 `awaiting_subagent` 且断线时仍 1.5s 轮询(见 [subagents.md](./subagents.md) §6)。

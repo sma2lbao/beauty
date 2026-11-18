@@ -36,14 +36,7 @@ export function RunDetail({
 }) {
   const model = useRunDetail({ runId, onSelectRun });
   const [tab, setTab] = useState<'overview' | 'checkpoints'>('overview');
-  const {
-    itemsQuery,
-    run,
-    showArtifact,
-    showSubagents,
-    stepsQuery,
-    todosQuery,
-  } = model;
+  const { items, run, showArtifact, showSubagents, steps, todos } = model;
 
   return (
     <aside
@@ -90,11 +83,11 @@ export function RunDetail({
                 运行项
               </span>
               <span className="font-mono text-[11px] text-ha-faint">
-                {itemsQuery.data?.length ?? 0} 项
+                {items.length} 项
               </span>
             </div>
             <RunItemTimeline
-              items={itemsQuery.data ?? []}
+              items={items}
               className="mt-2 max-h-96 overflow-y-auto"
               onOpenRun={onSelectRun}
             />
@@ -110,14 +103,14 @@ export function RunDetail({
                 执行步骤
               </span>
               <span className="font-mono text-[11px] text-ha-faint">
-                {stepsQuery.data?.length ?? 0} 个节点
+                {steps.length} 个节点
               </span>
             </div>
             <RunStepTimeline
-              steps={stepsQuery.data ?? []}
+              steps={steps}
               className="mt-2 max-h-72 overflow-y-auto"
             />
-            <RunTodoList todos={todosQuery.data?.todos ?? []} className="mt-3" />
+            <RunTodoList todos={todos} className="mt-3" />
           </ConsolePanel>
 
           <RunDetailInstructionsPanel model={model} />

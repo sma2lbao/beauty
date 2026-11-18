@@ -28,6 +28,7 @@ import type {
 import { runsApi } from '@/lib/runs-api';
 
 import { RunDetail } from './run-detail';
+import { readModelEvents } from './run-detail-test-events';
 
 vi.mock('@/lib/runs-api', () => ({
   runsApi: {
@@ -52,9 +53,16 @@ vi.mock('@/lib/runs-api', () => ({
   },
 }));
 
-vi.mock('@/features/runs/use-run-events', () => ({
-  useRunEvents: () => ({ events: [], connected: true }),
-}));
+// 步骤/过程项/清单由事件投影(§13):用例给事件而不是端点返回值。
+const stream = vi.hoisted(
+  () =>
+    ({ events: [], connected: true, ended: false }) as {
+      events: import('@/lib/runs-api').RunEvent[];
+      connected: boolean;
+      ended: boolean;
+    },
+);
+vi.mock('@/features/runs/use-run-events', () => ({ useRunEvents: () => stream }));
 
 const baseRun: Run = {
   id: 'run-1',
@@ -124,6 +132,7 @@ function renderDetail(
     },
     revision: todos.length > 0 ? 1 : 0,
   });
+  stream.events = readModelEvents({ steps, todos, items });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
