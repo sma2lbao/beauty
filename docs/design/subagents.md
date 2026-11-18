@@ -180,6 +180,8 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
 
 - 子 run 停在 `awaiting_*`(需人工)不唤醒父 run;唤醒丢失由 §6.2 的等待 sweeper 兜(漏唤醒
   补偿 + 超时级联取消),但**父 run 恢复后不会再等**:超时是终局,父 run 拿 cancelled 回执继续;
+- 子 run 停在人工介入态时 sweeper 既不取消也不计时(§6.2 计时口径),所以**人工一直不处理,
+  父 run 就一直等**——兜底只剩父 run 自己的 `run_timeout_seconds`;
 - 父 run 在 `running` 中途崩溃由 recover 兜,恢复后可能重复 interrupt 回到 `awaiting_subagent`;
 - 子 run 的 `timeout_seconds` 只约束 spawn 内联模式;异步模式的时限由 §6.2 的
   `subagent_wait_timeout_seconds` 在**等待方**计时。
@@ -192,14 +194,26 @@ worker 取 job → resume_subagent:子 run 未全终态则收手等下一次;全
 1. **漏唤醒补偿**:子 run 已全部终态,但父 run 没有任何 live job(`JobRepository.
 has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一条 `subagent` job
    (`dedupe=False`)。典型现场:子 run 终态提交后进程崩,`notify_parent` 的入队随事务一起丢。
-2. **等待超时**:仍有非终态子 run,且**最老**子 run 的 `created_at` 距今超过
-   `subagent_wait_timeout_seconds`(默认 3600s;`<= 0` 不限时)→ 对每个非终态子 run 调
+2. **等待超时**:仍有在飞子 run,且**最老的在飞**子 run 的 `created_at` 距今超过
+   `subagent_wait_timeout_seconds`(默认 3600s;`<= 0` 不限时)→ 对每个在飞子 run 调
    `cancel_run(..., WAIT_TIMEOUT_REASON)`,再复核一次 live job,没有则补一条唤醒 job。
    父 run 拿到 `cancelled` 回执后继续(不是永久挂起)。
 
 **为什么超时从等待方发起**:异步模式下子 run 是一条独立 job,没有谁在它身上计时;`cancel_run`
 已负责取消其排队 job、落 `run.cancelled.v1`、通知工具侧放弃等待(§9.5),但仍**不打断**已在沙箱
 执行的 argv。级联取消是「放弃等待」而不是「杀掉子 run 的进程」。
+
+**计时口径(2026-11-18 修正)**:超时只看**在飞**子 run,且遇到等人工的子 run 就整体让路。
+
+- **已终态的子 run 不参与计时**。父 run 先跑完一个子代理、过一阵再 spawn 新子 run 时,旧子 run
+  的 `created_at` 会把基线拉到很久以前,新子 run 一出生就被判超时、立刻被级联取消。基线必须是
+  `min(在飞子 run 的 created_at)`。
+- **子 run 停在人工介入态时不取消、也不计时**。`awaiting_approval`/`awaiting_confirmation`/
+  `awaiting_input` 是「等人」不是「卡住」——这些状态本身已通过 `services/notifications.py` 的
+  `NOTIFY_STATUSES` 发通知到账号,人可能马上就点。按超时取消会把审批/确认/提问入口连同 run
+  一起作废,还等于替人做决定。人处理完子 run 自己继续,终态照旧由 `notify_parent` 唤醒父 run;
+  代价是**人工不处理就一直等**(见 §6.1 残余,兜底是父 run 的 `run_timeout_seconds`)。
+  该分支只记 `debug` 日志,免得 30s 一轮刷。
 
 **幂等**:`resume_subagent` 先把父 run 改 `running` 再续图,重复唤醒直接返回;因此 sweeper 可以
 放心重排。取消 N 个子 run 时 `cancel_run` 内部的 `notify_parent` 已各入队一次,末尾的
@@ -209,8 +223,8 @@ has_live_for_run` 为假,即 queued 或租约未过期的 running)→ 重排一�
 
 - sweeper 与 worker 有竞态窗口:扫到「无 live job」到入队之间,原唤醒 job 可能刚好被写入
   (重复唤醒无害);
-- 超时判据用最老子 run 的 `created_at`,不看父子链路是否真在等(父 run 若因别的原因长时间
-  停在 `awaiting_subagent`,同样会被判超时);
+- 超时判据用最老**在飞**子 run 的 `created_at`,不看父子链路是否真在等(父 run 若因别的原因
+  长时间停在 `awaiting_subagent`,同样会被判超时);等人工的子 run 例外(上一段);
 - `subagent_wait_timeout_seconds <= 0` 时只做漏唤醒补偿,等太久仍只能靠人工取消;
 - sweeper 每轮跨账号全表扫 `awaiting_subagent`(与崩溃续跑 sweeper 同口径),量大时需要索引。
 

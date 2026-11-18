@@ -6,15 +6,18 @@
 - **漏唤醒**:子 run 已经终态,但唤醒 job 因进程崩溃或队列丢失没落地——父 run
   没有任何 live job,永远等不到;崩溃续跑 sweeper 只扫 planning/running,接不住
   停在 awaiting_subagent 的 run。
-- **等太久**:子 run 本身卡在长任务,或停在需要人工的 awaiting_*(人也不会再来)。
+- **等太久**:子 run 卡在长任务(或自己也在等它的子代理),父方等待超时后级联
+  取消。**停在需要人工的 awaiting_*(待审批/待确认/等回答)不算等太久**——那是
+  等人,不是卡住;把它按超时取消等于替人做决定,还顺手废掉审批入口。
 
 本 sweeper 每轮扫 awaiting_subagent:
 
 1. 子 run 全部终态、父 run 又没有 live job → 重排 subagent job(漏唤醒补偿;
    resume_subagent 幂等:先把状态改 running 再续图,重复触发无害);
-2. 仍有在飞子 run 且最老的子 run 已超过 subagent_wait_timeout_seconds → 逐个
-   cancel_run(原因「子代理等待超时」),再确保父 run 有一条唤醒 job——父 run 拿到
-   cancelled 回执后继续往下走。
+2. 仍有在飞子 run,且最老的**在飞**子 run 已超过 subagent_wait_timeout_seconds
+   → 逐个 cancel_run(原因「子代理等待超时」),再确保父 run 有一条唤醒 job——父
+   run 拿到 cancelled 回执后继续往下走;只要有子 run 停在人工介入态就整体让路、
+   不计时也不取消(人处理完子 run 自己继续,终态照旧唤醒父 run)。
 
 超时从**等待方**发起(级联取消),不是子 run 自己超时:子 run 的
 subagent_timeout_seconds 只约束内联模式;异步模式下子 run 是一条独立 job,没人
@@ -33,11 +36,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.models.runs import PARENT_KIND_SUBAGENT, Run
 from agent_orchestrator.repositories import JobRepository, RunRepository
+from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import jobs as jobs_service
 from agent_orchestrator.services.run_cancel import cancel_run
 from agent_orchestrator.services.run_lifecycle import require_run
 from agent_orchestrator.services.run_subagent_resume import WAITING_STATUS
 from agent_orchestrator.services.subagents_spec import _TERMINAL_STATUSES
+
+#: 子 run 停在等人工:父方等待计时整体暂停,不许按超时取消(人可能马上就点)。
+HUMAN_WAIT_STATUSES = frozenset(
+    {
+        RunStatus.AWAITING_APPROVAL.value,
+        RunStatus.AWAITING_CONFIRMATION.value,
+        RunStatus.AWAITING_INPUT.value,
+    }
+)
 
 if TYPE_CHECKING:
     from agent_orchestrator.core.container import AppContainer
@@ -91,15 +104,26 @@ async def _sweep_one(
         await _enqueue_wake(session, account_id, run_id)
         logger.info("subagent wake repaired", run_id=run_id, account_id=account_id)
         return True
+    active = [child for child in children if child.status not in _TERMINAL_STATUSES]
+    if any(child.status in HUMAN_WAIT_STATUSES for child in active):
+        # 等人 ≠ 卡住:子 run 待审批/待确认/等回答时通知已经发到人手上,超时取消
+        # 会把审批入口连同 run 一起作废。debug 级别,免得 30s 一轮刷日志。
+        logger.debug(
+            "subagent wait paused for human",
+            run_id=run_id,
+            account_id=account_id,
+            children=[child.id for child in active],
+        )
+        return False
     timeout = container.settings.subagent_wait_timeout_seconds
     if timeout <= 0:
         return False
-    oldest = _aware(min(child.created_at for child in children))
+    # 计时基线只看在飞子 run:已终态的历史子 run 不算「等了多久」,否则父 run 先
+    # 跑完一个子代理、再 spawn 新的,新子 run 一出生就被旧基线判超时。
+    oldest = _aware(min(child.created_at for child in active))
     if oldest is not None and now - oldest < timedelta(seconds=timeout):
         return False
-    for child in children:
-        if child.status in _TERMINAL_STATUSES:
-            continue
+    for child in active:
         # cancel_run 内部会 notify_parent(入队唤醒),所以下面只需要兜底
         await cancel_run(session, account_id, child.id, WAIT_TIMEOUT_REASON)
     if not await JobRepository(session).has_live_for_run(account_id, run_id, now):
