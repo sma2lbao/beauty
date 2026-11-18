@@ -1,0 +1,20 @@
+/**
+ * Avatar 样式(普通 CSS + BEM 语义类名)
+ * 尺寸由组件的 size 内联给出,这里只处理形状、配色与字形。
+ */
+
+.bd-avatar {
+  box-sizing: border-box;
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9999px;
+  background-color: var(--bd-avatar-bg);
+  color: var(--bd-muted-foreground);
+  font-family: var(--bd-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  user-select: none;
+}

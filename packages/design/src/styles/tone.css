@@ -1,0 +1,158 @@
+/**
+ * tone 语义色工具类(状态点、状态文字、语义标签、描边胶囊共用)。
+ *
+ * 五种变体 × 六个语义,全部是单类选择器(0,1,0),只设置颜色相关属性,
+ * 尺寸/圆角/字重由使用它的组件 CSS 决定:
+ *   .bd-tone-text--{tone}     纯文字色
+ *   .bd-tone-soft--{tone}     同色底 + 同色文字
+ *   .bd-tone-outline--{tone}  同色描边 + 同色底 + 同色文字
+ *   .bd-tone-solid--{tone}    实底 + 反色文字
+ *   .bd-tone-dot--{tone}      圆点底色
+ *
+ * 本文件不写任何色值:全部读 tokens.css 的语义色阶(--bd-{语义}-bg/-border 等)。
+ * accent 走 primary 令牌,danger 走 destructive 令牌(见 tokens.css 说明)。
+ */
+
+.bd-tone-text--neutral {
+  color: var(--bd-neutral-soft);
+}
+
+.bd-tone-text--accent {
+  color: var(--bd-primary-soft);
+}
+
+.bd-tone-text--info {
+  color: var(--bd-info);
+}
+
+.bd-tone-text--success {
+  color: var(--bd-success);
+}
+
+.bd-tone-text--warning {
+  color: var(--bd-warning);
+}
+
+.bd-tone-text--danger {
+  color: var(--bd-destructive);
+}
+
+.bd-tone-soft--neutral {
+  background-color: var(--bd-neutral-bg);
+  color: var(--bd-neutral-soft);
+}
+
+.bd-tone-soft--accent {
+  background-color: var(--bd-primary-bg);
+  color: var(--bd-primary-soft);
+}
+
+.bd-tone-soft--info {
+  background-color: var(--bd-info-bg);
+  color: var(--bd-info);
+}
+
+.bd-tone-soft--success {
+  background-color: var(--bd-success-bg);
+  color: var(--bd-success);
+}
+
+.bd-tone-soft--warning {
+  background-color: var(--bd-warning-bg);
+  color: var(--bd-warning);
+}
+
+.bd-tone-soft--danger {
+  background-color: var(--bd-destructive-bg);
+  color: var(--bd-destructive);
+}
+
+.bd-tone-outline--neutral {
+  border-color: var(--bd-neutral-border);
+  background-color: var(--bd-neutral-bg);
+  color: var(--bd-muted-foreground);
+}
+
+.bd-tone-outline--accent {
+  border-color: var(--bd-primary-border);
+  background-color: var(--bd-primary-bg);
+  color: var(--bd-primary);
+}
+
+.bd-tone-outline--info {
+  border-color: var(--bd-info-border);
+  background-color: var(--bd-info-bg);
+  color: var(--bd-info);
+}
+
+.bd-tone-outline--success {
+  border-color: var(--bd-success-border);
+  background-color: var(--bd-success-bg);
+  color: var(--bd-success);
+}
+
+.bd-tone-outline--warning {
+  border-color: var(--bd-warning-border);
+  background-color: var(--bd-warning-bg);
+  color: var(--bd-warning);
+}
+
+.bd-tone-outline--danger {
+  border-color: var(--bd-destructive-border);
+  background-color: var(--bd-destructive-bg);
+  color: var(--bd-destructive);
+}
+
+.bd-tone-solid--neutral {
+  background-color: var(--bd-secondary);
+  color: var(--bd-foreground);
+}
+
+.bd-tone-solid--accent {
+  background-color: var(--bd-primary);
+  color: var(--bd-primary-foreground);
+}
+
+.bd-tone-solid--info {
+  background-color: var(--bd-info);
+  color: var(--bd-background);
+}
+
+.bd-tone-solid--success {
+  background-color: var(--bd-success);
+  color: var(--bd-background);
+}
+
+.bd-tone-solid--warning {
+  background-color: var(--bd-warning);
+  color: var(--bd-background);
+}
+
+.bd-tone-solid--danger {
+  background-color: var(--bd-destructive);
+  color: var(--bd-background);
+}
+
+.bd-tone-dot--neutral {
+  background-color: var(--bd-neutral-dot);
+}
+
+.bd-tone-dot--accent {
+  background-color: var(--bd-primary-soft);
+}
+
+.bd-tone-dot--info {
+  background-color: var(--bd-info);
+}
+
+.bd-tone-dot--success {
+  background-color: var(--bd-success);
+}
+
+.bd-tone-dot--warning {
+  background-color: var(--bd-warning);
+}
+
+.bd-tone-dot--danger {
+  background-color: var(--bd-destructive);
+}

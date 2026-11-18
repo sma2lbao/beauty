@@ -1,0 +1,72 @@
+/**
+ * Status 样式(普通 CSS + BEM 语义类名)
+ * 颜色全部来自 tone 工具类(styles/tone.css),这里只管尺寸、间距与动画。
+ */
+
+.bd-status-dot {
+  box-sizing: border-box;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 9999px;
+}
+
+/* 进行中:tone 由业务给,闪烁只表达「还在动」 */
+.bd-status-dot--pulse {
+  animation: bd-status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes bd-status-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.bd-status-text {
+  font-family: var(--bd-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.bd-status-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.25rem;
+  padding-inline: 0.5rem;
+  border-radius: 0.3125rem;
+  font-family: var(--bd-font-sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bd-status-badge--mono {
+  font-family: var(--bd-font-mono);
+  font-weight: 400;
+}
+
+.bd-status-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  height: 1.625rem;
+  padding-inline: 0.625rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--bd-radius) - 2px);
+  font-family: var(--bd-font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 卡片标题行用 md:26px 在标题旁偏低,h30 与标题基线更齐 */
+.bd-status-pill--md {
+  height: 1.875rem;
+}

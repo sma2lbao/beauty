@@ -15,6 +15,8 @@
  */
 
 @import './tokens.css';
+/* 语义色工具类与组件同样进 components 层,宿主工具类可覆盖 */
+@import './tone.css' layer(components);
 /* 组件样式进 components 层:Tailwind v4 声明了 theme, base, components, utilities 的顺序,
    因此宿主的工具类(utilities)可以稳定覆盖组件样式,不必靠特异性或 !important 打架。
    注意只有本 Tailwind 入口这么做:prebuilt.css(非 Tailwind 宿主 / 文档站)保持未分层,
@@ -25,6 +27,7 @@
 
 @theme inline {
   --font-sans: var(--bd-font-sans);
+  --font-mono: var(--bd-font-mono);
 
   --color-background: var(--bd-background);
   --color-foreground: var(--bd-foreground);

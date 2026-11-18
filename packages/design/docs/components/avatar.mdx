@@ -1,0 +1,63 @@
+import { Avatar, Space } from '@beauty/design';
+
+# Avatar 头像
+
+用名字首字占位,不依赖图片资源。
+
+## 何时使用
+
+- 列表项、评论区、账户菜单里标识「谁」;
+- 只有名字、没有头像时不要留空白圆,首字比默认灰块更好认;
+- 一屏多个头像时保持同一尺寸,尺寸本身就是层级信息。
+
+## 基础用法
+
+取名字第一个字符并大写,空名字回退为「?」:
+
+<div className="bd-demo">
+  <Space align="center">
+    <Avatar name="sma2lbao" />
+    <Avatar name="张三" />
+    <Avatar name="beauty moon" />
+    <Avatar name={null} />
+  </Space>
+</div>
+
+```tsx
+import { Avatar } from '@beauty/design';
+
+<Avatar name="张三" />;
+```
+
+## 尺寸
+
+`size` 直接给像素边长:列表 24、工具栏 28、账户菜单 32。
+
+<div className="bd-demo">
+  <Space align="center">
+    <Avatar name="张三" size={24} />
+    <Avatar name="张三" size={28} />
+    <Avatar name="张三" size={32} />
+    <Avatar name="张三" size={40} />
+  </Space>
+</div>
+
+```tsx
+<Avatar name="张三" size={32} />
+```
+
+## 可访问性
+
+组件渲染 `role="img"` 与 `aria-label`:`aria-label` 取名字,读屏读作「张三」而不是
+「张」。名字为空时读作「未知用户」,首字本身对读屏是装饰内容。
+
+## API
+
+### AvatarProps
+
+继承 `React.ComponentPropsWithoutRef<'span'>`(不透传 `children`,内容由 `name` 决定)。
+
+| 属性 | 说明                              | 类型             | 默认值 |
+| ---- | --------------------------------- | ---------------- | ------ |
+| name | 名字:取首字作为缩写,空值显示「?」 | `string \| null` | —      |
+| size | 边长(px)                          | `number`         | `28`   |

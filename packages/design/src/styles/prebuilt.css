@@ -18,4 +18,6 @@
  */
 
 @import './tokens.css';
+/* 语义色工具类:组件里的状态色与业务侧的 tone 映射共用一套,不依赖 Tailwind */
+@import './tone.css';
 @import './components.css';

@@ -1,0 +1,157 @@
+import {
+  Space,
+  StatusBadge,
+  StatusDot,
+  StatusPill,
+  StatusText,
+  toneClasses,
+} from '@beauty/design';
+
+# Status 状态
+
+把业务的「进行中 / 成功 / 失败」映射成一组语义色,并渲染成圆点、文字、标签或胶囊。
+
+## 何时使用
+
+- 需要表达「状态」而不是「分类」时:分类用 Tag,状态用 Status;
+- 同一张列表里状态要能一眼扫出来,所以颜色只由 tone 决定,不要手写颜色;
+- 需要图标/进度条等更复杂的形态时,用 tone 类名自己组,不要往组件里塞业务。
+
+## tone 与颜色
+
+tone 是语义色,不是颜色名:`neutral` / `accent` / `info` / `success` / `warning` / `danger`。
+其中 `accent` 走主色令牌,`danger` 走 destructive 令牌,具体色值来自 `--bd-*` 令牌,
+换主色或暗色主题时自动跟随。
+
+业务侧把后端状态映射到 tone(例如运行中 → `accent`、失败 → `danger`),
+映射表留在业务层,组件只消费 tone。
+
+## 基础用法
+
+圆点 + 等宽文字,适合表格里的紧凑状态列:
+
+<div className="bd-demo">
+  <Space wrap>
+    <span>
+      <StatusDot tone="success" />{' '}
+      <StatusText tone="success">已完成</StatusText>
+    </span>
+    <span>
+      <StatusDot tone="accent" pulse />{' '}
+      <StatusText tone="accent">进行中</StatusText>
+    </span>
+    <span>
+      <StatusDot tone="warning" />{' '}
+      <StatusText tone="warning">待确认</StatusText>
+    </span>
+    <span>
+      <StatusDot tone="danger" /> <StatusText tone="danger">失败</StatusText>
+    </span>
+  </Space>
+</div>
+
+```tsx
+import { StatusDot, StatusText } from '@beauty/design';
+
+<span>
+  <StatusDot tone="accent" pulse />{' '}
+  <StatusText tone="accent">进行中</StatusText>
+</span>;
+```
+
+## 状态标签
+
+`StatusBadge` 是同色底 + 同色文字的小标签,默认等宽(编号、错误码、版本号),
+文案是自然语言时关掉 `mono`:
+
+<div className="bd-demo">
+  <Space wrap>
+    <StatusBadge>默认</StatusBadge>
+    <StatusBadge tone="accent">新建</StatusBadge>
+    <StatusBadge tone="info">处理中</StatusBadge>
+    <StatusBadge tone="success">成功</StatusBadge>
+    <StatusBadge tone="warning">P2</StatusBadge>
+    <StatusBadge tone="danger" mono={false}>
+      失败
+    </StatusBadge>
+  </Space>
+</div>
+
+```tsx
+<StatusBadge tone="success">成功</StatusBadge>
+<StatusBadge tone="danger" mono={false}>失败</StatusBadge>
+```
+
+## 描边胶囊
+
+`StatusPill` 自带同色圆点与描边,适合卡片标题行;两档高度按容器密度选,
+`pulse` 只给「还在动」的状态:
+
+<div className="bd-demo">
+  <Space wrap>
+    <StatusPill tone="info" pulse>
+      运行中
+    </StatusPill>
+    <StatusPill tone="success">已完成</StatusPill>
+    <StatusPill tone="danger">已失败</StatusPill>
+    <StatusPill tone="warning" size="md">
+      等待审批
+    </StatusPill>
+  </Space>
+</div>
+
+```tsx
+<StatusPill tone="info" pulse>运行中</StatusPill>
+<StatusPill tone="warning" size="md">等待审批</StatusPill>
+```
+
+## 自己组合
+
+需要更自由的形态时,直接用 `toneClasses` / `toneClass` 取语义类名,
+颜色仍然只来自令牌:
+
+```tsx
+import { toneClasses, toneClass } from '@beauty/design';
+
+const tone = toneClasses('success');
+<div className={tone.soft}>同色底 + 同色文字</div>
+<span className={toneClass('dot', 'success')} />
+```
+
+## 可访问性
+
+- `StatusDot` 是装饰性的,固定 `aria-hidden="true"`:状态的含义必须由旁边的
+  `StatusText` / 标签文案说出来,不能只有颜色;
+- 动画只做透明度呼吸,不改变尺寸,不触发 `prefers-reduced-motion` 之外的抖动。
+
+## API
+
+### StatusDotProps
+
+继承 `React.ComponentPropsWithoutRef<'span'>`。
+
+| 属性  | 说明         | 类型                                                                    | 默认值      |
+| ----- | ------------ | ----------------------------------------------------------------------- | ----------- |
+| tone  | 语义色       | `'neutral' \| 'accent' \| 'info' \| 'success' \| 'warning' \| 'danger'` | `'neutral'` |
+| pulse | 是否呼吸闪烁 | `boolean`                                                               | `false`     |
+
+### StatusTextProps
+
+| 属性 | 说明   | 类型   | 默认值      |
+| ---- | ------ | ------ | ----------- |
+| tone | 语义色 | `Tone` | `'neutral'` |
+
+### StatusBadgeProps
+
+| 属性 | 说明         | 类型      | 默认值      |
+| ---- | ------------ | --------- | ----------- |
+| tone | 语义色       | `Tone`    | `'neutral'` |
+| mono | 是否等宽显示 | `boolean` | `true`      |
+
+### StatusPillProps
+
+| 属性  | 说明                  | 类型           | 默认值      |
+| ----- | --------------------- | -------------- | ----------- |
+| tone  | 语义色                | `Tone`         | `'neutral'` |
+| size  | `sm` 26px / `md` 30px | `'sm' \| 'md'` | `'sm'`      |
+| pulse | 圆点是否呼吸闪烁      | `boolean`      | `false`     |

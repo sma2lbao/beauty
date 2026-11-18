@@ -1,0 +1,52 @@
+import { Kbd, Space } from '@beauty/design';
+
+# Kbd 键盘按键
+
+标注快捷键与按键组合。
+
+## 何时使用
+
+- 界面里确实绑定了快捷键(⌘K 打开搜索、Esc 关闭面板);
+- 不要为了装饰把按钮做成键帽样式,按键样式只在「真的能按」时才用。
+
+## 基础用法
+
+<div className="bd-demo">
+  <Space align="center">
+    <Kbd>Esc</Kbd>
+    <Kbd>Enter</Kbd>
+  </Space>
+</div>
+
+```tsx
+import { Kbd } from '@beauty/design';
+
+<Kbd>Esc</Kbd>;
+```
+
+## 按键组合
+
+多个键之间用普通文本串起来,组合符由内容决定(不同平台的写法不一样):
+
+<div className="bd-demo">
+  <Space align="center">
+    <span>
+      <Kbd>⌘</Kbd> <Kbd>K</Kbd>
+    </span>
+    <span>
+      <Kbd>Ctrl</Kbd> + <Kbd>Shift</Kbd> + <Kbd>P</Kbd>
+    </span>
+  </Space>
+</div>
+
+```tsx
+<span>
+  <Kbd>⌘</Kbd> <Kbd>K</Kbd>
+</span>
+```
+
+## API
+
+### KbdProps
+
+继承 `React.ComponentPropsWithoutRef<'kbd'>`,渲染原生 `<kbd>` 元素,内容即按键文本。

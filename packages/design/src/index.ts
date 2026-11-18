@@ -12,6 +12,9 @@ export {
   BrandWordmark,
 } from './components/brand/index.js';
 
+export { Avatar } from './components/avatar/index.js';
+export type { AvatarProps } from './components/avatar/index.js';
+
 export { Button, buttonVariants } from './components/button/index.js';
 export type {
   ButtonProps,
@@ -58,6 +61,8 @@ export type { FieldProps } from './components/field/index.js';
 export { Input } from './components/input/index.js';
 export type { InputProps, InputSize } from './components/input/index.js';
 
+export { Kbd } from './components/kbd/index.js';
+
 export { Checkbox } from './components/checkbox/index.js';
 export type { CheckboxProps } from './components/checkbox/index.js';
 
@@ -96,6 +101,19 @@ export type {
   TableRowProps,
 } from './components/table/index.js';
 
+export {
+  StatusBadge,
+  StatusDot,
+  StatusPill,
+  StatusText,
+} from './components/status/index.js';
+export type {
+  StatusBadgeProps,
+  StatusDotProps,
+  StatusPillProps,
+  StatusTextProps,
+} from './components/status/index.js';
+
 export { Tabs } from './components/tabs/index.js';
 export type { TabItem, TabsProps, TabsSize } from './components/tabs/index.js';
 
@@ -132,6 +150,8 @@ export { Spin } from './components/spin/index.js';
 export type { SpinProps, SpinSize } from './components/spin/index.js';
 
 export { Space } from './components/space/index.js';
+export { toneClass, toneClasses } from './tone.js';
+export type { Tone, ToneClasses, ToneVariant } from './tone.js';
 export type {
   SpaceAlign,
   SpaceDirection,

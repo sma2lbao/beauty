@@ -68,6 +68,10 @@
   /* 展示衬线:只给品牌字标用(界面正文一律无衬线) */
   --bd-font-display:
     Georgia, 'Times New Roman', 'Songti SC', 'Noto Serif SC', 'STSong', serif;
+  /* 等宽:状态标签、编号、Kbd 这类元信息用 */
+  --bd-font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
 
   /* 品牌资产令牌(几何在 Brand* 组件,颜色只此处一处定义) */
   --bd-logo-moon: #b76e79;
@@ -104,4 +108,55 @@
 
   --bd-logo-moon: #ffefc6;
   --bd-logo-text: #ededed;
+}
+/**
+ * ── 语义色阶(tone)────────────────────────────────────────────────────────
+ * tone 工具类(src/styles/tone.css)与 Status 组件族消费的颜色档位。
+ *
+ * 底色/描边由语义色与透明混合得到:亮暗主题共用同一套公式,宿主覆盖 --bd-*
+ * (换主色、品牌定制)时档位自动跟随,不需要逐个重新定义;需要精确控制某一档
+ * 时,覆盖对应令牌即可(如 --bd-info-border)。
+ *
+ * 选择器写成 :root, .dark 并在两处都声明:局部挂 .dark 换肤的子树也会用
+ * 子树自己的语义色重新计算,而不是继承上层算好的浅色值。
+ *
+ * tone 里的 accent 用 primary 令牌(danger 用 destructive 令牌):
+ * 组件库的语义命名只有 primary/destructive,业务侧统一从这里取。
+ */
+:root,
+.dark {
+  --bd-primary-bg: color-mix(in oklab, var(--bd-primary) 12%, transparent);
+  --bd-primary-border: color-mix(in oklab, var(--bd-primary) 55%, transparent);
+  --bd-primary-soft: color-mix(
+    in oklab,
+    var(--bd-primary) 72%,
+    var(--bd-foreground)
+  );
+  --bd-info-bg: color-mix(in oklab, var(--bd-info) 14%, transparent);
+  --bd-info-border: color-mix(in oklab, var(--bd-info) 45%, transparent);
+  --bd-success-bg: color-mix(in oklab, var(--bd-success) 14%, transparent);
+  --bd-success-border: color-mix(in oklab, var(--bd-success) 45%, transparent);
+  --bd-warning-bg: color-mix(in oklab, var(--bd-warning) 14%, transparent);
+  --bd-warning-border: color-mix(in oklab, var(--bd-warning) 45%, transparent);
+  --bd-destructive-bg: color-mix(
+    in oklab,
+    var(--bd-destructive) 14%,
+    transparent
+  );
+  --bd-destructive-border: color-mix(
+    in oklab,
+    var(--bd-destructive) 45%,
+    transparent
+  );
+  --bd-neutral-bg: var(--bd-secondary);
+  --bd-neutral-border: var(--bd-border);
+  --bd-neutral-soft: var(--bd-muted-foreground);
+  --bd-neutral-dot: var(--bd-border);
+
+  /* 头像底色:亮色下浅一点,暗色下比 --bd-muted 亮一档才看得出圆形轮廓 */
+  --bd-avatar-bg: var(--bd-muted);
+}
+
+.dark {
+  --bd-avatar-bg: #262626;
 }

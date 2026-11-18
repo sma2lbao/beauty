@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   Alert,
+  Avatar,
   Button,
   Card,
   CardContent,
@@ -24,12 +25,17 @@ import {
   Empty,
   Field,
   Input,
+  Kbd,
   Radio,
   RadioGroup,
   Select,
   Skeleton,
   Space,
   Spin,
+  StatusBadge,
+  StatusDot,
+  StatusPill,
+  StatusText,
   Switch,
   Table,
   TableBody,
@@ -53,6 +59,12 @@ const SLOTS = [
   'alert-icon',
   'alert-title',
   'alert-description',
+  'avatar',
+  'kbd',
+  'status-dot',
+  'status-text',
+  'status-badge',
+  'status-pill',
   'button',
   'card',
   'field',
@@ -168,6 +180,14 @@ describe('类名契约', () => {
           ]}
         />
         <Spin label="加载中" />
+        <Avatar name="张三" />
+        <Kbd>⌘K</Kbd>
+        <StatusDot tone="accent" pulse />
+        <StatusText tone="success">已完成</StatusText>
+        <StatusBadge tone="warning">P2</StatusBadge>
+        <StatusPill tone="info" size="md">
+          运行中
+        </StatusPill>
         <Empty
           description="暂无数据"
           actions={<Button size="sm">刷新</Button>}
