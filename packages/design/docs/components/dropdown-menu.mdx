@@ -1,0 +1,236 @@
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@beauty/design';
+
+# DropdownMenu 下拉菜单
+
+点击触发器展开一组操作或选项,选中即收起。
+
+## 何时使用
+
+- 同一对象的次要操作(重命名、复制、删除):空间不够平铺时收进菜单;
+- 互斥选择但没有足够空间做 Select(工作区、视图切换);
+- 主导航不要塞进下拉菜单:一级入口应该直接可见。
+
+## 基础用法
+
+`DropdownMenu` 负责展开态与关联关系,触发器在 `DropdownMenuTrigger`,
+面板在 `DropdownMenuContent`,菜单项用 `DropdownMenuItem`:
+
+<div className="bd-demo">
+  <div className="bd-demo-anchor">
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline">更多操作</Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>工作区</DropdownMenuLabel>
+        <DropdownMenuItem>重命名</DropdownMenuItem>
+        <DropdownMenuItem>复制链接</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem>删除</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
+</div>
+
+```tsx
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@beauty/design';
+
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="outline">更多操作</Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent align="end">
+    <DropdownMenuItem>重命名</DropdownMenuItem>
+    <DropdownMenuItem>删除</DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>;
+```
+
+## 定位方式
+
+面板是 `position: absolute` 的普通浮层,**没有 portal**。需要给触发器与面板的
+共同父级加 `position: relative`(上面的演示用 `.bd-demo-anchor`):
+
+```tsx
+<div className="relative">
+  <DropdownMenu>{/* Trigger / Content */}</DropdownMenu>
+</div>
+```
+
+好处是没有传送门带来的主题与层级割裂,样式仍受宿主作用域约束;
+代价是父级有 `overflow: hidden` 时面板会被裁切,这种情况请改用弹层容器。
+
+- `align`:`start`(默认)贴触发器左缘、`end` 贴右缘、`stretch` 与触发器同宽;
+- `side`:`bottom`(默认)向下展开、`top` 向上展开;
+- 触发器与面板的间距固定为 4px,由组件 CSS 负责。
+
+## 尺寸
+
+`size="sm"` 用于密集的操作列表(12px、上下 6px 留白),
+默认 `md` 是 13px、行高 32px 的整行:
+
+<div className="bd-demo">
+  <div className="bd-demo-anchor">
+    <DropdownMenu>
+      <DropdownMenuTrigger>筛选</DropdownMenuTrigger>
+      <DropdownMenuContent size="sm">
+        <DropdownMenuItem>全部任务</DropdownMenuItem>
+        <DropdownMenuItem>进行中</DropdownMenuItem>
+        <DropdownMenuItem>已完成</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
+</div>
+
+```tsx
+<DropdownMenuContent size="sm">
+  <DropdownMenuItem>全部任务</DropdownMenuItem>
+</DropdownMenuContent>
+```
+
+尺寸经 context 下发给菜单项,不需要逐项传 `size`。
+
+## 单选分组
+
+互斥选择用 `DropdownMenuRadioGroup` + `DropdownMenuRadioItem`,
+选中项由 `checked` 决定,读屏会念成 `menuitemradio`:
+
+<div className="bd-demo">
+  <div className="bd-demo-anchor">
+    <DropdownMenu>
+      <DropdownMenuTrigger>切换工作区</DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuLabel>工作区</DropdownMenuLabel>
+        <DropdownMenuRadioGroup>
+          <DropdownMenuRadioItem checked>默认工作区</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem>数据标注</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
+</div>
+
+```tsx
+<DropdownMenuRadioGroup>
+  {workspaces.map((workspace) => (
+    <DropdownMenuRadioItem
+      key={workspace.id}
+      checked={workspace.id === currentId}
+      onSelect={() => selectWorkspace(workspace.id)}
+    >
+      {workspace.name}
+    </DropdownMenuRadioItem>
+  ))}
+</DropdownMenuRadioGroup>
+```
+
+## 用 asChild 承载链接
+
+菜单项本质是 `button`。需要保留链接语义(路由跳转、外链)时传 `asChild`,
+组件会把行为合并到唯一子元素上,自己不加类名也不改结构:
+
+```tsx
+import { Link } from 'react-router';
+
+<DropdownMenuItem asChild>
+  <Link to="/runs">查看全部运行</Link>
+</DropdownMenuItem>;
+```
+
+触发器同理:`<DropdownMenuTrigger asChild><Button>…</Button></DropdownMenuTrigger>`
+让面板挂在任意按钮外观上;合并后的 `aria-expanded` / `aria-controls` /
+`onClick` 与子元素自身的处理器会依次执行。
+
+## 受控
+
+`open` + `onOpenChange` 受控;`defaultOpen` 只用于非受控初始态:
+
+```tsx
+<DropdownMenu open={open} onOpenChange={setOpen}>
+  {/* ... */}
+</DropdownMenu>
+```
+
+点外部、按 `Escape`、选中任一菜单项都会请求收起;受控模式下组件只回调、
+不自行改状态,由使用方决定是否真的收起。
+
+## 可访问性
+
+- 触发器自动获得 `aria-haspopup="menu"` / `aria-expanded` / `aria-controls`,
+  面板为 `role="menu"`,菜单项为 `role="menuitem"`,单选项为 `role="menuitemradio"`;
+- 面板打开时焦点落在面板上;用 `↓` / `↑` 在项间循环、`Home` / `End` 跳到首末项;
+- `Escape` 收起并把焦点还给触发器,`Tab` 离开即收起(菜单不是焦点陷阱);
+- 点击面板外部收起,且不抢焦点;
+- 展开式导航这类「菜单里放链接」的场景,给 `DropdownMenuContent` 传 `role={null}`
+  可保留链接语义——把页面链接塞进 `role="menu"` 会被读屏念成命令项。
+
+## API
+
+### DropdownMenuProps
+
+| 属性         | 说明             | 类型                      | 默认值  |
+| ------------ | ---------------- | ------------------------- | ------- |
+| open         | 受控展开态       | `boolean`                 | —       |
+| defaultOpen  | 非受控初始展开态 | `boolean`                 | `false` |
+| onOpenChange | 展开态变化回调   | `(open: boolean) => void` | —       |
+
+### DropdownMenuTriggerProps
+
+继承 `React.ComponentPropsWithRef<'button'>`。
+
+| 属性    | 说明                                   | 类型      | 默认值  |
+| ------- | -------------------------------------- | --------- | ------- |
+| asChild | 把交互合并到唯一子元素(如 Button/Link) | `boolean` | `false` |
+
+### DropdownMenuContentProps
+
+继承 `React.ComponentPropsWithRef<'div'>`。
+
+| 属性  | 说明                           | 类型                            | 默认值     |
+| ----- | ------------------------------ | ------------------------------- | ---------- |
+| align | 水平对齐                       | `'start' \| 'end' \| 'stretch'` | `'start'`  |
+| side  | 展开方向                       | `'bottom' \| 'top'`             | `'bottom'` |
+| size  | 菜单密度                       | `'sm' \| 'md'`                  | `'md'`     |
+| role  | 容器角色;导航链接场景传 `null` | `string \| null`                | `'menu'`   |
+
+### DropdownMenuItemProps
+
+继承 `React.ComponentPropsWithRef<'button'>`(去掉 `onSelect`)。
+
+| 属性     | 说明                                                       | 类型                          | 默认值  |
+| -------- | ---------------------------------------------------------- | ----------------------------- | ------- |
+| asChild  | 把行为合并到唯一子元素                                     | `boolean`                     | `false` |
+| onSelect | 选中回调;内联箭头会展开菜单, `preventDefault()` 可阻止收起 | `(event: MouseEvent) => void` | —       |
+
+### DropdownMenuRadioItemProps
+
+在 `DropdownMenuItemProps` 基础上:
+
+| 属性    | 说明     | 类型      | 默认值  |
+| ------- | -------- | --------- | ------- |
+| checked | 是否选中 | `boolean` | `false` |
+
+### 其余结构件
+
+| 组件                   | 说明                           |
+| ---------------------- | ------------------------------ |
+| DropdownMenuRadioGroup | 单选分组容器(`role="group"`)   |
+| DropdownMenuGroup      | 普通分组容器                   |
+| DropdownMenuLabel      | 分组标题,仅视觉,不进入焦点顺序 |
+| DropdownMenuSeparator  | 分组分隔线                     |

@@ -1,4 +1,17 @@
-import { Alert, Button, Input, Select, Spin, Tag } from '@beauty/design';
+import {
+  Alert,
+  Button,
+  Input,
+  Select,
+  Spin,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tag,
+} from '@beauty/design';
 import { useState } from 'react';
 
 import { ConsolePanel, EmptyPanel } from '@/components/console/ui';
@@ -40,7 +53,9 @@ function quotaLabel(account: AdminAccount): string {
 export function AdminAccountsPanel({ model }: { model: AdminModel }) {
   const { accounts } = model;
   const [draftQuery, setDraftQuery] = useState(accounts.query);
-  const [draftStatus, setDraftStatus] = useState<AdminStatus | ''>(accounts.status);
+  const [draftStatus, setDraftStatus] = useState<AdminStatus | ''>(
+    accounts.status,
+  );
   const [quotaTarget, setQuotaTarget] = useState<AdminAccount | null>(null);
   const [roleTarget, setRoleTarget] = useState<{
     account: AdminAccount;
@@ -139,67 +154,65 @@ export function AdminAccountsPanel({ model }: { model: AdminModel }) {
         />
       ) : (
         <ConsolePanel className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-[12px]">
-            <thead className="border-b border-ha-border text-[11px] text-ha-dim">
-              <tr>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  账号
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  状态
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  角色
-                </th>
-                <th scope="col" className="px-4 py-2.5 text-right font-medium">
+          <Table className="min-w-[960px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>账号</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>角色</TableHead>
+                <TableHead className="text-right">
                   本月 tokens
-                </th>
-                <th scope="col" className="px-4 py-2.5 text-right font-medium">
+                </TableHead>
+                <TableHead className="text-right">
                   本月成本
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  配额
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  创建时间
-                </th>
-                <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ha-border">
+                </TableHead>
+                <TableHead>配额</TableHead>
+                <TableHead>创建时间</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((account) => {
                 const isSelf = account.id === selfId;
                 return (
-                  <tr key={account.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-ha-text-2">{account.email}</div>
+                  <TableRow key={account.id}>
+                    <TableCell>
+                      <div className="font-medium text-ha-text-2">
+                        {account.email}
+                      </div>
                       <div className="mt-0.5 text-[11px] text-ha-dim">
                         {account.display_name ?? '未设置显示名'}
                       </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Tag color={account.status === 'active' ? 'success' : 'danger'}>
+                    </TableCell>
+                    <TableCell>
+                      <Tag
+                        color={
+                          account.status === 'active' ? 'success' : 'danger'
+                        }
+                      >
                         {STATUS_LABELS[account.status]}
                       </Tag>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Tag color={account.role === 'admin' ? 'primary' : 'neutral'}>
+                    </TableCell>
+                    <TableCell>
+                      <Tag
+                        color={account.role === 'admin' ? 'primary' : 'neutral'}
+                      >
                         {ROLE_LABELS[account.role]}
                       </Tag>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-ha-text-2">
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-ha-text-2">
                       {formatNumber(account.usage.month_tokens)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-ha-text-2">
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-ha-text-2">
                       {formatUsd(account.usage.month_cost_usd)}
-                    </td>
-                    <td className="px-4 py-3 text-ha-text-2">{quotaLabel(account)}</td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-ha-dim">
+                    </TableCell>
+                    <TableCell className="text-ha-text-2">
+                      {quotaLabel(account)}
+                    </TableCell>
+                    <TableCell className="font-mono text-[11px] text-ha-dim">
                       {formatDateTime(account.created_at)}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell>
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <Button
                           variant="outline"
@@ -220,29 +233,36 @@ export function AdminAccountsPanel({ model }: { model: AdminModel }) {
                             })
                           }
                         >
-                          {account.role === 'admin' ? '降为普通用户' : '设为管理员'}
+                          {account.role === 'admin'
+                            ? '降为普通用户'
+                            : '设为管理员'}
                         </Button>
                         <Button
-                          variant={account.status === 'active' ? 'danger' : 'outline'}
+                          variant={
+                            account.status === 'active' ? 'danger' : 'outline'
+                          }
                           size="sm"
                           disabled={isSelf}
                           title={isSelf ? '不能停用自己的账号' : undefined}
                           onClick={() =>
                             setStatusTarget({
                               account,
-                              next: account.status === 'active' ? 'disabled' : 'active',
+                              next:
+                                account.status === 'active'
+                                  ? 'disabled'
+                                  : 'active',
                             })
                           }
                         >
                           {account.status === 'active' ? '停用' : '启用'}
                         </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           <AdminPagination
             offset={accounts.offset}
             total={total}
@@ -305,7 +325,9 @@ export function AdminAccountsPanel({ model }: { model: AdminModel }) {
                 : ':启用后该账号即可恢复登录。')
             : undefined
         }
-        confirmLabel={statusTarget?.next === 'disabled' ? '停用账号' : '启用账号'}
+        confirmLabel={
+          statusTarget?.next === 'disabled' ? '停用账号' : '启用账号'
+        }
         pending={model.statusMutation.isPending}
         error={model.statusMutation.error}
         onClose={closeStatus}

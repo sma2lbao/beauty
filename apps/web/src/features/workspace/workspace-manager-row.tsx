@@ -3,8 +3,14 @@
  * 重命名(行内输入)/ 删除(就地二次确认)时就地换成对应表单。
  * 默认工作区由系统维护,不可删除但可重命名。
  */
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@beauty/design';
 import { FolderKanban } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 
 import type { Workspace } from '@/lib/workspace-api';
 import {
@@ -13,9 +19,7 @@ import {
 } from '@/lib/workspace-mutations';
 import { cn } from '@/lib/utils';
 
-import { menuItemClass } from './workspace-switcher-menu';
-
-type RowMode = 'idle' | 'menu' | 'rename' | 'delete';
+type RowMode = 'idle' | 'rename' | 'delete';
 
 export function WorkspaceManagerRow({
   workspace,
@@ -31,7 +35,6 @@ export function WorkspaceManagerRow({
 }) {
   const [mode, setMode] = useState<RowMode>('idle');
   const [name, setName] = useState(workspace.name);
-  const rowRef = useRef<HTMLLIElement | null>(null);
   const inputId = useId();
   const { rename, remove } = useWorkspaceMutations();
   const isDefault = workspace.is_default === true;
@@ -39,19 +42,6 @@ export function WorkspaceManagerRow({
   const trimmed = name.trim();
   const renameError = rename.error ? workspaceErrorMessage(rename.error) : null;
   const deleteError = remove.error ? workspaceErrorMessage(remove.error) : null;
-
-  useEffect(() => {
-    if (mode !== 'menu') {
-      return;
-    }
-    const onPointerDown = (event: MouseEvent) => {
-      if (rowRef.current && !rowRef.current.contains(event.target as Node)) {
-        setMode('idle');
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [mode]);
 
   const submitRename = async () => {
     if (!trimmed || rename.isPending) {
@@ -79,7 +69,7 @@ export function WorkspaceManagerRow({
   };
 
   return (
-    <li ref={rowRef} className="relative flex items-start gap-2.5 py-2.5">
+    <li className="relative flex items-start gap-2.5 py-2.5">
       <FolderKanban
         aria-hidden="true"
         className={cn(
@@ -190,67 +180,59 @@ export function WorkspaceManagerRow({
       )}
 
       {mode !== 'rename' && mode !== 'delete' ? (
-        <button
-          type="button"
-          aria-label={`工作区操作:${workspace.name}`}
-          aria-haspopup="menu"
-          aria-expanded={mode === 'menu'}
-          onClick={() =>
-            setMode((value) => (value === 'menu' ? 'idle' : 'menu'))
-          }
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ha-dim transition-colors hover:bg-ha-panel-2 hover:text-ha-text-2"
-        >
-          <span
-            aria-hidden="true"
-            className="font-mono text-[13px] leading-none"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`工作区操作:${workspace.name}`}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ha-dim transition-colors hover:bg-ha-panel-2 hover:text-ha-text-2"
+            >
+              <span
+                aria-hidden="true"
+                className="font-mono text-[13px] leading-none"
+              >
+                ⋯
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            aria-label={`工作区操作:${workspace.name}`}
+            align="end"
+            size="sm"
+            className="w-36"
           >
-            ⋯
-          </span>
-        </button>
-      ) : null}
-
-      {mode === 'menu' ? (
-        <div
-          role="menu"
-          aria-label={`工作区操作:${workspace.name}`}
-          className="absolute right-0 top-10 z-10 w-36 rounded-md border border-ha-border-strong bg-ha-panel p-1 shadow-xl"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setName(workspace.name);
-              rename.reset();
-              setMode('rename');
-            }}
-            className={cn(menuItemClass, 'text-ha-text-2 hover:bg-ha-panel-2')}
-          >
-            重命名工作区
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={isDefault}
-            title={isDefault ? '默认工作区由系统维护,不能删除' : undefined}
-            onClick={() => {
-              remove.reset();
-              setMode('delete');
-            }}
-            className={cn(
-              menuItemClass,
-              isDefault
-                ? 'text-ha-dim'
-                : 'text-ha-danger hover:bg-ha-danger-bg',
-            )}
-          >
-            删除工作区
-          </button>
-          {isDefault ? (
-            <p className="px-2 pb-1 pt-1 text-[10px] leading-4 text-ha-faint">
-              默认工作区不能删除,可重命名
-            </p>
-          ) : null}
-        </div>
+            <DropdownMenuItem
+              onSelect={() => {
+                setName(workspace.name);
+                rename.reset();
+                setMode('rename');
+              }}
+              className="text-ha-text-2 hover:bg-ha-panel-2"
+            >
+              重命名工作区
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isDefault}
+              title={isDefault ? '默认工作区由系统维护,不能删除' : undefined}
+              onSelect={() => {
+                remove.reset();
+                setMode('delete');
+              }}
+              className={cn(
+                isDefault
+                  ? 'text-ha-dim'
+                  : 'text-ha-danger hover:bg-ha-danger-bg',
+              )}
+            >
+              删除工作区
+            </DropdownMenuItem>
+            {isDefault ? (
+              <p className="px-2 pb-1 pt-1 text-[10px] leading-4 text-ha-faint">
+                默认工作区不能删除,可重命名
+              </p>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </li>
   );

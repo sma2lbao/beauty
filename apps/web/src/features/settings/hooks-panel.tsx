@@ -19,6 +19,12 @@ import {
   Select,
   Spin,
   Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from '@beauty/design';
 import { RotateCw, Trash2 } from 'lucide-react';
 
@@ -48,7 +54,8 @@ export function HooksPanel() {
         </CardHeader>
         <CardContent>
           <Alert variant="neutral">
-            当前部署未启用 hooks:后端 HOOKS_ENABLED 开关关闭。启用后刷新本页即可配置。
+            当前部署未启用 hooks:后端 HOOKS_ENABLED
+            开关关闭。启用后刷新本页即可配置。
           </Alert>
         </CardContent>
       </Card>
@@ -61,8 +68,8 @@ export function HooksPanel() {
         <CardTitle>自动化 hooks</CardTitle>
         <CardDescription>
           五个生命周期挂点各配一条 HTTPS webhook:PreToolUse 可拒绝本次工具调用,
-          PreCompact 可跳过本次压缩,其余事件只观察。secret 只在创建/轮换时显示一次,
-          接收端需校验 X-DSH-Signature。
+          PreCompact 可跳过本次压缩,其余事件只观察。secret
+          只在创建/轮换时显示一次, 接收端需校验 X-DSH-Signature。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -105,45 +112,45 @@ export function HooksPanel() {
 
         {model.hooks.length > 0 ? (
           <div className="overflow-x-auto rounded-md border border-ha-border">
-            <table className="w-full border-collapse text-left text-[12px]">
-              <thead>
-                <tr className="bg-ha-panel-2 text-[10px] uppercase tracking-[0.12em] text-ha-faint">
-                  <th className="px-3 py-2 font-medium">事件</th>
-                  <th className="px-3 py-2 font-medium">匹配</th>
-                  <th className="px-3 py-2 font-medium">目标地址</th>
-                  <th className="px-3 py-2 font-medium">超时</th>
-                  <th className="px-3 py-2 font-medium">启用</th>
-                  <th className="px-3 py-2 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table density="compact">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>事件</TableHead>
+                  <TableHead>匹配</TableHead>
+                  <TableHead>目标地址</TableHead>
+                  <TableHead>超时</TableHead>
+                  <TableHead>启用</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {model.hooks.map((hook) => (
-                  <tr key={hook.id} className="border-t border-ha-border">
-                    <td className="px-3 py-2">
+                  <TableRow key={hook.id}>
+                    <TableCell>
                       <span className="text-ha-text">
                         {EVENT_LABELS[hook.event]}
                       </span>
                       <span className="ml-2 font-mono text-[10px] text-ha-faint">
                         {hook.event}
                       </span>
-                    </td>
-                    <td className="px-3 py-2">
+                    </TableCell>
+                    <TableCell>
                       <code className="font-mono text-[11px] text-ha-text-2">
                         {hook.matcher}
                       </code>
-                    </td>
-                    <td className="max-w-[220px] px-3 py-2">
+                    </TableCell>
+                    <TableCell className="max-w-[220px]">
                       <code
                         className="block truncate font-mono text-[11px] text-ha-text-2"
                         title={hook.target}
                       >
                         {summarizeTarget(hook.target)}
                       </code>
-                    </td>
-                    <td className="px-3 py-2 text-ha-text-2">
+                    </TableCell>
+                    <TableCell className="text-ha-text-2">
                       {hook.timeout_seconds}s
-                    </td>
-                    <td className="px-3 py-2">
+                    </TableCell>
+                    <TableCell>
                       <Switch
                         checked={hook.enabled}
                         aria-label={`启用 ${EVENT_LABELS[hook.event]} hook`}
@@ -152,8 +159,8 @@ export function HooksPanel() {
                           model.toggleHook(hook, enabled)
                         }
                       />
-                    </td>
-                    <td className="px-3 py-2 text-right">
+                    </TableCell>
+                    <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button
                           variant="outline"
@@ -174,11 +181,11 @@ export function HooksPanel() {
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ) : model.loading || model.loadError ? null : (
           <p className="text-[12px] leading-5 text-ha-muted">

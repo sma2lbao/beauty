@@ -17,6 +17,12 @@ import {
   Input,
   Select,
   Spin,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from '@beauty/design';
 import { Trash2 } from 'lucide-react';
 
@@ -34,10 +40,7 @@ const ACTION_LABELS: Record<ApprovalAction, string> = {
   deny: '禁止',
 };
 
-const ACTION_TONES: Record<
-  ApprovalAction,
-  'success' | 'warning' | 'danger'
-> = {
+const ACTION_TONES: Record<ApprovalAction, 'success' | 'warning' | 'danger'> = {
   auto: 'success',
   confirm: 'warning',
   deny: 'danger',
@@ -83,24 +86,24 @@ export function ApprovalPolicyPanel() {
 
         {model.rows.length > 0 ? (
           <div className="overflow-x-auto rounded-md border border-ha-border">
-            <table className="w-full border-collapse text-left text-[12px]">
-              <thead>
-                <tr className="bg-ha-panel-2 text-[10px] uppercase tracking-[0.12em] text-ha-faint">
-                  <th className="px-3 py-2 font-medium">工具</th>
-                  <th className="px-3 py-2 font-medium">参数条件</th>
-                  <th className="px-3 py-2 font-medium">动作</th>
-                  <th className="px-3 py-2 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table density="compact">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>工具</TableHead>
+                  <TableHead>参数条件</TableHead>
+                  <TableHead>动作</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {model.rows.map((row) => (
-                  <tr key={row.id} className="border-t border-ha-border">
-                    <td className="px-3 py-2">
+                  <TableRow key={row.id}>
+                    <TableCell>
                       <code className="font-mono text-[12px] text-ha-text">
                         {row.tool}
                       </code>
-                    </td>
-                    <td className="px-3 py-2">
+                    </TableCell>
+                    <TableCell>
                       {row.argName ? (
                         <span className="font-mono text-[11px] text-ha-text-2">
                           {row.argName} {row.argMatch} {row.argValue}
@@ -108,13 +111,13 @@ export function ApprovalPolicyPanel() {
                       ) : (
                         <span className="text-ha-faint">—</span>
                       )}
-                    </td>
-                    <td className="px-3 py-2">
+                    </TableCell>
+                    <TableCell>
                       <ToneBadge tone={ACTION_TONES[row.action]}>
                         {ACTION_LABELS[row.action]}
                       </ToneBadge>
-                    </td>
-                    <td className="px-3 py-2 text-right">
+                    </TableCell>
+                    <TableCell className="text-right">
                       <Button
                         variant="outline"
                         size="sm"
@@ -124,11 +127,11 @@ export function ApprovalPolicyPanel() {
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ) : model.loading || model.loadError ? null : (
           <p className="text-[12px] leading-5 text-ha-muted">

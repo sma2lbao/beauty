@@ -20,6 +20,18 @@
   padding-right: 120px;
 }
 
+/* DropdownMenu 文档演示:
+ * 面板是绝对定位且没有 portal,触发器与面板的共同父级必须是定位祖先。 */
+.bd-demo-anchor {
+  position: relative;
+  display: inline-block;
+}
+
+/* Table 文档演示:让表格占满演示区宽度 */
+.bd-demo-table {
+  width: 100%;
+}
+
 /* Skeleton 文档演示用的宽高 */
 .bd-demo-skeleton-title {
   height: 1.5rem;

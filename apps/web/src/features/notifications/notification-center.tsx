@@ -11,9 +11,10 @@
  *   往下右展开会同时越过屏幕左边与底边;
  */
 import { Bell, CheckCheck } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useDismissable } from '@/components/console/use-dismissable';
 import { useNotificationsModel } from '@/features/notifications/use-notifications-model';
 import type {
   AppNotification,
@@ -89,29 +90,12 @@ export function NotificationCenter({
   const { items, unreadCount, isLoading, markRead, markAllRead } =
     useNotificationsModel();
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        bellRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+  useDismissable({
+    open,
+    onClose: () => setOpen(false),
+    containerRef,
+    triggerRef: bellRef,
+  });
 
   const openNotification = (notification: AppNotification) => {
     setOpen(false);

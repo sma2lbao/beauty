@@ -11,8 +11,15 @@
  * - 当前路由落在弹层里时,触发器左侧亮一个点,并保持高亮底色;
  * - 点外部 / Escape 收起(Escape 焦点回触发器);触发器是 button 而非链接。
  */
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@beauty/design';
 import { ChevronDown, Ellipsis } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useLocation } from 'react-router';
 
 import { ConsoleNavLink } from '@/components/console/ui';
@@ -25,14 +32,10 @@ import {
   visibleGroups,
 } from './nav-state';
 
-const PANEL_ID = 'sidebar-more-menu';
-
 export function MoreNav() {
   const { pathname } = useLocation();
   const { isAdmin } = useAccountRole();
   const [openAt, setOpenAt] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   // 管理台只对管理员开放;角色未知时按非管理员处理(失败关闭)。
   const groups = visibleGroups(MORE_GROUPS, isAdmin);
@@ -43,85 +46,53 @@ export function MoreNav() {
 
   const close = () => setOpenAt(null);
 
-  // 点到别处 / Escape 收起;焦点只在 Escape 时回触发器(鼠标点别处不该抢焦点)。
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpenAt(null);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpenAt(null);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
-
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-expanded={open}
-        aria-controls={PANEL_ID}
-        data-active={active ? 'true' : undefined}
-        onClick={() => setOpenAt(open ? null : pathname)}
-        className={cn(
-          'flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors',
-          open || active
-            ? 'bg-[#1c1d1f] text-ha-text'
-            : 'text-ha-text-3 hover:bg-ha-panel-2/70 hover:text-ha-text-2',
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className="relative shrink-0 [&>svg]:h-4 [&>svg]:w-4"
-        >
-          <Ellipsis />
-          {active && !open ? (
-            <span className="absolute -left-1.5 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-ha-accent-soft" />
-          ) : null}
-        </span>
-        <span className="flex-1 truncate text-left">更多</span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            'h-3 w-3 shrink-0 text-ha-ghost transition-transform',
-            open ? 'rotate-180' : '',
-          )}
-        />
-      </button>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => setOpenAt(next ? pathname : null)}
+    >
+      <div className="relative">
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            data-active={active ? 'true' : undefined}
+            className={cn(
+              'group flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors',
+              active
+                ? 'data-[state=open]:bg-[#1c1d1f] data-[state=open]:text-ha-text'
+                : 'text-ha-text-3 hover:bg-ha-panel-2/70 hover:text-ha-text-2 data-[state=open]:bg-[#1c1d1f] data-[state=open]:text-ha-text',
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className="relative shrink-0 [&>svg]:h-4 [&>svg]:w-4"
+            >
+              <Ellipsis />
+              {active && !open ? (
+                <span className="absolute -left-1.5 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-ha-accent-soft" />
+              ) : null}
+            </span>
+            <span className="flex-1 truncate text-left">更多</span>
+            <ChevronDown
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 text-ha-ghost transition-transform group-data-[state=open]:rotate-180"
+            />
+          </button>
+        </DropdownMenuTrigger>
 
-      {open ? (
-        <div
-          id={PANEL_ID}
-          className="absolute left-0 right-0 top-full z-40 mt-1 rounded-lg border border-ha-border-strong bg-ha-panel p-1 shadow-[0_18px_44px_rgba(0,0,0,0.55)]"
-        >
+        {/* 展开式导航:面板不承担 menu 语义,里面是普通链接。 */}
+        <DropdownMenuContent align="stretch" role={null}>
           {groups.map((group, index) => (
             <div key={group.id} className="flex flex-col gap-0.5">
-              {index > 0 ? (
-                <div aria-hidden="true" className="my-1 h-px bg-ha-border" />
-              ) : null}
-              <p className="px-2.5 pb-0.5 pt-1 text-[11px] font-semibold text-ha-dim">
-                {group.label}
-              </p>
+              {index > 0 ? <DropdownMenuSeparator /> : null}
+              <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
               {group.items.map((item) => (
                 <ConsoleNavLink key={item.to} {...item} onClick={close} />
               ))}
             </div>
           ))}
-        </div>
-      ) : null}
-    </div>
+        </DropdownMenuContent>
+      </div>
+    </DropdownMenu>
   );
 }

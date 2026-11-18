@@ -11,6 +11,7 @@
 @import '../components/card/card.css';
 @import '../components/checkbox/checkbox.css';
 @import '../components/dialog/dialog.css';
+@import '../components/dropdown-menu/dropdown-menu.css';
 @import '../components/empty/empty.css';
 @import '../components/field/field.css';
 @import '../components/input/input.css';
@@ -20,6 +21,7 @@
 @import '../components/space/space.css';
 @import '../components/spin/spin.css';
 @import '../components/switch/switch.css';
+@import '../components/table/table.css';
 @import '../components/tabs/tabs.css';
 @import '../components/tag/tag.css';
 @import '../components/textarea/textarea.css';

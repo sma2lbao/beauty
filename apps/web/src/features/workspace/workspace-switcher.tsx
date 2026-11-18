@@ -12,12 +12,12 @@
  *
  * 本文件只保留触发器与开合状态;菜单/弹窗/弹窗行分别在同域子文件里。
  */
+import { DropdownMenu, DropdownMenuTrigger } from '@beauty/design';
 import { ChevronDown, FolderKanban, FolderPlus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
-import { cn } from '@/lib/utils';
 
 import { WorkspaceManagerDialog } from './workspace-manager-dialog';
 import { WorkspaceSwitcherMenu } from './workspace-switcher-menu';
@@ -37,32 +37,6 @@ export function WorkspaceSwitcher({
   } = useWorkspaceSelection();
   const [open, setOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-
-  // 菜单点外部 / Escape 关闭,焦点回到触发器。
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   if (!isLoading && workspaces.length === 0) {
     // 空态占位:还没有工作区时,触发器直接引到创建工作区(设计稿 05 画板)。
@@ -79,63 +53,51 @@ export function WorkspaceSwitcher({
   }
 
   const handleSelect = (workspaceId: string) => {
-    setOpen(false);
     if (workspaceId !== activeWorkspaceId) {
       selectWorkspace(workspaceId);
     }
   };
 
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label="切换工作区"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className={cn(
-          'flex h-9 w-full items-center gap-2 rounded-md border px-2.5 text-left transition-colors',
-          open
-            ? 'border-ha-accent-soft/40 bg-ha-panel-2'
-            : 'border-ha-border-strong bg-ha-panel hover:border-ha-border-strong hover:bg-ha-panel-2/70',
-        )}
-      >
-        <FolderKanban
-          aria-hidden="true"
-          className="h-3.5 w-3.5 shrink-0 text-ha-accent-soft"
-        />
-        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ha-text">
-          {activeWorkspace?.name ?? '选择工作区…'}
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            'h-3 w-3 shrink-0 text-ha-dim transition-transform',
-            open ? 'rotate-180' : '',
-          )}
-        />
-      </button>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <div className="relative">
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="切换工作区"
+            className="group flex h-9 w-full items-center gap-2 rounded-md border border-ha-border-strong bg-ha-panel px-2.5 text-left transition-colors hover:border-ha-border-strong hover:bg-ha-panel-2/70 data-[state=open]:border-ha-accent-soft/40 data-[state=open]:bg-ha-panel-2"
+          >
+            <FolderKanban
+              aria-hidden="true"
+              className="h-3.5 w-3.5 shrink-0 text-ha-accent-soft"
+            />
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ha-text">
+              {activeWorkspace?.name ?? '选择工作区…'}
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 text-ha-dim transition-transform group-data-[state=open]:rotate-180"
+            />
+          </button>
+        </DropdownMenuTrigger>
 
-      {open ? (
         <WorkspaceSwitcherMenu
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
           counts={counts}
           onSelect={handleSelect}
-          onClose={() => setOpen(false)}
           onManage={() => {
             setOpen(false);
             setManagerOpen(true);
           }}
         />
-      ) : null}
 
-      <WorkspaceManagerDialog
-        open={managerOpen}
-        counts={counts}
-        onClose={() => setManagerOpen(false)}
-      />
-    </div>
+        <WorkspaceManagerDialog
+          open={managerOpen}
+          counts={counts}
+          onClose={() => setManagerOpen(false)}
+        />
+      </div>
+    </DropdownMenu>
   );
 }

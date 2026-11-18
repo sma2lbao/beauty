@@ -1,0 +1,79 @@
+/**
+ * Table 样式(普通 CSS + BEM 语义类名)
+ *
+ * 两套密度共用同一份结构:
+ * - default:表头下边框 + 11px 次级文字,行间分隔线,px-4 / py-2.5~3;
+ * - compact:表头整行底色 + 10px 大写小标题,行间分隔线,px-3 / py-2。
+ *
+ * 分隔线挂在 tr 上靠 border-collapse 折叠,与 Tailwind preflight 下的
+ * 表格行为一致;单元格内容的对齐、等宽数字等交给调用方 className。
+ */
+
+.bd-table {
+  box-sizing: border-box;
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-family: var(--bd-font-sans);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  color: var(--bd-foreground);
+}
+
+.bd-table__header {
+  border-bottom: 1px solid var(--bd-border);
+}
+
+.bd-table__head {
+  padding: 0.625rem 1rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--bd-muted-foreground);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.bd-table__body > .bd-table__row + .bd-table__row {
+  border-top: 1px solid var(--bd-border);
+}
+
+.bd-table__cell {
+  padding: 0.625rem 1rem;
+}
+
+.bd-table__footer {
+  border-top: 1px solid var(--bd-border);
+  background-color: var(--bd-muted);
+}
+
+.bd-table__caption {
+  margin-top: 0.75rem;
+  color: var(--bd-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}
+
+/* ── compact 密度 ─────────────────────────────────────────────────────── */
+
+.bd-table--compact .bd-table__header {
+  border-bottom: 0;
+}
+
+.bd-table--compact .bd-table__header .bd-table__row {
+  background-color: var(--bd-secondary);
+}
+
+.bd-table--compact .bd-table__head {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.bd-table--compact .bd-table__cell {
+  padding: 0.5rem 0.75rem;
+}
+
+.bd-table--compact .bd-table__body > .bd-table__row {
+  border-top: 1px solid var(--bd-border);
+}

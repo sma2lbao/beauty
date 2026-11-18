@@ -1,4 +1,16 @@
-import { Alert, Button, Input, Spin, Tag } from '@beauty/design';
+import {
+  Alert,
+  Button,
+  Input,
+  Spin,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tag,
+} from '@beauty/design';
 import { Fragment, useState } from 'react';
 
 import { ConsolePanel, EmptyPanel } from '@/components/console/ui';
@@ -112,83 +124,73 @@ export function AdminAuditPanel({ model }: { model: AdminModel }) {
         />
       ) : (
         <ConsolePanel className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-left text-[12px]">
-            <thead className="border-b border-ha-border text-[11px] text-ha-dim">
-              <tr>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  时间
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  操作者
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  action
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  目标
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  状态
-                </th>
-                <th scope="col" className="px-4 py-2.5 font-medium">
-                  request_id
-                </th>
-                <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                  详情
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ha-border">
+          <Table className="min-w-[1040px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>时间</TableHead>
+                <TableHead>操作者</TableHead>
+                <TableHead>action</TableHead>
+                <TableHead>目标</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>request_id</TableHead>
+                <TableHead className="text-right">详情</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((log) => {
                 const expanded = expandedId === log.id;
                 const meta = STATUS_META[log.status];
                 return (
                   <Fragment key={log.id}>
-                    <tr>
-                      <td className="px-4 py-3 font-mono text-[11px] text-ha-dim">
+                    <TableRow>
+                      <TableCell className="font-mono text-[11px] text-ha-dim">
                         {formatDateTime(log.created_at)}
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         <div className="text-ha-text-2">{log.actor_email}</div>
                         <div className="mt-0.5 font-mono text-[11px] text-ha-dim">
                           {log.actor_account_id}
                         </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-ha-text-2">{log.action}</td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-ha-dim">
+                      </TableCell>
+                      <TableCell className="font-mono text-ha-text-2">
+                        {log.action}
+                      </TableCell>
+                      <TableCell className="font-mono text-[11px] text-ha-dim">
                         {log.target_type + ':' + log.target_id}
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         <Tag color={meta.color}>{meta.label}</Tag>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-[11px] text-ha-dim">
+                      </TableCell>
+                      <TableCell className="font-mono text-[11px] text-ha-dim">
                         {log.request_id ?? '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
+                      </TableCell>
+                      <TableCell className="text-right">
                         <Button
                           variant="ghost"
                           size="sm"
                           aria-expanded={expanded}
-                          onClick={() => setExpandedId(expanded ? null : log.id)}
+                          onClick={() =>
+                            setExpandedId(expanded ? null : log.id)
+                          }
                         >
                           {expanded ? '收起' : '详情'}
                         </Button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                     {expanded ? (
-                      <tr>
-                        <td colSpan={7} className="bg-ha-panel-2/40 px-4 py-3">
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-ha-panel-2/40">
                           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-ha-text-2">
                             {JSON.stringify(log.detail, null, 2)}
                           </pre>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ) : null}
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
           <AdminPagination
             offset={audit.offset}
             total={total}

@@ -105,7 +105,7 @@ apps/web/
     ├── index.css               # Tailwind v4 主题 + 控制台 --ha-* 令牌
     ├── vitest.setup.ts         # 测试 setup：jest-dom 匹配器 + cleanup
     ├── components/             # 跨页共享与外壳，不放业务域组件
-    │   ├── console/            # 控制台外壳（layout / sidebar / topbar / status-bar）+ 通用原语（ui / dialog / markdown / diff-view / button-class）
+    │   ├── console/            # 控制台外壳（layout / sidebar / topbar / status-bar）+ 通用原语（ui / dialog / use-dismissable / markdown / diff-view / button-class）
     │   ├── layout/             # 官网页头、页脚、站点布局
     │   ├── brand/              # 品牌标识（官方几何内联）
     │   └── auth-guard.tsx 等   # 路由守卫、重定向、route fallback

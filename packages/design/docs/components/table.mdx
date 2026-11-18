@@ -1,0 +1,201 @@
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@beauty/design';
+
+# Table 数据表
+
+结构化数据的行列排版:表头、表体、表尾与题注是一组可组合的语义元素。
+
+## 何时使用
+
+- 多行数据需要在列之间横向比较(服务清单、用量明细、审计记录);
+- 键值对、纯展示的单列清单用定义列表或卡片,不要为了对齐做成表格;
+- 需要排序、筛选、分页时,表格只负责骨架,交互与状态留在业务层。
+
+## 基础用法
+
+<div className="bd-demo">
+  <div className="bd-demo-table">
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>服务</TableHead>
+          <TableHead>端口</TableHead>
+          <TableHead>状态</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        <TableRow>
+          <TableCell>api-gateway</TableCell>
+          <TableCell>8007</TableCell>
+          <TableCell>运行中</TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell>workspace-service</TableCell>
+          <TableCell>8005</TableCell>
+          <TableCell>运行中</TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>
+  </div>
+</div>
+
+```tsx
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@beauty/design';
+
+<Table>
+  <TableHeader>
+    <TableRow>
+      <TableHead>服务</TableHead>
+      <TableHead>端口</TableHead>
+    </TableRow>
+  </TableHeader>
+  <TableBody>
+    <TableRow>
+      <TableCell>api-gateway</TableCell>
+      <TableCell>8007</TableCell>
+    </TableRow>
+  </TableBody>
+</Table>;
+```
+
+## 密度
+
+`density="compact"` 收窄单元格留白,并把表头做成整行底色的密排样式,
+适合设置页、详情抽屉这类信息密集但行数不多的面板:
+
+<div className="bd-demo">
+  <div className="bd-demo-table">
+    <Table density="compact">
+      <TableHeader>
+        <TableRow>
+          <TableHead>审批策略</TableHead>
+          <TableHead>行为</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        <TableRow>
+          <TableCell>自动</TableCell>
+          <TableCell>只读工具直接执行,写操作需确认</TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell>严格</TableCell>
+          <TableCell>所有工具调用都需确认</TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>
+  </div>
+</div>
+
+```tsx
+<Table density="compact">{/* 与默认密度同一套子组件 */}</Table>
+```
+
+密度经 context 下发到每个 `TableHead` / `TableCell`,同时在元素上写
+`data-density` 便于宿主做局部覆盖;不需要逐层传参。
+
+## 表尾与题注
+
+`TableFooter` 用于合计行(带上边框与底色),`TableCaption` 用于补充数据口径:
+
+<div className="bd-demo">
+  <div className="bd-demo-table">
+    <Table>
+      <TableCaption>按近 7 天统计,单位为次</TableCaption>
+      <TableHeader>
+        <TableRow>
+          <TableHead>工具</TableHead>
+          <TableHead>调用数</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        <TableRow>
+          <TableCell>file.read</TableCell>
+          <TableCell>128</TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell>file.write</TableCell>
+          <TableCell>64</TableCell>
+        </TableRow>
+      </TableBody>
+      <TableFooter>
+        <TableRow>
+          <TableCell>合计</TableCell>
+          <TableCell>192</TableCell>
+        </TableRow>
+      </TableFooter>
+    </Table>
+  </div>
+</div>
+
+```tsx
+<Table>
+  <TableCaption>按近 7 天统计,单位为次</TableCaption>
+  {/* 表头 / 表体 */}
+  <TableFooter>
+    <TableRow>
+      <TableCell>合计</TableCell>
+      <TableCell>192</TableCell>
+    </TableRow>
+  </TableFooter>
+</Table>
+```
+
+## 窄屏横滚
+
+组件不假设外层布局。列多时自己包一层可横滚容器,并给表格一个最小宽度:
+
+```tsx
+<div style={{ overflowX: 'auto' }}>
+  <Table className="min-w-[960px]">{/* ... */}</Table>
+</div>
+```
+
+列宽、对齐、等宽数字等业务排版直接追加在单元格上:
+`<TableCell className="text-right tabular-nums">`。
+
+## 可访问性
+
+- 使用原生 `table` / `thead` / `tbody` / `tfoot` / `tr` / `th` / `td` / `caption`,
+  读屏的表导航与行列播报开箱可用;
+- 表头单元格保持 `th` 的默认语义,需要说明排列方式时传 `scope="col"`;
+- 表格必须有可识别的标题:用 `TableCaption`,或在表格上方写小节标题并以
+  `aria-labelledby` 关联。
+
+## API
+
+### TableProps
+
+继承 `React.ComponentPropsWithoutRef<'table'>`。
+
+| 属性    | 说明                                | 类型                     | 默认值      |
+| ------- | ----------------------------------- | ------------------------ | ----------- |
+| density | 密度;compact 收窄留白并给表头加底色 | `'default' \| 'compact'` | `'default'` |
+
+### 子组件
+
+| 组件         | 渲染元素  | 说明                        |
+| ------------ | --------- | --------------------------- |
+| TableHeader  | `thead`   | 表头区块                    |
+| TableBody    | `tbody`   | 表体,行间分隔线由 CSS 生成  |
+| TableFooter  | `tfoot`   | 表尾(合计行),带底色与上边框 |
+| TableRow     | `tr`      | 行,表头行与数据行共用       |
+| TableHead    | `th`      | 表头单元格,小号次级文字     |
+| TableCell    | `td`      | 数据单元格                  |
+| TableCaption | `caption` | 题注,渲染在表格下方         |
+
+除 `Table` 外都继承对应原生元素的 props(`className`、`colSpan`、`scope` 等原样透传)。

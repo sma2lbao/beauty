@@ -1,9 +1,16 @@
 /**
  * 看板筛选下拉:全部任务 / 进行中 / 待审核;选中项带强调点。
  */
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@beauty/design';
 import { Filter } from 'lucide-react';
 
-import { ConsoleButton, StatusDot } from '@/components/console/ui';
+import { consoleButtonClass } from '@/components/console/button-class';
+import { StatusDot } from '@/components/console/ui';
 import { cn } from '@/lib/utils';
 import type { RunFilterKey } from '@/stores/run-board-store';
 
@@ -17,30 +24,35 @@ const FILTERS: { key: RunFilterKey; label: string }[] = [
 
 export function RunFilterMenu({ model }: { model: RunsModel }) {
   const { filter, filterOpen, setFilter, setFilterOpen } = model;
+
   return (
-    <div className="relative">
-      <ConsoleButton
-        variant="secondary"
-        size="md"
-        aria-expanded={filterOpen}
-        onClick={() => setFilterOpen((value) => !value)}
-        className="h-8"
-      >
-        <Filter className="h-3.5 w-3.5" />
-        筛选
-      </ConsoleButton>
-      {filterOpen ? (
-        <div className="absolute right-0 top-9 z-20 w-40 rounded-lg border border-ha-border bg-ha-sidebar p-1 shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+    <DropdownMenu open={filterOpen} onOpenChange={setFilterOpen}>
+      <div className="relative">
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={consoleButtonClass({
+              variant: 'secondary',
+              size: 'md',
+              className: 'h-8',
+            })}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            筛选
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          aria-label="任务筛选"
+          align="end"
+          size="sm"
+          className="w-40"
+        >
           {FILTERS.map((item) => (
-            <button
+            <DropdownMenuItem
               key={item.key}
-              type="button"
-              onClick={() => {
-                setFilter(item.key);
-                setFilterOpen(false);
-              }}
+              onSelect={() => setFilter(item.key)}
               className={cn(
-                'flex h-7 w-full items-center justify-between rounded-md px-2 text-left text-[12px] transition-colors',
+                'h-7 justify-between',
                 filter === item.key
                   ? 'bg-[#1c1d1f] text-ha-text'
                   : 'text-ha-muted hover:bg-ha-panel-2 hover:text-ha-text-2',
@@ -48,10 +60,10 @@ export function RunFilterMenu({ model }: { model: RunsModel }) {
             >
               {item.label}
               {filter === item.key ? <StatusDot tone="accent" /> : null}
-            </button>
+            </DropdownMenuItem>
           ))}
-        </div>
-      ) : null}
-    </div>
+        </DropdownMenuContent>
+      </div>
+    </DropdownMenu>
   );
 }

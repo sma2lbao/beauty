@@ -12,6 +12,15 @@ import {
   CardTitle,
   Checkbox,
   Dialog,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Empty,
   Field,
   Input,
@@ -22,6 +31,14 @@ import {
   Space,
   Spin,
   Switch,
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
   Tabs,
   Tag,
   Textarea,
@@ -51,6 +68,22 @@ const SLOTS = [
   'dialog-close',
   'dialog-body',
   'dialog-footer',
+  'dropdown-menu-trigger',
+  'dropdown-menu-content',
+  'dropdown-menu-item',
+  'dropdown-menu-radio-item',
+  'dropdown-menu-group',
+  'dropdown-menu-radio-group',
+  'dropdown-menu-label',
+  'dropdown-menu-separator',
+  'table',
+  'table-header',
+  'table-body',
+  'table-footer',
+  'table-row',
+  'table-head',
+  'table-cell',
+  'table-caption',
   'radio-group',
   'radio-root',
   'radio',
@@ -155,6 +188,37 @@ describe('类名契约', () => {
         <Space direction="vertical" align="center" wrap size="lg">
           <span>内容</span>
         </Space>
+        <DropdownMenu defaultOpen>
+          <DropdownMenuTrigger>更多</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuLabel>操作</DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuItem>重命名</DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup>
+              <DropdownMenuRadioItem checked>工作区</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Table>
+          <TableCaption>最近 7 天</TableCaption>
+          <TableHeader>
+            <TableRow>
+              <TableHead>服务</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow>
+              <TableCell>api-gateway</TableCell>
+            </TableRow>
+          </TableBody>
+          <TableFooter>
+            <TableRow>
+              <TableCell>合计</TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
       </>,
     );
 

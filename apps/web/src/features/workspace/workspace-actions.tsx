@@ -6,8 +6,14 @@
  *   默认工作区(is_default)菜单项禁用,由系统维护;
  * - 菜单点外部 / Escape 关闭,焦点回到触发按钮。
  */
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@beauty/design';
 import { MoreHorizontal } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 
 import { ConsoleDialog } from '@/components/console/dialog';
 import {
@@ -17,8 +23,7 @@ import {
 import type { Workspace } from '@/lib/workspace-api';
 import { cn } from '@/lib/utils';
 
-const menuItemClass =
-  'flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+const MENU_ITEM_DISABLED = 'disabled:cursor-not-allowed disabled:opacity-40';
 
 export function WorkspaceActions({
   workspace,
@@ -29,46 +34,18 @@ export function WorkspaceActions({
   className?: string;
   triggerClassName?: string;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const [name, setName] = useState(workspace.name);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const inputId = useId();
   const { rename, remove } = useWorkspaceMutations();
 
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-    const onPointerDown = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMenuOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [menuOpen]);
-
   const openRename = () => {
-    setMenuOpen(false);
     setName(workspace.name);
     rename.reset();
     setDialog('rename');
   };
 
   const openDelete = () => {
-    setMenuOpen(false);
     remove.reset();
     setDialog('delete');
   };
@@ -111,63 +88,59 @@ export function WorkspaceActions({
   };
 
   return (
-    <div ref={menuRef} className={cn('relative flex shrink-0', className)}>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-label={`工作区操作:${workspace.name}`}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        onClick={(event) => {
-          event.stopPropagation();
-          setMenuOpen((open) => !open);
-        }}
-        className={cn(
-          'inline-grid h-6 w-6 place-items-center rounded-md text-ha-dim transition-colors hover:bg-ha-panel-2 hover:text-ha-text-2',
-          triggerClassName,
-        )}
-      >
-        <MoreHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
-      {menuOpen ? (
-        <div
-          role="menu"
+    <div className={cn('relative flex shrink-0', className)}>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`工作区操作:${workspace.name}`}
+            onClick={(event) => event.stopPropagation()}
+            className={cn(
+              'inline-grid h-6 w-6 place-items-center rounded-md text-ha-dim transition-colors hover:bg-ha-panel-2 hover:text-ha-text-2',
+              triggerClassName,
+            )}
+          >
+            <MoreHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
           aria-label={`工作区操作:${workspace.name}`}
-          className="absolute right-0 top-full z-40 mt-1 w-40 rounded-lg border border-ha-border-strong bg-ha-panel p-1 shadow-xl"
+          align="end"
+          size="sm"
+          className="w-40"
           onClick={(event) => event.stopPropagation()}
         >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={openRename}
-            className={cn(menuItemClass, 'text-ha-text-2 hover:bg-ha-panel-2')}
+          <DropdownMenuItem
+            onSelect={openRename}
+            className={cn(
+              MENU_ITEM_DISABLED,
+              'text-ha-text-2 hover:bg-ha-panel-2',
+            )}
           >
             重命名工作区
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={openDelete}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={openDelete}
             disabled={workspace.is_default === true}
             title={
               workspace.is_default ? '默认工作区由系统维护,不能删除' : undefined
             }
             className={cn(
-              menuItemClass,
+              MENU_ITEM_DISABLED,
               workspace.is_default
                 ? 'text-ha-dim'
                 : 'text-ha-danger hover:bg-ha-danger-bg',
             )}
           >
             删除工作区
-          </button>
+          </DropdownMenuItem>
           {workspace.is_default ? (
             <p className="px-2.5 pb-1 pt-1 text-[10px] leading-4 text-ha-faint">
               默认工作区不能删除,可重命名
             </p>
           ) : null}
-        </div>
-      ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* 重命名 */}
       <ConsoleDialog

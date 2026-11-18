@@ -1,4 +1,14 @@
-import { Alert, Button, Spin } from '@beauty/design';
+import {
+  Alert,
+  Button,
+  Spin,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@beauty/design';
 import type { ReactNode } from 'react';
 
 import { ConsolePanel, EmptyPanel, ToneBadge } from '@/components/console/ui';
@@ -13,10 +23,7 @@ import { formatUsd } from '@/lib/presentation';
 
 import { formatNumber } from '../usage/format-number';
 import { AdminAccessNotice } from './admin-access-panel';
-import {
-  ADMIN_COST_RANGES,
-  type AdminCostModel,
-} from './use-admin-cost-model';
+import { ADMIN_COST_RANGES, type AdminCostModel } from './use-admin-cost-model';
 
 const SOURCE_LABELS: Record<AdminCostBySource['source'], string> = {
   platform: '平台承担',
@@ -74,7 +81,9 @@ function SourceSplit({ summary }: { summary: AdminCostSummary }) {
               data-testid={'admin-cost-source-' + item.source}
             >
               <div className="flex items-center justify-between gap-3 text-[12px]">
-                <span className="text-ha-text-2">{SOURCE_LABELS[item.source]}</span>
+                <span className="text-ha-text-2">
+                  {SOURCE_LABELS[item.source]}
+                </span>
                 <span className="font-mono text-ha-dim">
                   {formatNumber(item.events)} 次 · {formatUsd(item.cost_usd)}
                 </span>
@@ -161,48 +170,38 @@ function ModelTable({ models }: { models: AdminCostByModel[] }) {
           窗口内没有模型调用记录。
         </p>
       ) : (
-        <table className="w-full min-w-[520px] text-left text-[12px]">
-          <thead className="border-b border-ha-border text-[11px] text-ha-dim">
-            <tr>
-              <th scope="col" className="px-4 py-2.5 font-medium">
-                模型
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                调用
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                tokens
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                成本
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                未计价
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-ha-border">
+        <Table className="min-w-[520px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>模型</TableHead>
+              <TableHead className="text-right">调用</TableHead>
+              <TableHead className="text-right">tokens</TableHead>
+              <TableHead className="text-right">成本</TableHead>
+              <TableHead className="text-right">未计价</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {models.map((item) => (
-              <tr key={item.model} data-testid="admin-cost-model-row">
-                <td className="px-4 py-2.5 font-mono text-ha-text-2">
+              <TableRow key={item.model} data-testid="admin-cost-model-row">
+                <TableCell className="font-mono text-ha-text-2">
                   {item.model}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-dim">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-dim">
                   {formatNumber(item.events)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-dim">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-dim">
                   {formatNumber(item.tokens)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-text-2">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-text-2">
                   {formatUsd(item.cost_usd)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-dim">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-dim">
                   {formatNumber(item.unpriced_events)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
     </ConsolePanel>
   );
@@ -220,45 +219,40 @@ function TopAccounts({ accounts }: { accounts: AdminCostTopAccount[] }) {
           窗口内没有账号成本记录。
         </p>
       ) : (
-        <table className="w-full min-w-[520px] text-left text-[12px]">
-          <thead className="border-b border-ha-border text-[11px] text-ha-dim">
-            <tr>
-              <th scope="col" className="px-4 py-2.5 font-medium">
-                账号
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                调用
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                tokens
-              </th>
-              <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                成本
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-ha-border">
+        <Table className="min-w-[520px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>账号</TableHead>
+              <TableHead className="text-right">调用</TableHead>
+              <TableHead className="text-right">tokens</TableHead>
+              <TableHead className="text-right">成本</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {accounts.map((item) => (
-              <tr key={item.account_id} data-testid="admin-cost-account-row">
-                <td
-                  className="px-4 py-2.5 font-mono text-ha-text-2"
+              <TableRow
+                key={item.account_id}
+                data-testid="admin-cost-account-row"
+              >
+                <TableCell
+                  className="font-mono text-ha-text-2"
                   title={item.account_id}
                 >
                   {item.email ?? item.account_id.slice(0, 8) + '…'}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-dim">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-dim">
                   {formatNumber(item.events)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-dim">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-dim">
                   {formatNumber(item.tokens)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono text-ha-text-2">
+                </TableCell>
+                <TableCell className="text-right font-mono text-ha-text-2">
                   {formatUsd(item.cost_usd)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
     </ConsolePanel>
   );

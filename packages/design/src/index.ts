@@ -22,6 +22,33 @@ export type {
 export { Dialog } from './components/dialog/index.js';
 export type { DialogProps } from './components/dialog/index.js';
 
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  dropdownMenuItemVariants,
+} from './components/dropdown-menu/index.js';
+export type {
+  DropdownMenuAlign,
+  DropdownMenuContentProps,
+  DropdownMenuGroupProps,
+  DropdownMenuItemProps,
+  DropdownMenuLabelProps,
+  DropdownMenuProps,
+  DropdownMenuRadioGroupProps,
+  DropdownMenuRadioItemProps,
+  DropdownMenuSeparatorProps,
+  DropdownMenuSide,
+  DropdownMenuSize,
+  DropdownMenuTriggerProps,
+} from './components/dropdown-menu/index.js';
+
 export { Empty } from './components/empty/index.js';
 export type { EmptyProps } from './components/empty/index.js';
 
@@ -46,6 +73,28 @@ export type { SelectProps, SelectSize } from './components/select/index.js';
 
 export { Textarea } from './components/textarea/index.js';
 export type { TextareaProps } from './components/textarea/index.js';
+
+export {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './components/table/index.js';
+export type {
+  TableBodyProps,
+  TableCaptionProps,
+  TableCellProps,
+  TableDensity,
+  TableFooterProps,
+  TableHeadProps,
+  TableHeaderProps,
+  TableProps,
+  TableRowProps,
+} from './components/table/index.js';
 
 export { Tabs } from './components/tabs/index.js';
 export type { TabItem, TabsProps, TabsSize } from './components/tabs/index.js';
