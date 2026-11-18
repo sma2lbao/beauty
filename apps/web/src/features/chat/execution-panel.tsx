@@ -16,6 +16,7 @@ import { SandboxFileTree } from '@/features/sandbox/sandbox-file-tree';
 import { SandboxTerminal } from '@/features/sandbox/sandbox-terminal';
 import { ConsoleButton, ConsoleTabs, ToneBadge } from '@/components/console/ui';
 import { RunStepTimeline } from '@/features/runs/run-step-timeline';
+import { SubagentWaitList } from '@/features/runs/run-subagent-wait';
 import { RunTodoList } from '@/features/runs/run-todo-list';
 import {
   RUN_STATUS_LABELS,
@@ -23,7 +24,13 @@ import {
   summarizeArguments,
   type ToolCall,
 } from '@/lib/presentation';
-import type { Run, RunStatus, RunStep, RunTodoItem } from '@/lib/runs-api';
+import type {
+  Run,
+  RunStatus,
+  RunStep,
+  RunTodoItem,
+  Subagent,
+} from '@/lib/runs-api';
 import type { SandboxInfo } from '@/lib/sandbox-api';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +42,7 @@ export function ExecutionPanel({
   toolCalls,
   steps = [],
   todos = [],
+  subagents = [],
   footerAction,
   sandbox = null,
   sandboxLoading = false,
@@ -51,6 +59,8 @@ export function ExecutionPanel({
   steps?: readonly RunStep[];
   /** 任务清单投影:空数组表示没有清单,整块不渲染。 */
   todos?: readonly RunTodoItem[];
+  /** 在等哪些子代理(L2 §2 第 26 条):只在 awaiting_subagent 时由调用方取。 */
+  subagents?: readonly Subagent[];
   /** 交付物统一走 footer 的 RunFooterAction;面板不再单开变更页签。 */
   footerAction?: ReactNode;
   sandbox?: SandboxInfo | null;
@@ -176,6 +186,10 @@ export function ExecutionPanel({
             );
           })}
 
+          {status === 'awaiting_subagent' ? (
+            <SubagentWaitList subagents={subagents} />
+          ) : null}
+
           <StatusStep status={status} run={run} />
         </div>
       ) : null}
@@ -293,15 +307,17 @@ function StatusStep({ status, run }: { status: RunStatus; run?: Run }) {
         ? '等待你确认危险操作'
         : status === 'awaiting_input'
           ? '等待你回答提问'
-          : status === 'blocked'
-            ? '任务中断,需要人工处理'
-            : status === 'failed'
-              ? '执行失败'
-              : status === 'completed'
-                ? '任务完成'
-                : status === 'running'
-                  ? 'Agent 正在执行下一步'
-                  : '等待规划';
+          : status === 'awaiting_subagent'
+            ? '等待子代理完成,子代理结束后自动继续'
+            : status === 'blocked'
+              ? '任务中断,需要人工处理'
+              : status === 'failed'
+                ? '执行失败'
+                : status === 'completed'
+                  ? '任务完成'
+                  : status === 'running'
+                    ? 'Agent 正在执行下一步'
+                    : '等待规划';
   return (
     <div
       className={cn(

@@ -167,6 +167,17 @@ export function useChatQueries(activeConversationId: string | null) {
   });
   const run = runQuery.data;
   const status: RunStatus = run?.status ?? 'pending';
+
+  // 在等哪些子代理(L2 异步子代理 §2 第 26 条):只在父 run 停在 awaiting_subagent
+  // 时取——子 run 有 conversation_id=None,会话里看不到它们,不主动拉就是四个字
+  // 「等待子代理」。子 run 终态会把父 run 推离该状态,轮询随即停。
+  const subagentsQuery = useQuery({
+    queryKey: queryKeys.runSubagents(activeRunId as string),
+    queryFn: () => runsApi.subagents(activeRunId as string),
+    enabled: Boolean(activeRunId) && status === 'awaiting_subagent',
+    retry: false,
+    refetchInterval: status === 'awaiting_subagent' ? 1500 : false,
+  });
   const conversation = conversationQuery.data;
   const title =
     conversation?.title ??
@@ -325,6 +336,7 @@ export function useChatQueries(activeConversationId: string | null) {
     toolCalls,
     steps: stepsQuery.data ?? [],
     todos: todosQuery.data?.todos ?? [],
+    subagents: subagentsQuery.data ?? [],
     plan: planQuery.data,
     liveRun,
     runPaused,

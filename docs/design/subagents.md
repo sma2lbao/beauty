@@ -321,6 +321,15 @@ spawn 走 confirm 策略(确认后经 tool_exec)、以及拒绝写但仍有 spaw
 - `run-item-timeline.tsx` 新增 `kind=subagent` 卡片:名称、子 run 状态、成本、
   摘要(可展开)、`onOpenRun` 可选回调;
 - `/runs` 看板卡片:`parent_kind === "subagent"` 显示「子代理」徽标;
+- **会话内「等待子代理」清单(11-18)**:`execution-panel.tsx` 在父 run 停在
+  `awaiting_subagent` 时经 `use-chat-queries.ts` 按 1.5s 轮询
+  `GET /runs/{id}/subagents`(离开该状态即停),渲染
+  `features/runs/run-subagent-wait.tsx`:名称/标题/状态徽标 + 子 run 停在
+  `awaiting_approval`/`awaiting_confirmation`/`awaiting_input` 时明示「等人」
+  (不是卡住),每行「打开」链接到 `/runs?run=<child_run_id>`。子 run 有
+  `conversation_id=None`,**不会**出现在会话里,这块清单是它们在会话侧的唯一出口;
+- **`/runs?run=<id>` 深链(11-18)**:`pages/runs.tsx` 读 URL 里的 `run` 直接打开
+  该 run 的抽屉(单向:URL → 抽屉;看板点卡片仍只动 store,不回写 URL);
 - 空态/错误态与既有面板一致(1.5s 轮询、终态静默)。
 
 ## 11. 隔离 / 权限 / 安全

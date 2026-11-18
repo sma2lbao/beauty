@@ -9,7 +9,8 @@
  * 分别在 features/runs/run-board.tsx 等文件,本文件只做编辑与布局。
  */
 import { Plus } from 'lucide-react';
-import { Link } from 'react-router';
+import { useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router';
 
 import { consoleButtonClass } from '@/components/console/button-class';
 import { PageHeader } from '@/components/console/ui';
@@ -30,6 +31,14 @@ export function RunsPage() {
     subtitle,
     unauthorized,
   } = model;
+
+  // 深链 `?run=<id>`:通知与「等待子代理」面板靠它直接打开某个 run 的抽屉。
+  // 单向(URL → 抽屉):看板点卡片仍只动 store,不回写 URL,免得每次点都改历史。
+  const [searchParams] = useSearchParams();
+  const urlRunId = searchParams.get('run');
+  useEffect(() => {
+    if (urlRunId) setSelectedRunId(urlRunId);
+  }, [urlRunId, setSelectedRunId]);
 
   return (
     <div className="flex min-h-0 flex-1">

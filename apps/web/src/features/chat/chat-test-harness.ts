@@ -158,9 +158,8 @@ export function typeAndSend(text: string): void {
 export async function setupChatTest(): Promise<void> {
   vi.clearAllMocks();
   setRunEvents([]);
-  const { conversationsApi, streamMessage } = await import(
-    '@/lib/conversations-api'
-  );
+  const { conversationsApi, streamMessage } =
+    await import('@/lib/conversations-api');
   const { mcpApi } = await import('@/lib/mcp-api');
   const { skillsApi } = await import('@/lib/skills-api');
   const { workspaceApi } = await import('@/lib/workspace-api');
@@ -229,6 +228,7 @@ export async function setupChatTest(): Promise<void> {
     counts: { pending: 0, in_progress: 0, completed: 0 },
     revision: 0,
   });
+  vi.mocked(runsApi.subagents).mockResolvedValue([]);
 }
 
 /* ── vi.mock 工厂:测试文件里动态 import 本文件后调用 ─────────────── */
@@ -319,6 +319,8 @@ export async function runsModuleMock() {
       })),
       artifacts: vi.fn(async () => []),
       downloadArtifact: vi.fn(),
+      // 等待子代理(L2):父 run awaiting_subagent 时拉子 run 清单
+      subagents: vi.fn(async () => []),
     },
   };
 }

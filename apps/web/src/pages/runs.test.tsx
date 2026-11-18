@@ -70,13 +70,13 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-function renderPage() {
+function renderPage(initialEntry = '/') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <RunsPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -135,6 +135,18 @@ describe('RunsPage', () => {
     // 血缘徽标只出现在子 run 卡片上。
     expect(screen.getAllByTestId('run-subagent-badge')).toHaveLength(1);
     expect(screen.getByText('整理本周邮件成周报')).toBeInTheDocument();
+  });
+
+  it('深链 ?run= 直接打开该 run 的抽屉', async () => {
+    vi.mocked(runsApi.list).mockResolvedValue([
+      makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
+      makeRun({ id: 'run-2', title: '依赖分析', status: 'running' }),
+    ]);
+    renderPage('/?run=run-2');
+
+    await waitFor(() => {
+      expect(runsApi.get).toHaveBeenCalledWith('run-2');
+    });
   });
 
   it('接口返回 401:提示先完成鉴权', async () => {

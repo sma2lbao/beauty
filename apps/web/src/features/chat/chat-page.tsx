@@ -162,6 +162,7 @@ export function ChatPage() {
           toolCalls={queries.toolCalls}
           steps={queries.steps}
           todos={queries.todos}
+          subagents={queries.subagents}
           sandbox={sandbox.data ?? null}
           sandboxLoading={sandbox.isPending}
           sandboxError={sandbox.error instanceof Error ? sandbox.error : null}
