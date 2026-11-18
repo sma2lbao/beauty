@@ -32,7 +32,7 @@ export default defineConfig({
   description: 'beauty monorepo 的 Web 端 React UI 组件库',
   // 站点标识与图标：三份资源都在 docs/public（等价于站点根，Rspress 的 publicDir
   // 固定为 `<root>/public`），dev 与构建产物统一按根路径引用。
-  //   logo.svg      渐变瓦片标识，导航栏与首页 hero 使用
+  //   logo.svg      渐变瓦片标识，导航栏使用
   //   logo-mono.svg 透明底单色字形，跟随系统深浅色
   //   favicon.svg   浏览器页签用小尺寸优化版（更少留白、更粗的月牙）
   // 注意 icon 必须是绝对路径写法：Rspress 会对绝对路径取 basename 拼到

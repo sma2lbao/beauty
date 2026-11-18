@@ -3,3 +3,10 @@
    令牌 + 组件 CSS 一次引入,文档站自身不再需要 Tailwind。 */
 @import '../../src/styles/prebuilt.css';
 @import './demo.css';
+
+/* 首页 hero 不配标识图(见 docs/index.mdx),副标题走满 72rem 的容器宽度。
+   默认断行只把「…React 组件」放第一行、「库」单独留到第二行;text-wrap: balance
+   让两行长度接近,断点落在词组之间,不出现孤字。 */
+.rp-home-hero__subtitle {
+  text-wrap: balance;
+}
