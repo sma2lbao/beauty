@@ -17,6 +17,9 @@
     },
     {
       "path": "./apps/site"
+    },
+    {
+      "path": "./apps/blog"
     }
   ]
 }

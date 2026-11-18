@@ -1,0 +1,110 @@
+---
+title: '一次性的实验项目,应该放在哪里'
+description: '学习项目最大的风险不是写不出来,而是把依赖、锁文件和脚手架噪声带进主仓。'
+date: '2026-11-18'
+tags: ['labs', '工程化']
+lang: mixed
+demo:
+  repo: beauty-moon
+  path: labs/ts/port-scanner
+  language: typescript
+  runtime: Node 22 + Vite
+  run: npm run lab:dev
+  port: 4100
+  status: runnable
+---
+
+学习过程中总会冒出一些「写个小东西验证一下」的念头:一个端口扫描器、一个 asyncio 爬虫、一个把 Markdown 转成幻灯片的脚本。它们的特点是:**生命周期短、依赖奇怪、大概率不会维护**。
+
+这类项目最舒服的位置,往往不是主仓的工作区里,而是一个明确隔离的实验区。
+
+## 主仓为什么容易被污染
+
+JavaScript 和 Python 的 workspace 都会主动发现成员:
+
+- npm 按 `packages/*`、`apps/*` 的通配符装依赖;
+- uv 按根 `pyproject.toml` 的 `members` 同步虚拟环境;
+- Nx 会扫描 `project.json` / `package.json` / `tsconfig.json`,把目录推断成项目。
+
+只要实验项目落在这些通配符或扫描路径下,它的依赖就会进入根锁文件,它的构建目标就会出现在 `nx graph` 里,它的 lint 规则就会影响全仓门禁。一个下午的实验,可能换来一次全仓依赖升级。
+
+## 三种隔离方式
+
+| 方式                | 隔离强度 | 代价                            | 适合场景                     |
+| ------------------- | -------- | ------------------------------- | ---------------------------- |
+| 独立仓库            | 最强     | 跨仓跳转、版本对齐稍麻烦        | 长期维护的示例、需要独立部署 |
+| 主仓 `labs/` + 围栏 | 中等     | 需要校验脚本防止误提交/误装依赖 | 一次性实验、学习记录         |
+| 直接写进现有 app    | 最弱     | 依赖与构建耦合,清理成本高       | 几十行的临时验证             |
+
+我最终选的是第二种:项目还在主仓里,方便和笔记一起提交、一起回看;但通过几道围栏,让它对主仓「不可见」。
+
+## 围栏具体拦什么
+
+一个合格的 `labs/` 需要同时满足:
+
+1. **不进版本库**:`.gitignore` 忽略 `/labs/`,实验代码留在本地,笔记里只记录路径、commit 和运行方式;
+2. **不进 npm workspace**:根 `package.json` 的 `workspaces` 只保留 `packages/*`、`apps/*`、`tools/*`;
+3. **不进 uv workspace**:根 `pyproject.toml` 的 `members` 是显式清单,不要加 `labs/*`;
+4. **不被 Nx 推断**:`labs/` 下放 `.nxignore`,并确保没有会被 Nx 插件识别的 `project.json`;
+5. **不被格式化/lint 扫描**:ESLint 与 Prettier 的 ignore 列表加上 `labs/`,否则一次 `npm run format` 会把实验代码也改一遍。
+
+这些规则靠人记很容易漏,所以最好有一个脚本在 CI 里断言。
+
+```bash title="scripts/check-labs.sh"
+# 断言 1:labs 不进入 git 索引
+if git ls-files --error-unmatch labs >/dev/null 2>&1; then
+  echo "labs/ 不应被跟踪" >&2
+  exit 1
+fi
+
+# 断言 2:根 package.json 的 workspaces 没有 labs
+node -e '
+  const pkg = require("./package.json");
+  if (pkg.workspaces.some((p) => p.includes("labs"))) process.exit(1);
+'
+
+# 断言 3:根锁文件没有 labs 的依赖痕迹
+if grep -q '"labs/' package-lock.json uv.lock 2>/dev/null; then
+  echo "锁文件里出现了 labs 条目" >&2
+  exit 1
+fi
+```
+
+脚本本身要进版本库,`labs/` 目录不进;这样规则可以被 review,实验代码不会。
+
+## 实验项目自己的约定
+
+即使不共享主仓依赖,实验项目内部也建议保持最低限度的秩序:
+
+- 端口固定在 `4100–4199`,避开主仓服务占用的 `3000/5173/8001–8008`;
+- 数据库名带 `lab_` 前缀,或者直接用内存/SQLite;
+- 每个项目一个 `README.md`,写清楚「怎么跑、跑完看什么、依赖什么」;
+- 需要 Docker 时用独立 compose 项目名 `lab-<slug>`,避免和主仓容器抢名字。
+
+这些约定不追求自动化,只求半年后回来还能一键跑起来。
+
+## 笔记里记录什么
+
+实验项目不进版本库,但笔记需要能复现。frontmatter 里放一组结构化元信息就够了:
+
+```yaml
+demo:
+  repo: beauty-moon
+  path: labs/ts/port-scanner
+  language: typescript
+  runtime: Node 22 + Vite
+  run: npm run lab:dev
+  port: 4100
+  status: runnable
+```
+
+正文里再补一段「当时想验证什么、结论是什么」。代码会丢,结论不会。
+
+## 小结
+
+- 一次性项目的第一风险是污染主仓,而不是技术难度;
+- `labs/` 方案的关键不是目录,而是五道围栏和一条 CI 断言;
+- 端口、数据库名、compose 项目名都要和主仓错开;
+- 笔记记录元信息与结论,代码留在本地。
+
+这套围栏落地之后,我终于可以放心地「先写个东西试试」,而不用每次先想一遍依赖会不会串味。

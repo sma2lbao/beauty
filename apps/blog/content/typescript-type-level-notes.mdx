@@ -1,0 +1,136 @@
+---
+title: '类型体操之前,先把类型当成集合'
+description: '用集合的视角理解 extends、never 和分配条件类型,再写一个真正用得上的 DeepPartial。'
+date: '2026-11-16'
+tags: ['typescript', '类型系统']
+series: 'TypeScript 进阶'
+seriesOrder: 1
+lang: ts
+---
+
+写类型体操最容易掉进的坑,是一上来就背 `infer`、`extends`、映射类型的组合拳。真正让我开窍的,是换一个视角:**类型就是值的集合,类型运算就是集合运算**。
+
+这篇笔记不追求覆盖所有技巧,只把三个最常用的判断串起来,最后落在一个能直接抄走的小工具上。
+
+## 把类型看成集合
+
+`string` 是所有字符串的集合,`'a' | 'b'` 是只有两个元素的集合,`never` 是空集,`unknown` 是全集。
+
+在这个视角下:
+
+- `A extends B` 读作「A 是 B 的子集」;
+- `A & B` 是交集;
+- `A | B` 是并集;
+- `never` 与任何类型求并集,还是对方。
+
+```ts title="subset.ts"
+type IsString<T> = T extends string ? true : false;
+
+type A = IsString<'hello'>; // true
+type B = IsString<42>; // false
+type C = IsString<string | number>; // boolean
+```
+
+最后一行值得停一下。`string | number` 不是 `string` 的子集,所以直觉上应该得到 `false`,但结果是 `boolean`。原因是**分配条件类型**:当 `T` 是裸类型参数且传入联合类型时,条件类型会分别对每个成员求值,再把结果并起来。
+
+```ts
+// string -> true,number -> false,并起来就是 boolean
+type C = IsString<string> | IsString<number>;
+```
+
+想关掉分配,用方括号把两边都包住:
+
+```ts title="no-distribute.ts"
+type IsStringExact<T> = [T] extends [string] ? true : false;
+
+type D = IsStringExact<string | number>; // false
+```
+
+## never 的两个容易混的用法
+
+`never` 是空集,所以「`never` 是任何类型的子集」成立。这解释了一个常见现象:
+
+```ts
+type Result = never extends string ? 'yes' : 'no'; // 'yes'
+```
+
+但在分配条件类型里,`never` 作为裸参数会被直接短路成 `never`,连分支都不进:
+
+```ts
+type Wrap<T> = T extends unknown ? [T] : never;
+
+type E = Wrap<never>; // never,而不是 [never]
+```
+
+需要保留 `never` 本身时,同样用元组包一层:
+
+```ts
+type WrapExact<T> = [T] extends [unknown] ? [T] : never;
+type F = WrapExact<never>; // [never]
+```
+
+这两个行为在写工具类型时经常成对出现,记不住就回到「空集」这个解释上推一遍。
+
+## 分配条件类型的一个实际用途
+
+假设接口返回的对象里,嵌套字段都可能缺省,但顶层字段必须保留。`Partial<T>` 会把顶层也变成可选,不够用。
+
+```ts title="deep-partial.ts"
+type DeepPartial<T> = T extends readonly (infer U)[]
+  ? readonly DeepPartial<U>[]
+  : T extends object
+    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    : T;
+```
+
+拆开看:
+
+1. 先判断数组,避免把数组当成普通对象做映射;
+2. 再判断对象,递归到每个属性;
+3. 其余原始类型原样返回。
+
+用一个真实一点的形状验证:
+
+```ts title="deep-partial.test.ts"
+interface Config {
+  name: string;
+  server: {
+    host: string;
+    port: number;
+    tls?: { cert: string; key: string };
+  };
+  plugins: Array<{ id: string; options: Record<string, unknown> }>;
+}
+
+const patch: DeepPartial<Config> = {
+  server: { port: 8080 },
+  plugins: [{ id: 'logger' }],
+};
+```
+
+注意 `plugins` 的元素里 `options` 也变成了可选,这正是递归生效的证据。
+
+### 数组为什么不能直接映射
+
+如果去掉第一层数组判断,`T extends object` 对数组也成立,`keyof T` 会得到 `number | 'length' | 'push' | ...` 这一串方法和属性,映射出来的类型既不是数组也不能赋值回去。用 `readonly (infer U)[]` 先剥掉数组外壳,是这类工具类型的固定套路。
+
+## 什么时候该停下来
+
+类型体操的收益曲线很陡:前 20% 能解决大部分真实问题,后面的复杂度主要服务于库作者。我的判断标准是:
+
+| 场景                      | 建议                          |
+| ------------------------- | ----------------------------- |
+| 业务代码里的 Props/返回值 | 用最直白的类型,必要时手写联合 |
+| 跨项目复用的工具类型      | 可以上条件类型,但要有测试     |
+| 类型库/框架内部           | 再考虑递归、分配、模板字面量  |
+
+如果一个类型需要写注释才能让同事看懂,它大概率应该退回成更笨但更稳的写法。
+
+## 小结
+
+- 把 `extends` 读成子集判断,`never` 读成空集;
+- 裸类型参数上的条件类型会分配,用 `[T] extends [U]` 关掉;
+- `DeepPartial` 的关键是先处理数组,再递归对象;
+- 类型是手段,可维护性才是目的。
+
+下一篇想写 `infer` 在函数重载和 Promise 解包里的几个固定模式。

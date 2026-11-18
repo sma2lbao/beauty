@@ -1,0 +1,314 @@
+@import 'tailwindcss';
+/*
+  博客复用主仓的设计令牌:
+  - @beauty/design/tailwind.css 带来 --bd-* 令牌与组件自带的普通 CSS,
+    博客只借它的字体/间距基准,视觉规则仍写在下面;
+  - --ha-* 是控制台/官网同一套暗色分层与靛蓝强调色,这里只取博客需要的子集,
+    避免把控制台的密集灰阶带进阅读场景。
+*/
+@import '@beauty/design/tailwind.css';
+
+:root {
+  color-scheme: dark;
+
+  --ha-bg: #08090a;
+  --ha-panel: #101113;
+  --ha-panel-2: #16181c;
+  --ha-code: #0d0f12;
+  --ha-border: #1f2023;
+  --ha-border-strong: #2b2d33;
+  --ha-text: #f4f4f5;
+  --ha-text-body: #e4e4e7;
+  --ha-text-2: #c8c8cf;
+  --ha-muted: #94949e;
+  --ha-dim: #71717a;
+  --ha-faint: #55555f;
+  --ha-accent: #5e6ad2;
+  --ha-accent-soft: #8d97f5;
+  --ha-accent-dim: #3f478f;
+}
+
+@theme inline {
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'PingFang SC',
+    'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+  --font-serif:
+    'Iowan Old Style', 'Palatino Linotype', 'Songti SC', 'Noto Serif SC',
+    Georgia, 'Times New Roman', serif;
+
+  --color-ha-bg: var(--ha-bg);
+  --color-ha-panel: var(--ha-panel);
+  --color-ha-panel-2: var(--ha-panel-2);
+  --color-ha-code: var(--ha-code);
+  --color-ha-border: var(--ha-border);
+  --color-ha-border-strong: var(--ha-border-strong);
+  --color-ha-text: var(--ha-text);
+  --color-ha-text-body: var(--ha-text-body);
+  --color-ha-text-2: var(--ha-text-2);
+  --color-ha-muted: var(--ha-muted);
+  --color-ha-dim: var(--ha-dim);
+  --color-ha-faint: var(--ha-faint);
+  --color-ha-accent: var(--ha-accent);
+  --color-ha-accent-soft: var(--ha-accent-soft);
+  --color-ha-accent-dim: var(--ha-accent-dim);
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ha-border-strong) transparent;
+  }
+
+  html {
+    @apply bg-ha-bg font-sans;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-ha-bg text-ha-text-body antialiased;
+    background-image:
+      radial-gradient(
+        55rem 26rem at 72% -12%,
+        rgb(94 106 210 / 0.13),
+        transparent 62%
+      ),
+      radial-gradient(
+        34rem 20rem at 8% -8%,
+        rgb(124 140 245 / 0.05),
+        transparent 60%
+      );
+    background-repeat: no-repeat;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--ha-accent) 45%, transparent);
+    color: #ffffff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ha-accent-soft);
+    outline-offset: 3px;
+  }
+}
+
+/* ── MDX 正文排版 ────────────────────────────────────────────────────────
+   没有引入 typography 插件:阅读页是本站唯一的长文场景,手写规则更可控,
+   也避免再增加一条构建链。 */
+.prose-post {
+  color: var(--ha-text-2);
+  font-size: 16.5px;
+  line-height: 1.85;
+  letter-spacing: 0.002em;
+}
+
+.prose-post > * + * {
+  margin-top: 1.3em;
+}
+
+.prose-post h2,
+.prose-post h3 {
+  color: var(--ha-text);
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 6rem;
+}
+
+.prose-post h2 {
+  margin-top: 2.6em;
+  font-size: 1.6rem;
+  line-height: 1.35;
+}
+
+.prose-post h3 {
+  margin-top: 2em;
+  font-size: 1.22rem;
+  line-height: 1.4;
+}
+
+.prose-post p {
+  text-wrap: pretty;
+}
+
+.prose-post a {
+  color: var(--ha-accent-soft);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--ha-accent-soft) 45%,
+    transparent
+  );
+  transition: color 140ms ease;
+}
+
+.prose-post a:hover {
+  color: #c2c8ff;
+}
+
+.prose-post strong {
+  color: var(--ha-text);
+  font-weight: 600;
+}
+
+.prose-post em {
+  color: var(--ha-text-body);
+}
+
+.prose-post blockquote {
+  border-left: 2px solid var(--ha-accent);
+  padding: 0.2rem 0 0.2rem 1.15rem;
+  color: var(--ha-muted);
+  font-style: italic;
+}
+
+.prose-post blockquote p {
+  margin: 0.4em 0;
+}
+
+.prose-post ul,
+.prose-post ol {
+  padding-left: 1.35em;
+}
+
+.prose-post ul {
+  list-style: disc;
+}
+
+.prose-post ol {
+  list-style: decimal;
+}
+
+.prose-post li {
+  padding-left: 0.15em;
+}
+
+.prose-post li + li {
+  margin-top: 0.4em;
+}
+
+.prose-post li::marker {
+  color: var(--ha-accent-soft);
+}
+
+.prose-post code:not(pre code) {
+  border: 1px solid var(--ha-border-strong);
+  border-radius: 4px;
+  background: var(--ha-panel-2);
+  padding: 0.1em 0.36em;
+  color: #d8dcff;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+.prose-post pre {
+  overflow-x: auto;
+  border: 1px solid var(--ha-border);
+  border-radius: 10px;
+  background: var(--ha-code);
+  padding: 1rem 1.15rem;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.prose-post pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.prose-post [data-rehype-pretty-code-figure] {
+  margin: 1.8em 0;
+}
+
+.prose-post [data-rehype-pretty-code-figure] pre {
+  margin: 0;
+}
+
+.prose-post [data-rehype-pretty-code-title] {
+  border: 1px solid var(--ha-border);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--ha-panel-2);
+  padding: 0.45rem 1.15rem;
+  color: var(--ha-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.prose-post
+  [data-rehype-pretty-code-title]
+  + [data-rehype-pretty-code-figure]
+  pre,
+.prose-post [data-rehype-pretty-code-title] + pre {
+  border-radius: 0 0 10px 10px;
+}
+
+.prose-post table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.prose-post th {
+  border-bottom: 1px solid var(--ha-border-strong);
+  padding: 0.55rem 0.8rem;
+  color: var(--ha-text);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.prose-post td {
+  border-bottom: 1px solid var(--ha-border);
+  padding: 0.55rem 0.8rem;
+  vertical-align: top;
+}
+
+.prose-post hr {
+  margin: 2.6em 0;
+  border: 0;
+  border-top: 1px solid var(--ha-border);
+}
+
+.prose-post img {
+  border: 1px solid var(--ha-border);
+  border-radius: 10px;
+}
+
+.prose-post .heading-anchor {
+  color: inherit;
+  text-decoration: none;
+}
+
+.prose-post .heading-anchor::after {
+  margin-left: 0.45em;
+  color: var(--ha-accent-soft);
+  content: '#';
+  font-family: var(--font-mono);
+  font-size: 0.7em;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.prose-post h2:hover .heading-anchor::after,
+.prose-post h3:hover .heading-anchor::after {
+  opacity: 0.75;
+}
+
+.prose-post [data-footnotes] {
+  margin-top: 3em;
+  border-top: 1px solid var(--ha-border);
+  padding-top: 1em;
+  font-size: 13px;
+  color: var(--ha-dim);
+}

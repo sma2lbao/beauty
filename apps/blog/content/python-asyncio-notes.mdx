@@ -1,0 +1,153 @@
+---
+title: 'asyncio 的三个坑:取消、超时与阻塞调用'
+description: '从一次线上任务卡死出发,把 TaskGroup、取消传播和 to_thread 的边界讲清楚。'
+date: '2026-11-10'
+tags: ['python', 'async']
+series: 'Python 工程习惯'
+seriesOrder: 1
+lang: python
+---
+
+上周一个后台任务看起来「跑了很久」,日志停在 `fetch page 3`,CPU 却几乎为零。最后发现是一段同步的 `requests.get` 混进了协程,把整个事件循环堵住了。
+
+借这次排查,把 asyncio 里最容易出问题的三件事整理一遍。
+
+## 取消不是「立刻停止」
+
+`task.cancel()` 只是往目标任务里抛一个 `CancelledError`。如果协程正卡在不响应取消的同步调用里,它根本收不到这个异常。
+
+```python title="cancel.py"
+import asyncio
+
+
+async def work() -> None:
+    try:
+        await asyncio.sleep(30)
+    except asyncio.CancelledError:
+        print("收到取消,做清理")
+        raise
+    finally:
+        print("finally 一定会执行")
+
+
+async def main() -> None:
+    task = asyncio.create_task(work())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("main 观察到取消")
+```
+
+三个要点:
+
+1. `CancelledError` 在 Python 3.8 之后继承自 `BaseException`,不要用 `except Exception` 顺手吞掉;
+2. 捕获后要么重新 `raise`,要么明确标记任务已完成,否则取消语义会丢;
+3. `finally` 适合放清理,但不要在里面 `await` 一个可能永远不返回的操作。
+
+## 用 TaskGroup 管理并发
+
+以前大家用 `gather`,但它有个尴尬点:某个子任务抛错时,其余任务不会自动取消,需要手动收尾。`TaskGroup` 把「一起开始、一起结束、一个失败全组取消」做成了结构化并发。
+
+```python title="task_group.py"
+import asyncio
+
+
+async def fetch(url: str) -> str:
+    await asyncio.sleep(0.2)
+    if "bad" in url:
+        raise RuntimeError(f"failed: {url}")
+    return f"ok: {url}"
+
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as group:
+        tasks = [
+            group.create_task(fetch(f"https://example.com/{i}"))
+            for i in range(3)
+        ]
+
+    print([task.result() for task in tasks])
+```
+
+当其中一个任务失败,`TaskGroup` 会取消同组其他任务,最后抛出一个 `ExceptionGroup`。捕获时用 `except*`:
+
+```python
+try:
+    async with asyncio.TaskGroup() as group:
+        group.create_task(fetch("https://example.com/bad"))
+except* RuntimeError as exc:
+    print("组内错误:", exc.exceptions)
+```
+
+`TaskGroup` 的退出点就是所有子任务的汇合点,这比散落的 `gather` + `cancel` 更容易推理。
+
+## 超时要包在正确的层级
+
+`asyncio.timeout` 是 3.11 引入的上下文管理器,比 `wait_for` 读起来更顺:
+
+```python title="timeout.py"
+import asyncio
+
+
+async def slow() -> None:
+    await asyncio.sleep(10)
+
+
+async def main() -> None:
+    try:
+        async with asyncio.timeout(1.5):
+            await slow()
+    except TimeoutError:
+        print("超时,继续走降级逻辑")
+```
+
+它取消的是当前任务,所以超时之后不要假设内部状态是干净的。需要保留中间结果时,把可恢复的进度写在 `asyncio.timeout` 外面。
+
+## 阻塞调用必须离开事件循环
+
+这是开头那次事故的根因。`requests`、`psycopg2`、`time.sleep`、大量 CPU 计算都不该直接出现在协程里。
+
+```python title="to_thread.py"
+import asyncio
+
+import requests
+
+
+def blocking_fetch(url: str) -> str:
+    return requests.get(url, timeout=5).text
+
+
+async def fetch(url: str) -> str:
+    # 交给默认线程池,事件循环可以继续调度其他任务
+    return await asyncio.to_thread(blocking_fetch, url)
+
+
+async def main() -> None:
+    async with asyncio.TaskGroup() as group:
+        group.create_task(fetch("https://example.com/a"))
+        group.create_task(fetch("https://example.com/b"))
+```
+
+判断标准很简单:**这段代码会不会让线程停住超过几毫秒?** 会,就 `to_thread`;是纯 CPU 且时间长,考虑 `ProcessPoolExecutor`。
+
+`to_thread` 也有代价:默认线程池大小有限,任务一多就会排队。批量抓取时,我更倾向用 `httpx.AsyncClient` 这类原生异步客户端,而不是把同步库硬塞进线程池。
+
+## 一张排查清单
+
+| 现象                    | 优先检查                           |
+| ----------------------- | ---------------------------------- |
+| 协程「卡住」但 CPU 为空 | 是否调用了同步 IO / `time.sleep`   |
+| 取消后仍有任务在跑      | 是否吞掉了 `CancelledError`        |
+| 一个失败拖垮整批        | 用 `TaskGroup` 替代裸 `gather`     |
+| 超时后状态不一致        | 超时层级是否包住了不该回滚的写操作 |
+
+## 小结
+
+- 取消是协作式的,阻塞调用收不到取消;
+- `TaskGroup` 提供结构化并发,失败会取消同组任务;
+- 超时用 `asyncio.timeout`,并明确超时后的状态边界;
+- 同步调用用 `to_thread` 隔离,但优先选原生异步客户端。
+
+下一步想把 `anyio` 和 trio 的取消模型拿来对比,看看结构化并发在不同实现里的差异。

@@ -10,7 +10,7 @@
     "dev:status": "bash scripts/dev.sh --status",
     "dev:reset": "bash scripts/reset-local.sh",
     "dev:seed": "bash scripts/seed-local.sh",
-    "test": "nx run-many -t test --projects=@beauty/web,@beauty/desktop,@beauty/design -- --run",
+    "test": "nx run-many -t test --projects=@beauty/web,@beauty/desktop,@beauty/design,@beauty/blog -- --run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "docs:check": "bash scripts/check-docs.sh",

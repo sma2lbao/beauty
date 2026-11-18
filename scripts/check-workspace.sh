@@ -61,7 +61,7 @@ fi
 # ── 检查 3: tracked 生成物 ────────────────────────────────────────
 echo "== 检查 3/3: tracked 生成物 =="
 # 例外清单: Next.js 官方要求提交 next-env.d.ts（见 .gitignore 注释）
-ALLOW_RE="^apps/site/next-env\.d\.ts$"
+ALLOW_RE="^apps/(site|blog)/next-env\.d\.ts$"
 GEN_RE="(^|/)(dist|out|coverage|reports|\.nx|test-output)(/|$)"
 LEAKS=$(git ls-files | grep -Ev "$ALLOW_RE" | grep -E "$GEN_RE" || true)
 if [ -n "$LEAKS" ]; then

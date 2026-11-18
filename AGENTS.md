@@ -8,6 +8,7 @@
 | ----------------------------- | ----------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web`                    | `@beauty/web`           | React 应用        | React 19 + react-router v8 + @tanstack/react-query + Tailwind CSS v4 + `@beauty/design` 组件库,Vite 8                                                                                                                                              |
 | `apps/site`                   | `@beauty/site`          | Next.js 官网      | Next.js App Router + Tailwind CSS v4 + `@beauty/design` 令牌;静态导出(`output: 'export'`),部署 Vercel                                                                                                                                              |
+| `apps/blog`                   | `@beauty/blog`          | Next.js 学习博客  | Next.js App Router + MDX(`content/*.mdx`, zod 校验 frontmatter) + Tailwind CSS v4 + `@beauty/design` 令牌;静态导出,构建后脚本生成 RSS,部署 Vercel                                                                                                  |
 | `apps/desktop`                | `@beauty/desktop`       | Electron 桌面应用 | Electron 44 + React 19 + Tailwind CSS v4 + `@beauty/design`;**本地电脑模式**:会话/文件/命令都在本机执行,主进程运行时在 `src/main/local/`,与 `apps/web` 云端模式并存可切换;详见其 README                                                            |
 | `packages/design`             | `@beauty/design`        | React 组件库      | 纯 CSS + `bd-` 前缀 BEM 类名 + `--bd-*` 设计令牌;rspress 文档站                                                                                                                                                                                    |
 | `packages/common`             | `common`                | Python 库         | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS)、交付物存储抽象;hatchling + pytest + ruff                                                                                                                                      |
@@ -56,6 +57,8 @@ npx nx dev @beauty/web                 # Vite dev server(5173 端口,交互开�
 npx nx build @beauty/web               # tsc --noEmit + vite 生产构建
 npx nx run @beauty/site:dev            # Next.js 官网 dev(3000 端口)
 npx nx build @beauty/site              # Next.js 静态导出(产物 apps/site/out)
+npx nx run @beauty/blog:dev            # 学习博客 dev(3001 端口)
+npx nx build @beauty/blog              # 静态导出(产物 apps/blog/out,含 feed.xml)
 npx nx typecheck @beauty/web           # 仅类型检查(web/design 同名)
 npx nx lint @beauty/web                # ESLint(共享配置 tools/eslint-config)
 npx nx lint @beauty/web -- --fix       # ESLint 自动修复
@@ -72,7 +75,7 @@ bash scripts/refactor-gate.sh @beauty/web   # 单项目全门禁:lint/typecheck/
 bash scripts/refactor-gate.sh --affected    # 只跑受影响项目(不收集覆盖率)
 bash scripts/check-docs.sh                  # docs prettier + 相对链接/锚点
 bash scripts/check-workspace.sh             # 未跟踪产物/归档注记/索引覆盖三查
-bash scripts/check-versions.sh              # 19 处版本字段 + CHANGELOG + release 配置一致性
+bash scripts/check-versions.sh              # 20 处版本字段 + CHANGELOG + release 配置一致性
 bash scripts/golden-run/golden-run.sh       # 黄金 run 冒烟(进程内 ASGI,零网络,9 阶段)
 node scripts/check-audit-allowlist.cjs      # 安全豁免到期校验(allowlist 必须带 owner+expires)
 npm run docs:check                          # = bash scripts/check-docs.sh

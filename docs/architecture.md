@@ -70,7 +70,8 @@ Browser
 │            ├── 代理 runtime（短请求 + 短流）
 │            ├── 产物/附件下载（DB/本地存储 → 流式响应）
 │            └── 限流/错误契约/审计头
-├── site.beautymoon.cn      Vercel Project: apps/site（Next.js 静态导出）
+├── site.beautymoon.cn      Vercel Project: apps/site（Next.js 静态导出：官网/文档/Changelog）
+├── blog.beautymoon.cn      Vercel Project: apps/blog（Next.js 静态导出：学习博客）
 └── 长流直连                runtime.beautymoon.cn（SSE，API 网关发短时 stream token）
 
 容器平台（Fly.io / Cloud Run / 自有云主机；容器化已落地，见 deploy/，R-36 关闭）
@@ -103,12 +104,13 @@ Browser
 
 ---
 
-## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端三应用）
+## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端四应用）
 
 | 服务 / 应用          | 部署 / 端口           | 职责                                                                                                                                                                   | 备注                                                                                                                                                                             |
 | -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                                                                                | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                                                                                                  |
-| apps/site            | Vercel 静态           | Next.js 官网、文档、博客、Changelog                                                                                                                                    | 静态导出（`output: 'export'`）                                                                                                                                                   |
+| apps/site            | Vercel 静态           | Next.js 官网、文档、Changelog                                                                                                                                          | 静态导出（`output: 'export'`）                                                                                                                                                   |
+| apps/blog            | Vercel 静态           | Next.js 学习博客（MDX、标签/系列/归档、RSS）                                                                                                                           | 独立静态导出；设计见 [blog.md](./design/blog.md)                                                                                                                                 |
 | apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                                                                                     | 与 web 云端模式并存可切换                                                                                                                                                        |
 | services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                       | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                                                                                |
 | agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel);MCP 预设(Notion 一键授权)与工具 annotations 风险分级                                                        | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                                                        |
@@ -178,7 +180,8 @@ beauty-moon/
 ```text
 apps/web             Vite SPA（暗色控制台；src/pages + src/components/console + src/lib 数据层）
   └── src/          页面/组件/数据层（@beauty/design 组件 + @beauty/design/tailwind.css 令牌）
-apps/site            Next.js App Router（官网、文档、博客；静态导出）
+apps/site            Next.js App Router（官网、文档、Changelog；静态导出）
+apps/blog            Next.js App Router（学习博客；静态导出，独立 Vercel 项目）
 apps/desktop         Electron（主进程 src/main/local/，本地电脑模式）
 services/api-gateway FastAPI 网关（同域 /api）
 packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）

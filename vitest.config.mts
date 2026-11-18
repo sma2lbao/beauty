@@ -32,6 +32,7 @@ export const thresholds = {
     statements: 84,
   },
   '@beauty/site': { lines: 97, functions: 95, branches: 96, statements: 97 },
+  '@beauty/blog': { lines: 85, functions: 85, branches: 75, statements: 85 },
   '@beauty/desktop (renderer)': {
     lines: 83,
     functions: 80,
