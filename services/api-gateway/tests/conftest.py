@@ -76,6 +76,18 @@ def handler(request: httpx.Request) -> httpx.Response:
         )
     if path == "/v1/auth/oauth/google/exchange":
         return httpx.Response(200, json=token_payload())
+    if path == "/v1/auth/oauth/github/authorize":
+        return httpx.Response(
+            200,
+            json={
+                "authorization_url": (
+                    "https://github.com/login/oauth/authorize?client_id=gh-client"
+                ),
+                "state": "signed-state",
+            },
+        )
+    if path == "/v1/auth/oauth/github/exchange":
+        return httpx.Response(200, json=token_payload())
     if path == "/v1/auth/issue":
         return httpx.Response(
             200,

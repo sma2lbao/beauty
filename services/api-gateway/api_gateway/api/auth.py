@@ -171,9 +171,13 @@ async def oauth_start(
     redirect_uri = (
         f"{settings.app_origin.rstrip('/')}/api/auth/oauth/{provider}/callback"
     )
-    data = await account_service.oauth_authorize(
-        client, settings, provider=provider, redirect_uri=redirect_uri
-    )
+    try:
+        data = await account_service.oauth_authorize(
+            client, settings, provider=provider, redirect_uri=redirect_uri
+        )
+    except Exception as exc:  # noqa: BLE001 - 未配置/上游失败统一回登录页
+        code_name = getattr(exc, "code", "oauth_failed")
+        return _login_error(settings, str(code_name))
     return RedirectResponse(data["authorization_url"], status_code=302)
 
 

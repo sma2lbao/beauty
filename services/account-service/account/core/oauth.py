@@ -191,11 +191,19 @@ async def _github_profile(
             "redirect_uri": payload["redirect_uri"],
         },
     )
+    # GitHub 对无效/过期 code 返回 200 + {"error": ...},不能只看状态码。
+    access_token = str(token.get("access_token") or "")
+    if not access_token:
+        raise UpstreamError("oauth.provider_error", "GitHub 令牌交换失败")
     headers = {
-        "Authorization": f"Bearer {token['access_token']}",
+        "Authorization": f"Bearer {access_token}",
         "Accept": "application/vnd.github+json",
+        "User-Agent": "beauty-moon-account-service",
     }
     info = await _json(client, "GET", GITHUB_USER, headers=headers)
+    subject = info.get("id")
+    if subject is None:
+        raise UpstreamError("oauth.provider_error", "GitHub 用户资料不完整")
     email = str(info.get("email") or "").lower()
     if not email:
         emails = await _json(client, "GET", GITHUB_EMAILS, headers=headers)
@@ -206,9 +214,9 @@ async def _github_profile(
         ]
         email = str(verified[0]["email"]).lower() if verified else ""
     if not email:
-        email = f"github-{info['id']}@users.noreply.github.com"
+        email = f"github-{subject}@users.noreply.github.com"
     return OAuthProfile(
-        "github", str(info["id"]), email, info.get("name") or info.get("login")
+        "github", str(subject), email, info.get("name") or info.get("login")
     )
 
 

@@ -20,7 +20,6 @@ import { siteUrl } from '@/lib/site-links';
 import {
   accountLabel,
   authMode,
-  oauthStartUrl,
   rememberLoginRedirect,
   sessionLogin,
   sessionRegister,
@@ -31,6 +30,8 @@ import {
   takeLoginRedirect,
 } from '@/lib/auth';
 import { queryKeys } from '@/lib/query-keys';
+
+import { SocialLogin } from './social-login';
 
 function SignedIn({
   account,
@@ -310,22 +311,7 @@ export function LoginPage() {
                   </>
                 ) : null}
 
-                {mode === 'session' ? (
-                  <div className="mt-5 grid gap-2">
-                    <a
-                      href={oauthStartUrl('google')}
-                      className="inline-flex h-9 items-center justify-center rounded-md border border-ha-border-strong bg-ha-panel-2 text-[13px] font-medium text-ha-text-2 transition-colors hover:text-ha-text"
-                    >
-                      使用 Google 登录
-                    </a>
-                    <a
-                      href={oauthStartUrl('github')}
-                      className="inline-flex h-9 items-center justify-center rounded-md border border-ha-border-strong bg-ha-panel-2 text-[13px] font-medium text-ha-text-2 transition-colors hover:text-ha-text"
-                    >
-                      使用 GitHub 登录
-                    </a>
-                  </div>
-                ) : null}
+                {mode === 'session' ? <SocialLogin /> : null}
               </>
             ) : null}
 

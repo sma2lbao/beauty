@@ -44,15 +44,15 @@
 
 ### 配置(前缀 `ACCOUNT__`)
 
-| 变量                  | 默认       | 说明                                                                                   |
-| --------------------- | ---------- | -------------------------------------------------------------------------------------- |
-| `TOKEN_TTL_SECONDS`   | 3600       | access token 有效期                                                                    |
-| `REFRESH_TTL_SECONDS` | 2592000    | refresh token 有效期(30 天)                                                            |
-| `TOKEN_AUDIENCE`      | beauty-api | JWT `aud`(与各服务 `AUTH_AUDIENCE` 一致)                                               |
-| `SIGNING_KEY_PATH`    | 空         | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test)          |
-| `INTERNAL_SECRET`     | 空         | 内部端点(`/v1/auth/issue`、`/usage/events`、`/byok/*` 内部面)的共享密钥,留空即关闭     |
+| 变量                  | 默认       | 说明                                                                                             |
+| --------------------- | ---------- | ------------------------------------------------------------------------------------------------ |
+| `TOKEN_TTL_SECONDS`   | 3600       | access token 有效期                                                                              |
+| `REFRESH_TTL_SECONDS` | 2592000    | refresh token 有效期(30 天)                                                                      |
+| `TOKEN_AUDIENCE`      | beauty-api | JWT `aud`(与各服务 `AUTH_AUDIENCE` 一致)                                                         |
+| `SIGNING_KEY_PATH`    | 空         | 签名私钥 PEM 路径:设置则跨重启不轮换 kid(生产必设);留空则进程内生成(dev/test)                    |
+| `INTERNAL_SECRET`     | 空         | 内部端点(`/v1/auth/issue`、`/usage/events`、`/byok/*` 内部面)的共享密钥,留空即关闭               |
 | `AUTH_ENABLED`        | true       | 校验 Bearer 并从 token claim 解析账号(自建 IdP 即本服务;显式关闭走 `X-Account-Id` 头,仅特殊部署) |
-| `ADMIN_EMAILS`       | []         | 管理员引导名单(JSON 数组,大小写不敏感);注册/登录命中即持久化 `role=admin`,鉴权时也兜底放行 |
+| `ADMIN_EMAILS`        | []         | 管理员引导名单(JSON 数组,大小写不敏感);注册/登录命中即持久化 `role=admin`,鉴权时也兜底放行       |
 
 ## 管理面(RBAC / 审计)
 
@@ -179,6 +179,20 @@ API 网关调用本服务的两个端点,浏览器不直接拿 token:
 
 配置: `ACCOUNT__GOOGLE_CLIENT_ID/SECRET`、`ACCOUNT__GITHUB_CLIENT_ID/SECRET`、
 `ACCOUNT__OAUTH_STATE_SECRET`(留空回退 `ACCOUNT__INTERNAL_SECRET`)。
+
+GitHub 登录需要先建一个 OAuth App(Settings → Developer settings → OAuth Apps):
+
+- Homepage URL:本地 `http://localhost:5173`,生产 `https://app.<domain>`
+- Authorization callback URL:本地 `http://localhost:5173/api/auth/oauth/github/callback`,
+  生产 `https://app.<domain>/api/auth/oauth/github/callback`
+- 授权 scope 由服务端申请(`read:user user:email`),不需要在 App 里额外勾选
+
+拿到 Client ID 后生成 Client Secret,写入 `ACCOUNT__GITHUB_CLIENT_ID` /
+`ACCOUNT__GITHUB_CLIENT_SECRET` 并重启 account-service。凭据缺失时 authorize 返回
+`oauth.provider_disabled`,网关会把浏览器带回 `/login?oauth_error=...` 而不是停在 JSON 错误页。
+
+**Web 端入口**:`apps/web` 的登录页目前只展示「使用 GitHub 登录」,Google 按钮暂时隐藏
+(后端 Google 能力保留,恢复只需在 `apps/web/src/features/auth/social-login.tsx` 加回入口)。
 
 OAuth 应用回调地址(本地):
 

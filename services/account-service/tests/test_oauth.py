@@ -101,13 +101,17 @@ def test_google_authorize_and_exchange(oauth_client: TestClient) -> None:
     assert second.json()["account_id"] == token["account_id"]
 
 
-def test_github_exchange_uses_primary_email(oauth_client: TestClient) -> None:
-    authorize = oauth_client.get(
+def _github_state(client: TestClient) -> str:
+    authorize = client.get(
         "/v1/auth/oauth/github/authorize",
         params={"redirect_uri": "http://localhost:5173/api/auth/oauth/github/callback"},
     )
     assert authorize.status_code == 200
-    state = authorize.json()["state"]
+    return authorize.json()["state"]
+
+
+def test_github_exchange_uses_primary_email(oauth_client: TestClient) -> None:
+    state = _github_state(oauth_client)
 
     exchanged = oauth_client.post(
         "/v1/auth/oauth/github/exchange",
@@ -115,6 +119,56 @@ def test_github_exchange_uses_primary_email(oauth_client: TestClient) -> None:
     )
     assert exchanged.status_code == 200
     assert exchanged.json()["subject"] == "octo@example.com"
+
+
+def test_github_exchange_falls_back_to_noreply_email(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_token"):
+            return httpx.Response(200, json={"access_token": "provider-token"})
+        if request.url.path == "/user":
+            return httpx.Response(200, json={"id": 42, "login": "octocat"})
+        if request.url.path == "/user/emails":
+            # 只有非 primary 的已验证邮箱:不能当账号邮箱用
+            return httpx.Response(
+                200,
+                json=[
+                    {"email": "octo@example.com", "primary": False, "verified": True}
+                ],
+            )
+        return httpx.Response(404, json={"code": "not_found"})
+
+    app = create_app(_settings(tmp_path), oauth_transport=httpx.MockTransport(handler))
+    with TestClient(app) as client:
+        exchanged = client.post(
+            "/v1/auth/oauth/github/exchange",
+            json={"code": "provider-code", "state": _github_state(client)},
+        )
+    assert exchanged.status_code == 200
+    assert exchanged.json()["subject"] == "github-42@users.noreply.github.com"
+
+
+def test_github_token_error_body_is_upstream_error(tmp_path: Path) -> None:
+    """GitHub 无效 code 返回 200 + error 体,必须当作失败而不是 KeyError。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_token"):
+            return httpx.Response(
+                200,
+                json={
+                    "error": "bad_verification_code",
+                    "error_description": "The code passed is incorrect or expired.",
+                },
+            )
+        return httpx.Response(404, json={"code": "not_found"})
+
+    app = create_app(_settings(tmp_path), oauth_transport=httpx.MockTransport(handler))
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/auth/oauth/github/exchange",
+            json={"code": "bad-code", "state": _github_state(client)},
+        )
+    assert response.status_code == 502
+    assert response.json()["code"] == "oauth.provider_error"
 
 
 def test_oauth_provider_disabled(tmp_path: Path) -> None:

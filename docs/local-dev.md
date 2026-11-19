@@ -82,7 +82,8 @@ VITE_AUTH_MODE=session
 
 然后重启 Vite。session 模式下 API 网关会写加密 httpOnly Cookie,SPA 不接触 token。
 OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本地不配也可用
-邮箱+密码登录。
+邮箱+密码登录。GitHub 登录的 OAuth App 注册与回调地址见
+[account-service README](../services/account-service/README.md#社交-oauthm0-05)。
 
 ## 3.1 Skills（场景模板）
 

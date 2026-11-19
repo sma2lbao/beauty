@@ -22,6 +22,9 @@ vi.mock('@/lib/auth', () => ({
   accessToken: vi.fn(async () => null),
   authHeaders: vi.fn(async () => ({})),
   accountLabel: vi.fn(async () => null),
+  oauthStartUrl: vi.fn(
+    (provider: string) => `/api/auth/oauth/${provider}/start`,
+  ),
   getStoredToken: vi.fn(() => null),
   getStoredRefreshToken: vi.fn(() => null),
   refreshAccessToken: vi.fn(async () => false),
@@ -168,6 +171,19 @@ describe('LoginPage', () => {
       expect(setStoredToken).toHaveBeenCalledWith('pasted-jwt');
     });
     expect(await screen.findByText('会话页占位')).toBeInTheDocument();
+  });
+
+  it('session 模式:只提供 GitHub 登录,Google 入口已隐藏', async () => {
+    vi.mocked(authMode).mockReturnValue('session');
+    renderLogin();
+
+    const github = await screen.findByRole('link', {
+      name: '使用 GitHub 登录',
+    });
+    expect(github).toHaveAttribute('href', '/api/auth/oauth/github/start');
+    expect(
+      screen.queryByRole('link', { name: /Google/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('logto 模式:未登录时跳 IdP 并记下来路', async () => {

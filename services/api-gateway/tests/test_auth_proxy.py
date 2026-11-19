@@ -94,6 +94,46 @@ def test_oauth_start_redirects_to_provider(client: TestClient) -> None:
     )
 
 
+def test_oauth_github_start_redirects_to_github(client: TestClient) -> None:
+    response = client.get("/api/auth/oauth/github/start", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith(
+        "https://github.com/login/oauth/authorize"
+    )
+
+
+def test_oauth_github_callback_sets_session(client: TestClient) -> None:
+    response = client.get(
+        "/api/auth/oauth/github/callback",
+        params={"code": "code-1", "state": "signed-state"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/")
+    assert client.get("/api/auth/session").status_code == 200
+
+
+def test_oauth_start_failure_returns_to_login() -> None:
+    """provider 未配置或上游报错时,浏览器必须回登录页而不是停在 4xx JSON。"""
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "code": "oauth.provider_disabled",
+                "message": "github 登录未配置",
+            },
+        )
+
+    app = create_app(settings(), transport=httpx.MockTransport(failing))
+    with TestClient(app) as client:
+        response = client.get("/api/auth/oauth/github/start", follow_redirects=False)
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert "/login?" in location
+    assert "oauth_error=oauth.provider_disabled" in location
+
+
 def test_oauth_callback_sets_session(client: TestClient) -> None:
     response = client.get(
         "/api/auth/oauth/google/callback",
