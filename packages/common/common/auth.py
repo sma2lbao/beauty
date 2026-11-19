@@ -1,4 +1,4 @@
-"""JWT 鉴权基座(架构 §10):IdP(Logto)签发的 access token 校验与账号提取。
+"""JWT 鉴权基座(架构 §10):OIDC IdP 签发的 access token 校验与账号提取。
 
 约定:
 

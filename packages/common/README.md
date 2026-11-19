@@ -30,7 +30,7 @@ beauty-moon 服务基础设施共享库。架构定位见 `docs/architecture.md`
   `/internal/metrics` 经 `exclude_telemetry` 排除,出站用 httpx 插桩自动注入 `traceparent`;
 - `common.observability`:`install_observability(app, settings)`——一行同时装
   Sentry、指标端点与追踪(7 个服务的 `create_app` 统一调用);
-- `common.auth`:`JwtVerifier`——IdP(Logto)access token 校验与账号提取:
+- `common.auth`:`JwtVerifier`——OIDC IdP access token 校验与账号提取:
   OIDC 发现 + JWKS 拉取(TTL 缓存、未知 kid 触发刷新以支持密钥轮换)、
   RS256 签名 + `iss`/`aud`/`exp` 校验;账号来自可配置 claim,缺失即拒绝
   (绝不回退请求头);JWKS 不可达是 502(上游问题);fetcher 可注入,测试零网络;

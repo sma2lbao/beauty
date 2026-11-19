@@ -4,7 +4,7 @@
   `account_id`(账号即隔离边界:account_id = users.id),`iss`/`aud`/`exp`
   与托管 IdP 的 access token 完全同构;
 - 暴露 OIDC 发现文档 + JWKS 端点——兄弟服务用同一个 `JwtVerifier`
-  经 HTTP 发现来验签,**没有任何专用后门**;将来要换 Logto 等托管 IdP
+  经 HTTP 发现来验签,**没有任何专用后门**;将来要换托管 IdP
   只改各服务 `AUTH_ISSUER`,业务代码零改动;
 - 凭证校验(密码哈希)在 services/auth_service.py,这里只管"签"。
 

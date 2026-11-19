@@ -9,7 +9,6 @@ import { SiteLayout } from '@/components/layout/site-layout';
 import { RouteFallback } from '@/components/route-fallback';
 import { siteUrl } from '@/lib/site-links';
 import { AboutPage } from '@/pages/about';
-import { CallbackPage } from '@/pages/callback';
 import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
 import { OAuthAuthorizePage } from '@/pages/oauth-authorize';
@@ -71,9 +70,8 @@ export function App() {
     // 渲染异常只替换出错区域,控制台外壳(侧栏/顶栏)保留
     <ErrorBoundary>
       <Routes>
-        {/* 公开页:登录/回调/官网/关于 */}
+        {/* 公开页:登录/官网/关于 */}
         <Route path="login" element={<LoginPage />} />
-        <Route path="callback" element={<CallbackPage />} />
         {/* 官网已迁到 apps/site;旧深链兼容跳转,不再维护第二份 Landing */}
         <Route
           path="landing"

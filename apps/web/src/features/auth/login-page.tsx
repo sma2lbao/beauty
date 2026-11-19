@@ -1,11 +1,12 @@
 /**
- * 登录页(架构 §10):`token`/`logto` 模式下整站的登录门,守卫(auth-guard)
+ * 登录页(架构 §10):`token`/`session` 模式下整站的登录门,守卫(auth-guard)
  * 拦下的访问都回到这里,登录成功后送回来路。
  *
  * - `token`:自建认证(account-service)——邮箱 + 密码登录、创建账号,
  *   或粘贴现成 access token(联调/运维,无续期);登录拿双令牌,
  *   access 过期由 http 层用 refresh 自动续;
- * - `logto`:跳 IdP 授权码 + PKCE 登录,回调在 `/callback`。
+ * - `session`:登录/注册走 API 网关,双令牌只存 httpOnly Cookie,
+ *   另提供 GitHub 社交登录(整页跳转 OAuth start)。
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,14 +21,11 @@ import { siteUrl } from '@/lib/site-links';
 import {
   accountLabel,
   authMode,
-  rememberLoginRedirect,
   sessionLogin,
   sessionRegister,
   setStoredToken,
   setStoredTokens,
-  signIn,
   signOut,
-  takeLoginRedirect,
 } from '@/lib/auth';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -160,14 +158,6 @@ export function LoginPage() {
       }
     });
 
-  const goLogto = () =>
-    void attempt(async () => {
-      // IdP 登录是整页跳转,来路先记下;真跳转时不会走到后面的 navigate
-      rememberLoginRedirect(target);
-      await signIn();
-      navigate(takeLoginRedirect(), { replace: true });
-    });
-
   const leave = () =>
     void attempt(async () => {
       await signOut();
@@ -193,7 +183,7 @@ export function LoginPage() {
           <div className="p-6">
             <h1 className="text-[18px] font-semibold text-ha-text">登录</h1>
 
-            {(mode === 'token' || mode === 'session') && account ? (
+            {account ? (
               <SignedIn
                 account={account}
                 busy={busy}
@@ -202,7 +192,7 @@ export function LoginPage() {
               />
             ) : null}
 
-            {(mode === 'token' || mode === 'session') && !account ? (
+            {!account ? (
               <>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {tab === 'login'
@@ -313,31 +303,6 @@ export function LoginPage() {
 
                 {mode === 'session' ? <SocialLogin /> : null}
               </>
-            ) : null}
-
-            {mode === 'logto' ? (
-              account ? (
-                <SignedIn
-                  account={account}
-                  busy={busy}
-                  onEnter={enter}
-                  onLeave={leave}
-                />
-              ) : (
-                <>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    跳转到 Logto 完成登录,回来后接着你刚才的页面。
-                  </p>
-                  <Button
-                    className="mt-5 w-full"
-                    size="lg"
-                    disabled={busy}
-                    onClick={goLogto}
-                  >
-                    使用 Logto 登录
-                  </Button>
-                </>
-              )
             ) : null}
 
             {oauthError ? (

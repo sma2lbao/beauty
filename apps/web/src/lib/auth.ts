@@ -5,31 +5,24 @@
  * - `token`(默认):自建认证登录(邮箱 + 密码,注册见登录页),双令牌存
  *   localStorage:access 过期后由 `@/lib/http` 拿 refresh 自动续(旋转式);
  *   运维仍可粘贴纯 access token(联调用,无续期能力);
- * - `logto`:Logto 授权码 + PKCE 登录,access token 由 SDK 自动续期。
+ * - `session`:生产推荐,登录走 API 网关 `/api/auth/*`,双令牌只存 httpOnly
+ *   Cookie,SPA 不接触 token。
  *
  * 账号标识只在 token 里(`account_id` claim),前端不传、也不需要知道它——
  * 守卫(auth-guard)保证未登录访问送回登录页,请求层不兜底临时账号头。
  *
- * 构建期环境变量:`VITE_AUTH_MODE`、`VITE_LOGTO_ENDPOINT`、`VITE_LOGTO_APP_ID`、
- * `VITE_LOGTO_RESOURCE`、`VITE_ACCOUNT_API_URL`(见 apps/web/.env.example)。
+ * 构建期环境变量:`VITE_AUTH_MODE`、`VITE_ACCOUNT_API_URL`
+ * (见 apps/web/.env.example)。
  */
-
-import LogtoClient from '@logto/browser';
 
 import {
   accountBase as ACCOUNT_BASE,
   authMode as MODE,
-  logto as logtoEnv,
   type AuthMode,
 } from '@/config/env';
 
 export type { AuthMode };
 
-const {
-  endpoint: LOGTO_ENDPOINT,
-  appId: LOGTO_APP_ID,
-  resource: LOGTO_RESOURCE,
-} = logtoEnv;
 const TOKEN_KEY = 'beauty.auth.access_token';
 const REFRESH_KEY = 'beauty.auth.refresh_token';
 const LABEL_KEY = 'beauty.auth.account_label';
@@ -156,36 +149,12 @@ export function setStoredToken(token: string | null): void {
   }
 }
 
-let client: LogtoClient | null = null;
-
-async function logto(): Promise<LogtoClient> {
-  if (!LOGTO_ENDPOINT || !LOGTO_APP_ID) {
-    throw new Error('缺少 VITE_LOGTO_ENDPOINT / VITE_LOGTO_APP_ID');
-  }
-  client ??= new LogtoClient({
-    endpoint: LOGTO_ENDPOINT,
-    appId: LOGTO_APP_ID,
-    ...(LOGTO_RESOURCE ? { resources: [LOGTO_RESOURCE] } : {}),
-  });
-  return client;
-}
-
 /** 当前 access token;拿不到返回 null(由调用方决定是否带 Authorization)。 */
 export async function accessToken(): Promise<string | null> {
   if (MODE === 'session') {
     return (await sessionAuthenticated()) ? 'session' : null;
   }
-  if (MODE === 'token') {
-    return getStoredToken();
-  }
-  if (MODE === 'logto') {
-    const logtoClient = await logto();
-    if (!(await logtoClient.isAuthenticated())) {
-      return null;
-    }
-    return logtoClient.getAccessToken(LOGTO_RESOURCE);
-  }
-  return null;
+  return getStoredToken();
 }
 
 let refreshing: Promise<boolean> | null = null;
@@ -258,33 +227,6 @@ export async function authHeaders(): Promise<Record<string, string>> {
   return {};
 }
 
-/** OIDC 回调地址:需在 Logto 控制台登记。 */
-export function callbackUri(): string {
-  return `${window.location.origin}/callback`;
-}
-
-const LOGIN_REDIRECT_KEY = 'beauty.auth.login_redirect';
-
-/** 记住登录成功后要回到的站内路径(登录页写入,回调页消费)。 */
-export function rememberLoginRedirect(path: string): void {
-  window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, path);
-}
-
-/** 取出并清掉登录来路:无记录或非站内路径一律回会话页。 */
-export function takeLoginRedirect(): string {
-  const value = window.sessionStorage.getItem(LOGIN_REDIRECT_KEY);
-  window.sessionStorage.removeItem(LOGIN_REDIRECT_KEY);
-  return value?.startsWith('/') && !value.startsWith('//') ? value : '/';
-}
-
-export async function signIn(): Promise<void> {
-  await (await logto()).signIn({ redirectUri: callbackUri() });
-}
-
-export async function handleSignInCallback(href: string): Promise<void> {
-  await (await logto()).handleSignInCallback(href);
-}
-
 export async function signOut(): Promise<void> {
   if (MODE === 'session') {
     try {
@@ -294,20 +236,14 @@ export async function signOut(): Promise<void> {
     }
     return;
   }
-  if (MODE === 'logto') {
-    await (await logto()).signOut(window.location.origin);
-    return;
-  }
-  if (MODE === 'token') {
-    // 尽力吊销 refresh token(失败不阻塞,本地令牌反正要清)
-    const token = getStoredRefreshToken();
-    if (token) {
-      void fetch(`${ACCOUNT_BASE}/account-api/v1/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: token }),
-      }).catch(() => undefined);
-    }
+  // token 模式:尽力吊销 refresh token(失败不阻塞,本地令牌反正要清)
+  const token = getStoredRefreshToken();
+  if (token) {
+    void fetch(`${ACCOUNT_BASE}/account-api/v1/auth/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: token }),
+    }).catch(() => undefined);
   }
   clearStoredTokens();
 }
@@ -335,24 +271,9 @@ export async function accountLabel(): Promise<string | null> {
       return null;
     }
   }
-  if (MODE === 'token') {
-    if (!getStoredToken()) {
-      return null;
-    }
-    const label = window.localStorage.getItem(LABEL_KEY);
-    return label ?? '手动令牌';
-  }
-  if (MODE !== 'logto') {
+  if (!getStoredToken()) {
     return null;
   }
-  try {
-    const logtoClient = await logto();
-    if (!(await logtoClient.isAuthenticated())) {
-      return null;
-    }
-    const claims = await logtoClient.getIdTokenClaims();
-    return (claims.email as string | undefined) ?? claims.sub ?? null;
-  } catch {
-    return null;
-  }
+  const label = window.localStorage.getItem(LABEL_KEY);
+  return label ?? '手动令牌';
 }

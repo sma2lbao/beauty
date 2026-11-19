@@ -22,7 +22,7 @@
 
 本服务兼作 IdP:凭证校验(密码)+ 令牌签发(RS256)+ OIDC 发现/JWKS,
 兄弟服务用同一个 `JwtVerifier` 经 HTTP 发现自动验签——**不设任何后门**,
-将来要换 Logto 等托管 IdP 只改各服务 `AUTH_ISSUER`,代码零改动。
+将来要换托管 IdP 只改各服务 `AUTH_ISSUER`,代码零改动。
 
 - `POST /v1/auth/register`:注册即建账号(`subject` = email,全局唯一;
   409 `account.email_taken`);密码最小 8 位,argon2id 哈希。响应是**扁平**

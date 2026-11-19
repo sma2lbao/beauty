@@ -16,12 +16,7 @@ vi.mock('@/lib/auth', () => ({
   accountLabel: vi.fn(async () => null),
   getStoredToken: vi.fn(() => null),
   setStoredToken: vi.fn(),
-  rememberLoginRedirect: vi.fn(),
-  takeLoginRedirect: vi.fn(() => '/'),
-  callbackUri: vi.fn(() => 'http://localhost:3000/callback'),
-  signIn: vi.fn(async () => {}),
   signOut: vi.fn(async () => {}),
-  handleSignInCallback: vi.fn(async () => {}),
 }));
 
 vi.mock('@/lib/conversations-api', () => ({

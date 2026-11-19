@@ -8,10 +8,8 @@ import { accountApi } from '@/lib/account-api';
 import {
   accountLabel,
   authMode,
-  rememberLoginRedirect,
   setStoredToken,
   setStoredTokens,
-  signIn,
   signOut,
 } from '@/lib/auth';
 
@@ -30,12 +28,7 @@ vi.mock('@/lib/auth', () => ({
   refreshAccessToken: vi.fn(async () => false),
   setStoredToken: vi.fn(),
   setStoredTokens: vi.fn(),
-  rememberLoginRedirect: vi.fn(),
-  takeLoginRedirect: vi.fn(() => '/'),
-  callbackUri: vi.fn(() => 'http://localhost:3000/callback'),
-  signIn: vi.fn(async () => {}),
   signOut: vi.fn(async () => {}),
-  handleSignInCallback: vi.fn(async () => {}),
 }));
 
 vi.mock('@/lib/account-api', async () => {
@@ -184,32 +177,6 @@ describe('LoginPage', () => {
     expect(
       screen.queryByRole('link', { name: /Google/ }),
     ).not.toBeInTheDocument();
-  });
-
-  it('logto 模式:未登录时跳 IdP 并记下来路', async () => {
-    vi.mocked(authMode).mockReturnValue('logto');
-    renderLogin({ from: '/knowledge' });
-
-    fireEvent.click(screen.getByRole('button', { name: '使用 Logto 登录' }));
-
-    await waitFor(() => {
-      expect(rememberLoginRedirect).toHaveBeenCalledWith('/knowledge');
-      expect(signIn).toHaveBeenCalled();
-    });
-  });
-
-  it('logto 模式:已登录显示账号与进入/退出操作', async () => {
-    vi.mocked(authMode).mockReturnValue('logto');
-    vi.mocked(accountLabel).mockResolvedValue('a@b.c');
-    renderLogin();
-
-    expect(await screen.findByText('已登录:a@b.c')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: '进入控制台' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: '退出登录' }),
-    ).toBeInTheDocument();
   });
 
   it('退出登录后回到登录表单', async () => {

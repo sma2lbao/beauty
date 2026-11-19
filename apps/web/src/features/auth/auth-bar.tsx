@@ -2,18 +2,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { Button, Input } from '@beauty/design';
-import {
-  accountLabel,
-  authMode,
-  setStoredToken,
-  signIn,
-  signOut,
-} from '@/lib/auth';
+import { accountLabel, authMode, setStoredToken, signOut } from '@/lib/auth';
 import { queryKeys } from '@/lib/query-keys';
 
 const MODE_LABEL: Record<string, string> = {
   token: '账号登录',
-  logto: 'Logto 登录',
+  session: '账号登录(Cookie)',
 };
 
 /**
@@ -103,26 +97,6 @@ export function AuthBar({ onChange }: { onChange?: () => void }) {
             保存令牌
           </Button>
         </>
-      ) : null}
-
-      {mode === 'logto' ? (
-        account ? (
-          <>
-            <span>{account}</span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => run(signOut)}
-            >
-              退出登录
-            </Button>
-          </>
-        ) : (
-          <Button size="sm" disabled={busy} onClick={() => run(signIn)}>
-            登录
-          </Button>
-        )
       ) : null}
 
       {error ? <span className="text-destructive">{error}</span> : null}

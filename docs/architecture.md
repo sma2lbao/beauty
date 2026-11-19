@@ -14,7 +14,7 @@
 | 对象存储          | **暂不引入**                                          | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
 | 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**           | 同左（SQLite 覆盖时用文件/内存 worker）      | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
 | 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底     | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                                                                    |
-| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）   | 同左（token 模式兜底）                       | ✅ 已实施；Logto **不用**（前端保留可选 logto 模式）                                                                |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）   | 同左（token 模式兜底）                       | ✅ 已实施；不用托管 IdP（自建 account-service + GitHub OAuth）                                                      |
 | 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud** | 同左（本地日志）                             | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                  |
 | 支付              | **不做 Stripe**                                       | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
 | 事务邮件          | **暂不做 Resend**                                     | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                                                                |
@@ -33,7 +33,7 @@
 
 **硬性原则**
 
-1. 内网形态**不依赖 Vercel/云 PG/云 Redis/Sentry/Logto/Stripe/Resend/Langfuse**；
+1. 内网形态**不依赖 Vercel/云 PG/云 Redis/Sentry/Stripe/Resend/Langfuse**；
 2. API 网关用 FastAPI 实现并与 SPA 同域部署（Nginx 反代 `/api`），不依赖 Vercel Functions；
 3. 前端产物必须可静态托管（无外部 CDN/字体/远程图片）；
 4. 模型可指向内网 OpenAI 兼容端点；无模型时系统仍能启动（降级为确定性桩）；
@@ -50,7 +50,7 @@
 | 003 | 长任务用 Postgres job 表 + worker                                               | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                                |
 | 004 | Sandbox 用 microsandbox provider                                                | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                               |
 | 005 | 数据：云 PG + 云 Redis；对象存储暂缓                                            | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件（2026-11-12 起本地默认改为 compose Postgres，SQLite 降为显式覆盖）；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                    |
-| 006 | 身份：自建 account-service（不用 Logto）                                        | ✅ 采用                | 需补 Google/GitHub 社交登录；前端鉴权保留可选 logto 模式（`VITE_AUTH_MODE=logto`）作为切换开关                                                                                          |
+| 006 | 身份：自建 account-service（不用托管 IdP）                                      | ✅ 采用                | GitHub 社交登录已接入（Google 入口隐藏）；前端鉴权仅 token/session 两模式                                                                                                               |
 | 007 | API 网关 httpOnly Cookie + 短时 JWT                                             | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                                      |
 | 008 | 计费：usage ledger + Free 配额 + BYOK                                           | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                                 |
 | 009 | MCP Server + Client                                                             | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                            |
@@ -108,7 +108,7 @@ Browser
 
 | 服务 / 应用          | 部署 / 端口           | 职责                                                                                                                                                                   | 备注                                                                                                                                                                             |
 | -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                                                                                | 鉴权 token/session/logto 三模式（`VITE_AUTH_MODE`，默认 token）                                                                                                                  |
+| apps/web             | Nginx 静态 / dev 5173 | Vite SPA 控制台（暗色控制台：工作台/任务编排/变更产物/知识库/工作区中心/事件队列/设置）                                                                                | 鉴权 token/session 两模式（`VITE_AUTH_MODE`，默认 token）                                                                                                                        |
 | apps/site            | Vercel 静态           | Next.js 官网、文档、Changelog                                                                                                                                          | 静态导出（`output: 'export'`）                                                                                                                                                   |
 | apps/blog            | Vercel 静态           | Next.js 学习博客（MDX、标签/系列/归档、RSS）                                                                                                                           | 独立静态导出；设计见 [blog.md](./design/blog.md)                                                                                                                                 |
 | apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                                                                                     | 与 web 云端模式并存可切换                                                                                                                                                        |
@@ -194,11 +194,11 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 5.2 认证与会话
 
-- 登录：account-service 自建 IdP——注册 + 邮箱密码登录（argon2id）+ **旋转式刷新令牌**（旧令牌一次性，重用即吊销该用户全部）+ 内部签发 `POST /v1/auth/issue` + OIDC 发现/JWKS（签名密钥经 `SIGNING_KEY_PATH` 持久化）；**不用 Logto**（前端保留 `VITE_AUTH_MODE=logto` 作为可选模式）；社交 OAuth（Google/GitHub）待补；
+- 登录：account-service 自建 IdP——注册 + 邮箱密码登录（argon2id）+ **旋转式刷新令牌**（旧令牌一次性，重用即吊销该用户全部）+ 内部签发 `POST /v1/auth/issue` + OIDC 发现/JWKS（签名密钥经 `SIGNING_KEY_PATH` 持久化）；**不用托管 IdP**；社交 OAuth 已接入 GitHub（Google 入口隐藏）；
 - API 网关回调后建立 **httpOnly, Secure, SameSite=Lax Cookie**；SPA 不接触 refresh token（session 模式）；
 - API 网关调 runtime 时签发短时服务 JWT（account/sub/scope）；服务间内部调用一律经 TokenBroker（账号来自签名 claim，无 `X-Account-Id` 裸调路径）；
 - 开放平台/API Key 请求绕过 API 网关，直连 public API，用 API Key → 短时 JWT；
-- 本地开发保留 token 模式兜底（`VITE_AUTH_MODE=token|session|logto`，默认 token）；`AUTH_ENABLED=false` 时认 `X-Account-Id` 仅保留为显式关闭鉴权的部署语义。
+- 本地开发保留 token 模式兜底（`VITE_AUTH_MODE=token|session`，默认 token）；`AUTH_ENABLED=false` 时认 `X-Account-Id` 仅保留为显式关闭鉴权的部署语义。
 
 ### 5.3 流式
 

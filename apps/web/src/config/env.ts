@@ -2,14 +2,14 @@
  * 构建期环境变量唯一入口(R-08):apps/web 全部 `import.meta.env` 读取收敛到本文件,
  * 其余代码只允许从这里 import。默认值与收敛前各处逐字一致:
  * - API base 默认 `''`(dev 同源,Vite 代理到各服务);
- * - authMode 默认 'token';logto 三项默认 undefined(缺配置时按需抛错);
+ * - authMode 默认 'token';
  * - siteUrl:VITE_SITE_URL > PROD 分支 > dev :3000(原 site-links.ts 逻辑原样搬入)。
  *
  * 求值语义保持与现状一致:模块加载时一次性求值(`vi.stubEnv` 后须 `vi.resetModules()`
  * 重新 import,与改造前 lib/auth 的用法相同)。
  */
 
-export type AuthMode = 'token' | 'session' | 'logto';
+export type AuthMode = 'token' | 'session';
 
 /** 鉴权模式(VITE_AUTH_MODE),默认 'token'。 */
 export const authMode: AuthMode =
@@ -58,7 +58,8 @@ export const sentryEnvironment: string =
   (isProd ? 'production' : 'development');
 
 /** Sentry release(VITE_SENTRY_RELEASE),与后端 `SENTRY_RELEASE` 用同一个值才能串起来。 */
-export const sentryRelease = import.meta.env.VITE_SENTRY_RELEASE as string | undefined;
+export const sentryRelease = import.meta.env.VITE_SENTRY_RELEASE as
+  string | undefined;
 
 /**
  * 前端 tracing 采样率(VITE_SENTRY_TRACES_SAMPLE_RATE):生产 0.1、开发 1.0。
@@ -67,18 +68,13 @@ export const sentryRelease = import.meta.env.VITE_SENTRY_RELEASE as string | und
 const configuredSentryRate = Number(
   import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE,
 );
-export const sentryTracesSampleRate: number = Number.isFinite(configuredSentryRate)
+export const sentryTracesSampleRate: number = Number.isFinite(
+  configuredSentryRate,
+)
   ? configuredSentryRate
   : isProd
     ? 0.1
     : 1.0;
-
-/** Logto OIDC 配置(VITE_LOGTO_*):缺省 undefined,logto 模式下缺配置抛错(见 lib/auth)。 */
-export const logto = {
-  endpoint: import.meta.env.VITE_LOGTO_ENDPOINT as string | undefined,
-  appId: import.meta.env.VITE_LOGTO_APP_ID as string | undefined,
-  resource: import.meta.env.VITE_LOGTO_RESOURCE as string | undefined,
-};
 
 /**
  * 官网基址(VITE_SITE_URL),原 site-links.ts 的默认逻辑原样搬入:
