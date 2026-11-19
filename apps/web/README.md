@@ -61,7 +61,7 @@ Nx 把 `apps/web/.env`（gitignored，本地 `token`）注入成进程环境变�
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://api-cvm.beautymoon.cn/api/:path*"
+      "destination": "https://api.beautymoon.cn/api/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
@@ -70,7 +70,7 @@ Nx 把 `apps/web/.env`（gitignored，本地 `token`）注入成进程环境变�
 
 - **顺序有意义**：`/api/*` 先整体代理到 API 网关，其余路径才走 SPA 回退；静态文件（`/assets/*`、
   `/favicon.svg`）先命中文件系统，回退不会遮蔽它们。
-- `api-cvm.beautymoon.cn` 是当前 API 网关公网入口（Caddy → `api-gateway:8007`，`/api` 前缀原样透传）；换部署域名时只需改这一处，并同步 `deploy/tencent/.env` 的 `API_HOST` 与各 `*__AUTH_ISSUER`。
+- `api.beautymoon.cn` 是当前 API 网关公网入口（Caddy → `api-gateway:8007`，`/api` 前缀原样透传）；换部署域名时只需改这一处，并同步 `deploy/tencent/.env` 的 `API_HOST` 与各 `*__AUTH_ISSUER`。
 - 还没部署 API 网关时只保留第二条 catch-all，否则 `/api/*` 会因目标不可达返回 5xx。
 - API 网关的公网入口必须保留 `/api` 前缀并透传流式响应（见下）。
 

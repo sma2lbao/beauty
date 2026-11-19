@@ -41,7 +41,7 @@ const ENTRIES = [
   {
     date: '2026-11-12',
     title: '部署主线与 E2B 沙箱',
-    body: '部署定型为 Vercel 静态层 + 腾讯云轻量(首尔)+ Neon;新增 E2B 沙箱 provider,默认库切本机 compose Postgres,网关路由可观测化,API 域名迁移到 api-cvm.beautymoon.cn。',
+    body: '部署定型为 Vercel 静态层 + 腾讯云轻量(首尔)+ Neon;新增 E2B 沙箱 provider,默认库切本机 compose Postgres,网关路由可观测化,API 域名迁移到 api.beautymoon.cn。',
   },
   {
     date: '2026-11-11',
