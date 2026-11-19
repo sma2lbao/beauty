@@ -1,0 +1,241 @@
+---
+title: 'Flink 时间语义、Watermark 与 Checkpoint'
+description: '从事件时间与处理时间的差异出发，讲清 Watermark、窗口、Keyed State、Checkpoint 与端到端 Exactly-Once 的配合方式。'
+date: '2026-11-19'
+tags: ['大数据', 'Flink', '流处理']
+series: '大数据开发'
+seriesOrder: 5
+---
+
+> 本文参考 Apache Flink 官方 [Timely Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/)、[Stateful Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/) 与 [Checkpointing](https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream/fault-tolerance/checkpointing/) 整理。
+
+## 流处理最难的不是算子，是“时间”
+
+批处理里，数据已经到齐，按分区算完就结束。流处理里，数据会迟到、乱序、重复，任务还会失败重启。于是有三个问题必须回答：
+
+1. **按什么时间算**：事件发生的时间，还是机器处理的时间？
+2. **什么时候算完**：怎么知道某个时间窗口的数据已经到齐？
+3. **失败后怎么恢复**：从哪条数据重新开始，状态怎么恢复？
+
+Flink 的答案分别是：事件时间/处理时间、Watermark、Checkpoint。
+
+## Event Time 与 Processing Time
+
+| 维度     | Event Time              | Processing Time    |
+| -------- | ----------------------- | ------------------ |
+| 时间来源 | 事件自带的时间戳        | 执行机器的系统时钟 |
+| 结果     | 可复现，能处理乱序/迟到 | 低延迟，但不确定   |
+| 依赖     | 需要 Watermark 推进     | 不需要协调         |
+| 适合     | 对账、风控、可回溯指标  | 实时监控、近似统计 |
+
+Processing Time 最简单：窗口按机器时间切，迟到数据直接进当前窗口，结果不可复现。Event Time 更符合业务语义：一条 10:59 的订单，无论 11:01 才到，都应该进入 10:00–11:00 的窗口。
+
+但 Event Time 需要知道“10:59 之前的数据到齐了吗”。这就是 Watermark。
+
+## Watermark：事件时间的进度条
+
+Watermark 是数据流中的特殊标记，携带一个时间戳 `t`。`Watermark(t)` 表示：**事件时间小于等于 `t` 的数据已经全部到达**（更严格地说，之后不会再有 `timestamp <= t` 的事件）。
+
+有了它，窗口算子才知道什么时候可以触发计算：
+
+```text
+事件时间：  10:58  10:59  11:02  10:57(迟到)  11:05
+Watermark：                  t=11:00
+                             │
+                             └── 触发 10:00–11:00 窗口
+```
+
+Watermark 的生成通常基于“最大事件时间减去允许乱序时长”：
+
+```java
+WatermarkStrategy
+    .<Event>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+    .withTimestampAssigner((event, ts) -> event.getEventTime());
+```
+
+这表示允许 5 秒乱序。乱序超过 5 秒的数据仍可能到达，但会被当作迟到数据。
+
+### 并行流里的 Watermark
+
+当一个算子有多个输入时，它取所有输入 Watermark 的**最小值**。因为只要有一个输入还没到 `t`，就不能保证 `t` 之前的数据到齐。
+
+这带来一个常见问题：某个分区长时间没有数据，它的 Watermark 不推进，整个窗口都不触发。解决方式是设置空闲检测：
+
+```java
+WatermarkStrategy
+    .<Event>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+    .withIdleness(Duration.ofMinutes(1));
+```
+
+空闲超过阈值的分区会被标记为 idle，不再拖住全局 Watermark。
+
+## 窗口、迟到数据与 Side Output
+
+Flink 常见窗口：
+
+- **Tumbling Window**：固定长度、不重叠，例如每分钟；
+- **Sliding Window**：固定长度、可重叠，例如每 5 分钟统计过去 10 分钟；
+- **Session Window**：按活动间隔切分，适合用户会话。
+
+窗口触发后，迟到数据默认被丢弃。可以设置允许迟到时间：
+
+```java
+.window(TumblingEventTimeWindows.of(Time.minutes(1)))
+.allowedLateness(Time.seconds(30))
+.sideOutputLateData(lateTag);
+```
+
+允许迟到会让窗口状态多保留一段时间，增加状态大小。更好的做法通常是：关键指标允许少量迟到，超过阈值的数据进入 Side Output，离线补偿或人工排查。
+
+## 状态：流任务的“记忆”
+
+无状态算子（map、filter）不需要记忆；有状态算子需要记住历史，例如：
+
+- 去重：记住已经见过的 key；
+- 聚合：记住每个 key 的累计值；
+- Join：缓存一侧数据等待另一侧；
+- 窗口：缓存窗口内的记录。
+
+Flink 的状态分两类：
+
+- **Keyed State**：按 key 分区，只能在 `keyBy` 之后使用，例如 `ValueState`、`ListState`、`MapState`；
+- **Operator State**：与算子实例绑定，例如 Kafka source 的分区 offset。
+
+Keyed State 按 **key group** 管理，key group 是状态恢复和扩缩容的最小单位。并行度变化时，Flink 按 key group 重新分配状态，而不是逐条迁移。
+
+状态后端决定状态存哪里：
+
+| 后端                        | 特点                           | 适用                    |
+| --------------------------- | ------------------------------ | ----------------------- |
+| HashMapStateBackend         | 状态在 JVM 堆内，快            | 小状态、低延迟          |
+| EmbeddedRocksDBStateBackend | 状态在本地 RocksDB，支持大状态 | 大状态、增量 Checkpoint |
+
+大状态任务要关注：
+
+- 状态是否无限增长（TTL、窗口清理）；
+- RocksDB 的写放大和 compaction；
+- Checkpoint 大小和上传时间；
+- 本地磁盘容量。
+
+## Checkpoint：一致性的快照
+
+Checkpoint 是 Flink 容错的核心。它定期把“所有算子的状态 + source 的读取位置”做成一份一致性快照，写到可靠存储（HDFS、S3、OSS）。
+
+流程简化如下：
+
+1. JobManager 触发 Checkpoint，向 source 注入 barrier；
+2. barrier 随数据流向下游传播；
+3. 算子收到所有输入的 barrier 后，对本地状态做快照；
+4. 快照写到状态后端/远程存储；
+5. 所有算子确认后，Checkpoint 完成；
+6. 故障恢复时，从最近的完整 Checkpoint 恢复状态，source 从对应 offset 重放。
+
+Checkpoint 默认是关闭的，需要显式开启。一个常见配置：
+
+```yaml
+execution.checkpointing.interval: 60s
+execution.checkpointing.timeout: 10min
+execution.checkpointing.min-pause: 30s
+execution.checkpointing.max-concurrent-checkpoints: 1
+state.backend: hashmap
+state.checkpoints.dir: s3://flink/checkpoints
+```
+
+参数之间的权衡：
+
+- **间隔小**：恢复时重放的数据少，但快照频繁，吞吐受影响；
+- **间隔大**：开销小，但故障后要重放更多数据，恢复更慢；
+- **超时太长**：失败 Checkpoint 迟迟不结束，占资源；
+- **并发 Checkpoint 太多**：多个快照同时写，放大 IO。
+
+没有一组“通用最优值”。通常从 1 分钟开始，根据状态大小、SLA 和恢复时间调整。
+
+### 对齐与 Unaligned Checkpoint
+
+默认的 Checkpoint 是**对齐**的：算子要等所有输入都收到 barrier，才能开始快照。反压严重时，barrier 排在数据后面，Checkpoint 可能超时。
+
+Unaligned Checkpoint 允许 barrier 越过在途数据，先把在途数据也纳入快照，从而减少等待。代价是快照更大、恢复更复杂。它适合“反压严重但状态不算太大”的场景，不是所有作业都该开。
+
+### Savepoint
+
+Savepoint 是手动触发的、带元数据的 Checkpoint，常用于：
+
+- 升级作业逻辑前保存状态；
+- 扩缩容；
+- 迁移集群；
+- 回滚到某个版本。
+
+Savepoint 与 Checkpoint 的区别：Checkpoint 由系统定期管理、可自动清理；Savepoint 由用户触发、需要显式保留。
+
+## 端到端 Exactly-Once 需要三方配合
+
+Flink 的 Checkpoint 保证的是**引擎内部**的一致性。要做到端到端 Exactly-Once，需要：
+
+1. **Source 可回放**：Kafka、文件等能按 offset/位置重读；
+2. **状态被 Checkpoint**：算子状态与 offset 一起快照；
+3. **Sink 支持事务或幂等**：
+   - Kafka sink 使用两阶段提交；
+   - 数据库使用幂等 upsert + 唯一键；
+   - 文件/对象存储使用临时文件 + 原子提交，或 Iceberg/Hudi 的原子提交。
+
+如果 Sink 是普通 JDBC 写入，即使 Flink 内部 Exactly-Once，故障重放仍可能重复写。这时要么让写入幂等，要么接受至少一次并做去重。
+
+## 一个 Flink SQL 窗口聚合
+
+```sql
+CREATE TABLE orders (
+  order_id STRING,
+  user_id STRING,
+  amount DECIMAL(10, 2),
+  ts TIMESTAMP(3),
+  WATERMARK FOR ts AS ts - INTERVAL '5' SECOND
+) WITH (
+  'connector' = 'kafka',
+  'topic' = 'orders',
+  'properties.bootstrap.servers' = 'localhost:9092',
+  'format' = 'json'
+);
+
+SELECT
+  window_start,
+  window_end,
+  SUM(amount) AS gmv
+FROM TABLE(
+  TUMBLE(TABLE orders, DESCRIPTOR(ts), INTERVAL '1' MINUTE)
+)
+GROUP BY window_start, window_end;
+```
+
+这段 SQL 的关键是 `WATERMARK FOR ts AS ts - INTERVAL '5' SECOND`：允许 5 秒乱序，窗口在 Watermark 越过窗口结束时触发。
+
+## 反压、Checkpoint 失败与排查
+
+常见现象与原因：
+
+| 现象                | 可能原因                          | 排查                                       |
+| ------------------- | --------------------------------- | ------------------------------------------ |
+| Checkpoint 超时     | 反压、状态太大、对象存储慢        | 看 checkpoint duration、反压指标、状态大小 |
+| Checkpoint 持续失败 | barrier 被堵、TM 磁盘满、网络问题 | 看 JobManager/TaskManager 日志、磁盘       |
+| 恢复很慢            | 状态大、并行度高、下载慢          | 看 state size、本地恢复、增量 Checkpoint   |
+| 窗口不触发          | Watermark 不推进、空闲分区        | 看 watermark、`withIdleness`               |
+| 结果重复            | Sink 非幂等、恢复后重放           | 检查 sink 语义与去重                       |
+
+反压是流任务的常态。关键是区分“短时反压”和“持续反压”：短时反压可能只是流量峰值；持续反压通常意味着算子处理能力不足、数据倾斜或外部系统变慢。
+
+## 调优检查清单
+
+- [ ] 是否使用 Event Time，Watermark 的乱序容忍是否合理？
+- [ ] 是否有空闲分区拖住 Watermark？
+- [ ] 窗口是否设置了合理的 allowed lateness 和迟到数据处理？
+- [ ] 状态是否有 TTL 或清理策略？
+- [ ] 是否使用 RocksDB 承载大状态，是否开启增量 Checkpoint？
+- [ ] Checkpoint 间隔、超时、并发数是否与 SLA 匹配？
+- [ ] Source 是否可回放，Sink 是否幂等/事务？
+- [ ] 是否监控反压、Checkpoint 时长、状态大小和重启次数？
+
+## 参考资料
+
+- [Flink Timely Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/)
+- [Flink Stateful Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/)
+- [Flink Checkpointing](https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream/fault-tolerance/checkpointing/)
+- [Flink Savepoints](https://nightlies.apache.org/flink/flink-docs-stable/docs/ops/state/savepoints/)

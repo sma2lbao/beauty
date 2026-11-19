@@ -32,8 +32,8 @@ describe('getAllPosts', () => {
 
     const published = getAllPosts({ contentDir });
     expect(posts).toHaveLength(published.length + 1);
-    expect(posts[0]?.slug).toBe('draft-agent-memory');
-    expect(posts[0]?.frontmatter.draft).toBe(true);
+    const drafts = posts.filter((post) => post.frontmatter.draft);
+    expect(drafts.map((post) => post.slug)).toEqual(['draft-agent-memory']);
   });
 
   it('缺少内容目录时返回空数组', () => {
@@ -137,8 +137,13 @@ describe('聚合', () => {
         '浏览器机制',
         'Web 安全',
         'SQL 基础',
+        '大数据开发',
       ]),
     );
+    const bigdataSeries = series.find((item) => item.name === '大数据开发');
+    expect(
+      bigdataSeries?.posts.map((post) => post.frontmatter.seriesOrder),
+    ).toEqual([1, 2, 3, 4, 5, 6, 7]);
     const httpSeries = series.find((item) => item.name === 'HTTP 基础');
     expect(httpSeries?.posts.map((post) => post.slug)).toEqual([
       'http-caching',

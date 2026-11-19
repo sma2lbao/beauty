@@ -1,0 +1,222 @@
+---
+title: '湖仓一体与 Iceberg 表格式'
+description: '从数据湖的痛点讲到 Iceberg 的 metadata、manifest、snapshot 三层结构，解释 ACID、隐藏分区、时间旅行与维护成本。'
+date: '2026-11-19'
+tags: ['大数据', '湖仓', 'Iceberg']
+series: '大数据开发'
+seriesOrder: 6
+---
+
+> 本文参考 Apache Iceberg 官方 [文档](https://iceberg.apache.org/docs/latest/) 与 [表规范](https://iceberg.apache.org/spec/) 整理，示例以 Spark 引擎为主。
+
+## 数据湖为什么需要“表格式”
+
+早期数据湖的典型用法是：把 Parquet/ORC 文件按日期目录写到对象存储，然后用 Hive、Spark、Presto 去读。
+
+```text
+s3://lake/orders/dt=2026-11-19/part-00000.parquet
+s3://lake/orders/dt=2026-11-19/part-00001.parquet
+```
+
+这套方式简单、便宜，但有几个硬伤：
+
+- **没有事务**：写入一半失败，会留下半成品文件；
+- **并发写冲突**：两个任务同时覆盖同一分区，结果不可预期；
+- **Schema 演进困难**：加列、改类型、重命名容易踩坑；
+- **分区依赖目录**：分区变更要重写历史数据，用户必须知道分区列；
+- **无法时间旅行**：只能看到“当前文件列表”，看不到某个时刻的一致快照；
+- **小文件治理靠人**：文件只会越写越多。
+
+Iceberg 的思路是：在数据文件之上加一层**表元数据**，把“文件集合”变成“有版本的表的快照”。
+
+## 湖仓一体的基本盘
+
+湖仓一体不是把数据仓库搬到对象存储，而是让对象存储上的数据具备仓库级能力：
+
+| 能力            | 传统数仓 | 数据湖      | 湖仓                |
+| --------------- | -------- | ----------- | ------------------- |
+| 存储成本        | 高       | 低          | 低                  |
+| Schema/分区演进 | 依赖系统 | 手工        | 表格式管理          |
+| 事务/并发写     | 强       | 弱          | 快照隔离 + 原子提交 |
+| 开放格式        | 私有     | Parquet/ORC | 开放表格式          |
+| 多引擎          | 有限     | 可以        | 同一张表多引擎读写  |
+| 时间旅行        | 部分支持 | 不支持      | 快照/标签           |
+
+湖仓的核心价值是“一份数据，多种引擎，事务可见”。计算引擎可以换，存储格式保持开放。
+
+## Iceberg 的三层元数据
+
+Iceberg 的表由以下结构组成：
+
+```text
+metadata.json（表元数据：schema、分区、当前快照）
+  └── snapshot（某个时刻的表状态）
+        └── manifest list（该快照包含哪些 manifest）
+              └── manifest file（数据文件 + 分区/统计信息）
+                    └── data files（Parquet/ORC/Avro）
+```
+
+- **metadata.json**：记录表结构、分区规范、属性、快照列表和当前快照；
+- **snapshot**：一次提交产生的表版本，指向一个 manifest list；
+- **manifest list**：列出该快照用到的 manifest 文件；
+- **manifest**：记录数据文件的路径、格式、分区值、列级统计（min/max、null 数等）；
+- **data file**：真正存数据的 Parquet/ORC/Avro 文件，写入后不可变。
+
+查询时，引擎先读 metadata，找到当前 snapshot，再读 manifest list 和 manifest，最后根据分区和统计信息裁剪数据文件。manifest 里的统计信息让引擎可以跳过不满足谓词的文件，而不必打开每个 Parquet。
+
+## 一次写入发生了什么
+
+以 `INSERT` 为例：
+
+1. 写入器把新数据写成新的 data file；
+2. 为这些文件生成新的 manifest；
+3. 生成新的 manifest list；
+4. 生成新的 metadata.json，指向新快照；
+5. 通过 catalog 原子地切换“当前 metadata”指针。
+
+第 5 步是关键。对象存储本身不提供跨文件原子事务，Iceberg 依赖 catalog 的原子操作（例如 Hive Metastore、REST Catalog、JDBC、Nessie）来完成提交。提交失败时，新文件成为孤儿文件，不会被任何快照引用；后台可以清理。
+
+并发写时，两个写入器可能同时基于旧快照提交。Iceberg 使用乐观并发：先提交的成功，后提交的检测到冲突后重试或失败。不同实现支持不同隔离级别，需要按引擎文档确认。
+
+## 隐藏分区与分区演进
+
+传统 Hive 分区是“目录 + 用户显式列”：
+
+```sql
+PARTITIONED BY (dt STRING)
+```
+
+Iceberg 的分区是**表规范的一部分**，对用户隐藏：
+
+```sql
+CREATE TABLE lake.orders (
+  order_id BIGINT,
+  user_id BIGINT,
+  amount DECIMAL(10, 2),
+  order_ts TIMESTAMP
+)
+USING iceberg
+PARTITIONED BY (days(order_ts), bucket(16, user_id));
+```
+
+这里没有新增 `dt` 列，但数据会按“天 + 16 个桶”组织。查询时直接写 `WHERE order_ts >= ...`，引擎会自动做分区裁剪。
+
+常用分区变换：
+
+| 变换                      | 作用            | 示例                  |
+| ------------------------- | --------------- | --------------------- |
+| `identity`                | 按列原值分区    | `region`              |
+| `bucket(N, col)`          | 哈希分桶        | `bucket(16, user_id)` |
+| `truncate(L, col)`        | 截断字符串/整数 | `truncate(4, code)`   |
+| `years/months/days/hours` | 时间粒度        | `days(order_ts)`      |
+
+分区演进时，Iceberg 允许新数据使用新分区规范，旧数据保留旧规范，查询仍然正确。这比“改分区就要重写全表”温和得多。
+
+## Schema 演进
+
+Iceberg 支持常见的 Schema 变更：
+
+- 加列；
+- 删除列；
+- 重命名列；
+- 调整列顺序；
+- 放宽类型（例如 `int` 到 `long`）。
+
+变更通过新的 metadata 生效，不重写历史数据文件。读取旧文件时，引擎按文件自己的 schema 解释，再映射到当前 schema。这要求写入端和查询端都遵守 Iceberg 的类型规则，不能随意做不兼容的窄化。
+
+## 时间旅行与快照
+
+每次提交都会产生一个 snapshot。可以按 snapshot id 或时间戳查询历史版本：
+
+```sql
+-- 按 snapshot id
+SELECT *
+FROM lake.orders VERSION AS OF 1234567890;
+
+-- 按时间戳
+SELECT *
+FROM lake.orders TIMESTAMP AS OF '2026-11-19 00:00:00';
+```
+
+时间旅行的用途：
+
+- 复现某次报表结果；
+- 对比两次写入的差异；
+- 回滚错误写入；
+- 审计数据变化。
+
+注意快照不是永久保留的。`expire_snapshots` 会清理旧快照和不再被引用的文件；如果业务需要长期回溯，应该用标签（tag/branch）或单独归档，而不是假设所有历史都在。
+
+## 删除与更新：Copy-on-Write 与 Merge-on-Read
+
+Iceberg 支持行级删除，但实现方式不同：
+
+- **Copy-on-Write（COW）**：重写受影响的 data file，生成新文件；读路径简单，写放大明显；
+- **Merge-on-Read（MOR）**：写入 delete file（位置删除或等值删除），读取时合并；写快，读需要处理 delete file。
+
+频繁小批量更新会产生大量 delete file 和小文件，查询越来越慢。这是湖仓表常见的“写优化换读优化”的代价，需要定期 compaction。
+
+## 维护：compaction、manifest 重写与快照清理
+
+Iceberg 表不是“写完就不用管”。典型维护动作：
+
+```sql
+-- 合并小文件（Spark 过程，catalog 名按实际替换）
+CALL lake.system.rewrite_data_files(table => 'orders');
+
+-- 重写 manifest，减少 manifest 数量
+CALL lake.system.rewrite_manifests(table => 'orders');
+
+-- 清理过期快照和孤儿文件
+CALL lake.system.expire_snapshots(
+  table => 'orders',
+  older_than => TIMESTAMP '2026-11-01 00:00:00'
+);
+```
+
+维护策略：
+
+- 小文件多：按目标文件大小 compaction；
+- delete file 多：重写受影响分区；
+- manifest 多：重写 manifest；
+- 快照多：按保留策略过期；
+- 孤儿文件：定期清理，避免存储泄漏。
+
+不要频繁全表 compaction，成本很高。按分区、按写入模式选择范围，并监控文件数量、平均文件大小和 manifest 数量。
+
+## Iceberg、Delta Lake、Hudi 怎么选
+
+| 维度     | Iceberg          | Delta Lake             | Hudi             |
+| -------- | ---------------- | ---------------------- | ---------------- |
+| 核心     | 快照 + manifest  | 事务日志 `_delta_log`  | 文件组 + 增量    |
+| 多引擎   | 广               | Spark 生态强           | Spark/Flink 生态 |
+| 更新     | COW/MOR          | COW + deletion vectors | COW/MOR          |
+| 流式写入 | 支持             | 支持                   | 强               |
+| 典型场景 | 开放湖仓、多引擎 | Databricks/Spark 为主  | 增量入湖、CDC    |
+
+选型不要只看功能表。要看团队引擎栈、catalog 能力、运维成本、社区生态和锁定风险。
+
+## 常见坑
+
+- **把 Iceberg 当数据库**：它没有二级索引、没有跨表事务、点查能力有限；
+- **catalog 不稳定**：catalog 是提交的单点，必须高可用；
+- **小文件不治理**：写入越频繁，文件越多，查询越慢；
+- **快照不清理**：存储成本持续上涨；
+- **并发写冲突**：高频覆盖同一分区会频繁冲突，需要设计写入分区；
+- **误以为时间旅行永久保留**：过期快照会被清理；
+- **忽略 delete file**：MOR 表读放大，必须监控和 compaction。
+
+## 练习
+
+1. 用 Spark + Iceberg 建一张按天分区的表，写入两批数据；
+2. 用 `VERSION AS OF` 对比两次快照；
+3. 执行一次 `rewrite_data_files`，观察文件数量变化；
+4. 模拟两个并发写入，观察冲突与重试；
+5. 查看 metadata.json，画出 snapshot → manifest list → manifest → data file 的关系。
+
+## 参考资料
+
+- [Iceberg Documentation](https://iceberg.apache.org/docs/latest/)
+- [Iceberg Table Spec](https://iceberg.apache.org/spec/)
+- [Iceberg Spark Getting Started](https://iceberg.apache.org/docs/latest/spark-getting-started/)
+- [Iceberg Maintenance](https://iceberg.apache.org/docs/latest/spark-procedures/)

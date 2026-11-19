@@ -1,0 +1,237 @@
+---
+title: 'Spark 执行模型：Job、Stage、Shuffle 与 AQE'
+description: '从 Driver/Executor 分工讲到 DAG 切分、Shuffle 读写、Join 策略和 AQE，建立 Spark 任务调优的执行层视角。'
+date: '2026-11-19'
+tags: ['大数据', 'Spark', '计算引擎']
+series: '大数据开发'
+seriesOrder: 3
+---
+
+> 本文参考 Apache Spark 的 [RDD Programming Guide](https://spark.apache.org/docs/latest/rdd-programming-guide.html)、[Tuning Guide](https://spark.apache.org/docs/latest/tuning.html) 与 [Performance Tuning](https://spark.apache.org/docs/latest/sql-performance-tuning.html) 整理。
+
+## 先建立执行层的坐标系
+
+很多人调 Spark 的方式是“加内存、加并行度、改 shuffle 分区数”，但不知道这些参数作用在哪一层。先把执行链路拆开：
+
+```text
+Application
+  └── Job（由 action 触发，如 count、collect、write）
+        └── Stage（按宽依赖切分）
+              └── Task（每个 partition 一个任务）
+                    └── Executor 上的线程执行
+```
+
+- **Driver**：解析程序、构建 DAG、划分 Stage、调度 Task、收集结果；
+- **Executor**：运行 Task，缓存数据，向 Driver 汇报状态；
+- **Cluster Manager**：分配资源（YARN、Kubernetes、Standalone）。
+
+Driver 不是“更快的 Executor”。它负责控制面，真正的数据计算在 Executor 上。把大量数据 `collect()` 到 Driver，或者让 Driver 做重计算，都是反模式。
+
+## Job、Stage、Task 是怎么来的
+
+Spark 是惰性求值：`map`、`filter`、`join` 这类 transformation 不会立刻执行，只有遇到 action 才提交 Job。
+
+一个 Job 内部，DAG Scheduler 会按依赖关系切 Stage：
+
+- **窄依赖**：父分区只对应一个子分区，例如 `map`、`filter`、`union`，不需要跨节点搬数据；
+- **宽依赖**：子分区依赖多个父分区，例如 `groupByKey`、`reduceByKey`、`join`，需要 Shuffle。
+
+Stage 的边界就是宽依赖。一个 Stage 内的 Task 数量通常等于该 Stage 输入的分区数；Task 是 Spark 调度的最小单位。
+
+```scala
+val events = spark.read.parquet("s3://warehouse/events")
+
+val gmv = events
+  .filter($"dt" === "2026-11-19")
+  .groupBy($"hour")
+  .agg(sum($"amount").as("gmv"))
+
+gmv.write.mode("overwrite").parquet("s3://warehouse/ads/gmv_hourly")
+```
+
+这段代码至少有两个 Stage：读取 + filter 是窄依赖；`groupBy` 触发 Shuffle，形成新的 Stage；最后的 `write` 是 action。
+
+## Shuffle 到底做了什么
+
+Shuffle 是 Spark 最贵的操作，因为它同时消耗磁盘、网络和序列化 CPU。
+
+以 `groupBy(hour)` 为例：
+
+1. **Map 端**：每个 Task 按 key 的哈希分区，把数据写到本地 shuffle 文件，同时写一个索引文件；
+2. **Reduce 端**：每个 Reduce Task 根据索引，从各个 Map 端拉取属于自己的分区；
+3. **聚合**：Reduce 端对拉取到的记录做排序/聚合。
+
+Shuffle 的问题不只是“数据量大”，还包括：
+
+- 分区数不合理：200 个分区处理 10 GB 数据，每个分区 50 MB，可能还好；处理 10 TB 就变成每个分区 50 GB；
+- 数据倾斜：某个 key 占了 80% 的数据，其他 Reduce 早早结束，只剩一个任务拖尾；
+- 小文件：每个 Reduce 输出一个文件，分区太多会产生大量小文件；
+- 序列化：Java 序列化比 Kryo 慢，字符串和嵌套对象尤其明显。
+
+## Join 策略：先看数据量，再看倾斜
+
+Spark SQL 常见的 Join 实现：
+
+| 策略                       | 适用场景                   | 代价                                  |
+| -------------------------- | -------------------------- | ------------------------------------- |
+| Broadcast Hash Join        | 一侧很小（默认阈值 10 MB） | 小表广播到每个 Executor，避免 Shuffle |
+| Sort Merge Join            | 两侧都大，等值 Join        | 两侧 Shuffle + 排序，稳定但贵         |
+| Shuffled Hash Join         | 一侧较小且分区后能放进内存 | 构建哈希表，内存压力大                |
+| Broadcast Nested Loop Join | 非等值 Join，一侧很小      | 笛卡尔式比较，容易爆炸                |
+
+Broadcast Join 的关键是“小表真的小”。如果统计信息缺失，优化器可能误判；AQE 可以在运行时把 Sort Merge Join 转成 Broadcast Join，但前提是运行时统计显示一侧确实小。
+
+强制广播可以用 hint：
+
+```sql
+SELECT /*+ BROADCAST(dim) */ *
+FROM fact f
+JOIN dim ON f.dim_id = dim.id;
+```
+
+但不要用 hint 掩盖统计信息问题。先 `ANALYZE TABLE`，再看 `EXPLAIN`。
+
+## AQE：让优化器在运行时再决策
+
+Adaptive Query Execution（AQE）从 Spark 3.2.0 起默认开启（`spark.sql.adaptive.enabled=true`）。它在 Shuffle 之后拿到真实的分区统计，再调整执行计划。
+
+主要能力：
+
+1. **合并小分区**：按目标大小合并相邻分区，避免大量小任务；
+2. **拆分倾斜分区**：把超大分区拆成多个任务；
+3. **Sort Merge Join 转 Broadcast Join**：运行时发现一侧很小，直接广播；
+4. **Sort Merge Join 转 Shuffled Hash Join**：分区能放进内存时减少排序；
+5. **本地 Shuffle Reader**：不需要跨节点拉取时直接读本地文件。
+
+关键参数（Spark 4.3 文档）：
+
+```properties
+spark.sql.adaptive.enabled=true
+spark.sql.adaptive.coalescePartitions.enabled=true
+spark.sql.adaptive.advisoryPartitionSizeInBytes=64MB
+spark.sql.adaptive.coalescePartitions.minPartitionSize=1MB
+spark.sql.adaptive.skewJoin.enabled=true
+spark.sql.adaptive.skewJoin.skewedPartitionFactor=5
+spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes=256MB
+spark.sql.autoBroadcastJoinThreshold=10MB
+spark.sql.shuffle.partitions=200
+```
+
+几个容易误解的点：
+
+- `spark.sql.shuffle.partitions` 仍是初始分区数；AQE 可以在运行时合并，但初始值太小会限制并行度；
+- `advisoryPartitionSizeInBytes=64MB` 是建议值，默认 `parallelismFirst=true` 时 Spark 会优先保证并行度，不一定严格按 64 MB 合并；
+- `skewedPartitionFactor=5` 且超过 256 MB 才算倾斜分区，两个条件同时满足；
+- AQE 不能修复所有倾斜，特别是 Join 之外的长尾、数据源读取倾斜。
+
+## 数据倾斜的几种处理方式
+
+### 1. 过滤异常 key
+
+如果倾斜来自少数脏数据（例如 `user_id = null` 或测试账号），先过滤或单独处理。这通常是最便宜的办法。
+
+### 2. 加盐打散
+
+给热点 key 加随机前缀，把一个大分区拆成多个小分区，聚合后再合并：
+
+```sql
+-- 第一层：加盐局部聚合
+SELECT
+  concat(user_id, '_', cast(floor(rand() * 16) AS int)) AS salted_key,
+  sum(amount) AS partial_amount
+FROM orders
+GROUP BY concat(user_id, '_', cast(floor(rand() * 16) AS int));
+
+-- 第二层：去掉盐，做全局聚合
+SELECT
+  split(salted_key, '_')[0] AS user_id,
+  sum(partial_amount) AS total_amount
+FROM partial
+GROUP BY split(salted_key, '_')[0];
+```
+
+加盐会增加一轮 Shuffle，适合“少数 key 特别大”的场景；如果所有 key 都均匀，加盐只会增加开销。
+
+### 3. 广播小表
+
+如果倾斜发生在 Join，且另一侧可以广播，Broadcast Join 直接从根上避免 Shuffle。
+
+### 4. 拆分热点数据
+
+把热点 key 单独抽出来处理，其余数据走正常 Join，最后 `union`。这比盲目加盐更可控，但代码复杂度更高。
+
+## 缓存与 Checkpoint
+
+`cache()` / `persist()` 把中间结果放到内存或磁盘，适合被多个 action 复用的 DataFrame。注意：
+
+- 缓存是 lazy 的，第一次 action 才真正物化；
+- 缓存会占 Executor 内存，可能引发 GC 或 spill；
+- 用完要 `unpersist()`，否则会一直占着。
+
+`checkpoint()` 会把 RDD/DataFrame 写到可靠存储，并截断 lineage。它适合迭代计算或 lineage 很长的场景，但会额外产生一次写盘。
+
+不要把 `cache` 当万能药。一个只被用一次的大表，缓存只会增加内存压力。
+
+## 资源配置的基本顺序
+
+调优不是先改参数，而是先定位瓶颈：
+
+1. **看 Stage 和 Task 分布**：是某个 Stage 慢，还是某个 Task 慢？
+2. **看 Shuffle**：读写量、分区数、spill 情况；
+3. **看 GC 和内存**：是否频繁 Full GC、是否大量 spill；
+4. **看数据倾斜**：Task 输入大小是否严重不均；
+5. **再看参数**：并行度、广播阈值、分区大小、Executor 核数/内存。
+
+一个常见的起点：
+
+```properties
+spark.executor.cores=4
+spark.executor.memory=16g
+spark.executor.memoryOverhead=2g
+spark.sql.shuffle.partitions=400
+spark.sql.adaptive.enabled=true
+spark.serializer=org.apache.spark.serializer.KryoSerializer
+```
+
+这些不是“最佳实践”，只是起点。Executor 核数太多会降低单 Task 内存、增加 GC；分区太少会浪费并行度；`memoryOverhead` 太小会导致容器被 YARN/K8s 杀掉。
+
+## 用 EXPLAIN 建立直觉
+
+```scala
+val df = spark.sql("""
+  SELECT f.user_id, sum(f.amount) AS gmv
+  FROM fact_order f
+  JOIN dim_user u ON f.user_id = u.user_id
+  WHERE f.dt = '2026-11-19'
+  GROUP BY f.user_id
+""")
+
+df.explain("formatted")
+```
+
+重点看：
+
+- `Exchange`：发生了几次 Shuffle；
+- `BroadcastHashJoin` / `SortMergeJoin`：Join 策略是否符合预期；
+- `AdaptiveSparkPlan`：AQE 是否生效；
+- `PartitionFilters`：分区裁剪是否命中；
+- `Statistics`：行数估算是否离谱。
+
+如果 `EXPLAIN` 里的估算行数与真实行数差一个数量级，先补统计信息，而不是加内存。
+
+## 排查清单
+
+- [ ] 是否收集了不必要的数据到 Driver？
+- [ ] 是否有 `collect()`、`toPandas()` 处理大结果？
+- [ ] 是否对同一 DataFrame 重复计算却没有缓存？
+- [ ] Shuffle 分区数是否与数据量匹配？
+- [ ] Join 是否命中 Broadcast，还是发生了大表 Shuffle？
+- [ ] 是否存在热点 key 或 null key？
+- [ ] 是否产生大量小文件？
+- [ ] 是否因为 UDF 导致无法向量化/下推？
+
+## 参考资料
+
+- [Spark RDD Programming Guide](https://spark.apache.org/docs/latest/rdd-programming-guide.html)
+- [Spark Tuning Guide](https://spark.apache.org/docs/latest/tuning.html)
+- [Spark SQL Performance Tuning](https://spark.apache.org/docs/latest/sql-performance-tuning.html)

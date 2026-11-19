@@ -1,0 +1,136 @@
+---
+title: '大数据开发全景：从批处理到湖仓'
+description: '从数据链路、批流计算、存储与表格式到数仓分层，梳理大数据开发的知识地图与学习顺序，并给出可落地的练习路线。'
+date: '2026-11-19'
+tags: ['大数据', '学习路线', '架构']
+series: '大数据开发'
+seriesOrder: 1
+---
+
+> 本文参考 Apache Hadoop、Apache Spark、Apache Flink、Apache Kafka、Apache Iceberg 官方文档与阿里云 DataWorks 分层实践整理，并结合个人理解重新组织。
+
+## 先看一条完整的数据链路
+
+大数据开发不是“会写一个 Spark 任务”这么简单。真实系统通常是一条从产生到消费的链路：
+
+```text
+业务库 / 日志 / 埋点 / IoT
+        │
+        ▼
+   采集与接入（CDC、日志采集、消息队列）
+        │
+        ▼
+   存储（对象存储 / HDFS / 湖仓表格式）
+        │
+        ▼
+   计算（批处理、流处理、SQL 引擎）
+        │
+        ▼
+   数仓分层（ODS → DWD → DWS → ADS）
+        │
+        ▼
+   服务（报表、指标平台、特征、数据 API）
+```
+
+链路上的每一段都有自己的失效模式：采集中断会造成数据缺口，存储小文件会拖垮元数据服务，计算倾斜会让一个任务跑十小时，消息队列的 `acks` 配错会在机器宕机时丢数据，数仓口径不统一会让两个报表对不上。
+
+所以学习大数据开发，建议按“链路”而不是按“组件”来组织知识。
+
+## 批处理与流处理
+
+批处理和流处理解决的是同一类问题的两种时间模型。
+
+| 维度     | 批处理                 | 流处理                     |
+| -------- | ---------------------- | -------------------------- |
+| 输入     | 有界数据集             | 无界事件流                 |
+| 延迟     | 分钟到小时             | 毫秒到秒                   |
+| 典型引擎 | Spark、Hive、MapReduce | Flink、Kafka Streams       |
+| 容错方式 | 重算失败分区           | Checkpoint + 可回放 source |
+| 结果语义 | 通常幂等覆盖写         | 至少一次 / 精确一次        |
+
+批处理适合全量重算、历史回溯、复杂 Join 和模型训练；流处理适合实时监控、风控、实时推荐和 CDC 同步。很多团队最终会走向“批流一体”：用同一套存储和表格式承载批与流，用不同的计算引擎读写。
+
+需要警惕的是“为了流而流”。如果业务能接受小时级延迟，批处理往往更便宜、更好维护。流处理的价值在于时效性带来的业务收益，而不是技术本身。
+
+## 存储与计算分离
+
+传统 Hadoop 集群把存储和计算放在同一批机器上，扩容时一起扩，容易出现资源浪费。云上更常见的架构是：
+
+- 存储层：对象存储（S3、OSS、COS）或 HDFS；
+- 计算层：Kubernetes 上的 Spark、Flink、Trino 等弹性集群；
+- 元数据层：Hive Metastore、REST Catalog、Unity Catalog 等。
+
+分离之后，计算可以按需弹性伸缩，存储可以独立扩容，不同引擎也能共享同一份数据。代价是网络带宽、元数据服务和权限体系变得更关键。
+
+## 表格式与湖仓
+
+“数据湖”擅长存原始文件，但缺少事务、Schema 演进和高效更新；“数据仓库”擅长 SQL 和管理，但扩展成本高。湖仓一体试图在对象存储上补齐仓库能力，核心是**表格式**：
+
+- Apache Iceberg：快照、manifest、隐藏分区、时间旅行；
+- Delta Lake：事务日志 `_delta_log`、ACID、Schema 演进；
+- Apache Hudi：支持 upsert、增量拉取和 MOR/COW 两种表。
+
+表格式把“一堆 Parquet 文件”变成“有事务语义的表”。它解决的不只是读写，还包括并发写、分区演进、历史版本和小文件治理。
+
+## 大数据开发的角色分工
+
+| 角色           | 主要职责                       | 核心能力                       |
+| -------------- | ------------------------------ | ------------------------------ |
+| 数据平台工程师 | 集群、存储、调度、权限、稳定性 | Linux、分布式系统、Kubernetes  |
+| 数据开发工程师 | 数仓建模、ETL、指标开发        | SQL、Spark、数仓分层、数据质量 |
+| 实时开发工程师 | 实时链路、流任务、状态与容错   | Flink、Kafka、Checkpoint 调优  |
+| 数据治理工程师 | 元数据、血缘、标准、成本       | 数据建模、治理流程、审计       |
+
+小团队里这些角色经常由同一个人承担，但能力栈的重心不同。初学者不必一开始就全覆盖，先打通“采集 → 存储 → 计算 → 指标”一条最小链路，再逐步补稳定性与治理。
+
+## 一条可执行的学习路线
+
+| 阶段              | 目标                           | 建议练习                                 |
+| ----------------- | ------------------------------ | ---------------------------------------- |
+| 1. SQL 与数据建模 | 能写窗口函数、能做分层建模     | 用公开数据集做 ODS/DWD/DWS/ADS 四层      |
+| 2. 分布式存储     | 理解块、副本、元数据           | 搭单机 HDFS，读写文件并观察副本          |
+| 3. 批计算         | 理解 Job/Stage/Task 与 Shuffle | 用 Spark 做一次 Join 与聚合，读执行计划  |
+| 4. 消息队列       | 理解分区、副本、消费位点       | 用 Kafka 做生产者/消费者，模拟消费者宕机 |
+| 5. 流计算         | 理解事件时间、Watermark、状态  | 用 Flink 做分钟级窗口聚合                |
+| 6. 湖仓表格式     | 理解快照、Manifest、时间旅行   | 用 Iceberg 建分区表，做一次快照回溯      |
+| 7. 治理与稳定性   | 理解质量、血缘、成本           | 给一条链路补数据校验、告警和回滚方案     |
+
+不要按“把文档读完”来安排学习。每学一个组件，都问三个问题：
+
+1. 它解决链路中的哪一段问题？
+2. 它的水平扩展靠什么？瓶颈在哪里？
+3. 机器故障、数据重复、数据延迟时，它会表现成什么样？
+
+## 常见误区
+
+- **只会写 SQL，不理解执行**：同样的 SQL 在不同分区、不同 Join 策略下可能差几十倍。
+- **把消息队列当数据库**：Kafka 擅长高吞吐顺序读写，不擅长按主键随机查询。
+- **流任务不设计状态**：状态无限增长，最后不是 OOM 就是 Checkpoint 超时。
+- **数仓没有明细层**：直接从 ODS 拼 ADS，指标口径无法复用，出了问题也无法追溯。
+- **忽略小文件**：对象存储上大量小文件会拖慢列举、增加元数据压力，并让查询变慢。
+
+## 练习：搭一条最小链路
+
+用 Docker 启动 Kafka、MinIO 和一个 Spark 容器，完成下面这条链路：
+
+```text
+模拟订单事件 → Kafka → Spark Structured Streaming → Parquet/Iceberg → SQL 查询
+```
+
+要求：
+
+- 事件包含 `order_id`、`user_id`、`amount`、`event_time`；
+- 按分钟统计 GMV；
+- 人为杀掉一次流任务，重启后验证结果不重复；
+- 用 `EXPLAIN` 观察一次聚合任务的 shuffle 分区数。
+
+这条链路跑通之后，再分别深入 HDFS、Spark、Kafka、Flink 和湖仓表格式，知识就会挂在同一条主线上，而不是散落的组件笔记。
+
+## 参考资料
+
+- [HDFS Architecture](https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-hdfs/HdfsDesign.html)
+- [Spark RDD Programming Guide](https://spark.apache.org/docs/latest/rdd-programming-guide.html)
+- [Flink Stateful Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/)
+- [Kafka Design](https://kafka.apache.org/documentation/#design)
+- [Iceberg Documentation](https://iceberg.apache.org/docs/latest/)
+- [DataWorks 数据分层](https://help.aliyun.com/zh/dataworks/user-guide/data-layer-1)

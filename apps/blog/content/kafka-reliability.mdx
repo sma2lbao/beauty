@@ -1,0 +1,256 @@
+---
+title: 'Kafka 可靠性：分区副本、ISR 与 Exactly-Once'
+description: '从 Topic/Partition/Replica 的物理模型出发，讲清 ISR、acks、幂等生产者、事务与消费位点，给出可执行的可靠性配置。'
+date: '2026-11-19'
+tags: ['大数据', 'Kafka', '消息队列']
+series: '大数据开发'
+seriesOrder: 4
+---
+
+> 本文参考 Apache Kafka 官方 [Design](https://kafka.apache.org/documentation/#design) 与 [Producer Configs](https://kafka.apache.org/documentation/#producerconfigs) 整理，配置默认值以实际客户端版本文档为准。
+
+## Kafka 不是“消息队列”四个字能概括的
+
+Kafka 的核心抽象是**分布式、分区、可复制的提交日志**：
+
+- **Topic**：逻辑上的消息类别；
+- **Partition**：Topic 的物理分片，也是并行和有序性的单位；
+- **Replica**：分区的副本，分为 leader 和 follower；
+- **Offset**：分区内每条消息的唯一递增编号；
+- **Consumer Group**：一组消费者共同消费一个 Topic，分区在组内分配。
+
+Kafka 只保证**分区内有序**，不保证 Topic 全局有序。如果需要全局顺序，只能把并行度降到 1 个分区，这通常意味着放弃吞吐。
+
+## 分区、副本与 Leader
+
+一个 Topic 可以有多个分区，每个分区有多个副本：
+
+```text
+Topic: orders (3 partitions, replication factor 3)
+
+Partition 0: Leader B1, Follower B2, Follower B3
+Partition 1: Leader B2, Follower B3, Follower B1
+Partition 2: Leader B3, Follower B1, Follower B2
+```
+
+- 生产者和消费者只和 **leader** 交互（旧版本消费者可能读 follower，现代客户端默认读 leader）；
+- follower 主动向 leader 拉取数据，保持同步；
+- leader 挂掉后，从 ISR 中选一个 follower 成为新 leader；
+- 副本分布在不同 broker / 机架上，避免单点故障。
+
+分区数决定最大消费并行度：一个分区在同一时刻只能被同一个 Consumer Group 内的一个消费者消费。分区数不是越多越好，分区太多会增加元数据、文件句柄、选举和再平衡成本。
+
+## ISR：什么算“同步副本”
+
+ISR（In-Sync Replicas）是“与 leader 保持同步的副本集合”。判断标准不是“曾经同步过”，而是 follower 是否在 `replica.lag.time.max.ms` 内追上了 leader 的日志末端。
+
+- leader 本身也算 ISR；
+- follower 落后太多会被移出 ISR；
+- 追上之后可以重新加入 ISR；
+- `min.insync.replicas` 是“至少要有多少个 ISR 才算可写”的下限。
+
+ISR 是 Kafka 可靠性的核心。`acks=all` 只保证“所有当前 ISR 都写入”，如果 ISR 只剩 leader 一个，`acks=all` 实际上退化成 `acks=1`。所以必须同时设置 `min.insync.replicas`。
+
+## acks：生产者的确认级别
+
+| `acks`           | 含义                             | 风险                        |
+| ---------------- | -------------------------------- | --------------------------- |
+| `0`              | 发出即认为成功，不等 broker 确认 | 网络/ broker 故障直接丢消息 |
+| `1`              | leader 写入本地日志即确认        | leader 挂掉且未复制时丢消息 |
+| `all`（或 `-1`） | 所有 ISR 都写入才确认            | 延迟更高，但可靠性最好      |
+
+可靠性组合通常是：
+
+```properties
+acks=all
+min.insync.replicas=2
+enable.idempotence=true
+```
+
+当 ISR 数量小于 `min.insync.replicas` 时，生产者会收到 `NotEnoughReplicas` 相关异常，而不是“假装成功”。这是好事：宁可写入失败，也不要静默丢数据。
+
+## 幂等生产者：解决重试带来的重复
+
+网络抖动时，生产者可能重试一条已经写入的消息。如果没有幂等机制，就会产生重复。
+
+Kafka 的幂等生产者通过 `PID`（Producer ID）+ 分区级 `sequence number` 去重：
+
+- 每个生产者实例有唯一 PID；
+- 每个分区维护递增序列号；
+- broker 拒绝序列号不连续或重复的写入；
+- 重试时不会产生重复消息。
+
+配置：
+
+```properties
+enable.idempotence=true
+max.in.flight.requests.per.connection=5
+retries=2147483647
+```
+
+注意：
+
+- 幂等性只在**单个生产者会话、单个分区**内有效；
+- 生产者重启后 PID 会变化，跨会话去重需要事务或业务幂等；
+- `max.in.flight.requests.per.connection` 过大时，重试可能导致乱序；开启幂等后 Kafka 会处理顺序，但仍建议不要盲目调大。
+
+## 事务：跨分区的原子写
+
+如果一次业务操作要写多个分区，幂等生产者不够，需要事务：
+
+```java
+producer.initTransactions();
+
+try {
+    producer.beginTransaction();
+    producer.send(new ProducerRecord<>("orders", orderId, orderJson));
+    producer.send(new ProducerRecord<>("order-events", orderId, eventJson));
+    producer.commitTransaction();
+} catch (Exception e) {
+    producer.abortTransaction();
+}
+```
+
+关键配置：
+
+```properties
+transactional.id=order-service-1
+enable.idempotence=true
+acks=all
+```
+
+消费者要读已提交的数据：
+
+```properties
+isolation.level=read_committed
+```
+
+事务解决了“多条消息要么都可见、要么都不可见”，但它不等于“端到端 Exactly-Once”。如果下游是数据库或对象存储，还需要下游支持幂等写入或事务，否则重复消费仍可能产生重复副作用。
+
+## 消费位点与语义
+
+消费者提交 offset 的时机决定消费语义：
+
+| 提交时机          | 语义                   | 说明                            |
+| ----------------- | ---------------------- | ------------------------------- |
+| 处理前提交        | 至多一次               | 崩溃会丢消息                    |
+| 处理后提交        | 至少一次               | 崩溃会重复处理                  |
+| 事务内提交 offset | 精确一次（Kafka 内部） | 需要 `sendOffsetsToTransaction` |
+
+常见错误是开启自动提交：
+
+```properties
+enable.auto.commit=true
+```
+
+自动提交按时间间隔发生，可能在业务处理完成前提交 offset，导致消息丢失。生产环境更推荐手动提交，并确保“业务处理成功”与“offset 提交”的顺序正确。
+
+一个典型的至少一次处理循环：
+
+```java
+while (true) {
+    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+    for (ConsumerRecord<String, String> record : records) {
+        process(record); // 必须幂等
+    }
+    consumer.commitSync();
+}
+```
+
+如果 `process` 不是幂等的，就要在业务侧做去重（唯一键、版本号、去重表）。
+
+## 消费者组与 Rebalance
+
+同一 Consumer Group 内：
+
+- 一个分区只能分配给一个消费者；
+- 消费者增加/减少、Topic 分区变化会触发 rebalance；
+- rebalance 期间消费会暂停，频繁 rebalance 会拖低吞吐。
+
+减少 rebalance 的手段：
+
+- 使用 cooperative sticky assignor，避免全量撤销；
+- 设置 `session.timeout.ms` 和 `heartbeat.interval.ms` 合理；
+- 避免消费者线程长时间阻塞在 `poll()` 之外；
+- 使用静态成员（`group.instance.id`）减少滚动重启带来的抖动。
+
+Rebalance 不是“故障”，但它是延迟和重复的常见来源。
+
+## 日志保留与 compaction
+
+Kafka 的日志按 segment 存储，每个 segment 有索引文件。清理策略有两类：
+
+- **delete**：按时间或大小删除旧 segment（`retention.ms`、`retention.bytes`）；
+- **compact**：按 key 保留最新值，适合“变更日志/配置/状态”类 Topic。
+
+compaction 不是立刻删除旧值，而是后台合并；tombstone（value 为 null）用于标记删除，需要配置 `delete.retention.ms` 让消费者有机会看到删除标记。
+
+不要用 compaction Topic 当数据库：
+
+- 没有二级索引；
+- 查询需要全量扫描或按 key 查找；
+- 保留策略和 compaction 有延迟；
+- 不适合高频随机更新。
+
+## 一个端到端 Exactly-Once 链路
+
+以 Flink 读 Kafka、写 Kafka 为例：
+
+1. Kafka source 记录每个分区的 offset；
+2. Flink Checkpoint 保存 source offset 和算子状态；
+3. Kafka sink 使用两阶段提交（2PC），在 Checkpoint 完成时提交事务；
+4. 故障恢复时，source 从 Checkpoint 的 offset 重放，sink 丢弃未提交事务。
+
+这条链路依赖：
+
+- source 可回放（Kafka 保留足够数据）；
+- Checkpoint 开启且存储可靠；
+- sink 支持事务或幂等；
+- 下游消费者使用 `read_committed`。
+
+如果 sink 是 MySQL，通常用“幂等 upsert + 唯一键”而不是分布式事务；如果 sink 是对象存储，通常用“临时文件 + 原子 rename”或表格式的原子提交。
+
+## 常见故障排查
+
+| 现象       | 可能原因                                        | 排查                                                |
+| ---------- | ----------------------------------------------- | --------------------------------------------------- |
+| 生产者超时 | ISR 不足、网络、broker 负载高                   | 看 `UnderReplicatedPartitions`、`NotEnoughReplicas` |
+| 消费重复   | 处理后提交前崩溃、rebalance                     | 业务幂等、检查提交顺序                              |
+| 消费延迟   | 分区数不足、消费者阻塞、rebalance               | 看 consumer lag、GC、poll 间隔                      |
+| 数据丢失   | `acks=1`、`min.insync.replicas=1`、unclean 选举 | 检查 topic 配置与选举日志                           |
+| 分区热点   | key 分布不均                                    | 重新设计 key、增加分区、加盐                        |
+
+常用命令：
+
+```bash
+# 查看 Topic 配置
+kafka-configs.sh --bootstrap-server localhost:9092 \
+  --entity-type topics --entity-name orders --describe
+
+# 查看消费者组 lag
+kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group order-service
+
+# 创建 Topic
+kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --topic orders --partitions 12 --replication-factor 3 \
+  --config min.insync.replicas=2
+```
+
+## 设计检查清单
+
+- [ ] 分区数是否匹配目标吞吐和消费者并行度？
+- [ ] 副本因子是否至少为 3（关键数据）？
+- [ ] 是否设置 `min.insync.replicas >= 2`？
+- [ ] 生产者是否开启幂等，是否使用 `acks=all`？
+- [ ] 消费端是否在业务成功后才提交 offset？
+- [ ] 业务处理是否幂等？
+- [ ] 是否监控 ISR、under-replicated、consumer lag？
+- [ ] 是否允许 unclean leader election？如果允许，能否接受丢数据？
+
+## 参考资料
+
+- [Kafka Design](https://kafka.apache.org/documentation/#design)
+- [Kafka Producer Configs](https://kafka.apache.org/documentation/#producerconfigs)
+- [Kafka Consumer Configs](https://kafka.apache.org/documentation/#consumerconfigs)
+- [Kafka Topic Configs](https://kafka.apache.org/documentation/#topicconfigs)

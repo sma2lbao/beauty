@@ -1,0 +1,285 @@
+---
+title: '数仓分层：ODS、DWD、DWS 与 ADS'
+description: '从分层目标、粒度设计、维度建模到增量与数据质量，讲清 ODS/DWD/DWS/ADS 各自该做什么、不该做什么。'
+date: '2026-11-19'
+tags: ['大数据', '数仓', '数据建模']
+series: '大数据开发'
+seriesOrder: 7
+---
+
+> 本文参考阿里云 DataWorks 的 [数据分层](https://help.aliyun.com/zh/dataworks/user-guide/data-layer-1) 实践，并结合维度建模的常见做法整理。
+
+## 分层不是为了多建几张表
+
+数仓分层经常被做成“把同一份数据抄四遍”，然后每个层都加一堆看起来合理的表。真正有价值的分层解决四个问题：
+
+1. **复用**：明细和汇总只算一次，多个应用共享；
+2. **口径一致**：指标在公共层定义，避免每个报表各写一套 SQL；
+3. **隔离变化**：源系统字段变化停留在 ODS/DWD，不穿透到所有应用；
+4. **可追溯**：从 ADS 指标能一路下钻到 DWD 明细和 ODS 原始数据。
+
+分层的代价是存储、计算和链路复杂度。层不是越多越好，关键是每一层有明确职责。
+
+## 四层各自做什么
+
+| 层  | 全称                     | 粒度         | 主要职责                        | 典型表                    |
+| --- | ------------------------ | ------------ | ------------------------------- | ------------------------- |
+| ODS | Operational Data Store   | 与源系统一致 | 原始接入、保留历史、轻量标准化  | `ods_order`、`ods_user`   |
+| DWD | Data Warehouse Detail    | 业务过程明细 | 清洗、去重、规范化、维度关联    | `dwd_order_detail`        |
+| DWS | Data Warehouse Summary   | 主题汇总     | 按主题/维度预聚合，服务多个应用 | `dws_user_order_1d`       |
+| ADS | Application Data Service | 应用指标     | 面向报表/接口的最终结果         | `ads_gmv_daily`           |
+| DIM | Dimension                | 维度         | 一致性维度、缓慢变化维          | `dim_user`、`dim_product` |
+
+### ODS：贴近源，保留历史
+
+ODS 的目标是“可回溯的原始层”：
+
+- 结构尽量与源系统一致，字段名可以统一，但不要过度加工；
+- 保留历史，不做覆盖式更新（除非源本身只给快照）；
+- 只做轻量标准化：类型转换、时区统一、编码统一、脏数据标记；
+- 分区通常按接入日期/小时；
+- 明确保留周期，避免无限增长。
+
+ODS 不是“数据沼泽”。该打的标记要打，该隔离的脏数据要隔离，但不要在 ODS 做复杂业务逻辑。
+
+### DWD：明细事实，统一口径
+
+DWD 是数仓的核心明细层，通常按**业务过程**建模：
+
+- 订单创建、支付、退款、发货；
+- 用户注册、登录、下单；
+- 商品曝光、点击、加购。
+
+DWD 要做：
+
+- 清洗：去重、空值处理、异常值处理；
+- 规范化：统一编码、单位、时区、枚举值；
+- 维度关联：补上用户、商品、地域等维度键；
+- 粒度声明：一行代表什么，必须写清楚；
+- 不聚合：保留最细粒度，供上层灵活组合。
+
+DWD 不应该做：
+
+- 面向某个报表的定制聚合；
+- 把多个业务过程混在一张“大宽表”里；
+- 直接依赖 ADS 的结果。
+
+### DWS：主题汇总，避免重复计算
+
+DWS 按主题和维度做预聚合，例如：
+
+- 用户主题：`dws_user_order_1d`（用户日下单数、GMV）；
+- 商品主题：`dws_product_sales_1d`；
+- 渠道主题：`dws_channel_traffic_1h`。
+
+DWS 的粒度通常是“主题 + 维度组合 + 时间周期”。设计时要问：
+
+- 这个汇总会被哪些应用复用？
+- 维度组合是否稳定？
+- 是否需要支持上卷/下钻？
+- 聚合是否可加（sum/count）？不可加指标（去重人数）要怎么处理？
+
+不要为每个报表建一张 DWS 表。DWS 应该沉淀公共指标，而不是复制 ADS。
+
+### ADS：面向应用，允许定制
+
+ADS 直接服务报表、API、大屏、运营后台。它可以：
+
+- 按应用需求做宽表；
+- 做排名、同环比、累计值；
+- 做特定维度的聚合；
+- 做数据服务所需的最终结构。
+
+ADS 的代价是定制化，所以要保持可追溯：每个指标应能映射到 DWS/DWD 的计算逻辑，而不是在 ADS 里重新发明口径。
+
+### DIM：一致性维度
+
+DIM 管理维度属性，例如用户、商品、门店、地域、渠道。关键是**一致性**：
+
+- 同一个维度在全仓库只有一个定义；
+- 维度键稳定（代理键/业务键策略明确）；
+- 缓慢变化维（SCD）策略明确：Type 1 覆盖、Type 2 拉链、Type 3 加列；
+- 维度层级清晰（省/市/区、品类/品牌/SPU/SKU）。
+
+没有一致性维度，DWD 和 DWS 的 Join 结果就会“同名不同义”。
+
+## 先定粒度，再谈建模
+
+维度建模的第一步不是画表，而是声明粒度：
+
+> 一行 DWD 订单明细，代表什么？
+
+可能的答案：
+
+- 一个订单一行；
+- 一个订单商品行一行；
+- 一次支付流水一行；
+- 一次退款一行。
+
+粒度不同，指标口径完全不同。比如“订单数”在订单粒度是 `count(order_id)`，在订单商品行粒度要做 `count(distinct order_id)`。如果粒度没写清楚，后面所有汇总都不可信。
+
+常见事实表类型：
+
+| 类型           | 含义                           | 例子                   |
+| -------------- | ------------------------------ | ---------------------- |
+| 事务事实表     | 一次业务事件一行               | 下单、支付、退款       |
+| 周期快照事实表 | 固定周期状态一行               | 每日库存、每日账户余额 |
+| 累积快照事实表 | 业务全过程一行，字段随阶段更新 | 订单从创建到完成       |
+
+## 一个电商分层的简化示例
+
+### ODS
+
+```sql
+CREATE TABLE IF NOT EXISTS ods_order (
+  order_id      STRING,
+  user_id       STRING,
+  product_id    STRING,
+  amount        DECIMAL(10, 2),
+  order_status  STRING,
+  created_at    TIMESTAMP,
+  updated_at    TIMESTAMP
+)
+PARTITIONED BY (dt STRING);
+```
+
+### DWD
+
+```sql
+INSERT OVERWRITE TABLE dwd_order_detail PARTITION (dt = '2026-11-19')
+SELECT
+  o.order_id,
+  o.user_id,
+  o.product_id,
+  o.amount,
+  o.order_status,
+  o.created_at,
+  o.updated_at
+FROM ods_order o
+WHERE o.dt = '2026-11-19'
+  AND o.order_id IS NOT NULL
+  AND o.amount >= 0;
+```
+
+真实场景还要处理：
+
+- 同一订单多条变更，按 `updated_at` 取最新；
+- 退款、取消等状态流转；
+- 用户/商品维度关联；
+- 脏数据隔离。
+
+### DWS
+
+```sql
+INSERT OVERWRITE TABLE dws_user_order_1d PARTITION (dt = '2026-11-19')
+SELECT
+  user_id,
+  COUNT(DISTINCT order_id) AS order_cnt,
+  SUM(amount) AS gmv
+FROM dwd_order_detail
+WHERE dt = '2026-11-19'
+GROUP BY user_id;
+```
+
+### ADS
+
+```sql
+INSERT OVERWRITE TABLE ads_gmv_daily PARTITION (dt = '2026-11-19')
+SELECT
+  dt,
+  SUM(gmv) AS gmv,
+  COUNT(DISTINCT user_id) AS paying_users
+FROM dws_user_order_1d
+WHERE dt = '2026-11-19'
+GROUP BY dt;
+```
+
+## 增量与回刷
+
+离线数仓最常见的两个问题是“重复”和“迟到”。
+
+### 幂等写入
+
+优先使用分区覆盖：
+
+```sql
+INSERT OVERWRITE TABLE dwd_order_detail PARTITION (dt = '2026-11-19')
+SELECT ...
+```
+
+同一分区跑多次，结果一致。比起 `INSERT INTO` 追加，覆盖写更容易保证幂等。
+
+### 去重
+
+源系统可能重复推送，按业务主键 + 更新时间去重：
+
+```sql
+SELECT *
+FROM (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY order_id
+      ORDER BY updated_at DESC
+    ) AS rn
+  FROM ods_order
+  WHERE dt = '2026-11-19'
+) t
+WHERE rn = 1;
+```
+
+### 迟到数据
+
+- 允许小窗口迟到：跑 T+1 时重算最近 N 天；
+- 大范围回刷：按分区重跑，注意下游依赖；
+- 流批结合：实时链路先出近似结果，离线链路第二天修正；
+- 记录数据版本，避免“修正后无法解释昨天的报表”。
+
+## 数据质量与治理
+
+分层只是骨架，质量要靠规则：
+
+| 检查       | 例子                        |
+| ---------- | --------------------------- |
+| 完整性     | 主键非空、分区行数不为 0    |
+| 唯一性     | `order_id` 不重复           |
+| 有效性     | `amount >= 0`、状态枚举合法 |
+| 一致性     | DWD 订单数与 ODS 去重后一致 |
+| 及时性     | 分区在 SLA 前产出           |
+| 参照完整性 | 用户 ID 能在 DIM 中找到     |
+
+治理还包括：
+
+- **血缘**：ADS 指标能追溯到 DWD/ODS；
+- **Owner**：每张表有负责人；
+- **SLA**：产出时间、刷新频率；
+- **成本**：存储、计算、扫描量；
+- **权限**：谁能读、谁能写、敏感字段如何脱敏。
+
+## 常见反模式
+
+- **跳过 DWD 直接 ODS → ADS**：指标无法复用，口径无法追溯；
+- **一张 DWD 大宽表打天下**：粒度混乱，字段爆炸，没人敢改；
+- **DWS 按报表建表**：表越来越多，公共指标仍然重复；
+- **维度不一致**：用户维度在三个系统有三套定义；
+- **非幂等任务**：重跑一次多一批数据；
+- **过度分层**：为了“规范”加五六层，链路长得没人维护；
+- **只建表不治理**：没有质量、血缘、Owner 和 SLA。
+
+## 练习
+
+用一份订单数据完成：
+
+1. 设计 ODS 表，保留原始字段和分区；
+2. 设计 DWD 订单明细，声明粒度并去重；
+3. 设计 DIM 用户维度和商品维度，说明 SCD 策略；
+4. 设计 DWS 用户日汇总和商品日汇总；
+5. 设计 ADS 每日 GMV 报表；
+6. 为每层写一条数据质量检查；
+7. 模拟一次迟到数据和一次重跑，验证幂等。
+
+## 参考资料
+
+- [DataWorks 数据分层](https://help.aliyun.com/zh/dataworks/user-guide/data-layer-1)
+- [DataWorks 数据建模](https://help.aliyun.com/zh/dataworks/user-guide/data-modeling/)
+- [Apache Iceberg Documentation](https://iceberg.apache.org/docs/latest/)
