@@ -15,7 +15,9 @@ from tests.conftest import ACCOUNT
 
 def _completed_run(client: TestClient) -> str:
     resp = client.post(
-        "/api/v1/runs", json={"title": "流式", "goal": "看事件流"}, headers=ACCOUNT
+        "/api/v1/runs",
+        json={"title": "流式", "goal": "生成一份周报文档看事件流"},
+        headers=ACCOUNT,
     )
     run_id = resp.json()["id"]
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)

@@ -59,7 +59,8 @@ def _summary(values: dict[str, Any]) -> CheckpointSummary:
         plan_chars=len(values.get("plan_markdown") or ""),
         tool_calls=len(values.get("tool_calls") or []),
         todos_count=len(values.get("todos") or []),
-        artifact_ready=bool(values.get("artifact")),
+        # 交付已就绪:要文件的 run 有 artifact,直接展示的 run 有 final_text
+        artifact_ready=bool(values.get("artifact") or values.get("final_text")),
     )
 
 

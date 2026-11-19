@@ -30,7 +30,8 @@ DELIVERY = "# 周报(成品)\n\n- 日程已整理\n"
 
 
 def _complete_run(client: TestClient) -> str:
-    run_id = _create_run(client)
+    # 交付事件/入库都围绕报告件;先让用户明确要文档。
+    run_id = _create_run(client, goal="生成一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"

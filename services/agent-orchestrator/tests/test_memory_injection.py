@@ -437,7 +437,7 @@ async def test_execute_phase_emits_delta_with_memory_tools(tmp_path) -> None:
         memory_enabled=True,
     )
     with TestClient(app) as client:
-        run_id = _create_run(client)
+        run_id = _create_run(client, goal="生成一份周报文档")
         resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"

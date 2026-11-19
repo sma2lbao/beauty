@@ -19,7 +19,8 @@ DELIVERY = "# 本周周报\n\n- 日程已整理\n"
 
 
 def _complete(client: TestClient) -> str:
-    run_id = _create_run(client)
+    # 显式要文档才会落 .md 报告件;这里断言的是镜像契约。
+    run_id = _create_run(client, goal="生成一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"
@@ -74,7 +75,7 @@ def test_mirror_carries_run_workspace_id(tmp_path: Path) -> None:
             "/api/v1/runs",
             json={
                 "title": "周报",
-                "goal": "整理本周日程",
+                "goal": "生成一份周报文档",
                 "acceptance_criteria": ["日程已整理"],
                 "workspace_id": "ws-1",
             },

@@ -51,7 +51,7 @@ def test_plan_auto_approves_without_dangerous_tools(tmp_path: Path) -> None:
         token_verifier=verifier(),
     )
     with TestClient(app) as client:
-        run_id = _create_run(client)
+        run_id = _create_run(client, goal="生成一份周报文档")
         resp = client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         assert resp.status_code == 200
         body = resp.json()

@@ -104,11 +104,17 @@ export function eventLine(
         text: `任务中断:${asText(payload.reason, '需要人工处理')}`,
         tone: 'warning',
       };
-    case 'run.delivered.v1':
+    case 'run.delivered.v1': {
+      // 用户没要文件时只交付会话正文(artifacts 显式为空):正文已经在回复气泡里,
+      // 不再另弹一条「已交付」;真有文件件时才播报。
+      if (Array.isArray(payload.artifacts) && payload.artifacts.length === 0) {
+        return null;
+      }
       return {
         text: `已交付《${asText(payload.title, '成品')}》。`,
         tone: 'success',
       };
+    }
     case 'run.completed.v1':
       return { text: '任务完成 ✅', tone: 'success' };
     default:

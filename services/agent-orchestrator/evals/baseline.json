@@ -7,7 +7,7 @@
         {
           "id": "direct-answer",
           "ok": true,
-          "duration_ms": 277.69,
+          "duration_ms": 328.21,
           "run_status": null,
           "events": [],
           "tool_calls": [],
@@ -23,7 +23,7 @@
         {
           "id": "approve-then-complete",
           "ok": true,
-          "duration_ms": 224.39,
+          "duration_ms": 583.33,
           "run_status": "completed",
           "events": [
             "run.created.v1",
@@ -42,10 +42,8 @@
             "run.delivered.v1",
             "run.completed.v1"
           ],
-          "tool_calls": [
-            "external_publish"
-          ],
-          "tokens": 399,
+          "tool_calls": ["external_publish"],
+          "tokens": 485,
           "deliverables": 1,
           "failures": []
         }
@@ -57,7 +55,7 @@
         {
           "id": "auto-policy-skips-confirmation",
           "ok": true,
-          "duration_ms": 234.12,
+          "duration_ms": 325.74,
           "run_status": "completed",
           "events": [
             "run.created.v1",
@@ -73,10 +71,8 @@
             "run.delivered.v1",
             "run.completed.v1"
           ],
-          "tool_calls": [
-            "external_publish"
-          ],
-          "tokens": 401,
+          "tool_calls": ["external_publish"],
+          "tokens": 488,
           "deliverables": 1,
           "failures": []
         }
@@ -87,6 +83,6 @@
     "cases": 3,
     "passed": 3,
     "failed": 0,
-    "tokens": 866
+    "tokens": 1039
   }
 }

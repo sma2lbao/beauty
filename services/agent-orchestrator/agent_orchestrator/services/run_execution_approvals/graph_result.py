@@ -108,21 +108,30 @@ async def _apply_graph_result(
         return run
     artifact = values.get("artifact")
     failed = values.get("final_status") == "failed"
-    if artifact:
-        if failed:
+    # 对话里的回复 = 交付正文(artifact 只在用户要文件时才有),再兜执行结果小结
+    reply = (
+        str((artifact or {}).get("content") or "")
+        or str(values.get("final_text") or "")
+        or "\n".join(values.get("results") or [])
+        or "任务完成 ✅"
+    )
+    if failed:
+        if artifact:
             # 失败终态不抓外链:不为一次失败执行消耗下载预算,只如实落报告件
             await _persist_artifact(session, run, artifact, store, workspace)
-        else:
-            await _deliver_artifacts(
-                session,
-                run,
-                artifact,
-                records=records,
-                store=store,
-                workspace=workspace,
-                downloader=downloader,
-                max_files=max_download_files,
-            )
+    else:
+        # artifact 为空(用户没要文件)时也要走一遍:真写出成品文件时仍要回收
+        await _deliver_artifacts(
+            session,
+            run,
+            artifact,
+            records=records,
+            store=store,
+            workspace=workspace,
+            downloader=downloader,
+            max_files=max_download_files,
+            reply=reply,
+        )
     run.rounds = values.get("rounds", 0)
     if failed:
         # 返工耗尽仍未验收:fail_node 的诚实终态(§6.1),事件流如实记录
@@ -153,14 +162,7 @@ async def _apply_graph_result(
         {"rounds": run.rounds, "results": values.get("results") or []},
     )
     await run_scores.record_rule_score(session, run, completed=True)
-    # 对话里的回复 = 交付物正文(没有时用执行结果小结兜底)
-    await _append_assistant_message(
-        session,
-        run,
-        str(artifact.get("content") or "")
-        or "\n".join(values.get("results") or [])
-        or "任务完成 ✅",
-    )
+    await _append_assistant_message(session, run, reply)
     # 提交后抽取(P1-3):run 完成写入进程内回调,由会话边界提交成功后执行;
     # outbox 开启时交给 outbox 消费者,这里只登记不等待
     memory_extraction.schedule_run_extraction(session, run)

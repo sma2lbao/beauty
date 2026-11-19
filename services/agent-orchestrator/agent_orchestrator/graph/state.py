@@ -67,7 +67,9 @@ class RunGraphState(TypedDict, total=False):
     pending_question: dict[str, Any]
     question_answers: Annotated[list[dict[str, Any]], add]  # 每次回答一条
     ask_cycles: Annotated[int, add]  # 提问轮次(上限见 nodes.MAX_ASK_CYCLES)
-    artifact: dict[str, Any]  # 交付物(title/kind/content),services 层落库
+    #: 交付正文:用户没要文件时的唯一交付形态,services 层直接作为会话回复展示。
+    final_text: str
+    artifact: dict[str, Any]  # 用户要文件型成果时的交付物(title/kind/content)
     verified: dict[str, bool]
     final_status: str
     status_reason: str  # blocked/failed 的原因(由 status 决定含义)

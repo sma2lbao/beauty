@@ -426,7 +426,7 @@ run: pending → planning → awaiting_approval(按需:无 DANGER 工具时自�
 - **ask_question**：模型提问走图内 `ask_gate` 中断 → run 进 `awaiting_input` + `run.question.required.v1`；`POST /api/v1/runs/{id}/answer`（`{question_id, action: answer|decline, answers}`）恢复图；一次 assistant 回合只能提问且独占，提问期间其余工具不执行；
 - **中断超时**：`interrupts` sweeper 周期扫描 `awaiting_approval` / `awaiting_confirmation` / `awaiting_input` 超时项，按 `run.interrupt.timeout.v1` 留痕后复用 reject/confirm/answer job 走正常状态机（不直接改状态，保留 resume 语义）；确认超时同时补写 `run.confirmation.received.v1`，提问超时补写 `run.question.timeout.v1` 与 `run.question.answered.v1`（decline/timeout/system）；
 - **verify**：对 `acceptance_criteria` 逐项校验，不达标自动返工，上限 3 轮；
-- **deliver**：交付物注册（一个 run 多件：报告/技能产物/工具外链文件）；写操作按风险等级执行。
+- **deliver**：交付物注册（一个 run 多件：报告/技能产物/工具外链文件）；写操作按风险等级执行。**默认不落报告件**（2026-11-19）：用户没明确要文件/文档时，最终正文直接作为会话回复展示，`run.delivered.v1` 仍发但 `artifacts` 为空；明确要 Markdown/报告/PDF 等才落 `.md` 报告件，技能产物、工具外链文件与沙箱成品照常回收。
 
 ### 11.2 Tool Registry（coding 与办公共用）
 

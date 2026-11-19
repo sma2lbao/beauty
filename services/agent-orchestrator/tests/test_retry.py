@@ -11,7 +11,8 @@ VERIFY_PASS = '{"summary": "验收通过", "verdicts": {"日程已整理": true}
 
 def _make_failed_run(client: TestClient) -> str:
     """造一个 failed run:计划成功,execute 阶段模型挂掉。"""
-    run_id = _create_run(client)
+    # 重试后的交付断言依赖报告件:让父/子 run 都明确要文档。
+    run_id = _create_run(client, goal="生成一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
     assert run["status"] == "failed"

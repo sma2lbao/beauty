@@ -37,7 +37,7 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
     delivery = "# 本周周报\n\n- 日程已整理\n"
     fake = FakeLLM(["# 计划", "执行结果:日程已整理", verify_pass, delivery])
     with _client(tmp_path, fake) as client:
-        run_id = _create_run(client)
+        run_id = _create_run(client, goal="把本周日程整理成周报文档")
         client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
         run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
         assert run["status"] == "completed"
@@ -65,9 +65,39 @@ def test_llm_delivery_persisted_with_event(tmp_path) -> None:
         assert delivered["payload"]["title"] == "周报"
 
 
+def test_default_delivery_lands_reply_without_file_artifact(tmp_path) -> None:
+    """用户没要文件:正文直接回会话,不落 .md 交付物;交付事件仍发但无文件件。"""
+    verify_pass = '{"summary": "验收通过", "verdicts": {"日程已整理": true}}'
+    delivery = "本周日程已整理完毕:周三评审,周五复盘。"
+    fake = FakeLLM(["# 计划", "执行结果:日程已整理", verify_pass, delivery])
+    with _client(tmp_path, fake) as client:
+        run_id = _create_run(client)
+        client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
+        run = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
+        assert run["status"] == "completed"
+
+        # 没有文件型交付物:清单为空,旧取件端点 404
+        listed = client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT)
+        assert listed.json() == []
+        assert (
+            client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT).status_code
+            == 404
+        )
+        # 交付事件仍发(记忆抽取等 outbox 消费者靠它触发),但 artifacts 为空
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
+        delivered = [e for e in events if e["type"] == "run.delivered.v1"]
+        assert len(delivered) == 1
+        payload = delivered[0]["payload"]
+        assert payload["artifacts"] == []
+        assert payload["artifact_ids"] == []
+        assert payload["chars"] == len(delivery)
+        types = [e["type"] for e in events if e["type"] != "run.item.v1"]
+        assert types[-1] == "run.completed.v1"
+
+
 def test_stub_delivery_assembles_artifact(client: TestClient) -> None:
-    """无 LLM(桩路径):deliver 拼装交付物并标注桩来源,同样可取件。"""
-    run_id = _create_run(client)
+    """无 LLM(桩路径):用户要文档时 deliver 拼装交付物并标注桩来源,同样可取件。"""
+    run_id = _create_run(client, goal="整理本周日程并输出周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     status_code = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT).json()
     assert status_code["status"] == "completed"
@@ -81,7 +111,7 @@ def test_stub_delivery_assembles_artifact(client: TestClient) -> None:
 
 def test_artifact_missing_and_account_isolation(client: TestClient) -> None:
     """未交付(仅创建)→ 404 artifact.not_found;跨账号取件不可见。"""
-    run_id = _create_run(client)
+    run_id = _create_run(client, goal="输出一份周报文档")
     resp = client.get(f"/api/v1/runs/{run_id}/artifact", headers=ACCOUNT)
     assert resp.status_code == 404
     assert resp.json()["code"] == "artifact.not_found"
@@ -148,7 +178,7 @@ def test_artifact_list_unknown_run_is_404(client: TestClient) -> None:
 
 def test_multi_artifacts_list_and_main_artifact_unchanged(client: TestClient) -> None:
     """报告之外再登记文本+二进制件:清单齐、旧 /artifact 仍取报告。"""
-    run_id = _create_run(client)
+    run_id = _create_run(client, goal="输出一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     settings = client.app.state.settings
@@ -203,7 +233,7 @@ def test_multi_artifacts_list_and_main_artifact_unchanged(client: TestClient) ->
 
 def test_download_text_and_binary_artifacts(client: TestClient) -> None:
     """下载端点:文本/二进制同一入口,Content-Type 与 Content-Disposition 正确。"""
-    run_id = _create_run(client)
+    run_id = _create_run(client, goal="输出一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     settings = client.app.state.settings

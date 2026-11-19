@@ -80,7 +80,8 @@ def _app(
 
 
 def _deliver(client: TestClient) -> str:
-    run_id = _create_run(client)
+    # 显式要文档才会落 .md 报告件;这里断言的是抓取/清单契约。
+    run_id = _create_run(client, goal="生成一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"

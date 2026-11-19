@@ -228,39 +228,64 @@ async def _mirror_artifacts(
 async def _deliver_artifacts(
     session: AsyncSession,
     run: Run,
-    artifact: dict[str, Any],
+    artifact: dict[str, Any] | None = None,
     *,
     records: list[dict[str, Any]],
     store: ArtifactStore | None,
     workspace: Workspace | None,
     downloader: FileDownloader | None,
     max_files: int,
-) -> RunArtifact:
-    """交付阶段:落报告 → 抓取工具外链 → 回收沙箱成品 → 镜像工作区 → 一条事件。
+    reply: str | None = None,
+) -> RunArtifact | None:
+    """交付阶段:落报告(可选) → 抓外链 → 回收沙箱成品 → 镜像工作区 → 一条事件。
 
     多件交付物(run_artifacts 一行一件,source 区分 report/skill/mcp/sandbox);
     报告件不再覆盖既有行——技能产物、外链文件、沙箱成品与报告各自成件。
-    报告仍是主件(取件/知识库/旧 `/artifact` 契约都按 report 优先),沙箱成品是
-    附加件:前端列表与下载都能拿到,但不会改变既有主件语义。
+    artifact 为 None 表示用户没要文件型成果:不落 .md 报告件,聊天里直接展示
+    正文;此时若执行阶段真写出了成品文件,仍照常回收并交付(主件取第一件)。
+
+    一件文件都没有时仍发 run.delivered.v1:交付的是会话正文(reply 的字符数),
+    payload 的 artifacts 为空——这条事件同时是 outbox 侧记忆抽取的触发点,
+    不能因为"没有文件"就整条不发。`reply` 也为空(失败/无正文)时才静默返回。
     """
-    report = await artifacts.persist_artifact(session, run, artifact, store)
+    report = (
+        await artifacts.persist_artifact(session, run, artifact, store)
+        if artifact
+        else None
+    )
     tool_files, download_errors = await _capture_tool_files(
         session, run, records, store, downloader, max_files=max_files
     )
     sandbox_files, sandbox_errors = await _capture_sandbox_files(
         session, run, records, store, max_files=max_files
     )
-    rows = [report, *tool_files, *sandbox_files]
+    rows = [*([report] if report is not None else []), *tool_files, *sandbox_files]
+    if not rows:
+        # 没有文件件:交付形态就是会话正文。事件照发——outbox 侧记忆抽取靠它
+        # 触发;artifacts 为空让前端知道"本次没有文件",不去弹「已交付《…》」。
+        if not reply:
+            return None
+        text_payload: dict[str, Any] = {
+            "chars": len(reply),
+            "artifact_ids": [],
+            "artifacts": [],
+            "download_errors": download_errors,
+        }
+        if sandbox_errors:
+            text_payload["sandbox_errors"] = sandbox_errors
+        await append_event(session, run, "run.delivered.v1", text_payload)
+        return None
+    primary = report or rows[0]
     mirrored_ids, mirror_errors = await _mirror_artifacts(
         session, run, rows, store, workspace
     )
     payload: dict[str, Any] = {
-        "artifact_id": report.id,
-        "kind": report.kind,
-        "title": report.title,
-        "chars": len(str(artifact.get("content") or "")),  # 字符数(文本)
-        "size_bytes": report.size_bytes,  # 存储字节数(UTF-8)
-        "storage": report.storage,
+        "artifact_id": primary.id,
+        "kind": primary.kind,
+        "title": primary.title,
+        "chars": len(str((artifact or {}).get("content") or "")),  # 字符数(文本)
+        "size_bytes": primary.size_bytes,  # 存储字节数(UTF-8)
+        "storage": primary.storage,
         "artifact_ids": [row.id for row in rows],
         "artifacts": [_artifact_meta(row) for row in rows],
         "download_errors": download_errors,
@@ -273,7 +298,7 @@ async def _deliver_artifacts(
     if sandbox_errors:
         payload["sandbox_errors"] = sandbox_errors
     await append_event(session, run, "run.delivered.v1", payload)
-    return report
+    return primary
 
 
 async def _persist_artifact(
@@ -284,7 +309,7 @@ async def _persist_artifact(
     workspace: Workspace | None = None,
 ) -> RunArtifact:
     """兼容薄包装:只落报告件(不抓取外链文件),语义同旧版交付。"""
-    return await _deliver_artifacts(
+    row = await _deliver_artifacts(
         session,
         run,
         artifact,
@@ -294,6 +319,8 @@ async def _persist_artifact(
         downloader=None,
         max_files=0,
     )
+    assert row is not None  # 有报告件时至少一行
+    return row
 
 
 async def get_artifact(

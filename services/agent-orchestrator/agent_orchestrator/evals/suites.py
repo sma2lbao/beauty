@@ -222,7 +222,7 @@ def _task_approval_cases() -> tuple[Case, ...]:
         Case(
             id="approve-then-complete",
             kind=KIND_TASK,
-            goal="整理本周日程并发布说明",
+            goal="整理本周日程并发布周报文档",
             llm_script=(
                 "# 执行计划\n- [ ] 检索日程\n- [ ] 发布说明",
                 {
@@ -265,7 +265,7 @@ def _tool_policy_cases() -> tuple[Case, ...]:
         Case(
             id="auto-policy-skips-confirmation",
             kind=KIND_TASK,
-            goal="整理本周日程并发布说明",
+            goal="整理本周日程并发布周报文档",
             llm_script=(
                 "# 执行计划\n- [ ] 检索日程\n- [ ] 发布说明",
                 {

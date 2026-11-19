@@ -49,7 +49,8 @@ def _filesystem_app(tmp_path: Path, fake: FakeLLM, root: Path):
 
 
 def _complete_run(client: TestClient) -> str:
-    run_id = _create_run(client)
+    # 报告件只在用户明确要文档时落库;这里断言的是存储后端契约。
+    run_id = _create_run(client, goal="生成一份周报文档")
     client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT)
     response = client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT)
     assert response.json()["status"] == "completed"

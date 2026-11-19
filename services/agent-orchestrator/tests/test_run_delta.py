@@ -44,7 +44,7 @@ def _create_run(client: TestClient) -> str:
         "/api/v1/runs",
         json={
             "title": "周报",
-            "goal": "整理本周日程",
+            "goal": "生成一份周报文档",
             "acceptance_criteria": ["日程已整理"],
         },
         headers=ACCOUNT,

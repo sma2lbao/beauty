@@ -223,7 +223,9 @@ Agent 编排服务:会话与运行编排的控制面(工具面/审批/事件流/
   `extra_instructions` 并入 plan/execute/verify/deliver 的提示词(模型必须遵循)。
 
 - 交付物(§7):一个 run 可以有**多件**交付物(`run_artifacts` 已去唯一约束)。
-  deliver 合成的成品报告是一件(`source=report`),技能产物每个文件一件
+  **默认不落报告件**:用户没明确要文件/文档时,deliver 正文直接作为会话回复展示
+  (`run.delivered.v1` 照发,但 `artifacts` 为空);只有用户明确要 Markdown/报告/
+  PDF 等才把 deliver 成品落成 `source=report` 的报告件。技能产物每个文件一件
   (`source=skill`),工具产出的外链文件每件一个(`source=mcp`,见下),执行期写进
   工作区的可运行成品每件一个(`source=sandbox`,见下);
   取件 `GET /runs/{id}/artifacts`(列表)/ `GET /runs/{id}/artifacts/{id}/download`
@@ -334,7 +336,7 @@ SKILL_NODE_IMAGE`,TTL `SKILL_SANDBOX_TTL_SECONDS`,网络取快照
     上限 `SKILL_MAX_OUTPUT_BYTES`(超限/二进制只报元数据),`stdout`/`stderr` 截断后回喂模型;
   - `/workspace/output` 里**每个文件独立登记**为一件交付物(`source=skill`,
     title=相对路径,二进制一并留字节、不再只报元数据);登记失败只写进 summary,
-    不让工具失败;交付阶段另落报告件(与技能产物并存,不覆盖);每次执行
+    不让工具失败;用户要文件时交付阶段另落报告件(与技能产物并存,不覆盖);每次执行
     **必销毁**沙箱;
   - chat 路径没有 `run_id`,`skill_run` 不会出现在对话直答的工具列表里
     (能力边界由 ToolContext 决定)。
