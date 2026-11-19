@@ -9,10 +9,11 @@ from common.errors import NotFoundError
 
 from connector.core.config import Settings
 from connector.providers.base import BaseProvider
+from connector.providers.github import GithubProvider
 
-# provider 登记表:当前仓库没有内置 provider(Notion 等产品改走 MCP 接入),
-# 新增 provider 时在此加一行;测试通过 tests/conftest.py 注入测试专用 demo。
-_REGISTRY: dict[str, type[BaseProvider]] = {}
+# provider 登记表:内置 GitHub(Notion 等产品改走 MCP 接入),新增 provider
+# 时在此加一行;测试通过 tests/conftest.py 注入测试专用 demo。
+_REGISTRY: dict[str, type[BaseProvider]] = {"github": GithubProvider}
 
 
 def enabled_provider_names(settings: Settings) -> tuple[str, ...]:

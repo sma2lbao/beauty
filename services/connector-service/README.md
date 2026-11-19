@@ -3,15 +3,16 @@
 连接器服务(架构 §8,设计见 [docs/design/connector.md](../../docs/design/connector.md)):
 把外部 SaaS 账号接入本平台账号,凭证只进不出,并把 provider 能力暴露成 agent 可调用的工具。
 
-**当前仓库没有内置 provider**:连接器服务只提供通用平台(授权会话、凭证托管、
-刷新单飞/巡检、目录、执行、连接管理与生命周期事件),Notion 等产品改走 MCP 接入
-(见 agent-orchestrator 与前端 `/connectors` 的 MCP 预设连接器)。要加直连 provider
-时,按同一套 `BaseProvider` 接口实现并注册即可(步骤见下文「接入新 provider」)。
+**内置 provider:GitHub**(GitHub App,user-to-server token;8 读 + 3 写工具)。
+连接器服务同时提供通用平台(授权会话、凭证托管、刷新单飞/巡检、目录、执行、
+连接管理与生命周期事件);Notion 等产品改走 MCP 接入(见 agent-orchestrator 与
+前端 `/connectors` 的 MCP 预设连接器)。要加其它直连 provider 时,按同一套
+`BaseProvider` 接口实现并注册即可(步骤见下文「接入新 provider」)。
 
 平台同时支持「粘贴静态令牌建连接」:provider 声明 `token_connectable=True` 并实现
 `connect_with_token` 后,用户可跳过 OAuth 直接贴令牌(见下文「静态令牌连接」)。
-邮件/日历能力已下线,存量连接在迁移 `b2e4c7a91d33` 中置为 `revoked`;2026-11 按
-新规划先后移除了内置的飞书、Notion provider。
+邮件/日历能力已下线,存量连接在迁移 `b2e4c7a91d33` 中置为 `revoked`;2026-11
+先后移除了内置的飞书、Notion provider,并于 2026-11-19 新增内置 GitHub provider。
 
 除惰性/手动刷新外,还有 **24h 刷新巡检**兜底;连接生命周期事件
 (`connector.connection.created/expired/revoked.v1`)经 **outbox** 与状态变更同事务发出。
@@ -69,7 +70,7 @@
 
 | 变量                                                                                  | 说明                                                                                                                            |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `CONNECTOR__PROVIDERS_ENABLED`                                                        | 启用哪些 provider(逗号分隔,须已注册);默认空(仓库无内置 provider)                                                                |
+| `CONNECTOR__PROVIDERS_ENABLED`                                                        | 启用哪些 provider(逗号分隔,须已注册);内置 `github`                                                                              |
 | `CONNECTOR__INTERNAL_SECRET`                                                          | tool-service → connector-service 的内部鉴权密钥,留空即关闭内部端点                                                              |
 | `CONNECTOR__OAUTH_REDIRECT_BASE`                                                      | `{base}/v1/oauth/{provider}/callback`,须与 provider 后台登记逐字一致;经网关时为 `http://<host>/api/connector`(默认直连 `:8004`) |
 | `CONNECTOR__OAUTH_SUCCESS_REDIRECT`                                                   | 授权结束 302 回前端的地址                                                                                                       |
@@ -81,7 +82,8 @@
 | `CONNECTOR__REFRESH_STALE_SECONDS`                                                    | 超过多久没刷新算「过期」候选(默认 86400s = 24h)                                                                                 |
 
 provider 自己的应用凭证字段由该 provider 的 manifest 定义,加在 `Settings`(env 前缀
-`CONNECTOR__`)里;未配置时目录里该 provider 的 `configured=false`。
+`CONNECTOR__`)里;未配置时目录里该 provider 的 `configured=false`。GitHub 的字段是
+`CONNECTOR__GITHUB_CLIENT_ID` / `CONNECTOR__GITHUB_CLIENT_SECRET`。
 
 ## 静态令牌连接(平台能力)
 
@@ -98,13 +100,46 @@ provider 自己的应用凭证字段由该 provider 的 manifest 定义,加在 `
   上游身份,通过后与其它凭证同一套 Fernet 信封加密写库,`auth_kind="token"`。
 - `account` 由 provider 决定(如 `integration:<bot_id>`、`token:<账号 id>`);同账号
   同 provider 同 account 重复粘贴**幂等复用同一行**。
-- 静态令牌一般没有 `expires_at`/`refresh_token`,不参与惰性刷新与巡检;上游返回
-  401 时连接置 `expired`,用户重新粘贴即可。
+- 静态令牌一般没有 `expires_at`/`refresh_token`。GitHub provider 对无 refresh token
+  的 `refresh` 原样返回(no-op),所以巡检扫到也不会失效;其它 provider 若不做这个
+  特判,平台会按刷新失败把连接置 `expired`。上游返回 401 时连接置 `expired`,用户
+  重新粘贴即可。
 - 校验失败返回 400 `connector.invalid_credentials`(不区分上游错误码);provider 未
   声明该能力返回 400 `connector.token_not_supported`。
 
 测试参考 `tests/demo_provider.py` 的 `token_connectable` 与 `connect_with_token`,
 用例见 `tests/test_token_connect.py`。
+
+## GitHub provider
+
+内置 provider key `github`，使用 **GitHub App 的 user-to-server token**（用户以自己身份授权），
+OAuth 全程 PKCE S256 + `scope=offline_access`。授权/换码/刷新实现在
+`connector/providers/github.py`，工具在 `github_tools.py`，REST 客户端与错误映射在
+`github_api.py`。
+
+- **启用**：`CONNECTOR__PROVIDERS_ENABLED=github` +
+  `CONNECTOR__GITHUB_CLIENT_ID` / `CONNECTOR__GITHUB_CLIENT_SECRET`。缺凭证时目录仍展示
+  GitHub 但 `configured=false`，OAuth 授权 409 `connector.provider_not_configured`。
+- **Callback URL**：`{CONNECTOR__OAUTH_REDIRECT_BASE}/v1/oauth/github/callback`，必须与
+  GitHub App 后台登记的 Callback URL 逐字一致；经网关时通常为
+  `https://api.beautymoon.cn/api/connector/v1/oauth/github/callback`。
+- **App 配置**：Permissions = Metadata R / Contents RW / Issues RW / Pull requests RW；
+  Optional Features 开启 **Expire user authorization tokens**；不需要 webhook，不上传私钥。
+- **token 生命周期**：access 8h、refresh 6 个月；每次 refresh 轮换，provider 把新
+  refresh token 放回 `Credentials`，由平台在行锁内同事务写回。若响应缺
+  `refresh_token`/`expires_in`（兜底场景），授权失败并提示开启 Expire 选项。
+- **PAT**：`token_connectable=True`，用户可粘贴 GitHub PAT 快速建连接（`auth_kind=token`）。
+  `account` 取 `login`；同一账号先 OAuth 后 PAT 会复用同一连接行并覆盖为 token 连接。
+- **0 安装坑**：`GET /user/installations` 的结果写入 `Identity.metadata`
+  （`has_installation` / `installations`），0 安装时 `has_installation=false`。当前
+  `ConnectionRead` 不暴露 `provider_metadata`，前端提示尚未接。
+- **工具**：8 读（`list_repositories`、`get_repository`、`get_file_contents`、
+  `search_code`、`list_issues`、`get_issue`、`list_pull_requests`、
+  `get_pull_request`）+ 3 写（`create_issue`、`create_issue_comment`、
+  `create_pull_request`）。写工具重放同参数会重复生效（与 Notion `append_blocks` 同级
+  限制，v1 不发明幂等键）。
+- **测试**：`tests/github_mock.py` 是全 MockTransport 的进程内上游；平台链路见
+  `tests/test_github_auth.py` / `test_github_tools.py` / `test_github_platform.py`。
 
 ## Notion 等产品:改走 MCP
 
@@ -135,6 +170,18 @@ provider 是**代码 manifest + 网络行为**,没有 YAML/builder:
 5. 补测试:上游用 `httpx.MockTransport` 打桩(平台链路参考 `tests/conftest.py`
    的 DemoMock 与 `tests/demo_provider.py`),零网络、零外呼;新 provider 也要覆盖
    授权/刷新/执行/错误映射分支,支持令牌连接时补 `tests/test_token_connect.py`。
+
+**以 GitHub 为例的完整参考**:
+
+- 授权/刷新/身份:`connector/providers/github.py`;工具清单与分派:
+  `connector/providers/github_tools.py`;HTTP 与错误映射:
+  `connector/providers/github_api.py`。
+- 注册:在 `connector/providers/__init__.py` 的 `_REGISTRY` 加
+  `"github": GithubProvider`;配置字段加在 `connector/core/config.py`。
+- 测试:`tests/github_mock.py` 模拟 token 端点与 REST(含限流、404/422、diff、
+  目录/文件/base64/截断);`tests/test_github_auth.py` 覆盖 PKCE/换码/轮换/身份,
+  `tests/test_github_tools.py` 覆盖 11 个工具与 §5.7 错误矩阵,
+  `tests/test_github_platform.py` 覆盖 OAuth 回调、PAT、目录 descriptor、刷新与 outbox。
 
 ## 账号级应用凭证(account_apps)
 

@@ -1,8 +1,8 @@
 /**
- * connector-service 的 provider 目录区(旧连接器体验)。
+ * connector-service 的直连 provider 目录区(GitHub 等)。
  *
- * /connectors 现在是 MCP 预设页,这段目录只在后端还返回 provider 时渲染
- * (providers.length > 0);组件原样保留,后端目录下线后自然不再出现。
+ * 只在后端启用并返回 provider 时渲染(providers.length > 0);GitHub 卡片
+ * 同时给出 GitHub App OAuth 与粘贴 PAT 两个入口,并提示 App 安装这一前置条件。
  * 页面只传模型,区块内部的加载/错误/空态与原来一致。
  */
 import { Cable } from 'lucide-react';
@@ -32,6 +32,9 @@ export function ConnectorCatalogSection({ model }: { model: ConnectorsModel }) {
   const unconfigured = model.providers.filter(
     (provider) =>
       provider.configured === false && provider.token_connectable !== true,
+  );
+  const github = model.providers.find(
+    (provider) => provider.provider === 'github',
   );
 
   if (loading) {
@@ -71,7 +74,7 @@ export function ConnectorCatalogSection({ model }: { model: ConnectorsModel }) {
       <EmptyPanel
         icon={<Cable aria-hidden className="size-6" />}
         title="暂无可用连接器"
-        description="后端还没有内置 provider；后续上线后会出现在这里。"
+        description="后端暂未启用直连连接器；在 connector-service 配置 PROVIDERS_ENABLED 后会出现在这里。"
       />
     );
   }
@@ -132,9 +135,27 @@ export function ConnectorCatalogSection({ model }: { model: ConnectorsModel }) {
         ))}
       </div>
 
+      {github ? (
+        <div
+          role="note"
+          className="space-y-1 rounded-lg border border-ha-border bg-ha-panel-2 px-3 py-2 text-xs leading-5 text-ha-text-2"
+        >
+          <p className="font-medium text-ha-text">GitHub 连接说明</p>
+          <p>
+            {github.configured === false
+              ? '「连接」走 GitHub App 授权，但服务端尚未配置 App 凭证；可先用「粘贴令牌连接」粘贴 PAT。'
+              : '「连接」走 GitHub App 授权；「粘贴令牌连接」使用个人访问令牌（PAT），适合快速试用。'}
+          </p>
+          <p>
+            授权后还需要把 GitHub App 安装到至少一个仓库，否则仓库、Issue 与 PR
+            工具会因无权限失败。
+          </p>
+        </div>
+      ) : null}
+
       <p className="text-xs leading-5 text-ha-muted">
         凭证经服务端加密保存，读取接口永不返回；授权在第三方页面完成，
-        本页不接触 access token。scope 变更或过期后需要重新连接。
+        本页不接触 access token。授权失效或过期后需要重新连接。
       </p>
     </div>
   );

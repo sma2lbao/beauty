@@ -48,6 +48,9 @@ export function authKindLabel(authKind?: string | null): string {
   switch ((authKind ?? '').toLowerCase()) {
     case 'oauth_user':
       return '用户授权(OAuth)';
+    case 'user':
+      // GitHub App user-to-server:权限由 App 后台配置,不在 scope 里表达
+      return '用户授权';
     case 'token':
     case 'api_key':
       return '访问令牌';
@@ -72,6 +75,12 @@ export function connectionName(
 }
 
 /**
+ * 不是权限的 OAuth 参数:GitHub 的 offline_access 只用来申请可刷新令牌,
+ * 不会出现在 token 响应的 scope 里,不能据此提示「缺少权限」。
+ */
+const NON_PERMISSION_SCOPES = new Set(['offline_access']);
+
+/**
  * 已授予但缺少的 scope(期望 - 已授予);用于提示重新连接补权限。
  * 连接 DTO 不返回期望 scope,优先用 provider 目录里的 manifest scope。
  */
@@ -82,7 +91,9 @@ export function missingScopes(
   if (!connection) return [];
   const expected = provider?.scopes ?? connection.expected_scopes ?? [];
   const granted = new Set(connection.scopes ?? []);
-  return expected.filter((scope) => !granted.has(scope));
+  return expected.filter(
+    (scope) => !NON_PERMISSION_SCOPES.has(scope) && !granted.has(scope),
+  );
 }
 
 /** 工具清单:连接上快照优先,回落到 provider manifest。 */

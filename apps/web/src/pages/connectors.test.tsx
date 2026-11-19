@@ -105,6 +105,21 @@ const tokenConnectableProvider: ConnectorProvider = {
   token_connectable: true,
 };
 
+/** 内置 GitHub provider:user-to-server,App 授权与 PAT 两种连接方式。 */
+const githubProvider: ConnectorProvider = {
+  provider: 'github',
+  display_name: 'GitHub',
+  description: '读写仓库、Issue 与 PR。',
+  auth_kind: 'user',
+  scopes: ['offline_access'],
+  configured: true,
+  token_connectable: true,
+  tools: [
+    { name: 'Github__get_repository', description: '读取仓库', risk: 'read' },
+    { name: 'Github__create_issue', description: '创建 Issue', risk: 'write' },
+  ],
+};
+
 const tokenConnection: ConnectorConnection = {
   id: 'c9',
   provider: 'notion',
@@ -115,6 +130,19 @@ const tokenConnection: ConnectorConnection = {
   scopes: ['read_content'],
   created_at: '2026-11-04T08:00:00+00:00',
   updated_at: '2026-11-04T08:00:00+00:00',
+};
+
+const githubConnection: ConnectorConnection = {
+  id: 'c-gh',
+  provider: 'github',
+  status: 'active',
+  account: 'octocat',
+  auth_kind: 'user',
+  enabled: true,
+  // GitHub 的 token 响应 scope 恒为空串,offline_access 不回流
+  scopes: [],
+  created_at: '2026-11-19T08:00:00+00:00',
+  updated_at: '2026-11-19T08:00:00+00:00',
 };
 
 const activeConnection: ConnectorConnection = {
@@ -238,6 +266,7 @@ describe('ConnectorsPage', () => {
       resolveProviders([demoProvider, notionProvider]);
     });
 
+    expect(await screen.findByText('直连连接器')).toBeTruthy();
     expect(await screen.findByText('示例连接器')).toBeTruthy();
     expect(screen.getByText('Notion')).toBeTruthy();
     expect(screen.getByText('me@example.com')).toBeTruthy();
@@ -361,6 +390,68 @@ describe('ConnectorsPage', () => {
     ).toBeTruthy();
   });
 
+  it('GitHub 出现在直连区,App 授权与 PAT 入口都可用', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([githubProvider]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText('直连连接器')).toBeTruthy();
+    expect(screen.getByText('GitHub')).toBeTruthy();
+    expect(screen.getByText(/用户授权 · 2 个工具/)).toBeTruthy();
+    expect(screen.getByText(/安装到至少一个仓库/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '连接 GitHub' })).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '粘贴令牌连接 GitHub' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: /粘贴令牌连接 GitHub/,
+    });
+    expect(within(dialog).getByText(/Personal access tokens/)).toBeTruthy();
+    expect(within(dialog).getByLabelText('个人访问令牌')).toBeTruthy();
+    expect(
+      within(dialog).getByPlaceholderText('github_pat_... 或 ghp_...'),
+    ).toBeTruthy();
+  });
+
+  it('GitHub 连接不把 offline_access 误报为缺失权限', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([githubProvider]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([
+      githubConnection,
+    ]);
+    renderPage();
+
+    await screen.findByText('GitHub');
+    fireEvent.click(screen.getByRole('button', { name: '管理 GitHub' }));
+
+    const dialog = await screen.findByRole('dialog', {
+      name: /octocat 连接详情/,
+    });
+    expect(within(dialog).queryByText(/缺少 1 项授权权限/)).toBeNull();
+    expect(
+      within(dialog).getByText(
+        'GitHub App 的权限在 App 后台配置，连接不返回 scope。',
+      ),
+    ).toBeTruthy();
+    expect(within(dialog).getAllByText('用户授权').length).toBeGreaterThan(0);
+  });
+
+  it('GitHub 与 Notion 同时展示在连接器页', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([githubProvider]);
+    vi.mocked(connectorApi.listConnections).mockResolvedValue([
+      githubConnection,
+    ]);
+    vi.mocked(mcpPresetsApi.list).mockResolvedValue([notionPreset]);
+    renderPage();
+
+    expect(await screen.findByText('直连连接器')).toBeTruthy();
+    expect(await screen.findByText('MCP 预设连接器')).toBeTruthy();
+    expect(screen.getByText('GitHub')).toBeTruthy();
+    expect(screen.getByText('Notion')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '管理 GitHub' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '连接 Notion' })).toBeTruthy();
+  });
+
   it('token_connectable 缺省时不显示粘贴令牌入口', async () => {
     renderPage();
 
@@ -376,7 +467,7 @@ describe('ConnectorsPage', () => {
 
     expect(await screen.findByText('暂无 MCP 预设')).toBeTruthy();
     expect(screen.queryByText('暂无可用连接器')).toBeNull();
-    expect(screen.queryByText('其它连接器')).toBeNull();
+    expect(screen.queryByText('直连连接器')).toBeNull();
   });
 
   it('MCP 预设加载失败展示错误与重试', async () => {

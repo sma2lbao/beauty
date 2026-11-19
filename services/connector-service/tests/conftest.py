@@ -3,9 +3,9 @@
 库/客户端样板来自 common.service_testkit(见 AGENTS.md「测试编排」)。
 连接行仍直接落库,但授权回调会用真实端点建连接。
 
-生产注册表里没有内置 provider;平台链路的测试一律用 tests.demo_provider 里的
-测试专用实现(provider key "demo"),在 import 本模块时注册进 _REGISTRY(它也覆盖
-静态令牌连接等平台能力)。
+生产注册表内置 GitHub;平台链路的测试仍用 tests.demo_provider 里的测试专用实现
+(provider key "demo"),在 import 本模块时额外注册进 _REGISTRY(它也覆盖静态令牌
+连接等平台能力)。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from connector.main import create_app
 from connector.providers import _REGISTRY
 from tests.demo_provider import DemoProvider
 
-# 测试进程内注册唯一的 provider(生产代码不内置任何 provider)
+# 测试进程内再注册一个 demo provider,平台链路测试不依赖真实 GitHub
 _REGISTRY[DemoProvider.name] = DemoProvider
 
 _IDP = TestIdP()
@@ -221,6 +221,9 @@ _settings = settings_factory(
     defaults={
         # 目录只暴露启用列表里的 provider;测试启用测试专用 demo
         "providers_enabled": "demo",
+        # 钉住 GitHub 凭证,避免宿主/ Nx 注入的 CONNECTOR__GITHUB_* 改变测试语义
+        "github_client_id": "",
+        "github_client_secret": "",
         "internal_secret": INTERNAL_SECRET,
         "oauth_redirect_base": "http://testserver",
         "oauth_success_redirect": "http://web.test/connectors",

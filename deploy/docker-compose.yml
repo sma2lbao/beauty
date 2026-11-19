@@ -221,10 +221,11 @@ services:
       CONNECTOR__AUTO_CREATE_TABLES: 'false'
       CONNECTOR__AUTH_ENABLED: 'false'
       CONNECTOR__CREDENTIAL_SECRET: ${CONNECTOR_CREDENTIAL_SECRET:-compose-demo-connector-secret-change-me}
-      # 当前无内置 provider(目录为空):内置 Notion provider 已于 2026-11-04 移除。
-      # Notion 改走官方 MCP(https://mcp.notion.com/mcp):在 Web /connectors 一键授权,
-      # 凭证由 agent-orchestrator 的 mcp_server_auth 托管,本服务不再需要 NOTION_* 变量。
-      # 接入新 provider 时再设 CONNECTOR__PROVIDERS_ENABLED=<key> 并补对应凭证。
+      # 内置 GitHub provider(GitHub App user-to-server token);凭证留空时目录仍展示但
+      # configured=false。Notion 走官方 MCP(https://mcp.notion.com/mcp),不经过本服务。
+      CONNECTOR__PROVIDERS_ENABLED: ${CONNECTOR_PROVIDERS_ENABLED:-github}
+      CONNECTOR__GITHUB_CLIENT_ID: ${CONNECTOR_GITHUB_CLIENT_ID:-}
+      CONNECTOR__GITHUB_CLIENT_SECRET: ${CONNECTOR_GITHUB_CLIENT_SECRET:-}
       CONNECTOR__INTERNAL_SECRET: ${CONNECTOR_INTERNAL_SECRET:-compose-demo-connector-internal-secret}
       # 浏览器回跳经同源网关 → connector-service;须与 provider 后台登记的重定向 URL 一致。
       CONNECTOR__OAUTH_REDIRECT_BASE: ${CONNECTOR_OAUTH_REDIRECT_BASE:-http://localhost:8080/api/connector}
@@ -427,7 +428,10 @@ services:
       - langfuse-clickhouse-logs:/var/log/clickhouse-server
     healthcheck:
       test:
-        ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1']
+        [
+          'CMD-SHELL',
+          'wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1',
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -466,7 +470,8 @@ services:
     volumes:
       - langfuse-redis-data:/data
     healthcheck:
-      test: ['CMD-SHELL', 'redis-cli -a langfuse-demo-password ping | grep -q PONG']
+      test:
+        ['CMD-SHELL', 'redis-cli -a langfuse-demo-password ping | grep -q PONG']
       interval: 3s
       timeout: 5s
       retries: 20
@@ -542,4 +547,3 @@ volumes:
   langfuse-clickhouse-logs:
   langfuse-minio-data:
   langfuse-redis-data:
-

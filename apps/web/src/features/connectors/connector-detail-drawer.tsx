@@ -231,7 +231,9 @@ export function ConnectorDetailDrawer({
               </ul>
             ) : (
               <p className="text-xs text-ha-muted">
-                后端未返回已授予的 scope。
+                {provider?.provider === 'github'
+                  ? 'GitHub App 的权限在 App 后台配置，连接不返回 scope。'
+                  : '后端未返回已授予的 scope。'}
               </p>
             )}
           </section>

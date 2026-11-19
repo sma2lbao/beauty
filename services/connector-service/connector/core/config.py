@@ -1,9 +1,9 @@
 """服务配置(env 前缀 CONNECTOR__,公共字段见 common.service_kit)。
 
 连接器平台:provider 由代码 manifest 注册(见 connector.providers),配置只负责
-「启用哪些 provider」与各自的应用凭证。当前仓库没有内置 provider(Notion 等产品
-改走 MCP 接入);新增 provider 后由它自己声明配置字段。未配置应用凭证时 provider
-仍出现在目录里但标记未配置。
+「启用哪些 provider」与各自的应用凭证。当前内置 GitHub(Notion 等产品改走 MCP
+接入);新增 provider 后由它自己声明配置字段。未配置应用凭证时 provider 仍出现
+在目录里但标记未配置。
 """
 
 from __future__ import annotations
@@ -23,14 +23,20 @@ class Settings(ServiceSettings):
     service_name: str = "connector-service"
     # 本地默认连 deploy/docker-compose.yml 的 postgres:16(每服务独立库);
     # 测试走临时 SQLite、离线场景用 SQLite 覆盖,生产用 CONNECTOR__DATABASE_URL 覆盖
-    database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_connector"
+    database_url: str = (
+        "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_connector"
+    )
     # 连接凭证应用层加密密钥(生产必须换随机长密钥/KMS)
     credential_secret: str = "dev-connector-secret-change-me"
 
     # ── 连接器平台 ────────────────────────────────────────────────────────
     # 启用的 provider(逗号分隔);代码里没有对应 manifest 的名字会被忽略。
-    # 当前仓库没有内置 provider,默认空;新增 provider 后在此登记 key。
+    # 当前内置 github,默认空;启用写 CONNECTOR__PROVIDERS_ENABLED=github。
     providers_enabled: str = ""
+    # GitHub App 凭证(与 account-service 的 GitHub OAuth App 登录不同,不能复用)。
+    # 未配置时 provider 仍出现在目录里,但标记 configured=false。
+    github_client_id: str = ""
+    github_client_secret: str = ""
     # 服务间内部调用鉴权(X-Internal-Secret);留空 = 内部端点整体关闭(401)。
     internal_secret: str = ""
     # OAuth 回调基址:redirect_uri = {base}/v1/oauth/{provider}/callback,

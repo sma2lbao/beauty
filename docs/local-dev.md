@@ -59,7 +59,7 @@ npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
-connector-service(:8004)是通用连接器平台(OAuth 授权会话/凭证托管/刷新巡检/outbox;当前无内置 provider),Web 端 `/connectors` 页面已改为 **MCP 预设连接器**(Notion 一键授权,Notion 经官方 MCP 接入);邮件与日历能力已下线。
+connector-service(:8004)是通用连接器平台(OAuth 授权会话/凭证托管/刷新巡检/outbox;内置 GitHub provider),Web 端 `/connectors` 页面已改为 **MCP 预设连接器**(Notion 一键授权,Notion 经官方 MCP 接入);邮件与日历能力已下线。
 
 打开 http://localhost:5173。
 
@@ -95,7 +95,7 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
 
 ## 3.2 连接器平台与 MCP 预设(Notion 走 MCP)
 
-- **定位**:connector-service(:8004) 是**通用连接器平台**(OAuth 授权会话、凭证托管、连接生命周期:刷新单飞 + 24h 巡检 + outbox 生命周期事件;支持 OAuth 授权与静态令牌两种连接方式)。**当前无内置 provider**(`connector/providers/` 目录为空):内置飞书 provider 已于 2026-11-04 上旬移除,内置 Notion provider 也已于 2026-11-04 二次规划移除。设计见 [design/connector.md](./design/connector.md)。
+- **定位**:connector-service(:8004) 是**通用连接器平台**(OAuth 授权会话、凭证托管、连接生命周期:刷新单飞 + 24h 巡检 + outbox 生命周期事件;支持 OAuth 授权与静态令牌两种连接方式)。**内置 GitHub provider**:GitHub App user-to-server,8 读 + 3 写,配置 `CONNECTOR__GITHUB_CLIENT_ID/SECRET` 并设 `CONNECTOR__PROVIDERS_ENABLED=github`;内置飞书 provider 已于 2026-11-04 上旬移除,内置 Notion provider 也已于 2026-11-04 二次规划移除(Notion 走官方 MCP)。设计见 [design/connector.md](./design/connector.md)。
 - **Notion 改走官方 MCP**(`https://mcp.notion.com/mcp`):凭证、工具与授权都在 **agent-orchestrator** 侧(`mcp_server_auth` + `mcp_oauth`),不再经过 connector-service;`/connectors` 页面从「provider 目录」改为 **MCP 预设连接器**(一键授权)+「我的 MCP 服务」区(自定义 server),已是 MCP 的唯一入口(侧栏不再单列)。
 - **三步用起来**:
   1. 启动服务(`connector-service` 无需任何 Notion 凭证;确认 `agent-orchestrator` 的 `AGENT_ORCHESTRATOR__MCP_OAUTH_*` 开启,默认开)。
@@ -104,8 +104,8 @@ OAuth 按钮只有在 account-service 配了 client id/secret 时才可用;本�
   3. 回会话(`/`),在输入区「MCP」选择器里选 `Notion`(或深链 `/?mcp=<server_id>`),让模型用 Notion 工具;不选 = 装配全部已启用 server 的 MCP 工具。
 - **工具面**:以 server `tools/list` 为准(当前约 70 个),命名 `mcp__notion__<tool>`;风险按工具粒度分级(`annotations` + 预设只读前缀,详见 [design/connector.md](./design/connector.md) §7):只读工具直接执行;写工具在对话里出确认卡(`/v1/conversations/{cid}/tool-confirmations/*`);`destructiveHint=true` 等 DANGER 工具不进对话。
 - **默认只授权了什么**:预设 server 以 `auto_approve=false` 创建——未声明 `readOnlyHint`、也未命中预设只读前缀的工具一律按 DANGER 处理(对话里不执行);把连接器页「我的 MCP 服务」的 server 详情「免确认执行」打开后,这类工具降为 WRITE,对话里出确认卡后执行。这比内置 provider 时的直连写更保守,属预期行为。
-- **接口(MCP 预设)**:`GET /v1/mcp/presets`(预设目录)、`POST /v1/mcp/presets/{key}`(幂等 ensure server)、`POST /v1/mcp/servers/{id}/oauth/start`(body 可带 `{"next":"/mcp"|"/connectors"}`,决定回调 302 落点)、`GET /v1/mcp/servers`(连接状态:`has_oauth`/`oauth_authorized`/工具数等)。旧 provider 接口(`/v1/connectors`、`/v1/connections` 等)仍保留,但目录为空,仅对未来 provider 生效。
-- **执行链(平台侧,保留)**:orchestrator → tool-service(`TOOL__CONNECTOR_*`)→ connector-service(工具名 `<Provider>__<tool>`;`risk=write` 走对话确认)——当前无 provider 时不会装配任何连接器工具。
+- **接口(MCP 预设)**:`GET /v1/mcp/presets`(预设目录)、`POST /v1/mcp/presets/{key}`(幂等 ensure server)、`POST /v1/mcp/servers/{id}/oauth/start`(body 可带 `{"next":"/mcp"|"/connectors"}`,决定回调 302 落点)、`GET /v1/mcp/servers`(连接状态:`has_oauth`/`oauth_authorized`/工具数等)。旧 provider 接口(`/v1/connectors`、`/v1/connections` 等)仍保留,GitHub 使用这些接口;未启用 provider 时目录为空。
+- **执行链(平台侧,保留)**:orchestrator → tool-service(`TOOL__CONNECTOR_*`)→ connector-service(工具名 `<Provider>__<tool>`;`risk=write` 走对话确认)——未启用任何 provider(或没有 active 连接)时不会装配连接器工具。
 - **已删除**:IMAP/SMTP 邮件连接与收发、Gmail / Microsoft 365 OAuth 授权、日历事件 CRUD;内置飞书 provider(2026-11-04);内置 Notion provider 及其 `CONNECTOR__NOTION_*` 配置(2026-11-04 二次规划,Notion 改 MCP)。
 
 ## 3.3 MCP Client（第三方工具）

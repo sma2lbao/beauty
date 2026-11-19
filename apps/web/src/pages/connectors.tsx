@@ -1,12 +1,13 @@
 /**
- * 连接器页 = MCP 预设连接器(主)+ 我的 MCP 服务(自定义 server)+ provider 目录(旧)。
+ * 连接器页 = 直连连接器(GitHub 等)+ MCP 预设连接器 + 我的 MCP 服务。
  *
- * 第一段:Notion 等内置 MCP 预设,一键「幂等创建 server → 浏览器 OAuth → 回跳」,
+ * 第一段:connector-service 的 provider 目录(GitHub 等),只在后端启用 provider 时
+ * 渲染;未连接给「连接」(GitHub App OAuth)与「粘贴令牌连接」(PAT),已连接给
+ * 「去对话」「管理」。
+ * 第二段:Notion 等内置 MCP 预设,一键「幂等创建 server → 浏览器 OAuth → 回跳」,
  * 已连接给「去会话使用」(/ ?mcp=<server_id>)与「管理」(本页 #mcp-servers)。
- * 第二段:原 /mcp 页的管理区(注册/测试/启停/删除/免确认开关)内嵌到本页,
+ * 第三段:原 /mcp 页的管理区(注册/测试/启停/删除/免确认开关)内嵌到本页,
  * 连接器页成为 MCP 的唯一入口;/mcp 路由保留为旧书签与 OAuth 校验失败时的兜底落点。
- * 第三段:旧 provider 目录只在后端还返回 provider 时渲染(当前 connector-service
- * 无内置 provider,即隐藏),组件与旧测试都保留。
  *
  * 页面只做组装:数据/动作分别在 use-connector-presets 与 use-connectors-model。
  * 安全边界:凭证永不出后端;授权一律整页跳第三方,本页不接触 access token。
@@ -93,7 +94,11 @@ export function ConnectorsPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
         title="连接器"
-        subtitle="MCP 预设一键授权 · 自定义 MCP server 注册与工具权限 · 凭证只存在服务端"
+        subtitle={
+          model.providers.length > 0
+            ? 'GitHub 等直连连接器 · Notion 等 MCP 预设一键授权 · 凭证只存在服务端'
+            : 'Notion 等 MCP 预设一键授权 · 自定义 MCP server 注册与工具权限 · 凭证只存在服务端'
+        }
         actions={
           <ConsoleButton
             variant="secondary"
@@ -108,6 +113,26 @@ export function ConnectorsPage() {
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
+        {model.providers.length > 0 ? (
+          <section
+            aria-labelledby="connector-catalog-heading"
+            className="mb-10 space-y-4"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <h2
+                id="connector-catalog-heading"
+                className="text-sm font-medium text-ha-text"
+              >
+                直连连接器
+              </h2>
+              <p className="text-xs text-ha-dim">
+                GitHub 等应用级连接器；Notion 等在下方 MCP 预设区
+              </p>
+            </div>
+            <ConnectorCatalogSection model={model} />
+          </section>
+        ) : null}
+
         <section aria-labelledby="mcp-presets-heading" className="space-y-4">
           <div className="flex items-baseline justify-between gap-3">
             <h2
@@ -117,7 +142,7 @@ export function ConnectorsPage() {
               MCP 预设连接器
             </h2>
             <p className="text-xs text-ha-dim">
-              授权在第三方页面完成，完成即可在会话里调用
+              Notion 等官方 MCP，授权在第三方页面完成
             </p>
           </div>
 
@@ -246,21 +271,6 @@ export function ConnectorsPage() {
           </div>
           <McpManagementSection model={mcpModel} showOAuthNotice={false} />
         </section>
-
-        {model.providers.length > 0 ? (
-          <section
-            aria-labelledby="connector-catalog-heading"
-            className="mt-8 space-y-4"
-          >
-            <h2
-              id="connector-catalog-heading"
-              className="text-sm font-medium text-ha-text"
-            >
-              其它连接器
-            </h2>
-            <ConnectorCatalogSection model={model} />
-          </section>
-        ) : null}
       </div>
 
       {selectedConnection ? (
@@ -293,6 +303,7 @@ export function ConnectorsPage() {
 
       <ConnectorTokenDialog
         open={tokenProvider !== null}
+        providerKey={tokenProvider}
         providerName={tokenProviderName}
         pending={tokenConnecting}
         error={tokenConnectError}

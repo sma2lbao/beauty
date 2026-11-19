@@ -1,14 +1,15 @@
 # 连接器平台（Connector Platform）设计
 
-> 状态：已实现（P1 平台骨架；2026-11-04 二次调整后**无内置 provider**，Notion 改走官方 MCP） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、移除内置 Notion provider
+> 状态：已实现（P1 平台骨架 + 内置 GitHub provider；Notion 走官方 MCP） · 2026-11-03 定稿 / 2026-11-04 回填实现状态、移除内置 Notion provider / 2026-11-19 新增内置 GitHub provider
 > 关联：[architecture.md](../architecture.md) §8.2（MCP client）、§11.2（审批）、[tool-service.md](./tool-service.md)、[01-workbuddy.md](../research/connector/01-workbuddy.md)、[02-mainstream.md](../research/connector/02-mainstream.md)、[03-feishu-notion.md](../research/connector/03-feishu-notion.md)
 > 定位：本文是「连接器」这一能力域的单一真源，回答**做什么、照谁做、先做哪个、按什么顺序做**；服务边界仍以 [architecture.md](../architecture.md) 为准。
-> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；**内置 provider 目录为空**：内置飞书 provider（2026-11-04 上旬移除）与内置 **Notion** provider（provider key `notion`、4 只读 + 2 写工具）均已按 2026-11-04 二次规划移除，平台 API、`account_apps` 与静态令牌连接能力保留给后续 provider。**Notion 现通过官方 MCP 接入**（`https://mcp.notion.com/mcp`，见 §6）：`/connectors` 改为 MCP 预设连接器页（MCP 唯一入口：预设卡片 + 页内「我的 MCP 服务」区；侧栏不再单列 MCP，`/mcp` 仅兼容直链），一键授权后由 agent-orchestrator 的 MCP client 托管凭证与工具，风险按 MCP 工具 `annotations` + 预设只读前缀分档（§7）；对话内写操作确认链路（`chat_tool_confirmations`）保留，对 `risk=write` 的 MCP 工具同样生效。P3 剩余连接详情授权展示（组织共享连接已随账号模型改造移除）与 P4（其他 provider）未开始。
-> **2026-11-04 规划变更（二次）**：删除内置 Notion provider（`connector/providers/notion.py`、`CONNECTOR__NOTION_*` 配置项与 Notion provider 专项测试），connector-service 收敛为**通用连接器平台（当前无内置 provider）**；Notion 改为官方 MCP `https://mcp.notion.com/mcp`，`/connectors` 页面改为 **MCP 预设连接器（一键授权）+「我的 MCP 服务」区**（MCP 唯一入口，侧栏不再单列；`/mcp` 仅兼容直链）；agent-orchestrator 按 MCP 工具 `annotations` + 预设 read 前缀做风险分级（读直接执行、写在对话内出确认卡、破坏性工具不进对话，见 §7）。平台骨架/页面/执行面/审计保留。
+> 现状：P1 平台已落地——授权会话、连接 CRUD/撤销、刷新单飞 + 24h 巡检、outbox 生命周期事件、tool-service 执行面与 `/connectors` 页面；**内置 provider：GitHub**（GitHub App user-to-server，8 读 + 3 写，见 §5.9）。内置飞书 provider（2026-11-04 上旬移除）与内置 **Notion** provider（provider key `notion`、4 只读 + 2 写工具）均已按 2026-11-04 二次规划移除，平台 API、`account_apps` 与静态令牌连接能力保留给后续 provider。**Notion 现通过官方 MCP 接入**（`https://mcp.notion.com/mcp`，见 §6）：`/connectors` 改为 MCP 预设连接器页（MCP 唯一入口：预设卡片 + 页内「我的 MCP 服务」区；侧栏不再单列 MCP，`/mcp` 仅兼容直链），一键授权后由 agent-orchestrator 的 MCP client 托管凭证与工具，风险按 MCP 工具 `annotations` + 预设只读前缀分档（§7）；对话内写操作确认链路（`chat_tool_confirmations`）保留，对 `risk=write` 的 MCP 工具同样生效。P3 剩余连接详情授权展示（组织共享连接已随账号模型改造移除）与 P4（其他 provider）未开始。
+> **2026-11-19 更新**：新增内置 GitHub provider（`connector/providers/github.py`，GitHub App user-to-server token、PKCE S256、11 个工具），配置 `CONNECTOR__GITHUB_CLIENT_ID/SECRET`，`CONNECTOR__PROVIDERS_ENABLED=github` 启用；详见 §5.9。
+> **2026-11-04 规划变更（二次）**：删除内置 Notion provider（`connector/providers/notion.py`、`CONNECTOR__NOTION_*` 配置项与 Notion provider 专项测试），connector-service 收敛为**通用连接器平台（当时无内置 provider；2026-11-19 新增 GitHub，见 §5.9）**；Notion 改为官方 MCP `https://mcp.notion.com/mcp`，`/connectors` 页面改为 **MCP 预设连接器（一键授权）+「我的 MCP 服务」区**（MCP 唯一入口，侧栏不再单列；`/mcp` 仅兼容直链）；agent-orchestrator 按 MCP 工具 `annotations` + 预设 read 前缀做风险分级（读直接执行、写在对话内出确认卡、破坏性工具不进对话，见 §7）。平台骨架/页面/执行面/审计保留。
 
 ## 1. 摘要
 
-一句话：把 `connector-service`（:8004）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明。2026-11-04 二次调整后**平台保留、内置 provider 目录为空**；Notion 不再内置，改由 agent-orchestrator 的 MCP client 接官方 MCP（`https://mcp.notion.com/mcp`），`/connectors` 变为 MCP 预设连接器（一键授权）+「我的 MCP 服务」区，成为 MCP 唯一入口（`/mcp` 仅兼容直链）。
+一句话：把 `connector-service`（:8004）升级为**连接器平台**——统一承载 OAuth 授权、凭证托管、token 刷新、工具暴露与执行代理；连接器本体用**代码 manifest** 声明。2026-11-04 二次调整后**平台保留**；2026-11-19 起内置 GitHub provider（§5.9）。Notion 不再内置，改由 agent-orchestrator 的 MCP client 接官方 MCP（`https://mcp.notion.com/mcp`），`/connectors` 变为 MCP 预设连接器（一键授权）+「我的 MCP 服务」区，成为 MCP 唯一入口（`/mcp` 仅兼容直链）。
 
 三条主线（也是本稿与「直接接 MCP」的分野）：
 
@@ -20,7 +21,7 @@
 
 | #   | 决策                                                                                                                                                                                                                                                     | 理由 / 依据                                                                                                                                                                     |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/<key>.py`），能力用**代码 manifest** 声明，不引入 YAML / builder（当前目录为空：内置 Notion provider 已移除，见 §6）                                                          | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据                                        |
+| D1  | **connector-service 做平台层**；每 provider 一个模块（`connector/providers/<key>.py`），能力用**代码 manifest** 声明，不引入 YAML / builder（当前内置 GitHub，见 §5.9；内置 Notion provider 已移除，见 §6）                                              | 定义层与连接层分离（Composio AuthConfig vs ConnectedAccount）；Nango 已废弃 `nango.yaml`（带 YAML 的部署被直接拒绝），是最有力的反向证据                                        |
 | D2  | 连接**归属到授权用户**（`owner_subject`），账号内可见；无跨账号共享连接（账号即边界）                                                                                                                                                                    | 撤销与审计必须能回答「谁授权的」；现状 `connections` 无归属字段是明确缺口                                                                                                       |
 | D3  | 授权走**服务端一次性授权会话**：`oauth_sessions` 存 state nonce / PKCE verifier / account / user / redirect / 过期，回调用 nonce 换回身份                                                                                                                | state 只放随机数、身份靠服务端行查回；RFC 9700 强制 PKCE(S256)、精确 redirect、禁隐式流                                                                                         |
 | D4  | **凭证零出口**：agent 侧新增 `/v1/connections/{id}/execute`，由 connector-service 解密并注入 token；token 不下发给 tool-service 或前端                                                                                                                   | WorkBuddy `server-side`、Composio Proxy Execute、Arcade token vault 同构；解密点收敛到一处，泄漏面可控                                                                          |
@@ -36,14 +37,14 @@
 
 ### 1.2 分期
 
-| 期  | 内容                                                                                | 可回滚性                        | 状态                          |
-| --- | ----------------------------------------------------------------------------------- | ------------------------------- | ----------------------------- |
-| P0  | 决策确认（§9.1）+ 迁表设计                                                          | —                               | 已定稿                        |
-| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表            | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现（当前无内置 provider） |
-| P2  | 内置 Notion provider（4 只读 + 2 写工具）+ 前端 `/connectors` + tool-service 执行面 | 同上（按 provider 关）          | 已实现后撤销（2026-11-04）    |
-| P3  | 连接详情授权展示（组织共享连接已移除；内置写工具部分随 provider 移除，见 §8.4）     | 按工具关闭                      | 部分完成                      |
-| P4  | 其他 provider（代码 manifest）+ 任意 MCP server 并入连接器 UI                       | 按 provider 关                  | 未开始                        |
-| P5  | MCP 预设连接器（Notion 一键授权）+ annotations 风险分级（2026-11-04 二次变更）      | 按 server 停用                  | 已实现                        |
+| 期  | 内容                                                                                | 可回滚性                        | 状态                       |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------- | -------------------------- |
+| P0  | 决策确认（§9.1）+ 迁表设计                                                          | —                               | 已定稿                     |
+| P1  | 平台骨架：授权会话 / 连接创建 / 刷新 / 撤销 / 执行代理 / provider 注册表            | `CONNECTOR__PROVIDERS_ENABLED=` | 已实现（内置 GitHub）      |
+| P2  | 内置 Notion provider（4 只读 + 2 写工具）+ 前端 `/connectors` + tool-service 执行面 | 同上（按 provider 关）          | 已实现后撤销（2026-11-04） |
+| P3  | 连接详情授权展示（组织共享连接已移除；内置写工具部分随 provider 移除，见 §8.4）     | 按工具关闭                      | 部分完成                   |
+| P4  | 其他 provider（代码 manifest）+ 任意 MCP server 并入连接器 UI                       | 按 provider 关                  | 未开始                     |
+| P5  | MCP 预设连接器（Notion 一键授权）+ annotations 风险分级（2026-11-04 二次变更）      | 按 server 停用                  | 已实现                     |
 
 ## 2. 实现前现状盘点（2026-11-03，保留作背景）
 
@@ -144,7 +145,7 @@ agent-orchestrator ── MCP tools/list（工具面以 server 为准，当前�
 ```
 
 ```text
-【连接器平台（connector-service，当前无内置 provider；保留给后续 provider）】
+【连接器平台（connector-service，内置 GitHub；注册表可扩展）】
 浏览器 /connectors ── POST /api/connector/v1/connectors/{provider}/authorize
    ▼
 api-gateway ──▶ connector-service ── 建 oauth_sessions（state nonce；provider 声明支持时可带 PKCE）
@@ -183,13 +184,13 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 **oauth_sessions**（新表）：`id`(32 hex)、`account_id`、`owner_subject`、`provider`、`state_nonce`(unique, 64)、`code_verifier`(nullable)、`redirect_uri`、`scopes`、`status`(`pending|completed|failed|expired`)、`error_code`、`connection_id`、`expires_at`、`created_at`、`completed_at`。**回调成功/token 落库后再置 completed**；重复 nonce 一律 400。
 
-**account_apps**（新表，可选覆盖）：`account_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一约束 `uq_account_apps_account_id (account_id, provider)`。解析顺序：账号行 → 全局 Settings，实现在 `connector/services/apps.py`（`app_id` 与 `app_secret` 都可用才生效，半配置行记 warning 后回退全局）；授权、刷新、巡检与执行面均按账号解析 provider，目录的 `configured` 仍用全局配置、不暴露账号凭证。v1 不做管理 UI（先配置/脚本写入）。2026-11-04 二次变更后无内置 provider：`account_apps` 与静态令牌连接能力保留给后续 provider；Notion 的 OAuth 客户端与 token 由 agent-orchestrator 的 `mcp_server_auth` 托管，不再使用本表。
+**account_apps**（新表，可选覆盖）：`account_id`、`provider`、`app_id`、`app_secret_encrypted`(JSON)、`config`(JSON)，唯一约束 `uq_account_apps_account_id (account_id, provider)`。解析顺序：账号行 → 全局 Settings，实现在 `connector/services/apps.py`（`app_id` 与 `app_secret` 都可用才生效，半配置行记 warning 后回退全局）；授权、刷新、巡检与执行面均按账号解析 provider，目录的 `configured` 仍用全局配置、不暴露账号凭证。v1 不做管理 UI（先配置/脚本写入）。2026-11-04 二次变更后一度无内置 provider；2026-11-19 起内置 GitHub（§5.9）。`account_apps` 与静态令牌连接能力对后续 provider 保留；Notion 的 OAuth 客户端与 token 由 agent-orchestrator 的 `mcp_server_auth` 托管，不再使用本表。
 
 **outbox_events / processed_events**（迁移 `c4f7b1e93a52`，`down_revision = '8f1c2a5d7b90'`）：与 `events.outbox` 同源，存连接生命周期事件（`created/expired/revoked`）供至少一次投递；`processed_events` 供消费方按事件 id 幂等。`CONNECTOR__OUTBOX_ENABLED=false` 时不写表、只落结构化日志。
 
 ### 5.3 API 契约（connector-service）
 
-> 2026-11-04 二次变更：平台 API 保留，**当前无内置 provider**（目录为空）。直接后果：`GET /v1/connectors` 返回空列表，`POST /v1/connectors/{provider}/authorize` / `execute` 对任何 provider 都回 404 `connector.provider_not_found`；静态令牌连接（`POST /v1/connections`）仍可用，但同样需要已注册的 provider。Notion 的授权与工具已改走 MCP（§6），不再经过本节端点。
+> 2026-11-04 二次变更时平台曾无内置 provider；2026-11-19 起内置 GitHub（§5.9）。`GET /v1/connectors` 只展示 `CONNECTOR__PROVIDERS_ENABLED` 中已注册的 provider；未注册/未启用时 authorize/execute 回 404 `connector.provider_not_found`。静态令牌连接（`POST /v1/connections`）同样需要已注册的 provider。Notion 的授权与工具已改走 MCP（§6），不再经过本节端点。
 
 | 方法/路径                                  | 说明                                                                                                                                                                                                                                         | 鉴权                                   |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
@@ -222,7 +223,7 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 
 ### 5.4 授权会话时序（平台机制）
 
-> 2026-11-04 二次变更后平台无内置 provider，本节只保留通用机制；具体 provider 的端点、参数与身份差异由 manifest 实现。Notion 的授权已改走 MCP（§6），不再经过本节。
+> 本节描述通用机制；具体 provider 的端点、参数与身份差异由 manifest 实现（GitHub 见 §5.9）。Notion 的授权已改走 MCP（§6），不再经过本节。
 
 1. 前端调 `POST /v1/connectors/{provider}/authorize`；connector-service 生成 `state_nonce`（随机 32B）落 `oauth_sessions`，TTL 10 分钟；provider 声明支持 PKCE 时同时生成 `code_verifier`。
 2. 返回 `authorize_url`（provider 授权端点 + `client_id` / `redirect_uri` / `response_type=code` / `state` / scope，scope 按 manifest）。
@@ -231,7 +232,7 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 5. 拉身份（`fetch_identity`）取 provider 账号/工作区标识；`account` 写稳定可读标识；凭证 `encrypt_credentials` 落库；写 `connections`；置会话 `completed`。
 6. 302 回 `/connectors?provider=<p>&status=connected&connection_id=<id>`；失败回 `...&status=error&code=<code>`，错误码只暴露白名单（不泄漏上游原文）。
 
-**令牌连接（`auth_kind=token`）不经过本节**：不建 `oauth_sessions`、无 `state`/PKCE/回调，直接 `POST /v1/connections` 校验令牌身份后落库（§5.3）；平台语义保留，当前无 provider 可提供该路径（Notion 的静态令牌连接已随内置 provider 移除）。
+**令牌连接（`auth_kind=token`）不经过本节**：不建 `oauth_sessions`、无 `state`/PKCE/回调，直接 `POST /v1/connections` 校验令牌身份后落库（§5.3）；平台语义保留，GitHub 通过 `token_connectable=True` 提供该路径（见 §5.9）。
 
 ### 5.5 刷新与失效
 
@@ -239,7 +240,7 @@ agent-orchestrator ── tool-service ── POST /v1/connectors/{provider}/exe
 - **单飞**：`SELECT … FOR UPDATE` 锁连接行 → 复盘 `expires_at` 是否已被他人刷新 → 调 provider → 同事务写回 `access/refresh/expires_at`。
 - **失败**：`invalid_grant`/`20037` 等置 `status=expired`、写 `last_error_code`、发 outbox `connector.connection.expired.v1`；前端卡片变「需要重新连接」。
 - **provider 特例（历史，随内置 Notion provider 移除）**：原内置 Notion provider 的 token 响应无 `expires_in`，`expires_at` 留空表示未知；401 触发一次 refresh、24h 巡检按 `last_refreshed_at` 判定。平台侧的懒刷新/单飞/巡检机制不变，供后续 provider 复用。
-- **令牌连接特例**：`auth_kind=token` 的连接无 `expires_at`、无 refresh token——手动 / 懒刷新会因缺 refresh token 失败（`connector.auth_expired`），属预期；正常调用遇 401 置 `status=expired` + `last_error_code`，前端提示重新粘贴令牌；24h 巡检按 `last_refreshed_at` 同样会扫到令牌连接，刷新失败只留痕、不销毁连接。
+- **令牌连接特例**：`auth_kind=token` 的连接无 `expires_at`、无 refresh token。GitHub provider 对无 refresh token 的 `refresh` 原样返回（no-op），因此手动/巡检刷新不会失败、连接不会被巡检置 `expired`；平台不按 `auth_kind` 过滤巡检，**这是 provider 的责任**。正常调用遇 401 仍置 `status=expired` + `last_error_code`，前端提示重新粘贴令牌。
 - **飞书特例（历史，provider 已移除）**：refresh 一次性、禁止并发；365 天强制重授权，`expires_at` 之外另存 `metadata.refresh_deadline` 做提前提示。
 - **outbox**：已接入 `events.outbox`（迁移 `c4f7b1e93a52`）；`connector.connection.created/expired/revoked.v1` 与状态变更同事务写入，`CONNECTOR__OUTBOX_ENABLED=true` 时由 `ConnectorRuntime` 起后台 `OutboxDispatcher` 至少一次投递（消费方按事件 id 去重），关闭时降级为结构化日志 `connection_event`、不写库；只发生命周期事件，不发业务数据。
 - **当前实现边界**：惰性刷新 + 手动刷新 + 24h 巡检均已上线。巡检（`connector/services/patrol.py`）跨账号扫 `active + enabled` 且 `last_refreshed_at` 为空或早于 `now - CONNECTOR__REFRESH_STALE_SECONDS` 的连接，逐条独立事务走同一单飞刷新路径，单条失败只留痕不中断整轮；由 `CONNECTOR__REFRESH_PATROL_ENABLED`（生产默认 true、测试关）控制。`account_apps` 已参与凭证解析（见 §5.2）。
@@ -257,7 +258,7 @@ class BaseProvider:
     tools: tuple[ToolSpec, ...]  # ToolSpec(name, title, description, input_schema, risk)
 ```
 
-**2026-11-04 二次变更后 `connector/providers/` 目录为空**：内置 Notion provider（4 只读 + 2 写）已随规划移除，`/v1/connectors` 返回空目录；平台仍保留 manifest 注册/编译/执行链路，供后续没有官方 MCP 的 provider 接入。Notion 的工具面改由官方 MCP 提供（§6/§7）。
+**内置 provider 现有 GitHub**（§5.9，11 个工具）：`/v1/connectors` 在 `CONNECTOR__PROVIDERS_ENABLED=github` 且注册表命中时展示它。内置 Notion provider（4 只读 + 2 写）已于 2026-11-04 随规划移除；Notion 的工具面改由官方 MCP 提供（§6/§7）。平台 manifest 注册/编译/执行链路继续供后续 provider 接入。
 
 编译规则（对任何 provider 生效）：`ToolDescriptor(name="<Provider>__<tool>", executor=ExecutorKind.CONNECTOR, kind=FUNCTION, risk=<ToolSpec.risk>, scopes=[], connector={"provider": "<name>"})`；**`risk` 由 `ToolSpec.risk` 声明并原样透传**（`read`/`write`），不在 catalog 里另立规则。
 
@@ -293,7 +294,7 @@ class BaseProvider:
   `{"ok":false,"error":{...}}`；HTTP 4xx 只用于「无连接 / 未知工具 / 内部鉴权」这类协议错误。
 - 回调失败不返回 JSON：302 回 `/connectors?...&status=error&code=<白名单错误码>`。
 - 上游原始错误只进日志与 `last_error_code`，不回显 body。
-- **当前无内置 provider**：目录为空时 `connector.provider_not_found` 是常见结果；Notion 的授权/工具错误改由 MCP 错误码表达（如 `mcp.auth_required`、`mcp.server_disabled`），不在本表。
+- **当前内置 GitHub**：未启用时 `connector.provider_not_found` 仍可能出现；GitHub 的授权/工具错误走本表。Notion 的授权/工具错误由 MCP 错误码表达（如 `mcp.auth_required`、`mcp.server_disabled`），不在本表。
 
 ### 5.8 安全与账号边界
 
@@ -303,6 +304,47 @@ class BaseProvider:
 - 凭证边界：连接器路径的 provider 凭证（`connections.credentials` 与 `account_apps` 应用凭证）只存服务端、不进日志/响应；**Notion 的 OAuth 客户端与 token 现由 agent-orchestrator 的 `mcp_server_auth` 托管**（`AGENT_ORCHESTRATOR__MCP_SECRET` 加密），connector-service 不再持有 Notion 凭证。
 - 生产密钥换 KMS/长随机（现状默认值仅供 dev）；P1 补 `CONNECTOR__CREDENTIAL_SECRET` 启动强校验（生产非默认值）。
 - 飞书 IP 白名单（历史，provider 已移除）：Serverless 出口 IP 不固定时不可用，v1 未启用；现改为应用级限流 + 错误告警。
+
+### 5.9 GitHub 内置 provider（2026-11-19）
+
+**定位**：平台第一个内置直连 provider，走 **GitHub App 的 user-to-server token**（用户以自己身份授权），v1 不做 installation token、server-to-server、webhook 与同步引擎。OAuth 全程启用 PKCE S256，并请求 GitHub App 唯一支持的 `scope=offline_access`。代码拆为 `providers/github.py`（manifest/授权/刷新/身份）、`providers/github_tools.py`（11 个 ToolSpec 与 call 分派）、`providers/github_api.py`（REST 客户端与错误映射）。
+
+**token 生命周期**：access token 8 小时（`expires_in=28800`），refresh token 6 个月（`refresh_token_expires_in=15897600`）；**刷新是轮换的**——每次 refresh 返回新的 access + 新的 refresh，旧 refresh 立即作废。`GithubProvider.refresh` 把新 refresh 原样放进 `Credentials`，由服务层在行锁内同事务写回；provider 内不做缓存/重试。若上游响应缺 `refresh_token`/`expires_in`（例如 App 未开启「Expire user authorization tokens」且未返回可刷新 token），授权失败并提示开启该选项；provider 请求 `scope=offline_access`，正常情况下即使 App 未开启也会返回 8h access + refresh，这里是兜底防御。
+
+**连接方式**：OAuth 授权，或用户粘贴 PAT（`token_connectable=True`）。PAT 用 `GET /user` 校验后落 `auth_kind=token`、`expires_at=None`；`account` 取 GitHub `login`，与 OAuth 的 account 相同——同一账号先 OAuth 后粘贴 PAT 会复用同一连接行并把 `auth_kind` 覆盖为 `token`、丢掉 refresh token（唯一约束 `(account_id, provider, account)` 的既有语义，v1 接受并记录为限制）。
+
+**工具面（8 读 + 3 写）**：
+
+| 工具                   | risk  | 端点                                          | 要点                                                              |
+| ---------------------- | ----- | --------------------------------------------- | ----------------------------------------------------------------- |
+| `list_repositories`    | read  | `GET /user/repos`                             | visibility/affiliation/sort/page/per_page（≤100）                 |
+| `get_repository`       | read  | `GET /repos/{o}/{r}`                          | `include_readme` 时再取 `/readme` 并 base64 解码                  |
+| `get_file_contents`    | read  | `GET /repos/{o}/{r}/contents/{path}?ref=`     | 目录→条目列表；文件→base64 解码；>256KB 截断并标 `truncated`      |
+| `search_code`          | read  | `GET /search/code?q=`                         | 独立且更紧的限流（认证用户约 10 次/分）                           |
+| `list_issues`          | read  | `GET /repos/{o}/{r}/issues`                   | 按 `pull_request` 键过滤混入的 PR                                 |
+| `get_issue`            | read  | `GET /repos/{o}/{r}/issues/{n}` + `/comments` | 评论条数有上限并标 `comments_truncated`                           |
+| `list_pull_requests`   | read  | `GET /repos/{o}/{r}/pulls`                    | state/page/per_page                                               |
+| `get_pull_request`     | read  | `GET /repos/{o}/{r}/pulls/{n}`                | `include_diff` 时用 `application/vnd.github.diff` 取 diff（截断） |
+| `create_issue`         | write | `POST /repos/{o}/{r}/issues`                  | title 必填；body/labels                                           |
+| `create_issue_comment` | write | `POST /repos/{o}/{r}/issues/{n}/comments`     | body 必填                                                         |
+| `create_pull_request`  | write | `POST /repos/{o}/{r}/pulls`                   | title/head/base 必填；body；head 分支须已存在                     |
+
+`repo` 参数统一为 `owner/name`，格式非法抛 `connector.invalid_arguments`。写工具的确认链完全复用平台（`ToolSpec.risk=WRITE` → 对话内 pending 确认/任务审批），不自建审批。**幂等限制**：写工具重放同一参数会重复生效；确认状态机只能挡住「同一 `tool_call` 被重复确认」，与 Notion `append_blocks` 同级，v1 不发明幂等键。
+
+**0 安装坑**：GitHub App 的「用户已授权」与「App 已安装到仓库」是两件事。`fetch_identity` 额外调用 `GET /user/installations`，把 `installations` 与 `has_installation` 写进 `Identity.metadata`（落库到 `connections.provider_metadata`）；0 安装时 `has_installation=false`。当前 `ConnectionRead` 不暴露 `provider_metadata`：Web 端已有静态「授权后需把 App 安装到至少一个仓库」提示（§5.9 Web 入口），但不会按 `has_installation` 精确提示；精确提示留待详情接口暴露 metadata。PAT 连接不调用 `/user/installations`（该端点只接受 GitHub App 用户 token），metadata 为空。
+
+**错误映射**（`call` 内统一抛 `ProviderError`，不回显上游原文）：401 → `connector.auth_expired`（执行前已懒刷新，401 即 token 被撤销）；403 且 `x-ratelimit-remaining=0`、429 或带 `Retry-After` → `connector.upstream_rate_limited`（hint 带重置/重试秒数）；其余 403 → `connector.upstream_error`（hint「无权限或资源受限」）；404/422 → `connector.invalid_arguments`；超时 → `connector.upstream_timeout`；5xx → `connector.upstream_unavailable`。
+
+**GitHub App 后台配置清单**：
+
+1. **Callback URL**：`https://api.beautymoon.cn/api/connector/v1/oauth/github/callback`（必须与部署的 `CONNECTOR__OAUTH_REDIRECT_BASE=https://api.beautymoon.cn/api/connector` 逐字一致；本地开发另加 `http://127.0.0.1:8004/v1/oauth/github/callback`）。回调经 API 网关通用路由透传，无需改网关。
+2. **Permissions**：Metadata `Read`、Contents `Read & write`、Issues `Read & write`、Pull requests `Read & write`（v1 不需要 Administration、Webhooks、Actions）。
+3. **Optional Features**：开启 **Expire user authorization tokens**（推荐；provider 请求 `scope=offline_access`，若响应仍缺 `refresh_token`/`expires_in` 会走 `connector.oauth_failed` 并提示开启该选项）。
+4. **不配置 webhook、不上传私钥**：v1 只用 user-to-server token，不需 PEM/installation token。
+
+**部署与启用**：`CONNECTOR__PROVIDERS_ENABLED=github`、`CONNECTOR__GITHUB_CLIENT_ID`、`CONNECTOR__GITHUB_CLIENT_SECRET`；未配置凭证时目录仍展示 GitHub 但 `configured=false`，OAuth 接口 409 `connector.provider_not_configured`（令牌连接仍可用）。`account_apps` 账号级应用覆盖 v1 不实现，沿用基类默认回退全局。真实 GitHub App 的端到端冒烟（授权/刷新/写工具）是人工后续步骤，自动化测试全部 `MockTransport` 零网络。
+
+**Web 入口（2026-11-19）**：`/connectors` 顶部新增「直连连接器」区（原先的旧 provider 目录从页尾上移）——GitHub 卡片同时提供「连接」（GitHub App OAuth）与「粘贴令牌连接」（PAT）；`auth_kind=user` 显示为「用户授权」，粘贴令牌弹窗为 GitHub 给出 PAT 获取步骤与 `github_pat_` 占位。`offline_access` 被标记为非权限 scope，不会因 token 响应 `scope=""` 误报「缺少权限」。页内另有静态「授权后需把 App 安装到至少一个仓库」提示；**该提示不读取 `provider_metadata.has_installation`**，0 安装的精确提示仍是后续工作。
 
 ## 6. Notion 接入：官方 MCP（2026-11-04 二次变更）
 
@@ -365,15 +407,15 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 
 **连接器 provider 写工具（历史）**：内置 provider 时期的 `Notion__create_page` / `Notion__append_blocks` 已随 provider 移除；机制不变——provider 的 `ToolSpec.risk=WRITE` 同样编译成 `risk=write` 并走同一条对话确认链（§5.6）。
 
-**其他 provider / 任意 MCP server（P4）**：把任意 MCP server 并入「连接器」UI 同列展示（`kind=mcp`，凭证仍走 `mcp_oauth`）；组织共享连接已随账号模型改造移除、不再计划；`/connectors` 的旧 provider 目录区只在 `providers.length>0` 时渲染（当前隐藏，旧组件与测试暂不删）。
+**其他 provider / 任意 MCP server（P4）**：把任意 MCP server 并入「连接器」UI 同列展示（`kind=mcp`，凭证仍走 `mcp_oauth`）；组织共享连接已随账号模型改造移除、不再计划；`/connectors` 的「直连连接器」区只在 `providers.length>0` 时渲染（启用 GitHub 后显示）。
 
 ## 8. 实施清单
 
 估算单位：S ≤ 1 人日，M 2–3 人日，L 4–5 人日。**P0–P2 合计约 25–35 人日**（单人；平台与 provider/前端可并行压缩）。
 
 > **实现状态（2026-11-04 二次回填）**：P1 平台骨架（C1.1–C1.12）仍有效（平台 API / 授权会话 / 刷新巡检 / outbox / 执行面 / 审计），
-> 但**内置 provider 已清空**：内置飞书 provider（11-04 上旬移除）与内置 Notion provider（11-04 二次变更移除）均已删除，
-> `connector/providers/` 目录为空、`GET /v1/connectors` 返回空目录。Notion 改走**官方 MCP**（§6）：预设 server + 一键授权
+> 2026-11-19 新增内置 GitHub provider（§5.9）。内置飞书 provider（11-04 上旬移除）与内置 Notion provider（11-04 二次变更移除）均已删除；
+> 当前 `connector/providers/` 只含 GitHub，`GET /v1/connectors` 按启用列表展示。Notion 改走**官方 MCP**（§6）：预设 server + 一键授权
 >
 > - 工具 annotations 风险分级已上线（C7.1–C7.5，见 §8.7），`/connectors` 页改为 MCP 预设连接器（MCP 唯一入口：预设卡片 +「我的 MCP 服务」区；侧栏不再单列「MCP」，`/mcp` 仅保留给旧书签与 OAuth `state` 验签失败兜底回跳）。
 >   对话内写操作确认链路（`chat_tool_confirmations`）保留并对 MCP 的 WRITE 工具生效（§7）。
@@ -459,7 +501,8 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 
 ### 8.5 P4 其他 provider 与 MCP 并入（预留）
 
-- [ ] **C4.1** 其他 provider：按 `connector/providers/` 代码 manifest 新增 `BaseProvider` 子类 + `_REGISTRY` 登记 + `CONNECTOR__PROVIDERS_ENABLED` 列出 — 验收：目录出现新 provider，授权/刷新/执行复用平台（M/provider）
+- [x] **C4.1** 其他 provider：按 `connector/providers/` 代码 manifest 新增 `BaseProvider` 子类 + `_REGISTRY` 登记 + `CONNECTOR__PROVIDERS_ENABLED` 列出 — 验收：目录出现新 provider，授权/刷新/执行复用平台（M/provider）
+  - **2026-11-19 完成（GitHub）**：`providers/github.py`/`github_tools.py`/`github_api.py`，11 个工具（8 读 + 3 写），PKCE S256 + refresh 轮换 + PAT；connector-service 164 passed / 96.15% 行覆盖，`alembic check` 无新迁移。
 - [ ] **C4.2** provider 主动探测：`POST /v1/oauth/introspect` 接入巡检 + 401 自动刷新一次 — 验收：token 失效后巡检自愈，失败才置 expired（M）。（2026-11-04：原为 Notion 专项，provider 移除后暂无对象，能力留待未来 provider。）
 - [ ] **C4.3** provider 级独立限流（如 data source 查询约 3 次/秒）与 workspace 共享预算隔离 — 验收：多连接不同时打爆预算（M）。（2026-11-04：原为 Notion 专项，provider 移除后暂无对象。）
 - [ ] **C4.4** 任意 MCP server 并入连接器 UI（`kind=mcp`，凭证仍走 `mcp_oauth`） — 验收：审批/审计与原生 provider 一致（L）。（2026-11-04：内置 Notion 预设已并入 `/connectors`，任意 server 并入仍待 P4；MCP 侧的审批/审计已由 MCP client 承接。）
@@ -495,12 +538,12 @@ Notion 预设的只读前缀（`mcp_presets.py`）：`notion-search`、`notion-f
 - [x] **C7.1** `mcp_presets.py`：`MCPPreset` + `PRESETS`（当前 `notion`） + `list_presets`/`preset_for_key`/`preset_for_url`（忽略末尾斜杠）；未知 key → 404 `mcp.preset_not_found` — 验收：单测覆盖 key/url 匹配与去尾斜杠
 - [x] **C7.2** 工具注解与风险分级：`MCPToolRead.annotations` 透传并写回 `tools_cache`；`_tool_risk` 按 destructiveHint → readOnlyHint → 预设只读前缀 → auto_approve → DANGER 的顺序分档 — 验收：对话路径 WRITE 落确认、DANGER 被裁剪
 - [x] **C7.3** 端点：`GET /v1/mcp/presets`、`POST /v1/mcp/presets/{key}`（幂等 ensure，按 url 复用已有 server，重名回退 `Notion-2`）、`POST /v1/mcp/servers/{id}/oauth/start` 接受的 `next`（`/connectors` 为主，`/mcp` 兼容直链）；授权成功尽力刷新 `tools_cache` — 验收：重复调用不重复建 server，回调落点正确
-- [x] **C7.4** Web `/connectors` 改为 MCP 预设页：预设卡片、已连接状态与工具数、一键授权、`去会话使用`（`/?mcp=<id>`）、`管理`（本页 `#mcp-servers`，即「我的 MCP 服务」区）；页结构为预设卡片 +「我的 MCP 服务」区 + 旧 provider 目录区（仅 `providers.length>0` 时渲染） — 验收：`nx typecheck/test/lint @beauty/web` 绿
+- [x] **C7.4** Web `/connectors` 改为 MCP 预设页：预设卡片、已连接状态与工具数、一键授权、`去会话使用`（`/?mcp=<id>`）、`管理`（本页 `#mcp-servers`，即「我的 MCP 服务」区）；页结构为「直连连接器」区（GitHub 等，仅 `providers.length>0` 时渲染）+ MCP 预设卡片 +「我的 MCP 服务」区；GitHub 卡片提供 OAuth 与 PAT 两个入口（2026-11-19 上移并重命名旧 provider 目录区） — 验收：`nx typecheck/test/lint @beauty/web` 绿
 - [x] **C7.5** 文档与部署：本文、tool-execution.md、local-dev.md §3.2、architecture.md、AGENTS.md、README 索引、compose 注释同步；connector-service 删除 Notion provider/配置/测试 — 验收：`check-docs` / `check-workspace` / `compose config` 均通过
 
 ## 9. 风险与开放问题
 
-> 2026-11-04 二次变更：下述飞书 / 内置 Notion provider 相关条目保留为历史记录；**当前平台无内置 provider**，Notion 经官方 MCP 接入（预设 + 一键授权 + annotations 风险分级，见 §6 / §7 / §8.7）。
+> 2026-11-04 二次变更：下述飞书 / 内置 Notion provider 相关条目保留为历史记录；2026-11-19 起平台内置 GitHub provider（§5.9），Notion 经官方 MCP 接入（预设 + 一键授权 + annotations 风险分级，见 §6 / §7 / §8.7）。
 
 ### 9.1 待产品确认（阻塞 P1）
 
