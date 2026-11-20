@@ -1,0 +1,28 @@
+/**
+ * VirtualList 样式(普通 CSS + BEM 语义类名)
+ *
+ * 根节点就是滚动容器:高度由调用方给,组件只负责 overflow 与定位上下文。
+ * 占位层撑出真实总高度,每一项绝对定位并通过 transform 位移,
+ * 滚动时只改窗口内容、不改文档流布局。
+ */
+
+.bd-virtual-list {
+  box-sizing: border-box;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.bd-virtual-list__spacer {
+  position: relative;
+  width: 100%;
+}
+
+.bd-virtual-list__item {
+  box-sizing: border-box;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}

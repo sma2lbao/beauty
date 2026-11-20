@@ -1,0 +1,101 @@
+import { VirtualList } from '@beauty/design';
+
+# VirtualList 虚拟列表
+
+只渲染滚动视口附近的项,把 DOM 数量与数据总量解耦。数据会持续增长的长列表
+(会话、日志、审计记录)用它保持滚动流畅。
+
+## 何时使用
+
+- 列表总量不可预期,且会随使用分页累积到几百上千条;
+- 行高固定,或能按数据提前算出行高;
+- 需要保留原生滚动、键盘与读屏语义的普通纵向列表。
+
+以下场景不要用:行高必须由内容测量才能确定的富文本/图片流、需要横向虚拟化或
+网格布局的列表、总量很小(几十条以内)的列表——直接渲染更简单。
+
+## 基础用法
+
+给组件一个确定高度(这里是 240px 的演示框),其余与普通列表一致:
+
+<div className="bd-demo bd-demo--vertical">
+  <VirtualList
+    className="bd-demo-virtual-list"
+    items={Array.from({ length: 500 }, (_, index) => '会话 ' + (index + 1))}
+    itemHeight={36}
+    getKey={(item) => item}
+    renderItem={(item) => <div className="bd-demo-virtual-row">{item}</div>}
+  />
+</div>
+
+```tsx
+import { VirtualList } from '@beauty/design';
+
+<VirtualList
+  className="session-list"
+  items={sessions}
+  itemHeight={52}
+  getKey={(session) => session.id}
+  renderItem={(session) => <SessionRow session={session} />}
+/>;
+```
+
+```css
+.session-list {
+  height: 100%; /* 或 flex: 1 + min-height: 0 */
+}
+```
+
+组件根节点就是滚动容器,不假设外层布局;高度必须由调用方给出,否则没有可视窗口。
+
+## 变高行
+
+`itemHeight` 可以传函数,组件按前缀和定位每一项。函数请在外部保持引用稳定
+(模块级函数或 `useCallback`),否则每次渲染都会重算全部偏移:
+
+```tsx
+const rowHeight = (row, index) => (row.kind === 'group' ? 32 : 52);
+
+<VirtualList
+  items={rows}
+  itemHeight={rowHeight}
+  renderItem={(row) =>
+    row.kind === 'group' ? (
+      <GroupTitle>{row.label}</GroupTitle>
+    ) : (
+      <Row row={row} />
+    )
+  }
+/>;
+```
+
+## 窗口与留白
+
+`overscan` 控制视口上下额外渲染的项数(默认 4)。快速滚动时留白会短暂出现,
+调大能减少留白、代价是更多的 DOM。滚动时被移出窗口的项会卸载,行内未受控的
+局部状态(输入框草稿、展开态)请提升到数据层,或用 `getKey` 保证 React 能复用。
+
+## 可访问性
+
+组件不替业务决定语义:传 `role="list"` 给容器,在 `renderItem` 里给行加
+`role="listitem"` 即可。窗口化会卸载视口外的行,读屏的"列表项总数"因此不等于
+数据总量——需要准确总数时把 `aria-setsize` / `aria-posinset` 写在行上,
+或对读屏场景改用非虚拟化列表。
+
+## API
+
+### VirtualListProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`(除 `children`),并额外提供:
+
+| 属性                   | 说明                                    | 类型                                             | 默认值 |
+| ---------------------- | --------------------------------------- | ------------------------------------------------ | ------ |
+| items                  | 全量数据                                | `readonly T[]`                                   | —      |
+| itemHeight             | 单项高度(px),或按项与下标计算高度的函数 | `number \| ((item: T, index: number) => number)` | —      |
+| renderItem             | 渲染单项内容,外层已负责定位与高度       | `(item: T, index: number) => ReactNode`          | —      |
+| overscan               | 视口上下额外渲染的项数                  | `number`                                         | `4`    |
+| getKey                 | 稳定 key;数据会增删时务必传入           | `(item: T, index: number) => Key`                | 下标   |
+| itemClassName          | 单项外层容器的附加类名                  | `string`                                         | —      |
+| fallbackViewportHeight | 视口尚未测量时(SSR 首帧/测试)的兜底高度 | `number`                                         | `320`  |
+
+行高与 `renderItem` 的实际高度必须一致,否则滚动位置会漂移。

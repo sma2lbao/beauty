@@ -109,6 +109,7 @@ export default defineConfig({
         { text: 'Tabs 页签', link: '/components/tabs' },
         { text: 'Tag 标签', link: '/components/tag' },
         { text: 'Textarea 多行文本框', link: '/components/textarea' },
+        { text: 'VirtualList 虚拟列表', link: '/components/virtual-list' },
       ],
     },
     footer: {

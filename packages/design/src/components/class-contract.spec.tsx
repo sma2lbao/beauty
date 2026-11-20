@@ -52,6 +52,7 @@ import {
   Tabs,
   Tag,
   Textarea,
+  VirtualList,
 } from '../index.js';
 
 /**
@@ -143,6 +144,9 @@ const SLOTS = [
   'spin-indicator',
   'spin-label',
   'textarea',
+  'virtual-list',
+  'virtual-list-spacer',
+  'virtual-list-item',
 ];
 
 describe('类名契约', () => {
@@ -244,6 +248,11 @@ describe('类名契约', () => {
         <Space direction="vertical" align="center" wrap size="lg">
           <span>内容</span>
         </Space>
+        <VirtualList
+          items={['会话 1', '会话 2']}
+          itemHeight={32}
+          renderItem={(item) => <span>{item}</span>}
+        />
         <DropdownMenu defaultOpen>
           <DropdownMenuTrigger>更多</DropdownMenuTrigger>
           <DropdownMenuContent>

@@ -48,11 +48,11 @@ export function SessionRow({
 
   return (
     <div
-      key={conversation.id}
       role="listitem"
       aria-label={conversation.title}
       className={cn(
-        'group relative flex items-center gap-[9px] rounded-md px-2.5 py-[9px] transition-colors',
+        // 固定行高:侧栏虚拟列表按 52px 定位,这里保持一致
+        'group relative flex h-[52px] items-center gap-[9px] rounded-md px-2.5 transition-colors',
         selected ? 'bg-[#1c1d1f]' : 'hover:bg-ha-panel-2/60',
       )}
     >

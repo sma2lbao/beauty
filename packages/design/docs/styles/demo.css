@@ -32,6 +32,25 @@
   width: 100%;
 }
 
+/* VirtualList 文档演示:固定高度的滚动窗口 + 等高铁行 */
+.bd-demo-virtual-list {
+  width: 100%;
+  max-width: 360px;
+  height: 240px;
+  border: 1px solid var(--bd-border);
+  border-radius: 8px;
+}
+
+.bd-demo-virtual-row {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--bd-border);
+  font-size: 0.8125rem;
+  color: var(--bd-foreground);
+}
+
 /* Skeleton 文档演示用的宽高 */
 .bd-demo-skeleton-title {
   height: 1.5rem;

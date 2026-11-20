@@ -192,26 +192,44 @@ describe('ConsoleSidebar 工作区/会话', () => {
     expect(params?.workspace_id).toBeUndefined();
   });
 
-  it('会话区只列当前工作区的会话,未分组单独一段', async () => {
+  it('会话区只列当前工作区的会话,未分组在同一列表内单独成段', async () => {
     renderSidebar();
     await screen.findByText('整理本周日程成周报');
 
-    // 标题标明当前工作区
-    expect(screen.getByText('默认工作区 的会话')).toBeInTheDocument();
-    const activeList = screen.getByRole('list', {
-      name: '默认工作区 的会话',
-    });
-    expect(
-      within(activeList).getByText('整理本周日程成周报'),
-    ).toBeInTheDocument();
+    // 列表名标明当前工作区
+    const list = screen.getByRole('list', { name: '默认工作区 的会话' });
+    expect(within(list).getByText('整理本周日程成周报')).toBeInTheDocument();
 
     // 其他工作区的会话不进入当前工作区列表
-    expect(within(activeList).queryByText('销售话术复盘')).toBeNull();
-    // 归属为空的历史会话收进「未分组」,仍然可见
-    const ungroupedList = screen.getByRole('list', { name: '未分组会话' });
-    expect(
-      within(ungroupedList).getByText('未归属的历史会话'),
-    ).toBeInTheDocument();
+    expect(within(list).queryByText('销售话术复盘')).toBeNull();
+    // 归属为空的历史会话收进「未分组」分组,与活动会话共用一个虚拟列表
+    expect(within(list).getByText('未分组')).toBeInTheDocument();
+    expect(within(list).getByText('未归属的历史会话')).toBeInTheDocument();
+  });
+
+  it('会话很多时只渲染视口附近的行,滚动区按全量撑高', async () => {
+    vi.mocked(conversationsApi.page).mockResolvedValue({
+      items: Array.from({ length: 120 }, (_, i) => ({
+        ...conversation,
+        id: `bulk-${i}`,
+        title: `批量会话 ${i}`,
+      })),
+      next_cursor: null,
+    });
+    renderSidebar();
+
+    const list = await screen.findByRole('list', { name: '默认工作区 的会话' });
+    expect(within(list).getByText('批量会话 0')).toBeInTheDocument();
+    // 120 行全部参与排版,但 DOM 只留视口附近的行(jsdom 用 320px 兜底视口)
+    expect(list.querySelector('[data-slot="virtual-list-spacer"]')).toHaveStyle(
+      {
+        height: `${120 * 52}px`,
+      },
+    );
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(40);
+    expect(within(list).queryByText('批量会话 119')).toBeNull();
   });
 
   it('下拉菜单切换工作区:只改 workspace 参数', async () => {

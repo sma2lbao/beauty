@@ -172,6 +172,11 @@ export { Spin } from './components/spin/index.js';
 export type { SpinProps, SpinSize } from './components/spin/index.js';
 
 export { Space } from './components/space/index.js';
+export { VirtualList } from './components/virtual-list/index.js';
+export type {
+  VirtualListItemHeight,
+  VirtualListProps,
+} from './components/virtual-list/index.js';
 export { toneClass, toneClasses } from './tone.js';
 export type { Tone, ToneClasses, ToneVariant } from './tone.js';
 export type {
