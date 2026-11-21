@@ -22,7 +22,7 @@
     "@nx/eslint": "23.2.1",
     "@nx/js": "23.2.1",
     "@nx/vitest": "23.2.1",
-    "@nxlv/python": "^23.3.5",
+    "@nxlv/python": "^23.5.0",
     "@swc/helpers": "~0.5.24",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "~4.1.0",
