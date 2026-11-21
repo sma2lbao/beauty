@@ -9,7 +9,8 @@
 #   生产只 pull 不 build；镜像由本地/CI 以 --platform linux/amd64 构建后推 TCR；
 # - 只有 api-gateway 绑 127.0.0.1:8007，公网流量经 Caddy 反代；其余服务只走 compose 内网，
 #   服务间地址一律用服务名（http://agent-orchestrator:8002 等），不再用 127.0.0.1；
-# - 数据库/Redis 外置（Neon / 云 Redis），本机不跑有状态基础设施；迁移是一次性 migrate 作业；
+# - 数据库/Redis/sandboxd 外置（同 VPC 的另一台基础设施机，内网访问），本机不跑有状态基础设施；
+#   迁移是一次性 migrate 作业；
 # - 内存上限按 2C4G 机型调（合计约 3.5G + 系统）；升到 4C8G 后可整体上调；
 # - 沙箱不落本机：轻量没有 /dev/kvm，microsandbox 不可用，见 README「沙箱」一节；
 # - 同一个镜像内 ENV SERVICE 会被 compose 的 `environment.SERVICE` 覆盖：每个服务必须显式指定，

@@ -3,32 +3,32 @@
 > **本文是唯一现行架构真源**（2026-10-24 起生效，取代 v1《微服务架构设计》与 v2《架构 v2》）。
 > 旧版已归档至 [docs/archive/2026-10/](./archive/2026-10/)（architecture-v2.md 为本文基底、feature-gap.md、tasks-m0\*.md）。
 > 实现与本文冲突时，先修订本文达成共识，再动代码。架构决策记录（ADR 001-011）见 §1。
-> 部署与平台缺口（云 PG/Redis 接入等）在 [docs/roadmap.md](./roadmap.md) 跟踪，不在本文重复展开。
+> 部署与平台缺口在 [docs/roadmap.md](./roadmap.md) 跟踪，不在本文重复展开；生产 PostgreSQL/Redis/sandboxd 已切到同 VPC 的基础设施机（2026-11-21），见 [design/hybrid-deployment.md](./design/hybrid-deployment.md)。
 
 ## 0. 最终选型（2026-10 拍板）
 
-| 领域              | 生产                                                                       | 开发环境                                                  | 状态                                                                                                                |
-| ----------------- | -------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）                              | **本机 compose Postgres:16**（每服务独立库）              | ✅ 已实施（生产 Neon 接入为 M0-03 待办；SQLite 仍可显式覆盖）                                                       |
-| Redis             | **云 Redis，提供 URL**                                                     | **本地 Redis**                                            | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                                                              |
-| 对象存储          | **暂不引入**                                                               | 本地文件系统 / DB 列                                      | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**                                | 同左（SQLite 覆盖时用文件/内存 worker）                   | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
-| 沙箱              | **microsandbox provider（P1）**；e2b / sandboxd 远端可选；local 仅本地兜底 | 本地 microsandbox / local / fake provider / 远端 sandboxd | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.4）                                                                   |
-| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）                        | 同左（token 模式兜底）                                    | ✅ 已实施；不用托管 IdP（自建 account-service + GitHub OAuth）                                                      |
-| 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud**                      | 同左（本地日志）                                          | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                  |
-| 支付              | **不做 Stripe**                                                            | —                                                         | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
-| 事务邮件          | **暂不做 Resend**                                                          | 本地 SMTP / 控制台日志                                    | ⏸ 暂缓；站内通知优先                                                                                                |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）                                  | 本地 Vite                                                 | ✅ 已实施                                                                                                           |
-| API 网关          | **FastAPI 服务**（同域 `/api`，:8007）                                     | 本地 uvicorn                                              | ✅ 已实施                                                                                                           |
-| LLM 推理          | **继续用 API**（litellm 网关 :8003）                                       | 本地/API                                                  | ✅ 已实施                                                                                                           |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）                               | 本地 Next dev                                             | ✅ 已实施                                                                                                           |
-| 多区域 / 数据驻留 | 不做                                                                       | —                                                         | ⏸ 后续                                                                                                              |
+| 领域              | 生产                                                                                     | 开发环境                                                  | 状态                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Postgres          | **自建 PostgreSQL 16（基础设施机，同 VPC 内网）**                                        | **本机 compose Postgres:16**（每服务独立库）              | ✅ 已实施（生产=腾讯云基础设施机；本地 compose PG；SQLite 仅显式覆盖）                                              |
+| Redis             | **自建 Redis（基础设施机，requirepass）**                                                | **本地 Redis**                                            | ✅ 已接（account 动态注册 / gateway 固定窗口限流；R-P1-8 关闭）                                                     |
+| 对象存储          | **暂不引入**                                                                             | 本地文件系统 / DB 列                                      | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**                                              | 同左（SQLite 覆盖时用文件/内存 worker）                   | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
+| 沙箱              | **sandboxd（基础设施机，gVisor + Docker）**；e2b 备选；microsandbox P1；local 仅本地兜底 | 本地 microsandbox / local / fake provider / 远端 sandboxd | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.4）                                                                   |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）                                      | 同左（token 模式兜底）                                    | ✅ 已实施；不用托管 IdP（自建 account-service + GitHub OAuth）                                                      |
+| 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud**                                    | 同左（本地日志）                                          | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                  |
+| 支付              | **不做 Stripe**                                                                          | —                                                         | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
+| 事务邮件          | **暂不做 Resend**                                                                        | 本地 SMTP / 控制台日志                                    | ⏸ 暂缓；站内通知优先                                                                                                |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）                                                | 本地 Vite                                                 | ✅ 已实施                                                                                                           |
+| API 网关          | **FastAPI 服务**（同域 `/api`，:8007）                                                   | 本地 uvicorn                                              | ✅ 已实施                                                                                                           |
+| LLM 推理          | **继续用 API**（litellm 网关 :8003）                                                     | 本地/API                                                  | ✅ 已实施                                                                                                           |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）                                             | 本地 Next dev                                             | ✅ 已实施                                                                                                           |
+| 多区域 / 数据驻留 | 不做                                                                                     | —                                                         | ⏸ 后续                                                                                                              |
 
 ### 0.1 两种部署形态（同一套代码）
 
 | 形态                         | 适用               | Web/API 网关                                                                  | 数据                        | 外部依赖                                                                              | 状态                |
 | ---------------------------- | ------------------ | ----------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------- | ------------------- |
-| **A. SaaS（静态 SPA + 云）** | to C 公网          | Nginx 托管 SPA + FastAPI 网关；Next.js 官网部署 Vercel                        | 云 PG/云 Redis              | LLM API、Sentry（可选）                                                               | ✅ 当前             |
+| **A. SaaS（静态 SPA + 云）** | to C 公网          | Nginx 托管 SPA + FastAPI 网关；Next.js 官网部署 Vercel                        | 基础设施机 PG/Redis         | LLM API、Sentry（可选）                                                               | ✅ 当前             |
 | **B. 内网/离线（Intranet）** | 私有化/内网/无外网 | **Linux VM/裸机 + systemd 原生进程 + Nginx**（不用 Compose/K8s）；**仅 HTTP** | SQLite + 本地目录；无 Redis | 内网 OpenAI 兼容模型（支持 function calling）；或 `LLM_ENABLED=false` 桩；Sentry 关闭 | **⏸ 暂缓（M0-13）** |
 
 **硬性原则**
@@ -43,20 +43,20 @@
 
 ## 1. ADR（最终状态）
 
-| ADR | 决策                                                                            | 状态                   | 说明                                                                                                                                                                                    |
-| --- | ------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 001 | Vite SPA + Next.js 独立静态官网                                                 | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                                           |
-| 002 | 静态 SPA + FastAPI 网关 + 容器 runtime                                          | ✅ 采用                | 八个 Python 服务（七业务 + API 网关）；API 网关为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭）         |
-| 003 | 长任务用 Postgres job 表 + worker                                               | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                                |
-| 004 | Sandbox 用 microsandbox provider                                                | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                               |
-| 005 | 数据：云 PG + 云 Redis；对象存储暂缓                                            | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件（2026-11-12 起本地默认改为 compose Postgres，SQLite 降为显式覆盖）；**Redis 业务接入未完成（限流仍进程内，R-P1-8）**                                    |
-| 006 | 身份：自建 account-service（不用托管 IdP）                                      | ✅ 采用                | GitHub 社交登录已接入（Google 入口隐藏）；前端鉴权仅 token/session 两模式                                                                                                               |
-| 007 | API 网关 httpOnly Cookie + 短时 JWT                                             | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                                      |
-| 008 | 计费：usage ledger + Free 配额 + BYOK                                           | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                                 |
-| 009 | MCP Server + Client                                                             | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                            |
-| 010 | Tool Registry + Skill + Workspace 类型                                          | ✅ 采用                | coding/办公共用运行时                                                                                                                                                                   |
-| 011 | 内网/离线部署可启动                                                             | ⏸ 暂缓                 | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                                          |
-| 012 | 部署主线：Vercel 静态层 + 腾讯云轻量（首尔）单机 Compose + Neon；沙箱外置 Modal | ✅ 采用                | 2026-11-11 定稿，理由/改造/成本见 [design/hybrid-deployment.md](./design/hybrid-deployment.md)；Cloud Run/Fly 降为备选（[serverless-deployment.md](./design/serverless-deployment.md)） |
+| ADR | 决策                                                                                           | 状态                   | 说明                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 001 | Vite SPA + Next.js 独立静态官网                                                                | ✅ 采用                | SPA 静态托管；官网 Next.js 静态导出（Vercel）                                                                                                                                                              |
+| 002 | 静态 SPA + FastAPI 网关 + 容器 runtime                                                         | ✅ 采用                | 八个 Python 服务（七业务 + API 网关）；API 网关为独立 FastAPI 服务；容器化已落地——统一镜像 `deploy/docker/python-service.Dockerfile` + `deploy/docker-compose.yml`（R-36 关闭）                            |
+| 003 | 长任务用 Postgres job 表 + worker                                                              | ✅ 采用                | 不引入 Temporal/Inngest；复用现有 outbox 与 checkpointer                                                                                                                                                   |
+| 004 | Sandbox 用 microsandbox provider                                                               | ✅ P1 + P2 + P3        | 见 §4.4；stdio MCP、技能包上传/执行已落地                                                                                                                                                                  |
+| 005 | 数据：自建 PG + 自建 Redis；对象存储暂缓                                                       | ✅ 采用                | 开发 SQLite/本地 Redis/本地文件（2026-11-12 起本地默认改为 compose Postgres，SQLite 降为显式覆盖）；Redis 限流已接（基础设施机）                                                                           |
+| 006 | 身份：自建 account-service（不用托管 IdP）                                                     | ✅ 采用                | GitHub 社交登录已接入（Google 入口隐藏）；前端鉴权仅 token/session 两模式                                                                                                                                  |
+| 007 | API 网关 httpOnly Cookie + 短时 JWT                                                            | ✅ 采用                | 防 XSS、收敛跨域；API Key 场景除外                                                                                                                                                                         |
+| 008 | 计费：usage ledger + Free 配额 + BYOK                                                          | ✅ 采用（Stripe 暂缓） | 订阅/发票/税后续再接；BYOK 已接入：gateway 按账号解析、失败回退平台 key（06 P0-6 ✅ 2026-10-26，见 [design/byok.md](./design/byok.md)）                                                                    |
+| 009 | MCP Server + Client                                                                            | ✅ 采用（M3）          | 开放平台核心                                                                                                                                                                                               |
+| 010 | Tool Registry + Skill + Workspace 类型                                                         | ✅ 采用                | coding/办公共用运行时                                                                                                                                                                                      |
+| 011 | 内网/离线部署可启动                                                                            | ⏸ 暂缓                 | 当前只要求本地启动；方案见 §10.3，恢复时再实施                                                                                                                                                             |
+| 012 | 部署主线：Vercel 静态层 + 腾讯云应用机（首尔）Compose + 同 VPC 基础设施机（PG/Redis/sandboxd） | ✅ 采用                | 2026-11-11 定稿、2026-11-21 改双机；理由/改造/成本见 [design/hybrid-deployment.md](./design/hybrid-deployment.md)；Cloud Run/Fly 降为备选（[serverless-deployment.md](./design/serverless-deployment.md)） |
 
 ---
 
@@ -83,14 +83,15 @@ Browser
 ├── knowledge-service       摄取/检索/重排（JSON 向量，无需 pgvector）                :8006
 └── account-service         账号/会话/配额/usage/API Key（自建 IdP）                 :8001
 
-云托管（只保留 URL 型依赖）
-├── 云 Postgres             生产库（URL 注入；开发用本机 compose Postgres）
-├── 云 Redis                限流/锁/短期缓存（URL 注入；开发本地 Redis；业务接入待办）
+云托管 / 自建基础设施（URL 型依赖）
+├── 基础设施机 Postgres    生产库（同 VPC 内网 URL；开发用本机 compose Postgres）
+├── 基础设施机 Redis       限流/锁/短期缓存（同 VPC；开发本地 Redis）
 └── Sentry                  前端/服务错误（官方 SaaS）
 
 开发环境
 ├── compose Postgres:16     每服务独立库（deploy/docker-compose.yml；SQLite 可显式覆盖）
 ├── 本地 Redis              可选（未配置时降级为进程内限流）
+├── 远端 sandboxd          gVisor + Docker（当前生产沙箱；本地默认 microsandbox）
 ├── 本地目录                artifact_store=filesystem（默认）
 └── 本地 SMTP               事务邮件联调（生产暂不做）
 ```
@@ -112,7 +113,7 @@ Browser
 | apps/site            | Vercel 静态           | Next.js 官网、文档、Changelog                                                                                                                                                                         | 静态导出（`output: 'export'`）                                                                                                                                                                |
 | apps/blog            | Vercel 静态           | Next.js 学习博客（MDX、标签/系列/归档、RSS）                                                                                                                                                          | 独立静态导出；设计见 [blog.md](./design/blog.md)                                                                                                                                              |
 | apps/desktop         | Electron 44           | 桌面应用（本地电脑模式：进程/文件/命令在本机执行）                                                                                                                                                    | 与 web 云端模式并存可切换                                                                                                                                                                     |
-| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                                                      | FastAPI 同源 `/api`；限流目前进程内（Redis 后接）                                                                                                                                             |
+| services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                                                      | FastAPI 同源 `/api`；限流走基础设施机 Redis（未配置时回退进程内）                                                                                                                             |
 | agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel);MCP 预设(Notion 一键授权)与工具 annotations 风险分级                                                                                       | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                                                                     |
 | tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                                                      | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                                                                        |
 | llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                                                             | BYOK（按账号注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                                   |
@@ -225,21 +226,21 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ## 6. 数据与存储
 
-| 数据                                                             | 生产                             | 开发               | 说明                                                   |
-| ---------------------------------------------------------------- | -------------------------------- | ------------------ | ------------------------------------------------------ |
-| runs / run_events / conversations / chat_messages / instructions | 云 Postgres                      | 本机 PG            | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
-| connections / credentials                                        | 云 Postgres                      | 本机 PG            | 凭证加密暂用应用层密钥；KMS 后置                       |
-| workspaces / artifacts / sandboxes                               | 云 Postgres + 内容存 DB/文件系统 | 本机 PG + 本地目录 | 对象存储后置；单实例 filesystem 可用                   |
-| knowledge_documents / chunks                                     | 云 Postgres（JSON 向量）         | 本机 PG            | 现有实现不依赖 pgvector，可直接跑                      |
-| orgs / members / quotas / usage_ledger / api_keys                | 云 Postgres                      | 本机 PG            | usage ledger 新增；Stripe 后置                         |
-| session / rate limit / locks                                     | 云 Redis（**业务未接，R-P1-8**） | 本地 Redis（可选） | 未配置时降级为进程内实现                               |
-| jobs                                                             | 云 Postgres（job 表）            | 本机 PG job 表     | 队列与重试；worker 轮询                                |
+| 数据                                                             | 生产                               | 开发               | 说明                                                   |
+| ---------------------------------------------------------------- | ---------------------------------- | ------------------ | ------------------------------------------------------ |
+| runs / run_events / conversations / chat_messages / instructions | 基础设施机 PG                      | 本机 PG            | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
+| connections / credentials                                        | 基础设施机 PG                      | 本机 PG            | 凭证加密暂用应用层密钥；KMS 后置                       |
+| workspaces / artifacts / sandboxes                               | 基础设施机 PG + 内容存 DB/文件系统 | 本机 PG + 本地目录 | 对象存储后置；单实例 filesystem 可用                   |
+| knowledge_documents / chunks                                     | 基础设施机 PG（JSON 向量）         | 本机 PG            | 现有实现不依赖 pgvector，可直接跑                      |
+| orgs / members / quotas / usage_ledger / api_keys                | 基础设施机 PG                      | 本机 PG            | usage ledger 新增；Stripe 后置                         |
+| session / rate limit / locks                                     | 基础设施机 Redis（已接）           | 本地 Redis（可选） | 未配置时降级为进程内实现                               |
+| jobs                                                             | 基础设施机 PG（job 表）            | 本机 PG job 表     | 队列与重试；worker 轮询                                |
 
 **开发/生产一致性**
 
 - 开发：本机 compose Postgres:16，每服务独立库（见 `deploy/docker-compose.yml`）；离线/测试可显式改回 SQLite，`AUTO_CREATE_TABLES=true` 仅作兜底建表；
-- 生产：云 Postgres + Alembic 迁移（现有迁移未使用 PG 专属类型，SQLite 兼容）；
-- CI 必须对**云 PG**跑一遍迁移 + 集成测试，避免「SQLite 过、PG 挂」；
+- 生产：基础设施机 PostgreSQL 16 + Alembic 迁移（迁移只用通用类型，SQLite/PG 兼容）；
+- CI 必须对 **Postgres** 跑一遍迁移 + 集成测试（testcontainers），避免「SQLite 过、PG 挂」；
 - 多实例部署时 **filesystem artifact store 不可用**，必须用 database 模式或共享盘；对象存储接入后替换。
 
 ---
@@ -251,7 +252,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 - **Free 配额**：`usage_ledger` 记录 token 用量（tool call / 存储维度待补，见 06 P0-1）；按月聚合 → 配额检查（402/429）；
 - **BYOK**：账号级 provider key 经**信封 v2 加密**存储，KMS 可切 `local` / Vault Transit；llm-gateway 按 `X-Account-Id` + `X-Internal-Secret` 向 account 的内部端点解析并短时缓存（300s / 负缓存 30s），**失败一律回退平台 `settings.api_key`**；账号 key 只覆盖 `api_key`、不覆盖 `api_base`；BYOK 不扣模型 credits（用量来源尚未在 `usage_events` 区分，属 06 P0-1）。契约见 [design/byok.md](./design/byok.md)；
 - **订阅/支付**：Stripe 暂不做；先只支持 Free 档 + 手动开通内部档；付费自助后续补；
-- **限流**：Redis（**当前进程内实现，Redis 接入待办 R-P1-8**）或进程内降级；账号/IP/Key 三级；Turnstile 后置；
+- **限流**：基础设施机 Redis（account 动态注册 / gateway 固定窗口；不可用时回退进程内）；账号/IP/Key 三级；Turnstile 后置；
 - **公开分享**：不可猜测 token、可撤销、可过期（后置）。
 
 ---
@@ -319,22 +320,22 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 ### 10.1 环境
 
-| 环境    | Web                                    | Runtime                                | 数据                                                |
-| ------- | -------------------------------------- | -------------------------------------- | --------------------------------------------------- |
-| dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                     | 本机 compose Postgres + 本地 Redis(可选) + 本地目录 |
-| staging | Vercel preview（SPA + `/api` rewrite） | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon staging 6 库 + 本地卷 artifact                 |
-| prod    | Vercel（SPA + `/api` rewrite）         | 腾讯云轻量（首尔）单机 Compose + Caddy | Neon prod 6 库 + 本地卷 artifact（COS 后置）        |
+| 环境    | Web                                    | Runtime                                   | 数据                                                |
+| ------- | -------------------------------------- | ----------------------------------------- | --------------------------------------------------- |
+| dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                        | 本机 compose Postgres + 本地 Redis(可选) + 本地目录 |
+| staging | Vercel preview（SPA + `/api` rewrite） | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 6 库 + 本地卷 artifact                |
+| prod    | Vercel（SPA + `/api` rewrite）         | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 6 库 + 本地卷 artifact（COS 后置）    |
 
-- CI：lint/typecheck/test/build → **对云 PG 跑迁移与集成测试** → 部署 preview → smoke/e2e；
+- CI：lint/typecheck/test/build → **对 Postgres 跑迁移与集成测试（testcontainers）** → 部署 preview → smoke/e2e；
 - 服务镜像：8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
 - 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
-- 成本护栏：单机固定成本 + Neon 按量计费、Free 配额、预算告警。
+- 成本护栏：两台固定成本（应用机 + 基础设施机）、Free 配额、预算告警。
 
 ### 10.2 从当前仓库迁移（M0 路径）
 
 1. ✅ 新增 `services/api-gateway`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
 2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；生产编排见 `deploy/tencent/`（轻量单机 + Caddy + 8 服务 Compose，2026-11-11）；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
-3. ⏳ 接入云 PG（Neon 6 库）/ 云 Redis URL——**M0-03 进行中**，配置样例见 `deploy/tencent/.env.example`；开发默认本机 compose Postgres/本地 Redis；产物改 database 模式以支持多实例；
+3. ✅ 接入自建 PG 16（6 库，每服务独立 alembic 版本表）/ Redis（同 VPC 基础设施机，2026-11-21）；配置样例见 `deploy/tencent/.env.example`；开发默认本机 compose Postgres；产物仍 filesystem，多实例前改 database/COS；
 4. ⏳ account-service 补 Google/GitHub OAuth + API 网关 Cookie 会话（保留 token 模式开发兜底）——API 网关 Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
 6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；
@@ -479,7 +480,8 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 - **P2（2026-10-20）**：stdio MCP 接入——命令在沙箱内拉起，`StdioSandboxPool` 按对话级复用（`ToolContext.conversation_id`），probe 走 stdio JSON-RPC；`env/token` 只存密文；Web MCP 面板支持 HTTP/stdio 切换；
 - **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
 - **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单账号可信环境（桌面本地模式），启动即打 warning；生产/多账号仍只用 microsandbox；
-- **外置 microVM provider=e2b（2026-11-12）**：`workspace/services/sandbox_provider/e2b_sandbox.py` 通过 E2B 控制面（E2B 官方云 / 阿里云 Agent Sandbox 极速版，同一 SDK 只换 Key 与 Domain）提供与 microsandbox 相同的 `SandboxProvider` 协议；沙箱按 `metadata.beauty_sandbox_name` 标记并在服务重启后查回，`destroy` 幂等；`network` 映射 `allow_internet_access`，`cols/rows` 走 `pty.create`；轻量服务器无 `/dev/kvm` 时作为生产 provider（`WORKSPACE__SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`，Hobby 单会话 ≤1h）；
+- **外置 sandboxd provider（2026-11-21）**：`workspace/services/sandbox_provider/sandboxd.py` + `sandboxd_shell.py` 通过 REST `/v1/sandboxes`（create/destroy/exec/files）与 WebSocket PTY 提供隔离执行；生产 `WORKSPACE__SANDBOX_PROVIDER=sandboxd` + `SANDBOXD_URL/SANDBOXD_TOKEN` 指向基础设施机（gVisor + Docker，`10.8.0.14:8088`）；没有可重连 session id，服务重启后 shell 按 `session_lost` 处理；
+- **外置 microVM provider=e2b（2026-11-12）**：`workspace/services/sandbox_provider/e2b_sandbox.py` 通过 E2B 控制面（E2B 官方云 / 阿里云 Agent Sandbox 极速版，同一 SDK 只换 Key 与 Domain）提供与 microsandbox 相同的 `SandboxProvider` 协议；沙箱按 `metadata.beauty_sandbox_name` 标记并在服务重启后查回，`destroy` 幂等；`network` 映射 `allow_internet_access`，`cols/rows` 走 `pty.create`；轻量服务器无 `/dev/kvm` 时可作 e2b 备选 provider（`WORKSPACE__SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`，Hobby 单会话 ≤1h）；
 - **远端 gVisor + Docker provider=sandboxd（2026-11-21）**：`workspace/services/sandbox_provider/sandboxd.py` 通过另一台云服务器上的 sandboxd REST 控制面创建/执行/销毁沙箱，隔离由 gVisor（runsc）+ Docker 提供；本服务不需要本机 Docker/`/dev/kvm`，只要求能访问 sandboxd 且持有 token。创建时把沙箱名写进 `owner` 并在服务重启后按 `owner` 查回；`network` 映射布尔值；exec 的 `stdin` 用「上传临时文件 + `/bin/sh` 重定向」模拟（`run_code` 依赖）；sandboxd 的 PTY 走 WebSocket（`/v1/sandboxes/{id}/pty`，文本帧即 stdin），`open_shell` 可用；但没有可重连的 session id/pid，`attach_shell` 明确返回 `sandbox.provider_unsupported`；
 - **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
