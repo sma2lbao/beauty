@@ -22,7 +22,8 @@
   opacity: 0.8;
 }
 
-.bd-empty__description {
+/* 描述是 <p>:用「元素 + 类」避免被宿主段落规则(如文档站 `.rp-doc p`)盖掉 */
+p.bd-empty__description {
   margin: 0;
   max-width: 32rem;
   font-size: 0.875rem;

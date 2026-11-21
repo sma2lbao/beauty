@@ -14,106 +14,110 @@
   line-height: 1.4375rem;
 }
 
-.bd-markdown__h1,
-.bd-markdown__h2,
-.bd-markdown__h3,
-.bd-markdown__h4 {
+h1.bd-markdown__h1,
+h2.bd-markdown__h2,
+h3.bd-markdown__h3,
+h4.bd-markdown__h4 {
   margin: 1rem 0 0.375rem;
   color: var(--bd-foreground);
   font-weight: 600;
   line-height: 1.5;
 }
 
-.bd-markdown__h1 {
+h1.bd-markdown__h1 {
   margin-top: 1.25rem;
   font-size: 1.25rem;
 }
 
-.bd-markdown__h2 {
+h2.bd-markdown__h2 {
   margin-top: 1.25rem;
   font-size: 1.0625rem;
 }
 
-.bd-markdown__h3 {
+h3.bd-markdown__h3 {
   font-size: 0.9375rem;
 }
 
-.bd-markdown__h4 {
+h4.bd-markdown__h4 {
   font-size: 0.875rem;
 }
 
-.bd-markdown__p {
+p.bd-markdown__p {
   margin: 0.5rem 0;
+  line-height: inherit;
 }
 
-.bd-markdown__ul,
-.bd-markdown__ol {
+ul.bd-markdown__ul,
+ol.bd-markdown__ol {
   margin: 0.5rem 0;
   padding-left: 1.25rem;
+  line-height: inherit;
 }
 
-.bd-markdown__ul {
+ul.bd-markdown__ul {
   list-style: disc;
 }
 
-.bd-markdown__ol {
+ol.bd-markdown__ol {
   list-style: decimal;
 }
 
-.bd-markdown__ul ::marker,
-.bd-markdown__ol ::marker {
+ul.bd-markdown__ul ::marker,
+ol.bd-markdown__ol ::marker {
   color: var(--bd-muted-foreground);
 }
 
-.bd-markdown__li {
+li.bd-markdown__li {
   margin: 0.25rem 0;
+  line-height: inherit;
 }
 
-.bd-markdown__blockquote {
+blockquote.bd-markdown__blockquote {
   margin: 0.75rem 0;
+  line-height: inherit;
   padding-left: 0.75rem;
   border-left: 2px solid var(--bd-input);
   color: var(--bd-muted-foreground);
 }
 
-.bd-markdown__hr {
+hr.bd-markdown__hr {
   margin: 1rem 0;
   border: 0;
   border-top: 1px solid var(--bd-border);
 }
 
-.bd-markdown__strong {
+strong.bd-markdown__strong {
   color: var(--bd-foreground);
   font-weight: 600;
 }
 
-.bd-markdown__em {
+em.bd-markdown__em {
   font-style: italic;
 }
 
-.bd-markdown__link {
+a.bd-markdown__link {
   color: var(--bd-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
   overflow-wrap: anywhere;
 }
 
-.bd-markdown__link:hover {
+a.bd-markdown__link:hover {
   color: var(--bd-primary-soft);
 }
 
-.bd-markdown__code {
+code.bd-markdown__code {
   font-family: var(--bd-font-mono);
 }
 
-.bd-markdown__code--block {
+code.bd-markdown__code--block {
   background: none;
   color: var(--bd-code-foreground);
   font-size: 0.75rem;
   line-height: 1.25rem;
 }
 
-.bd-markdown__code--inline {
+code.bd-markdown__code--inline {
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
   background: var(--bd-secondary);
@@ -121,7 +125,7 @@
   font-size: 0.75rem;
 }
 
-.bd-markdown__pre {
+pre.bd-markdown__pre {
   margin: 0.75rem 0;
   padding: 0.75rem;
   overflow-x: auto;
@@ -135,7 +139,7 @@
 }
 
 /* 代码块里的内联代码样式必须让位给代码块本身 */
-.bd-markdown__pre .bd-markdown__code {
+pre.bd-markdown__pre code.bd-markdown__code {
   padding: 0;
   background: none;
   color: inherit;
@@ -164,31 +168,36 @@
   overflow-x: auto;
 }
 
-.bd-markdown__table {
+table.bd-markdown__table {
   width: 100%;
+  margin: 0;
   border-collapse: collapse;
   font-size: 0.75rem;
 }
 
-.bd-markdown__thead {
+thead.bd-markdown__thead {
   background: var(--bd-secondary);
 }
 
-.bd-markdown__th {
+th.bd-markdown__th {
   padding: 0.25rem 0.5rem;
+  font-size: inherit;
+  line-height: inherit;
   border: 1px solid var(--bd-border);
   color: var(--bd-foreground);
   font-weight: 600;
   text-align: left;
 }
 
-.bd-markdown__td {
+td.bd-markdown__td {
   padding: 0.25rem 0.5rem;
+  font-size: inherit;
+  line-height: inherit;
   border: 1px solid var(--bd-border);
   vertical-align: top;
 }
 
-.bd-markdown__img {
+img.bd-markdown__img {
   max-width: 100%;
   margin: 0.75rem 0;
   border: 1px solid var(--bd-border);

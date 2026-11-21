@@ -16,6 +16,16 @@
   align-items: flex-start;
 }
 
+/* 竖向演示里的整块提示类组件(Alert 等)撑满宽度,
+ * 否则每个提示条按自身文本收缩,宽度参差又不便读。 */
+.bd-demo--stretch {
+  align-items: stretch;
+}
+
+.bd-demo--stretch > * {
+  width: 100%;
+}
+
 .bd-demo--block {
   padding-right: 120px;
 }

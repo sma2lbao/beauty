@@ -16,7 +16,7 @@ import { Select, Space } from '@beauty/design';
 <div className="bd-demo">
   <Select defaultValue="" aria-label="城市" style={{ maxWidth: '220px' }}>
     <option value="" disabled>
-      请选择城市
+      {'请选择城市'}
     </option>
     <option value="sh">上海</option>
     <option value="hz">杭州</option>
@@ -66,8 +66,8 @@ import { Select } from '@beauty/design';
 
 继承 `React.ComponentPropsWithRef<'select'>`(除 `size`)。
 
-| 属性        | 说明                   | 类型        | 默认值  |
-| ----------- | ---------------------- | ----------- | ------- | ----- | ------ |
-| size        | 尺寸,与 Input 一致高度 | `'sm'       | 'md'    | 'lg'` | `'md'` |
-| invalid     | 校验失败态             | `boolean`   | `false` |
-| placeholder | 辅助说明(不替代空选项) | `ReactNode` | —       |
+| 属性        | 说明                   | 类型                   | 默认值  |
+| ----------- | ---------------------- | ---------------------- | ------- |
+| size        | 尺寸,与 Input 一致高度 | `'sm' \| 'md' \| 'lg'` | `'md'`  |
+| invalid     | 校验失败态             | `boolean`              | `false` |
+| placeholder | 辅助说明(不替代空选项) | `ReactNode`            | —       |

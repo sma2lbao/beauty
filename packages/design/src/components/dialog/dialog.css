@@ -46,14 +46,23 @@
   gap: 0.375rem;
 }
 
-.bd-dialog__title {
+/* 标题/描述用「元素 + 类」抬特异性:对话框常直接渲染在文档内容里,
+ * 宿主的 h2/p 规则(如文档站 `.rp-doc h2`)会盖掉单类名重置。 */
+h2.bd-dialog__title {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.5rem;
 }
 
-.bd-dialog__description {
+/* 文档站的正文样式会给"页面里的第一个 h2"插入一条分隔线占位
+ * (`.rp-doc ... :where(h2:first-of-type)::before`);对话框里的 h2 常是
+ * 本子树里的第一个 h2,会被误伤,这里明确不要伪元素。 */
+h2.bd-dialog__title::before {
+  content: none;
+}
+
+p.bd-dialog__description {
   margin: 0;
   color: var(--bd-muted-foreground);
   font-size: 0.875rem;

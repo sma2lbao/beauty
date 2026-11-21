@@ -34,18 +34,21 @@
 }
 
 .bd-alert__title {
-  margin: 0;
   font-weight: 600;
   color: inherit;
 }
 
 .bd-alert__description {
-  margin: 0;
   color: var(--bd-muted-foreground);
 }
 
-.bd-alert__title + .bd-alert__description {
-  margin-top: 0.125rem;
+/* 标题与正文都是 <p>:宿主站点常给段落加外边距与行高
+ * (例如 rspress 文档站的 `.rp-doc p` 是 20px / 28px)。
+ * 用「元素 + 类」把特异性抬到 (0,1,1),保证不同宿主下间距一致。 */
+p.bd-alert__title,
+p.bd-alert__description {
+  margin: 0;
+  line-height: inherit;
 }
 
 /* ---------- 语义类型 ---------- */

@@ -9,9 +9,12 @@
  * 表格行为一致;单元格内容的对齐、等宽数字等交给调用方 className。
  */
 
-.bd-table {
+table.bd-table {
   box-sizing: border-box;
   width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
   border-collapse: collapse;
   text-align: left;
   font-family: var(--bd-font-sans);
@@ -20,11 +23,14 @@
   color: var(--bd-foreground);
 }
 
-.bd-table__header {
+thead.bd-table__header {
   border-bottom: 1px solid var(--bd-border);
+  background: none;
 }
 
-.bd-table__head {
+/* 表头/单元格是 th/td:用「元素 + 类」抬特异性,
+ * 避免被宿主表格样式(如文档站 `.rp-doc th`)盖掉留白与字号。 */
+th.bd-table__head {
   padding: 0.625rem 1rem;
   font-size: 0.6875rem;
   font-weight: 500;
@@ -37,16 +43,17 @@
   border-top: 1px solid var(--bd-border);
 }
 
-.bd-table__cell {
+td.bd-table__cell {
   padding: 0.625rem 1rem;
+  font-size: inherit;
 }
 
-.bd-table__footer {
+tfoot.bd-table__footer {
   border-top: 1px solid var(--bd-border);
   background-color: var(--bd-muted);
 }
 
-.bd-table__caption {
+caption.bd-table__caption {
   margin-top: 0.75rem;
   color: var(--bd-muted-foreground);
   font-size: 0.75rem;

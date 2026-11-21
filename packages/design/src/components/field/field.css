@@ -31,8 +31,9 @@
   gap: 0.375rem;
 }
 
-.bd-field__hint,
-.bd-field__error {
+/* 提示/错误都是 <p>:用「元素 + 类」避免被宿主段落规则(如文档站 `.rp-doc p`)盖掉 */
+p.bd-field__hint,
+p.bd-field__error {
   margin: 0;
   font-size: 0.75rem;
   line-height: 1.125rem;
