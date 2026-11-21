@@ -21,14 +21,14 @@
 
 ## 2. 现状(证据)
 
-| 能力         | 落地前                                                                                | 位置                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 文件工具     | 已有:`read`/`glob`/`grep`/`list_dir`/`write`/`edit`,全部在沙箱内、路径 jail 在 helper | `services/tool-service/tool_service/services/catalog.py`                                              |
-| 命令执行     | 缺失:目录 9 个工具里没有 exec,也没有 shell                                            | 同上 `TOOLS`                                                                                          |
-| 内部 exec    | 有,但只服务内部逻辑:上下文文件发现、技能执行                                          | `services/agent-orchestrator/agent_orchestrator/context/sandbox_files.py`、`services/skill_runner.py` |
-| 桌面本地模式 | 有 `run_command`(工作区根目录、默认 120s、>256KB 截断)                                | `apps/desktop/src/main/local/agent.ts`                                                                |
-| 沙箱隔离     | microVM(microsandbox)默认,`sandbox_network=deny`,exec 默认 60s、256KB 输出上限        | `services/workspace-service/workspace/services/sandbox_provider.py`                                   |
-| 结果上限     | 超过 25,000 字符直接回 `tool.too_large`(模型拿不到更大结果)                           | `services/tool-service/tool_service/constants.py`                                                     |
+| 能力         | 落地前                                                                                                                       | 位置                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 文件工具     | 已有:`read`/`glob`/`grep`/`list_dir`/`write`/`edit`,全部在沙箱内、路径 jail 在 helper                                        | `services/tool-service/tool_service/services/catalog.py`                                              |
+| 命令执行     | 缺失:目录 9 个工具里没有 exec,也没有 shell                                                                                   | 同上 `TOOLS`                                                                                          |
+| 内部 exec    | 有,但只服务内部逻辑:上下文文件发现、技能执行                                                                                 | `services/agent-orchestrator/agent_orchestrator/context/sandbox_files.py`、`services/skill_runner.py` |
+| 桌面本地模式 | 有 `run_command`(工作区根目录、默认 120s、>256KB 截断)                                                                       | `apps/desktop/src/main/local/agent.ts`                                                                |
+| 沙箱隔离     | 内核级隔离默认(microsandbox microVM;可选 e2b、sandboxd gVisor + Docker),`sandbox_network=deny`,exec 默认 60s、256KB 输出上限 | `services/workspace-service/workspace/services/sandbox_provider/`                                     |
+| 结果上限     | 超过 25,000 字符直接回 `tool.too_large`(模型拿不到更大结果)                                                                  | `services/tool-service/tool_service/constants.py`                                                     |
 
 D13 原文(需修订的决策)在 `docs/design/tool-service.md` §决策表:「不引入任意命令执行、不开沙箱联网」。当时的理由是没有可用的隔离执行面;**当前沙箱已经具备**(microVM + 网络 deny + 输出/超时上限),因此改为「默认关闭、按部署开启、逐次确认」。
 
@@ -151,22 +151,22 @@ shell 能绕过文件工具的路径 jail(直接 `cat /workspace/../etc/passwd` 
 
 ### 7.3 打开 exec 的部署前提
 
-- 沙箱必须用 `sandbox_provider=microsandbox`(microVM);`local` provider 无隔离,只允许本地单账号开发。
+- 沙箱必须用内核级隔离的 provider(`microsandbox` / `e2b` / `sandboxd`);`local` provider 无隔离,只允许本地单账号开发。
 - `sandbox_network=deny` 保持默认;**不要**为了 `pip install` 打开网络。
 - 单 run 配额(`TOOL__MAX_TOOL_CALLS_PER_RUN`)与沙箱 TTL 是唯一的时间/次数兜底,生产建议调低。
 - 需要人工确认 UI(orchestrator 的 confirmation 闸);无人值守的自动化 run 不应开启 exec。
 
 ### 7.4 已知风险与缓解
 
-| 风险                        | 缓解                                                                       |
-| --------------------------- | -------------------------------------------------------------------------- |
-| 资源耗尽(CPU/内存/长跑进程) | 沙箱 cpus/memory 上限 + exec 超时 + microVM 硬隔离(二期加 run 级 CPU 预算) |
-| 沙箱内删掉交付物/改坏仓库   | 确认闸 + `git` 可回滚(工作区是账号文件真源,不在容器外)                     |
-| 输出洪水                    | 16K/8K 截断 + 25K 硬上限 + note 提示回读                                   |
-| 沙箱内 exfil(网络)          | `network=deny`;不开放 egress,`fetch` 与 exec 互不替代                      |
-| 供应链(沙箱内装依赖)        | 默认失败;需要预装依赖应在镜像/工作区准备阶段完成                           |
-| microVM 逃逸                | 依赖 microsandbox 上游;紧跟安全公告,不以 exec 为信任边界                   |
-| 命令注入                    | 命令本身就是模型给的字符串,不经拼接;审批与沙箱是唯一防线                   |
+| 风险                        | 缓解                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| 资源耗尽(CPU/内存/长跑进程) | 沙箱 cpus/memory 上限 + exec 超时 + microVM/gVisor 硬隔离(二期加 run 级 CPU 预算) |
+| 沙箱内删掉交付物/改坏仓库   | 确认闸 + `git` 可回滚(工作区是账号文件真源,不在容器外)                            |
+| 输出洪水                    | 16K/8K 截断 + 25K 硬上限 + note 提示回读                                          |
+| 沙箱内 exfil(网络)          | `network=deny`;不开放 egress,`fetch` 与 exec 互不替代                             |
+| 供应链(沙箱内装依赖)        | 默认失败;需要预装依赖应在镜像/工作区准备阶段完成                                  |
+| microVM / gVisor 逃逸       | 依赖 microsandbox / E2B / gVisor 上游;紧跟安全公告,不以 exec 为信任边界           |
+| 命令注入                    | 命令本身就是模型给的字符串,不经拼接;审批与沙箱是唯一防线                          |
 
 ### 7.5 与 P1-A 的关系
 

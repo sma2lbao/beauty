@@ -21,14 +21,14 @@
 
 ## 2. 现状(证据)
 
-| 能力        | 落地前                                                                                    | 位置                                                                 |
-| ----------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 命令执行    | 已有 `exec`(P1-L):一次性 `/bin/sh -lc`,cwd 夹在 `/workspace` 内、默认关                   | `services/tool-service/tool_service/services/execution/exec_path.py` |
-| 多行 Python | 只能 `python3 -c "..."` 或 heredoc,转义在 20 行以上不可维护                               | 由模型在对话/计划里自行拼接,无工具级入口                             |
-| 执行协议    | `exec` 已确立「不进 helper、直调 `SandboxProvider.exec`」                                 | `services/tool-service/tool_service/services/sandbox.py`             |
-| 沙箱隔离    | microVM 默认(microsandbox;可选 E2B 云/阿里云极速版),`sandbox_network=deny`,沙箱 TTL 1800s | `services/workspace-service/workspace/services/sandbox_provider/`    |
-| 目录        | 10 个工具(含 `exec`),没有代码执行入口                                                     | `services/tool-service/tool_service/services/catalog.py`             |
-| 结果上限    | 整包 25,000 字符;`exec` 已自带 16K/8K 截断与回缩                                          | `services/tool-service/tool_service/constants.py`                    |
+| 能力        | 落地前                                                                                                                             | 位置                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 命令执行    | 已有 `exec`(P1-L):一次性 `/bin/sh -lc`,cwd 夹在 `/workspace` 内、默认关                                                            | `services/tool-service/tool_service/services/execution/exec_path.py` |
+| 多行 Python | 只能 `python3 -c "..."` 或 heredoc,转义在 20 行以上不可维护                                                                        | 由模型在对话/计划里自行拼接,无工具级入口                             |
+| 执行协议    | `exec` 已确立「不进 helper、直调 `SandboxProvider.exec`」                                                                          | `services/tool-service/tool_service/services/sandbox.py`             |
+| 沙箱隔离    | 内核级隔离默认(microsandbox microVM;可选 E2B 云/阿里云极速版、远端 sandboxd gVisor + Docker),`sandbox_network=deny`,沙箱 TTL 1800s | `services/workspace-service/workspace/services/sandbox_provider/`    |
+| 目录        | 10 个工具(含 `exec`),没有代码执行入口                                                                                              | `services/tool-service/tool_service/services/catalog.py`             |
+| 结果上限    | 整包 25,000 字符;`exec` 已自带 16K/8K 截断与回缩                                                                                   | `services/tool-service/tool_service/constants.py`                    |
 
 ## 3. 目标与非目标
 
@@ -214,7 +214,7 @@ Python 进程能做 shell 能做的所有事,而且更省事:`os.system`/`subpro
 
 ### 8.3 打开 run_code 的部署前提
 
-- 沙箱必须是 microVM:`sandbox_provider=microsandbox`(本机 runtime)或 `e2b`(外置 E2B 官方云/阿里云 Agent Sandbox 极速版,需 `E2B_API_KEY`,Hobby 单会话 ≤1h);`local` provider 无隔离,只允许本地单账号开发。
+- 沙箱必须是内核级隔离:`sandbox_provider=microsandbox`(本机 microVM)、`e2b`(外置 E2B 官方云/阿里云 Agent Sandbox 极速版,需 `E2B_API_KEY`,Hobby 单会话 ≤1h)或 `sandboxd`(另一台云服务器的 gVisor + Docker,需 `SANDBOXD_URL`/`SANDBOXD_TOKEN`);`local` provider 无隔离,只允许本地单账号开发。
 - `sandbox_network=deny` 保持默认;**不要**为了 `pip install` 打开网络。
 - 单 run 配额(`TOOL__MAX_TOOL_CALLS_PER_RUN`)与沙箱 TTL 是唯一的时间/次数兜底,生产建议调低。
 - 需要人工确认 UI(orchestrator 的 confirmation 闸);无人值守的自动化 run 不应开启。
@@ -222,20 +222,20 @@ Python 进程能做 shell 能做的所有事,而且更省事:`os.system`/`subpro
 
 ### 8.4 已知风险与缓解
 
-| 风险                          | 缓解                                                                     |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| 资源耗尽(CPU/内存/长跑进程)   | 沙箱 cpus/memory 上限 + 120s 超时 + microVM 硬隔离 + 单 run 调用次数上限 |
-| 输出洪水                      | 16K/8K 截断 + 25K 硬上限 + notes 提示回读                                |
-| 沙箱内副作用(写文件/删交付物) | 沙箱隔离 + 逐次确认 + TTL;run 级写配额不覆盖(见 §8.5)                    |
-| 沙箱内 exfil(网络)            | `network=deny`;不开放 egress,`fetch` 与 `run_code` 互不替代              |
-| 依赖安装(供应链)              | 默认失败;需要预装依赖应在镜像/工作区准备阶段完成                         |
-| microVM 逃逸                  | 依赖 microsandbox / E2B 上游;紧跟安全公告,不以 `run_code` 为信任边界     |
-| 代码注入                      | 代码本身就是模型给的源码,不经拼接;/bin/sh 不参与;审批与沙箱是唯一防线    |
-| 审计残留代码片段(可能含密钥)  | `arguments` 只留前 2,000 字符 + sha256;不要把密钥写进代码                |
+| 风险                          | 缓解                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| 资源耗尽(CPU/内存/长跑进程)   | 沙箱 cpus/memory 上限 + 120s 超时 + microVM/gVisor 硬隔离 + 单 run 调用次数上限 |
+| 输出洪水                      | 16K/8K 截断 + 25K 硬上限 + notes 提示回读                                       |
+| 沙箱内副作用(写文件/删交付物) | 沙箱隔离 + 逐次确认 + TTL;run 级写配额不覆盖(见 §8.5)                           |
+| 沙箱内 exfil(网络)            | `network=deny`;不开放 egress,`fetch` 与 `run_code` 互不替代                     |
+| 依赖安装(供应链)              | 默认失败;需要预装依赖应在镜像/工作区准备阶段完成                                |
+| microVM / gVisor 逃逸         | 依赖 microsandbox / E2B / gVisor 上游;紧跟安全公告,不以 `run_code` 为信任边界   |
+| 代码注入                      | 代码本身就是模型给的源码,不经拼接;/bin/sh 不参与;审批与沙箱是唯一防线           |
+| 审计残留代码片段(可能含密钥)  | `arguments` 只留前 2,000 字符 + sha256;不要把密钥写进代码                       |
 
 ### 8.5 已知残留:run 级写配额不覆盖沙箱内副作用
 
-`TOOL__MAX_WRITES_PER_RUN` / `TOOL__MAX_WRITE_BYTES_PER_RUN` 只统计 `write`/`edit` 两个工具;沙箱里的 Python 代码写了多少字节,工具面看不到。当前边界靠三层:沙箱(microVM + TTL)、工具级审批(每次调用人工确认)、run 级总调用次数。要做「run 级沙箱写预算」需要沙箱侧计量(microsandbox 磁盘用量或工作区快照 diff),留到后续迭代。
+`TOOL__MAX_WRITES_PER_RUN` / `TOOL__MAX_WRITE_BYTES_PER_RUN` 只统计 `write`/`edit` 两个工具;沙箱里的 Python 代码写了多少字节,工具面看不到。当前边界靠三层:沙箱(microVM/gVisor + TTL)、工具级审批(每次调用人工确认)、run 级总调用次数。要做「run 级沙箱写预算」需要沙箱侧计量(microsandbox 磁盘用量或工作区快照 diff),留到后续迭代。
 
 ### 8.6 与 P1-A 的关系
 

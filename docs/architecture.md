@@ -7,22 +7,22 @@
 
 ## 0. 最终选型（2026-10 拍板）
 
-| 领域              | 生产                                                  | 开发环境                                     | 状态                                                                                                                |
-| ----------------- | ----------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）         | **本机 compose Postgres:16**（每服务独立库） | ✅ 已实施（生产 Neon 接入为 M0-03 待办；SQLite 仍可显式覆盖）                                                       |
-| Redis             | **云 Redis，提供 URL**                                | **本地 Redis**                               | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                                                              |
-| 对象存储          | **暂不引入**                                          | 本地文件系统 / DB 列                         | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
-| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**           | 同左（SQLite 覆盖时用文件/内存 worker）      | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
-| 沙箱              | **microsandbox provider（P1）**；local 仅本地兜底     | 本地 microsandbox / local / fake provider    | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §4.4）                                                                    |
-| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）   | 同左（token 模式兜底）                       | ✅ 已实施；不用托管 IdP（自建 account-service + GitHub OAuth）                                                      |
-| 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud** | 同左（本地日志）                             | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                  |
-| 支付              | **不做 Stripe**                                       | —                                            | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
-| 事务邮件          | **暂不做 Resend**                                     | 本地 SMTP / 控制台日志                       | ⏸ 暂缓；站内通知优先                                                                                                |
-| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）             | 本地 Vite                                    | ✅ 已实施                                                                                                           |
-| API 网关          | **FastAPI 服务**（同域 `/api`，:8007）                | 本地 uvicorn                                 | ✅ 已实施                                                                                                           |
-| LLM 推理          | **继续用 API**（litellm 网关 :8003）                  | 本地/API                                     | ✅ 已实施                                                                                                           |
-| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）          | 本地 Next dev                                | ✅ 已实施                                                                                                           |
-| 多区域 / 数据驻留 | 不做                                                  | —                                            | ⏸ 后续                                                                                                              |
+| 领域              | 生产                                                                       | 开发环境                                                  | 状态                                                                                                                |
+| ----------------- | -------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Postgres          | **云数据库，提供 URL**（Neon/RDS/云 PG 均可）                              | **本机 compose Postgres:16**（每服务独立库）              | ✅ 已实施（生产 Neon 接入为 M0-03 待办；SQLite 仍可显式覆盖）                                                       |
+| Redis             | **云 Redis，提供 URL**                                                     | **本地 Redis**                                            | ⚠️ compose 已起、业务未接（限流仍进程内；R-P1-8 缺口）                                                              |
+| 对象存储          | **暂不引入**                                                               | 本地文件系统 / DB 列                                      | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
+| 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**                                | 同左（SQLite 覆盖时用文件/内存 worker）                   | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
+| 沙箱              | **microsandbox provider（P1）**；e2b / sandboxd 远端可选；local 仅本地兜底 | 本地 microsandbox / local / fake provider / 远端 sandboxd | ✅ P1 底座 + P2 stdio MCP + P3 技能包（见 §11.4）                                                                   |
+| 身份              | **自建 account-service**（邮箱+密码，补社交 OAuth）                        | 同左（token 模式兜底）                                    | ✅ 已实施；不用托管 IdP（自建 account-service + GitHub OAuth）                                                      |
+| 可观测            | **Sentry 官方服务** + 结构化日志 + **Langfuse Cloud**                      | 同左（本地日志）                                          | ✅ 已实施；Langfuse 已接入（trace/generation span、ingested cost、scores）；Web 前端 Sentry 已接入                  |
+| 支付              | **不做 Stripe**                                                            | —                                                         | ⏸ 暂缓；先 usage ledger + Free 配额；BYOK 加密存储 + 按账号注入已接（[design/byok.md](./design/byok.md)），订阅后续 |
+| 事务邮件          | **暂不做 Resend**                                                          | 本地 SMTP / 控制台日志                                    | ⏸ 暂缓；站内通知优先                                                                                                |
+| Web 托管          | **Nginx 托管静态 SPA**（同域反代 `/api`）                                  | 本地 Vite                                                 | ✅ 已实施                                                                                                           |
+| API 网关          | **FastAPI 服务**（同域 `/api`，:8007）                                     | 本地 uvicorn                                              | ✅ 已实施                                                                                                           |
+| LLM 推理          | **继续用 API**（litellm 网关 :8003）                                       | 本地/API                                                  | ✅ 已实施                                                                                                           |
+| 静态官网          | **Next.js 静态导出**（部署 Vercel，SSG/SEO）                               | 本地 Next dev                                             | ✅ 已实施                                                                                                           |
+| 多区域 / 数据驻留 | 不做                                                                       | —                                                         | ⏸ 后续                                                                                                              |
 
 ### 0.1 两种部署形态（同一套代码）
 
@@ -480,6 +480,7 @@ P3 起支持**用户上传技能包**（SKILL.md + 可选 skill.json + scripts/�
 - **P3（2026-10-20）**：用户上传技能包——zip 校验/版本化/对象存储、run 快照；skill_run 在一次性沙箱内解包并执行 entrypoint，产物登记为 run 交付物；Web Skills 页支持上传/版本/删除；
 - **本地兜底 local provider（2026-10-26）**：`WORKSPACE__SANDBOX_PROVIDER=local` 用「宿主目录 + 宿主子进程」实现同一 `SandboxProvider` 协议——每个沙箱是 `<SANDBOX_LOCAL_ROOT>/<name>/{workspace,home,tmp}`，沙箱内 `/workspace` 映射到其中的 `workspace/`；**没有隔离**，镜像/CPU/内存/网络策略无法强制执行，仅供没有 microVM runtime 的本地开发与单账号可信环境（桌面本地模式），启动即打 warning；生产/多账号仍只用 microsandbox；
 - **外置 microVM provider=e2b（2026-11-12）**：`workspace/services/sandbox_provider/e2b_sandbox.py` 通过 E2B 控制面（E2B 官方云 / 阿里云 Agent Sandbox 极速版，同一 SDK 只换 Key 与 Domain）提供与 microsandbox 相同的 `SandboxProvider` 协议；沙箱按 `metadata.beauty_sandbox_name` 标记并在服务重启后查回，`destroy` 幂等；`network` 映射 `allow_internet_access`，`cols/rows` 走 `pty.create`；轻量服务器无 `/dev/kvm` 时作为生产 provider（`WORKSPACE__SANDBOX_PROVIDER=e2b` + `E2B_API_KEY`，Hobby 单会话 ≤1h）；
+- **远端 gVisor + Docker provider=sandboxd（2026-11-21）**：`workspace/services/sandbox_provider/sandboxd.py` 通过另一台云服务器上的 sandboxd REST 控制面创建/执行/销毁沙箱，隔离由 gVisor（runsc）+ Docker 提供；本服务不需要本机 Docker/`/dev/kvm`，只要求能访问 sandboxd 且持有 token。创建时把沙箱名写进 `owner` 并在服务重启后按 `owner` 查回；`network` 映射布尔值；exec 的 `stdin` 用「上传临时文件 + `/bin/sh` 重定向」模拟（`run_code` 依赖）；sandboxd 的 PTY 走 WebSocket（`/v1/sandboxes/{id}/pty`，文本帧即 stdin），`open_shell` 可用；但没有可重连的 session id/pid，`attach_shell` 明确返回 `sandbox.provider_unsupported`；
 - **尚未落地（P4）**：出网 allowlist/凭据注入、配额与 sandboxMs 计量、审计事件、常驻 process bridge / 多实例沙箱池；node 技能镜像需含 python3（解包脚本）；
 - **当前对外承诺不变**：coding agent 仍只做**只读代码分析 + 补丁建议**；沙箱只用于受控的 MCP/skill 执行，未开放终端与预览。
 

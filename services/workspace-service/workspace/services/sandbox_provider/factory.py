@@ -10,6 +10,7 @@ from .e2b_sandbox import E2bSandboxProvider
 from .local import LocalSandboxProvider
 from .microsandbox import MicrosandboxProvider
 from .protocols import SandboxProvider
+from .sandboxd import SandboxdProvider
 from .unavailable import UnavailableSandboxProvider
 
 
@@ -29,6 +30,15 @@ def build_sandbox_provider(settings: Settings) -> SandboxProvider:
             api_key=settings.sandbox_e2b_api_key,
             domain=settings.sandbox_e2b_domain,
             template=settings.sandbox_e2b_template,
+            max_output_bytes=settings.sandbox_max_output_bytes,
+            default_exec_timeout_seconds=settings.sandbox_exec_timeout_seconds,
+        )
+    if settings.sandbox_provider == "sandboxd":
+        return SandboxdProvider(
+            base_url=settings.sandbox_sandboxd_url,
+            token=settings.sandbox_sandboxd_token,
+            default_image=settings.sandbox_sandboxd_image,
+            request_timeout_seconds=settings.sandbox_sandboxd_request_timeout_seconds,
             max_output_bytes=settings.sandbox_max_output_bytes,
             default_exec_timeout_seconds=settings.sandbox_exec_timeout_seconds,
         )

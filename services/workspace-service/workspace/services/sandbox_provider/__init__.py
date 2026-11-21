@@ -1,10 +1,12 @@
 """沙箱运行时适配层:业务层只依赖 `SandboxProvider` 协议。
 
-三种实现:
+四种实现:
 
 - `MicrosandboxProvider`:microsandbox microVM(默认,隔离);
 - `E2bSandboxProvider`:E2B 云沙箱 microVM(官方云或兼容 E2B 的阿里云
   Agent Sandbox 极速版),远端运行、按 metadata 名字查回;
+- `SandboxdProvider`:gVisor + Docker 远端沙箱,通过另一台服务器上的
+  sandboxd REST 控制面管理;持久 shell 走 sandboxd 的 WebSocket PTY;
 - `LocalSandboxProvider`:宿主本地目录 + 子进程,**无隔离**,仅用于
   没有 microVM runtime 的本地开发/单账号可信环境。
 
@@ -59,6 +61,8 @@ from .protocols import (
     SandboxSpec,
     ShellSession,
 )
+from .sandboxd import SandboxdProvider
+from .sandboxd_shell import SandboxdShellSession
 from .unavailable import UnavailableSandboxProvider
 from .utils import (
     FS_ENTRY_KINDS,
@@ -100,6 +104,8 @@ __all__ = [
     "E2bShellSession",
     "MicroShellSession",
     "MicrosandboxProvider",
+    "SandboxdProvider",
+    "SandboxdShellSession",
     "UnavailableSandboxProvider",
     "build_sandbox_provider",
     # 模块级工具函数(拆分前就在本模块顶层,保持可导入)

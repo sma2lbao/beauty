@@ -66,6 +66,15 @@ class Settings(BaseAppSettings):
     sandbox_e2b_domain: str | None = None  # 兼容厂商填其 E2B_DOMAIN,官方云留空
     # 模板名(镜像);空 = 优先用请求里的 image,再退化 base
     sandbox_e2b_template: str = ""
+    # sandboxd(gVisor + Docker,部署在另一台云服务器):provider=sandboxd 时
+    # 通过 REST 控制面管理远端沙箱、WebSocket 提供 PTY;地址/token 必填,
+    # token 建议走 SANDBOXD_TOKEN 环境变量或部署侧密钥管理,不要写进仓库。
+    sandbox_sandboxd_url: str = ""
+    sandbox_sandboxd_token: str | None = None
+    # 请求里 image 为 microsandbox 别名(如 python)时换成这个 Docker 镜像
+    sandbox_sandboxd_image: str = "python:3.11-slim"
+    # 控制面普通请求(创建/列目录/续期)超时;文件与 exec 另有更宽松的超时
+    sandbox_sandboxd_request_timeout_seconds: float = 30.0
     # local provider 的沙箱根目录:每个沙箱一个 <root>/<name>/ 目录,
     # /workspace 映射到其中的 workspace/;默认落在服务目录下并被 gitignore
     sandbox_local_root: str = "./.sandboxes"

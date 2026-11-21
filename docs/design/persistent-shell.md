@@ -29,17 +29,17 @@
 
 新表 `shell_sessions`(模型 `workspace/models/shell.py::ShellSessionRecord`,`AccountMixin` 自动带 `account_id`):
 
-| 列                                                            | 说明                                                                |
-| ------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `sandbox_id` / `session_id`                                   | 会话标识;唯一键 `(account_id, sandbox_id, session_id)`              |
-| `provider`                                                    | 创建会话的 provider 名(`e2b`/`microsandbox`/`local`),接管时必须匹配 |
-| `runtime_name`                                                | provider 侧的沙箱名,接管时用来找回沙箱                              |
-| `provider_pid`                                                | provider 侧进程号(e2b 的 pty pid);空表示不可接管                    |
-| `cwd` / `cols` / `rows` / `tty`                               | 接管时恢复终端用                                                    |
-| `status`                                                      | `running` / `closed` / `lost`                                       |
-| `owner_instance`                                              | 当前持有者实例身份                                                  |
-| `lease_expires_at`                                            | 租约到期时间;过期即视为无主                                         |
-| `last_activity_at` / `created_at` / `closed_at` / `exit_code` | 观测与回收用                                                        |
+| 列                                                            | 说明                                                                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `sandbox_id` / `session_id`                                   | 会话标识;唯一键 `(account_id, sandbox_id, session_id)`                                                 |
+| `provider`                                                    | 创建会话的 provider 名(`e2b`/`microsandbox`/`local`;`sandboxd` 可创建但无 pid,不会接管),接管时必须匹配 |
+| `runtime_name`                                                | provider 侧的沙箱名,接管时用来找回沙箱                                                                 |
+| `provider_pid`                                                | provider 侧进程号(e2b 的 pty pid);空表示不可接管                                                       |
+| `cwd` / `cols` / `rows` / `tty`                               | 接管时恢复终端用                                                                                       |
+| `status`                                                      | `running` / `closed` / `lost`                                                                          |
+| `owner_instance`                                              | 当前持有者实例身份                                                                                     |
+| `lease_expires_at`                                            | 租约到期时间;过期即视为无主                                                                            |
+| `last_activity_at` / `created_at` / `closed_at` / `exit_code` | 观测与回收用                                                                                           |
 
 索引:`Index("ix_shell_sessions_lease", "status", "lease_expires_at")` 供孤儿扫描;`owner_instance` 与 `sandbox_id` 单列索引。
 
@@ -132,6 +132,7 @@ async def attach_shell(
 - `e2b`:`sandbox.pty.connect(pid, on_data, timeout=0)`(SDK 文档注明可按 pid 连接正在运行的 pty),`timeout=0` 表示不限连接时长;连上后 best-effort `pty.resize`。`E2bShellSession` 暴露 `pid` 属性供登记;
 - `local`:抛 `sandbox.provider_unsupported`——宿主 pty 子进程无法被另一个进程接管;
 - `microsandbox`:同样抛 `sandbox.provider_unsupported`(SDK 有 `attach`/`attach_shell`,但能否重连既有 tty 流未验证,不做未验证的承诺);
+- `sandboxd`:`open_shell` 走 WebSocket PTY(`/v1/sandboxes/{id}/pty`),但沙箱没有可重连的 session id/pid,`attach_shell` 抛 `sandbox.provider_unsupported`;
 - `unavailable`:沿用 `_unavailable()`。
 
 协议 docstring 明确要求:不支持重连必须抛 `sandbox.provider_unsupported`,不要返回一个假装能用的会话。
@@ -139,7 +140,7 @@ async def attach_shell(
 ## 8. 恢复的边界
 
 - **输出不回放**:ring buffer 与 `seq` 只在持有实例内存里。接管后 `seq` 从 0 重新计数,接管前的输出不可恢复(SSE 客户端会看到 `seq` 回退)。要真正的"任意实例回放",需要方案 B;
-- **只有 e2b 可接管**:生产用 e2b 时重启/滚动升级能接回会话;local 与 microsandbox 只能得到明确的 `session_lost`;
+- **只有 e2b 可接管**:生产用 e2b 时重启/滚动升级能接回会话;local、microsandbox 与 sandboxd 只能得到明确的 `session_lost`(sandboxd 能开会话,但没有 pid/重连能力);
 - **不是强一致**:租约过期到新实例接管之间最多 120s 窗口,期间请求得到 409 `session_elsewhere` 或(过期后)`session_lost`;
 - **不跨 provider**:provider 名不匹配一律 `lost`,不尝试跨 provider 迁移。
 

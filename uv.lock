@@ -4896,14 +4896,15 @@ dependencies = [
     { name = "database" },
     { name = "e2b" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "microsandbox" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite" },
-    { name = "httpx" },
     { name = "pytest-asyncio" },
     { name = "pytest-socket" },
 ]
@@ -4916,14 +4917,15 @@ requires-dist = [
     { name = "database", editable = "packages/database" },
     { name = "e2b", specifier = ">=2.63.0" },
     { name = "fastapi", specifier = ">=0.143.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "microsandbox", specifier = ">=0.7.8" },
     { name = "uvicorn", specifier = ">=0.53.0" },
+    { name = "websockets", specifier = ">=16.1.1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-socket", specifier = ">=0.8.1" },
 ]

@@ -84,9 +84,10 @@
 (microVM 隔离),为后续**用户 skill / stdio MCP** 提供执行环境。**P1 已落地**:provider
 抽象、沙箱实例生命周期、HTTP API 与过期回收;stdio MCP / skill 打包在 P2/P3。
 
-`WORKSPACE__SANDBOX_PROVIDER` 有四个取值:`microsandbox`(**默认**,生产/多账号唯一
-推荐)、`e2b`(外置 microVM 控制面:E2B 官方云或阿里云 Agent Sandbox 极速版,
-见下文「E2B provider」)、`local`(宿主目录 + 宿主子进程,**无隔离**,仅本地开发/单账号
+`WORKSPACE__SANDBOX_PROVIDER` 有五个取值:`microsandbox`(**默认**,生产/多账号
+唯一推荐)、`e2b`(外置 microVM 控制面:E2B 官方云或阿里云 Agent Sandbox 极速版,
+见下文「E2B provider」)、`sandboxd`(另一台服务器上的 gVisor + Docker 控制面,见下文
+「sandboxd provider」)、`local`(宿主目录 + 宿主子进程,**无隔离**,仅本地开发/单账号
 可信环境,见下文「local provider」)与 `unavailable`(调用即 502,供没有 runtime 的
 dev 显式失败)。
 
@@ -146,29 +147,33 @@ dev 显式失败)。
 
 配置(env 前缀 `WORKSPACE__`,括号内为默认值):
 
-| 配置项                                                                  | 说明                                                                                                                                                              |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox`(**默认**,生产/多账号唯一推荐)真 microVM;`e2b` 外置 microVM 控制面(官方云/阿里云极速版);`local` 宿主执行、**无隔离**(见下);`unavailable` 调用即 502 |
-| `SANDBOX_LOCAL_ROOT`(./.sandboxes)                                      | 仅 `provider=local`:宿主根目录,每个沙箱 `<root>/<name>/{workspace,home,tmp}`,相对**服务进程工作目录**                                                             |
-| `SANDBOX_DEFAULT_IMAGE`(python)                                         | microsandbox 镜像别名                                                                                                                                             |
-| `SANDBOX_DEFAULT_TTL_SECONDS`(1800) / `SANDBOX_MAX_TTL_SECONDS`(7200)   | 默认/上限 TTL                                                                                                                                                     |
-| `SANDBOX_DEFAULT_CPUS`(1.0) / `SANDBOX_DEFAULT_MEMORY_MB`(512)          | 默认配额                                                                                                                                                          |
-| `SANDBOX_NETWORK`(deny)                                                 | 默认网络策略(`deny`/`public`)                                                                                                                                     |
-| `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                                                                                                            |
-| `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                                                                                                                 |
-| `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                                                                                                          |
-| `SANDBOX_WORKSPACE_ROOT`("")                                            | 每沙箱私有 `/workspace` 的宿主根目录(空= `<MSB_HOME>/workspaces`);每个沙箱一个 `<root>/<name>/`,destroy/过期回收时删除                                                  |
-| `SANDBOX_E2B_API_KEY`(None)                                             | 仅 `provider=e2b`:控制面 Key(留空回退环境变量 `E2B_API_KEY`;不要写进仓库)                                                                                         |
-| `SANDBOX_E2B_DOMAIN`(None)                                              | 仅 `provider=e2b`:控制面域名(留空回退 `E2B_DOMAIN`;阿里云极速版填 `<region>.sandbox.aliyuncs.com`)                                                                |
-| `SANDBOX_E2B_TEMPLATE`("")                                              | 仅 `provider=e2b`:默认模板名(空= `base`;`image` 非 `python` 时优先用 `image` 当模板名)                                                                            |
-| `INSTANCE_ID`("") / `SANDBOX_SHELL_LEASE_SECONDS`(120)                  | 实例身份(空= 主机名:pid)与 shell 会话租约;跨实例归属/接管见 [design/persistent-shell.md](../../docs/design/persistent-shell.md)                                   |
-| `SANDBOX_SHELL_IDLE_SECONDS`(1800)                                      | 持久 shell 会话空闲回收 TTL(无输入/输出/订阅满该时长即关)                                                                                                         |
-| `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS`(30)                              | 空闲回收 sweeper 周期                                                                                                                                             |
-| `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(300)                           | 已关闭会话在内存里保留多久,供断线重连回放(之后按 404 处理)                                                                                                        |
-| `SANDBOX_SHELL_RING_BYTES`(65536)                                       | 每会话输出环形缓冲上限(最近 64KB,断线回放用)                                                                                                                      |
-| `SANDBOX_SHELL_HEARTBEAT_SECONDS`(15)                                   | SSE 心跳注释行间隔(也决定 API 网关/代理的读超时下限)                                                                                                              |
-| `SANDBOX_SHELL_MAX_PER_SANDBOX`(8)                                      | 单沙箱活跃会话上限,超出 409 `sandbox.session_limit`                                                                                                               |
-| `SANDBOX_SHELL_MAX_SUBSCRIBERS`(32)                                     | 单会话 SSE 订阅者上限,超出 409 `sandbox.session_busy`                                                                                                             |
+| 配置项                                                                  | 说明                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SANDBOX_PROVIDER`(microsandbox)                                        | `microsandbox`(**默认**,生产/多账号唯一推荐)真 microVM;`e2b` 外置 microVM 控制面(官方云/阿里云极速版);`sandboxd` 远端 gVisor + Docker(见下);`local` 宿主执行、**无隔离**(见下);`unavailable` 调用即 502 |
+| `SANDBOX_LOCAL_ROOT`(./.sandboxes)                                      | 仅 `provider=local`:宿主根目录,每个沙箱 `<root>/<name>/{workspace,home,tmp}`,相对**服务进程工作目录**                                                                                                   |
+| `SANDBOX_DEFAULT_IMAGE`(python)                                         | microsandbox 镜像别名                                                                                                                                                                                   |
+| `SANDBOX_DEFAULT_TTL_SECONDS`(1800) / `SANDBOX_MAX_TTL_SECONDS`(7200)   | 默认/上限 TTL                                                                                                                                                                                           |
+| `SANDBOX_DEFAULT_CPUS`(1.0) / `SANDBOX_DEFAULT_MEMORY_MB`(512)          | 默认配额                                                                                                                                                                                                |
+| `SANDBOX_NETWORK`(deny)                                                 | 默认网络策略(`deny`/`public`)                                                                                                                                                                           |
+| `SANDBOX_EXEC_TIMEOUT_SECONDS`(60) / `SANDBOX_MAX_OUTPUT_BYTES`(262144) | 执行超时与输出截断上限                                                                                                                                                                                  |
+| `SANDBOX_REAPER_ENABLED`(true) / `SANDBOX_REAPER_INTERVAL_SECONDS`(60)  | 过期回收开关/间隔                                                                                                                                                                                       |
+| `SANDBOX_MSB_HOME`("")                                                  | microsandbox runtime home(空=SDK 默认 `~/.microsandbox`)                                                                                                                                                |
+| `SANDBOX_WORKSPACE_ROOT`("")                                            | 每沙箱私有 `/workspace` 的宿主根目录(空= `<MSB_HOME>/workspaces`);每个沙箱一个 `<root>/<name>/`,destroy/过期回收时删除                                                                                  |
+| `SANDBOX_E2B_API_KEY`(None)                                             | 仅 `provider=e2b`:控制面 Key(留空回退环境变量 `E2B_API_KEY`;不要写进仓库)                                                                                                                               |
+| `SANDBOX_E2B_DOMAIN`(None)                                              | 仅 `provider=e2b`:控制面域名(留空回退 `E2B_DOMAIN`;阿里云极速版填 `<region>.sandbox.aliyuncs.com`)                                                                                                      |
+| `SANDBOX_E2B_TEMPLATE`("")                                              | 仅 `provider=e2b`:默认模板名(空= `base`;`image` 非 `python` 时优先用 `image` 当模板名)                                                                                                                  |
+| `SANDBOX_SANDBOXD_URL`("")                                              | 仅 `provider=sandboxd`:控制面地址(`http://host:port`;留空回退环境变量 `SANDBOXD_URL`;必填)                                                                                                              |
+| `SANDBOX_SANDBOXD_TOKEN`(None)                                          | 仅 `provider=sandboxd`:控制面 Bearer token(留空回退 `SANDBOXD_TOKEN`;不要写进仓库)                                                                                                                      |
+| `SANDBOX_SANDBOXD_IMAGE`(python:3.11-slim)                              | 仅 `provider=sandboxd`:请求 `image` 为 `python` 别名时使用的 Docker 镜像                                                                                                                                |
+| `SANDBOX_SANDBOXD_REQUEST_TIMEOUT_SECONDS`(30)                          | 仅 `provider=sandboxd`:创建/列目录/续期等普通请求超时(文件与 exec 另放宽)                                                                                                                               |
+| `INSTANCE_ID`("") / `SANDBOX_SHELL_LEASE_SECONDS`(120)                  | 实例身份(空= 主机名:pid)与 shell 会话租约;跨实例归属/接管见 [design/persistent-shell.md](../../docs/design/persistent-shell.md)                                                                         |
+| `SANDBOX_SHELL_IDLE_SECONDS`(1800)                                      | 持久 shell 会话空闲回收 TTL(无输入/输出/订阅满该时长即关)                                                                                                                                               |
+| `SANDBOX_SHELL_SWEEP_INTERVAL_SECONDS`(30)                              | 空闲回收 sweeper 周期                                                                                                                                                                                   |
+| `SANDBOX_SHELL_CLOSED_RETENTION_SECONDS`(300)                           | 已关闭会话在内存里保留多久,供断线重连回放(之后按 404 处理)                                                                                                                                              |
+| `SANDBOX_SHELL_RING_BYTES`(65536)                                       | 每会话输出环形缓冲上限(最近 64KB,断线回放用)                                                                                                                                                            |
+| `SANDBOX_SHELL_HEARTBEAT_SECONDS`(15)                                   | SSE 心跳注释行间隔(也决定 API 网关/代理的读超时下限)                                                                                                                                                    |
+| `SANDBOX_SHELL_MAX_PER_SANDBOX`(8)                                      | 单沙箱活跃会话上限,超出 409 `sandbox.session_limit`                                                                                                                                                     |
+| `SANDBOX_SHELL_MAX_SUBSCRIBERS`(32)                                     | 单会话 SSE 订阅者上限,超出 409 `sandbox.session_busy`                                                                                                                                                   |
 
 ### 持久 shell 会话(#2)
 
@@ -345,6 +350,56 @@ E2B_API_KEY=e2b_xxx
 
 未配置 Key 时创建沙箱返回 `502 sandbox.provider_unavailable`(明确失败,不降级)。
 
+### sandboxd provider(gVisor + Docker,远端)
+
+`WORKSPACE__SANDBOX_PROVIDER=sandboxd` 时,沙箱跑在**另一台云服务器**的 sandboxd 上:
+sandboxd 用 gVisor(runsc)+ Docker 提供隔离,本服务通过 REST 控制面管理生命周期、
+通过 WebSocket 提供 PTY。
+控制面契约:`POST /v1/sandboxes`、`POST /v1/sandboxes/{id}/exec`、
+`PUT|GET|DELETE /v1/sandboxes/{id}/files?path=`、`GET .../files/list?path=`、
+`GET /v1/sandboxes/{id}/pty?cmd=&cwd=&cols=&rows`(WebSocket,PTY 见下)。
+
+- 本服务只要求能出网访问 sandboxd 的地址与端口,**不需要**本机 Docker/gVisor;
+  token 走 `SANDBOXD_TOKEN` 或部署侧密钥管理,不要写进仓库;
+- 创建时把沙箱名写进 `owner`(sandboxd 没有 metadata),服务重启后按 `owner` 从
+  `GET /v1/sandboxes` 查回 id;`destroy` 在控制面已无该沙箱时幂等;
+- 镜像:请求里的 `image` 原样传给 sandboxd;`python` 是 microsandbox 的别名,会被换成
+  `SANDBOX_SANDBOXD_IMAGE`(默认 `python:3.11-slim`)。CPU/内存/TTL 透传;
+- 网络:`deny` → `network=false`,`public` → `true`(与 E2B 的映射一致);
+- exec 的 `argv` 以数组透传,不经 shell;`cwd` 默认 `/workspace`。sandboxd 没有
+  stdin 字段:带 stdin 的执行(如 `run_code`)会先把内容上传到
+  `/tmp/.beauty-stdin-<uuid>`,再用 `/bin/sh -c 'exec "$@" < "$BEAUTY_SANDBOX_STDIN"'`
+  包一层,执行结束(含异常)删除临时文件;
+- 执行成功后尽力 `POST /extend` 续期 sandboxd 侧 TTL;续期失败只记日志,不改变已拿到的
+  结果。长时间任务仍受 sandboxd 自身 TTL 约束,按 `SANDBOX_MAX_TTL_SECONDS` 与 sandboxd
+  的回收策略对齐;
+- **PTY 走 WebSocket**:`open_shell` 连接 `GET .../pty`(http→ws、https→wss),
+  文本帧即 stdin;`cols/rows` 用查询参数建 PTY,当前不发送 resize 控制帧。命令默认
+  `/bin/sh -i`,有 env 时用 `env K=V ...` 前缀(shlex 转义)。服务端发
+  `{"type":"exit","exit_code":N}` 时结束会话,`exit_code` 透传;没有该帧就按 EOF 处理,
+  `exit_code` 保持空。sandboxd 不返回可重连的 session id/pid,所以 **`attach_shell` 仍返回
+  `sandbox.provider_unsupported`**;服务重启后既有会话按 `session_lost` 处理,跨重启接管
+  继续用 `e2b`;
+- 鉴权失败(401/403)收成 `502 sandbox.provider_unavailable`;连接失败/5xx 收成
+  `502 sandbox.provider_error`;exec 超时(响应 `timed_out` 或 408/504)是
+  `sandbox.exec_timeout`。
+
+配置(env 前缀 `WORKSPACE__`):
+
+```sh
+WORKSPACE__SANDBOX_PROVIDER=sandboxd
+# 控制面地址与 token(必填);token 建议走环境变量注入
+SANDBOXD_URL=http://sandboxd.example.com:8088
+SANDBOXD_TOKEN=...
+# 也可以只配服务侧字段(优先级:显式字段 > 环境变量)
+# WORKSPACE__SANDBOX_SANDBOXD_URL=http://sandboxd.example.com:8088
+# WORKSPACE__SANDBOX_SANDBOXD_TOKEN=...
+# WORKSPACE__SANDBOX_SANDBOXD_IMAGE=python:3.11-slim
+# WORKSPACE__SANDBOX_SANDBOXD_REQUEST_TIMEOUT_SECONDS=30
+```
+
+未配置地址或 token 时创建沙箱返回 `502 sandbox.provider_unavailable`(明确失败,不降级)。
+
 ### local provider(宿主执行,无隔离)
 
 `WORKSPACE__SANDBOX_PROVIDER=local` 时,一个沙箱就是**宿主上的一个目录 + 直接拉起的
@@ -414,11 +469,16 @@ WORKSPACE__SANDBOX_LOCAL_ROOT=./.sandboxes
 - `provider=e2b` 不需要本机 runtime/OCI 拉取,但要能出网访问控制面
   (`api.e2b.dev` 或阿里云 `api.<region>.sandbox.aliyuncs.com`);Key 缺失或鉴权失败
   同样返回 `502 sandbox.provider_unavailable`,429/额度问题返回
-  `502 sandbox.provider_error`。
+  `502 sandbox.provider_error`;
+- `provider=sandboxd` 不需要本机 Docker/runtime,但要能访问远端 sandboxd;远端需预拉镜像、
+  给 `/workspace` 可写,并保证 token 有创建/执行/删除权限。地址或 token 缺失、鉴权失败返回
+  `502 sandbox.provider_unavailable`。
 
 测试(零网络、零 runtime):`tests/conftest.py` 的 `FakeSandboxProvider`
 注入内存文件表与固定执行输出,`create_app(..., sandbox_provider=fake)` 覆盖
-生命周期/隔离/路径校验/过期回收/故障收口,不会启动真实 microVM。
+生命周期/隔离/路径校验/过期回收/故障收口,不会启动真实 microVM;
+`SandboxdProvider` 用 `httpx.MockTransport` 假控制面、PTY 用注入的 fake WebSocket
+connector(`tests/test_sandbox_provider_sandboxd.py`),同样零网络。
 
 命令(仓库根):`npx nx run workspace-service:serve`(:8005)/ `npx nx test workspace-service`
 迁移:`cd services/workspace-service && uv run alembic upgrade head`

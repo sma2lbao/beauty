@@ -103,9 +103,9 @@ bash deploy/tencent/scripts/deploy.sh
 
 ## 7. 沙箱
 
-轻量没有 `/dev/kvm`，`microsandbox` 不能跑。外置 microVM 用 **`e2b` provider**
-（2026-11-12 落地，`workspace/services/sandbox_provider/e2b_sandbox.py`）：E2B 官方云
-或阿里云 Agent Sandbox 极速版，同一套代码只换 Key/Domain。
+轻量没有 `/dev/kvm`，`microsandbox` 不能跑。生产用外置隔离面，二选一：**`e2b`**
+（托管 microVM，E2B 官方云或阿里云 Agent Sandbox 极速版）或 **`sandboxd`**
+（另一台云服务器上的 gVisor + Docker，本服务通过 REST 管理、WebSocket 提供 PTY）。
 
 ```dotenv
 WORKSPACE__SANDBOX_PROVIDER=e2b
@@ -116,13 +116,33 @@ E2B_API_KEY=CHANGE-ME-e2b-key
 WORKSPACE__SANDBOX_REAPER_ENABLED=true
 ```
 
-没有 E2B Key 时保持 `WORKSPACE__SANDBOX_PROVIDER=unavailable`（工具执行返回明确的
-「沙箱不可用」错误，其余功能正常）。E2B Hobby 单沙箱寿命上限 1h，按套餐调整
+### sandboxd（自建 gVisor + Docker，另一台云服务器）
+
+目标机安装 gVisor（runsc）+ Docker 并运行 sandboxd；轻量机只需能访问其地址，
+不需要本机 Docker/`/dev/kvm`：
+
+```dotenv
+WORKSPACE__SANDBOX_PROVIDER=sandboxd
+SANDBOXD_URL=http://sandboxd.example.com:8088
+SANDBOXD_TOKEN=CHANGE-ME-sandboxd-token
+# 按需换成预装工具链的镜像；python 别名默认 python:3.11-slim
+# WORKSPACE__SANDBOX_SANDBOXD_IMAGE=python:3.11-slim
+```
+
+- 保证轻量机到 sandboxd 的内网/出网连通，并让 token 只具备创建/执行/删除权限；
+- sandboxd 侧需预拉镜像、给 `/workspace` 可写；CPU/内存/TTL 由本服务透传；
+- **PTY 走 WebSocket**（`/v1/sandboxes/{id}/pty`）：`open_shell` 可用，文本帧即 stdin；
+  但 sandboxd 没有可重连的 session id/pid，`attach_shell` 返回 `sandbox.provider_unsupported`，
+  服务重启后会话按 `session_lost` 处理；需要跨重启接管时继续用 `e2b`；
+- exec 的 `stdin` 由本服务先上传临时文件再重定向到命令（`run_code` 依赖此路径）。
+
+两个远端 provider 都没配时保持 `WORKSPACE__SANDBOX_PROVIDER=unavailable`（工具执行返回
+明确的「沙箱不可用」错误，其余功能正常）。E2B Hobby 单沙箱寿命上限 1h，按套餐调整
 `WORKSPACE__SANDBOX_MAX_TTL_SECONDS`（默认 7200 会超限，建议 ≤3600）。
 
 - **禁止**在生产用 `WORKSPACE__SANDBOX_PROVIDER=local`：等于在宿主机直接跑用户代码。
 - 备选：Modal Sandboxes provider（尚未实现，`sandbox_provider/modal.py`）用 `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` 认证；接口契约与 microsandbox 一致（argv + stdin + 超时）。没有 Modal 账号时，在 [modal.com](https://modal.com) 注册并 `pip install modal && modal token new` 即可拿到 token。
-- 未配置任何 microVM provider 时，Agent 的文件/命令类工具不可用（对话、知识库、连接器不受影响）。
+- 未配置任何隔离 provider（`e2b` / `sandboxd` / 本机 `microsandbox`）时，Agent 的文件/命令类工具不可用（对话、知识库、连接器不受影响）。
 
 ## 8. 备份 / 监控
 
