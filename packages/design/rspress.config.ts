@@ -99,6 +99,7 @@ export default defineConfig({
         { text: 'Kbd 键盘按键', link: '/components/kbd' },
         { text: 'Markdown 富文本', link: '/components/markdown' },
         { text: 'Radio 单选框', link: '/components/radio' },
+        { text: 'Resizable 分隔面板', link: '/components/resizable' },
         { text: 'Select 选择器', link: '/components/select' },
         { text: 'Skeleton 骨架屏', link: '/components/skeleton' },
         { text: 'Space 间距', link: '/components/space' },

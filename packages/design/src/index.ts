@@ -95,6 +95,18 @@ export type {
   RadioProps,
 } from './components/radio/index.js';
 
+export {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from './components/resizable/index.js';
+export type {
+  ResizableDirection,
+  ResizableHandleProps,
+  ResizablePanelGroupProps,
+  ResizablePanelProps,
+} from './components/resizable/index.js';
+
 export { Select } from './components/select/index.js';
 export type { SelectProps, SelectSize } from './components/select/index.js';
 

@@ -1,0 +1,140 @@
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@beauty/design';
+
+# Resizable 分隔面板
+
+拖拽分隔条,自由调整同一区域内各块空间的大小。
+
+## 何时使用
+
+- 需要并排查看、且两侧比例随任务变化的场景(代码 + 预览、目录 + 正文、列表 + 详情);
+- 比例长期固定的布局直接用 Grid,不要为了"可拖"增加交互;
+- 窄屏请改成上下堆叠,横向拖拽在小屏上并不好用。
+
+## 水平分栏
+
+`defaultSize` 是百分比,只决定初始布局;拖动后由用户的尺寸接管。
+面板与分隔条必须是 `ResizablePanelGroup` 的直接子节点,书写顺序即布局顺序:
+
+<div className="bd-demo bd-demo--stretch">
+  <ResizablePanelGroup className="bd-demo-resizable">
+    <ResizablePanel defaultSize={30} minSize={20}>
+      <div className="bd-demo-resizable-pane bd-demo-resizable-pane--muted">
+        {'导航 · 30%'}
+      </div>
+    </ResizablePanel>
+    <ResizableHandle withHandle />
+    <ResizablePanel>
+      <div className="bd-demo-resizable-pane">{'主内容 · 70%'}</div>
+    </ResizablePanel>
+  </ResizablePanelGroup>
+</div>
+
+```tsx
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@beauty/design';
+
+<ResizablePanelGroup>
+  <ResizablePanel defaultSize={30} minSize={20}>
+    导航
+  </ResizablePanel>
+  <ResizableHandle withHandle />
+  <ResizablePanel>主内容</ResizablePanel>
+</ResizablePanelGroup>;
+```
+
+## 垂直分栏
+
+`direction="vertical"` 把分栏方向转为上下,分隔条的拖拽轴向与方向键随之改变:
+
+<div className="bd-demo bd-demo--stretch">
+  <ResizablePanelGroup direction="vertical" className="bd-demo-resizable">
+    <ResizablePanel defaultSize={60}>
+      <div className="bd-demo-resizable-pane bd-demo-resizable-pane--muted">
+        {'编辑区 · 60%'}
+      </div>
+    </ResizablePanel>
+    <ResizableHandle withHandle />
+    <ResizablePanel>
+      <div className="bd-demo-resizable-pane">{'运行输出 · 40%'}</div>
+    </ResizablePanel>
+  </ResizablePanelGroup>
+</div>
+
+## 嵌套分组
+
+组内面板可以再放一个分组,内外层各自维护尺寸,互不影响:
+
+<div className="bd-demo bd-demo--stretch">
+  <ResizablePanelGroup className="bd-demo-resizable bd-demo-resizable--tall">
+    <ResizablePanel defaultSize={32} minSize={20}>
+      <ResizablePanelGroup
+        direction="vertical"
+        className="bd-demo-resizable--nested"
+      >
+        <ResizablePanel defaultSize={40}>
+          <div className="bd-demo-resizable-pane bd-demo-resizable-pane--muted">
+            {'侧栏 · 上'}
+          </div>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel>
+          <div className="bd-demo-resizable-pane">{'侧栏 · 下'}</div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </ResizablePanel>
+    <ResizableHandle withHandle />
+    <ResizablePanel minSize={30}>
+      <div className="bd-demo-resizable-pane">{'主内容'}</div>
+    </ResizablePanel>
+  </ResizablePanelGroup>
+</div>
+
+## 尺寸约束与重置
+
+- `defaultSize` / `minSize` / `maxSize` 都是百分比,拖拽与键盘操作都会被约束在区间内;
+- 缺省 `defaultSize` 时按剩余空间均分;面板增删时已有尺寸会保留并重新归一化;
+- 双击分隔条恢复初始布局;`onLayout` 在每次尺寸变化(拖拽 / 键盘 / 重置)后回传当前百分比数组。
+
+## 可访问性
+
+分隔条是 `role="separator"` 的可聚焦元素,`aria-valuenow` 反映前一个面板的占比。
+水平分栏用 ←/→ 调整,垂直分栏用 ↑/↓;按住 Shift 每次只调 1%。
+指针拖拽基于 Pointer Events,触屏同样可用;拖拽期间整组锁定文本选择。
+
+## API
+
+### ResizablePanelGroupProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性      | 说明                                | 类型                         | 默认值         |
+| --------- | ----------------------------------- | ---------------------------- | -------------- |
+| direction | 分栏方向                            | `'horizontal' \| 'vertical'` | `'horizontal'` |
+| onLayout  | 尺寸变化回调(百分比数组,按面板顺序) | `(sizes: number[]) => void`  | —              |
+
+### ResizablePanelProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性        | 说明                                 | 类型     | 默认值 |
+| ----------- | ------------------------------------ | -------- | ------ |
+| defaultSize | 初始占比(%),仅首次布局与双击重置使用 | `number` | —      |
+| minSize     | 最小占比(%)                          | `number` | `0`    |
+| maxSize     | 最大占比(%)                          | `number` | `100`  |
+
+### ResizableHandleProps
+
+继承 `React.ComponentPropsWithoutRef<'div'>`。
+
+| 属性       | 说明               | 类型      | 默认值         |
+| ---------- | ------------------ | --------- | -------------- |
+| withHandle | 显示可见的拖拽手柄 | `boolean` | `false`        |
+| disabled   | 禁用拖拽与键盘调整 | `boolean` | `false`        |
+| aria-label | 分隔条的无障碍名称 | `string`  | `调整面板大小` |

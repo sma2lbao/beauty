@@ -31,6 +31,9 @@ import {
   Markdown,
   Radio,
   RadioGroup,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
   Select,
   SideBySideRows,
   Skeleton,
@@ -110,6 +113,9 @@ const SLOTS = [
   'radio',
   'radio-box',
   'radio-label',
+  'resizable-panel-group',
+  'resizable-panel',
+  'resizable-handle',
   'tabs',
   'tabs-list',
   'tabs-tab',
@@ -191,6 +197,11 @@ describe('类名契约', () => {
             { value: 'b', label: 'B', content: <span>面板 B</span> },
           ]}
         />
+        <ResizablePanelGroup>
+          <ResizablePanel defaultSize={40}>左侧</ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel>右侧</ResizablePanel>
+        </ResizablePanelGroup>
         <Spin label="加载中" />
         <Avatar name="张三" />
         <Kbd>⌘K</Kbd>

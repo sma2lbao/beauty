@@ -42,6 +42,44 @@
   width: 100%;
 }
 
+/* Resizable 文档演示:固定高度的分栏容器,内层面板内容撑满 */
+.bd-demo-resizable {
+  width: 100%;
+  height: 240px;
+  border: 1px solid var(--bd-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background-color: var(--bd-background);
+}
+
+.bd-demo-resizable--tall {
+  height: 300px;
+}
+
+/* 嵌套在面板里的分组:铺满面板,不再画外框 */
+.bd-demo-resizable--nested {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.bd-demo-resizable-pane {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem;
+  color: var(--bd-muted-foreground);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.bd-demo-resizable-pane--muted {
+  background-color: var(--bd-muted);
+}
+
 /* VirtualList 文档演示:固定高度的滚动窗口 + 等高铁行 */
 .bd-demo-virtual-list {
   width: 100%;

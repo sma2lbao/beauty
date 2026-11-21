@@ -20,6 +20,7 @@
 @import '../components/kbd/kbd.css';
 @import '../components/markdown/markdown.css';
 @import '../components/radio/radio.css';
+@import '../components/resizable/resizable.css';
 @import '../components/select/select.css';
 @import '../components/skeleton/skeleton.css';
 @import '../components/space/space.css';
