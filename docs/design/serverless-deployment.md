@@ -89,7 +89,7 @@
 | 4   | 后台常驻循环       | orchestrator：`core/container.py:429` outbox、`:486` jobs worker、`:493` interrupts sweeper；workspace：`workspace/main.py:95-97` sandbox reaper                                                                                    | Cloud Run service 会缩到 0，进程被杀→任务不执行、超时不触发               | §5.3        |
 | 5   | PG 连接方式        | 各服务 `database_url` 默认 `sqlite+aiosqlite:///./*.db`；compose 用 `postgresql+asyncpg://postgres:5432`                                                                                                                            | serverless 需要 Cloud SQL/Neon 连接方式与连接池上限                       | §5.4        |
 | 6   | 数据库迁移         | compose `migrate` 作业（`deploy/docker-compose.yml:72-96`）                                                                                                                                                                         | 无 compose；需 Cloud Run Job / CI 步骤                                    | §5.4        |
-| 7   | 交付物存储         | orchestrator `artifact_store=database`（`core/config.py:41`）；workspace `artifact_store=filesystem`（`workspace/core/config.py:19-20`）+ 本地卷                                                                                    | 本地卷在 serverless 不持久、不共享；GCS 实现缺失                          | §5.5        |
+| 7   | 交付物存储         | orchestrator `artifact_store=database`；workspace 生产已切 `cos`（`workspace/core/config.py:27-40`），`filesystem` 仅本地/测试                                                                                                      | COS 跨云延迟/出口费；serverless 需选平台邻近对象存储，S3/GCS 实现待补     | §5.5        |
 | 8   | 沙箱               | `workspace/core/config.py:30-45` `sandbox_provider=microsandbox`，需要 `/dev/kvm`；MCP stdio 也走沙箱                                                                                                                               | Cloud Run/Fargate/Workers 无 KVM，microsandbox 起不来                     | §5.6        |
 | 9   | 签名密钥           | account-service `signing_key_path` 空则进程内生成（`account/core/idp.py:99-118`，注释已写明生产必须持久）                                                                                                                           | 多实例/重启→已发 token 全失效                                             | §5.8        |
 | 10  | 内部密钥           | `INTERNAL_SECRET` 经 compose 环境注入（`docker-compose.yml:228` 等）                                                                                                                                                                | 需 Secret Manager 注入，且不能进镜像                                      | §5.8        |
@@ -104,7 +104,7 @@
 
 - **配置全部走环境变量**：每个服务一个前缀（`ACCOUNT__`/`AGENT_ORCHESTRATOR__`/`TOOL__`…），无配置文件路径依赖。
 - **数据库抽象干净**：SQLAlchemy async + asyncpg，PG 与 SQLite 同一套 URL；`AUTO_CREATE_TABLES=false` 生产契约已存在。
-- **交付物有存储抽象**：`ArtifactStore` Protocol（`packages/common/common/artifacts.py:44`）只有 put/get/delete，加 GCS/S3 实现不影响调用方。
+- **交付物有存储抽象**：`ArtifactStore` Protocol（`packages/common/common/artifacts.py`）只有 put/get/delete + `backend` 标识，已有 COS 实现；加 GCS/S3 实现不影响调用方。
 - **沙箱有 Provider 抽象**：`SandboxProvider`（`services/workspace-service/workspace/services/sandbox_provider.py`）已支持替换（`docs/architecture.md:460` 写明备选 E2B/Fly Machines）；tool-service 只经 HTTP 调 workspace，不直连 runtime。
 - **SSE 断线续传已实现**：`GET /v1/runs/{id}/events/stream` 接受 `Last-Event-ID`（`api/v1/runs.py:169-175`），前端 EventSource 自动重连；run 状态可从 PG 重建。
 - **pause/resume 可跨实例**：审批/确认/提问的中断（`interrupt`）与 LangGraph Postgres checkpointer 绑定，resume 请求落到哪个实例都能继续。
@@ -134,7 +134,7 @@
 | 隔离沙箱         | 能否跑任意 argv、有独立文件系统、无宿主直读                | 4    | 文件工具必须隔离（[tool-service.md](./tool-service.md) §2.4 硬约束 3）；`microsandbox` 需要 `/dev/kvm`                               |
 | 镜像原地复用     | 现有 Dockerfile/镜像能否直接部署                           | 4    | 8 服务共用 `deploy/docker/python-service.Dockerfile`，容器化已完成，重写成本最高                                                     |
 | 托管 Postgres    | 是否有托管 PG 16、连接池、备份                             | 4    | 6 个库、5 个 alembic 迁移链；LangGraph checkpointer 依赖 PG                                                                          |
-| 对象存储         | 是否有 S3/GCS 兼容 API + 预签名 URL                        | 4    | 交付物存储抽象只有 database/filesystem 两种实现（`common/artifacts.py`），serverless 必须补对象存储                                  |
+| 对象存储         | 是否有 S3/GCS 兼容 API + 预签名 URL                        | 4    | 已有 database/filesystem/COS 三种实现（`common/artifacts.py`），但缺 S3/GCS 兼容与预签名；serverless 必须补对象存储                  |
 | 密钥管理         | 密钥/证书能否注入且不落盘                                  | 4    | `INTERNAL_SECRET`、`SESSION_SECRET`、account 签名密钥（`idp.py:99-118`）、connector `credential_secret`                              |
 | 静态托管与同源   | SPA + `/api` 同源（Cookie 会话）                           | 3    | API 网关 httpOnly Cookie + CSRF 依赖同源（§2.4 约束 5）                                                                              |
 | 可观测性         | 日志/指标/追踪接入                                         | 2    | 已接 OTel/Sentry（`common/observability.py`），只需出口                                                                              |
@@ -411,26 +411,36 @@ workspace-service 同理：`workspace/core/config.py` 加 `role`，reaper 只在
 
 ### 5.5 交付物存储：对象存储适配器
 
-**现状**：只有 `database`（字节进 PG）与 `filesystem`（本地目录）两种（`packages/common/common/artifacts.py`，`build_artifact_store(backend, root)`）；orchestrator 默认 `database`，workspace 默认 `filesystem` + 本地卷。
+**现状（2026-11-22）**：已有 `database`（字节进 PG）、`filesystem`（本地目录）、`cos`（腾讯云 COS）三种（`packages/common/common/artifacts.py`，`build_artifact_store(backend, root, cos)`）。**workspace 生产已切 `cos`**，`filesystem` 只保留本地开发/测试；orchestrator 默认仍是 `database`。
 
-**现状的关键细节**：`load_bytes` 不按 row 的 storage 字段分派（`packages/common/common/artifacts.py:138` 只在写入时记录 storage，`:162-180` 读取时只用注入的那个 store）——直接切 `ARTIFACT_STORE` 会让历史 `database` 对象读不到。所以切换前必须「按原 key 回填/复制对象」，或给读取路径补 storage 分派（推荐 v1.5 做，这才支持零停机回退）。
+**现状的关键细节**：`load_bytes` 不按 row 的 storage 字段分派（`packages/common/common/artifacts.py` 只在写入时记录 `storage`，读取时只用注入的那个 store）——直接切 `ARTIFACT_STORE` 会让历史对象读不到。本次切换接受这个代价：旧 filesystem 对象不迁移、下载返回 500 `artifact.object_missing`；database 行内联正文仍可读。若要零停机回退，仍需「按原 key 回填/复制对象」或给读取路径补 storage 分派。
 
-**改法**：v1 只做 **S3 兼容** 后端（AWS S3 / Cloudflare R2 / MinIO / GCS S3 interop 一份实现覆盖；GCS 原生留 v1.5）。在 `packages/common/common/` 增加 `S3ArtifactStore`，实现现有 Protocol：
+**已落地（腾讯云 COS，官方 SDK）**：
+
+- 新文件 `packages/common/common/cos_artifacts.py`：`CosArtifactConfig`（bucket/region/secret_id/secret_key/token/scheme/endpoint/timeout_seconds/retry_times/pool_max_size）+ `CosArtifactStore`；同步 `cos-python-sdk-v5` 经 `asyncio.to_thread` 执行，协议仍是 put/get/delete，`backend="cos"`；
+- 404 get 返回 None、404 delete 幂等；其余 COS/网络错误映射为 `StorageError`（`artifact.cos_*_failed`，details 不含密钥）；key 二次校验；不额外加 prefix，桶内 key 就是 `object_key`；
+- 依赖在 `packages/common`（`cos-python-sdk-v5>=1.9.45`），由共享镜像的 `uv sync` 安装；
+- 配置走 `WORKSPACE__ARTIFACT_COS_*`，密钥只从环境变量注入；生产桶私有读写，SSE-COS 在桶侧配置（代码不逐对象传加密头）；
+- 本期不做预签名直链，下载继续经 API 流式返回（避免扩大改动面）；`build_artifact_store` 的 `s3` 分支仍未实现。
+
+**后续（S3 兼容 / 非腾讯云 serverless）**：若迁到 AWS S3 / Cloudflare R2 / MinIO / GCS S3 interop，再按本节增加 `S3ArtifactStore`（`boto3` 同步客户端 + `anyio.to_thread`，不引 aiobotocore）：
 
 ```python
 class ArtifactStore(Protocol):
-    async def put(self, key: str, data: bytes) -> None: ...
-    async def get(self, key: str) -> bytes: ...
+    backend: str
+    async def put(
+        self, key: str, data: bytes, *, content_type: str = ...
+    ) -> int: ...
+    async def get(self, key: str) -> bytes | None: ...
     async def delete(self, key: str) -> None: ...
 ```
 
-- 用 `boto3` 同步客户端 + `anyio.to_thread`（不引 aiobotocore，少一个依赖）；`backend=s3` + `bucket`/`region`/`endpoint_url`/`prefix`/`presign_ttl_seconds` 配置，key 继续用 `build_artifact_key`，S3 层只加 prefix；
-- 新增 **预签名下载 URL**（`presigned_url(key, expires)`，TTL ≤300s）；两种接法：API 网关透传 307（省带宽、暴露 bucket 域）或 API 网关跟随 307 拉流转发（行为不变、多一跳）——v1 选后者，前者作带宽优化；
-- 凭据不用静态 key：走 workload identity（Cloud Run service account / ECS task role / ACA managed identity），boto3 默认 credential chain；bucket 全 public access block、禁 ACL、默认 SSE；
-- `build_artifact_store` 增加 `s3` 分支；orchestrator/workspace 的 `ARTIFACT_STORE=s3`；
+- `backend=s3` + `bucket`/`region`/`endpoint_url`/可选 `prefix` 配置，key 继续用 `build_artifact_key`；
+- 预签名下载 URL（TTL ≤300s）：API 网关透传 307 或跟随 307 拉流转发，两者都要单独评估；本期未做；
+- 凭据优先 workload identity（Cloud Run service account / ECS task role / ACA managed identity），bucket 全 public access block、禁 ACL、默认 SSE；
 - 本地 compose 仍默认 `database|filesystem`（保持零云依赖的本地开发）。
 
-**验收**：上传交付物后 bucket 有对象；下载走预签名 URL（不带账号 JWT 也能在有效期内下载，过期 403）；单测用 `moto`（dev 依赖）+ botocore Stubber 的 fake S3（零网络）；切后端前对象已回填，历史交付物可读。
+**验收（COS 已满足）**：上传交付物后桶内有对象、`storage=="cos"`；下载字节一致；删除后对象消失；单测注入 fake COS client（零网络，`--disable-socket`）。历史对象不迁移。
 
 ### 5.6 沙箱：替换 SandboxProvider（不改工具协议）
 
@@ -544,7 +554,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `api-gateway:8007
 | outbox claim 无锁    | `packages/events/events/outbox.py:119-133` 普通 SELECT；`drain_once` 注释承认第 2、3 步之间崩溃会重投（`:267-311`）                                                                     | 多实例 dispatcher 会放大重复投递                            | 单实例 worker 兜底；后续给 claim 加 `FOR UPDATE SKIP LOCKED` + `dispatching` 状态                                                        |
 | jobs 租约无续期      | `repositories.py:337-356` 只在 claim 时写 `lease_until`；`jobs_worker.py:148,161` 只清空，无心跳                                                                                        | run 执行超过 60s 会被另一实例重领重跑                       | worker 单实例兜底；后续在 `_dispatch` 期间周期续租 + `JOBS_LEASE_SECONDS` 调到覆盖最长 run（如 900）                                     |
 | 启动自动建表         | `service_kit/lifespan.py:26-41` 仅在 `auto_create_tables=true` 时 `create_all`                                                                                                          | 误配会让多实例并发建表                                      | 生产保持 false；新增 `MIGRATE_ON_STARTUP=false` 并启动校验                                                                               |
-| 交付物本地目录       | workspace `artifact_store=filesystem` + `./.artifacts`（`workspace/core/config.py:19-20`）；orchestrator `./.documents`（`:126`）                                                       | serverless 本地盘不共享/不持久                              | 短期 workspace 改 `database`（零代码），中期对象存储（§5.5）                                                                             |
+| 交付物本地目录       | workspace 生产 `artifact_store=cos`；本地/测试 `filesystem` + `./.artifacts`；orchestrator `./.documents`                                                                               | 本地盘在 serverless 不共享/不持久                           | 腾讯云已接 COS；其他云按 §5.5 补 S3/GCS                                                                                                  |
 | API 网关就绪依赖上游 | `api_gateway/core/config.py:38` `ready_probe_upstreams=False`（默认不探测）                                                                                                             | 若打开，冷启动时会因上游未起而一直 not ready                | 保持 false；平台 readiness 只看 API 网关自身 DB/进程健康                                                                                 |
 
 ## 6. 分阶段实施步骤
@@ -584,7 +594,7 @@ Fly.io 路线可保留 nginx 容器（镜像不变），只把 `api-gateway:8007
 ### 阶段 3：workspace / tool-service / 沙箱 / 对象存储（4-6 人日）
 
 1. 实现选定的 `SandboxProvider`（E2B/Modal/Fly），保留 `microsandbox` 用于本地/自建；配置 `WORKSPACE__SANDBOX_PROVIDER=<new>`。
-2. workspace 改 `ARTIFACT_STORE=database`（短期）或接入对象存储（§5.5）；沙箱 reaper 交 provider TTL 或 worker 单实例。
+2. workspace 生产已接 COS（腾讯云）；若目标平台非腾讯云，按 §5.5 加 S3/GCS 实现。沙箱 reaper 交 provider TTL 或 worker 单实例。
 3. tool-service 上云（内部 URL），`AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED=true`；文件工具/搜索/写工具在沙箱内 E2E。
 4. ask_question E2E：提问挂起 → 前端卡片 → answer API → 图恢复（跨实例）。
 5. 沙箱隔离回归：路径逃逸/symlink/硬链/双账号用例在真实 provider 上跑一遍（不能只跑 fake）。
@@ -823,8 +833,8 @@ D1 的改造要点（相对 Cloud Run 主线）：
 | `AGENT_ORCHESTRATOR__*_SERVICE_URL`                                            | orchestrator                                            | 全部 `127.0.0.1`                | 平台内部域名                                |
 | `AGENT_ORCHESTRATOR__ROLE`                                                     | orchestrator                                            | 不存在（all）                   | `api` / `worker`                            |
 | `AGENT_ORCHESTRATOR__TOOL_SERVICE_ENABLED`                                     | orchestrator                                            | false                           | true（tool-service 是唯一文件工具路径）     |
-| `WORKSPACE__ARTIFACT_STORE`                                                    | workspace                                               | `filesystem`                    | `database`（过渡）/`s3`（推荐）             |
-| `WORKSPACE__ARTIFACT_BUCKET`/`REGION`/`ENDPOINT_URL`/`PRESIGN_TTL_SECONDS`     | workspace                                               | 不存在                          | 见 §5.5 与 §9.3                             |
+| `WORKSPACE__ARTIFACT_STORE`                                                    | workspace                                               | `filesystem`                    | `cos`（腾讯云生产）/ `s3`（其他云，待实现） |
+| `WORKSPACE__ARTIFACT_COS_BUCKET`/`REGION`/`SECRET_ID`/`SECRET_KEY`             | workspace                                               | 不存在                          | cos 必填；密钥走 Secret Manager             |
 | `WORKSPACE__SANDBOX_PROVIDER`                                                  | workspace                                               | `microsandbox`                  | `modal` / `e2b` / `fly`                     |
 | `TOOL__WORKSPACE_SERVICE_URL`、`TOOL__KNOWLEDGE_SERVICE_URL`                   | tool                                                    | `127.0.0.1:8005/8006`           | 平台内部域名                                |
 | `LLM_GATEWAY__API_KEY`                                                         | llm-gateway                                             | 空                              | Secret Manager                              |

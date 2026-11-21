@@ -2,8 +2,8 @@
 
 约定:
 
-- `ArtifactStore` 协议只有三个动作(put/get/delete),S3/MinIO 等实现
-  只需满足同一协议,调用方零改动;
+- `ArtifactStore` 协议只有三个动作(put/get/delete),S3/MinIO/COS 等实现
+  只需满足同一协议,调用方零改动;后端类型由 `backend` 暴露给业务层;
 - 对象键由 `build_artifact_key` 生成(只允许安全字符),实现侧仍会
   二次校验:`.resolve()` 后必须落在存储根内——**防目录穿越**;
 - 文件 IO 走 `asyncio.to_thread`,不阻塞事件循环;
@@ -15,9 +15,12 @@ from __future__ import annotations
 import re
 from asyncio import to_thread
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from common.errors import StorageError
+
+if TYPE_CHECKING:
+    from common.cos_artifacts import CosArtifactConfig
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
@@ -44,6 +47,8 @@ def build_artifact_key(*parts: str, suffix: str = ".md") -> str:
 class ArtifactStore(Protocol):
     """交付物内容存储协议。"""
 
+    backend: str
+
     async def put(
         self, key: str, data: bytes, *, content_type: str = DEFAULT_CONTENT_TYPE
     ) -> int:
@@ -61,28 +66,52 @@ class ArtifactStore(Protocol):
 
 DATABASE_BACKEND = "database"
 FILESYSTEM_BACKEND = "filesystem"
+COS_BACKEND = "cos"
 
 
 def build_artifact_store(
-    backend: str, *, root: str = "./.artifacts"
+    backend: str,
+    *,
+    root: str = "./.artifacts",
+    cos: CosArtifactConfig | None = None,
 ) -> ArtifactStore | None:
-    """按配置选后端:``database`` → None(内容随行存 DB 列);``filesystem`` → 本地目录。
+    """按配置选后端:``database`` → None(内容随行存 DB 列);
+    ``filesystem`` → 本地目录;``cos`` → 腾讯云 COS。
 
-    未知后端直接报错(启动即失败,不带病上线)。
+    未知后端或 COS 缺配置直接报错(启动即失败,不带病上线)。
     """
     if backend == DATABASE_BACKEND:
         return None
     if backend == FILESYSTEM_BACKEND:
         return FilesystemArtifactStore(root)
+    if backend == COS_BACKEND:
+        if cos is None:
+            raise StorageError(
+                "artifact.cos_config_missing",
+                "COS 后端缺少配置",
+                details={
+                    "supported": [
+                        DATABASE_BACKEND,
+                        FILESYSTEM_BACKEND,
+                        COS_BACKEND,
+                    ]
+                },
+            )
+        # 延迟导入:非 COS 服务不加载腾讯云 SDK
+        from common.cos_artifacts import CosArtifactStore
+
+        return CosArtifactStore(cos)
     raise StorageError(
         "artifact.unknown_store",
         f"未知的交付物存储后端:{backend}",
-        details={"supported": [DATABASE_BACKEND, FILESYSTEM_BACKEND]},
+        details={"supported": [DATABASE_BACKEND, FILESYSTEM_BACKEND, COS_BACKEND]},
     )
 
 
 class FilesystemArtifactStore:
-    """本地目录实现:单机部署与开发用;换 S3 兼容存储时调用方不动。"""
+    """本地目录实现:单机部署与开发/测试用;生产由 COS 后端替代。"""
+
+    backend = FILESYSTEM_BACKEND
 
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root).expanduser().resolve()

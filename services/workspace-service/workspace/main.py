@@ -10,7 +10,7 @@ import asyncio
 from contextlib import suppress
 
 import structlog
-from common.artifacts import ArtifactStore, build_artifact_store
+from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.service_kit import build_lifespan, create_service_app, install_database
 from fastapi import FastAPI
@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from workspace.api.health import health_router
 from workspace.api.v1.router import api_router
 from workspace.core.config import Settings
+from workspace.core.storage import build_store
 from workspace.models import sandbox as sandbox_models  # noqa: F401  注册 ORM 元数据
 from workspace.models import shell as shell_models  # noqa: F401  注册 ORM 元数据
 from workspace.models import workspace as workspace_models  # noqa: F401
@@ -86,9 +87,7 @@ async def _startup(app: FastAPI) -> None:
     # 交付物存储(§7)
     store: ArtifactStore | None = app.state.artifact_store
     if store is None:
-        store = build_artifact_store(
-            settings.artifact_store, root=settings.artifact_root
-        )
+        store = build_store(settings)
     app.state.artifact_store = store
 
     # 沙箱运行时(§7 阶段 B / P1)

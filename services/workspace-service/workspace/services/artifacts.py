@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from common.artifacts import ArtifactStore, build_artifact_key
+from common.artifacts import DATABASE_BACKEND, ArtifactStore, build_artifact_key
 from common.errors import StorageError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,7 +135,7 @@ async def create_artifact(
         title=data.title,
         filename=filename,
         content_type=content_type,
-        storage="filesystem" if store is not None else "database",
+        storage=store.backend if store is not None else DATABASE_BACKEND,
         size_bytes=len(payload),
         # database 后端:文本进 content,二进制进 content_bytes
         content=None if store is not None or is_binary else data.content,

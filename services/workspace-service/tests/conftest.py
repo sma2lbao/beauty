@@ -35,6 +35,8 @@ _settings = settings_factory(
         # 显式钉回测试意图的镜像别名:本地 .env 会经 uv run 注入
         # WORKSPACE__SANDBOX_DEFAULT_IMAGE(指向本地 rootfs),不钉就依赖机器配置
         "sandbox_default_image": "python",
+        # 钉住存储后端:本地 .env 若切成 cos,Nx 注入环境变量后测试会真的连 COS
+        "artifact_store": "filesystem",
         "artifact_root": lambda tmp: str(tmp / "objects"),
     },
 )

@@ -173,12 +173,12 @@ WORKSPACE__SANDBOX_MAX_TTL_SECONDS=3600
 
 ## 8. 备份 / 监控
 
-| 项     | 做法                                                                                 |
-| ------ | ------------------------------------------------------------------------------------ |
-| 数据库 | 基础设施机每日 `pg_dump`（6 个库分别导）到 COS/另一块盘；要 PITR 就开 WAL 归档       |
-| 密钥   | `docker run --rm -v beauty-prod_account-keys:/k alpine tar -C /k -cf - . > keys.tar` |
-| 交付物 | `workspace-artifacts` 卷定期打包到 COS（切 COS 直存后可停）                          |
-| 监控   | 云监控看 CPU/内存/磁盘；Caddy 访问日志在卷 `caddy-data`；`docker stats` 周检         |
+| 项     | 做法                                                                                               |
+| ------ | -------------------------------------------------------------------------------------------------- |
+| 数据库 | 基础设施机每日 `pg_dump`（6 个库分别导）到 COS/另一块盘；要 PITR 就开 WAL 归档                     |
+| 密钥   | `docker run --rm -v beauty-prod_account-keys:/k alpine tar -C /k -cf - . > keys.tar`               |
+| 交付物 | 已由 workspace 直存 COS（`ARTIFACT_STORE=cos`）；本地 `workspace-artifacts` 卷只剩历史对象，可清理 |
+| 监控   | 云监控看 CPU/内存/磁盘；Caddy 访问日志在卷 `caddy-data`；`docker stats` 周检                       |
 
 ## 9. 排障
 

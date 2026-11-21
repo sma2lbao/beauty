@@ -79,7 +79,7 @@ Browser
 ├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
 ├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(内置 GitHub)（design/connector.md） :8004
-├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 内容存储（DB/本地文件）  :8005
+├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 对象存储（生产 COS）  :8005
 ├── knowledge-service       摄取/检索/重排（JSON 向量，无需 pgvector）                :8006
 └── account-service         账号/会话/配额/usage/API Key（自建 IdP）                 :8001
 
@@ -119,7 +119,7 @@ Browser
 | llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                                                             | BYOK（按账号注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                                   |
 | connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按账号连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**内置 GitHub provider**（GitHub App user-to-server，8 读 + 3 写） | 2026-10 邮箱/日历能力下线；2026-11-19 新增内置 GitHub provider；内置 Notion provider 于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
 | knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                                                                                                                | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                                          |
-| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                                                | 暂用 DB/本地文件；对象存储后置                                                                                                                                                                |
+| workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                                                | 生产交付物/对象走腾讯云 COS（官方 cos-python-sdk-v5）；filesystem/database 仅本地与测试；历史 filesystem 对象不迁移                                                                           |
 | account-service      | 容器 :8001            | 账号/配额/usage/API Key/自建认证                                                                                                                                                                      | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                                                               |
 | packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                                                      | Python 共享库                                                                                                                                                                                 |
 | packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                                               | 仓储层账号隔离 + 统一 404                                                                                                                                                                     |
@@ -368,7 +368,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 1. **无 Vercel/容器编排**：API 网关以 FastAPI 进程由 systemd 管理；Nginx 托管 SPA 静态产物并反代 `/api`；SPA 深链 rewrite 由 Nginx 完成；
 2. **无外部 CDN/字体/图片**：构建产物自包含；
 3. **模型可配**：`LLM_GATEWAY__API_BASE`、`LLM_GATEWAY__API_KEY`、`LLM_GATEWAY__DEFAULT_MODEL`（litellm 透传 `api_base`/`api_key`）；未配置且 `LLM_ENABLED=false` 时可启动（桩）；内网模型**支持 function calling**；
-4. **数据本地**：SQLite + 本地目录；Redis 不配置（进程内限流/锁）；产物 `ARTIFACT_STORE=filesystem|database`；
+4. **数据本地**：SQLite + 本地目录；Redis 不配置（进程内限流/锁）；生产产物走 COS，内网离线用 `ARTIFACT_STORE=filesystem|database`；
 5. **可选依赖默认关闭**：Sentry、社交 OAuth、Stripe、Resend、Langfuse；
 6. **鉴权本地可用**：仅 account-service 邮箱密码（无内网 OIDC/LDAP）；**HTTP 内网 Cookie `API_GATEWAY__COOKIE_SECURE=false`** + SameSite=Lax + CSRF + 短会话 + 防火墙/IP allowlist；
 7. **内网构建/交付**：Python 走内网 PyPI（或 wheelhouse），Node 走内网 npm；发布包 + 校验和；无容器镜像依赖；
@@ -390,7 +390,7 @@ LLM_GATEWAY__API_KEY=...
 LLM_GATEWAY__DEFAULT_MODEL=openai/<model>
 SENTRY_ENABLED=false
 SOCIAL_LOGIN_ENABLED=false
-ARTIFACT_STORE=filesystem         # 单机；多机改 database/共享盘
+ARTIFACT_STORE=filesystem         # 内网离线单机；生产 cos + WORKSPACE__ARTIFACT_COS_*
 DATABASE_URL=sqlite+aiosqlite:////var/lib/beauty/app/app.db
 REDIS_URL=                      # 留空 = 进程内降级
 ```

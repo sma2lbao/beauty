@@ -1,6 +1,6 @@
 # 混合部署落地：Vercel + 腾讯云应用机（首尔）+ 基础设施机（PostgreSQL / Redis / sandboxd）
 
-> 状态：落地定稿（2026-11-11，2026-11-21 更新为双机）。本文是**当前部署主线**：Web 静态层放 Vercel，8 个 Python 服务跑在腾讯云轻量应用服务器（首尔）的 Docker Compose 上；PostgreSQL / Redis / sandboxd 都在**同 VPC 的另一台基础设施机**（`10.8.0.14`），不再依赖 Neon/云 Redis/托管沙箱。
+> 状态：落地定稿（2026-11-11，2026-11-21 更新为双机，2026-11-22 交付物切 COS）。本文是**当前部署主线**：Web 静态层放 Vercel，8 个 Python 服务跑在腾讯云轻量应用服务器（首尔）的 Docker Compose 上；PostgreSQL / Redis / sandboxd 都在**同 VPC 的另一台基础设施机**（`10.8.0.14`），不再依赖 Neon/云 Redis/托管沙箱。
 > 关联文档：[serverless-deployment.md](./serverless-deployment.md)（平台横向对比与 Fly / Cloud Run 细节，决策背景）、[architecture.md](../architecture.md)（§10 部署与迁移、ADR-012）、[deploy/tencent/README.md](../../deploy/tencent/README.md)（运维手册）。
 
 ## 1. 结论与范围
@@ -13,7 +13,7 @@
 | 数据库     | 基础设施机自建 PostgreSQL 15，6 个库           | 一服务一库 + 每服务独立 alembic 版本表；同 VPC 内网 RTT < 1ms（当前经公网 IP） |
 | 缓存/限流  | 基础设施机 Redis（requirepass）                | account 动态注册限流、gateway 固定窗口限流；未配置时回退进程内                 |
 | 沙箱       | 基础设施机 sandboxd（gVisor + Docker，已落地） | 应用机无 `/dev/kvm`；`SANDBOX_PROVIDER=sandboxd`；e2b 托管 microVM 为备选      |
-| 交付物     | 过渡期本地卷，后续 COS                         | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点                                |
+| 交付物     | 腾讯云 COS（已落地，官方 SDK）                 | `ARTIFACT_STORE=cos` + bucket/region/ak/sk；filesystem 仅本地/测试             |
 | 密钥       | 主机 `.env`（600）+ 卷内 PEM                   | 后续可换 Secret Manager / KMS                                                  |
 
 **为什么不是「尽量都放 Vercel」**：api-gateway 要代理 SSE 长流（Vercel 函数时长 Hobby 300s / Pro 800s），agent-orchestrator 跑分钟级 run 与 5 个常驻循环，workspace/connector 也各带常驻循环，这些都不是函数模型能承载的；把 8 个服务放同一台机器还顺带消灭了跨云鉴权与内网延迟问题。详见 serverless-deployment.md §3.2/§3.3。
@@ -42,7 +42,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 └──────────────────────────────────────────────────────────────────┘
    │                        │
    ▼                        ▼
- ┌──── 基础设施机（同 VPC，10.8.0.14）────┐   COS（后续，交付物直存）
+ ┌──── 基础设施机（同 VPC，10.8.0.14）────┐   COS（交付物直存，已落地）
  │ PostgreSQL 15：6 库 beauty_<service>   │
  │ Redis：限流（account / gateway）       │
  │ sandboxd：gVisor + Docker + PTY WS     │
@@ -90,9 +90,11 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ### 3.6 交付物与文件
 
-- 过渡期 `ARTIFACT_STORE=filesystem` + 本地卷；单机可用。
-- 后续切 COS（S3 兼容）：`ARTIFACT_STORE=s3` + endpoint/ak/sk；Vercel 代理有 4.5MB 请求上限，大文件走 COS 直传或直连 api 子域。
-- 磁盘：60GB 盘，交付物与镜像层共用；定期 `docker system prune`。
+- 生产 `ARTIFACT_STORE=cos`：腾讯云 COS（官方 `cos-python-sdk-v5`，不是 S3 兼容层），桶 `cos-beauty-moon-1254003975`、地域 `ap-seoul`、私有读写；如需服务端加密在桶侧开 SSE-COS（代码不逐对象传加密头）。`WORKSPACE__ARTIFACT_COS_*` 注入桶/地域/密钥。
+- key 仍由 `build_artifact_key` 生成（`<账号>/<工作区>/<交付物><后缀>`），桶内不加 prefix；交付物与 skill 包对象都走 COS。
+- 历史 filesystem 对象不迁移：切 COS 后旧对象读不到（下载 500 `artifact.object_missing`），已确认接受；database 行内联正文仍可读。`ARTIFACT_STORE=filesystem` 只保留给本地开发/测试。
+- Vercel 代理仍有 4.5MB 请求上限；大文件直传/直连 api 子域是后续项。
+- 磁盘：60GB 盘，交付物不再占本地卷；定期 `docker system prune`。
 
 ### 3.7 密钥与配置
 
@@ -115,15 +117,15 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ### P1（上线 2 周内）
 
-| #   | 改造                                                    |
-| --- | ------------------------------------------------------- |
-| 8   | 每日 `pg_dump` 到 COS + 密钥卷备份                      |
-| 9   | 云监控告警（CPU/内存/磁盘/容器退出）                    |
-| 10  | 发布脚本自动化（TCR 推送 → pull → 健康等待 → 失败回滚） |
-| 11  | 交付物切 COS（S3 兼容）                                 |
-| 12  | 大文件走直连 api 子域（绕开 Vercel 4.5MB）              |
-| 13  | CI 增加 `docker compose config -q` + amd64 镜像构建     |
-| 14  | 日志采集（Caddy 访问日志 + 容器 stdout → CLS 可选）     |
+| #   | 改造                                                          |
+| --- | ------------------------------------------------------------- |
+| 8   | 每日 `pg_dump` 到 COS + 密钥卷备份                            |
+| 9   | 云监控告警（CPU/内存/磁盘/容器退出）                          |
+| 10  | 发布脚本自动化（TCR 推送 → pull → 健康等待 → 失败回滚）       |
+| 11  | 交付物 COS 已落地；历史 filesystem 对象不迁移（需要时再回填） |
+| 12  | 大文件走直连 api 子域（绕开 Vercel 4.5MB）                    |
+| 13  | CI 增加 `docker compose config -q` + amd64 镜像构建           |
+| 14  | 日志采集（Caddy 访问日志 + 容器 stdout → CLS 可选）           |
 
 ### P2（规模化）
 
@@ -138,7 +140,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 | api-gateway        | `APP_ORIGIN=https://app.beautymoon.cn`、`RUNTIME_PUBLIC_URL`、`COOKIE_SECURE=true`、`INTERNAL_SECRET`、上游 URL 用 compose 服务名 |
 | account-service    | `AUTH_ISSUER`、`SIGNING_KEY_PATH`、`INTERNAL_SECRET`、`OAUTH21_WEB_ORIGIN`                                                        |
 | agent-orchestrator | `AUTH_ISSUER`、`INTERNAL_AUTH_SECRET`、`LLM_GATEWAY_URL`、`TOOL/KNOWLEDGE/WORKSPACE_ENABLED=true`、`OUTBOX_ENABLED=true`          |
-| workspace-service  | `ARTIFACT_ROOT`、`SANDBOX_PROVIDER`、`SANDBOX_REAPER_ENABLED`                                                                     |
+| workspace-service  | `ARTIFACT_STORE=cos`、`ARTIFACT_COS_BUCKET/REGION/SECRET_ID/SECRET_KEY`、`SANDBOX_PROVIDER`、`SANDBOX_REAPER_ENABLED`             |
 | connector-service  | `CREDENTIAL_SECRET`、`INTERNAL_SECRET`、`OAUTH_REDIRECT_BASE`                                                                     |
 | tool-service       | `WORKSPACE_SERVICE_URL`、`CONNECTOR_BASE_URL`、`CONNECTOR_INTERNAL_SECRET`、`AUTH_ISSUER`                                         |
 | knowledge-service  | `EMBEDDING_PROVIDER=local`、`LLM_GATEWAY_URL`、`INTERNAL_SECRET`                                                                  |

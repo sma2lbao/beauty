@@ -1,6 +1,7 @@
 """服务配置(env 前缀 WORKSPACE__,约定见 common.config)。"""
 
 from common.config import BaseAppSettings
+from pydantic import SecretStr
 from pydantic_settings import SettingsConfigDict
 
 
@@ -21,9 +22,22 @@ class Settings(BaseAppSettings):
     auto_create_tables: bool = False  # dev/test 直建表;生产走 alembic
     # 单库多迁移链(多服务共用一个库)时的独立版本表;留空即默认 alembic_version
     alembic_version_table: str | None = None
-    # 交付物内容存储(§7):database = DB 列;filesystem = 本地对象目录
+    # 交付物内容存储(§7):database = DB 列;filesystem = 本地对象目录(dev/test);
+    # cos = 腾讯云 COS(生产)。filesystem 仍保留给本地与测试使用。
     artifact_store: str = "filesystem"
     artifact_root: str = "./.artifacts"
+    # COS 后端(artifact_store=cos):桶名形如 <bucket>-<APPID>,地域如 ap-seoul;
+    # endpoint 留空走默认域名,内网/加速域名才显式填 host(不带协议/路径)。
+    artifact_cos_bucket: str = ""
+    artifact_cos_region: str = ""
+    artifact_cos_secret_id: SecretStr | None = None
+    artifact_cos_secret_key: SecretStr | None = None
+    artifact_cos_token: SecretStr | None = None
+    artifact_cos_scheme: str = "https"
+    artifact_cos_endpoint: str = ""
+    artifact_cos_timeout_seconds: float = 30.0
+    artifact_cos_retry_times: int = 3
+    artifact_cos_pool_max_size: int = 10
     # 通用二进制对象(P3:skill 包 zip)单对象字节上限;超限返回 400 object.too_large
     object_max_bytes: int = 20 * 1024 * 1024
     default_workspace_name: str = "默认工作区"

@@ -2,7 +2,7 @@
 
 工作区服务(架构 §3/§7):**工作区 + 交付物元数据 + 对象存储 + 沙箱生命周期**。
 
-§7 数据模型要点把 `artifacts` 归属到本服务(实体文件在对象存储,COS/R2 阶段 B)。
+§7 数据模型要点把 `artifacts` 归属到本服务(实体文件在对象存储,生产已切腾讯云 COS)。
 
 - `POST /v1/workspaces`、`GET /v1/workspaces`、`GET /v1/workspaces/{id}`:
   工作区(账号资料空间;返回体带 `is_default` 标记);
@@ -43,15 +43,34 @@
 | 删除默认工作区                 | `workspace.default_protected` | 409  |
 | 工作区不存在或跨账号(读/改/删) | `workspace.not_found`         | 404  |
 
-交付物内容通过 `common.artifacts.ArtifactStore` 落盘:
+交付物内容通过 `common.artifacts.ArtifactStore` 落存储:
 
-- 文本类(`text/*`、JSON/YAML/XML 等)进 `content` 列;二进制进 `content_bytes`
-  列(下载端点按 MIME 取原始字节,不再假设"交付物一定是 Markdown");
-- `ARTIFACT_STORE=database`:上述两列即正文;
-- `ARTIFACT_STORE=filesystem`(默认):字节直接写 `ARTIFACT_ROOT`
-  (键 `<账号>/<工作区>/<交付物><安全后缀>`,后缀由 MIME 推导、bin 兜底),
-  行里只留 `object_key`/`size_bytes`/`filename`/`content_type`;
-- 换 S3/COS 只需实现该协议,读端契约不变。
+- `ARTIFACT_STORE=database`:文本进 `content` 列、二进制进 `content_bytes`
+  列,两列即正文(下载端点按 MIME 取原始字节,不假设"交付物一定是 Markdown");
+- `ARTIFACT_STORE=cos`(**生产**):字节写腾讯云 COS,key 仍是
+  `<账号>/<工作区>/<交付物><安全后缀>`(后缀由 MIME 推导、bin 兜底),
+  桶内 key 就是 `object_key`,不额外加 prefix;行里只留
+  `object_key`/`size_bytes`/`filename`/`content_type`,且 `storage` 记 `cos`;
+- `ARTIFACT_STORE=filesystem`(**仅本地开发/测试**):字节直接写 `ARTIFACT_ROOT`,
+  行语义同上、`storage` 记 `filesystem`;
+- 读端按启动时注入的 store 读取,**不按行里的 `storage` 分派**。因此从
+  filesystem 切到 COS 后,旧的 filesystem 对象读不到(下载返回 500
+  `artifact.object_missing`);本期不迁移历史对象,database 行内联正文仍可读;
+- 换后端只需实现该协议,读端契约不变。
+
+生产 COS 配置(env 前缀 `WORKSPACE__`;密钥只从环境变量/主机 `.env` 注入,
+不写进仓库):
+
+```sh
+WORKSPACE__ARTIFACT_STORE=cos
+WORKSPACE__ARTIFACT_COS_BUCKET=cos-beauty-moon-1254003975
+WORKSPACE__ARTIFACT_COS_REGION=ap-seoul
+WORKSPACE__ARTIFACT_COS_SECRET_ID=...
+WORKSPACE__ARTIFACT_COS_SECRET_KEY=...
+WORKSPACE__ARTIFACT_COS_SCHEME=https
+# 默认 cos.<region>.myqcloud.com;仅私有化/加速域名时填 host
+WORKSPACE__ARTIFACT_COS_ENDPOINT=
+```
 
 ## 对象存储 API(P3:skill 包)
 
