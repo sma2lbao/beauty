@@ -21,7 +21,7 @@
   "devDependencies": {
     "@nx/eslint": "23.2.1",
     "@nx/js": "23.2.1",
-    "@nx/vitest": "23.2.1",
+    "@nx/vitest": "24.0.6",
     "@nxlv/python": "^23.3.5",
     "@swc/helpers": "~0.5.24",
     "@types/node": "^22.0.0",
