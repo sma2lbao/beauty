@@ -2,7 +2,7 @@
 
 > 状态：设计定稿（2026-10-25）。本文回答两个问题：**把 beauty-moon 从 docker compose 迁到 serverless 平台，选哪个平台**、**仓库需要改哪些地方**。
 > 关联文档：[architecture.md](../architecture.md)（§10 部署与迁移）、[tool-service.md](./tool-service.md)（工具服务设计）、[local-dev.md](../local-dev.md)
-> ⚠️ **2026-11-11 更新、2026-11-21 修订**：当前落地主线是 **Vercel（静态）+ 腾讯云应用机（首尔，Compose）+ 同 VPC 基础设施机（PostgreSQL 16 / Redis / sandboxd）**，见 [hybrid-deployment.md](./hybrid-deployment.md)；本文保留为平台横向对比与备选分析，「Cloud Run 首选 / Vercel 不推荐」不再代表当前决策，Neon/云 Redis/托管沙箱仅作历史方案。
+> ⚠️ **2026-11-11 更新、2026-11-21 修订**：当前落地主线是 **Vercel（静态）+ 腾讯云应用机（首尔，Compose）+ 基础设施机（PostgreSQL 15 / Redis / sandboxd）**，见 [hybrid-deployment.md](./hybrid-deployment.md)；本文保留为平台横向对比与备选分析，「Cloud Run 首选 / Vercel 不推荐」不再代表当前决策，Neon/云 Redis/托管沙箱仅作历史方案。
 
 ## 1. 摘要
 

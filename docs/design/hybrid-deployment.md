@@ -5,16 +5,16 @@
 
 ## 1. 结论与范围
 
-| 层         | 选型                                           | 说明                                                                      |
-| ---------- | ---------------------------------------------- | ------------------------------------------------------------------------- |
-| Web / 官网 | Vercel                                         | 现状不动；`/api/:path*` rewrite 到公网 API 网关                           |
-| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose     | 应用机：8 个 Python 服务 + Caddy；升配 4C8G                               |
-| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`   | 只反代 api-gateway:8007，其余服务仅内网                                   |
-| 数据库     | 基础设施机自建 PostgreSQL 16，6 个库           | 一服务一库 + 每服务独立 alembic 版本表；同 VPC 内网，RTT < 1ms            |
-| 缓存/限流  | 基础设施机 Redis（requirepass）                | account 动态注册限流、gateway 固定窗口限流；未配置时回退进程内            |
-| 沙箱       | 基础设施机 sandboxd（gVisor + Docker，已落地） | 应用机无 `/dev/kvm`；`SANDBOX_PROVIDER=sandboxd`；e2b 托管 microVM 为备选 |
-| 交付物     | 过渡期本地卷，后续 COS                         | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点                           |
-| 密钥       | 主机 `.env`（600）+ 卷内 PEM                   | 后续可换 Secret Manager / KMS                                             |
+| 层         | 选型                                           | 说明                                                                           |
+| ---------- | ---------------------------------------------- | ------------------------------------------------------------------------------ |
+| Web / 官网 | Vercel                                         | 现状不动；`/api/:path*` rewrite 到公网 API 网关                                |
+| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose     | 应用机：8 个 Python 服务 + Caddy；升配 4C8G                                    |
+| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`   | 只反代 api-gateway:8007，其余服务仅内网                                        |
+| 数据库     | 基础设施机自建 PostgreSQL 15，6 个库           | 一服务一库 + 每服务独立 alembic 版本表；同 VPC 内网 RTT < 1ms（当前经公网 IP） |
+| 缓存/限流  | 基础设施机 Redis（requirepass）                | account 动态注册限流、gateway 固定窗口限流；未配置时回退进程内                 |
+| 沙箱       | 基础设施机 sandboxd（gVisor + Docker，已落地） | 应用机无 `/dev/kvm`；`SANDBOX_PROVIDER=sandboxd`；e2b 托管 microVM 为备选      |
+| 交付物     | 过渡期本地卷，后续 COS                         | `ARTIFACT_STORE=filesystem`；COS 走 S3 兼容端点                                |
+| 密钥       | 主机 `.env`（600）+ 卷内 PEM                   | 后续可换 Secret Manager / KMS                                                  |
 
 **为什么不是「尽量都放 Vercel」**：api-gateway 要代理 SSE 长流（Vercel 函数时长 Hobby 300s / Pro 800s），agent-orchestrator 跑分钟级 run 与 5 个常驻循环，workspace/connector 也各带常驻循环，这些都不是函数模型能承载的；把 8 个服务放同一台机器还顺带消灭了跨云鉴权与内网延迟问题。详见 serverless-deployment.md §3.2/§3.3。
 
@@ -43,7 +43,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
    │                        │
    ▼                        ▼
  ┌──── 基础设施机（同 VPC，10.8.0.14）────┐   COS（后续，交付物直存）
- │ PostgreSQL 16：6 库 beauty_<service>   │
+ │ PostgreSQL 15：6 库 beauty_<service>   │
  │ Redis：限流（account / gateway）       │
  │ sandboxd：gVisor + Docker + PTY WS     │
  └────────────────────────────────────────┘
@@ -81,7 +81,8 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ### 3.5 数据库与 Redis（基础设施机）
 
-- PostgreSQL 16 与 Redis 部署在同 VPC 的另一台服务器（当前 `10.8.0.14`），应用机只走内网；不暴露公网，安全组只放行应用机内网 IP 的 5432/6379/8088。
+- PostgreSQL 15 与 Redis 部署在另一台基础设施机；目标形态是同 VPC 内网、不暴露公网（安全组只放行应用机内网 IP）。
+- **当前生产实际**：基础设施机在另一网络，应用机经公网 IP（`101.33.78.123`）连 5432/6379/8088，安全组仅放行应用机公网出口；PG/Redis 未启用 TLS，属先上线的临时形态，建议尽快切内网或启用 TLS。
 - 6 个库一服务一库（`beauty_account`…`beauty_tool`），每库用独立 `*__ALEMBIC_VERSION_TABLE`（6 条 alembic 链共用默认版本表会互相覆盖）；迁移按 account → agent → connector → knowledge → workspace → tool 串行。
 - 内网连接不需要 `?ssl=require`；生产 `*__AUTO_CREATE_TABLES=false`，表结构只由 `migrate` 作业推进。
 - 当前 `packages/database/database/session.py` 是 `NullPool`（每请求新建连接）：延迟与连接数都不理想，后续改 `QueuePool + pool_pre_ping`。
@@ -147,14 +148,14 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ## 6. 上线路径（4–6 人日）
 
-| 天   | 内容                                                             |
-| ---- | ---------------------------------------------------------------- |
-| D1   | 买机（首尔 2C4G 30M）、Ubuntu 24.04、Docker、swap、安全组、DNS   |
-| D1–2 | 基础设施机 PG 16 建 6 库 + Redis；应用机 .env 指向内网；迁移执行 |
-| D2–3 | 基础设施机部署 sandboxd（gVisor + Docker）+ 配置；镜像构建       |
-| D3   | `.env` 填全、`deploy.sh` 起服务、验收登录/SSE/交付物             |
-| D4   | 灰度 `api2` → 切 `api`、观察 24h                                 |
-| 缓冲 | 备份/监控/发布脚本；沙箱在境外带来的时延实测                     |
+| 天   | 内容                                                                   |
+| ---- | ---------------------------------------------------------------------- |
+| D1   | 买机（首尔 2C4G 30M）、Ubuntu 24.04、Docker、swap、安全组、DNS         |
+| D1–2 | 基础设施机 PG 15 建 6 库 + Redis；应用机 .env 指向基础设施机；迁移执行 |
+| D2–3 | 基础设施机部署 sandboxd（gVisor + Docker）+ 配置；镜像构建             |
+| D3   | `.env` 填全、`deploy.sh` 起服务、验收登录/SSE/交付物                   |
+| D4   | 灰度 `api2` → 切 `api`、观察 24h                                       |
+| 缓冲 | 备份/监控/发布脚本；沙箱在境外带来的时延实测                           |
 
 ## 7. 成本（月，2026-11 价目）
 
@@ -211,5 +212,5 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 1. serverless-deployment.md 的「Cloud Run 首选」不再代表当前决策（保留为备选分析）；
 2. 该文档 §4.6「worker 必须单实例 / 租约无续期」在 912e15b 后已过时；
 3. 该文档「Vercel 不推荐」仍然成立（针对全量后端），但**静态层 + rewrite 入口**是当前方案的一部分；
-4. 数据库/Redis/沙箱已从 Neon/云 Redis/托管 microVM 迁到**同 VPC 的基础设施机**（自建 PG 16 + Redis + sandboxd），见 §1/§3.4/§3.5；Neon 连接串仅保留为迁移来源；
+4. 数据库/Redis/沙箱已从 Neon/云 Redis/托管 microVM 迁到**同 VPC 的基础设施机**（自建 PG 15 + Redis + sandboxd），见 §1/§3.4/§3.5；Neon 连接串仅保留为迁移来源；
 5. 该文档 §7.6 的服务级 Vercel 导出配置（`services/*/vercel.json`、`services/*/.python-version`、`pyproject.toml` 的 `[tool.vercel]`、`scripts/check-vercel-config.py`）已于 2026-11-12 移除，Vercel 侧只保留 `apps/web` 与 `packages/design` 的 `vercel.json`。

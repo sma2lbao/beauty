@@ -1,6 +1,6 @@
 # 腾讯云轻量（首尔）部署
 
-Vercel（Web 静态）+ 腾讯云应用机（8 个 Python 服务 + Caddy）+ 基础设施机（PostgreSQL 16 / Redis / sandboxd）。
+Vercel（Web 静态）+ 腾讯云应用机（8 个 Python 服务 + Caddy）+ 基础设施机（PostgreSQL 15 / Redis / sandboxd）。
 设计取舍与逐项分析见 [docs/design/hybrid-deployment.md](../../docs/design/hybrid-deployment.md)。
 
 ## 1. 机器与系统
@@ -55,15 +55,16 @@ docker push "$REGISTRY/beauty/python-service:$TAG"
 
 ### 1.1 基础设施机（PostgreSQL / Redis / sandboxd）
 
-当前生产把有状态组件与本机 Docker 隔离到**另一台服务器**（同 VPC）：
+当前生产把有状态组件与本机 Docker 隔离到**另一台服务器**（目标形态是同 VPC 内网；当前生产暂经公网 IP 连接，见下方提示）：
 
 | 组件          | 监听 | 说明                                                                                                                 |
 | ------------- | ---- | -------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL 16 | 5432 | 6 个库 `beauty_<service>`，一服务一库；与 `deploy/postgres/initdb/01-create-databases.sql` 同构，角色 `beauty_admin` |
+| PostgreSQL 15 | 5432 | 6 个库 `beauty_<service>`，一服务一库；与 `deploy/postgres/initdb/01-create-databases.sql` 同构，角色 `beauty_admin` |
 | Redis         | 6379 | `requirepass`；account-service 动态注册限流、api-gateway 固定窗口限流                                                |
 | sandboxd      | 8088 | gVisor（runsc）+ Docker，提供 `/v1/sandboxes` REST 与 PTY WebSocket                                                  |
 
 - 系统同为 Ubuntu 24.04；规格按并发选（4C8G 起步更稳，sandboxd 会跑用户代码）。
+- **当前生产实际连接方式**：基础设施机在另一网络，应用机经**公网 IP**（`101.33.78.123`）连 5432/6379/8088，安全组仅放行应用机公网出口 IP；PG/Redis 当前未启用 TLS。这是先上线的临时形态，建议尽快切到同 VPC 内网或启用 TLS（Geo 跨区时延迟与暴露面都更差）。
 - **安全组**：5432 / 6379 / 8088 只对应用机内网 IP 放行，**不要对 `0.0.0.0/0` 开放**。
 - 两台机必须能互通（同 VPC/子网，或轻量 → CVM 走云联网）；应用机 `.env` 里 DB/Redis/sandboxd 地址都填基础设施机的内网 IP。
 - 数据备份与升级在基础设施机做（见 §8），应用机只负责无状态服务。
@@ -113,7 +114,7 @@ bash deploy/tencent/scripts/deploy.sh
 
 ## 6. 数据库与 Redis（基础设施机）
 
-- PostgreSQL 16 + Redis 都在同 VPC 的基础设施机上（`10.8.0.14`），应用机只连内网，RTT 通常 < 1ms；不再依赖 Neon/云 Redis。
+- PostgreSQL 15（实例 15.20）+ Redis 部署在基础设施机上，应用机经内网或公网 IP 连接；不再依赖 Neon/云 Redis。同 VPC 内网时 RTT 通常 < 1ms，公网跨区时实测约 30–60ms。
 - 6 个库一服务一库，**不能合并**（各自 alembic 链共用默认 `alembic_version` 表）；每个库用独立版本表 `*__ALEMBIC_VERSION_TABLE`。
 - 生产 `*__AUTO_CREATE_TABLES=false`，表结构只由 `deploy/tencent/scripts/migrate.sh`（compose 的 `migrate` 作业）推进。
 - 内网连接不需要 `?ssl=require`；如基础设施机启用 TLS，再给 URL 加 `?ssl=require` 并配证书校验。

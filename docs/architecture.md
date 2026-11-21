@@ -9,7 +9,7 @@
 
 | 领域              | 生产                                                                                     | 开发环境                                                  | 状态                                                                                                                |
 | ----------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Postgres          | **自建 PostgreSQL 16（基础设施机，同 VPC 内网）**                                        | **本机 compose Postgres:16**（每服务独立库）              | ✅ 已实施（生产=腾讯云基础设施机；本地 compose PG；SQLite 仅显式覆盖）                                              |
+| Postgres          | **自建 PostgreSQL 15（基础设施机；当前经公网 IP 连接）**                                 | **本机 compose Postgres:16**（每服务独立库）              | ✅ 已实施（生产=腾讯云基础设施机；本地 compose PG；SQLite 仅显式覆盖）                                              |
 | Redis             | **自建 Redis（基础设施机，requirepass）**                                                | **本地 Redis**                                            | ✅ 已接（account 动态注册 / gateway 固定窗口限流；R-P1-8 关闭）                                                     |
 | 对象存储          | **暂不引入**                                                                             | 本地文件系统 / DB 列                                      | ⏸ 暂缓（产物先 DB/文件系统，二进制附件受大小限制）                                                                  |
 | 队列 / 工作流     | **Postgres job 表 + worker（SKIP LOCKED）**                                              | 同左（SQLite 覆盖时用文件/内存 worker）                   | ✅ 已实施；Temporal / Inngest **暂不做**                                                                            |
@@ -239,7 +239,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 **开发/生产一致性**
 
 - 开发：本机 compose Postgres:16，每服务独立库（见 `deploy/docker-compose.yml`）；离线/测试可显式改回 SQLite，`AUTO_CREATE_TABLES=true` 仅作兜底建表；
-- 生产：基础设施机 PostgreSQL 16 + Alembic 迁移（迁移只用通用类型，SQLite/PG 兼容）；
+- 生产：基础设施机 PostgreSQL 15（实例 15.20）+ Alembic 迁移（迁移只用通用类型，SQLite/PG 兼容）；
 - CI 必须对 **Postgres** 跑一遍迁移 + 集成测试（testcontainers），避免「SQLite 过、PG 挂」；
 - 多实例部署时 **filesystem artifact store 不可用**，必须用 database 模式或共享盘；对象存储接入后替换。
 
@@ -335,7 +335,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 
 1. ✅ 新增 `services/api-gateway`（FastAPI）与 `apps/site`（Next.js）；`apps/web` 只构建静态产物，由 Nginx 托管；
 2. ✅ 八个服务已容器化（统一镜像 + compose 全量编排，:8080）并纳入 CI `docker-build`；生产编排见 `deploy/tencent/`（轻量单机 + Caddy + 8 服务 Compose，2026-11-11）；内网另加 systemd 单元 + 发布包（M0-13 暂缓）；本地开发保留 compose；
-3. ✅ 接入自建 PG 16（6 库，每服务独立 alembic 版本表）/ Redis（同 VPC 基础设施机，2026-11-21）；配置样例见 `deploy/tencent/.env.example`；开发默认本机 compose Postgres；产物仍 filesystem，多实例前改 database/COS；
+3. ✅ 接入自建 PG 15（6 库，每服务独立 alembic 版本表）/ Redis（基础设施机，2026-11-21；当前经公网 IP，建议尽快切内网或 TLS）；配置样例见 `deploy/tencent/.env.example`；开发默认本机 compose Postgres；产物仍 filesystem，多实例前改 database/COS；
 4. ⏳ account-service 补 Google/GitHub OAuth + API 网关 Cookie 会话（保留 token 模式开发兜底）——API 网关 Cookie 会话已落地，社交 OAuth 待补；
 5. ✅ `jobs` 表 + worker，run 启动/恢复走队列（不引入 Temporal）；
 6. ✅ 前端 SSE 带 `Last-Event-ID` + 自动重连；
