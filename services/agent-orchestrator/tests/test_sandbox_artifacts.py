@@ -15,7 +15,10 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.context.sandbox_files import WORKSPACE_ROOT
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.services import sandbox_artifacts
-from agent_orchestrator.services.run_artifacts import _capture_sandbox_files
+from agent_orchestrator.services.run_artifacts import (
+    _capture_sandbox_files,
+    _deliver_artifacts,
+)
 from tests.conftest import ACCOUNT, _create_run
 
 SNAKE_HTML = "<!doctype html><html><body><script>1</script></body></html>"
@@ -133,8 +136,8 @@ def test_capture_targets_only_successful_whitelisted_unique_paths() -> None:
     assert sandbox_artifacts.capture_targets(records, max_files=0) == []
 
 
-def test_reader_not_configured_captures_nothing(client: TestClient) -> None:
-    """未装配读取器(= 沙箱关闭)时整体跳过:不落件、不报错、不读文件。"""
+def test_reader_not_configured_reports_sandbox_disabled(client: TestClient) -> None:
+    """未装配读取器(= 沙箱开关关闭)不再静默:原因写进 sandbox_errors。"""
     run_id = _create_run(client)
     settings = client.app.state.settings
     records = [{"ok": True, "paths": ["snake.html"]}]
@@ -142,8 +145,46 @@ def test_reader_not_configured_captures_nothing(client: TestClient) -> None:
     metas, errors = _capture(settings, run_id, records, None)
 
     assert metas == []
-    assert errors == []
+    assert [error["path"] for error in errors] == ["/workspace/snake.html"]
+    assert "沙箱未启用" in errors[0]["error"]
     assert sandbox_artifacts.current() is None
+
+
+def test_delivery_payload_surfaces_sandbox_disabled(client: TestClient) -> None:
+    """沙箱关闭但执行期确实写了成品:交付事件带上 sandbox_errors(线上静默坑的护栏)。"""
+    run_id = _create_run(client)
+    settings = client.app.state.settings
+
+    async def _run():
+        factory = create_session_factory(settings.database_url)
+        sandbox_artifacts.configure(None)
+        try:
+            async with session_scope(factory) as session:
+                run = await session.get(Run, run_id)
+                assert run is not None
+                await _deliver_artifacts(
+                    session,
+                    run,
+                    None,
+                    records=[{"ok": True, "paths": ["snake.html"]}],
+                    store=None,
+                    workspace=None,
+                    downloader=None,
+                    max_files=10,
+                    reply="已写好贪吃蛇",
+                )
+        finally:
+            await factory.engine.dispose()
+
+    asyncio.run(_run())
+
+    events = client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT).json()
+    payload = next(e["payload"] for e in events if e["type"] == "run.delivered.v1")
+    assert payload["artifact_ids"] == []
+    assert [error["path"] for error in payload["sandbox_errors"]] == [
+        "/workspace/snake.html"
+    ]
+    assert "沙箱未启用" in payload["sandbox_errors"][0]["error"]
 
 
 def test_capture_persists_html_artifact_and_dedupes(client: TestClient) -> None:

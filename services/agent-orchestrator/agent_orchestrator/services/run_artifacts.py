@@ -101,13 +101,25 @@ async def _capture_sandbox_files(
     这里读的就是工具写进去的那个工作区。同一路径用 source_url 去重(路径不是
     URL,但同为"来源"标识,且不会与 http(s) 链接撞键):重放与追加执行不会
     重复落件。单件读不到/超限只留痕,不拖垮交付。
+
+    沙箱开关关闭时成品还留在沙箱里,过去这一路是静默 return(线上交付物全空的
+    隐形坑),现在把原因如实写进 sandbox_errors,run.delivered.v1 里能直接看到。
     """
-    reader = sandbox_artifacts.current()
-    if reader is None or max_files <= 0:
-        return [], []
     targets = sandbox_artifacts.capture_targets(records, max_files=max_files)
     if not targets:
         return [], []
+    reader = sandbox_artifacts.current()
+    if reader is None:
+        return [], [
+            {
+                "path": target.path,
+                "error": (
+                    "沙箱未启用(AGENT_ORCHESTRATOR__SANDBOX_ENABLED=false),"
+                    "成品未回收"
+                ),
+            }
+            for target in targets
+        ]
     scope_key = scope_key_for(
         run.account_id,
         conversation_id=run.conversation_id,
