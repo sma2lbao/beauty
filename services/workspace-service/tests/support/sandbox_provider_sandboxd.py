@@ -84,6 +84,16 @@ class FakePtyConnector:
         return self.websocket
 
 
+def _abs_fs_path(path: str) -> str:
+    """假控制面内部按绝对路径存目录;这里把相对 /workspace 的入参还原。"""
+    text = path.strip()
+    if not text or text in (".", "./"):
+        return "/workspace"
+    if text.startswith("/"):
+        return text
+    return f"/workspace/{text}"
+
+
 def _spec(**overrides: Any) -> SandboxSpec:
     base: dict[str, Any] = {
         "account_id": "acc-1",
@@ -137,9 +147,12 @@ class SandboxdStub:
         return {key: values[0] for key, values in parsed.items() if values}
 
     def _file_list(self, path: str) -> httpx.Response:
+        if path.startswith("/") or path.startswith(".."):
+            # 与真实 sandboxd 一致:只接受相对 /workspace 的路径
+            return httpx.Response(400, json={"detail": "path must be relative"})
         if self.file_list_status >= 400:
             return httpx.Response(self.file_list_status, json={"detail": "no such dir"})
-        payload = self.file_lists.get(path, {"entries": []})
+        payload = self.file_lists.get(_abs_fs_path(path), {"entries": []})
         if isinstance(payload, list):
             payload = {"entries": payload}
         return httpx.Response(200, json=payload)
@@ -161,6 +174,16 @@ class SandboxdStub:
         if path.endswith("/files/list"):
             return self._file_list(self.query(request).get("path", ""))
         if path.endswith("/files"):
+            query_path = self.query(request).get("path", "")
+            # 与真实 sandboxd 一致:绝对路径/空路径都会被 400 拒绝
+            if (
+                not query_path
+                or query_path.startswith("/")
+                or query_path.startswith("..")
+            ):
+                return httpx.Response(
+                    400, json={"detail": "path must be relative to /workspace"}
+                )
             if method == "PUT":
                 self.chunks.append(request.content)
                 status = self.upload_statuses.pop(0) if self.upload_statuses else 204

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import shlex
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -69,6 +70,28 @@ _ENTRY_KINDS = {
     "link": "symlink",
 }
 _META_NAME = "beauty_sandbox_name"
+# sandboxd 的文件 API 只接受相对 /workspace 的路径(绝对路径一律 400),
+# 而 provider 协议对外约定的是沙箱内绝对路径,出网前统一转换。
+_WORKSPACE_ROOT = "/workspace"
+
+
+def _fs_path(path: str, *, for_list: bool = False) -> str:
+    """把沙箱内绝对路径换成 sandboxd files API 要求的 /workspace 相对路径。"""
+    text = str(path or "").strip()
+    if not text or text in (".", "./"):
+        return "." if for_list else ""
+    if not text.startswith("/"):
+        return text
+    normalized = posixpath.normpath(text)
+    if normalized == _WORKSPACE_ROOT:
+        return "." if for_list else ""
+    if normalized.startswith(f"{_WORKSPACE_ROOT}/"):
+        return normalized[len(_WORKSPACE_ROOT) + 1 :]
+    raise UpstreamError(
+        "sandbox.provider_error",
+        f"sandboxd 只能访问 {_WORKSPACE_ROOT} 内的路径:{text}",
+        details={"path": text},
+    )
 
 
 def _extract_id(payload: Any) -> str | None:
@@ -579,10 +602,14 @@ class SandboxdProvider:
         timeout: int,
         name: str,
     ) -> dict[str, Any]:
-        """sandboxd exec 没有 stdin 字段:先上传临时文件,再让 /bin/sh 重定向。"""
-        temp_path = f"/tmp/.beauty-stdin-{uuid4().hex}"
+        """sandboxd exec 没有 stdin 字段:先上传临时文件,再让 /bin/sh 重定向。
+
+        临时文件必须落在 /workspace 内:文件 API 不接受 /tmp 这类绝对路径。
+        """
+        temp_name = f".beauty-stdin-{uuid4().hex}"
+        temp_path = f"{_WORKSPACE_ROOT}/{temp_name}"
         upload = await self._upload(
-            sandbox_id, temp_path, stdin.encode("utf-8"), name=name
+            sandbox_id, temp_name, stdin.encode("utf-8"), name=name
         )
         if upload.status_code >= 400:
             self._raise_status(upload, name)
@@ -605,7 +632,7 @@ class SandboxdProvider:
                 name=name,
             )
         finally:
-            await self._delete_file_best_effort(sandbox_id, temp_path, name=name)
+            await self._delete_file_best_effort(sandbox_id, temp_name, name=name)
 
     async def _upload(
         self,
@@ -620,7 +647,7 @@ class SandboxdProvider:
             f"/v1/sandboxes/{sandbox_id}/files",
             name=name,
             content=data,
-            params={"path": path},
+            params={"path": _fs_path(path)},
             timeout=max(self._request_timeout_seconds, _FILE_TRANSFER_TIMEOUT_SECONDS),
         )
 
@@ -632,7 +659,7 @@ class SandboxdProvider:
                 "DELETE",
                 f"/v1/sandboxes/{sandbox_id}/files",
                 name=name,
-                params={"path": path},
+                params={"path": _fs_path(path)},
                 timeout=10.0,
             )
 
@@ -699,7 +726,7 @@ class SandboxdProvider:
             "GET",
             f"/v1/sandboxes/{sandbox_id}/files",
             name=name,
-            params={"path": path},
+            params={"path": _fs_path(path)},
             timeout=max(self._request_timeout_seconds, _FILE_TRANSFER_TIMEOUT_SECONDS),
         )
         if response.status_code >= 400:
@@ -762,7 +789,7 @@ class SandboxdProvider:
             "GET",
             f"/v1/sandboxes/{sandbox_id}/files/list",
             name=name,
-            params={"path": path},
+            params={"path": _fs_path(path, for_list=True)},
             timeout=max(self._request_timeout_seconds, _FILE_TRANSFER_TIMEOUT_SECONDS),
         )
         if response.status_code >= 400:

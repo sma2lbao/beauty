@@ -204,7 +204,9 @@ async def test_exec_stdin_uploads_wrapper_and_cleans_up() -> None:
 
     upload = stub.calls("PUT")[0]
     temp_path = stub.query(upload)["path"]
-    assert temp_path.startswith("/tmp/.beauty-stdin-")
+    # 文件 API 只收 /workspace 相对路径,临时文件放 workspace 根
+    assert temp_path.startswith(".beauty-stdin-")
+    assert "/" not in temp_path
     assert upload.content == b"print(1)\n"
 
     body = _json(stub.calls("POST", "/v1/sandboxes/sbx-1/exec")[0])
@@ -216,7 +218,7 @@ async def test_exec_stdin_uploads_wrapper_and_cleans_up() -> None:
         "python3",
         "-",
     ]
-    assert body["env"] == {"BEAUTY_SANDBOX_STDIN": temp_path}
+    assert body["env"] == {"BEAUTY_SANDBOX_STDIN": f"/workspace/{temp_path}"}
 
     delete = stub.calls("DELETE")[0]
     assert stub.query(delete)["path"] == temp_path
@@ -270,6 +272,9 @@ async def test_write_file_creates_parent_then_retries() -> None:
     assert len(uploads) == 2
     assert uploads[0].content == b"data"
     assert uploads[1].content == b"data"
+    # provider 对外是绝对路径,发给 sandboxd 时要变成 /workspace 相对路径
+    assert stub.query(uploads[0])["path"] == "dir/file.txt"
+    assert stub.query(uploads[1])["path"] == "dir/file.txt"
     mkdir = _json(stub.calls("POST", "/v1/sandboxes/sbx-1/exec")[0])
     assert mkdir["cmd"] == ["mkdir", "-p", "/workspace/dir"]
 
@@ -317,13 +322,12 @@ async def test_list_dir_recurses_to_depth_and_skips_symlinks() -> None:
     assert entries[2].size == 5
     assert entries[2].modified is not None
     assert (
-        stub.calls("GET", "/v1/sandboxes/sbx-1/files/list")[0].url.params["path"]
-        == "/workspace"
+        stub.calls("GET", "/v1/sandboxes/sbx-1/files/list")[0].url.params["path"] == "."
     )
     assert not [
         request
         for request in stub.calls("GET", "/v1/sandboxes/sbx-1/files/list")
-        if stub.query(request)["path"] == "/workspace/src/sub"
+        if stub.query(request)["path"] == "src/sub"
     ]
 
     deeper = await provider.list_dir("bm-abc", "/workspace", depth=3)
@@ -341,6 +345,19 @@ async def test_list_dir_missing_base_is_not_found() -> None:
 
     assert excinfo.value.code == "sandbox.file_not_found"
     assert excinfo.value.details["path"] == "/workspace"
+
+
+async def test_read_file_sends_workspace_relative_path() -> None:
+    stub = SandboxdStub()
+    provider = _provider(stub)
+    await provider.create(_spec())
+
+    assert await provider.read_file("bm-abc", "/workspace/dir/a.txt") == b"content"
+    assert stub.query(stub.calls("GET")[0])["path"] == "dir/a.txt"
+
+    with pytest.raises(UpstreamError) as excinfo:
+        await provider.read_file("bm-abc", "/etc/passwd")
+    assert excinfo.value.code == "sandbox.provider_error"
 
 
 async def test_destroy_treats_missing_runtime_as_done() -> None:
@@ -393,9 +410,7 @@ async def test_open_shell_connects_pty_and_streams() -> None:
         "cols": ["100"],
         "rows": ["40"],
     }
-    assert call["additional_headers"] == {
-        "Authorization": "Bearer sandboxd-test-token"
-    }
+    assert call["additional_headers"] == {"Authorization": "Bearer sandboxd-test-token"}
     assert call["proxy"] is None
     assert call["max_size"] is None
 
