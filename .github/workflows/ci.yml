@@ -73,7 +73,7 @@ jobs:
   # 与本地等价：bash scripts/check-docs.sh（纯 bash+node，无 Python 依赖，可与 setup 并行）
   # ------------------------------------------------------------------
   docs-check:
-    name: docs-check (prettier + links)
+    name: docs-check (prettier + links + drift)
     runs-on: ubuntu-latest
     needs: setup
     steps:
@@ -89,7 +89,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Docs gate (prettier + links + anchors)
+      - name: Docs gate (prettier + links + anchors + drift)
         run: bash scripts/check-docs.sh
 
       - name: Workspace hygiene (archive notes + docs index + tracked artifacts)

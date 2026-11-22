@@ -109,10 +109,10 @@ apps/web/
     │   ├── layout/             # 官网页头、页脚、站点布局
     │   ├── brand/              # 品牌标识（官方几何内联）
     │   └── auth-guard.tsx 等   # 路由守卫、重定向、route fallback
-    ├── features/               # 业务域（17 个）：组件 + use-<domain>-model.ts 数据层
+    ├── features/               # 业务域（19 个）：组件 + use-<domain>-model.ts 数据层
     │   ├── chat/  runs/  sandbox/  workspace/  settings/  sidebar/  mcp/
-    │   ├── command-palette/  knowledge/  outbox/  changes/  usage/
-    │   └── memory/  skills/  artifacts/  auth/  notifications/
+    │   ├── command-palette/  knowledge/  outbox/  changes/  usage/  admin/
+    │   └── memory/  skills/  artifacts/  auth/  notifications/  connectors/
     ├── lib/                    # 取数与协议层：*-api 客户端、presentation 格式化、query-keys、http、sse
     ├── stores/                 # zustand：UI 偏好、任务看板选中/筛选
     └── pages/                  # 路由页面，只做组装（PageHeader + 子面板），不直接取数

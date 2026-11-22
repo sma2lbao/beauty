@@ -33,14 +33,14 @@ npm run dev:reset    # 重置本地 Postgres 库(6 个)与 SQLite/产物
 
 ## 路线图与差距分析
 
-与其他 agent harness 的对比、现状差距与优先级待办见 [docs/gap-2026-10/](./docs/gap-2026-10/)（先读 `00-summary.md`）。
+与其他 agent harness 的对比、现状差距与优先级待办见 [docs/gap-2026-11/](./docs/gap-2026-11/)（先读 `00-refresh-2026-11-09.md`；gap-2026-10 是历史快照）。
 
 ## 目录结构
 
 ```
 beauty-moon/
 ├── apps/
-│   ├── web/                    # 品牌前台站点（React + react-router + react-query + Tailwind + @beauty/design）
+│   ├── web/                    # Harness Agent 控制台（React + react-router + react-query + Tailwind + @beauty/design）
 │   │   ├── src/                # 页面 / 组件 / 路由
 │   │   ├── index.html
 │   │   └── vite.config.ts      # react + tailwindcss 插件，@ -> src 别名
@@ -85,10 +85,10 @@ npx nx build @beauty/web      # tsc 类型检查 + vite 生产构建
 npx nx preview @beauty/web    # 预览生产构建
 npx nx typecheck @beauty/web  # 仅类型检查
 npx nx lint @beauty/web        # ESLint(共享配置 tools/eslint-config)
-npx nx test @beauty/web       # vitest + Testing Library 单测
+npx nx test @beauty/web -- --run  # vitest + Testing Library 单测(不加 --run 是 watch 模式)
 ```
 
-React 19 + TypeScript SPA：react-router v8 路由、@tanstack/react-query 数据层、Tailwind CSS v4 + shadcn/ui 组件，详见 [apps/web/README.md](apps/web/README.md)。
+React 19 + TypeScript SPA：react-router v8 路由、@tanstack/react-query 数据层、Tailwind CSS v4 + `@beauty/design` 组件库（无本地 shadcn/ui 副本），详见 [apps/web/README.md](apps/web/README.md)。
 
 ### 桌面端（本地电脑模式）
 

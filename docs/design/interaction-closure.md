@@ -76,12 +76,15 @@ Web 对话区（A 的前端 + B）、console-ui 与 Web 壳（C + D）。
   `run/plan`、收起编辑态；失败就地中文提示（409/422）。
 - 保存后可继续「放行执行 / 拒绝」；计划正文为空时允许直接放行（沿用现有占位文案）。
 
-## 4. C. 代码高亮（packages/console-ui）
+## 4. C. 代码高亮（`@beauty/design`）
 
-- `packages/console-ui/src/markdown.tsx` 的围栏代码块渲染接 `highlightCode(code, language)`：
-  产出 `{ key, text, kind }[]` 或等价片段，由渲染层拼 `<span className>`，**不用** raw HTML、
+> 落地时原计划的独立组件包已在 W6 收敛中删除，代码随 markdown 组件一并迁入
+> `packages/design`；下面按现状路径描述，语义未变。
+
+- `packages/design/src/components/markdown/markdown.tsx` 的围栏代码块渲染接 `highlightCode(code, language)`：
+  产出 `{ text, kind }[]`，由渲染层拼 `<span className>`，**不用** raw HTML、
   不破坏 `rehype-sanitize`。
-- 新增 `packages/console-ui/src/markdown-highlight.ts`：轻量 tokenizer，支持
+- `packages/design/src/components/markdown/highlight.ts`：轻量 tokenizer，支持
   `ts/tsx/js/jsx/json/python/py/bash/sh/shell` 的关键字、字符串、注释、数字；其它语言/无语言原样返回。
   高亮 token 用既有 `--ha-*` 令牌对应的 Tailwind 类（`text-ha-accent-soft` 关键字 /
   `text-ha-success` 字符串 / `text-ha-faint` 注释 / `text-ha-warning` 数字），与暗色控制台一致。
@@ -103,7 +106,7 @@ Web 对话区（A 的前端 + B）、console-ui 与 Web 壳（C + D）。
 - 服务端：`npx nx lint agent-orchestrator` + `npx nx test agent-orchestrator`（覆盖率 ≥82），
   `tests/snapshots/openapi.json` 重生成后 prettier；测试零网络（FakeLLM/FakeTool/FakeSandbox 既有夹具）。
 - 前端：`npx nx lint @beauty/web` + `npx nx typecheck @beauty/web` +
-  `npx nx test @beauty/web -- --run`；console-ui：`npx nx test @beauty/console-ui -- --run` + build。
+  `npx nx test @beauty/web -- --run`；design：`npx nx test @beauty/design -- --run` + build。
 - 全仓：`bash scripts/check-docs.sh`、`bash scripts/check-workspace.sh`、`git diff --check`。
 
 ## 7. 残余（预期）
@@ -135,12 +138,12 @@ Web 对话区（A 的前端 + B）、console-ui 与 Web 壳（C + D）。
   `approval-block.tsx`（计划编辑）、`chat-page.tsx`。
 - 测试：`conversation-rewrite-api.test.ts`、`message-actions.test.tsx`、`chat-rewrite.test.tsx`、`chat-approval.test.tsx`。
 
-### 8.3 代码高亮（packages/console-ui）
+### 8.3 代码高亮（`@beauty/design`）
 
-- `packages/console-ui/src/markdown-highlight.ts`（`languageFromClassName` / `normalizeLanguage` /
+- `packages/design/src/components/markdown/highlight.ts`（`languageFromClassName` / `normalizeLanguage` /
   `highlightCode`，单遍扫描 tokenizer）+ `markdown.tsx` 的 `code` 组件按语言渲染 token span；
   颜色只用既有令牌（`text-ha-accent-soft` / `text-ha-success` / `text-ha-faint` / `text-ha-warning`），不注入 raw HTML。
-- 测试：`markdown-highlight.test.ts`、`markdown.test.tsx`（新增 2 例）。
+- 测试：`packages/design/src/components/markdown/highlight.spec.ts`、`markdown.spec.tsx`。
 
 ### 8.4 错误边界（apps/web 壳）
 
