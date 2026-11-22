@@ -7,6 +7,7 @@ import { connectorApi } from '@/lib/connector-api';
 import { conversationsApi, streamMessage } from '@/lib/conversations-api';
 import { ApiError } from '@/lib/http';
 import { knowledgeApi } from '@/lib/knowledge-api';
+import { memoryApi } from '@/lib/memory-api';
 import { skillsApi } from '@/lib/skills-api';
 
 import {
@@ -40,6 +41,10 @@ vi.mock('@/lib/connector-api', async () =>
 );
 vi.mock('@/lib/knowledge-api', async () =>
   (await import('./chat-test-harness')).knowledgeModuleMock(),
+);
+
+vi.mock('@/lib/memory-api', async () =>
+  (await import('./chat-test-harness')).memoryModuleMock(),
 );
 vi.mock('@/features/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
@@ -442,6 +447,57 @@ describe('连接器多选与引用轨收纳(P2)', () => {
         'c1',
         expect.objectContaining({
           contextRefs: [{ kind: 'message', id: 'm1' }],
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('@ 能引用记忆,发送带 memory 引用', async () => {
+    vi.mocked(memoryApi.list).mockResolvedValue([
+      {
+        id: 'mem-1',
+        kind: 'preference',
+        scope: 'account',
+        workspace_id: null,
+        content: '周报先写结论再列细节',
+        pinned: false,
+        source_type: 'manual',
+        source_id: null,
+        injection_mode: 'retrieved',
+        confidence: 1,
+        valid_from: null,
+        invalid_at: null,
+        superseded_by: null,
+        expires_at: null,
+        last_accessed_at: null,
+        access_count: 0,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ]);
+    const textarea = await openConversation();
+
+    fireEvent.change(textarea, { target: { value: '@周报' } });
+    const menu = await screen.findByRole('listbox', { name: '上下文候选' });
+    expect(within(menu).getByText('记忆')).toBeInTheDocument();
+    fireEvent.click(within(menu).getByText('周报先写结论再列细节'));
+
+    await waitFor(() => expect(textarea).toHaveValue('@周报先写结论再列细节 '));
+    expect(
+      screen.getByLabelText('移除引用 周报先写结论再列细节'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(textarea, {
+      target: { value: '@周报先写结论再列细节 按这个偏好写' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        expect.objectContaining({
+          contextRefs: [{ kind: 'memory', id: 'mem-1' }],
         }),
         expect.anything(),
       ),

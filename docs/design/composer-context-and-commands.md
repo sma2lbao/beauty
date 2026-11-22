@@ -1,6 +1,6 @@
 # 输入区 @ 上下文引用与 / 命令设计
 
-> 状态：P0/P1 已实施；P2 进行中（`/connector` 多选、引用轨 `+N`、`@` 消息引用已落地，其余待排期）
+> 状态：P0/P1 已实施；P2 进行中（`/connector` 多选、引用轨 `+N`、`@` 消息/记忆引用已落地，其余待排期）
 > 范围：`apps/web` 会话工作台输入区；P1 涉及 `agent-orchestrator`、`knowledge-service`、`workspace-service`；连接器选择复用 `tool-service` 的现有工具目录
 > 参考：Cursor、Tiptap、Open WebUI、Continue、LibreChat、VS Code Chat、Slack 斜杠命令
 
@@ -10,7 +10,7 @@
 
 本次要解决的问题：
 
-1. **@ 添加上下文**：在光标处输入 `@`，从技能、MCP 服务、连接器、知识库文档、交付物、沙箱文件中选择，选择结果既出现在正文中，也以结构化字段随消息提交。
+1. **@ 添加上下文**：在光标处输入 `@`，从技能、MCP 服务、连接器、消息、记忆、知识库文档、交付物、沙箱文件中选择，选择结果既出现在正文中，也以结构化字段随消息提交。
 2. **/ 选择命令或能力**：在消息开头输入 `/`，执行会话动作（新建、停止、附件）或切换能力（模型、发送方式、技能、MCP）。
 3. **可渐进落地**：P0 不依赖后端改动，先让 `/` 与 `@技能/@MCP` 可用；P1 再打通连接器、知识库/交付物/沙箱文件的结构化引用与消息回显。
 
@@ -144,7 +144,7 @@
 | 交付物   | `workspaceApi.artifacts(workspaceId)`        | P1  | 新增 `contextRefs`；正文插入 `@交付物标题 `                            |
 | 沙箱文件 | `sandboxApi.conversationSandbox/sandboxTree` | P1  | 新增 `contextRefs`；正文插入 `@相对路径 `，`contextRefs.id` 存绝对路径 |
 | 消息     | `queries.messages`（当前会话）               | P2  | 新增 `contextRefs`（kind=message）；只列最近 20 条，跨会话按不存在处理 |
-| 记忆     | `memoryApi`                                  | P2  | 引用一条记忆；需先确认记忆注入与引用的边界                             |
+| 记忆     | `memoryApi`（账号级 + 当前工作区）           | P2  | 新增 `contextRefs`（kind=memory）；只列最近 30 条，跨账号按不存在处理  |
 
 #### / 命令清单
 
@@ -292,18 +292,18 @@ caret = start + token.length + 1
 
 #### 菜单面板
 
-| 项       | 规范                                                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| 定位     | 优先锚定光标（镜像 div 测量）；测量失败时锚定输入区左上角，向上弹出                                                      |
-| 宽度     | 320–380px，随输入区宽度收缩；小屏（< 640px）为 `calc(100vw - 32px)`                                                      |
-| 最大高度 | 280px，内部滚动；候选总数上限 50，不做虚拟滚动                                                                           |
-| 容器     | `bg-ha-panel` + `border border-ha-border` + 10px 圆角 + 轻阴影                                                           |
-| 字号     | 标题 13px/20px，描述 12px/18px；分组标题 11px/16px，`text-ha-muted`                                                      |
-| 行高     | 36px（单行）/ 48px（带描述）                                                                                             |
-| 选中态   | `bg-ha-panel-2`，左侧 2px `--ha-accent` 竖条；禁用态 45% 不透明度                                                        |
-| 图标     | `lucide-react`：技能 Sparkles、MCP Plug、连接器 Cable、知识库 BookOpen、交付物 FileText、沙箱文件 Terminal、命令 Command |
-| 分组     | 分组标题吸顶；组间 4px 间距；无匹配时显示空态                                                                            |
-| 滚动     | 键盘移动时 `scrollIntoView({ block: 'nearest' })`                                                                        |
+| 项       | 规范                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 定位     | 优先锚定光标（镜像 div 测量）；测量失败时锚定输入区左上角，向上弹出                                                                                           |
+| 宽度     | 320–380px，随输入区宽度收缩；小屏（< 640px）为 `calc(100vw - 32px)`                                                                                           |
+| 最大高度 | 280px，内部滚动；候选总数上限 50，不做虚拟滚动                                                                                                                |
+| 容器     | `bg-ha-panel` + `border border-ha-border` + 10px 圆角 + 轻阴影                                                                                                |
+| 字号     | 标题 13px/20px，描述 12px/18px；分组标题 11px/16px，`text-ha-muted`                                                                                           |
+| 行高     | 36px（单行）/ 48px（带描述）                                                                                                                                  |
+| 选中态   | `bg-ha-panel-2`，左侧 2px `--ha-accent` 竖条；禁用态 45% 不透明度                                                                                             |
+| 图标     | `lucide-react`：技能 Sparkles、MCP Plug、连接器 Package、消息 MessageSquare、记忆 Brain、知识库 FileText、交付物 FolderOpen、沙箱文件 FileCode2、命令 Command |
+| 分组     | 分组标题吸顶；组间 4px 间距；无匹配时显示空态                                                                                                                 |
+| 滚动     | 键盘移动时 `scrollIntoView({ block: 'nearest' })`                                                                                                             |
 
 #### 引用轨（P1）
 
@@ -1205,11 +1205,11 @@ HTTP 实现 GET `/v1/artifacts/{artifact_id}`；404 → `None`；其他非 200 �
 - `/connector` 二级菜单多选：sticky 面板，Enter/Space 切换、Esc 或点击外部关闭；“不使用连接器”一次清空；提交仍按 provider 去重落到 `connector_providers`。
 - 引用轨两行收纳：内容引用与连接器芯片合计超过 6 条收进 `+N`，展开后显示“收起”；正文 token 与提交内容不受收纳状态影响。
 - `@` 消息引用：只列当前会话最近 20 条消息，标题由服务端生成（`你: 首行…` / `助手: 首行…`）；解析只允许本会话，跨会话 message id 一律 404 `context_ref.not_found`，不泄漏存在性。
+- `@` 记忆引用：菜单列账号级 + 当前工作区最近 30 条，标题形如 `偏好: 首行…`；解析按账号隔离，未知或已失效的记忆一律 404 `context_ref.not_found`；正文为空时 409 `context_ref.empty`。
 
 待排期：
 
 - 输入框内联 chip（Tiptap/Lexical 评估）；
-- `@` 记忆引用；
 - 连接器连接级选择（同一 provider 多连接，需先扩 `ToolDescriptor.connector`）；
 - 连接器 prompts（若上游提供）作为 `/` 模板；
 - 服务端搜索与最近使用；

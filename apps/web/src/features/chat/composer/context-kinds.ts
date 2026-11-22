@@ -2,7 +2,13 @@
  * 内容引用的展示元数据(图标/中文名/菜单 key 映射)。
  * 单独成文件:组件文件只导出组件,否则 fast refresh 失效。
  */
-import { FileCode2, FileText, FolderOpen, MessageSquare } from 'lucide-react';
+import {
+  Brain,
+  FileCode2,
+  FileText,
+  FolderOpen,
+  MessageSquare,
+} from 'lucide-react';
 
 import type { ContextRefKind } from '@/lib/conversations-api';
 
@@ -11,6 +17,7 @@ export const CONTEXT_KIND_ICONS = {
   artifact: FolderOpen,
   sandbox_file: FileCode2,
   message: MessageSquare,
+  memory: Brain,
 } satisfies Record<ContextRefKind, typeof FileText>;
 
 export const CONTEXT_KIND_LABELS: Record<ContextRefKind, string> = {
@@ -18,6 +25,7 @@ export const CONTEXT_KIND_LABELS: Record<ContextRefKind, string> = {
   artifact: '交付物',
   sandbox_file: '沙箱文件',
   message: '消息',
+  memory: '记忆',
 };
 
 /**
@@ -29,6 +37,7 @@ const KEY_PREFIX: Record<string, string> = {
   artifact: 'artifact',
   sandbox_file: 'sandbox',
   message: 'message',
+  memory: 'memory',
 };
 
 export function refKey(ref: { kind: string; id: string }): string {

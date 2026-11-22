@@ -1,17 +1,13 @@
 import type { LucideIcon } from 'lucide-react';
 
+import type { ContextRefKind } from '@/lib/conversations-api';
+
 /** 根菜单里的斜杠命令 id(P0 固定清单)。 */
 export type ComposerCommandId =
   'new' | 'stop' | 'attach' | 'model' | 'mode' | 'skill' | 'mcp' | 'connector';
 
 /** @ 菜单项的语义:能力绑定(技能/MCP/连接器)或内容引用。 */
-export type ComposerItemKind =
-  | 'skill'
-  | 'mcp'
-  | 'connector'
-  | 'knowledge_document'
-  | 'artifact'
-  | 'sandbox_file';
+export type ComposerItemKind = 'skill' | 'mcp' | 'connector' | ContextRefKind;
 
 /** @ 菜单里的一项:技能、MCP、连接器,或一条内容引用。 */
 export type ComposerItem = {

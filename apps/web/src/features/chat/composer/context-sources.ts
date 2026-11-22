@@ -76,6 +76,7 @@ export function filterMentionGroups(
     { key: 'mcp', label: 'MCP 服务', options: [] },
     { key: 'connectors', label: '连接器', options: [] },
     { key: 'messages', label: '消息', options: [] },
+    { key: 'memories', label: '记忆', options: [] },
     { key: 'knowledge', label: '知识库文档', options: [] },
     { key: 'artifacts', label: '交付物', options: [] },
     { key: 'sandbox', label: '沙箱文件', options: [] },
@@ -85,9 +86,10 @@ export function filterMentionGroups(
     mcp: 1,
     connector: 2,
     message: 3,
-    knowledge_document: 4,
-    artifact: 5,
-    sandbox_file: 6,
+    memory: 4,
+    knowledge_document: 5,
+    artifact: 6,
+    sandbox_file: 7,
   };
   for (const item of sorted) {
     const group = groups[groupOf[item.kind] ?? 0];

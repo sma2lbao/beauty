@@ -29,6 +29,7 @@ from agent_orchestrator.context.sandbox_files import (
 )
 from agent_orchestrator.repositories.message import MessageRepository
 from agent_orchestrator.schemas.conversations import ContextRefCreate
+from agent_orchestrator.services.memory import store as memory_store
 
 if TYPE_CHECKING:
     from common.clients.sandbox import Sandbox
@@ -301,6 +302,63 @@ async def _resolve_message(
     )
 
 
+#: 记忆类型的展示名:引用轨上"记忆 · 偏好"比裸正文更容易辨认。
+MEMORY_KIND_LABELS = {
+    "note": "随手记",
+    "preference": "偏好",
+    "fact": "事实",
+    "procedure": "流程",
+}
+
+
+async def _resolve_memory(
+    ref: ContextRefCreate,
+    account_id: str,
+    *,
+    session: AsyncSession | None,
+    per_ref_chars: int,
+) -> ResolvedRef:
+    """引用一条长期记忆。
+
+    记忆属于账号,跨账号由仓储兜底 404(不泄漏存在性)。已失效/被替代的
+    记忆也允许引用:用户显式选择即视为确认,内容里会带原样正文。
+    """
+    if session is None:
+        raise ConflictError(
+            "context_ref.unavailable",
+            "记忆引用能力未启用",
+            details={"kind": ref.kind},
+        )
+    try:
+        memory = await memory_store.get_memory(session, account_id, ref.id)
+    except NotFoundError as exc:
+        raise NotFoundError(
+            "context_ref.not_found",
+            "引用的记忆不存在",
+            details={"kind": ref.kind, "id": ref.id},
+        ) from exc
+    text = (memory.content or "").strip()
+    if not text:
+        raise ConflictError(
+            "context_ref.empty",
+            "这条记忆没有正文",
+            details={"kind": ref.kind, "id": ref.id},
+        )
+    kind_label = MEMORY_KIND_LABELS.get(memory.kind, "记忆")
+    first_line = " ".join(text.splitlines()[0].split())
+    snippet = first_line[:MESSAGE_TITLE_CHARS]
+    if len(first_line) > MESSAGE_TITLE_CHARS:
+        snippet = f"{snippet}…"
+    text, truncated = _truncate(text, per_ref_chars)
+    return ResolvedRef(
+        kind=ref.kind,
+        id=ref.id,
+        title=f"{kind_label}: {snippet}",
+        content=text,
+        truncated=truncated,
+    )
+
+
 async def resolve_context_refs(
     account_id: str,
     conversation_id: str,
@@ -349,6 +407,10 @@ async def resolve_context_refs(
                 session=session,
                 conversation_id=conversation_id,
                 per_ref_chars=per_ref,
+            )
+        elif ref.kind == "memory":
+            item = await _resolve_memory(
+                ref, account_id, session=session, per_ref_chars=per_ref
             )
         else:
             item = await _resolve_sandbox_file(

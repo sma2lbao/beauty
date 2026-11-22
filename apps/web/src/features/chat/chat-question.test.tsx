@@ -36,6 +36,10 @@ vi.mock('@/lib/connector-api', async () =>
 vi.mock('@/lib/knowledge-api', async () =>
   (await import('./chat-test-harness')).knowledgeModuleMock(),
 );
+
+vi.mock('@/lib/memory-api', async () =>
+  (await import('./chat-test-harness')).memoryModuleMock(),
+);
 vi.mock('@/features/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
 );

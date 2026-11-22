@@ -510,7 +510,8 @@
               "knowledge_document",
               "artifact",
               "sandbox_file",
-              "message"
+              "message",
+              "memory"
             ],
             "title": "Kind",
             "type": "string"
@@ -532,7 +533,8 @@
               "knowledge_document",
               "artifact",
               "sandbox_file",
-              "message"
+              "message",
+              "memory"
             ],
             "title": "Kind",
             "type": "string"

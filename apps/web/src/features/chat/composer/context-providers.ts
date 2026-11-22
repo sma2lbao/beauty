@@ -6,11 +6,18 @@
  * 正文 token 只是可读回声,提交时只发结构化 id。
  */
 import { useQuery } from '@tanstack/react-query';
-import { FileText, FolderOpen, MessageSquare, Package } from 'lucide-react';
+import {
+  Brain,
+  FileText,
+  FolderOpen,
+  MessageSquare,
+  Package,
+} from 'lucide-react';
 
 import type { ChatMessage } from '@/lib/conversations-api';
 import { connectorApi } from '@/lib/connector-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
+import { memoryApi } from '@/lib/memory-api';
 import { queryKeys } from '@/lib/query-keys';
 import { sandboxTree } from '@/lib/sandbox-api';
 import { workspaceApi } from '@/lib/workspace-api';
@@ -29,9 +36,25 @@ type Options = {
 /** 消息引用只列最近 20 条:更早的交给"引用目录"再做(P2 待排期)。 */
 const MESSAGE_ITEM_LIMIT = 20;
 
+/** 记忆引用取最近 30 条;检索留给 @ 搜索(P2 待排期)。 */
+const MEMORY_ITEM_LIMIT = 30;
+
+/** 记忆类型的展示名(与后端 MEMORY_KIND_LABELS 保持一致)。 */
+const MEMORY_KIND_LABELS: Record<string, string> = {
+  note: '随手记',
+  preference: '偏好',
+  fact: '事实',
+  procedure: '流程',
+};
+
 function messageTitle(message: ChatMessage): string {
   const firstLine = message.content.split('\n')[0].trim();
   return firstLine || message.content.trim();
+}
+
+function memoryTitle(content: string): string {
+  const firstLine = content.split('\n')[0].trim();
+  return firstLine || content.trim();
 }
 
 /** 已连接且启用的连接器 provider(按 provider 粒度,不是 connection id)。 */
@@ -63,6 +86,20 @@ function useWorkspaceArtifacts(workspaceId: string | null) {
   });
 }
 
+/** 账号级 + 当前工作区的记忆(后端按 account 隔离,这里只做展示)。 */
+function useMemories(workspaceId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.memoryList(undefined, workspaceId ?? undefined),
+    queryFn: () =>
+      memoryApi.list({
+        workspaceId: workspaceId ?? undefined,
+        limit: MEMORY_ITEM_LIMIT,
+      }),
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 function useSandboxFiles(sandboxId: string | null) {
   return useQuery({
     queryKey: ['composer-sandbox-files', sandboxId ?? ''],
@@ -88,6 +125,7 @@ export function useComposerContextSources({
   const providers = useConnectedProviders();
   const documents = useKnowledgeDocuments();
   const artifacts = useWorkspaceArtifacts(workspaceId);
+  const memories = useMemories(workspaceId);
   const files = useSandboxFiles(sandboxId);
 
   const items: ComposerItem[] = [
@@ -123,6 +161,19 @@ export function useComposerContextSources({
         description: `连接器 · ${provider.tools.length} 个工具`,
         icon: Package,
       })),
+    // 记忆紧随消息:两者都是"对话上下文",先于外部资料
+    ...(memories.data ?? []).map((memory) => {
+      const title = memoryTitle(memory.content);
+      return {
+        key: `memory:${memory.id}`,
+        kind: 'memory' as const,
+        id: memory.id,
+        label: truncateTitle(title),
+        token: `@${truncateTitle(title)}`,
+        description: `记忆 · ${MEMORY_KIND_LABELS[memory.kind] ?? memory.kind}`,
+        icon: Brain,
+      };
+    }),
     ...(documents.data ?? []).map((document) => ({
       key: `knowledge:${document.id}`,
       kind: 'knowledge_document' as const,
@@ -160,6 +211,7 @@ export function useComposerContextSources({
     loading:
       providers.isPending ||
       documents.isPending ||
+      memories.isPending ||
       (Boolean(workspaceId) && artifacts.isPending) ||
       (Boolean(sandboxId) && files.isPending),
   };

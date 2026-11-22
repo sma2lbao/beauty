@@ -293,6 +293,11 @@ export function connectorModuleMock() {
   return { connectorApi: { listProviders: vi.fn(async () => []) } };
 }
 
+/** 输入区 @ 记忆:默认空清单。 */
+export function memoryModuleMock() {
+  return { memoryApi: { list: vi.fn(async () => []) } };
+}
+
 /** 输入区 @ 知识库文档:默认空清单。 */
 export function knowledgeModuleMock() {
   return { knowledgeApi: { documents: vi.fn(async () => []) } };
