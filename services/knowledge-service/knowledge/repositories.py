@@ -31,6 +31,20 @@ class DocumentChunkRepository(AccountRepository[DocumentChunk]):
             account_id, DocumentChunk.document_id == document_id
         )
 
+    async def list_chunks(
+        self, account_id: str, document_id: str
+    ) -> list[DocumentChunk]:
+        """按 ordinal 取某文档的全部分块(引用正文用,恒带账号过滤)。"""
+        rows = await self.session.execute(
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.account_id == account_id,
+                DocumentChunk.document_id == document_id,
+            )
+            .order_by(DocumentChunk.ordinal, DocumentChunk.id)
+        )
+        return list(rows.scalars().all())
+
     async def searchable_rows(self, account_id: str) -> list[tuple[DocumentChunk, str]]:
         """检索用的一跳查询:返回 (分块, 文档标题),恒定带账号过滤。
 

@@ -27,6 +27,16 @@ class DocumentRead(BaseModel):
     created_at: datetime
 
 
+class DocumentContent(BaseModel):
+    """按文档 id 取回可引用的正文(分块按 ordinal 拼接,可截断)。"""
+
+    document_id: str
+    title: str
+    content: str
+    truncated: bool
+    chunk_count: int
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     limit: int | None = Field(default=None, ge=1, le=50)

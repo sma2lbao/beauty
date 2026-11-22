@@ -127,3 +127,51 @@ def test_document_not_found_details_key(client: TestClient) -> None:
     body = response.json()
     assert body["code"] == "knowledge.document_not_found"
     assert body["details"] == {"document_id": "nope"}
+
+
+def test_document_content_returns_chunk_text(client: TestClient) -> None:
+    """@ 引用需要的正文端点:返回拼接后的分块正文,不含 embedding。"""
+    document_id = _ingest(client, "客户 A 合同", CONTRACT).json()["id"]
+
+    response = client.get(
+        f"/v1/knowledge/documents/{document_id}/content", headers=ACCOUNT
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["title"] == "客户 A 合同"
+    assert CONTRACT in body["content"]
+    assert body["truncated"] is False
+    assert body["chunk_count"] >= 1
+    assert "embedding" not in body
+
+
+def test_document_content_truncates(client: TestClient) -> None:
+    """max_chars 内截断并标记 truncated,正文长度不超上限。"""
+    document_id = _ingest(client, "长文", "合同条款。" * 400).json()["id"]
+
+    body = client.get(
+        f"/v1/knowledge/documents/{document_id}/content?max_chars=500",
+        headers=ACCOUNT,
+    ).json()
+    assert body["truncated"] is True
+    assert 0 < len(body["content"]) <= 500
+
+
+def test_document_content_account_isolation_and_validation(
+    client: TestClient,
+) -> None:
+    document_id = _ingest(client, "客户 A 合同", CONTRACT).json()["id"]
+
+    other = client.get(f"/v1/knowledge/documents/{document_id}/content", headers=OTHER)
+    assert other.status_code == 404
+    assert other.json()["code"] == "knowledge.document_not_found"
+
+    missing = client.get("/v1/knowledge/documents/nope/content", headers=ACCOUNT)
+    assert missing.status_code == 404
+
+    too_small = client.get(
+        f"/v1/knowledge/documents/{document_id}/content?max_chars=100",
+        headers=ACCOUNT,
+    )
+    assert too_small.status_code == 422

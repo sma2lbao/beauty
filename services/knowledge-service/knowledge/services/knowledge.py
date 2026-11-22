@@ -85,6 +85,38 @@ async def delete_document(
     await documents.delete(document)
 
 
+async def document_content(
+    session: AsyncSession,
+    account_id: str,
+    document_id: str,
+    *,
+    max_chars: int,
+) -> tuple[KnowledgeDocument, str, bool]:
+    """取文档可引用正文:分块按 ordinal 拼接,超出 max_chars 截断。
+
+    返回 (文档, 正文, 是否截断)。正文只来自分块(与检索一致),不读 embedding。
+    """
+    document = await require_document(session, account_id, document_id)
+    chunks = await DocumentChunkRepository(session).list_chunks(account_id, document.id)
+    parts: list[str] = []
+    used = 0
+    truncated = False
+    for chunk in chunks:
+        piece = chunk.content
+        separator = 2 if parts else 0  # "\n\n"
+        remaining = max_chars - used - separator
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(piece) > remaining:
+            parts.append(piece[:remaining])
+            truncated = True
+            break
+        parts.append(piece)
+        used += separator + len(piece)
+    return document, "\n\n".join(parts), truncated
+
+
 async def search(
     session: AsyncSession,
     account_id: str,

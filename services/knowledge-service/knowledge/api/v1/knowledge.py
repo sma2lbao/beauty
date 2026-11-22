@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowledge.api.deps import (
@@ -15,6 +15,7 @@ from knowledge.api.deps import (
 )
 from knowledge.core.config import Settings
 from knowledge.schemas.knowledge import (
+    DocumentContent,
     DocumentCreate,
     DocumentRead,
     SearchHit,
@@ -70,6 +71,26 @@ async def get_document(
         session, account_id, document_id
     )
     return DocumentRead.model_validate(document)
+
+
+@router.get("/documents/{document_id}/content", response_model=DocumentContent)
+async def get_document_content(
+    document_id: str,
+    session: DBSession,
+    account_id: AccountId,
+    max_chars: Annotated[int, Query(ge=500, le=20_000)] = 8000,
+) -> DocumentContent:
+    """取文档可引用正文(分块按 ordinal 拼接,可截断);供输入区 @ 引用。"""
+    document, content, truncated = await knowledge_service.document_content(
+        session, account_id, document_id, max_chars=max_chars
+    )
+    return DocumentContent(
+        document_id=document.id,
+        title=document.title,
+        content=content,
+        truncated=truncated,
+        chunk_count=document.chunk_count,
+    )
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
