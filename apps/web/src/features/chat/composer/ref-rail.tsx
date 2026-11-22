@@ -1,8 +1,8 @@
 /**
- * 引用轨:输入区上方常驻的已选上下文与连接器芯片。
+ * 引用轨:输入区上方常驻的已选上下文、连接器与技能/MCP 能力芯片。
  *
  * 内容引用(知识库/交付物/沙箱文件)删除芯片会同步删正文 token;
- * 连接器是能力绑定,删除芯片只解绑,不追删正文里已经写下的可读 token。
+ * 连接器/技能/MCP 是能力绑定,删除芯片只解绑,不追删正文里的可读 token。
  * 超过一行可见数量时收成 "+N",点开再展开(设计 §5.6 两行收纳)。
  */
 import { Package, X } from 'lucide-react';
@@ -19,7 +19,8 @@ import type { ComposerItem } from './types';
 /** 收起时可见的芯片数:约两行(单行 5–6 个,按窄屏保守取值)。 */
 const MAX_VISIBLE = 6;
 
-type RailEntry = {
+/** 能力芯片:技能/MCP 的选中态在没有底部 select 之后由这里显示。 */
+export type RailCapability = {
   key: string;
   label: string;
   title: string;
@@ -28,11 +29,14 @@ type RailEntry = {
   onRemove: () => void;
 };
 
+type RailEntry = RailCapability;
+
 export function RefRail({
   refs,
   items,
   selectedConnectors,
   connectorName,
+  capabilities = [],
   onRemoveRef,
   onRemoveConnector,
 }: {
@@ -40,11 +44,14 @@ export function RefRail({
   items: ComposerItem[];
   selectedConnectors: string[];
   connectorName: (provider: string) => string;
+  capabilities?: RailCapability[];
   onRemoveRef: (ref: ChatContextRef) => void;
   onRemoveConnector: (provider: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  if (!refs.length && !selectedConnectors.length) return null;
+  if (!refs.length && !selectedConnectors.length && !capabilities.length) {
+    return null;
+  }
   const labelOf = (ref: ChatContextRef) =>
     ref.title ||
     items.find((item) => refKey(item) === refKey(ref))?.label ||
@@ -69,6 +76,7 @@ export function RefRail({
       Icon: Package,
       onRemove: () => onRemoveConnector(provider),
     })),
+    ...capabilities,
   ];
   const visible = expanded ? entries : entries.slice(0, MAX_VISIBLE);
   const hidden = entries.length - visible.length;

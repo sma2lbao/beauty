@@ -11,6 +11,7 @@ import {
   createRenderPage,
   makeConversation,
   makeMessage,
+  pickCommandOption,
   setRunEvents,
   setupChatTest,
   typeAndSend,
@@ -157,9 +158,8 @@ describe('ChatPage 发送与流式', () => {
   it('发送方式选「直接回答」时按 chat 发送', async () => {
     renderPage();
 
-    fireEvent.change(screen.getByLabelText('发送方式'), {
-      target: { value: 'chat' },
-    });
+    // 底部 select 已移除:发送方式改由 /mode 命令设置
+    await pickCommandOption('/mode', '直接回答');
     typeAndSend('你好');
 
     await waitFor(() =>
@@ -174,9 +174,7 @@ describe('ChatPage 发送与流式', () => {
   it('发送方式选「任务」时按 task 发送', async () => {
     renderPage();
 
-    fireEvent.change(screen.getByLabelText('发送方式'), {
-      target: { value: 'task' },
-    });
+    await pickCommandOption('/mode', '作为任务');
     typeAndSend('把本周日程整理成周报');
 
     await waitFor(() =>

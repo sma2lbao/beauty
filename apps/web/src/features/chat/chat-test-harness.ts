@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentType, ReactNode } from 'react';
 import { createElement } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
@@ -159,6 +159,23 @@ export function typeAndSend(text: string): void {
     target: { value: text },
   });
   fireEvent.click(screen.getByRole('button', { name: '发送' }));
+}
+
+/**
+ * 通过 / 菜单选择能力(技能/MCP/发送方式等):底部 select 已移除,菜单是唯一入口。
+ * `command` 是根菜单里的命令标签(如 '/skill'),`option` 是二级菜单里的选项文字。
+ */
+export async function pickCommandOption(
+  command: string,
+  option: string,
+): Promise<void> {
+  fireEvent.change(screen.getByLabelText('描述下一步任务'), {
+    target: { value: command },
+  });
+  const root = await screen.findByRole('listbox', { name: '命令候选' });
+  fireEvent.click(within(root).getByText(command));
+  const submenu = await screen.findByRole('listbox', { name: '命令候选' });
+  fireEvent.click(await within(submenu).findByText(option));
 }
 
 export async function setupChatTest(): Promise<void> {

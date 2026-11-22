@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPage } from '@/pages/chat';
@@ -10,6 +10,7 @@ import {
   createRenderPage,
   makeConversation,
   makeMessage,
+  pickCommandOption,
   setRunEvents,
   setupChatTest,
   typeAndSend,
@@ -211,9 +212,9 @@ describe('ChatPage 技能', () => {
     ]);
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
-    fireEvent.change(screen.getByLabelText('选择技能'), {
-      target: { value: 'coding.repo-readonly-review' },
-    });
+    // 底部 select 已移除:技能改由 /skill 命令设置
+    await pickCommandOption('/skill', '只读代码审查');
+    expect(screen.getByLabelText('移除技能 只读代码审查')).toBeInTheDocument();
     typeAndSend('用技能汇总');
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
@@ -230,35 +231,31 @@ describe('ChatPage 技能', () => {
 });
 
 describe('ChatPage MCP 引用', () => {
-  async function waitForMcpOptions() {
-    await waitFor(() =>
-      expect(screen.getByLabelText('选择 MCP server').textContent).toContain(
-        'linear',
-      ),
-    );
-  }
-
-  it('选择器只出现启用的 server,不出现停用的', async () => {
+  /** 打开 /mcp 二级菜单:server 清单只在这里出现(底部 select 已移除)。 */
+  async function openMcpSubmenu() {
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
-    await waitForMcpOptions();
+    fireEvent.change(screen.getByLabelText('描述下一步任务'), {
+      target: { value: '/mcp' },
+    });
+    const root = await screen.findByRole('listbox', { name: '命令候选' });
+    fireEvent.click(within(root).getByText('/mcp'));
+    return screen.findByRole('listbox', { name: '命令候选' });
+  }
 
-    const select = screen.getByLabelText('选择 MCP server');
-    const labels = [...(select as HTMLSelectElement).options].map(
-      (option) => option.textContent,
-    );
-    expect(labels).toContain('linear');
-    expect(labels).not.toContain('旧 server');
+  it('菜单只出现启用的 server,不出现停用的', async () => {
+    const submenu = await openMcpSubmenu();
+
+    expect(await within(submenu).findByText('linear')).toBeInTheDocument();
+    expect(within(submenu).queryByText('旧 server')).toBeNull();
   });
 
   it('选择 MCP server 后发送携带 mcp_server_ids', async () => {
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
-    await waitForMcpOptions();
 
-    fireEvent.change(screen.getByLabelText('选择 MCP server'), {
-      target: { value: 'mcp-linear' },
-    });
+    await pickCommandOption('/mcp', 'linear');
+    expect(screen.getByLabelText('移除 MCP linear')).toBeInTheDocument();
     typeAndSend('查一下 linear 的 issue');
 
     await waitFor(() =>
@@ -277,13 +274,9 @@ describe('ChatPage MCP 引用', () => {
   it('URL 的 ?mcp= 作为默认选中', async () => {
     renderPage('/?conversation=c1&mcp=mcp-linear');
     await screen.findAllByText('待审批');
-    await waitForMcpOptions();
 
-    await waitFor(() =>
-      expect(screen.getByLabelText('选择 MCP server')).toHaveValue(
-        'mcp-linear',
-      ),
-    );
+    // 选中态由引用轨能力芯片显示
+    expect(await screen.findByLabelText('移除 MCP linear')).toBeInTheDocument();
   });
 
   it('历史用户消息带 mcp_server_ids 时渲染 MCP chip', async () => {

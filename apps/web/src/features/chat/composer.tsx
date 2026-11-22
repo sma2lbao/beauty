@@ -1,4 +1,4 @@
-import { ArrowUp, Paperclip } from 'lucide-react';
+import { ArrowUp, Paperclip, Plug, Sparkles } from 'lucide-react';
 import { useRef } from 'react';
 
 import type { SendMode } from '@/lib/conversations-api';
@@ -8,10 +8,13 @@ import { AttachmentRail } from './composer/attachment-rail';
 import { ComposerSuggestions } from './composer/composer-suggestions';
 import { useComposerContextSources } from './composer/context-providers';
 import { refKey } from './composer/context-kinds';
-import { RefRail } from './composer/ref-rail';
+import { RefRail, type RailCapability } from './composer/ref-rail';
 import { SUGGESTIONS_ID, suggestionOptionId } from './composer/suggestion-ids';
 import { useComposerMenu } from './composer/use-composer-menu';
-import { useComposerSources } from './composer/use-composer-sources';
+import {
+  SEND_MODE_LABELS,
+  useComposerSources,
+} from './composer/use-composer-sources';
 import type { ComposerCommandId } from './composer/types';
 import { MAX_ATTACHMENTS } from './use-chat-attachments';
 import type { ChatQueries } from './use-chat-queries';
@@ -41,7 +44,9 @@ export type ChatComposerProps = {
 };
 
 /**
- * 输入区:附件、模型、发送方式/技能/MCP 选择与发送按钮。
+ * 输入区:附件、模型与发送按钮。
+ * 发送方式/技能/MCP 不再占底部工具栏——@ 与 / 菜单是它们的唯一入口,
+ * 已选技能/MCP 由引用轨的能力芯片显示(芯片 × 即解绑)。
  * 只负责表单呈现,上传/发送逻辑由上层 hook 提供。
  * 新会话(还没有 id)也能选附件:hook 先暂存,发送时建会话再上传。
  */
@@ -148,6 +153,32 @@ export function ChatComposer({
   const quotaBlocked =
     stream.visibleError instanceof ApiError &&
     stream.visibleError.code.startsWith('quota.');
+  // 技能/MCP 的选中态:底部 select 已移除,引用轨的能力芯片是唯一可见处
+  const skillLabel = selectedSkill
+    ? skills.find((skill) => skill.id === selectedSkill)?.title || selectedSkill
+    : '';
+  const capabilityChips: RailCapability[] = [];
+  if (selectedSkill) {
+    capabilityChips.push({
+      key: `skill:${selectedSkill}`,
+      label: skillLabel,
+      title: `技能 · ${skillLabel}`,
+      removeLabel: `移除技能 ${skillLabel}`,
+      Icon: Sparkles,
+      onRemove: () => onSkillChange(''),
+    });
+  }
+  if (selectedMcp) {
+    const serverName = mcpServerName(selectedMcp);
+    capabilityChips.push({
+      key: `mcp:${selectedMcp}`,
+      label: serverName,
+      title: `MCP · ${serverName}`,
+      removeLabel: `移除 MCP ${serverName}`,
+      Icon: Plug,
+      onRemove: () => onMcpChange(''),
+    });
+  }
   return (
     <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
       <form
@@ -162,6 +193,7 @@ export function ChatComposer({
           items={contextSources.items}
           selectedConnectors={selectedConnectors}
           connectorName={connectorName}
+          capabilities={capabilityChips}
           onRemoveRef={(ref) => {
             // 正文里的可读 token 一起删掉;token 已被改掉时只删引用本身
             menu.removeToken(refKey(ref));
@@ -284,71 +316,6 @@ export function ChatComposer({
                 <option value={selectedModel}>{selectedModel}</option>
               ) : null}
             </select>
-            <label
-              htmlFor="send-mode"
-              className="font-mono text-[11px] text-ha-faint"
-            >
-              发送方式
-            </label>
-            <select
-              id="send-mode"
-              value={sendMode}
-              onChange={(event) =>
-                onSendModeChange(event.target.value as SendMode)
-              }
-              className="h-[22px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-            >
-              <option value="auto">自动分流</option>
-              <option value="chat">直接回答</option>
-              <option value="task">作为任务</option>
-            </select>
-            <label
-              htmlFor="send-skill"
-              className="font-mono text-[11px] text-ha-faint"
-            >
-              技能
-            </label>
-            <select
-              id="send-skill"
-              aria-label="选择技能"
-              value={selectedSkill}
-              onChange={(event) => onSkillChange(event.target.value)}
-              className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-            >
-              <option value="">不使用技能</option>
-              {skills.map((skill) => (
-                <option key={skill.id} value={skill.id}>
-                  {skill.title}
-                </option>
-              ))}
-            </select>
-            <label
-              htmlFor="send-mcp"
-              className="font-mono text-[11px] text-ha-faint"
-            >
-              MCP
-            </label>
-            <select
-              id="send-mcp"
-              aria-label="选择 MCP server"
-              value={selectedMcp}
-              onChange={(event) => onMcpChange(event.target.value)}
-              className="h-[22px] max-w-[150px] rounded-[5px] border border-transparent bg-ha-panel-2 px-1.5 font-mono text-[11px] font-medium text-ha-muted outline-none hover:text-ha-text-2 focus:border-ha-accent"
-            >
-              <option value="">不使用 MCP</option>
-              {enabledMcpServers.map((server) => (
-                <option key={server.id} value={server.id}>
-                  {server.name}
-                </option>
-              ))}
-              {/* URL/草稿引用了已停用或已删除的 server:补一个兜底项,避免 value 失配 */}
-              {selectedMcp &&
-              !enabledMcpServers.some((server) => server.id === selectedMcp) ? (
-                <option value={selectedMcp}>
-                  {mcpServerName(selectedMcp)}
-                </option>
-              ) : null}
-            </select>
             {inFlight ? (
               <span className="hidden truncate font-mono text-[11px] text-ha-info sm:inline">
                 任务进行中 · 发送会并入追加指令
@@ -368,6 +335,7 @@ export function ChatComposer({
             <button
               type="submit"
               aria-label="发送"
+              title={`发送(发送方式:${SEND_MODE_LABELS[sendMode]})`}
               disabled={!canSend}
               className="grid h-7 w-7 place-items-center rounded-md bg-ha-accent text-white transition-colors hover:bg-[#6b77e2] disabled:opacity-40"
             >

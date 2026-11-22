@@ -94,9 +94,8 @@ describe('输入区 @ 上下文菜单', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' });
 
     await waitFor(() => expect(textarea).toHaveValue('@只读代码审查 '));
-    expect(screen.getByLabelText('选择技能')).toHaveValue(
-      'coding.repo-readonly-review',
-    );
+    // 底部 select 已移除:选中态由引用轨能力芯片显示
+    expect(screen.getByLabelText('移除技能 只读代码审查')).toBeInTheDocument();
     expect(streamMessage).not.toHaveBeenCalled();
   });
 
@@ -157,8 +156,12 @@ describe('输入区 / 命令菜单', () => {
     expect(within(submenu).getByText('选择发送方式')).toBeInTheDocument();
     fireEvent.click(within(submenu).getByText('直接回答'));
 
+    // 底部 select 已移除:选中态由发送按钮 title 显示
     await waitFor(() =>
-      expect(screen.getByLabelText('发送方式')).toHaveValue('chat'),
+      expect(screen.getByRole('button', { name: '发送' })).toHaveAttribute(
+        'title',
+        '发送(发送方式:直接回答)',
+      ),
     );
     expect(textarea).toHaveValue('');
     expect(streamMessage).not.toHaveBeenCalled();

@@ -40,6 +40,13 @@ type SourceInput = {
   attachmentCount: number;
 };
 
+/** 发送方式的展示名:菜单二级选项与发送按钮提示共用,避免两处文案漂移。 */
+export const SEND_MODE_LABELS: Record<SendMode, string> = {
+  auto: '自动分流',
+  chat: '直接回答',
+  task: '作为任务',
+};
+
 /** 输入区菜单的数据源:能力项、命令清单、命令二级菜单。 */
 export function useComposerSources({
   skills,
@@ -177,11 +184,19 @@ export function useComposerSources({
     }[] = [
       {
         value: 'auto',
-        label: '自动分流',
+        label: SEND_MODE_LABELS.auto,
         description: '由服务端判断对话或任务',
       },
-      { value: 'chat', label: '直接回答', description: '不建任务,直接回复' },
-      { value: 'task', label: '作为任务', description: '创建任务并规划执行' },
+      {
+        value: 'chat',
+        label: SEND_MODE_LABELS.chat,
+        description: '不建任务,直接回复',
+      },
+      {
+        value: 'task',
+        label: SEND_MODE_LABELS.task,
+        description: '创建任务并规划执行',
+      },
     ];
     return {
       model: {
