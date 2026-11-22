@@ -181,7 +181,10 @@ describe('conversationsApi', () => {
     const fetchMock = mockFetch(201, result);
 
     await expect(
-      conversationsApi.postMessage('c1', '把本周日程整理成周报'),
+      conversationsApi.postMessage('c1', {
+        content: '把本周日程整理成周报',
+        mode: 'auto',
+      }),
     ).resolves.toEqual(result);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -204,7 +207,7 @@ describe('conversationsApi', () => {
       mode: 'chat',
     });
 
-    await conversationsApi.postMessage('c1', '你好', 'chat');
+    await conversationsApi.postMessage('c1', { content: '你好', mode: 'chat' });
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.body).toBe(
@@ -236,15 +239,19 @@ describe('conversationsApi', () => {
     let meta: unknown;
     let done: unknown;
 
-    await streamMessage('c1', '你好', 'auto', {
-      onMeta: (value) => {
-        meta = value;
+    await streamMessage(
+      'c1',
+      { content: '你好', mode: 'auto' },
+      {
+        onMeta: (value) => {
+          meta = value;
+        },
+        onDelta: (text) => deltas.push(text),
+        onDone: (value) => {
+          done = value;
+        },
       },
-      onDelta: (text) => deltas.push(text),
-      onDone: (value) => {
-        done = value;
-      },
-    });
+    );
 
     expect(meta).toEqual({ mode: 'chat', message: { id: 'm1' }, run: null });
     expect(deltas).toEqual(['你', '好']); // 增量按到达顺序回调
@@ -267,9 +274,13 @@ describe('conversationsApi', () => {
     );
     const errors: unknown[] = [];
 
-    await streamMessage('c1', '你好', 'chat', {
-      onError: (value) => errors.push(value),
-    });
+    await streamMessage(
+      'c1',
+      { content: '你好', mode: 'chat' },
+      {
+        onError: (value) => errors.push(value),
+      },
+    );
 
     expect(errors).toEqual([
       { code: 'llm.upstream_error', message: '上游断了' },
@@ -279,9 +290,11 @@ describe('conversationsApi', () => {
   it('streamMessage 开流前的错误仍抛 ApiError(chat 未启用模型)', async () => {
     mockFetch(409, { code: 'chat.llm_disabled', message: '未启用模型' });
 
-    const error = (await streamMessage('c1', '你好', 'chat', {}).catch(
-      (failure: unknown) => failure,
-    )) as ApiError;
+    const error = (await streamMessage(
+      'c1',
+      { content: '你好', mode: 'chat' },
+      {},
+    ).catch((failure: unknown) => failure)) as ApiError;
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);

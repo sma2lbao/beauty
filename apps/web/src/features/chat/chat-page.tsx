@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import { ExecutionPanel } from '@/features/chat/execution-panel';
 import { SandboxFileViewer } from '@/features/sandbox/sandbox-file-viewer';
@@ -36,6 +36,7 @@ type OpenFile = {
 
 /** 会话工作台页:只做 URL/输入选项与三个域 hook 的装配,外加控制台外壳。 */
 export function ChatPage() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const conversationParam = searchParams.get('conversation');
   const newFlag = searchParams.get('new') === '1';
@@ -84,6 +85,17 @@ export function ChatPage() {
     settleConversation: queries.settleConversation,
     setManualRun: queries.setManualRun,
   });
+  /** /new:清空本轮输入,保留工作区跳到新会话。 */
+  const startNewConversation = () => {
+    stream.setDraft('');
+    stream.attachments.clear();
+    const params = new URLSearchParams();
+    if (queries.activeWorkspaceId) {
+      params.set('workspace', queries.activeWorkspaceId);
+    }
+    params.set('new', '1');
+    navigate(`/?${params.toString()}`);
+  };
   // 会话沙箱:文件树、终端、文件查看器共用同一份缓存。
   const sandbox = useConversationSandbox(activeConversationId);
   useSandboxRefresh(activeConversationId, queries.toolCalls.length);
@@ -152,6 +164,7 @@ export function ChatPage() {
               onMcpChange={setMcpOverride}
               selectedModel={selectedModel}
               onModelChange={changeModel}
+              onNewConversation={startNewConversation}
             />
           )}
         </section>

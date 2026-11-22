@@ -10,8 +10,6 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** 与后端 attach.attachment_too_large 同义的本地前置提示。 */
 export const ATTACHMENT_TOO_LARGE = '附件超过 10MB 上限';
 
-export type ChatAttachments = ReturnType<typeof useChatAttachments>;
-
 /**
  * 输入区的附件选择与上传。
  *
@@ -124,3 +122,5 @@ export function useChatAttachments(activeConversationId: string | null) {
     restore,
   };
 }
+
+export type ChatAttachments = ReturnType<typeof useChatAttachments>;

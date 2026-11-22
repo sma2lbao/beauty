@@ -210,7 +210,7 @@ export async function setupChatTest(): Promise<void> {
   });
   // 默认:分流为任务(建 run),与流式端点同形状
   vi.mocked(streamMessage).mockImplementation(
-    async (_conversationId, _content, _mode, handlers) => {
+    async (_conversationId, _request, handlers) => {
       handlers.onMeta?.({
         mode: 'run_created',
         message: makeMessage({

@@ -69,6 +69,36 @@ export type ChatMessage = {
 /** 发送方式:auto = 服务端自动分流(默认);chat = 直接回答;task = 作为任务。 */
 export type SendMode = 'auto' | 'chat' | 'task';
 
+/**
+ * 发消息的结构化请求(streamMessage / postMessage 共用)。
+ *
+ * 技能、MCP、模型是「能力绑定」;正文里的 @token 只是可读回声,
+ * 服务端只信这里的 id,不从正文解析。
+ */
+export type SendMessageRequest = {
+  content: string;
+  mode: SendMode;
+  attachmentIds?: string[];
+  skillId?: string;
+  mcpServerIds?: string[];
+  model?: string;
+};
+
+function messageBody(request: SendMessageRequest) {
+  return {
+    content: request.content,
+    mode: request.mode,
+    attachment_ids: request.attachmentIds ?? [],
+    skill_id: request.skillId,
+    // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
+    mcp_server_ids: request.mcpServerIds?.length
+      ? request.mcpServerIds
+      : undefined,
+    // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
+    model: request.model || undefined,
+  };
+}
+
 /** 会话附件元数据;正文走 downloadAttachment(不塞进消息 JSON)。 */
 export type Attachment = {
   id: string;
@@ -172,29 +202,12 @@ export const conversationsApi = {
     http.request<ChatMessage[]>(
       `/api/v1/conversations/${conversationId}/messages`,
     ),
-  postMessage: (
-    conversationId: string,
-    content: string,
-    mode: SendMode = 'auto',
-    attachmentIds: string[] = [],
-    skillId?: string,
-    mcpServerIds: string[] = [],
-    model?: string,
-  ) =>
+  postMessage: (conversationId: string, request: SendMessageRequest) =>
     http.request<MessagePostResult>(
       `/api/v1/conversations/${conversationId}/messages`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          content,
-          mode,
-          attachment_ids: attachmentIds,
-          skill_id: skillId,
-          // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
-          mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
-          // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
-          model: model ?? undefined,
-        }),
+        body: JSON.stringify(messageBody(request)),
       },
     ),
   /** 确认执行待确认的写工具;grant(§5,不传等价 once)随请求体透传。 */
@@ -298,26 +311,12 @@ export { parseSseFrame } from '@/lib/conversation-stream';
  */
 export async function streamMessage(
   conversationId: string,
-  content: string,
-  mode: SendMode,
+  request: SendMessageRequest,
   handlers: StreamMessageHandlers,
-  attachmentIds: string[] = [],
-  skillId?: string,
-  mcpServerIds: string[] = [],
-  model?: string,
 ): Promise<void> {
   await streamTurn(
     `${BASE}/api/v1/conversations/${conversationId}/messages/stream`,
-    JSON.stringify({
-      content,
-      mode,
-      attachment_ids: attachmentIds,
-      skill_id: skillId,
-      // 空数组不落进 body:后端默认就是 [],旧契约测试也保持原样
-      mcp_server_ids: mcpServerIds.length ? mcpServerIds : undefined,
-      // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
-      model: model ?? undefined,
-    }),
+    JSON.stringify(messageBody(request)),
     handlers,
     {
       code: 'stream_failed',

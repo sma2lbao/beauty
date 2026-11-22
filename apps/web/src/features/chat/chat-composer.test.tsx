@@ -81,10 +81,12 @@ describe('ChatPage 附件', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c1',
-        '看看附件',
-        'auto',
+        expect.objectContaining({
+          content: '看看附件',
+          mode: 'auto',
+          attachmentIds: ['a1'],
+        }),
         expect.anything(),
-        ['a1'],
       ),
     );
   });
@@ -125,10 +127,12 @@ describe('ChatPage 附件', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c-new',
-        '看看附件',
-        'auto',
+        expect.objectContaining({
+          content: '看看附件',
+          mode: 'auto',
+          attachmentIds: ['a1'],
+        }),
         expect.anything(),
-        ['a1'],
       ),
     );
   });
@@ -153,10 +157,12 @@ describe('ChatPage 附件', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c-new',
-        '看看',
-        'auto',
+        expect.objectContaining({
+          content: '看看',
+          mode: 'auto',
+          attachmentIds: [],
+        }),
         expect.anything(),
-        [],
       ),
     );
     expect(conversationsApi.uploadAttachment).not.toHaveBeenCalled();
@@ -202,11 +208,12 @@ describe('ChatPage 技能', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c1',
-        '用技能汇总',
-        'auto',
+        expect.objectContaining({
+          content: '用技能汇总',
+          mode: 'auto',
+          skillId: 'coding.repo-readonly-review',
+        }),
         expect.anything(),
-        [],
-        'coding.repo-readonly-review',
       ),
     );
   });
@@ -247,12 +254,12 @@ describe('ChatPage MCP 引用', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c1',
-        '查一下 linear 的 issue',
-        'auto',
+        expect.objectContaining({
+          content: '查一下 linear 的 issue',
+          mode: 'auto',
+          mcpServerIds: ['mcp-linear'],
+        }),
         expect.anything(),
-        [],
-        undefined,
-        ['mcp-linear'],
       ),
     );
   });
@@ -309,13 +316,12 @@ describe('ChatPage 模型路由（C1 §6.3）', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenLastCalledWith(
         'c1',
-        '用备用模型再答一次',
-        'auto',
+        expect.objectContaining({
+          content: '用备用模型再答一次',
+          mode: 'auto',
+          model: 'gpt-4o-mini',
+        }),
         expect.anything(),
-        [],
-        undefined,
-        undefined,
-        'gpt-4o-mini',
       ),
     );
   });
@@ -376,13 +382,12 @@ describe('ChatPage 模型路由（C1 §6.3）', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '把本周日程整理成周报',
-        'auto',
+        expect.objectContaining({
+          content: '把本周日程整理成周报',
+          mode: 'auto',
+          model: 'gpt-4o-mini',
+        }),
         expect.anything(),
-        [],
-        undefined,
-        undefined,
-        'gpt-4o-mini',
       ),
     );
   });

@@ -64,10 +64,11 @@ describe('ChatPage 发送与流式', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '把本周日程整理成周报',
-        'auto',
+        expect.objectContaining({
+          content: '把本周日程整理成周报',
+          mode: 'auto',
+        }),
         expect.anything(),
-        [],
       ),
     );
     // 返回的 run 立即接管:状态从它读
@@ -88,10 +89,8 @@ describe('ChatPage 发送与流式', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c1',
-        '顺便看看日历',
-        'auto',
+        expect.objectContaining({ content: '顺便看看日历', mode: 'auto' }),
         expect.anything(),
-        [],
       ),
     );
     expect(conversationsApi.create).not.toHaveBeenCalled();
@@ -105,7 +104,7 @@ describe('ChatPage 发送与流式', () => {
       makeConversation({ id: 'c-new', title: '新会话', active_run_id: null }),
     );
     vi.mocked(streamMessage).mockImplementation(
-      async (_conversationId, _content, _mode, handlers) => {
+      async (_conversationId, _request, handlers) => {
         handlers.onMeta?.({
           mode: 'chat',
           message: makeMessage({ id: 'm2', run_id: null, content: '你好' }),
@@ -137,10 +136,8 @@ describe('ChatPage 发送与流式', () => {
     expect(await screen.findByText('你好!有什么可以帮你的?')).toBeTruthy();
     expect(streamMessage).toHaveBeenCalledWith(
       'c-new',
-      '你好',
-      'auto',
+      expect.objectContaining({ content: '你好', mode: 'auto' }),
       expect.anything(),
-      [],
     );
     // 没有 run:不查状态、不显示任务状态
     expect(runsApi.get).not.toHaveBeenCalled();
@@ -158,10 +155,8 @@ describe('ChatPage 发送与流式', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '你好',
-        'chat',
+        expect.objectContaining({ content: '你好', mode: 'chat' }),
         expect.anything(),
-        [],
       ),
     );
   });
@@ -177,10 +172,11 @@ describe('ChatPage 发送与流式', () => {
     await waitFor(() =>
       expect(streamMessage).toHaveBeenCalledWith(
         'c-new',
-        '把本周日程整理成周报',
-        'task',
+        expect.objectContaining({
+          content: '把本周日程整理成周报',
+          mode: 'task',
+        }),
         expect.anything(),
-        [],
       ),
     );
   });
@@ -191,7 +187,7 @@ describe('ChatPage 发送与流式', () => {
       releaseGate = resolve;
     });
     vi.mocked(streamMessage).mockImplementation(
-      async (_conversationId, _content, _mode, handlers) => {
+      async (_conversationId, _request, handlers) => {
         handlers.onMeta?.({
           mode: 'chat',
           message: makeMessage({ id: 'm2', run_id: null, content: '你好' }),
@@ -235,7 +231,7 @@ describe('ChatPage 发送与流式', () => {
       message_id: 'm3',
     });
     vi.mocked(streamMessage).mockImplementation(
-      async (_conversationId, _content, _mode, handlers) => {
+      async (_conversationId, _request, handlers) => {
         handlers.onMeta?.({
           mode: 'chat',
           message: makeMessage({
@@ -311,7 +307,7 @@ describe('ChatPage 发送与流式', () => {
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
     vi.mocked(streamMessage).mockImplementation(
-      async (_conversationId, _content, _mode, handlers) => {
+      async (_conversationId, _request, handlers) => {
         handlers.onMeta?.({
           mode: 'chat',
           message: makeMessage({ id: 'm2', run_id: null, content: '继续写' }),
@@ -348,7 +344,7 @@ describe('ChatPage 发送与流式', () => {
     renderPage('/?conversation=c1');
     await screen.findAllByText('待审批');
     vi.mocked(streamMessage).mockImplementation(
-      (_conversationId, _content, _mode, handlers) =>
+      (_conversationId, _request, handlers) =>
         new Promise<void>((_resolve, reject) => {
           handlers.onMeta?.({
             mode: 'chat',

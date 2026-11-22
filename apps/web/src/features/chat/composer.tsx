@@ -1,8 +1,14 @@
 import { ArrowUp, Paperclip, X } from 'lucide-react';
+import { useRef } from 'react';
 
 import type { SendMode } from '@/lib/conversations-api';
 import { ApiError } from '@/lib/http';
 
+import { ComposerSuggestions } from './composer/composer-suggestions';
+import { SUGGESTIONS_ID, suggestionOptionId } from './composer/suggestion-ids';
+import { useComposerMenu } from './composer/use-composer-menu';
+import { useComposerSources } from './composer/use-composer-sources';
+import type { ComposerCommandId } from './composer/types';
 import { MAX_ATTACHMENTS } from './use-chat-attachments';
 import type { ChatQueries } from './use-chat-queries';
 import type { ChatStream } from './use-chat-stream';
@@ -19,6 +25,8 @@ export type ChatComposerProps = {
   /** 本轮使用的模型 id;空串 = 默认模型(不指定,由网关路由)。 */
   selectedModel: string;
   onModelChange: (modelId: string) => void;
+  /** /new:清空草稿与暂存附件后跳到新会话。 */
+  onNewConversation: () => void;
 };
 
 /**
@@ -37,9 +45,11 @@ export function ChatComposer({
   onMcpChange,
   selectedModel,
   onModelChange,
+  onNewConversation,
 }: ChatComposerProps) {
   const { draft, attachments, sending, canSend, setDraft, submit, stop } =
     stream;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const {
     skills,
     models,
@@ -59,6 +69,41 @@ export function ChatComposer({
     removeStaged,
   } = attachments;
   const attachmentCount = uploaded.length + staged.length;
+  const { items, commands, submenus } = useComposerSources({
+    skills,
+    mcpServers: enabledMcpServers,
+    models: models.map((model) => model.id),
+    defaultModel,
+    selectedSkill,
+    selectedMcp,
+    selectedModel,
+    sendMode,
+    sending,
+    attachmentCount,
+  });
+  const menu = useComposerMenu({
+    textareaRef,
+    value: draft,
+    onChange: setDraft,
+    items,
+    commands,
+    submenus,
+    onPickItem: (item) => {
+      if (item.kind === 'skill') onSkillChange(item.id);
+      else onMcpChange(item.id);
+    },
+    onRunCommand: (command) => {
+      if (command.id === 'new') onNewConversation();
+      else if (command.id === 'stop') stop();
+      else if (command.id === 'attach') fileInputRef.current?.click();
+    },
+    onPickSubmenuOption: (commandId: ComposerCommandId, value) => {
+      if (commandId === 'model') onModelChange(value);
+      else if (commandId === 'mode') onSendModeChange(value as SendMode);
+      else if (commandId === 'skill') onSkillChange(value);
+      else if (commandId === 'mcp') onMcpChange(value);
+    },
+  });
   // 配额拦截(429 quota.*)就地提示:P0-2 起对话直答也过配额闸,
   // 错误详情里的月用量/上限在「用量」页能看,这里只给一条可行动提示。
   const quotaBlocked =
@@ -125,28 +170,54 @@ export function ChatComposer({
         <label className="sr-only" htmlFor="chat-input">
           描述下一步任务
         </label>
-        <textarea
-          id="chat-input"
-          rows={2}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              event.key === 'Enter' &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              submit();
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            id="chat-input"
+            rows={2}
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded={menu.open}
+            aria-controls={menu.open ? SUGGESTIONS_ID : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={
+              menu.activeOption
+                ? suggestionOptionId(menu.activeOption.key)
+                : undefined
             }
-          }}
-          placeholder={
-            inFlight
-              ? '补充一句,会并入当前任务的追加指令…'
-              : '描述下一步任务,或直接说说你想做什么…'
-          }
-          className="block w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-6 text-ha-text-body outline-none placeholder:text-ha-dim"
-        />
+            value={draft}
+            onChange={menu.handleChange}
+            onSelect={menu.handleSelect}
+            onKeyDown={(event) => {
+              // 菜单优先吃掉 ↑↓/Enter/Esc;没被处理才走发送快捷键。
+              if (menu.handleKeyDown(event)) return;
+              if (
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+            placeholder={
+              inFlight
+                ? '补充一句,会并入当前任务的追加指令…'
+                : '描述下一步任务,输入 @ 添加上下文、/ 选择命令…'
+            }
+            className="block w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-6 text-ha-text-body outline-none placeholder:text-ha-dim"
+          />
+          <ComposerSuggestions
+            open={menu.open}
+            anchor={menu.anchor}
+            groups={menu.groups}
+            activeKey={menu.activeKey}
+            label={menu.label}
+            emptyLabel={menu.emptyLabel}
+            onPick={menu.choose}
+            onHover={menu.setActiveKey}
+          />
+        </div>
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <input
@@ -293,7 +364,7 @@ export function ChatComposer({
         </div>
       </form>
       <p className="mx-auto mt-2 max-w-[820px] text-center font-mono text-[11px] text-ha-faint">
-        Enter 发送 · Shift + Enter 换行
+        Enter 发送 · Shift + Enter 换行 · @ 添加上下文 · / 选择命令
       </p>
     </div>
   );
