@@ -154,6 +154,7 @@ async def create_run(
         skill_network=skill.network if skill else None,
         skill_timeout_seconds=skill.timeout_seconds if skill else None,
         mcp_server_ids=list(data.mcp_server_ids or []),
+        connector_providers=list(data.connector_providers or []),
         model=model,
         timeout_seconds=data.timeout_seconds,
         priority=data.priority,

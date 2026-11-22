@@ -481,6 +481,7 @@ def _fork_child(parent: Run, title: str) -> Run:
         skill_network=parent.skill_network,
         skill_timeout_seconds=parent.skill_timeout_seconds,
         mcp_server_ids=list(parent.mcp_server_ids or []),
+        connector_providers=list(parent.connector_providers or []),
         model=parent.model,
         parent_run_id=parent.id,
         parent_kind=PARENT_KIND_FORK,

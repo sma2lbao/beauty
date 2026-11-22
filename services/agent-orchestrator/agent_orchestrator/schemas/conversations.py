@@ -76,6 +76,30 @@ class AttachmentRead(BaseModel):
     created_at: datetime
 
 
+#: 内容引用的类别(P1):知识库文档 / 交付物 / 沙箱文件。
+#: 技能与 MCP 是"能力绑定",走 skill_id / mcp_server_ids,不落在这里。
+ContextRefKind = Literal["knowledge_document", "artifact", "sandbox_file"]
+
+
+class ContextRefCreate(BaseModel):
+    """用户显式引用的资料:只传 kind + id,标题与正文由服务端解析。
+
+    只信 id 不信标题,避免客户端伪造引用内容;单条 id 上限 400 字符
+    (沙箱文件是绝对路径,比其他 id 长)。
+    """
+
+    kind: ContextRefKind
+    id: str = Field(min_length=1, max_length=400)
+
+
+class ContextRefRead(BaseModel):
+    """消息回显的引用快照:title 落库时由服务端解析结果填。"""
+
+    kind: ContextRefKind
+    id: str
+    title: str = ""
+
+
 class MessageCreate(BaseModel):
     """发消息:content 即对话内容/任务目标;mode 是"发送方式"。
 
@@ -92,6 +116,10 @@ class MessageCreate(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=120)
     # 显式引用的 MCP server(最多 10 个):非空时本次只装配这些 server 的工具
     mcp_server_ids: list[str] = Field(default_factory=list, max_length=10)
+    # 显式引用的资料(P1):正文由服务端按 id 解析后注入,最多 10 条
+    context_refs: list[ContextRefCreate] = Field(default_factory=list, max_length=10)
+    # 显式引用的连接器 provider(最多 10 个):非空时本次只用这些连接器的工具
+    connector_providers: list[str] = Field(default_factory=list, max_length=10)
 
 
 class RewriteMessage(BaseModel):
@@ -113,6 +141,9 @@ class MessageRead(BaseModel):
     role: str
     content: str
     mcp_server_ids: list[str] = Field(default_factory=list)
+    # 旧消息没有这两列快照时按空列表回显(迁移 server_default='[]')
+    context_refs: list[ContextRefRead] = Field(default_factory=list)
+    connector_providers: list[str] = Field(default_factory=list)
     created_at: datetime
 
 

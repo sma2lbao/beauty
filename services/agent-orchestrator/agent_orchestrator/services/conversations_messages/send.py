@@ -84,6 +84,11 @@ async def post_message(
     skill: SkillDefinition | None = None,
     mcp_server_ids: list[str] | None = None,
     mcp_reference_note: str = "",
+    connector_providers: list[str] | None = None,
+    connector_reference_note: str = "",
+    # 已解析的引用快照([{kind,id,title}])与注入块;解析在端点层完成(开流前)
+    context_refs: list[dict[str, Any]] | None = None,
+    reference_context: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
     store: ArtifactStore | None = None,
@@ -110,8 +115,17 @@ async def post_message(
     chat 分支的模型调用(triage/压缩/直答)与新建 run 的快照都用它。
     """
     conversation = await require_conversation(session, account_id, conversation_id)
+    # MCP 与连接器都是"显式引用能力"的约束片段,合并成一段附在系统提示尾部
+    reference_note = "\n\n".join(
+        part for part in (mcp_reference_note, connector_reference_note) if part
+    )
     message = await _persist_user_message(
-        session, conversation, content, mcp_server_ids=mcp_server_ids
+        session,
+        conversation,
+        content,
+        mcp_server_ids=mcp_server_ids,
+        context_refs=context_refs,
+        connector_providers=connector_providers,
     )
     if attachment_ids:
         await attachments_service.link_attachments(
@@ -155,6 +169,7 @@ async def post_message(
                     conversation_id=conversation_id,
                     workspace_id=conversation.workspace_id,
                     mcp_server_ids=tuple(mcp_server_ids or ()),
+                    connector_providers=tuple(connector_providers or ()),
                 )
             ),
         ):
@@ -187,7 +202,8 @@ async def post_message(
                     llm,
                     message,
                     toolkit,
-                    reference_note=mcp_reference_note,
+                    reference_note=reference_note,
+                    reference_context=reference_context,
                     policies=policies,
                     context=context,
                     settings=settings,
@@ -233,7 +249,9 @@ async def post_message(
         jobs_enabled=jobs_enabled,
         skill=skill,
         attachment_context=attachment_context,
+        reference_context=reference_context,
         mcp_server_ids=mcp_server_ids,
+        connector_providers=connector_providers,
         store=store,
         workspace=workspace,
         downloader=downloader,
@@ -256,13 +274,15 @@ async def _prepare_turn(
     content: str,
     *,
     attachment_context: str,
+    reference_context: str = "",
     resolved_model: str | None,
     has_images: bool = False,
     mode: str = triage.AUTO,
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
     mcp_server_ids: list[str] | None = None,
-    mcp_reference_note: str = "",
+    connector_providers: list[str] | None = None,
+    reference_note: str = "",
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
@@ -292,7 +312,8 @@ async def _prepare_turn(
         prompt = await chat.prompt(
             session,
             message,
-            reference_note=mcp_reference_note,
+            reference_note=reference_note,
+            reference_context=reference_context,
             context=context,
             settings=settings,
         )
@@ -309,7 +330,9 @@ async def _prepare_turn(
         jobs_enabled=jobs_enabled,
         skill=skill,
         attachment_context=attachment_context,
+        reference_context=reference_context,
         mcp_server_ids=mcp_server_ids,
+        connector_providers=connector_providers,
         store=store,
         workspace=workspace,
         downloader=downloader,

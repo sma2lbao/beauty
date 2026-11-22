@@ -207,6 +207,15 @@ class Settings(BaseAppSettings):
     knowledge_enabled: bool = False
     knowledge_service_url: str = "http://127.0.0.1:8006"
     knowledge_timeout_seconds: float = 30.0
+    # 输入区 @ 引用(composer-context-and-commands.md §7):把用户显式选择的知识
+    # 文档/交付物/沙箱文件按 id 解析成正文块,注入本轮提示词。开关关闭时携带
+    # context_refs 的请求 409 context_ref.unavailable(不静默丢引用)。
+    context_refs_enabled: bool = True
+    context_refs_max_items: int = 10
+    context_refs_max_chars: int = 20_000
+    context_refs_per_ref_chars: int = 8_000
+    # 输入区 @ 连接器(§7.6):按 provider 过滤本轮可用工具并落 run 快照。
+    connector_providers_enabled: bool = True
     # 长期记忆(§6.7 记忆模块):跨会话保留的用户偏好/事实/项目笔记。
     # 与知识库的分工:知识库是"文档"检索(显式工具),记忆是"对话沉淀"(自动召回)。
     # 存储走 orchestration 自己的 memories 表(账号隔离 + 工作区归属),

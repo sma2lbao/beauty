@@ -266,9 +266,20 @@ class RemoteToolkit:
 
     def _visible_tools(self) -> tuple[ToolDescriptor, ...]:
         tools = self._catalog.descriptors(self._account_id)
-        if self._allowed is None:
+        if self._allowed is not None:
+            tools = tuple(tool for tool in tools if tool.name in self._allowed)
+        # 显式引用的连接器(P1):非空时只保留被引用 provider 的连接器工具,
+        # 非连接器工具照常可见;空选择 = 不限制(既有行为)。
+        ctx = current_tool_context()
+        selected = set(ctx.connector_providers) if ctx is not None else set()
+        if not selected:
             return tools
-        return tuple(tool for tool in tools if tool.name in self._allowed)
+        return tuple(
+            tool
+            for tool in tools
+            if tool.connector is None
+            or str(tool.connector.get("provider") or "") in selected
+        )
 
     def _descriptor(self, name: str) -> ToolDescriptor | None:
         canonical = self._canonical(name)

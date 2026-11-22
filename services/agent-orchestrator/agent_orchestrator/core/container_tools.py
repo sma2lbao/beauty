@@ -70,6 +70,19 @@ class ToolsAssemblyMixin:
         )
 
         toolkit_factory = self.toolkit_factory
+        # 知识客户端独立装配:连接器/引用解析(端点层)与 legacy 知识工具共用同一份。
+        # 注入的替身优先;自建的才登记 closer。
+        knowledge_client = self.knowledge_client
+        if knowledge_client is None and (
+            settings.knowledge_enabled or settings.context_refs_enabled
+        ):
+            knowledge_client = KnowledgeClient(
+                settings.knowledge_service_url,
+                settings.knowledge_timeout_seconds,
+                token_provider=broker.token,
+            )
+            self._closers.append(("knowledge client", knowledge_client.aclose))
+        self._publish("knowledge_client", knowledge_client)
         knowledge: KnowledgeClient | None = None
         if toolkit_factory is None and settings.tool_service_enabled:
             # 内置工具服务(设计 §12.3):目录与执行都在 tool-service(:8008)。
@@ -85,15 +98,9 @@ class ToolsAssemblyMixin:
                 if settings.documents_enabled
                 else None
             )
-            knowledge = (
-                KnowledgeClient(
-                    settings.knowledge_service_url,
-                    settings.knowledge_timeout_seconds,
-                    token_provider=broker.token,
-                )
-                if settings.knowledge_enabled
-                else None
-            )
+            # legacy 知识工具只在 knowledge_enabled 时接入;引用解析另用上面的
+            # knowledge_client(两者可以是同一个实例,不再重复建连接)
+            knowledge = knowledge_client if settings.knowledge_enabled else None
             toolkit_factory = partial(
                 build_tools,
                 documents=documents,
@@ -116,4 +123,4 @@ class ToolsAssemblyMixin:
         ):
             extras_factory = self._extras_factory()
         self._publish("tool_extras_factory", extras_factory)
-        return knowledge
+        return knowledge_client

@@ -34,6 +34,7 @@ from agent_orchestrator.models import (  # noqa: F401  注册 ORM 元数据(对�
 from agent_orchestrator.models import mcp as mcp_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import runs as runs_models  # noqa: F401  注册 ORM 元数据
 from agent_orchestrator.models import skills as skills_models  # noqa: F401  注册 ORM
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_server import (
     ApiKeyVerifier,
@@ -67,6 +68,7 @@ def create_app(
     llm_client: LLMClient | None = None,
     toolkit_factory: ToolkitFactory | None = None,
     tool_client: ToolClient | None = None,
+    knowledge_client: KnowledgeClient | None = None,
     tool_extras_factory: ToolExtrasFactory | None = None,
     token_verifier: JwtVerifier | None = None,
     artifact_store: ArtifactStore | None = None,
@@ -113,6 +115,7 @@ def create_app(
         llm_client=llm_client,
         toolkit_factory=toolkit_factory,
         tool_client=tool_client,
+        knowledge_client=knowledge_client,
         tool_extras_factory=tool_extras_factory,
         token_verifier=token_verifier,
         artifact_store=artifact_store,

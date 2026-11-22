@@ -59,6 +59,7 @@ from agent_orchestrator.services.alerts import (
 from agent_orchestrator.services.file_capture import FileDownloader
 from agent_orchestrator.services.interrupts import start_sweeper
 from agent_orchestrator.services.jobs_worker import start_worker
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_client import reset_url_guard
 from agent_orchestrator.services.mcp_server import (
@@ -130,6 +131,7 @@ INJECTED = (
     "llm_client",
     "toolkit_factory",
     "tool_client",
+    "knowledge_client",
     "tool_extras_factory",
     "token_verifier",
     "artifact_store",
@@ -161,6 +163,7 @@ class AppContainer(
         llm_client: LLMClient | None = None,
         toolkit_factory: ToolkitFactory | None = None,
         tool_client: ToolClient | None = None,
+        knowledge_client: KnowledgeClient | None = None,
         tool_extras_factory: ToolExtrasFactory | None = None,
         token_verifier: JwtVerifier | None = None,
         artifact_store: ArtifactStore | None = None,
@@ -195,6 +198,8 @@ class AppContainer(
         self.llm_client = llm_client
         self.toolkit_factory = toolkit_factory
         self.tool_client = tool_client
+        # 引用解析(知识文档)用的独立知识客户端;由 _assemble_tools 按开关补齐
+        self.knowledge_client = knowledge_client
         self.tool_extras_factory = tool_extras_factory
         self.token_verifier = token_verifier
         self.artifact_store = artifact_store
@@ -275,9 +280,8 @@ class AppContainer(
 
         await self._assemble_llm()
         self._assemble_memory()
-        knowledge = await self._assemble_tools()
-        if knowledge is not None:
-            self._closers.append(("knowledge client", knowledge.aclose))
+        # _assemble_tools 自行登记知识客户端 closer(端点解析与 legacy 工具共用)
+        await self._assemble_tools()
         await self._assemble_graph_deps()
         self._assemble_context()
         await self._assemble_outbox()

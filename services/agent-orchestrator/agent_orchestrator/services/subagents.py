@@ -299,6 +299,7 @@ async def spawn_subagent(
         conversation_id=None,
         workspace_id=parent.workspace_id,
         mcp_server_ids=list(parent.mcp_server_ids or []),
+        connector_providers=list(parent.connector_providers or []),
     )
     await RunRepository(session).add(child)
     await append_event(

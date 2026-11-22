@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import quote
 
 import httpx
 from common.errors import UpstreamError
@@ -33,6 +34,10 @@ class Knowledge(Protocol):
     async def list_documents(
         self, account_id: str, *, limit: int = 50
     ) -> list[dict[str, Any]]: ...
+
+    async def document_content(
+        self, account_id: str, document_id: str, *, max_chars: int = 8000
+    ) -> dict[str, Any] | None: ...
 
 
 class KnowledgeClient:
@@ -88,6 +93,34 @@ class KnowledgeClient:
         )
         documents = payload if isinstance(payload, list) else []
         return documents[:limit]
+
+    async def document_content(
+        self, account_id: str, document_id: str, *, max_chars: int = 8000
+    ) -> dict[str, Any] | None:
+        """按 id 取文档可引用正文;不存在(404)返回 None。"""
+        try:
+            response = await self._client.get(
+                f"/v1/knowledge/documents/{quote(document_id, safe='')}/content",
+                params={"max_chars": max_chars},
+                headers=await self._headers(account_id),
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(
+                "knowledge.upstream_error", f"知识库服务不可达:{exc}"
+            ) from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise UpstreamError(
+                "knowledge.upstream_error",
+                f"知识库服务返回 {response.status_code}",
+                details={"body": response.text[:200]},
+            )
+        payload = response.json()
+        return dict(payload) if isinstance(payload, dict) else None
+
+    async def _headers(self, account_id: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {await self._token_provider(account_id)}"}
 
     async def _request(
         self,

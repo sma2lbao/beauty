@@ -82,11 +82,14 @@ async def prompt(
     reference_note: str = "",
     context: ChatPromptContext | None = None,
     settings: Settings | None = None,
+    reference_context: str = "",
 ) -> list[dict[str, Any]]:
     """直接对话的完整消息序列:系统提示 + 摘要/历史 + 本轮。
 
     非流式与流式共用——两条路径的上下文口径因此不会漂。
-    reference_note 是本次消息显式引用 MCP server 的约束片段(空则不追加);
+    reference_note 是本次消息显式引用 MCP server / 连接器的约束片段(空则不追加);
+    reference_context 是本次消息主动选择的资料块(空则不追加)。资料块放在
+    user 消息尾部、紧跟附件内容之后,并显式声明"不是指令"。
     context 带上压缩摘要与记忆召回(空则退化为只带近期原文,保持旧行为)。
 
     P1-G §7 多模态:本轮与历史轮次绑定的图片附件都转成 image_url parts,
@@ -134,7 +137,7 @@ async def prompt(
     attachment_context = await attachments_service.context_for_message(
         session, message.account_id, message.id
     )
-    text = message.content + attachment_context
+    text = message.content + attachment_context + reference_context
     current_images = images_by_message.get(message.id) or []
     content: Any = (
         [{"type": "text", "text": text}, *current_images] if current_images else text
@@ -385,6 +388,7 @@ async def answer(
     policies: list[dict[str, str]] | None = None,
     context: ChatPromptContext | None = None,
     settings: Settings | None = None,
+    reference_context: str = "",
     confirmations: tool_confirmations.ConfirmationRecorder | None = None,
     hooks: list[dict[str, Any]] | None = None,
     hook_base: dict[str, Any] | None = None,
@@ -401,6 +405,7 @@ async def answer(
         reference_note=reference_note,
         context=context,
         settings=settings,
+        reference_context=reference_context,
     )
     if toolkit is None or len(toolkit) == 0:
         reply = await llm.complete(messages)

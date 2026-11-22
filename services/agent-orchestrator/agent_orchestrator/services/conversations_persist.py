@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from common.artifacts import ArtifactStore
 from common.logging import get_logger
@@ -70,12 +70,15 @@ async def _persist_user_message(
     content: str,
     *,
     mcp_server_ids: list[str] | None = None,
+    context_refs: list[dict[str, Any]] | None = None,
+    connector_providers: list[str] | None = None,
 ) -> ChatMessage:
     """落用户消息(首条顺带定题)并顶起会话活跃时间。
 
     created_at 必须早于随后创建的 run / assistant 回复——多轮历史靠它排序。
-    mcp_server_ids 是用户显式引用的 MCP server(空 = 不限制),随消息落库
-    以便历史回放时仍能看到"这条消息引用了谁"。
+    mcp_server_ids / context_refs / connector_providers 都是本条消息的引用
+    快照(空 = 不限制),随消息落库以便历史回放时仍能看到"这条消息引用了谁"。
+    context_refs 只存 {kind,id,title},正文不落库。
     """
     messages = MessageRepository(session)
     if not await messages.has_any_message(conversation.account_id, conversation.id):
@@ -86,6 +89,8 @@ async def _persist_user_message(
         role="user",
         content=content,
         mcp_server_ids=list(mcp_server_ids or []),
+        context_refs=list(context_refs or []),
+        connector_providers=list(connector_providers or []),
     )
     await messages.add(message)
     conversation.updated_at = datetime.now(UTC)
@@ -132,7 +137,9 @@ async def _task_path(
     jobs_enabled: bool = False,
     skill: SkillDefinition | None = None,
     attachment_context: str = "",
+    reference_context: str = "",
     mcp_server_ids: list[str] | None = None,
+    connector_providers: list[str] | None = None,
     store: ArtifactStore | None = None,
     workspace: Workspace | None = None,
     downloader: FileDownloader | None = None,
@@ -150,10 +157,13 @@ async def _task_path(
     context_pipeline 只在同步规划(未入队 job)时透传给 plan_run:起图那一刻
     按策略快照上下文;入队时由 worker 从容器取同一份策略,口径一致。
     """
+    # 引用块与附件上下文同一位置注入 user 文本(资料不是指令,不进 system);
+    # 进行中 run 的追加指令不改已建 run 的工具/引用快照,只追加文本。
+    user_text = content + attachment_context + reference_context
     run = await active_run(session, conversation.account_id, conversation.id)
     if run is not None:
         await runs_service.queue_instruction(
-            session, conversation.account_id, run.id, content + attachment_context
+            session, conversation.account_id, run.id, user_text
         )
         message.run_id = run.id
         return run, "instruction_queued"
@@ -162,12 +172,13 @@ async def _task_path(
         conversation.account_id,
         RunCreate(
             title=title_from_message(content),
-            goal=content + attachment_context,
+            goal=user_text,
             acceptance_criteria=[],
             conversation_id=conversation.id,
             workspace_id=conversation.workspace_id,
             skill_id=skill.manifest.id if skill else None,
             mcp_server_ids=list(mcp_server_ids or []),
+            connector_providers=list(connector_providers or []),
             # 消息级模型覆盖(P1-G);为空时 create_run 会继承会话模型
             model=model,
         ),

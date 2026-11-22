@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
 from sqlalchemy import (
@@ -71,6 +72,11 @@ class ChatMessage(UUIDMixin, AccountMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text)
     # 用户发消息时显式引用的 MCP server(§6.7):空列表 = 不限制(用全部已启用)
     mcp_server_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # 显式引用的资料(P1):[{kind, id, title}];正文不落库,只有解析出的标题。
+    # 与 mcp_server_ids 一样是"本条消息的引用快照",rewrite 沿用不修改。
+    context_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    # 显式引用的连接器 provider(P1):["github", ...];空 = 不限制(用全部已连接)
+    connector_providers: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
 class ChatToolConfirmation(UUIDMixin, AccountMixin, TimestampMixin, Base):

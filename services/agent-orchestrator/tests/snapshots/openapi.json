@@ -496,6 +496,47 @@
         "title": "ConfirmRequest",
         "type": "object"
       },
+      "ContextRefCreate": {
+        "description": "用户显式引用的资料:只传 kind + id,标题与正文由服务端解析。\n\n只信 id 不信标题,避免客户端伪造引用内容;单条 id 上限 400 字符\n(沙箱文件是绝对路径,比其他 id 长)。",
+        "properties": {
+          "id": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["knowledge_document", "artifact", "sandbox_file"],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": ["kind", "id"],
+        "title": "ContextRefCreate",
+        "type": "object"
+      },
+      "ContextRefRead": {
+        "description": "消息回显的引用快照:title 落库时由服务端解析结果填。",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": ["knowledge_document", "artifact", "sandbox_file"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": ["kind", "id"],
+        "title": "ContextRefRead",
+        "type": "object"
+      },
       "ConversationCreate": {
         "description": "建对话:标题可空(首条消息会自动定题)。\n\nworkspace_id 显式指定对话所属工作区(不存在 → 404 workspace.not_found);\n不传则落账号默认工作区(workspace 客户端未启用/不可达时降级为空,不阻断建对话)。",
         "properties": {
@@ -2756,11 +2797,27 @@
             "title": "Attachment Ids",
             "type": "array"
           },
+          "connector_providers": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Connector Providers",
+            "type": "array"
+          },
           "content": {
             "maxLength": 2000,
             "minLength": 1,
             "title": "Content",
             "type": "string"
+          },
+          "context_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ContextRefCreate"
+            },
+            "maxItems": 10,
+            "title": "Context Refs",
+            "type": "array"
           },
           "mcp_server_ids": {
             "items": {
@@ -2844,9 +2901,23 @@
       },
       "MessageRead": {
         "properties": {
+          "connector_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Connector Providers",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
+          },
+          "context_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ContextRefRead"
+            },
+            "title": "Context Refs",
+            "type": "array"
           },
           "conversation_id": {
             "title": "Conversation Id",
@@ -3313,6 +3384,14 @@
             "title": "Acceptance Criteria",
             "type": "array"
           },
+          "connector_providers": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Connector Providers",
+            "type": "array"
+          },
           "conversation_id": {
             "anyOf": [
               {
@@ -3615,6 +3694,13 @@
           "attempts": {
             "title": "Attempts",
             "type": "integer"
+          },
+          "connector_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Connector Providers",
+            "type": "array"
           },
           "conversation_id": {
             "anyOf": [

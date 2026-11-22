@@ -50,6 +50,11 @@ async def stream_message(
     skill: SkillDefinition | None = None,
     mcp_server_ids: list[str] | None = None,
     mcp_reference_note: str = "",
+    connector_providers: list[str] | None = None,
+    connector_reference_note: str = "",
+    # 已解析的引用快照([{kind,id,title}])与注入块;解析在端点层完成(开流前)
+    context_refs: list[dict[str, Any]] | None = None,
+    reference_context: str = "",
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
     store: ArtifactStore | None = None,
@@ -72,10 +77,18 @@ async def stream_message(
     run: Run | None = None
     prompt: list[dict[str, Any]] = []
     resolved_model: str | None = None
+    reference_note = "\n\n".join(
+        part for part in (mcp_reference_note, connector_reference_note) if part
+    )
     async with session_scope(factory) as session:
         conversation = await require_conversation(session, account_id, conversation_id)
         message = await _persist_user_message(
-            session, conversation, content, mcp_server_ids=mcp_server_ids
+            session,
+            conversation,
+            content,
+            mcp_server_ids=mcp_server_ids,
+            context_refs=context_refs,
+            connector_providers=connector_providers,
         )
         if attachment_ids:
             await attachments_service.link_attachments(
@@ -106,13 +119,15 @@ async def stream_message(
             message,
             content,
             attachment_context=attachment_context,
+            reference_context=reference_context,
             resolved_model=resolved_model,
             has_images=has_images,
             mode=mode,
             jobs_enabled=jobs_enabled,
             skill=skill,
             mcp_server_ids=mcp_server_ids,
-            mcp_reference_note=mcp_reference_note,
+            connector_providers=connector_providers,
+            reference_note=reference_note,
             store=store,
             workspace=workspace,
             downloader=downloader,
@@ -133,6 +148,7 @@ async def stream_message(
         run=run,
         prompt=prompt,
         mcp_server_ids=mcp_server_ids,
+        connector_providers=connector_providers,
         toolkit_factory=toolkit_factory,
         extras_factory=extras_factory,
         settings=settings,

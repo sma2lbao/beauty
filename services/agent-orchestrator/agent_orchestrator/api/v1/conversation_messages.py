@@ -21,11 +21,14 @@ from agent_orchestrator.api.deps import (
     get_container,
     get_context_pipeline,
     get_file_downloader,
+    get_knowledge_client,
     get_llm_client,
     get_run_graph,
+    get_sandbox_client,
     get_session,
     get_settings,
     get_skills,
+    get_tool_client,
     get_tool_extras_factory,
     get_toolkit_factory,
     get_workspace_client,
@@ -39,12 +42,16 @@ from agent_orchestrator.schemas.conversations import (
     RewriteMessage,
 )
 from agent_orchestrator.schemas.runs import RunRead
+from agent_orchestrator.services import context_refs as context_refs_service
 from agent_orchestrator.services import conversations as conversations_service
 from agent_orchestrator.services import models as models_service
 from agent_orchestrator.services import run_quota, triage
 from agent_orchestrator.services.file_capture import FileDownloader
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import LLMClient
+from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skills import SkillRegistry
+from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.workspace import Workspace
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -59,6 +66,9 @@ ToolkitFactory = Annotated[Any, Depends(get_toolkit_factory)]
 ToolExtrasFactory = Annotated[Any, Depends(get_tool_extras_factory)]
 ArtifactStoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 WorkspaceDep = Annotated[Workspace | None, Depends(get_workspace_client)]
+KnowledgeDep = Annotated[KnowledgeClient | None, Depends(get_knowledge_client)]
+SandboxDep = Annotated[Sandbox | None, Depends(get_sandbox_client)]
+ToolClientDep = Annotated[ToolClient | None, Depends(get_tool_client)]
 FileDownloaderDep = Annotated[FileDownloader | None, Depends(get_file_downloader)]
 ContextPipelineDep = Annotated[ContextPipeline | None, Depends(get_context_pipeline)]
 
@@ -84,6 +94,9 @@ async def post_message(
     tool_extras_factory: ToolExtrasFactory,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    knowledge: KnowledgeDep,
+    sandbox: SandboxDep,
+    tool_client: ToolClientDep,
     downloader: FileDownloaderDep,
     context_pipeline: ContextPipelineDep,
 ) -> MessagePostResult:
@@ -98,6 +111,19 @@ async def post_message(
         settings=settings,
         skill_id=body.skill_id,
         mcp_server_ids=body.mcp_server_ids,
+        connector_providers=body.connector_providers,
+        tool_client=tool_client,
+    )
+    # 引用解析在同事务内完成:404/400/409 在写消息与调模型之前就返回,
+    # 不会留下"消息落库了但资料取不到"的半截状态
+    refs = await context_refs_service.resolve_context_refs(
+        account_id,
+        conversation_id,
+        body.context_refs,
+        knowledge=knowledge,
+        workspace=workspace,
+        sandbox=sandbox,
+        settings=settings,
     )
     message, run, reply, mode = await conversations_service.post_message(
         session,
@@ -112,6 +138,10 @@ async def post_message(
         skill=target.skill,
         mcp_server_ids=target.mcp_server_ids,
         mcp_reference_note=target.mcp_reference_note,
+        connector_providers=target.connector_providers,
+        connector_reference_note=target.connector_reference_note,
+        context_refs=refs.snapshot,
+        reference_context=refs.block,
         toolkit_factory=toolkit_factory,
         extras_factory=tool_extras_factory,
         store=store,
@@ -204,6 +234,9 @@ async def stream_message(
     tool_extras_factory: ToolExtrasFactory,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    knowledge: KnowledgeDep,
+    sandbox: SandboxDep,
+    tool_client: ToolClientDep,
     downloader: FileDownloaderDep,
     context_pipeline: ContextPipelineDep,
 ) -> StreamingResponse:
@@ -237,6 +270,18 @@ async def stream_message(
         settings=settings,
         skill_id=body.skill_id,
         mcp_server_ids=body.mcp_server_ids,
+        connector_providers=body.connector_providers,
+        tool_client=tool_client,
+    )
+    # 引用解析必须在开流前:SSE 一旦 200 就只能发错误帧,取不到资料要当场 4xx
+    refs = await context_refs_service.resolve_context_refs(
+        account_id,
+        conversation_id,
+        body.context_refs,
+        knowledge=knowledge,
+        workspace=workspace,
+        sandbox=sandbox,
+        settings=settings,
     )
     return StreamingResponse(
         _message_frames(
@@ -253,6 +298,10 @@ async def stream_message(
                 skill=target.skill,
                 mcp_server_ids=target.mcp_server_ids,
                 mcp_reference_note=target.mcp_reference_note,
+                connector_providers=target.connector_providers,
+                connector_reference_note=target.connector_reference_note,
+                context_refs=refs.snapshot,
+                reference_context=refs.block,
                 toolkit_factory=toolkit_factory,
                 extras_factory=tool_extras_factory,
                 store=store,
@@ -284,6 +333,9 @@ async def rewrite_message(
     tool_extras_factory: ToolExtrasFactory,
     store: ArtifactStoreDep,
     workspace: WorkspaceDep,
+    knowledge: KnowledgeDep,
+    sandbox: SandboxDep,
+    tool_client: ToolClientDep,
     downloader: FileDownloaderDep,
     context_pipeline: ContextPipelineDep,
 ) -> StreamingResponse:
@@ -307,6 +359,7 @@ async def rewrite_message(
         body.content,
         skills=skills,
         settings=settings,
+        tool_client=tool_client,
     )
     return StreamingResponse(
         _message_frames(
@@ -320,6 +373,9 @@ async def rewrite_message(
                 body.content,
                 skills=skills,
                 jobs_enabled=settings.jobs_enabled,
+                knowledge=knowledge,
+                sandbox=sandbox,
+                tool_client=tool_client,
                 toolkit_factory=toolkit_factory,
                 extras_factory=tool_extras_factory,
                 store=store,

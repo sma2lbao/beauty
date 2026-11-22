@@ -48,6 +48,12 @@ class Workspace(Protocol):
         workspace_id: str | None = None,
     ) -> dict[str, Any]: ...
 
+    async def get_artifact(
+        self, account_id: str, artifact_id: str
+    ) -> dict[str, Any] | None:
+        """按 id 取交付物(含正文);不存在/越权(404)返回 None。"""
+        ...
+
     async def put_object(
         self,
         account_id: str,
@@ -167,6 +173,13 @@ class WorkspaceClient:
                 details={"body": response.text[:200]},
             )
         return dict(response.json())
+
+    async def get_artifact(
+        self, account_id: str, artifact_id: str
+    ) -> dict[str, Any] | None:
+        """按 id 取交付物(含正文);不存在/越权(404)→ None。"""
+        quoted = quote(artifact_id, safe="")
+        return await self._workspace_or_none(account_id, f"/v1/artifacts/{quoted}")
 
     # ---- 通用对象 API(P3-A:POST/GET/DELETE /v1/objects) ----
 

@@ -46,7 +46,8 @@ async def _stream_turn(
     run: Run | None,
     prompt: list[dict[str, Any]],
     mcp_server_ids: list[str] | None,
-    toolkit_factory: ToolkitFactory | None,
+    connector_providers: list[str] | None = None,
+    toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None,
     settings: Settings | None,
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
@@ -91,6 +92,7 @@ async def _stream_turn(
                     conversation_id=conversation_id,
                     workspace_id=conversation.workspace_id,
                     mcp_server_ids=tuple(mcp_server_ids or ()),
+                    connector_providers=tuple(connector_providers or ()),
                 )
             ),
         ):

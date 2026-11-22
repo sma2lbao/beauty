@@ -36,6 +36,9 @@ class ToolContext:
     workspace_id: str | None = None
     # 对话消息显式引用的 MCP server:非空时只装配这些 server 的工具
     mcp_server_ids: tuple[str, ...] = ()
+    # 对话消息显式引用的连接器 provider(P1):非空时工具目录只保留这些
+    # provider 的连接器工具;空 = 不限制
+    connector_providers: tuple[str, ...] = ()
 
     @property
     def sandbox_scope(self) -> str:

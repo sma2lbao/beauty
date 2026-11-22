@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent_orchestrator.models.conversations import Conversation
 from agent_orchestrator.repositories import ConversationRepository
 from agent_orchestrator.services import attachments as attachments_service
+from agent_orchestrator.services import connectors as connectors_service
 from agent_orchestrator.services import mcp as mcp_service
 from agent_orchestrator.services import skill_packages, triage
 from agent_orchestrator.services.skill_packages import SkillDefinition
@@ -48,6 +49,18 @@ class MessageTarget:
     skill: SkillDefinition | None = None
     mcp_server_ids: list[str] = field(default_factory=list)
     mcp_reference_note: str = ""
+    # 显式引用的连接器 provider(P1):非空时本次只装配这些连接器的工具
+    connector_providers: list[str] = field(default_factory=list)
+    connector_reference_note: str = ""
+
+    @property
+    def reference_note(self) -> str:
+        """能力绑定的系统提示补充:MCP 与连接器各一段,空段不产生空行。"""
+        return "\n\n".join(
+            note
+            for note in (self.mcp_reference_note, self.connector_reference_note)
+            if note
+        )
 
 
 async def resolve_message_target(
@@ -58,8 +71,10 @@ async def resolve_message_target(
     settings: Any,
     skill_id: str | None,
     mcp_server_ids: list[str],
+    connector_providers: list[str] | None = None,
+    tool_client: Any = None,
 ) -> MessageTarget:
-    """在给定事务内解析技能与 MCP 绑定(未知 404、停用/未启用 409)。"""
+    """在给定事务内解析技能 / MCP / 连接器绑定(未知 404、停用/未启用 409)。"""
     skill: SkillDefinition | None = None
     if skill_id:
         skill = await skill_packages.resolve_skill(
@@ -67,8 +82,21 @@ async def resolve_message_target(
         )
         if skill is None:
             raise NotFoundError("skill.not_found", "Skill 不存在")
+    # 连接器:按账号工具目录校验 provider(空选择零请求;未知 404)
+    requested_connectors = list(connector_providers or [])
+    resolved_connectors = await connectors_service.resolve_connector_providers(
+        account_id,
+        requested_connectors,
+        tool_client=tool_client,
+        settings=settings,
+    )
+    connector_note = connectors_service.connector_reference_note(resolved_connectors)
     if not mcp_server_ids:
-        return MessageTarget(skill=skill)
+        return MessageTarget(
+            skill=skill,
+            connector_providers=resolved_connectors,
+            connector_reference_note=connector_note,
+        )
     if not settings.mcp_enabled:
         raise ConflictError("mcp.disabled", "MCP 能力未启用")
     servers = await mcp_service.resolve_selected(session, account_id, mcp_server_ids)
@@ -76,6 +104,8 @@ async def resolve_message_target(
         skill=skill,
         mcp_server_ids=[server.id for server in servers],
         mcp_reference_note=mcp_service.reference_note(servers),
+        connector_providers=resolved_connectors,
+        connector_reference_note=connector_note,
     )
 
 
@@ -112,6 +142,8 @@ async def resolve_stream_target(
     settings: Any,
     skill_id: str | None,
     mcp_server_ids: list[str],
+    connector_providers: list[str] | None = None,
+    tool_client: Any = None,
 ) -> MessageTarget:
     """开流前的 404/409 预检(独立短事务)。
 
@@ -127,4 +159,6 @@ async def resolve_stream_target(
             settings=settings,
             skill_id=skill_id,
             mcp_server_ids=mcp_server_ids,
+            connector_providers=connector_providers,
+            tool_client=tool_client,
         )

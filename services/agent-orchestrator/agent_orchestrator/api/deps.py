@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.context.pipeline import ContextPipeline
 from agent_orchestrator.core.container import AppContainer
+from agent_orchestrator.services.knowledge import KnowledgeClient
 from agent_orchestrator.services.llm import LLMClient
 from agent_orchestrator.services.mcp_stdio import StdioSandboxPool
 from agent_orchestrator.services.post_commit import (
@@ -34,6 +35,7 @@ from agent_orchestrator.services.post_commit import (
     bind_runtime,
     drain_after_commit,
 )
+from agent_orchestrator.services.sandbox import Sandbox
 from agent_orchestrator.services.skills import SkillRegistry
 from agent_orchestrator.services.tool_client import ToolClient
 from agent_orchestrator.services.workspace import Workspace
@@ -123,6 +125,19 @@ def get_tool_extras_factory(request: Request):
     未启用 MCP/skill 执行时为 None:chat 只有内置工具,行为不变。
     """
     return get_container(request).tool_extras_factory
+
+
+def get_knowledge_client(request: Request) -> KnowledgeClient | None:
+    """知识服务客户端:引用解析(@知识库文档)用;未装配时为 None。
+
+    与 legacy 知识工具共用同一个实例(容器持有,端点只读)。
+    """
+    return get_container(request).knowledge_client
+
+
+def get_sandbox_client(request: Request) -> Sandbox | None:
+    """沙箱客户端:引用解析(@沙箱文件)用;未开启为 None。"""
+    return get_container(request).sandbox_client
 
 
 def get_workspace_client(request: Request) -> Workspace | None:

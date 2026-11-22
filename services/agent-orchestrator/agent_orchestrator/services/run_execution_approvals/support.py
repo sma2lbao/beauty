@@ -77,6 +77,8 @@ def _tool_context(run: Run):
             workspace_id=run.workspace_id,
             # run 创建时快照的 MCP 引用:工具装配(execution/extras)只暴露这些 server
             mcp_server_ids=tuple(run.mcp_server_ids or ()),
+            # 连接器引用快照:工具目录只保留这些 provider 的连接器工具
+            connector_providers=tuple(run.connector_providers or ()),
         )
     )
 

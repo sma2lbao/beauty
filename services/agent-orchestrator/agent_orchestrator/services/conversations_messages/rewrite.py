@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,8 +19,10 @@ from agent_orchestrator.core.config import Settings
 from agent_orchestrator.models.conversations import ChatMessage, Conversation
 from agent_orchestrator.models.runs import Run
 from agent_orchestrator.repositories import MessageRepository, RunRepository
+from agent_orchestrator.schemas.conversations import ContextRefCreate
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import attachments as attachments_service
+from agent_orchestrator.services import context_refs as context_refs_service
 from agent_orchestrator.services import triage
 from agent_orchestrator.services.conversation_targets import (
     MessageTarget,
@@ -43,6 +46,8 @@ if TYPE_CHECKING:  # 仅用于类型标注,避免 services 层与工具层的导
     ToolkitFactory = Callable[[str], ToolRegistry]
     #: 外部工具(MCP/skill_run)工厂:按账号现取,与 run 执行图共用
     ExtrasFactory = Callable[[str], Awaitable[list[ToolSpec]]]
+logger = logging.getLogger(__name__)
+
 REWRITE_TERMINAL_RUN_STATUSES = frozenset(
     {
         RunStatus.COMPLETED.value,
@@ -83,6 +88,7 @@ async def _rewrite_plan(
     *,
     skills: SkillRegistry,
     settings: Settings | None,
+    tool_client: Any = None,
 ) -> RewritePlan:
     """校验重写请求并算出落库计划(不写库,事务内可重复调用)。
 
@@ -159,6 +165,8 @@ async def _rewrite_plan(
         settings=settings,
         skill_id=None,
         mcp_server_ids=list(user_message.mcp_server_ids or []),
+        connector_providers=list(user_message.connector_providers or []),
+        tool_client=tool_client,
     )
     return RewritePlan(
         conversation=conversation,
@@ -179,6 +187,7 @@ async def precheck_rewrite(
     *,
     skills: SkillRegistry,
     settings: Settings | None,
+    tool_client: Any = None,
 ) -> None:
     """开流前的只读校验:404/409/422 必须在 SSE 200 之前给出。
 
@@ -194,7 +203,56 @@ async def precheck_rewrite(
             content,
             skills=skills,
             settings=settings,
+            tool_client=tool_client,
         )
+
+
+async def _rewrite_reference_context(
+    session: AsyncSession,
+    account_id: str,
+    conversation_id: str,
+    message: ChatMessage,
+    *,
+    knowledge: Any = None,
+    workspace: Workspace | None = None,
+    sandbox: Any = None,
+    settings: Settings | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    """重写沿用原消息的引用:逐条重解析,失效的跳过并留痕,不阻断本轮。
+
+    为什么逐条而不是整批:一条文档被删不该让整次重写失败;重写是"再来一次",
+    降级为少一条资料比 4xx 更符合预期。全部失效时按无引用处理。
+    """
+    raw = list(message.context_refs or [])
+    if not raw:
+        return [], ""
+    resolved: list[context_refs_service.ResolvedRef] = []
+    for item in raw:
+        try:
+            create = ContextRefCreate.model_validate(item)
+            part = await context_refs_service.resolve_context_refs(
+                account_id,
+                conversation_id,
+                [create],
+                knowledge=knowledge,
+                workspace=workspace,
+                sandbox=sandbox,
+                settings=settings,
+            )
+        except AppError as exc:
+            logger.warning(
+                "rewrite context ref skipped: kind=%s id=%s code=%s",
+                item.get("kind"),
+                item.get("id"),
+                exc.code,
+            )
+            continue
+        resolved.extend(part.refs)
+    if not resolved:
+        return [], ""
+    # 复用 ReferenceContext.snapshot 的落库形状,避免第二份字段映射
+    merged = context_refs_service.ReferenceContext(refs=resolved)
+    return merged.snapshot, context_refs_service.build_reference_block(resolved)
 
 
 async def stream_rewrite(
@@ -208,6 +266,10 @@ async def stream_rewrite(
     *,
     skills: SkillRegistry,
     jobs_enabled: bool = False,
+    context_refs: Any = None,
+    knowledge: Any = None,
+    sandbox: Any = None,
+    tool_client: Any = None,
     toolkit_factory: ToolkitFactory | None = None,
     extras_factory: ExtrasFactory | None = None,
     store: ArtifactStore | None = None,
@@ -240,6 +302,7 @@ async def stream_rewrite(
             content,
             skills=skills,
             settings=settings,
+            tool_client=tool_client,
         )
         conversation = plan.conversation
         messages = MessageRepository(session)
@@ -259,6 +322,19 @@ async def stream_rewrite(
         )
         # 不继承 model 覆盖:走会话默认模型(conversation.model 可能为空 → 网关默认)
         resolved_model = model_for_conversation(conversation)
+        # 引用沿用原消息(重写不允许改引用);失效条目跳过,不阻断本轮
+        ref_snapshot, reference_context = await _rewrite_reference_context(
+            session,
+            account_id,
+            conversation_id,
+            message,
+            knowledge=knowledge,
+            workspace=workspace,
+            sandbox=sandbox,
+            settings=settings,
+        )
+        if ref_snapshot:
+            message.context_refs = ref_snapshot
         prompt, run, outcome = await _prepare_turn(
             session,
             graph,
@@ -268,13 +344,15 @@ async def stream_rewrite(
             message,
             message.content,
             attachment_context=attachment_context,
+            reference_context=reference_context,
             resolved_model=resolved_model,
             has_images=has_images,
             mode=triage.AUTO,
             jobs_enabled=jobs_enabled,
             skill=plan.target.skill,
             mcp_server_ids=plan.target.mcp_server_ids,
-            mcp_reference_note=plan.target.mcp_reference_note,
+            connector_providers=plan.target.connector_providers,
+            reference_note=plan.target.reference_note,
             store=store,
             workspace=workspace,
             downloader=downloader,
@@ -295,6 +373,7 @@ async def stream_rewrite(
         run=run,
         prompt=prompt,
         mcp_server_ids=plan.target.mcp_server_ids,
+        connector_providers=plan.target.connector_providers,
         toolkit_factory=toolkit_factory,
         extras_factory=extras_factory,
         settings=settings,
