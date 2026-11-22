@@ -34,11 +34,16 @@ export function parseSseFrame(
   }
 }
 
-/** 按事件名分发一帧(未知事件忽略,便于后端新增帧而不破坏旧前端)。 */
-function dispatchFrame(handlers: StreamMessageHandlers, raw: string): void {
+/**
+ * 按事件名分发一帧(未知事件忽略,便于后端新增帧而不破坏旧前端)。
+ *
+ * 返回是否已到终态帧(done/error):对话流不发 `stream.end`,解析层靠它
+ * 区分「正常收尾」与「断线」——后者由 `streamTurn` 抛 stream.interrupted。
+ */
+function dispatchFrame(handlers: StreamMessageHandlers, raw: string): boolean {
   const parsed = parseSseFrame(raw);
   if (!parsed) {
-    return;
+    return false;
   }
   const [name, data] = parsed;
   if (name === 'meta') {
@@ -60,12 +65,15 @@ function dispatchFrame(handlers: StreamMessageHandlers, raw: string): void {
     handlers.onDone?.(
       data as Parameters<NonNullable<StreamMessageHandlers['onDone']>>[0],
     );
+    return true;
   } else if (name === 'error') {
     handlers.onError?.({
       code: typeof data.code === 'string' ? data.code : 'llm.upstream_error',
       message: typeof data.message === 'string' ? data.message : '模型调用失败',
     });
+    return true;
   }
+  return false;
 }
 
 /**
@@ -73,6 +81,10 @@ function dispatchFrame(handlers: StreamMessageHandlers, raw: string): void {
  *
  * 开流前的错误(404/409/422)仍是统一错误契约,直接抛 ApiError;
  * 开流后的失败由后端发 error 帧,走 onError(HTTP 已是 200,改不了)。
+ *
+ * 对话流没有 `stream.end`(服务端发完 done/error 就关连接),所以「读完但没见到
+ * 终态帧」就是断线:抛 `stream.interrupted`,由调用方收口已落库的半截回复
+ * (服务端在 finally 里把已产出片段落库,前端重拉消息即可见)。
  */
 export async function streamTurn(
   path: string,
@@ -80,6 +92,8 @@ export async function streamTurn(
   handlers: StreamMessageHandlers,
   fallback: StreamTurnFallback,
 ): Promise<void> {
+  /** 是否已收到 done/error:收到后连接结束属正常收尾。 */
+  let settled = false;
   await connectSse(path, {
     method: 'POST',
     body,
@@ -87,7 +101,11 @@ export async function streamTurn(
     mapError: async (response) => {
       // HTTP 层已是 200 但没流式内容;或开流前失败(404/409/422)。
       if (response.ok) {
-        return new ApiError(response.status, 'stream_failed', fallback.emptyMessage);
+        return new ApiError(
+          response.status,
+          'stream_failed',
+          fallback.emptyMessage,
+        );
       }
       let code = fallback.code;
       let message = fallback.failureMessage(response.status);
@@ -103,6 +121,19 @@ export async function streamTurn(
       }
       return new ApiError(response.status, code, message);
     },
-    onFrame: (frame) => dispatchFrame(handlers, frame.raw),
+    onFrame: (frame) => {
+      if (dispatchFrame(handlers, frame.raw)) {
+        settled = true;
+      }
+    },
+    onInterrupted: () => {
+      if (!settled) {
+        throw new ApiError(
+          0,
+          'stream.interrupted',
+          '回复中断,已保存部分内容,可重新生成',
+        );
+      }
+    },
   });
 }

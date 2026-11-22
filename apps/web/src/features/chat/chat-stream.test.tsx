@@ -304,4 +304,70 @@ describe('ChatPage 发送与流式', () => {
     expect(await screen.findByText(/本月模型用量已达配额/)).toBeTruthy();
     expect(screen.getByText(/可在「用量」页查看配额明细/)).toBeTruthy();
   });
+
+  it('回复中断:提示已保存部分内容,重拉消息且不把输入还回', async () => {
+    // 对话流不发 stream.end:EOF 时没见到 done/error 就是断线。
+    // 用户消息与半截回复已在服务端落库,所以只重拉、不还草稿(重发会重复)。
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    vi.mocked(streamMessage).mockImplementation(
+      async (_conversationId, _content, _mode, handlers) => {
+        handlers.onMeta?.({
+          mode: 'chat',
+          message: makeMessage({ id: 'm2', run_id: null, content: '继续写' }),
+          run: null,
+        });
+        handlers.onDelta?.('写到一半');
+        throw new ApiError(
+          0,
+          'stream.interrupted',
+          '回复中断,已保存部分内容,可重新生成',
+        );
+      },
+    );
+    const messagesBefore = vi.mocked(conversationsApi.messages).mock.calls
+      .length;
+
+    typeAndSend('继续写');
+
+    expect(
+      await screen.findByText('回复中断,已保存部分内容,可重新生成'),
+    ).toBeTruthy();
+    // 临时气泡撤掉,不会永远停在「正在回答」
+    await waitFor(() => expect(screen.queryByText(/正在回答/)).toBeNull());
+    // 已落库内容重新拉取
+    await waitFor(() =>
+      expect(
+        vi.mocked(conversationsApi.messages).mock.calls.length,
+      ).toBeGreaterThan(messagesBefore),
+    );
+    expect(screen.getByLabelText('描述下一步任务')).toHaveValue('');
+  });
+
+  it('停止生成:撤掉临时气泡重拉已落库内容,不报错', async () => {
+    renderPage('/?conversation=c1');
+    await screen.findAllByText('待审批');
+    vi.mocked(streamMessage).mockImplementation(
+      (_conversationId, _content, _mode, handlers) =>
+        new Promise<void>((_resolve, reject) => {
+          handlers.onMeta?.({
+            mode: 'chat',
+            message: makeMessage({ id: 'm2', run_id: null, content: '继续写' }),
+            run: null,
+          });
+          handlers.onDelta?.('写到一半');
+          handlers.signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+        }),
+    );
+
+    typeAndSend('继续写');
+
+    fireEvent.click(await screen.findByRole('button', { name: '停止生成' }));
+
+    await waitFor(() => expect(screen.queryByText(/正在回答/)).toBeNull());
+    expect(screen.queryByText(/回复中断/)).toBeNull();
+    expect(screen.getByLabelText('描述下一步任务')).toHaveValue('');
+  });
 });
