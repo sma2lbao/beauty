@@ -62,11 +62,16 @@ export function measureCaretRect(
   mirror.appendChild(span);
   document.body.appendChild(mirror);
   mirror.scrollTop = textarea.scrollTop;
+  // 镜像固定在视口外:量到的是镜像自身坐标系,必须平移回 textarea
+  // 在视口中的位置,否则菜单会被夹到视口左上角。
+  const mirrorRect = mirror.getBoundingClientRect();
   const spanRect = span.getBoundingClientRect();
   document.body.removeChild(mirror);
+  const offsetLeft = rect.left - mirrorRect.left;
+  const offsetTop = rect.top - mirrorRect.top;
   return {
-    left: spanRect.left,
-    top: spanRect.top,
-    bottom: spanRect.bottom,
+    left: spanRect.left + offsetLeft,
+    top: spanRect.top + offsetTop,
+    bottom: spanRect.bottom + offsetTop,
   };
 }
