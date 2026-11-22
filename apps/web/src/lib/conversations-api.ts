@@ -52,6 +52,22 @@ export type ConversationListParams = {
   cursor?: string;
 };
 
+/** 显式引用的资料类型(正文由后端按 id 解析,前端只发 id)。 */
+export type ContextRefKind = 'knowledge_document' | 'artifact' | 'sandbox_file';
+
+/** 消息上的一条引用快照(标题由服务端解析后回写)。 */
+export type ContextRefRead = {
+  kind: ContextRefKind;
+  id: string;
+  title?: string;
+};
+
+/** 发送时的一条引用:只有 kind + id,客户端不能伪造正文/标题。 */
+export type ContextRefInput = {
+  kind: ContextRefKind;
+  id: string;
+};
+
 export type ChatMessage = {
   id: string;
   conversation_id: string;
@@ -64,6 +80,10 @@ export type ChatMessage = {
    * 空数组 = 未指定,沿用全部启用 server 的现状。
    */
   mcp_server_ids?: string[];
+  /** 显式引用的资料(旧消息缺省 = 没引用)。 */
+  context_refs?: ContextRefRead[];
+  /** 显式引用的连接器 provider(旧消息缺省 = 不限制)。 */
+  connector_providers?: string[];
 };
 
 /** 发送方式:auto = 服务端自动分流(默认);chat = 直接回答;task = 作为任务。 */
@@ -82,6 +102,10 @@ export type SendMessageRequest = {
   skillId?: string;
   mcpServerIds?: string[];
   model?: string;
+  /** 内容引用:知识库文档 / 交付物 / 沙箱文件(最多 10 条) */
+  contextRefs?: ContextRefInput[];
+  /** 能力引用:连接器 provider(最多 10 个) */
+  connectorProviders?: string[];
 };
 
 function messageBody(request: SendMessageRequest) {
@@ -96,6 +120,12 @@ function messageBody(request: SendMessageRequest) {
       : undefined,
     // 未选模型时不落键,沿用会话默认/网关默认(§6.3 优先级)
     model: request.model || undefined,
+    context_refs: request.contextRefs?.length
+      ? request.contextRefs.map((ref) => ({ kind: ref.kind, id: ref.id }))
+      : undefined,
+    connector_providers: request.connectorProviders?.length
+      ? request.connectorProviders
+      : undefined,
   };
 }
 

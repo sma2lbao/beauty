@@ -12,6 +12,7 @@ import {
 
 import { DangerConfirmCard, PlanApprovalCard } from './approval-block';
 import { ChatEmptyState } from './chat-empty-state';
+import { describeSendError } from './composer/send-errors';
 import { ChatPendingBlock } from './chat-pending-block';
 import { AgentBlock, MessageBlock } from './message-bubbles';
 import { QuestionCard } from './question-card';
@@ -69,6 +70,7 @@ export function ChatMessageList({
     pendingWrites,
     eventLines,
     mcpCatalog,
+    connectorName,
     changeNewSessionWorkspace,
   } = queries;
 
@@ -150,6 +152,7 @@ export function ChatMessageList({
                   : 0
               }
               mcpCatalog={mcpCatalog}
+              connectorName={connectorName}
               rewrite={rewrite}
             />
           );
@@ -256,7 +259,9 @@ export function ChatMessageList({
         {run && status === 'awaiting_confirmation' ? (
           <DangerConfirmCard
             writes={pendingWrites}
-            onConfirm={(grant) => actions.confirmDanger(run.id, 'approve', grant)}
+            onConfirm={(grant) =>
+              actions.confirmDanger(run.id, 'approve', grant)
+            }
             onReject={() => actions.confirmDanger(run.id, 'reject')}
             busy={actions.busy}
           />
@@ -311,7 +316,7 @@ export function ChatMessageList({
 
         {error && !unauthorized ? (
           <p className="rounded-md border border-ha-danger-border bg-ha-danger-bg px-3 py-2.5 text-[12px] text-ha-danger">
-            {error instanceof Error ? error.message : '发送失败'}
+            {describeSendError(error)}
           </p>
         ) : null}
 

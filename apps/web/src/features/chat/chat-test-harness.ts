@@ -288,13 +288,28 @@ export function mcpModuleMock() {
   return { mcpApi: { list: vi.fn(async () => []) } };
 }
 
+/** 输入区 @ 连接器:默认没有任何已连接 provider。 */
+export function connectorModuleMock() {
+  return { connectorApi: { listProviders: vi.fn(async () => []) } };
+}
+
+/** 输入区 @ 知识库文档:默认空清单。 */
+export function knowledgeModuleMock() {
+  return { knowledgeApi: { documents: vi.fn(async () => []) } };
+}
+
 export async function workspaceModuleMock() {
   const actual = await vi.importActual<typeof import('@/lib/workspace-api')>(
     '@/lib/workspace-api',
   );
   return {
     ...actual,
-    workspaceApi: { workspaces: vi.fn(), defaultWorkspace: vi.fn() },
+    workspaceApi: {
+      workspaces: vi.fn(),
+      defaultWorkspace: vi.fn(),
+      // 输入区 @ 交付物:默认空列表,用例需要时再 mockResolvedValue
+      artifacts: vi.fn(async () => []),
+    },
   };
 }
 

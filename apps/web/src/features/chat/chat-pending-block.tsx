@@ -14,6 +14,8 @@ export function ChatPendingBlock({ pending }: { pending: ChatPending }) {
       <UserBlock
         text={pending.user}
         attachments={pending.attachments}
+        contextRefs={pending.contextRefs}
+        connectors={pending.connectors}
         mcpServers={pending.mcpServers}
       />
       {pending.chatTools.length > 0 ? (

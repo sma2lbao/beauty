@@ -1,10 +1,14 @@
-import { ArrowUp, Paperclip, X } from 'lucide-react';
+import { ArrowUp, Paperclip } from 'lucide-react';
 import { useRef } from 'react';
 
 import type { SendMode } from '@/lib/conversations-api';
 import { ApiError } from '@/lib/http';
 
+import { AttachmentRail } from './composer/attachment-rail';
 import { ComposerSuggestions } from './composer/composer-suggestions';
+import { useComposerContextSources } from './composer/context-providers';
+import { refKey } from './composer/context-kinds';
+import { RefRail } from './composer/ref-rail';
 import { SUGGESTIONS_ID, suggestionOptionId } from './composer/suggestion-ids';
 import { useComposerMenu } from './composer/use-composer-menu';
 import { useComposerSources } from './composer/use-composer-sources';
@@ -25,6 +29,13 @@ export type ChatComposerProps = {
   /** 本轮使用的模型 id;空串 = 默认模型(不指定,由网关路由)。 */
   selectedModel: string;
   onModelChange: (modelId: string) => void;
+  /** 本轮显式引用的连接器 provider(多选,能力绑定)。 */
+  selectedConnectors: string[];
+  onToggleConnector: (provider: string) => void;
+  connectorName: (provider: string) => string;
+  /** @ 菜单里交付物/沙箱文件的数据源;新会话没有沙箱时为空。 */
+  workspaceId: string | null;
+  sandboxId: string | null;
   /** /new:清空草稿与暂存附件后跳到新会话。 */
   onNewConversation: () => void;
 };
@@ -45,6 +56,11 @@ export function ChatComposer({
   onMcpChange,
   selectedModel,
   onModelChange,
+  selectedConnectors,
+  onToggleConnector,
+  connectorName,
+  workspaceId,
+  sandboxId,
   onNewConversation,
 }: ChatComposerProps) {
   const { draft, attachments, sending, canSend, setDraft, submit, stop } =
@@ -65,13 +81,15 @@ export function ChatComposer({
     error: attachmentError,
     fileInputRef,
     pick,
-    removeUploaded,
-    removeStaged,
   } = attachments;
   const attachmentCount = uploaded.length + staged.length;
+  // 知识库文档/交付物/沙箱文件与连接器:@ 菜单的另外四组来源
+  const contextSources = useComposerContextSources({ workspaceId, sandboxId });
   const { items, commands, submenus } = useComposerSources({
     skills,
     mcpServers: enabledMcpServers,
+    contextItems: contextSources.items,
+    selectedConnectors,
     models: models.map((model) => model.id),
     defaultModel,
     selectedSkill,
@@ -90,7 +108,16 @@ export function ChatComposer({
     submenus,
     onPickItem: (item) => {
       if (item.kind === 'skill') onSkillChange(item.id);
-      else onMcpChange(item.id);
+      else if (item.kind === 'mcp') onMcpChange(item.id);
+      else if (item.kind === 'connector') onToggleConnector(item.id);
+      else {
+        // 内容引用:结构化 kind+id 随发送提交;标题只用于芯片展示
+        stream.addContextRef({
+          kind: item.kind,
+          id: item.id,
+          title: item.label,
+        });
+      }
     },
     onRunCommand: (command) => {
       if (command.id === 'new') onNewConversation();
@@ -118,45 +145,19 @@ export function ChatComposer({
         }}
         className="mx-auto w-full max-w-[820px] rounded-[10px] border border-ha-border-strong bg-ha-panel p-3 transition-colors focus-within:border-ha-accent/70"
       >
-        {attachmentCount ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {uploaded.map((attachment) => (
-              <span
-                key={attachment.id}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
-              >
-                <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
-                <span className="truncate">{attachment.filename}</span>
-                <button
-                  type="button"
-                  aria-label={`移除附件 ${attachment.filename}`}
-                  onClick={() => removeUploaded(attachment.id)}
-                  className="text-ha-dim hover:text-ha-text"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            {staged.map((file, index) => (
-              <span
-                key={`staged-${index}-${file.name}`}
-                title="发送首条消息时上传"
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-dashed border-ha-border bg-ha-panel-2 px-2 py-1 font-mono text-[11px] text-ha-text-2"
-              >
-                <Paperclip className="h-3 w-3 shrink-0 text-ha-muted" />
-                <span className="truncate">{file.name}</span>
-                <button
-                  type="button"
-                  aria-label={`移除附件 ${file.name}`}
-                  onClick={() => removeStaged(index)}
-                  className="text-ha-dim hover:text-ha-text"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <RefRail
+          refs={stream.contextRefs}
+          items={contextSources.items}
+          selectedConnectors={selectedConnectors}
+          connectorName={connectorName}
+          onRemoveRef={(ref) => {
+            // 正文里的可读 token 一起删掉;token 已被改掉时只删引用本身
+            menu.removeToken(refKey(ref));
+            stream.removeContextRef(ref);
+          }}
+          onRemoveConnector={onToggleConnector}
+        />
+        <AttachmentRail attachments={attachments} />
         {attachmentError ? (
           <p className="mb-2 text-[12px] text-ha-danger" role="alert">
             {attachmentError}

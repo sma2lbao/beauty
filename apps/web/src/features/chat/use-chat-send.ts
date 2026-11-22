@@ -15,7 +15,7 @@ import {
   type ChatToolEvent,
 } from './stream-handlers';
 import type { ChatAttachments } from './use-chat-attachments';
-import type { ChatPending } from './use-chat-stream';
+import type { ChatContextRef, ChatPending } from './use-chat-stream';
 
 /**
  * 中断收口后补一次消息刷新的延迟:服务端在流结束时(finally)才把已产出片段
@@ -32,7 +32,11 @@ type UseChatSendOptions = {
   selectedSkill: string;
   selectedMcp: string;
   selectedModel: string;
+  selectedConnectors: string[];
   mcpServerName: (id: string) => string;
+  connectorName: (provider: string) => string;
+  contextRefs: ChatContextRef[];
+  setContextRefs: Dispatch<SetStateAction<ChatContextRef[]>>;
   setManualRun: (run: { conversationId: string; runId: string } | null) => void;
   queryClient: QueryClient;
   attachments: ChatAttachments;
@@ -61,7 +65,11 @@ export function useChatSend({
   selectedSkill,
   selectedMcp,
   selectedModel,
+  selectedConnectors,
   mcpServerName,
+  connectorName,
+  contextRefs,
+  setContextRefs,
   setManualRun,
   queryClient,
   attachments,
@@ -116,6 +124,11 @@ export function useChatSend({
         user: text,
         reply: '',
         attachments: selectedAttachments,
+        contextRefs,
+        connectors: selectedConnectors.map((id) => ({
+          id,
+          name: connectorName(id),
+        })),
         mcpServers: mcpServerIds.map((id) => ({
           id,
           name: mcpServerName(id),
@@ -162,13 +175,23 @@ export function useChatSend({
           skillId: selectedSkill || undefined,
           mcpServerIds,
           model: selectedModel || undefined,
+          contextRefs: contextRefs.length
+            ? contextRefs.map(({ kind, id }) => ({ kind, id }))
+            : undefined,
+          connectorProviders: selectedConnectors.length
+            ? selectedConnectors
+            : undefined,
         },
         streamHandlers,
       );
+      // 引用已随本轮落库;能力绑定(技能/MCP/连接器)继续保留给下一轮。
+      setContextRefs([]);
     } catch (failure) {
       const error = failure instanceof Error ? failure : new Error('发送失败');
       if (error.name === 'AbortError') {
         // 用户点「停止生成」:服务端在 finally 里落库已产出片段,撤掉临时气泡重拉即可
+        // 引用已随消息落库,不能留在输入区等下一轮重复引用
+        setContextRefs([]);
         if (conversationId) void settle(conversationId);
       } else if (
         opened ||
@@ -176,6 +199,8 @@ export function useChatSend({
       ) {
         // 流已开(或已判定断线)时用户消息与半截回复都在服务端:不还草稿(重发会
         // 重复),重拉已保存内容;延迟再刷一次兜住服务端落库与客户端 EOF 的竞态。
+        // 引用同样已落库,清空输入区的引用轨。
+        setContextRefs([]);
         setStreamError({ conversationId: conversationId ?? '', error });
         if (conversationId) {
           const id = conversationId;

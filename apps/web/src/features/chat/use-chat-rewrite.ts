@@ -83,6 +83,9 @@ export function useChatRewrite({
       user: userText,
       reply: '',
       attachments: [],
+      // 重写的引用来自原消息,由历史气泡展示;临时气泡不重复渲染引用芯片
+      contextRefs: [],
+      connectors: [],
       mcpServers: [],
       chatTools: [],
     });

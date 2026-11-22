@@ -31,6 +31,12 @@ vi.mock('@/lib/runs-api', async () =>
 vi.mock('@/lib/models-api', async () =>
   (await import('./chat-test-harness')).modelsModuleMock(),
 );
+vi.mock('@/lib/connector-api', async () =>
+  (await import('./chat-test-harness')).connectorModuleMock(),
+);
+vi.mock('@/lib/knowledge-api', async () =>
+  (await import('./chat-test-harness')).knowledgeModuleMock(),
+);
 vi.mock('@/features/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
 );
@@ -45,7 +51,6 @@ afterEach(() => {
   setRunEvents([]);
   setRunStreamConnected(true);
 });
-
 
 describe('读模型来源:事件优先、断线回落(A/B)', () => {
   it('SSE 连上时步骤与清单来自事件流,不再请求投影端点', async () => {

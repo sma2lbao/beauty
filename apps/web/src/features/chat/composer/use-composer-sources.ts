@@ -18,12 +18,15 @@ import { buildMentionItems } from './context-sources';
 import type {
   ComposerCommand,
   ComposerCommandId,
+  ComposerItem,
   ComposerSubmenu,
 } from './types';
 
 type SourceInput = {
   skills: SkillManifest[];
   mcpServers: MCPServer[];
+  contextItems: ComposerItem[];
+  selectedConnectors: string[];
   models: string[];
   defaultModel: string | null;
   selectedSkill: string;
@@ -38,6 +41,8 @@ type SourceInput = {
 export function useComposerSources({
   skills,
   mcpServers,
+  contextItems,
+  selectedConnectors,
   models,
   defaultModel,
   selectedSkill,
@@ -48,8 +53,23 @@ export function useComposerSources({
   attachmentCount,
 }: SourceInput) {
   const items = useMemo(
-    () => buildMentionItems(skills, mcpServers, selectedSkill, selectedMcp),
-    [skills, mcpServers, selectedSkill, selectedMcp],
+    () =>
+      buildMentionItems(
+        skills,
+        mcpServers,
+        contextItems,
+        selectedSkill,
+        selectedMcp,
+        selectedConnectors,
+      ),
+    [
+      skills,
+      mcpServers,
+      contextItems,
+      selectedSkill,
+      selectedMcp,
+      selectedConnectors,
+    ],
   );
 
   const commands = useMemo<ComposerCommand[]>(() => {

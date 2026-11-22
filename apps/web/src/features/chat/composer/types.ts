@@ -4,10 +4,19 @@ import type { LucideIcon } from 'lucide-react';
 export type ComposerCommandId =
   'new' | 'stop' | 'attach' | 'model' | 'mode' | 'skill' | 'mcp';
 
-/** @ 菜单里的能力项:技能或 MCP server。 */
+/** @ 菜单项的语义:能力绑定(技能/MCP/连接器)或内容引用。 */
+export type ComposerItemKind =
+  | 'skill'
+  | 'mcp'
+  | 'connector'
+  | 'knowledge_document'
+  | 'artifact'
+  | 'sandbox_file';
+
+/** @ 菜单里的一项:技能、MCP、连接器,或一条内容引用。 */
 export type ComposerItem = {
   key: string;
-  kind: 'skill' | 'mcp';
+  kind: ComposerItemKind;
   id: string;
   label: string;
   /** 插入正文的可读 token(不含尾随空格)。 */

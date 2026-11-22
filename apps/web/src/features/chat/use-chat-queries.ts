@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { useRunEvents } from '@/features/runs/use-run-events';
+import { useChatCapabilities } from './use-chat-capabilities';
 import type { Attachment, ChatMessage } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
-import { mcpApi } from '@/lib/mcp-api';
 import { modelsApi } from '@/lib/models-api';
 import type { Plan, Run, RunStatus } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
@@ -28,10 +28,7 @@ import {
 import { queryKeys } from '@/lib/query-keys';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
 
-/**
- * 会话工作台的数据层:工作区/会话/消息/附件/run/事件流,以及由它们派生的
- * 展示状态。只读 + 失效,不发请求副作用。
- */
+/** 会话工作台的数据层:工作区/会话/消息/附件/run/事件流及派生展示状态;只读 + 失效,不发请求副作用。 */
 export function useChatQueries(activeConversationId: string | null) {
   const queryClient = useQueryClient();
   const [, setSearchParams] = useSearchParams();
@@ -64,11 +61,14 @@ export function useChatQueries(activeConversationId: string | null) {
     queryFn: skillsApi.list,
     retry: false,
   });
-  const mcpQuery = useQuery({
-    queryKey: queryKeys.mcpServers,
-    queryFn: mcpApi.list,
-    retry: false,
-  });
+  const {
+    mcpServers,
+    enabledMcpServers,
+    mcpServerName,
+    mcpCatalog,
+    connectorProviders,
+    connectorName,
+  } = useChatCapabilities();
   // 可选模型目录(C1 §6.3):只读展示,选择器与顶栏共用同一份缓存;
   // 拉取失败不阻塞对话(退化成只有「默认模型」一项),所以不进 queryError。
   const modelsQuery = useQuery({
@@ -78,15 +78,6 @@ export function useChatQueries(activeConversationId: string | null) {
     staleTime: 60_000,
   });
   const conversations = conversationsQuery.data ?? [];
-  // 选择器只列启用的 server;历史消息/URL 里可能引用已停用的 id,用全量列表展示名字
-  const mcpServers = mcpQuery.data ?? [];
-  const enabledMcpServers = mcpServers.filter((server) => server.enabled);
-  const mcpServerName = (id: string) =>
-    mcpServers.find((server) => server.id === id)?.name ?? id;
-  const mcpCatalog = mcpServers.map((server) => ({
-    id: server.id,
-    name: server.name,
-  }));
 
   const conversationQuery = useQuery({
     queryKey: queryKeys.conversation(activeConversationId as string),
@@ -284,21 +275,27 @@ export function useChatQueries(activeConversationId: string | null) {
   const statusSeq = lastStatusEventSeq(events);
   useEffect(() => {
     if (!activeRunId || statusSeq === 0) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.run(activeRunId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.run(activeRunId),
+    });
   }, [statusSeq, activeRunId, queryClient]);
 
   // 计划与「等待审批」是同一事务写入的:事件到了就重取计划,审批卡片不会只剩外壳。
   const planSeq = lastPlanEventSeq(events);
   useEffect(() => {
     if (!activeRunId || planSeq === 0) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.plan(activeRunId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.plan(activeRunId),
+    });
   }, [planSeq, activeRunId, queryClient]);
 
   // stream.end:服务端发完最后一条事件就收尾了,这里补一次刷新(状态终值、
   // 落库的 assistant 消息、会话标题),不依赖下一条事件来触发。
   useEffect(() => {
     if (!activeRunId || !ended) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.run(activeRunId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.run(activeRunId),
+    });
     if (activeConversationId) {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.conversationMessages(activeConversationId),
@@ -360,6 +357,8 @@ export function useChatQueries(activeConversationId: string | null) {
     enabledMcpServers,
     mcpServerName,
     mcpCatalog,
+    connectorProviders,
+    connectorName,
     conversation,
     messages,
     attachmentsByMessage,

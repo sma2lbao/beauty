@@ -3,7 +3,7 @@
  * 以及完成态消息(按 run 补充已执行步数/运行摘要)。
  * 附件下载:点击即流式取回 blob 触发浏览器下载,失败静默(可重点)。
  */
-import { FileText, Plug, Sparkles } from 'lucide-react';
+import { FileText, Package, Plug, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
@@ -13,6 +13,10 @@ import { conversationsApi } from '@/lib/conversations-api';
 import { clockTime, runMetaLine } from '@/lib/presentation';
 import type { Run } from '@/lib/runs-api';
 
+import {
+  CONTEXT_KIND_ICONS,
+  CONTEXT_KIND_LABELS,
+} from './composer/context-kinds';
 import { EditMessageForm, MessageActionRow } from './message-actions';
 
 /** 最后一轮消息才挂上的操作(编辑重发 / 重新生成),busy 时全部禁用。 */
@@ -29,12 +33,18 @@ export function UserBlock({
   text,
   createdAt,
   attachments = [],
+  contextRefs = [],
+  connectors = [],
   mcpServers = [],
   actions,
 }: {
   text: string;
   createdAt?: string;
   attachments?: Attachment[];
+  /** 本轮显式引用的资料(知识库/交付物/沙箱文件)。 */
+  contextRefs?: { kind: string; id: string; title?: string }[];
+  /** 本轮显式引用的连接器 provider。 */
+  connectors?: { id: string; name: string }[];
   mcpServers?: { id: string; name: string }[];
   /** 仅最后一轮用户消息传入:复制 / 编辑重发,就地 textarea 与错误。 */
   actions?: {
@@ -70,6 +80,35 @@ export function UserBlock({
           {text}
         </p>
       )}
+      {contextRefs.length || connectors.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {contextRefs.map((ref) => {
+            const Icon =
+              CONTEXT_KIND_ICONS[ref.kind as keyof typeof CONTEXT_KIND_ICONS];
+            return (
+              <span
+                key={`${ref.kind}:${ref.id}`}
+                title={`${CONTEXT_KIND_LABELS[ref.kind as keyof typeof CONTEXT_KIND_LABELS] ?? '引用'} · ${ref.title || ref.id}`}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-0.5 font-mono text-[11px] text-ha-text-2"
+              >
+                {Icon ? (
+                  <Icon className="h-3 w-3 shrink-0 text-ha-muted" />
+                ) : null}
+                <span className="truncate">{ref.title || ref.id}</span>
+              </span>
+            );
+          })}
+          {connectors.map((connector) => (
+            <span
+              key={`connector:${connector.id}`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ha-border bg-ha-panel-2 px-2 py-0.5 font-mono text-[11px] text-ha-text-2"
+            >
+              <Package className="h-3 w-3 shrink-0 text-ha-muted" />
+              <span className="truncate">连接器 · {connector.name}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {mcpServers.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {mcpServers.map((server) => (
@@ -182,6 +221,7 @@ export function MessageBlock({
   steps,
   attachments,
   mcpCatalog = [],
+  connectorName,
   rewrite,
 }: {
   message: ChatMessage;
@@ -189,6 +229,8 @@ export function MessageBlock({
   steps?: number;
   attachments?: Attachment[];
   mcpCatalog?: { id: string; name: string }[];
+  /** provider → 展示名;历史消息只存 provider key,取不到时退回 key。 */
+  connectorName?: (provider: string) => string;
   /** 最后一轮消息的操作(编辑重发/重新生成);其余消息不传。 */
   rewrite?: MessageRewriteActions;
 }) {
@@ -198,11 +240,17 @@ export function MessageBlock({
       id,
       name: mcpCatalog.find((server) => server.id === id)?.name ?? id,
     }));
+    const connectors = (message.connector_providers ?? []).map((provider) => ({
+      id: provider,
+      name: connectorName?.(provider) ?? provider,
+    }));
     return (
       <UserBlock
         text={message.content}
         createdAt={message.created_at}
         attachments={attachments}
+        contextRefs={message.context_refs}
+        connectors={connectors}
         mcpServers={mcpServers}
         actions={
           rewrite?.onEdit

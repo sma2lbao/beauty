@@ -31,6 +31,12 @@ vi.mock('@/lib/runs-api', async () =>
 vi.mock('@/lib/models-api', async () =>
   (await import('./chat-test-harness')).modelsModuleMock(),
 );
+vi.mock('@/lib/connector-api', async () =>
+  (await import('./chat-test-harness')).connectorModuleMock(),
+);
+vi.mock('@/lib/knowledge-api', async () =>
+  (await import('./chat-test-harness')).knowledgeModuleMock(),
+);
 vi.mock('@/features/runs/use-run-events', async () =>
   (await import('./chat-test-harness')).useRunEventsModuleMock(),
 );
@@ -62,12 +68,8 @@ describe('ChatPage 编辑重发 / 重新生成(interaction-closure §2.2)', () =
 
     expect(await screen.findByText('好,已加上提醒')).toBeInTheDocument();
     // 两轮历史里只有 m3 有编辑重发、m4 有重新生成(历史 user/assistant 不挂操作)
-    expect(
-      screen.getAllByRole('button', { name: '编辑重发' }),
-    ).toHaveLength(1);
-    expect(
-      screen.getAllByRole('button', { name: '重新生成' }),
-    ).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '编辑重发' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '重新生成' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: '复制' })).toHaveLength(2);
   });
 

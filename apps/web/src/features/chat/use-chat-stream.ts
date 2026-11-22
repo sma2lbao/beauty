@@ -2,7 +2,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
-import type { Attachment, SendMode } from '@/lib/conversations-api';
+import type {
+  Attachment,
+  ContextRefInput,
+  SendMode,
+} from '@/lib/conversations-api';
 import type { ToolCallMeta } from '@/lib/tool-meta';
 
 import type { ChatToolEvent } from './stream-handlers';
@@ -17,12 +21,19 @@ export type ChatToolCall = {
   ok: boolean;
 } & ToolCallMeta;
 
+/** 本轮输入区挂上的内容引用(带本地标题,展示芯片用)。 */
+export type ChatContextRef = ContextRefInput & { title?: string };
+
 /** 流式发送期间临时气泡的内容。 */
 export type ChatPending = {
   conversationId: string;
   user: string;
   reply: string;
   attachments: Attachment[];
+  /** 本次发送显式引用的内容资料(展示 chip 用;不选为空数组) */
+  contextRefs: ChatContextRef[];
+  /** 本次发送显式引用的连接器 provider(展示 chip 用;不选为空数组) */
+  connectors: { id: string; name: string }[];
   /** 本次发送显式引用的 MCP server(展示 chip 用;不选为空数组) */
   mcpServers: { id: string; name: string }[];
   /** 会话内只读工具调用(tool 事件流式累积;done 后随消息一起消失) */
@@ -52,7 +63,10 @@ type UseChatStreamOptions = {
    * 沿用会话默认/网关默认;非空时随建会话与流式消息一起带上。
    */
   selectedModel: string;
+  /** 本轮显式引用的连接器 provider(能力绑定,来自页面状态)。 */
+  selectedConnectors: string[];
   mcpServerName: (id: string) => string;
+  connectorName: (provider: string) => string;
   /** 失效会话消息/附件/会话列表(由数据层提供)。 */
   settleConversation: (conversationId: string) => Promise<void>;
   setManualRun: (run: { conversationId: string; runId: string } | null) => void;
@@ -70,7 +84,9 @@ export function useChatStream({
   selectedSkill,
   selectedMcp,
   selectedModel,
+  selectedConnectors,
   mcpServerName,
+  connectorName,
   settleConversation,
   setManualRun,
 }: UseChatStreamOptions) {
@@ -79,6 +95,21 @@ export function useChatStream({
   const conversationParam = searchParams.get('conversation');
 
   const [draft, setDraft] = useState('');
+  // 内容引用(知识库/交付物/沙箱文件):正文 token 只是可读回声,
+  // 提交时只发结构化 kind+id;开流前失败保留,发送成功后清空。
+  const [contextRefs, setContextRefs] = useState<ChatContextRef[]>([]);
+  const addContextRef = (ref: ChatContextRef) =>
+    setContextRefs((previous) =>
+      previous.some((item) => item.kind === ref.kind && item.id === ref.id)
+        ? previous
+        : [...previous, ref],
+    );
+  const removeContextRef = (ref: ContextRefInput) =>
+    setContextRefs((previous) =>
+      previous.filter(
+        (item) => !(item.kind === ref.kind && item.id === ref.id),
+      ),
+    );
   // 附件选择/上传/暂存(新会话没有 id 时先暂存,发送时随建会话上传)
   const attachments = useChatAttachments(activeConversationId);
   // 瞬时态都带上会话 id:切走再切回不会把上一个会话的流/错误/气泡串过来
@@ -217,7 +248,11 @@ export function useChatStream({
     selectedSkill,
     selectedMcp,
     selectedModel,
+    selectedConnectors,
     mcpServerName,
+    connectorName,
+    contextRefs,
+    setContextRefs,
     setManualRun,
     queryClient,
     attachments,
@@ -245,6 +280,10 @@ export function useChatStream({
     draft,
     setDraft,
     attachments,
+    contextRefs,
+    addContextRef,
+    removeContextRef,
+    setContextRefs,
     sending,
     canSend,
     submit,

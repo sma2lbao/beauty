@@ -110,6 +110,31 @@ export function detectCommand(
   return { start: value.length - trimmed.length, query };
 }
 
+/**
+ * 删除一段 token 区间(引用轨芯片删除时同步):连尾随空格一起删,
+ * 后面的区间随之前移。找不到该 ref 时返回 null。
+ */
+export function removeTokenRange(
+  value: string,
+  ranges: TokenRange[],
+  refId: string,
+): { value: string; ranges: TokenRange[] } | null {
+  const range = ranges.find((item) => item.refId === refId);
+  if (!range) return null;
+  const end = value[range.end] === ' ' ? range.end + 1 : range.end;
+  const removed = end - range.start;
+  return {
+    value: value.slice(0, range.start) + value.slice(end),
+    ranges: ranges
+      .filter((item) => item.refId !== refId)
+      .map((item) =>
+        item.start >= end
+          ? { ...item, start: item.start - removed, end: item.end - removed }
+          : item,
+      ),
+  };
+}
+
 /** 标题超过 32 字截断为前 31 字 + 省略号。 */
 export function truncateTitle(title: string, max = 32): string {
   const chars = Array.from(title);

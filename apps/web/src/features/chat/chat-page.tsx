@@ -51,6 +51,14 @@ export function ChatPage() {
   } | null>(null);
   const [artifactFor, setArtifactFor] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  // 本轮显式引用的连接器 provider(能力绑定,多选;不随发送清空)。
+  const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
+  const toggleConnector = (provider: string) =>
+    setSelectedConnectors((previous) =>
+      previous.includes(provider)
+        ? previous.filter((item) => item !== provider)
+        : [...previous, provider],
+    );
 
   // 会话选择以 URL 为唯一来源;?skill/&mcp 是默认值,手动切换后以本地选择为准
   const activeConversationId = newFlag ? null : conversationParam;
@@ -81,7 +89,9 @@ export function ChatPage() {
     selectedSkill,
     selectedMcp,
     selectedModel,
+    selectedConnectors,
     mcpServerName: queries.mcpServerName,
+    connectorName: queries.connectorName,
     settleConversation: queries.settleConversation,
     setManualRun: queries.setManualRun,
   });
@@ -89,6 +99,8 @@ export function ChatPage() {
   const startNewConversation = () => {
     stream.setDraft('');
     stream.attachments.clear();
+    stream.setContextRefs([]);
+    setSelectedConnectors([]);
     const params = new URLSearchParams();
     if (queries.activeWorkspaceId) {
       params.set('workspace', queries.activeWorkspaceId);
@@ -164,6 +176,11 @@ export function ChatPage() {
               onMcpChange={setMcpOverride}
               selectedModel={selectedModel}
               onModelChange={changeModel}
+              selectedConnectors={selectedConnectors}
+              onToggleConnector={toggleConnector}
+              connectorName={queries.connectorName}
+              workspaceId={queries.activeWorkspaceId}
+              sandboxId={sandbox.data?.id ?? null}
               onNewConversation={startNewConversation}
             />
           )}

@@ -19,8 +19,10 @@ function matches(query: string, ...fields: (string | undefined)[]) {
 export function buildMentionItems(
   skills: SkillManifest[],
   servers: MCPServer[],
+  contextItems: ComposerItem[],
   selectedSkill: string,
   selectedMcp: string,
+  selectedConnectors: string[],
 ): ComposerItem[] {
   const skillItems = skills.map((skill) => ({
     key: `skill:${skill.id}`,
@@ -42,7 +44,18 @@ export function buildMentionItems(
     icon: Plug,
     current: server.id === selectedMcp,
   }));
-  return [...skillItems, ...mcpItems];
+  const connectorItems = contextItems
+    .filter((item) => item.kind === 'connector')
+    .map((item) => ({
+      ...item,
+      current: selectedConnectors.includes(item.id),
+    }));
+  return [
+    ...skillItems,
+    ...mcpItems,
+    ...connectorItems,
+    ...contextItems.filter((item) => item.kind !== 'connector'),
+  ];
 }
 
 /** 过滤并分组;前缀命中的排前面,组内保持数据源顺序。 */
@@ -61,9 +74,21 @@ export function filterMentionGroups(
   const groups: ComposerGroup[] = [
     { key: 'skills', label: '技能', options: [] },
     { key: 'mcp', label: 'MCP 服务', options: [] },
+    { key: 'connectors', label: '连接器', options: [] },
+    { key: 'knowledge', label: '知识库文档', options: [] },
+    { key: 'artifacts', label: '交付物', options: [] },
+    { key: 'sandbox', label: '沙箱文件', options: [] },
   ];
+  const groupOf: Record<string, number> = {
+    skill: 0,
+    mcp: 1,
+    connector: 2,
+    knowledge_document: 3,
+    artifact: 4,
+    sandbox_file: 5,
+  };
   for (const item of sorted) {
-    const group = item.kind === 'skill' ? groups[0] : groups[1];
+    const group = groups[groupOf[item.kind] ?? 0];
     group.options.push({
       key: item.key,
       label: item.label,

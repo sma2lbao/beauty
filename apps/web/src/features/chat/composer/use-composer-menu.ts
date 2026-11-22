@@ -17,6 +17,7 @@ import {
   detectCommand,
   detectMention,
   remapRanges,
+  removeTokenRange,
   type TokenRange,
 } from './mention-ranges';
 import type {
@@ -40,12 +41,7 @@ type ComposerMenuInput = {
   onPickSubmenuOption: (commandId: ComposerCommandId, value: string) => void;
 };
 
-/**
- * @ 与 / 共用的 suggestion 状态机。
- *
- * 文本仍是受控纯文本:token 只用于插入可读文本与维护区间;
- * 真正提交的是页面级 selectedSkill / selectedMcp,不从正文解析。
- */
+/** @ 与 / 共用的 suggestion 状态机:正文仍是受控纯文本,token 只用于插入可读文本与维护区间;真正提交的是页面级能力绑定与 context refs,不从正文解析。 */
 export function useComposerMenu({
   textareaRef,
   value,
@@ -199,6 +195,19 @@ export function useComposerMenu({
     onChange(next);
     return nextCaret;
   }, [caret, onChange, triggerStart, value]);
+
+  /** 删除正文里的一段 token(引用轨芯片删除时同步)。 */
+  const removeToken = useCallback(
+    (refId: string) => {
+      const next = removeTokenRange(value, tokensRef.current, refId);
+      if (!next) return;
+      tokensRef.current = next.ranges;
+      previousValueRef.current = next.value;
+      onChange(next.value);
+      close();
+    },
+    [close, onChange, value],
+  );
 
   const choose = useCallback(
     (option: ComposerOption) => {
@@ -382,6 +391,7 @@ export function useComposerMenu({
     handleKeyDown,
     handleSelect,
     choose,
+    removeToken,
     setActiveKey,
   };
 }
