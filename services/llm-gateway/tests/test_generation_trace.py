@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -110,6 +111,26 @@ def test_ingested_cost_prices_cached_tokens_at_cache_rate() -> None:
     assert cost["input"] == pytest.approx(200 * 2.8e-07 + 800 * 2.8e-08)
     assert cost["output"] == pytest.approx(500 * 4.2e-07)
     assert cost["total"] == pytest.approx(cost["input"] + cost["output"])
+
+
+def test_quantize_usd_rounds_to_micro_usd() -> None:
+    """金额口径是微美元(落库 Numeric(12,6)):计价出口不能留 9 位尾数。"""
+    assert generation_trace.quantize_usd(0.000240804) == 0.000241
+    assert generation_trace.quantize_usd(0.0002404) == 0.00024
+    assert generation_trace.quantize_usd(0.0) == 0.0
+
+
+def test_bill_quantizes_cost_to_stored_precision() -> None:
+    """_bill 写进 UsageOut 的成本已按微美元取整:account 的金额契约直接通过。"""
+    # 1000*2.8e-07 + 1*4.2e-07 = 0.00028042(8 位尾数),取整后 0.00028
+    usage = UsageOut(prompt_tokens=1000, completion_tokens=1, total_tokens=1001)
+    raw = generation_trace.ingested_cost(DEEPSEEK, usage)
+    assert raw is not None
+    billed = completion_response._bill(usage, DEEPSEEK)
+    assert billed is not None
+    assert billed.cost_usd is not None
+    assert billed.cost_usd == 0.00028
+    assert Decimal(str(billed.cost_usd)).as_tuple().exponent >= -6
 
 
 def test_finish_generation_exports_cache_token_attributes() -> None:

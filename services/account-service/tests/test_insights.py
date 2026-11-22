@@ -124,6 +124,24 @@ def test_usage_summary_aggregates_cost_and_billing_source(tmp_path: Path) -> Non
     }
 
 
+def test_usage_event_quantizes_cost_to_stored_precision(tmp_path: Path) -> None:
+    """网关浮点尾数(0.000240804)按 Numeric(12,6) 收敛,不能判 422。
+
+    422 会让 outbox 把整条用量事件重试到 failed,已经花掉的 token 永久丢账;
+    列本身就是 6 位小数,取整只改表示精度、不改金额口径。
+    """
+    with _client(tmp_path) as client:
+        resp = client.post(
+            "/v1/usage/events",
+            json={"model": "m", "cost_usd": 0.000240804},
+            headers=INTERNAL,
+        )
+        assert resp.status_code == 201
+        summary = client.get("/v1/usage/summary", headers=ACCOUNT).json()
+    assert summary["month_cost_usd"] == pytest.approx(0.000241)
+    assert summary["unpriced_events"] == 0
+
+
 def test_usage_event_id_is_idempotent(tmp_path: Path) -> None:
     """P0-3:outbox 至少一次投递 → 同一 event_id 只落一条、只计费一次。"""
     body = {

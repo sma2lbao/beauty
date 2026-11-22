@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import litellm
@@ -35,6 +36,20 @@ _STATUS_LIMIT = 500
 
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+#: 平台金额精度:usage_events.cost_usd 是 Numeric(12,6),计价出口按微美元取整。
+USD_QUANTUM = Decimal("0.000001")
+
+
+def quantize_usd(value: float) -> float:
+    """把估算金额收敛到微美元(四舍五入),与落库精度一致。
+
+    tokens × 单价天然会产出 0.000240804 这种 9 位尾数;原样透传到 account 会被
+    金额契约(Numeric(12,6))判非法,outbox 重投也永远过不去。精度由计价源头
+    (本模块)定义,下游只按同一口径持久化与聚合。
+    """
+    return float(Decimal(str(value)).quantize(USD_QUANTUM, rounding=ROUND_HALF_UP))
 
 
 def ingested_cost(model: str, usage: UsageOut) -> dict[str, float] | None:

@@ -7,7 +7,7 @@ from typing import Any
 from llm_gateway import metrics
 from llm_gateway.schemas.completions import ToolCall, ToolFunction, UsageOut
 from llm_gateway.services.completion_request import _get
-from llm_gateway.services.generation_trace import ingested_cost
+from llm_gateway.services.generation_trace import ingested_cost, quantize_usd
 
 
 def _normalize_tool_calls(message: Any) -> list[ToolCall]:
@@ -49,13 +49,16 @@ def _bill(
     billing_source 由入口层按 BYOK 解析结果给:平台 key 与账号 key 都按同一
     价目表算成本,区别只在谁承担——用账号 key 的调用成本仍要落库(账号用量页
     需要它),但平台侧应把它视为"非平台支出"。
+
+    契约里的金额按微美元取整(与 usage_events 的 Numeric(12,6) 同口径);
+    Langfuse 的成本明细保留计价原始值,便于核对价目表。
     """
     if usage is None:
         return None
     cost = ingested_cost(model, usage)
     return usage.model_copy(
         update={
-            "cost_usd": cost["total"] if cost is not None else None,
+            "cost_usd": quantize_usd(cost["total"]) if cost is not None else None,
             "billing_source": billing_source,
         }
     )

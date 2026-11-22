@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+#: usage_events.cost_usd 存 Numeric(12,6):平台金额口径是微美元(6 位小数)。
+_USD_PLACES = 6
+_USD_QUANTUM = Decimal("0.000001")
 
 
 class UsageByModel(BaseModel):
@@ -41,9 +45,32 @@ class UsageEventCreate(BaseModel):
     completion_tokens: int = Field(default=0, ge=0)
     #: 网关按价目表估算的美元成本;None = 未计价,不要补 0
     cost_usd: Decimal | None = Field(
-        default=None, ge=0, max_digits=12, decimal_places=6
+        default=None, ge=0, max_digits=12, decimal_places=_USD_PLACES
     )
     billing_source: Literal["platform", "byok"] = "platform"
+
+    @field_validator("cost_usd", mode="before")
+    @classmethod
+    def _quantize_cost(cls, value: object) -> object:
+        """超精度金额按存储口径收敛,而不是整条投递判 422。
+
+        网关计价是 tokens × 单价,天然会出现 0.000240804 这种 9 位尾数,
+        而列是 Numeric(12,6)——数据库本来也会四舍五入到 6 位。在这里先取整
+        只改表示精度、不改金额口径;若直接拒绝,outbox 会把整条事件重试到
+        failed,已经花掉的 token 就永久丢账(P0-3 的意义正是「一定记上」)。
+        """
+        if value is None or isinstance(value, bool):
+            return value
+        try:
+            decimal = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return value  # 交给 pydantic 报「不是合法小数」
+        if not decimal.is_finite() or decimal.as_tuple().exponent >= -_USD_PLACES:
+            return decimal
+        try:
+            return decimal.quantize(_USD_QUANTUM, rounding=ROUND_HALF_UP)
+        except InvalidOperation:  # 超出 Decimal 上下文精度:让后续约束去拒绝
+            return decimal
 
 
 class UsageQuota(BaseModel):

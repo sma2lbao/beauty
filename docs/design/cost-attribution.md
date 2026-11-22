@@ -18,6 +18,7 @@
   - `llm_gateway/__init__.py` 设 `LITELLM_LOCAL_MODEL_COST_MAP=True`，价目表随包分发、零网络；
   - 未知模型返回 `None`（宁缺勿错价）。
 - 回写：`services/llm-gateway/llm_gateway/services/completion_response.py` 的 `_bill(usage, model, *, billing_source)` 把 `cost["total"]` 写进 `UsageOut.cost_usd`，并补 `billing_source`；未知模型保持空。
+- 精度：平台金额口径是**微美元（6 位小数）**——`usage_events.cost_usd` 是 `Numeric(12,6)`。`_bill()` 出口经 `generation_trace.quantize_usd()` 四舍五入到 6 位（Langfuse 成本明细仍记原始估算，便于核对价目表）；否则 `tokens × 单价` 产生的 `0.000240804` 这类 9 位尾数会被 account 的金额契约判 422。
 - 来源判定：`api/deps.py` 的 `resolve_byok_key()` 解析到账号 BYOK key 时 `source="byok"`，否则回退平台 key 为 `"platform"`；`api/v1/completions.py` 把它传给 `complete()/stream()`。
 - 对外契约：`CompletionResponse.usage` 与流式 done 片的 `usage` 都带 `cost_usd` / `billing_source`（见 `schemas/completions.py` 的 `UsageOut`）。
 
@@ -30,7 +31,7 @@
 ## 4. 落库与聚合（account-service）
 
 - 表：`account/models/account.py` 的 `UsageEvent` 增 `cost_usd Numeric(12,6) NULL`、`billing_source String(16) NOT NULL DEFAULT 'platform'`；迁移 `migrations/versions/e5b2d9c4a7f1_usage_cost.py`。
-- 写入：`POST /v1/usage/events` 的 `UsageEventCreate` 接受 `cost_usd >= 0`（拒绝负成本）与 `billing_source` 枚举；`services/insights.py` 的 `record_usage()` 原样落库。
+- 写入：`POST /v1/usage/events` 的 `UsageEventCreate` 接受 `cost_usd >= 0`（拒绝负成本）与 `billing_source` 枚举；超过 6 位小数的金额在契约层按同一口径四舍五入（不判 422，避免 outbox 重投到 `failed` 永久丢账）；`services/insights.py` 的 `record_usage()` 原样落库。
 - 聚合：`GET /v1/usage/summary` 返回 `today_cost_usd` / `month_cost_usd` / `unpriced_events`，以及 `by_model[].cost_usd` / `by_model[].unpriced_events`；金额用 `Decimal` 求和后转 float，按模型仍以 tokens 降序。
 - 口径：今日/本月按 UTC 自然日与自然月切分，与本文件其他用量指标一致。
 
