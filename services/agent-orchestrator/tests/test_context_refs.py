@@ -471,3 +471,82 @@ def test_message_rejects_when_context_refs_disabled(tmp_path) -> None:
         assert resp.json()["code"] == "context_ref.unavailable"
         assert knowledge.calls == []
         assert fake.calls == []
+
+
+# ---- 消息引用(P2):同一会话的历史消息 ----
+
+def test_message_ref_injects_earlier_reply_of_same_conversation(tmp_path) -> None:
+    settings = _settings(tmp_path, llm_enabled=True)
+    fake = FakeLLM(["上一轮结论:先复现再修复", "本轮沿用上一轮结论"])
+    with _client(settings, FakeKnowledgeContent(), fake) as client:
+        conversation = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        first = client.post(
+            f"/api/v1/conversations/{conversation}/messages",
+            json={"content": "上一轮结论是什么", "mode": "chat"},
+            headers=ACCOUNT,
+        )
+        assert first.status_code == 201, first.text
+        first_id = first.json()["message"]["id"]
+
+        resp = client.post(
+            f"/api/v1/conversations/{conversation}/messages",
+            json={
+                "content": "按上一轮结论继续",
+                "mode": "chat",
+                "context_refs": [{"kind": "message", "id": first_id}],
+            },
+            headers=ACCOUNT,
+        )
+        assert resp.status_code == 201, resp.text
+
+        # 被引用消息的正文进引用块(第二轮调用的最后一条 user 文本)
+        second_user_text = fake.calls[-1][-1]["content"]
+        assert second_user_text.startswith("按上一轮结论继续")
+        assert "## 引用资料" in second_user_text
+        assert "上一轮结论是什么" in second_user_text
+
+        messages = client.get(
+            f"/api/v1/conversations/{conversation}/messages", headers=ACCOUNT
+        ).json()
+        # 列表按时间正序:user1 / assistant1 / user2
+        second = next(m for m in messages if m["content"] == "按上一轮结论继续")
+        refs = second["context_refs"]
+        assert refs == [
+            {"kind": "message", "id": first_id, "title": "你: 上一轮结论是什么"}
+        ]
+
+
+def test_message_ref_rejects_other_conversation_without_persisting(tmp_path) -> None:
+    settings = _settings(tmp_path, llm_enabled=True)
+    fake = FakeLLM(["只该被调用一次"])
+    with _client(settings, FakeKnowledgeContent(), fake) as client:
+        mine = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        other = client.post(
+            "/api/v1/conversations", json={}, headers=ACCOUNT
+        ).json()["id"]
+        first = client.post(
+            f"/api/v1/conversations/{other}/messages",
+            json={"content": "别的会话里的内容", "mode": "chat"},
+            headers=ACCOUNT,
+        )
+        assert first.status_code == 201, first.text
+        stolen_id = first.json()["message"]["id"]
+
+        resp = client.post(
+            f"/api/v1/conversations/{mine}/messages",
+            json={
+                "content": "引用别人的消息",
+                "mode": "chat",
+                "context_refs": [{"kind": "message", "id": stolen_id}],
+            },
+            headers=ACCOUNT,
+        )
+        # 跨会话按"不存在"处理,不泄漏消息是否存在
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "context_ref.not_found"
+        # 只有"别的会话"那条消息调用过模型,被拒的这次没有
+        assert len(fake.calls) == 1

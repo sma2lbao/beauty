@@ -53,7 +53,8 @@ export type ConversationListParams = {
 };
 
 /** 显式引用的资料类型(正文由后端按 id 解析,前端只发 id)。 */
-export type ContextRefKind = 'knowledge_document' | 'artifact' | 'sandbox_file';
+export type ContextRefKind =
+  'knowledge_document' | 'artifact' | 'sandbox_file' | 'message';
 
 /** 消息上的一条引用快照(标题由服务端解析后回写)。 */
 export type ContextRefRead = {

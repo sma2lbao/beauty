@@ -78,7 +78,9 @@ class AttachmentRead(BaseModel):
 
 #: 内容引用的类别(P1):知识库文档 / 交付物 / 沙箱文件。
 #: 技能与 MCP 是"能力绑定",走 skill_id / mcp_server_ids,不落在这里。
-ContextRefKind = Literal["knowledge_document", "artifact", "sandbox_file"]
+ContextRefKind = Literal[
+    "knowledge_document", "artifact", "sandbox_file", "message"
+]
 
 
 class ContextRefCreate(BaseModel):

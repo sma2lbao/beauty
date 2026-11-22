@@ -1,6 +1,7 @@
 import {
   Cpu,
   Paperclip,
+  Package,
   Plug,
   Plus,
   Sparkles,
@@ -10,6 +11,7 @@ import {
 import { useMemo } from 'react';
 
 import type { SendMode } from '@/lib/conversations-api';
+import type { ConnectorProvider } from '@/lib/connector-api';
 import type { MCPServer } from '@/lib/mcp-api';
 import type { SkillManifest } from '@/lib/skills-api';
 
@@ -27,6 +29,7 @@ type SourceInput = {
   mcpServers: MCPServer[];
   contextItems: ComposerItem[];
   selectedConnectors: string[];
+  connectorProviders: ConnectorProvider[];
   models: string[];
   defaultModel: string | null;
   selectedSkill: string;
@@ -43,6 +46,7 @@ export function useComposerSources({
   mcpServers,
   contextItems,
   selectedConnectors,
+  connectorProviders,
   models,
   defaultModel,
   selectedSkill,
@@ -138,11 +142,25 @@ export function useComposerSources({
         disabled: mcpServers.length === 0 && !selectedMcp,
         disabledReason: '暂无启用的 MCP 服务',
       },
+      {
+        id: 'connector',
+        label: '/connector',
+        description: sending
+          ? '选择连接器(对新任务生效)'
+          : '选择连接器(可多选)',
+        icon: Package,
+        kind: 'capability',
+        disabled:
+          connectorProviders.length === 0 && selectedConnectors.length === 0,
+        disabledReason: '暂无已连接的连接器',
+      },
     ];
   }, [
     attachmentCount,
+    connectorProviders.length,
     mcpServers.length,
     models.length,
+    selectedConnectors.length,
     selectedMcp,
     selectedSkill,
     sending,
@@ -243,11 +261,36 @@ export function useComposerSources({
           })),
         ],
       },
+      connector: {
+        commandId: 'connector',
+        title: '选择连接器(可多选)',
+        sticky: true,
+        options: [
+          {
+            key: 'connector:',
+            label: '不使用连接器',
+            description: '清空已选连接器',
+            icon: Package,
+            value: '',
+            current: selectedConnectors.length === 0,
+          },
+          ...connectorProviders.map((provider) => ({
+            key: `connector:${provider.provider}`,
+            label: provider.display_name || provider.provider,
+            description: `${provider.tools.length} 个工具`,
+            icon: Package,
+            value: provider.provider,
+            current: selectedConnectors.includes(provider.provider),
+          })),
+        ],
+      },
     };
   }, [
+    connectorProviders,
     defaultModel,
     mcpServers,
     models,
+    selectedConnectors,
     selectedMcp,
     selectedModel,
     selectedSkill,

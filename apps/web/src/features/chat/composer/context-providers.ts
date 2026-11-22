@@ -6,8 +6,9 @@
  * 正文 token 只是可读回声,提交时只发结构化 id。
  */
 import { useQuery } from '@tanstack/react-query';
-import { FileText, FolderOpen, Package } from 'lucide-react';
+import { FileText, FolderOpen, MessageSquare, Package } from 'lucide-react';
 
+import type { ChatMessage } from '@/lib/conversations-api';
 import { connectorApi } from '@/lib/connector-api';
 import { knowledgeApi } from '@/lib/knowledge-api';
 import { queryKeys } from '@/lib/query-keys';
@@ -21,7 +22,17 @@ type Options = {
   workspaceId: string | null;
   /** 当前会话的沙箱;没有沙箱时沙箱文件组为空(新建会话的常态)。 */
   sandboxId: string | null;
+  /** 当前会话已落库的消息;新建会话时为空数组。 */
+  messages: ChatMessage[];
 };
+
+/** 消息引用只列最近 20 条:更早的交给"引用目录"再做(P2 待排期)。 */
+const MESSAGE_ITEM_LIMIT = 20;
+
+function messageTitle(message: ChatMessage): string {
+  const firstLine = message.content.split('\n')[0].trim();
+  return firstLine || message.content.trim();
+}
 
 /** 已连接且启用的连接器 provider(按 provider 粒度,不是 connection id)。 */
 function useConnectedProviders() {
@@ -72,6 +83,7 @@ function useSandboxFiles(sandboxId: string | null) {
 export function useComposerContextSources({
   workspaceId,
   sandboxId,
+  messages,
 }: Options): { items: ComposerItem[]; loading: boolean } {
   const providers = useConnectedProviders();
   const documents = useKnowledgeDocuments();
@@ -79,6 +91,24 @@ export function useComposerContextSources({
   const files = useSandboxFiles(sandboxId);
 
   const items: ComposerItem[] = [
+    // 最近的对话消息排最前:引用上一轮结论是最常见的用法
+    ...messages
+      .filter((message) => message.content.trim().length > 0)
+      .slice(-MESSAGE_ITEM_LIMIT)
+      .reverse()
+      .map((message) => {
+        const title = messageTitle(message);
+        return {
+          key: `message:${message.id}`,
+          kind: 'message' as const,
+          id: message.id,
+          label: truncateTitle(title),
+          token: `@${truncateTitle(title)}`,
+          description:
+            message.role === 'user' ? '消息 · 你发的' : '消息 · 助手回复',
+          icon: MessageSquare,
+        };
+      }),
     ...(providers.data ?? [])
       .filter(
         (provider) =>

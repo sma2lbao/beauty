@@ -182,6 +182,24 @@ function makeKnowledgeDocument() {
   };
 }
 
+function makeNotionProvider() {
+  return {
+    provider: 'notion',
+    display_name: 'Notion',
+    description: '页面与数据库',
+    auth_kind: 'oauth_user',
+    scopes: ['read'],
+    tools: [{ name: 'notion.search', description: '搜索页面', risk: 'read' }],
+    connected: true,
+    connection: {
+      id: 'conn-2',
+      status: 'active',
+      account: 'workspace',
+      enabled: true,
+    },
+  };
+}
+
 function makeGithubProvider() {
   return {
     provider: 'github',
@@ -318,6 +336,149 @@ describe('输入区 @ 内容引用与连接器(P1)', () => {
 
     expect(await screen.findByText('合同模板')).toBeInTheDocument();
     expect(await screen.findByText('连接器 · GitHub')).toBeInTheDocument();
+  });
+});
+
+describe('连接器多选与引用轨收纳(P2)', () => {
+  it('/connector 打开 sticky 二级菜单,连续勾选后仍可继续选', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      makeGithubProvider() as never,
+      makeNotionProvider() as never,
+    ]);
+    const textarea = await openConversation();
+
+    fireEvent.change(textarea, { target: { value: '/connector' } });
+    const menu = await screen.findByRole('listbox', { name: '命令候选' });
+    // 连接器目录是异步查询:等命令可用再点
+    await waitFor(() =>
+      expect(
+        within(menu).getByText('/connector').closest('button'),
+      ).not.toHaveAttribute('aria-disabled'),
+    );
+    fireEvent.click(within(menu).getByText('/connector'));
+
+    const submenu = await screen.findByRole('listbox', { name: '命令候选' });
+    expect(within(submenu).getByText('选择连接器(可多选)')).toBeInTheDocument();
+
+    fireEvent.click(within(submenu).getByText('GitHub'));
+    // sticky:选完不关闭,可以直接接着选下一个
+    expect(
+      await screen.findByRole('listbox', { name: '命令候选' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('移除连接器 GitHub')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(screen.getByRole('listbox', { name: '命令候选' })).getByText(
+        'Notion',
+      ),
+    );
+    expect(screen.getByLabelText('移除连接器 Notion')).toBeInTheDocument();
+
+    fireEvent.change(textarea, { target: { value: '查一下 issue' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        expect.objectContaining({ connectorProviders: ['github', 'notion'] }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('sticky 二级菜单里 Space 与 Enter 等价,Esc 收起', async () => {
+    vi.mocked(connectorApi.listProviders).mockResolvedValue([
+      makeGithubProvider() as never,
+    ]);
+    const textarea = await openConversation();
+
+    fireEvent.change(textarea, { target: { value: '/connector' } });
+    const menu = await screen.findByRole('listbox', { name: '命令候选' });
+    await waitFor(() =>
+      expect(
+        within(menu).getByText('/connector').closest('button'),
+      ).not.toHaveAttribute('aria-disabled'),
+    );
+    fireEvent.click(within(menu).getByText('/connector'));
+    await screen.findByText('选择连接器(可多选)');
+
+    // 默认高亮「不使用连接器」,↓ 到 GitHub 再 Space 勾选
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+    fireEvent.keyDown(textarea, { key: ' ' });
+
+    expect(
+      await screen.findByLabelText('移除连接器 GitHub'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('listbox', { name: '命令候选' }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: 'Escape' });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('listbox', { name: '命令候选' }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('@ 能引用当前会话的历史消息,发送带 message 引用', async () => {
+    const textarea = await openConversation();
+
+    fireEvent.change(textarea, { target: { value: '@周报' } });
+    const menu = await screen.findByRole('listbox', { name: '上下文候选' });
+    fireEvent.click(within(menu).getByText('把本周日程整理成周报'));
+
+    await waitFor(() => expect(textarea).toHaveValue('@把本周日程整理成周报 '));
+    expect(
+      screen.getByLabelText('移除引用 把本周日程整理成周报'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(textarea, {
+      target: { value: '@把本周日程整理成周报 接着上一轮继续' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() =>
+      expect(streamMessage).toHaveBeenLastCalledWith(
+        'c1',
+        expect.objectContaining({
+          contextRefs: [{ kind: 'message', id: 'm1' }],
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('引用超过一行时收成 +N,可展开与收起', async () => {
+    vi.mocked(knowledgeApi.documents).mockResolvedValue(
+      Array.from({ length: 7 }, (_, index) => {
+        const number = index + 1;
+        return {
+          ...makeKnowledgeDocument(),
+          id: `k${number}`,
+          title: `文档${number}`,
+        };
+      }),
+    );
+    const textarea = await openConversation();
+
+    for (let number = 1; number <= 7; number += 1) {
+      fireEvent.change(textarea, { target: { value: `@文档${number}` } });
+      const menu = await screen.findByRole('listbox', { name: '上下文候选' });
+      fireEvent.click(within(menu).getByText(`文档${number}`));
+      // 第 7 条起芯片被收进 +N,这里只等 token 写回正文
+      await waitFor(() => expect(textarea).toHaveValue(`@文档${number} `));
+    }
+
+    // 7 条只露 6 条,其余收进 +1
+    expect(screen.queryByLabelText('移除引用 文档7')).not.toBeInTheDocument();
+    const more = screen.getByLabelText('展开其余 1 个引用');
+    fireEvent.click(more);
+
+    expect(await screen.findByLabelText('移除引用 文档7')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('收起引用'));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('移除引用 文档7')).not.toBeInTheDocument(),
+    );
   });
 });
 

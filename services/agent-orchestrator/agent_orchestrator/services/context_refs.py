@@ -20,12 +20,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from common.errors import AppError, ConflictError, NotFoundError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_orchestrator.context.sandbox_files import (
     WORKSPACE_ROOT,
     SandboxWorkspaceFiles,
     scope_key_for,
 )
+from agent_orchestrator.repositories.message import MessageRepository
 from agent_orchestrator.schemas.conversations import ContextRefCreate
 
 if TYPE_CHECKING:
@@ -242,6 +244,63 @@ async def _resolve_sandbox_file(
     )
 
 
+#: 消息引用的标题只取首行一段,避免长消息把引用轨撑爆。
+MESSAGE_TITLE_CHARS = 40
+
+
+def _message_title(role: str, text: str) -> str:
+    """消息标题:角色 + 首行摘要(服务端生成,客户端不能自定义)。"""
+    first_line = " ".join(text.splitlines()[0].split())
+    snippet = first_line[:MESSAGE_TITLE_CHARS]
+    if len(first_line) > MESSAGE_TITLE_CHARS:
+        snippet = f"{snippet}…"
+    who = "你" if role == "user" else "助手"
+    return f"{who}: {snippet}"
+
+
+async def _resolve_message(
+    ref: ContextRefCreate,
+    account_id: str,
+    *,
+    session: AsyncSession | None,
+    conversation_id: str,
+    per_ref_chars: int,
+) -> ResolvedRef:
+    """引用当前会话里的一条历史消息。
+
+    只允许本会话:跨会话的 message id 按"不存在"处理,既防越权读到
+    别的对话,也让错误口径与其他 kind 一致(一律 404 不泄漏存在性)。
+    """
+    if session is None:
+        raise ConflictError(
+            "context_ref.unavailable",
+            "消息引用能力未启用",
+            details={"kind": ref.kind},
+        )
+    message = await MessageRepository(session).get_for_account(account_id, ref.id)
+    if message is None or message.conversation_id != conversation_id:
+        raise NotFoundError(
+            "context_ref.not_found",
+            "引用的消息不存在",
+            details={"kind": ref.kind, "id": ref.id},
+        )
+    text = (message.content or "").strip()
+    if not text:
+        raise ConflictError(
+            "context_ref.empty",
+            "这条消息没有可引用的正文",
+            details={"kind": ref.kind, "id": ref.id},
+        )
+    text, truncated = _truncate(text, per_ref_chars)
+    return ResolvedRef(
+        kind=ref.kind,
+        id=ref.id,
+        title=_message_title(message.role, text),
+        content=text,
+        truncated=truncated,
+    )
+
+
 async def resolve_context_refs(
     account_id: str,
     conversation_id: str,
@@ -251,6 +310,7 @@ async def resolve_context_refs(
     workspace: Workspace | None,
     sandbox: Sandbox | None,
     settings: Any,
+    session: AsyncSession | None = None,
 ) -> ReferenceContext:
     """解析全部引用并生成注入块;空列表直接返回空结果(零下游请求)。
 
@@ -281,6 +341,14 @@ async def resolve_context_refs(
         elif ref.kind == "artifact":
             item = await _resolve_artifact(
                 ref, account_id, workspace=workspace, per_ref_chars=per_ref
+            )
+        elif ref.kind == "message":
+            item = await _resolve_message(
+                ref,
+                account_id,
+                session=session,
+                conversation_id=conversation_id,
+                per_ref_chars=per_ref,
             )
         else:
             item = await _resolve_sandbox_file(

@@ -72,6 +72,8 @@ export function ChatComposer({
     defaultModel,
     enabledMcpServers,
     mcpServerName,
+    connectorProviders,
+    messages,
     inFlight,
   } = queries;
   const {
@@ -84,12 +86,17 @@ export function ChatComposer({
   } = attachments;
   const attachmentCount = uploaded.length + staged.length;
   // 知识库文档/交付物/沙箱文件与连接器:@ 菜单的另外四组来源
-  const contextSources = useComposerContextSources({ workspaceId, sandboxId });
+  const contextSources = useComposerContextSources({
+    workspaceId,
+    sandboxId,
+    messages,
+  });
   const { items, commands, submenus } = useComposerSources({
     skills,
     mcpServers: enabledMcpServers,
     contextItems: contextSources.items,
     selectedConnectors,
+    connectorProviders,
     models: models.map((model) => model.id),
     defaultModel,
     selectedSkill,
@@ -129,6 +136,11 @@ export function ChatComposer({
       else if (commandId === 'mode') onSendModeChange(value as SendMode);
       else if (commandId === 'skill') onSkillChange(value);
       else if (commandId === 'mcp') onMcpChange(value);
+      else if (commandId === 'connector') {
+        // 空串 = 不使用连接器:逐个 toggle 清空(保持页面状态单一真源)
+        if (!value) selectedConnectors.forEach(onToggleConnector);
+        else onToggleConnector(value);
+      }
     },
   });
   // 配额拦截(429 quota.*)就地提示:P0-2 起对话直答也过配额闸,

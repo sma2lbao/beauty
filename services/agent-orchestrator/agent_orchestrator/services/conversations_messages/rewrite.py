@@ -238,6 +238,7 @@ async def _rewrite_reference_context(
                 workspace=workspace,
                 sandbox=sandbox,
                 settings=settings,
+                session=session,
             )
         except AppError as exc:
             logger.warning(

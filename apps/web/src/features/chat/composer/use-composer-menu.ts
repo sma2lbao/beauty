@@ -219,7 +219,8 @@ export function useComposerMenu({
       }
       if (submenu) {
         onPickSubmenuOption(submenu.commandId, option.value ?? '');
-        close();
+        // sticky(如 /connector)留在原地连续勾选;其余二级菜单选完即收
+        if (!submenu.sticky) close();
         return;
       }
       if (!option.commandId) return;
@@ -298,7 +299,12 @@ export function useComposerMenu({
         close();
         return true;
       }
-      if (event.key === 'Enter' || event.key === 'Tab') {
+      // Enter/Tab 确认;多选二级菜单(如 /connector)里 Space 等价,便于连续勾选
+      if (
+        event.key === 'Enter' ||
+        event.key === 'Tab' ||
+        (event.key === ' ' && submenu?.sticky)
+      ) {
         if (!activeOption || activeOption.disabled) return false;
         event.preventDefault();
         choose(activeOption);
@@ -306,7 +312,7 @@ export function useComposerMenu({
       }
       return false;
     },
-    [activeOption, choose, close, mode, move, options.length],
+    [activeOption, choose, close, mode, move, options.length, submenu],
   );
 
   const handleSelect = useCallback(() => {

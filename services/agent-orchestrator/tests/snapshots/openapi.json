@@ -506,7 +506,12 @@
             "type": "string"
           },
           "kind": {
-            "enum": ["knowledge_document", "artifact", "sandbox_file"],
+            "enum": [
+              "knowledge_document",
+              "artifact",
+              "sandbox_file",
+              "message"
+            ],
             "title": "Kind",
             "type": "string"
           }
@@ -523,7 +528,12 @@
             "type": "string"
           },
           "kind": {
-            "enum": ["knowledge_document", "artifact", "sandbox_file"],
+            "enum": [
+              "knowledge_document",
+              "artifact",
+              "sandbox_file",
+              "message"
+            ],
             "title": "Kind",
             "type": "string"
           },

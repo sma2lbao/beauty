@@ -124,6 +124,7 @@ async def post_message(
         workspace=workspace,
         sandbox=sandbox,
         settings=settings,
+        session=session,
     )
     message, run, reply, mode = await conversations_service.post_message(
         session,
@@ -274,15 +275,19 @@ async def stream_message(
         tool_client=tool_client,
     )
     # 引用解析必须在开流前:SSE 一旦 200 就只能发错误帧,取不到资料要当场 4xx
-    refs = await context_refs_service.resolve_context_refs(
-        account_id,
-        conversation_id,
-        body.context_refs,
-        knowledge=knowledge,
-        workspace=workspace,
-        sandbox=sandbox,
-        settings=settings,
-    )
+    # 流式端点没有请求级 session(事务在 stream_message 内部自己开),这里单开
+    # 一个短会话做消息引用的校验与读取,结果(content)随 refs 带进流。
+    async with factory() as ref_session:
+        refs = await context_refs_service.resolve_context_refs(
+            account_id,
+            conversation_id,
+            body.context_refs,
+            knowledge=knowledge,
+            workspace=workspace,
+            sandbox=sandbox,
+            settings=settings,
+            session=ref_session,
+        )
     return StreamingResponse(
         _message_frames(
             conversations_service.stream_message(

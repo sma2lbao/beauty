@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 
 /** 根菜单里的斜杠命令 id(P0 固定清单)。 */
 export type ComposerCommandId =
-  'new' | 'stop' | 'attach' | 'model' | 'mode' | 'skill' | 'mcp';
+  'new' | 'stop' | 'attach' | 'model' | 'mode' | 'skill' | 'mcp' | 'connector';
 
 /** @ 菜单项的语义:能力绑定(技能/MCP/连接器)或内容引用。 */
 export type ComposerItemKind =
@@ -61,4 +61,6 @@ export type ComposerSubmenu = {
   commandId: ComposerCommandId;
   title: string;
   options: ComposerOption[];
+  /** 多选二级菜单:选中不关闭,Enter/Space 切换,直到 Esc/点击外部。 */
+  sticky?: boolean;
 };

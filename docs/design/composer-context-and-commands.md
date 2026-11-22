@@ -1,6 +1,6 @@
 # 输入区 @ 上下文引用与 / 命令设计
 
-> 状态：设计稿（P0 可直接实施，P1/P2 待排期）
+> 状态：P0/P1 已实施；P2 进行中（`/connector` 多选、引用轨 `+N`、`@` 消息引用已落地，其余待排期）
 > 范围：`apps/web` 会话工作台输入区；P1 涉及 `agent-orchestrator`、`knowledge-service`、`workspace-service`；连接器选择复用 `tool-service` 的现有工具目录
 > 参考：Cursor、Tiptap、Open WebUI、Continue、LibreChat、VS Code Chat、Slack 斜杠命令
 
@@ -143,7 +143,7 @@
 | 知识库   | `knowledgeApi.documents()`                   | P1  | 新增 `contextRefs`；正文插入 `@文档标题 `                              |
 | 交付物   | `workspaceApi.artifacts(workspaceId)`        | P1  | 新增 `contextRefs`；正文插入 `@交付物标题 `                            |
 | 沙箱文件 | `sandboxApi.conversationSandbox/sandboxTree` | P1  | 新增 `contextRefs`；正文插入 `@相对路径 `，`contextRefs.id` 存绝对路径 |
-| 消息     | 当前会话消息                                 | P2  | 引用某条历史消息作为上下文                                             |
+| 消息     | `queries.messages`（当前会话）               | P2  | 新增 `contextRefs`（kind=message）；只列最近 20 条，跨会话按不存在处理 |
 | 记忆     | `memoryApi`                                  | P2  | 引用一条记忆；需先确认记忆注入与引用的边界                             |
 
 #### / 命令清单
@@ -320,7 +320,7 @@ caret = start + token.length + 1
 ```
 
 - chip 样式沿用附件 chip：`bg-ha-panel-2`、`border-ha-border`、12px 字号、圆角 6px。
-- 最多 10 个；超过时换行，最多两行，其余收进 `+N` 弹出层（P2；P0/P1 直接换行，输入区自然增高）。
+- 最多 10 个；超出 6 条时其余收进 `+N`，点开可展开、再点“收起”还原（P2 已落地；展开状态不写进 URL 或请求）。
 - 删除内容引用 chip 时同步删除正文中对应的 token（若 token 已被用户编辑，则只删引用）；连接器 chip 例外，见下条。
 - 引用轨展示内容引用与连接器；技能/MCP 仍由底部 `select` 显示，避免两处状态。连接器没有工具栏控件，引用轨就是它唯一的可见入口：chip 标“连接器 · 显示名”，删除即从 `selectedConnectors` 移除。
 - 连接器 chip 删除只解绑，不删除正文 token；正文里的 `@GitHub` 会变成普通文本，不会静默改用户输入。
@@ -1200,9 +1200,17 @@ HTTP 实现 GET `/v1/artifacts/{artifact_id}`；404 → `None`；其他非 200 �
 
 ### 8.3 P2：体验深化（按需）
 
+已落地：
+
+- `/connector` 二级菜单多选：sticky 面板，Enter/Space 切换、Esc 或点击外部关闭；“不使用连接器”一次清空；提交仍按 provider 去重落到 `connector_providers`。
+- 引用轨两行收纳：内容引用与连接器芯片合计超过 6 条收进 `+N`，展开后显示“收起”；正文 token 与提交内容不受收纳状态影响。
+- `@` 消息引用：只列当前会话最近 20 条消息，标题由服务端生成（`你: 首行…` / `助手: 首行…`）；解析只允许本会话，跨会话 message id 一律 404 `context_ref.not_found`，不泄漏存在性。
+
+待排期：
+
 - 输入框内联 chip（Tiptap/Lexical 评估）；
-- `@` 消息/记忆引用；
-- 连接器连接级选择（同一 provider 多连接）；`/connector` 二级菜单多选；
+- `@` 记忆引用；
+- 连接器连接级选择（同一 provider 多连接，需先扩 `ToolDescriptor.connector`）；
 - 连接器 prompts（若上游提供）作为 `/` 模板；
 - 服务端搜索与最近使用；
 - MCP prompts（`prompts/list`）作为 `/` 模板；
