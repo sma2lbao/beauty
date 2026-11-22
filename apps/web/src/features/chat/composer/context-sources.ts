@@ -58,18 +58,26 @@ export function buildMentionItems(
   ];
 }
 
-/** 过滤并分组;前缀命中的排前面,组内保持数据源顺序。 */
+/**
+ * 过滤并分组:前缀命中优先,其次最近使用,其余保持数据源顺序。
+ * 最近使用只影响组内顺序,不改变分组归属,避免同一项在菜单里出现两次。
+ */
 export function filterMentionGroups(
   items: ComposerItem[],
   query: string,
+  recentKeys: readonly string[] = [],
 ): ComposerGroup[] {
   const needle = query.trim().toLowerCase();
+  const recentRank = new Map(recentKeys.map((key, index) => [key, index]));
   const sorted = items
     .filter((item) => matches(query, item.label, item.id, item.description))
     .sort((left, right) => {
       const leftPrefix = left.label.toLowerCase().startsWith(needle) ? 0 : 1;
       const rightPrefix = right.label.toLowerCase().startsWith(needle) ? 0 : 1;
-      return leftPrefix - rightPrefix;
+      if (leftPrefix !== rightPrefix) return leftPrefix - rightPrefix;
+      const leftRecent = recentRank.get(left.key) ?? Number.MAX_SAFE_INTEGER;
+      const rightRecent = recentRank.get(right.key) ?? Number.MAX_SAFE_INTEGER;
+      return leftRecent - rightRecent;
     });
   const groups: ComposerGroup[] = [
     { key: 'skills', label: '技能', options: [] },

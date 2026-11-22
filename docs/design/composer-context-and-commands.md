@@ -1,6 +1,6 @@
 # 输入区 @ 上下文引用与 / 命令设计
 
-> 状态：P0/P1 已实施；P2 进行中（`/connector` 多选、引用轨 `+N`、`@` 消息/记忆引用已落地，其余待排期）
+> 状态：P0/P1 已实施；P2 进行中（`/connector` 多选、引用轨 `+N`、`@` 消息/记忆引用、最近使用排序已落地，其余待排期）
 > 范围：`apps/web` 会话工作台输入区；P1 涉及 `agent-orchestrator`、`knowledge-service`、`workspace-service`；连接器选择复用 `tool-service` 的现有工具目录
 > 参考：Cursor、Tiptap、Open WebUI、Continue、LibreChat、VS Code Chat、Slack 斜杠命令
 
@@ -1206,13 +1206,14 @@ HTTP 实现 GET `/v1/artifacts/{artifact_id}`；404 → `None`；其他非 200 �
 - 引用轨两行收纳：内容引用与连接器芯片合计超过 6 条收进 `+N`，展开后显示“收起”；正文 token 与提交内容不受收纳状态影响。
 - `@` 消息引用：只列当前会话最近 20 条消息，标题由服务端生成（`你: 首行…` / `助手: 首行…`）；解析只允许本会话，跨会话 message id 一律 404 `context_ref.not_found`，不泄漏存在性。
 - `@` 记忆引用：菜单列账号级 + 当前工作区最近 30 条，标题形如 `偏好: 首行…`；解析按账号隔离，未知或已失效的记忆一律 404 `context_ref.not_found`；正文为空时 409 `context_ref.empty`。
+- 最近使用排序：选过的菜单项 key 写入 `localStorage`（`beauty:composer-recent`，MRU，最多 12 条，只存 key 不存标题）；组内排序为「前缀命中 → 最近使用 → 数据源顺序」，不新增重复分组；存储不可用时静默降级。
 
 待排期：
 
 - 输入框内联 chip（Tiptap/Lexical 评估）；
 - 连接器连接级选择（同一 provider 多连接，需先扩 `ToolDescriptor.connector`）；
 - 连接器 prompts（若上游提供）作为 `/` 模板；
-- 服务端搜索与最近使用；
+- 服务端搜索（当前数据源在前端过滤；知识库/记忆条目多时才值得接 `/search`）；
 - MCP prompts（`prompts/list`）作为 `/` 模板；
 - 模板变量表单（Open WebUI 风格）；
 - 二进制交付物引用（下载 → 附件管道）；

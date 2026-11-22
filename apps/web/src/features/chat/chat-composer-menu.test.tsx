@@ -67,6 +67,8 @@ function makeSkill() {
 }
 
 beforeEach(async () => {
+  // 最近使用落 localStorage,用例之间必须隔离
+  window.localStorage.clear();
   await setupChatTest();
 });
 
@@ -451,6 +453,38 @@ describe('连接器多选与引用轨收纳(P2)', () => {
         expect.anything(),
       ),
     );
+  });
+
+  it('最近用过的资料排在组内最前', async () => {
+    vi.mocked(knowledgeApi.documents).mockResolvedValue([
+      { ...makeKnowledgeDocument(), id: 'k1', title: '合同模板' },
+      { ...makeKnowledgeDocument(), id: 'k2', title: '报销制度' },
+    ]);
+    const textarea = await openConversation();
+
+    // 先选第二条,让它成为最近使用
+    fireEvent.change(textarea, { target: { value: '@报销' } });
+    const first = await screen.findByRole('listbox', { name: '上下文候选' });
+    fireEvent.click(within(first).getByText('报销制度'));
+    await waitFor(() => expect(textarea).toHaveValue('@报销制度 '));
+
+    // 清空后重新打开菜单:同样不输入过滤词时,报销制度应排第一
+    fireEvent.change(textarea, { target: { value: '@' } });
+    const menu = await screen.findByRole('listbox', { name: '上下文候选' });
+    await waitFor(() => {
+      // 最近使用只调组内顺序:知识库分组里报销制度应排在合同模板之前
+      const labels = within(menu)
+        .getAllByRole('option')
+        .map((option) => option.textContent ?? '');
+      const recentIndex = labels.findIndex((label) =>
+        label.includes('报销制度'),
+      );
+      const olderIndex = labels.findIndex((label) =>
+        label.includes('合同模板'),
+      );
+      expect(recentIndex).toBeGreaterThanOrEqual(0);
+      expect(recentIndex).toBeLessThan(olderIndex);
+    });
   });
 
   it('@ 能引用记忆,发送带 memory 引用', async () => {

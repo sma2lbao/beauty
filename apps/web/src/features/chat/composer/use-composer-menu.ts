@@ -13,6 +13,7 @@ import {
 import { measureCaretRect, type CaretAnchor } from './caret-rect';
 import { filterCommandGroups } from './command-registry';
 import { filterMentionGroups } from './context-sources';
+import { loadRecentKeys, pushRecentKey, saveRecentKeys } from './recent-items';
 import {
   detectCommand,
   detectMention,
@@ -60,6 +61,7 @@ export function useComposerMenu({
   const [submenuId, setSubmenuId] = useState<ComposerCommandId | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<CaretAnchor | null>(null);
+  const [recentKeys, setRecentKeys] = useState<string[]>(loadRecentKeys);
   const tokensRef = useRef<TokenRange[]>([]);
   const previousValueRef = useRef(value);
   const pendingCaretRef = useRef<number | null>(null);
@@ -75,7 +77,8 @@ export function useComposerMenu({
   }, []);
 
   const groups = useMemo<ComposerGroup[]>(() => {
-    if (mode === 'mention') return filterMentionGroups(items, query);
+    if (mode === 'mention')
+      return filterMentionGroups(items, query, recentKeys);
     if (mode === 'command') {
       if (submenu) {
         return [
@@ -89,7 +92,7 @@ export function useComposerMenu({
       return filterCommandGroups(commands, query);
     }
     return [];
-  }, [commands, items, mode, query, submenu]);
+  }, [commands, items, mode, query, recentKeys, submenu]);
 
   const options = useMemo(
     () => groups.flatMap((group) => group.options),
@@ -179,6 +182,11 @@ export function useComposerMenu({
       setCaret(nextCaret);
       onChange(next);
       onPickItem(item);
+      setRecentKeys((previous) => {
+        const nextKeys = pushRecentKey(previous, item.key);
+        saveRecentKeys(nextKeys);
+        return nextKeys;
+      });
       close();
     },
     [caret, close, onChange, onPickItem, triggerStart, value],
