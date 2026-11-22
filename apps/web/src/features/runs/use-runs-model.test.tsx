@@ -9,11 +9,15 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Run } from '@/lib/runs-api';
+import type { Run, RunPage } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { resetRunBoard } from '@/stores/run-board-store';
 
 import { useRunsModel, validateRunCreate } from './use-runs-model';
+
+function page(items: Run[]): RunPage {
+  return { items, next_cursor: null };
+}
 
 vi.mock('@/lib/runs-api', () => ({
   runsApi: {
@@ -50,17 +54,21 @@ function renderModel() {
 describe('validateRunCreate', () => {
   it('留空超时/默认优先级合法', () => {
     expect(validateRunCreate({ timeoutSeconds: '', priority: '0' })).toBeNull();
-    expect(validateRunCreate({ timeoutSeconds: '0', priority: '-100' })).toBeNull();
-    expect(validateRunCreate({ timeoutSeconds: '604800', priority: '100' })).toBeNull();
+    expect(
+      validateRunCreate({ timeoutSeconds: '0', priority: '-100' }),
+    ).toBeNull();
+    expect(
+      validateRunCreate({ timeoutSeconds: '604800', priority: '100' }),
+    ).toBeNull();
   });
 
   it('拒绝非整数/越界输入', () => {
     expect(validateRunCreate({ timeoutSeconds: 'abc', priority: '0' })).toMatch(
       /整数秒/,
     );
-    expect(validateRunCreate({ timeoutSeconds: '604801', priority: '0' })).toMatch(
-      /604800/,
-    );
+    expect(
+      validateRunCreate({ timeoutSeconds: '604801', priority: '0' }),
+    ).toMatch(/604800/);
     expect(validateRunCreate({ timeoutSeconds: '', priority: '101' })).toMatch(
       /-100\.\.100/,
     );
@@ -74,7 +82,7 @@ describe('useRunsModel 新建任务', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRunBoard();
-    vi.mocked(runsApi.list).mockResolvedValue([]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([]));
     vi.mocked(runsApi.create).mockResolvedValue(createdRun);
   });
 

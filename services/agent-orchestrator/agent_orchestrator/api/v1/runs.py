@@ -33,6 +33,7 @@ from agent_orchestrator.schemas.runs import (
     RunCreate,
     RunEventRead,
     RunItemRead,
+    RunPage,
     RunRead,
     RunScoreCreate,
     RunScoreRead,
@@ -112,15 +113,22 @@ async def create_run(
     return RunRead.model_validate(run)
 
 
-@router.get("", response_model=list[RunRead])
+@router.get("", response_model=RunPage)
 async def list_runs(
     session: DBSession,
     account_id: AccountId,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> list[RunRead]:
-    """账号内 run 列表,最新在前(控制台首页)。"""
-    runs = await runs_service.list_runs(session, account_id, limit)
-    return [RunRead.model_validate(run) for run in runs]
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    cursor: str | None = None,
+) -> RunPage:
+    """账号内 run 列表,最新在前(控制台首页);q 搜索标题/目标,cursor 翻页。"""
+    runs, next_cursor = await runs_service.list_runs(
+        session, account_id, limit, q=q, cursor=cursor
+    )
+    return RunPage(
+        items=[RunRead.model_validate(run) for run in runs],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/stream")

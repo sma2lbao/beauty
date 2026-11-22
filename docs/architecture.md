@@ -262,6 +262,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 ### 8.1 Public API
 
 > 状态（2026-10-25）：以下为**目标态**。当前只有基础 runs/events/artifacts/usage 只读接口——runs 列表无 cursor、无幂等键/Webhook/SDK（见 06 §2.3 #8）。
+> 更新（2026-11-22）：runs 列表已支持游标分页 + 搜索（`GET /api/v1/runs?limit&cursor&q` → `{items,next_cursor}`，坏游标 400 `run.bad_cursor`）；幂等键/Webhook/SDK 仍未做。
 
 - `/v1`：conversations、runs、events(SSE)、artifacts、skills、tools、usage；
 - 鉴权：OAuth 2.1（第三方应用）或 API Key（服务端调用）；scope 最小化；

@@ -17,10 +17,39 @@ class RunRepository(AccountRepository[Run]):
     not_found_message = "run 不存在"
     id_detail_key = "run_id"
 
-    async def list_recent(self, account_id: str, limit: int = 50) -> list[Run]:
-        """账号内最新在前的 run 列表(id 兜底保证顺序确定)。"""
+    async def list_recent(
+        self,
+        account_id: str,
+        limit: int = 50,
+        *,
+        q: str | None = None,
+        before_id: str | None = None,
+    ) -> list[Run]:
+        """账号内最新在前的 run 列表(id 兜底保证顺序确定)。
+
+        q 按标题/目标模糊搜索(控制台看板搜索框);before_id 是分页游标锚点,
+        用 (created_at, id) 做 keyset,避免 offset 在新增 run 时漂移。
+        """
+        criteria: list = []
+        if q and q.strip():
+            pattern = f"%{q.strip()}%"
+            criteria.append(or_(Run.title.ilike(pattern), Run.goal.ilike(pattern)))
+        if before_id:
+            anchor = await self.get_for_account(account_id, before_id)
+            if anchor is None:
+                return []
+            criteria.append(
+                or_(
+                    Run.created_at < anchor.created_at,
+                    and_(
+                        Run.created_at == anchor.created_at,
+                        Run.id < anchor.id,
+                    ),
+                )
+            )
         return await self.list_scoped(
             account_id,
+            *criteria,
             limit=limit,
             order_by=[Run.created_at.desc(), Run.id.desc()],
         )

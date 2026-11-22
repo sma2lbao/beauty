@@ -14,9 +14,11 @@ export function RunBoard({ model }: { model: RunsModel }) {
   const {
     runs,
     runsQuery,
+    searching,
     selectedRunId,
     setCreateOpen,
     setSelectedRunId,
+    setQuery,
     visibleColumns,
   } = model;
   return (
@@ -24,20 +26,37 @@ export function RunBoard({ model }: { model: RunsModel }) {
       {!runsQuery.isPending && runs.length === 0 ? (
         <EmptyPanel
           className="my-auto w-full border-ha-border-strong"
-          title="还没有 run。"
-          description="任务编排把每次执行当成一条可观测的运行:先规划、放行后执行、交付前审核。新建一个任务开始。"
+          title={searching ? '没有匹配的任务。' : '还没有 run。'}
+          description={
+            searching
+              ? '换个关键词试试,或清空搜索框查看全部任务。'
+              : '任务编排把每次执行当成一条可观测的运行:先规划、放行后执行、交付前审核。新建一个任务开始。'
+          }
           action={
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className={consoleButtonClass({
-                variant: 'primary',
-                size: 'md',
-              })}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              新建任务
-            </button>
+            searching ? (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className={consoleButtonClass({
+                  variant: 'secondary',
+                  size: 'md',
+                })}
+              >
+                清空搜索
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className={consoleButtonClass({
+                  variant: 'primary',
+                  size: 'md',
+                })}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                新建任务
+              </button>
+            )
           }
         />
       ) : null}

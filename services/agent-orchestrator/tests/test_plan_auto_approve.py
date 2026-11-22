@@ -186,9 +186,9 @@ def test_stream_task_auto_approves_and_mirrors_artifacts(tmp_path: Path) -> None
         )
         assert resp.status_code == 200
 
-        runs = client.get("/api/v1/runs?limit=5", headers=ACCOUNT).json()
-        assert len(runs) == 1
-        run = runs[0]
+        page = client.get("/api/v1/runs?limit=5", headers=ACCOUNT).json()
+        assert len(page["items"]) == 1
+        run = page["items"][0]
         assert run["status"] == "completed"
         events = _events(client, run["id"])
         types = [event["type"] for event in events]

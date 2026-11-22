@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime
 
 from common.errors import AppError, NotFoundError
@@ -23,6 +22,7 @@ from agent_orchestrator.repositories import (
 )
 from agent_orchestrator.schemas.runs import RunStatus
 from agent_orchestrator.services import hooks as hooks_service
+from agent_orchestrator.services import pagination
 from agent_orchestrator.services.conversation_targets import (
     MessageTarget as MessageTarget,
 )
@@ -116,17 +116,14 @@ async def resolve_workspace_id(
 
 def encode_cursor(conversation_id: str) -> str:
     """把分页锚点编码成不透明游标(base64url,无填充)。"""
-    raw = base64.urlsafe_b64encode(conversation_id.encode()).decode()
-    return raw.rstrip("=")
+    return pagination.encode_cursor(conversation_id)
 
 
 def decode_cursor(cursor: str) -> str:
     """解码游标;非法游标给 400(不泄漏内部格式)。"""
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        return base64.urlsafe_b64decode(padded.encode()).decode()
-    except Exception as exc:  # noqa: BLE001 - 任何解码失败都视为坏游标
-        raise AppError("conversation.bad_cursor", "分页游标无效") from exc
+    return pagination.decode_cursor(
+        cursor, error_code="conversation.bad_cursor", message="分页游标无效"
+    )
 
 
 async def _backfill_legacy_workspace(

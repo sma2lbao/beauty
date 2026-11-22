@@ -111,7 +111,7 @@ seed_artifacts "【本地演示】预览图" "data:image/png;base64,iVBORw0KGgoA
 
 # 4) 一个演示 run(幂等;失败不阻塞 seed)
 runs=$(curl -sS "$ORCHESTRATOR_URL/api/v1/runs?limit=100" -H "Authorization: Bearer $TOKEN")
-run_exists=$(printf '%s' "$runs" | python3 -c 'import json,sys; title="【本地演示】整理本周文档"; print(any(item.get("title")==title for item in json.load(sys.stdin)))')
+run_exists=$(printf '%s' "$runs" | python3 -c 'import json,sys; title="【本地演示】整理本周文档"; print(any(item.get("title")==title for item in json.load(sys.stdin)["items"]))')
 if [ "$run_exists" = "True" ]; then
   echo "演示 run 已存在,跳过"
 else

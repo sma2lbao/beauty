@@ -65,6 +65,22 @@ export type Run = {
   created_at: string;
 };
 
+/**
+ * GET /api/v1/runs 的分页响应(keyset 游标):items 最新在前,
+ * next_cursor 是下一页入参,为空表示到底。
+ */
+export type RunPage = {
+  items: Run[];
+  next_cursor: string | null;
+};
+
+/** run 列表查询参数:q 按标题/目标模糊搜索;cursor 来自上一页。 */
+export type RunListParams = {
+  limit?: number;
+  q?: string;
+  cursor?: string;
+};
+
 /** 检查点摘要(P1-C):回退/分叉时用来判断「这个点值不值得回去」。 */
 export type RunCheckpointSummary = {
   rounds: number;
@@ -158,11 +174,7 @@ export type RunStep = {
  * `cancelled` 是 S3 之后的新终值:节点被取消打断时如实标记,不算失败。
  */
 export type StepStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'blocked'
-  | 'cancelled';
+  'running' | 'completed' | 'failed' | 'blocked' | 'cancelled';
 
 /**
  * 过程项分类(P1-D 事件分类学,契约见 docs/design/event-taxonomy.md §4):
@@ -170,13 +182,7 @@ export type StepStatus =
  * item 是「过程项」维度,与节点步骤(step)正交,通过 `step_id` 挂到步骤上。
  */
 export type RunItemKind =
-  | 'plan'
-  | 'tool'
-  | 'file_change'
-  | 'mcp_call'
-  | 'search'
-  | 'todo'
-  | 'subagent';
+  'plan' | 'tool' | 'file_change' | 'mcp_call' | 'search' | 'todo' | 'subagent';
 
 /** 过程项生命周期相位(§5):started → delta → completed/failed。 */
 export type RunItemPhase = 'started' | 'delta' | 'completed' | 'failed';

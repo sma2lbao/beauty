@@ -83,6 +83,13 @@ class RunRead(BaseModel):
     created_at: datetime
 
 
+class RunPage(BaseModel):
+    """run 列表分页:keyset 游标(created_at + id),避免 offset 漂移。"""
+
+    items: list[RunRead]
+    next_cursor: str | None = None
+
+
 class CheckpointSummary(BaseModel):
     """checkpoint 的状态摘要(列表页只给够判断的量级,不回传整份状态)。"""
 

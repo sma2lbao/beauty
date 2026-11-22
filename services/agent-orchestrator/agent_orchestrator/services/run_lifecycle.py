@@ -19,7 +19,7 @@ from agent_orchestrator.repositories import (
     RunRepository,
 )
 from agent_orchestrator.schemas.runs import RunCreate, RunStatus
-from agent_orchestrator.services import compaction, history
+from agent_orchestrator.services import compaction, history, pagination
 from agent_orchestrator.services.compaction import CompactionResult
 from agent_orchestrator.services.llm_binding import model_for_conversation
 from agent_orchestrator.services.run_events import append_event
@@ -185,10 +185,32 @@ async def create_run(
 
 
 async def list_runs(
-    session: AsyncSession, account_id: str, limit: int = 50
-) -> list[Run]:
-    """账号内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。"""
-    return await RunRepository(session).list_recent(account_id, limit)
+    session: AsyncSession,
+    account_id: str,
+    limit: int = 50,
+    *,
+    q: str | None = None,
+    cursor: str | None = None,
+) -> tuple[list[Run], str | None]:
+    """账号内 run 列表:最新在前(控制台首页用);id 兜底保证顺序确定。
+
+    keyset 分页:多取一条判断 has_more,用最后一条 id 作下一页游标;
+    q 按标题/目标模糊搜索。
+    """
+    before_id = (
+        pagination.decode_cursor(
+            cursor, error_code="run.bad_cursor", message="分页游标无效"
+        )
+        if cursor
+        else None
+    )
+    rows = await RunRepository(session).list_recent(
+        account_id, limit + 1, q=q, before_id=before_id
+    )
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = pagination.encode_cursor(items[-1].id) if has_more and items else None
+    return items, next_cursor
 
 
 async def queue_instruction(

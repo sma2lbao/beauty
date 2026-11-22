@@ -3,12 +3,12 @@
  * 筛选/新建弹窗开关与草稿字段,以及按列分组的派生结果。
  * 视图组件只消费这里,不再各自发请求。
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useDeferredValue, useState } from 'react';
 
 import { BOARD_COLUMNS, isRunQuiescent } from '@/lib/presentation';
 import { isUnauthorized, runsApi } from '@/lib/runs-api';
-import { useRunsStreamStatus } from '@/lib/runs-stream';
+import { useRunsList } from '@/lib/runs-list';
 import { useRunBoardStore } from '@/stores/run-board-store';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -57,14 +57,11 @@ export function useRunsModel() {
   const [timeoutSeconds, setTimeoutSeconds] = useState('');
   const [priority, setPriority] = useState('0');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
 
-  // 与侧栏共用 ['runs'] 缓存:状态流连上时不再定时拉,30s 兜底防漏帧/半开连接。
-  const runsStream = useRunsStreamStatus();
-  const runsQuery = useQuery({
-    queryKey: queryKeys.runs,
-    queryFn: runsApi.list,
-    refetchInterval: runsStream.connected ? false : 30_000,
-  });
+  // 与侧栏共用 ['runs','page',q] 缓存:状态流连上时不再定时拉,30s 兜底。
+  const { query: runsQuery, runs } = useRunsList({ q: deferredQuery });
   const createMutation = useMutation({
     mutationFn: () =>
       runsApi.create({
@@ -99,7 +96,7 @@ export function useRunsModel() {
     createMutation.mutate();
   };
 
-  const runs = runsQuery.data ?? [];
+  const searching = deferredQuery.trim().length > 0;
   const activeCount = runs.filter((run) => !isRunQuiescent(run.status)).length;
   const runningCount = runs.filter((run) => run.status === 'running').length;
   const unauthorized = isUnauthorized(runsQuery.error);
@@ -145,6 +142,12 @@ export function useRunsModel() {
     submitCreate,
     runsQuery,
     createMutation,
+    query,
+    setQuery,
+    searching,
+    hasNextPage: runsQuery.hasNextPage,
+    fetchNextPage: runsQuery.fetchNextPage,
+    isFetchingNextPage: runsQuery.isFetchingNextPage,
     runs,
     activeCount,
     runningCount,

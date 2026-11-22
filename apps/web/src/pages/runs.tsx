@@ -18,6 +18,7 @@ import { RunBoard } from '@/features/runs/run-board';
 import { RunCreateDialog } from '@/features/runs/run-create-dialog';
 import { RunDetail } from '@/features/runs/run-detail';
 import { RunFilterMenu } from '@/features/runs/run-filter-menu';
+import { RunSearchInput } from '@/features/runs/run-search';
 import { useRunsModel } from '@/features/runs/use-runs-model';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +49,7 @@ export function RunsPage() {
           subtitle={subtitle}
           actions={
             <>
+              <RunSearchInput model={model} />
               <RunFilterMenu model={model} />
               <button
                 type="button"
@@ -81,6 +83,19 @@ export function RunsPage() {
         ) : null}
 
         <RunBoard model={model} />
+
+        {model.hasNextPage ? (
+          <div className="flex justify-center px-6 pb-4 sm:px-8">
+            <button
+              type="button"
+              onClick={() => void model.fetchNextPage()}
+              disabled={model.isFetchingNextPage}
+              className="rounded-md border border-ha-border px-4 py-1.5 text-[11px] text-ha-muted transition-colors hover:border-ha-border-strong hover:text-ha-text-2 disabled:opacity-50"
+            >
+              {model.isFetchingNextPage ? '加载中…' : '加载更多'}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {selectedRunId ? (

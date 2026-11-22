@@ -59,7 +59,7 @@ def test_retry_keeps_parent_history_intact(tmp_path: Path) -> None:
         parent = client.get(f"/api/v1/runs/{parent_id}", headers=ACCOUNT).json()
         assert parent["status"] == "failed"  # 旧 run 仍是 failed,不被"重试"改写
         assert parent["status_reason"]  # 失败原因保留
-        runs = client.get("/api/v1/runs", headers=ACCOUNT).json()
+        runs = client.get("/api/v1/runs", headers=ACCOUNT).json()["items"]
         assert {run["id"] for run in runs} == {parent_id, child["id"]}
 
 

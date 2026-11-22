@@ -5,12 +5,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Run } from '@/lib/runs-api';
+import type { Run, RunPage } from '@/lib/runs-api';
 import { runsApi } from '@/lib/runs-api';
 import { resetRunBoard } from '@/stores/run-board-store';
 
 import { RunCreateDialog } from './run-create-dialog';
 import { useRunsModel } from './use-runs-model';
+
+function page(items: Run[]): RunPage {
+  return { items, next_cursor: null };
+}
 
 vi.mock('@/lib/runs-api', () => ({
   runsApi: {
@@ -61,7 +65,7 @@ describe('RunCreateDialog 超时与优先级', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRunBoard();
-    vi.mocked(runsApi.list).mockResolvedValue([]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([]));
     vi.mocked(runsApi.create).mockResolvedValue(createdRun);
   });
 

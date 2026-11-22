@@ -3,11 +3,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Run } from '@/lib/runs-api';
+import type { Run, RunPage } from '@/lib/runs-api';
 import { ApiError, runsApi, streamRunEvents } from '@/lib/runs-api';
 import { resetRunBoard } from '@/stores/run-board-store';
 
 import { RunsPage } from './runs';
+
+const page = (items: Run[]): RunPage => ({ items, next_cursor: null });
 
 vi.mock('@/lib/runs-api', async () => {
   const actual =
@@ -109,24 +111,26 @@ describe('RunsPage', () => {
   });
 
   it('没有 run 时给出空态', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([]));
     renderPage();
 
     expect(await screen.findByText('还没有 run。')).toBeInTheDocument();
   });
 
   it('子代理 run 卡片显示「子代理」徽标,普通 run 不显示', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
-      makeRun({
-        id: 'child-1',
-        title: '依赖分析',
-        status: 'running',
-        parent_run_id: 'run-1',
-        parent_kind: 'subagent',
-        agent_name: '依赖分析',
-      }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([
+        makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
+        makeRun({
+          id: 'child-1',
+          title: '依赖分析',
+          status: 'running',
+          parent_run_id: 'run-1',
+          parent_kind: 'subagent',
+          agent_name: '依赖分析',
+        }),
+      ]),
+    );
     renderPage();
 
     expect(await screen.findByTestId('run-subagent-badge')).toHaveTextContent(
@@ -138,10 +142,12 @@ describe('RunsPage', () => {
   });
 
   it('深链 ?run= 直接打开该 run 的抽屉', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
-      makeRun({ id: 'run-2', title: '依赖分析', status: 'running' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([
+        makeRun({ id: 'run-1', title: '整理本周邮件成周报' }),
+        makeRun({ id: 'run-2', title: '依赖分析', status: 'running' }),
+      ]),
+    );
     renderPage('/?run=run-2');
 
     await waitFor(() => {
@@ -159,7 +165,7 @@ describe('RunsPage', () => {
   });
 
   it('创建 run 时把验收标准按行解析', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([]));
     vi.mocked(runsApi.create).mockResolvedValue(makeRun({ id: 'run-2' }));
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ id: 'run-2' }));
     renderPage();
@@ -181,9 +187,9 @@ describe('RunsPage', () => {
   });
 
   it('待审批 run:显示计划与放行按钮,放行调用审批 API', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ status: 'awaiting_approval' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([makeRun({ status: 'awaiting_approval' })]),
+    );
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_approval' }),
     );
@@ -208,9 +214,9 @@ describe('RunsPage', () => {
   });
 
   it('待确认危险操作 run:确认按钮调用 confirm(approve)', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ status: 'awaiting_confirmation' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([makeRun({ status: 'awaiting_confirmation' })]),
+    );
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_confirmation' }),
     );
@@ -236,9 +242,9 @@ describe('RunsPage', () => {
   });
 
   it('已完成 run:列出多件交付物(报告 + 文件)', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ status: 'completed' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([makeRun({ status: 'completed' })]),
+    );
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     vi.mocked(runsApi.artifacts).mockResolvedValue([
       {
@@ -280,9 +286,9 @@ describe('RunsPage', () => {
   });
 
   it('交付物:文本可预览、图片用 blob URL、文件可下载', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ status: 'completed' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([makeRun({ status: 'completed' })]),
+    );
     vi.mocked(runsApi.get).mockResolvedValue(makeRun({ status: 'completed' }));
     vi.mocked(runsApi.artifacts).mockResolvedValue([
       {
@@ -351,7 +357,7 @@ describe('RunsPage', () => {
       status: 'blocked',
       status_reason: '计划与目标不符,先别发',
     });
-    vi.mocked(runsApi.list).mockResolvedValue([blocked]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([blocked]));
     vi.mocked(runsApi.get).mockResolvedValue(blocked);
     vi.mocked(runsApi.resume).mockResolvedValue({
       run_id: 'run-1',
@@ -373,7 +379,7 @@ describe('RunsPage', () => {
       status: 'cancelled',
       status_reason: '用户在控制台取消',
     });
-    vi.mocked(runsApi.list).mockResolvedValue([cancelled]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([cancelled]));
     vi.mocked(runsApi.get).mockResolvedValue(cancelled);
     renderPage();
 
@@ -387,7 +393,7 @@ describe('RunsPage', () => {
 
   it('cancelled run:追加指令不可提交(已是终态)', async () => {
     const cancelled = makeRun({ status: 'cancelled' });
-    vi.mocked(runsApi.list).mockResolvedValue([cancelled]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([cancelled]));
     vi.mocked(runsApi.get).mockResolvedValue(cancelled);
     renderPage();
 
@@ -401,7 +407,7 @@ describe('RunsPage', () => {
 
   it('blocked run:追加指令仍可用(blocked 非终态)', async () => {
     const blocked = makeRun({ status: 'blocked' });
-    vi.mocked(runsApi.list).mockResolvedValue([blocked]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([blocked]));
     vi.mocked(runsApi.get).mockResolvedValue(blocked);
     vi.mocked(runsApi.instructions).mockResolvedValue([]);
     renderPage();
@@ -430,7 +436,7 @@ describe('RunsPage', () => {
       status: 'awaiting_approval',
       parent_run_id: 'run-1',
     });
-    vi.mocked(runsApi.list).mockResolvedValue([failed]);
+    vi.mocked(runsApi.list).mockResolvedValue(page([failed]));
     vi.mocked(runsApi.get).mockImplementation(async (id) =>
       id === 'run-2' ? retried : failed,
     );
@@ -449,9 +455,9 @@ describe('RunsPage', () => {
   });
 
   it('追加指令:提交后调用排队接口并展示队列状态', async () => {
-    vi.mocked(runsApi.list).mockResolvedValue([
-      makeRun({ status: 'awaiting_approval' }),
-    ]);
+    vi.mocked(runsApi.list).mockResolvedValue(
+      page([makeRun({ status: 'awaiting_approval' })]),
+    );
     vi.mocked(runsApi.get).mockResolvedValue(
       makeRun({ status: 'awaiting_approval' }),
     );

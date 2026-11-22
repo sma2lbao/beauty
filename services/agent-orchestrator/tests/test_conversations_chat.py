@@ -31,7 +31,9 @@ def test_simple_chat_answers_without_run(tmp_path) -> None:
             "assistant",
         ]
         # 整个会话没有产生任何 run
-        assert client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json() == []
+        assert (
+            client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json()["items"] == []
+        )
         assert _detail(client, conversation_id)["active_run_id"] is None
 
 
@@ -177,7 +179,9 @@ def test_stream_chat_streams_deltas_and_persists_reply(tmp_path) -> None:
             "user",
             "assistant",
         ]
-        assert client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json() == []
+        assert (
+            client.get("/api/v1/runs?limit=50", headers=ACCOUNT).json()["items"] == []
+        )
 
 
 def test_stream_task_sends_meta_without_deltas(tmp_path) -> None:

@@ -15,6 +15,8 @@ import { runsBase as BASE } from '@/config/env';
 import type { ApprovalGrant } from './approval-api';
 import type {
   Run,
+  RunListParams,
+  RunPage,
   Plan,
   RunEvent,
   RunStep,
@@ -42,7 +44,21 @@ export { ApiError, isUnauthorized };
 const http = createHttpClient(BASE);
 
 export const runsApi = {
-  list: () => http.request<Run[]>('/api/v1/runs?limit=50'),
+  /**
+   * 分页列表(看板与侧栏共用):keyset 游标翻页,可按标题/目标搜索。
+   * 兼容滚动升级:旧版后端返回 Run[],这里统一归一化成 RunPage。
+   */
+  list: async (params: RunListParams = {}): Promise<RunPage> => {
+    const search = new URLSearchParams();
+    search.set('limit', String(params.limit ?? 50));
+    const q = params.q?.trim();
+    if (q) search.set('q', q);
+    if (params.cursor) search.set('cursor', params.cursor);
+    const data = await http.request<RunPage | Run[]>(
+      `/api/v1/runs?${search.toString()}`,
+    );
+    return Array.isArray(data) ? { items: data, next_cursor: null } : data;
+  },
   create: (body: {
     title: string;
     goal: string;

@@ -3566,6 +3566,32 @@
         "title": "RunItemRead",
         "type": "object"
       },
+      "RunPage": {
+        "description": "run 列表分页:keyset 游标(created_at + id),避免 offset 漂移。",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": ["items"],
+        "title": "RunPage",
+        "type": "object"
+      },
       "RunRead": {
         "properties": {
           "acceptance_criteria": {
@@ -9018,7 +9044,7 @@
     },
     "/api/v1/runs": {
       "get": {
-        "description": "账号内 run 列表,最新在前(控制台首页)。",
+        "description": "账号内 run 列表,最新在前(控制台首页);q 搜索标题/目标,cursor 翻页。",
         "operationId": "list_runs_api_v1_runs_get",
         "parameters": [
           {
@@ -9031,6 +9057,39 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           },
           {
@@ -9071,11 +9130,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/RunRead"
-                  },
-                  "title": "Response List Runs Api V1 Runs Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/RunPage"
                 }
               }
             },

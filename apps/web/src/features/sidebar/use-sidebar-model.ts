@@ -18,8 +18,7 @@ import type { Conversation } from '@/lib/conversations-api';
 import { conversationsApi } from '@/lib/conversations-api';
 import { queryKeys } from '@/lib/query-keys';
 import type { Run } from '@/lib/runs-api';
-import { runsApi } from '@/lib/runs-api';
-import { useRunsStreamStatus } from '@/lib/runs-stream';
+import { useRunsList } from '@/lib/runs-list';
 import { useWorkspaceSelection } from '@/lib/workspace-selection';
 
 export function useSidebarModel() {
@@ -61,14 +60,8 @@ export function useSidebarModel() {
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
   });
 
-  // 账号级状态流已连上时列表由推送维护,只保留 30s 兜底(防漏帧/半开连接);
-  // 未连上(首屏/断网/重连中)仍按兜底间隔拉,不能用 false 把 UI 变成死的。
-  const runsStream = useRunsStreamStatus();
-  const runsQuery = useQuery({
-    queryKey: queryKeys.runs,
-    queryFn: runsApi.list,
-    refetchInterval: runsStream.connected ? false : 30_000,
-  });
+  // 与看板共用 ['runs','page',''] 缓存(账号级状态流推送维护 + 30s 兜底)。
+  const { runs: recentRuns } = useRunsList();
   const accountQuery = useQuery({
     queryKey: queryKeys.authAccount,
     queryFn: accountLabel,
@@ -177,7 +170,7 @@ export function useSidebarModel() {
   });
 
   const latestRunByConversation = new Map<string, Run>();
-  for (const run of runsQuery.data ?? []) {
+  for (const run of recentRuns) {
     if (!run.conversation_id) continue;
     const previous = latestRunByConversation.get(run.conversation_id);
     if (

@@ -1,10 +1,11 @@
+import type { InfiniteData } from '@tanstack/react-query';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runsBase } from '@/config/env';
-import type { Run } from '@/lib/runs-types';
+import type { Run, RunPage } from '@/lib/runs-types';
 import { queryKeys } from '@/lib/query-keys';
 import type { ConnectSseOptions } from '@/lib/sse';
 import {
@@ -37,6 +38,10 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     created_at: '2026-10-13T10:00:00+00:00',
     ...overrides,
   };
+}
+
+function pageOf(items: Run[]): InfiniteData<RunPage> {
+  return { pages: [{ items, next_cursor: null }], pageParams: [undefined] };
 }
 
 function stateFrame(run: Run, cursor = 'c1') {
@@ -84,10 +89,7 @@ describe('upsertRun', () => {
   it('未命中按 id 前插,命中就原地覆盖', () => {
     const first = makeRun({ id: 'a' });
     const second = makeRun({ id: 'b' });
-    expect(upsertRun([first], second).map((run) => run.id)).toEqual([
-      'b',
-      'a',
-    ]);
+    expect(upsertRun([first], second).map((run) => run.id)).toEqual(['b', 'a']);
     const merged = upsertRun([first], makeRun({ id: 'a', status: 'running' }));
     expect(merged).toHaveLength(1);
     expect(merged[0].status).toBe('running');
@@ -98,7 +100,7 @@ describe('useRunsStream', () => {
   it('连上后把推送摘要并进列表缓存,状态变为 connected', async () => {
     const queryClient = new QueryClient();
     const existing = makeRun({ id: 'run-1', status: 'planning' });
-    queryClient.setQueryData(queryKeys.runs, [existing]);
+    queryClient.setQueryData(queryKeys.runsPage(''), pageOf([existing]));
     connectSseMock.mockImplementation(
       async (_url: string, options: ConnectSseOptions) => {
         options.onOpen?.();
@@ -125,7 +127,10 @@ describe('useRunsStream', () => {
     expect(result.current).toBeDefined();
     expect(getRunsStreamStatus().connected).toBe(true);
 
-    const cached = queryClient.getQueryData<Run[]>(queryKeys.runs) ?? [];
+    const cached =
+      queryClient
+        .getQueryData<InfiniteData<RunPage>>(queryKeys.runsPage(''))
+        ?.pages.flatMap((page) => page.items) ?? [];
     expect(cached.map((run) => run.id)).toEqual(['run-2', 'run-1']);
     expect(cached[1].status).toBe('running');
 
@@ -151,13 +156,13 @@ describe('useRunsStream', () => {
       await Promise.resolve();
     });
 
-    expect(queryClient.getQueryData(queryKeys.runs)).toBeUndefined();
+    expect(queryClient.getQueryData(queryKeys.runsPage(''))).toBeUndefined();
   });
 
   it('断线按指数退避重连,并带上最后一帧的游标', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
-    queryClient.setQueryData(queryKeys.runs, [] as Run[]);
+    queryClient.setQueryData(queryKeys.runsPage(''), pageOf([]));
     connectSseMock
       .mockImplementationOnce(
         async (_url: string, options: ConnectSseOptions) => {
@@ -187,8 +192,75 @@ describe('useRunsStream', () => {
     });
 
     expect(connectSseMock).toHaveBeenCalledTimes(2);
-    const [, second] = connectSseMock.mock.calls[1] as [string, ConnectSseOptions];
+    const [, second] = connectSseMock.mock.calls[1] as [
+      string,
+      ConnectSseOptions,
+    ];
     expect(second.lastEventId).toBe('c1');
     expect(getRunsStreamStatus().connected).toBe(true);
+  });
+
+  it('只把新 run 前插进命中搜索词的缓存', async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(queryKeys.runsPage(''), pageOf([]));
+    queryClient.setQueryData(queryKeys.runsPage('周报'), pageOf([]));
+    queryClient.setQueryData(queryKeys.runsPage('登录'), pageOf([]));
+    connectSseMock.mockImplementation(
+      async (_url: string, options: ConnectSseOptions) => {
+        options.onOpen?.();
+        options.onFrame?.(
+          stateFrame(makeRun({ id: 'run-9', title: '整理周报' }), 'c1'),
+        );
+        await new Promise<void>(() => {});
+      },
+    );
+
+    renderHook(() => useRunsStream(), { wrapper: wrapper(queryClient) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const idsOf = (q: string) =>
+      queryClient
+        .getQueryData<InfiniteData<RunPage>>(queryKeys.runsPage(q))
+        ?.pages.flatMap((page) => page.items)
+        .map((run) => run.id) ?? [];
+    expect(idsOf('')).toEqual(['run-9']);
+    expect(idsOf('周报')).toEqual(['run-9']);
+    expect(idsOf('登录')).toEqual([]);
+  });
+
+  it('已在后续页的 run 只在该页原地更新,不重复前插到第一页', async () => {
+    const queryClient = new QueryClient();
+    const first = makeRun({ id: 'run-1', status: 'planning' });
+    const second = makeRun({ id: 'run-2', status: 'planning' });
+    queryClient.setQueryData(queryKeys.runsPage(''), {
+      pages: [
+        { items: [first], next_cursor: 'c1' },
+        { items: [second], next_cursor: null },
+      ],
+      pageParams: [undefined, 'c1'],
+    } satisfies InfiniteData<RunPage>);
+    connectSseMock.mockImplementation(
+      async (_url: string, options: ConnectSseOptions) => {
+        options.onOpen?.();
+        options.onFrame?.(
+          stateFrame(makeRun({ id: 'run-2', status: 'running' }), 'c1'),
+        );
+        await new Promise<void>(() => {});
+      },
+    );
+
+    renderHook(() => useRunsStream(), { wrapper: wrapper(queryClient) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const pages = queryClient.getQueryData<InfiniteData<RunPage>>(
+      queryKeys.runsPage(''),
+    )?.pages;
+    expect(pages?.[0].items.map((run) => run.id)).toEqual(['run-1']);
+    expect(pages?.[1].items.map((run) => run.id)).toEqual(['run-2']);
+    expect(pages?.[1].items[0].status).toBe('running');
   });
 });

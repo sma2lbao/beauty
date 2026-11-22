@@ -9,8 +9,10 @@
  */
 
 export const queryKeys = {
-  /** 运行域:['runs'] 列表 / ['run', id] 详情。 */
+  /** 运行域:['runs'] 列表前缀 / ['run', id] 详情。 */
   runs: ['runs'] as const,
+  /** run 列表分页:['runs', 'page', q](q 为空串 = 不加搜索);看板与侧栏共用。 */
+  runsPage: (q: string) => ['runs', 'page', q] as const,
   run: (runId: string) => ['run', runId] as const,
   /** 执行计划:['plan', runId]。 */
   plan: (runId: string) => ['plan', runId] as const,

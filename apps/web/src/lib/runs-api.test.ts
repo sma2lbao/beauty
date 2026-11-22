@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunEvent } from '@/lib/runs-api';
 import {
   ApiError,
-  mergeEvents,
   parseEventFrame,
   runsApi,
   streamRunEvents,
@@ -44,22 +43,6 @@ describe('parseEventFrame', () => {
   });
 });
 
-describe('mergeEvents', () => {
-  it('去重并按 seq 升序', () => {
-    const merged = mergeEvents([event], {
-      seq: 2,
-      type: 'run.created.v1',
-      payload: {},
-    });
-    expect(merged.map((item) => item.seq)).toEqual([2, 3]);
-  });
-
-  it('重复 seq 不重复插入(SSE 重放/续传)', () => {
-    const merged = mergeEvents([event], event);
-    expect(merged).toHaveLength(1);
-  });
-});
-
 describe('runsApi', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -70,13 +53,17 @@ describe('runsApi', () => {
     setStoredToken('test-jwt');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [{ id: 'r1', status: 'pending' }],
+      json: async () => ({
+        items: [{ id: 'r1', status: 'pending' }],
+        next_cursor: null,
+      }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const runs = await runsApi.list();
+    const page = await runsApi.list();
 
-    expect(runs).toHaveLength(1);
+    expect(page.items).toHaveLength(1);
+    expect(page.next_cursor).toBeNull();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/v1/runs?limit=50');
     expect((init.headers as Record<string, string>)['Authorization']).toBe(

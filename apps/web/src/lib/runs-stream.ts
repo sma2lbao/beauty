@@ -14,14 +14,14 @@
  * 兜底:连接未就绪时侧栏/看板仍按 30s 轮询(见 useRunsStreamStatus 的消费点),
  * 断网时 UI 不会变成死的。
  */
-import type { QueryClient } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useSyncExternalStore } from 'react';
 
 import { runsBase as BASE } from '@/config/env';
 import { ApiError } from '@/lib/http';
 import { queryKeys } from '@/lib/query-keys';
-import type { Run } from '@/lib/runs-types';
+import type { Run, RunPage } from '@/lib/runs-types';
 import type { SseFrame } from '@/lib/sse';
 import { connectSse } from '@/lib/sse';
 
@@ -31,7 +31,10 @@ export const RUN_STATE_EVENT = 'run.state.v1';
 /** 连接状态:connected 决定侧栏/看板是否还要轮询兜底。 */
 export type RunsStreamStatus = { connected: boolean; reconnecting: boolean };
 
-const DISCONNECTED: RunsStreamStatus = { connected: false, reconnecting: false };
+const DISCONNECTED: RunsStreamStatus = {
+  connected: false,
+  reconnecting: false,
+};
 
 let status: RunsStreamStatus = DISCONNECTED;
 const listeners = new Set<() => void>();
@@ -100,14 +103,65 @@ export function upsertRun(list: readonly Run[], run: Run): Run[] {
   return next;
 }
 
+/** 从 ['runs','page',q] 取搜索词;其它形状(旧键)返回 null。 */
+function searchOf(queryKey: readonly unknown[]): string | null {
+  return queryKey[0] === 'runs' &&
+    queryKey[1] === 'page' &&
+    typeof queryKey[2] === 'string'
+    ? queryKey[2]
+    : null;
+}
+
+/** 与服务端 ilike 对齐的宽松匹配(大小写不敏感的子串)。 */
+function matchesQuery(run: Run, q: string): boolean {
+  const needle = q.toLowerCase();
+  return (
+    run.title.toLowerCase().includes(needle) ||
+    run.goal.toLowerCase().includes(needle)
+  );
+}
+
 /**
- * 把一条摘要写进缓存。列表未加载过时不"凭空造一个只有一条的列表"
+ * 把一条摘要写进列表缓存。列表未加载过时不"凭空造一个只有一条的列表"
  * (那会让 useQuery 以为数据已就绪,永远不再拉全量),详情同理只在已有数据时合并。
+ *
+ * 分页缓存逐页更新:已在任一页的 run 原地合并;新 run 只在空搜索或命中搜索词时
+ * 前插第一页(与服务端 created_at 倒序一致),不污染其它搜索词的缓存。
  */
 function applyRunState(queryClient: QueryClient, run: Run): void {
-  queryClient.setQueryData<Run[]>(queryKeys.runs, (current) =>
-    current ? upsertRun(current, run) : current,
-  );
+  const entries = queryClient.getQueryCache().findAll({
+    queryKey: queryKeys.runs,
+  });
+  for (const entry of entries) {
+    const q = searchOf(entry.queryKey);
+    if (q === null) continue; // 旧形状缓存不猜,交给下一次列表请求
+    queryClient.setQueryData<InfiniteData<RunPage>>(
+      entry.queryKey,
+      (current) => {
+        if (!current) return current;
+        const exists = current.pages.some((page) =>
+          page.items.some((item) => item.id === run.id),
+        );
+        if (exists) {
+          return {
+            ...current,
+            pages: current.pages.map((page) =>
+              page.items.some((item) => item.id === run.id)
+                ? { ...page, items: upsertRun(page.items, run) }
+                : page,
+            ),
+          };
+        }
+        if (q && !matchesQuery(run, q)) return current;
+        const [first, ...rest] = current.pages;
+        if (!first) return current;
+        return {
+          ...current,
+          pages: [{ ...first, items: [run, ...first.items] }, ...rest],
+        };
+      },
+    );
+  }
   queryClient.setQueryData<Run>(queryKeys.run(run.id), (current) =>
     current ? { ...current, ...run } : current,
   );
