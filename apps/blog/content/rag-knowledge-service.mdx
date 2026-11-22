@@ -1,0 +1,153 @@
+---
+title: '知识库服务：分块、嵌入、检索的最小可用实现'
+description: 'RAG 三件套的真实实现：段落优先分块与尾窗丢弃、JSON 存向量不依赖 pgvector、可插拔嵌入提供方（本地词法哈希 + 网关语义嵌入）、余弦检索与 Agent 闭环。'
+date: '2026-11-22'
+tags: ['RAG', '知识库', '嵌入', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 10
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/knowledge-service`（:8006）。它刻意做小——看懂它，就掌握了 RAG 的骨架，之后换任何重型方案都是局部替换。
+
+## RAG 的最小骨架
+
+知识库服务只做四件事，每件一个模块：
+
+```text
+入库   POST /v1/knowledge/documents  {title, content}
+  ↓
+分块   chunk_text(content, size=400, overlap=60)     → services/chunking.py
+嵌入   embedder.embed(chunks)                        → services/embeddings.py
+落库   knowledge_documents + document_chunks 两张表
+检索   POST /v1/knowledge/search  {query, limit}     → 余弦相似度排序
+```
+
+没有管道编排、没有异步任务——一次 HTTP 请求内完成入库（分块 → 嵌入 → 落库）。文档量级不大时，同步完成是最简单正确的形态；「需要异步摄取」是规模问题，不是第一天就要解决的问题。
+
+## 分块：段落优先，窗口兜底
+
+分块质量直接决定检索质量：块太大，向量是「多主题的混响」，哪条查询都对不上；块太小，上下文断裂。真实实现分两步（`chunk_text`，默认 size=400 / overlap=60）：
+
+**第一步：段落优先合并。** 按 `\n\n` 切段，段落内超长的再切成不超过 size 的碎片，然后贪心合并——能装进 size 的相邻段落用空行拼成一个块。这保留了文档作者的自然语义边界：一段「安装步骤」不会被劈成两半。
+
+**第二步：长段滑动窗口硬切。** 没有 `\n\n` 边界的长文本（比如粘贴的日志）用滑动窗口硬切，相邻窗口重叠 `size - step` 字符，保证跨越切点的信息在两个块里都出现。
+
+一个容易漏掉的细节是**尾窗丢弃**：
+
+```python
+if len(pieces) > 1 and len(pieces[-1]) <= overlap:
+    pieces.pop()  # 末尾窗口不长于重叠长度:内容已被前块完全覆盖,丢弃
+```
+
+最后一个窗口如果只剩几个字符（不超过重叠长度），说明它的内容已被前一块完整包含——留着只会产生「一两个字符的检索噪声块」，命中它反而稀释排序。
+
+模块 docstring 交代了设计取舍：「刻意保持简单可解释——不做语义分块（标题层级/表格感知）。分块策略变化只影响 ingest，检索读端契约不变。」**分块是可独立演化的环节**：先上简单版，语义分块后补。
+
+## 存储：JSON 存向量，不依赖 pgvector
+
+```text
+knowledge_documents:  title / source / size_bytes / chunk_count / embedding_model
+document_chunks:      document_id / ordinal / content / embedding(JSON)
+                      唯一约束 (document_id, ordinal)
+```
+
+向量以 JSON 数组存进 `document_chunks.embedding`，检索时全量载入 Python 算余弦。很多人第一反应是「怎么不用 pgvector」——这是个值得展开的决策：
+
+- **数据量决定一切**：几百份文档、每份几十块，O(N) 余弦在毫秒级，pgvector 的 ANN 索引在这个量级上毫无优势，还要引入扩展依赖与迁移负担；
+- **迁移成本被 Protocol 隔离**：读端契约是 `SearchHit {chunk_id, document_id, title, ordinal, content, score}`，换 pgvector 只改仓储实现，「本表只留引用，读端契约不变」；
+- **embedding_model 存在文档行上**：换嵌入模型后新旧向量不可比，这个字段就是「哪批向量属于哪个模型」的标记，重建索引时按它筛。
+
+另一个细节：`source` 字段从 32 位放宽到 64 位，因为要存 `run:<32位id>`——交付物自动入库时，检索结果要能溯源到产生它的 run。**溯源字段从第一天就要进 schema**，事后补要迁移。
+
+## 嵌入提供方：Protocol + 工厂 + 两种实现
+
+```python
+class EmbeddingProvider(Protocol):
+    name: str
+    model: str
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """顺序一致、维度一致。"""
+```
+
+协议只有两个属性一个方法，两侧实现：
+
+**本地词法嵌入（默认，零依赖）**：`LocalHashingEmbeddingProvider`——不是语义嵌入，是**词法近似**：把每个 token（拉丁词、中文单字）用 blake2b 哈希落进 256 个桶计数，L2 归一化成稀疏向量。两个词的向量相似当且仅当它们字面上共享 token——「维修」和「修理」毫无关系。它的价值是**零依赖跑通全链路**：没有模型 API 时，入库、检索、排序的代码路径全部可测；生产切网关提供方，一行配置。
+
+**网关语义嵌入**：POST llm-gateway 的 `/v1/embeddings`，模型默认 bge-m3。两个工程点：
+
+```python
+async def embed(self, texts: list[str]) -> list[list[float]]:
+    ...
+    vectors = response.json().get("embeddings") or []
+    if len(vectors) != len(texts):
+        raise UpstreamError(
+            "knowledge.embedding_mismatch",
+            "嵌入返回条数与输入不一致",
+            details={"expected": len(texts), "got": len(vectors)},
+        )
+```
+
+- **条数校验**：批量嵌入返回数与输入不一致 → 显式报错，而不是静默错位（错位的向量是检索事故的根源）；
+- **出站头注入用 setdefault**：透传 request_id/traceparent 观测头，补 `X-Account-Id` 与 `X-Internal-Secret`——上游显式给了就不覆盖。
+
+工厂 `build_embedder(provider, ...)` 遇到未知 provider 直接 ValueError——**未知配置在启动时就报错，不带病上线**。
+
+## 检索：余弦 + 稳定排序
+
+```python
+async def search(session, account_id, query, limit, embedder):
+    """向量检索:返回 (分块, 文档标题, 分数),分数降序、同分按 ordinal 稳定。"""
+    query_vector = (await embedder.embed([query]))[0]
+    rows = await DocumentChunkRepository(session).searchable_rows(account_id)
+    scored = [
+        (chunk, title, cosine_similarity(query_vector, list(chunk.embedding or [])))
+        for chunk, title in rows
+    ]
+    scored.sort(key=lambda item: (-item[2], item[0].ordinal, item[0].id))
+    return scored[:limit]
+```
+
+三个细节：
+
+1. **`searchable_rows` 是仓储的显式命名方法**——「分块 join 文档」的复杂查询留在仓储层，比散在业务层的裸 SQL 更容易审计。这是第 6 篇「复杂查询以显式命名方法留在仓储」约定的实例；
+2. **账号过滤在仓储层**：检索天然只搜自己的文档，隔离不靠业务层记得；
+3. **排序键带 tiebreaker**：`(-score, ordinal, id)`——同分块按文档序稳定，两次相同查询返回相同顺序。**排序的确定性是可测试性的前提**。`cosine_similarity` 对维度不一致或零向量返回 0 不抛错（排序更稳）。
+
+limit 收口 `max(1, min(limit, settings.search_max_limit))`，查询长度 2000 字、文档 100 万字在 schema 层限死。
+
+## Agent 闭环：检索是工具，交付物也是语料
+
+知识库对 Agent 的价值在两个方向：
+
+**读**：orchestrator 注册 `search_knowledge` 工具，模型在执行任务时「先查资料再回答」——工具面按 `KNOWLEDGE_ENABLED` 开关暴露（能力即权限边界，没开就不出现在工具列表）。
+
+**写**：run 交付的产物自动入库。这条链路用的是第 5 篇的 outbox——`KNOWLEDGE_INGEST_ENABLED=true` 时挂上第一个真实消费者：订阅 `run.delivered.v1`，把交付物内容经 knowledge-service 摄取。于是「Agent 上次生成的周报」这次就能被 `search_knowledge` 查到——**Agent 的产出沉淀为下一轮的知识**，这是事件驱动架构在 Agent 平台里的具体收益。
+
+## 什么时候该升级
+
+最小实现的边界在哪里，升级信号就在哪里：
+
+| 信号 | 升级方向 |
+| --- | --- |
+| 分块数上万，检索延迟明显 | pgvector + ANN 索引（读端契约不变） |
+| 词法嵌入检索质量不够 | 网关语义嵌入（已是内置选项） |
+| 长文档结构复杂（表格/代码） | 语义分块：按标题层级/语法边界切 |
+| 纯向量召回不准 | 混合检索：BM25 词法分 + 向量分融合（RRF） |
+| 检索结果开头有几条垃圾 | 重排（rerank）：小模型对 top-K 精排 |
+
+升级全部发生在 ingest/检索的内部实现层，对 Agent 工具面（`search_knowledge`）与 API 契约零改动——**把「会变的部分」圈在协议后面，是最值得从这套实现里带走的架构习惯**。
+
+## 要点清单
+
+- [ ] 分块段落优先、窗口兜底，尾窗丢弃防检索噪声；
+- [ ] 向量存储与检索算法按数据量选，JSON 列在这个量级完全够用；
+- [ ] `embedding_model` 存在行上——换模型后新旧向量不可比；
+- [ ] 嵌入提供方 Protocol 化，本地词法实现保证零依赖可跑；
+- [ ] 批量嵌入校验返回条数，错位向量是检索事故根源；
+- [ ] 检索排序带 tiebreaker，确定性才可测试；
+- [ ] 交付物自动入库：Agent 产出经 outbox 沉淀为知识。
+
+## 系列导航
+
+上一篇：[LLM 网关](/posts/llm-gateway-design)　|　下一篇：[Agent 记忆系统](/posts/agent-memory-system)

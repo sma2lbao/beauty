@@ -1,0 +1,217 @@
+---
+title: '事务性 Outbox：微服务不丢事件的一致性方案'
+description: '状态改了事件必须发出去：同事务落 outbox、三段式投递、领取租约 + SKIP LOCKED、指数退避、SAVEPOINT 幂等消费，从一个真实实现讲透每个决策。'
+date: '2026-11-22'
+tags: ['微服务', '一致性', '事件驱动', 'PostgreSQL']
+series: 'Agent 平台实现'
+seriesOrder: 5
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `packages/events/events/outbox.py`（420 行，完整实现）。
+
+## 双写问题：微服务一致性的第一课
+
+场景：交付物落库了，还要发一个 `run.delivered.v1` 事件让知识库自动入库。两个写入不可能用一个数据库事务完成——事件要发给别的服务，数据库事务管不到消息队列。
+
+直接写会遇到两种不一致：
+
+```text
+方案 A:先改状态,再发消息
+  → 状态改了,发消息前进程崩了:事件永久丢失,知识库永远不知道有新交付物
+
+方案 B:先发消息,再改状态
+  → 消息发出去了,事务回滚了:知识库拿到了一个「不存在」的交付物
+```
+
+事务性 outbox 的解法：**事件不发出去，先作为一行写进同一个数据库事务的 outbox 表**。业务状态和事件要么一起提交、要么一起回滚，双写问题从根上消失。投递是之后的异步动作。
+
+```python
+class OutboxEvent(UUIDMixin, AccountMixin, TimestampMixin, Base):
+    """待投递事件(id 即信封 id,作为消费幂等的去重键)。"""
+
+    __tablename__ = "outbox_events"
+
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[str] = mapped_column(String(40))
+    envelope_account_id: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default=PENDING, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), ...)
+    last_error: Mapped[str | None] = mapped_column(Text)
+```
+
+写入端只有一个动作，发生在业务事务里：
+
+```python
+async def record(self, account_id, envelope, *, available_at=None):
+    """与业务状态同一事务登记事件;调用方随后提交,两者一起生效。"""
+    event = OutboxEvent(id=envelope.id, ...)
+    self.session.add(event)
+    await self.session.flush()
+    return event
+```
+
+## 投递语义：至少一次，明说代价
+
+outbox 投递是**至少一次**：投递成功才标记 dispatched，进程在「投递后、标记前」崩溃会导致重投。这不是缺陷而是主动选择——精确一次投递在通用组件里做不出来，至少一次 + 消费方幂等是工程上唯一站得住的组合。文档里明说：「消费方必须幂等（用 mark_processed 去重）」。
+
+失败处理：指数退避重试，超限落 `failed` 状态——**不静默丢弃，留在表里可查可重放**。
+
+```python
+DEFAULT_BACKOFF_SECONDS: tuple[float, ...] = (1.0, 5.0, 30.0, 120.0)
+
+async def mark_failed(self, event, error, *, max_attempts=5, backoff_seconds=...):
+    """记一次失败:累加尝试数、写入原因,并按退避档位安排下次;超限落 failed。"""
+    event.attempts += 1
+    event.last_error = error[:500]
+    if event.attempts >= max_attempts:
+        event.status = FAILED
+    else:
+        index = min(event.attempts - 1, len(backoff_seconds) - 1)
+        delay = backoff_seconds[index]
+        event.available_at = datetime.now(UTC) + timedelta(seconds=delay)
+```
+
+退避用档位数组而不是连续指数计算：1s、5s、30s、120s 四档封顶，行为可预测、运维能心算「这条事件下次什么时候重试」。
+
+## 三段式投递：处理器绝不在数据库事务里运行
+
+dispatcher 的 `drain_once` 是本文最值得细读的部分。直觉写法是「一个事务里领取 + 投递 + 标记」，但它有个隐蔽的坑：**投递处理器会调外部服务、写自己的库**，把它放在 outbox 事务里意味着——长事务持锁（SQLite 下直接 database is locked）、外部调用的耗时被数据库锁放大。
+
+真实实现拆成三段：
+
+```python
+async def drain_once(self) -> DispatchStats:
+    """投递一批:**三段式**,处理器绝不在数据库事务里运行。
+
+    1. 短事务:领取一批并提交——claim 同时把 available_at 推到租约之后,
+       其它 dispatcher 不会重复领取(立刻释放数据库锁);
+    2. 事务外:逐条投递(失败只记录,不影响其它事件);
+    3. 短事务:逐条标记 dispatched / failed(+ 退避)。
+
+    代价:第 2、3 步之间崩溃会重投——这**本来**就是至少一次语义。
+    """
+    async with session_scope(self._factory) as session:
+        claimed = await OutboxRepository(session).claim(
+            limit=self._batch_size, lease_seconds=self._claim_lease_seconds
+        )
+        envelopes = [(event.id, event.to_envelope()) for event in claimed]
+
+    delivered = failed = 0
+    for event_id, envelope in envelopes:
+        error: str | None = None
+        try:
+            await self._bus.publish(envelope)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        # 每条一个短事务:成功/失败分别落库,互不牵连
+        async with session_scope(self._factory) as session:
+            ...
+```
+
+最后一句是精髓：**「两步之间崩溃会重投，而这本就是至少一次语义」**——既然消费方必须幂等，重投没有变差，就不值得为消灭它引入分布式事务。工程设计的完整性体现在：每一步的代价都被明说，且每一步的代价都能被已有的语义吸收。
+
+## 多副本领取：租约 + SKIP LOCKED
+
+多个 dispatcher 实例并发投递怎么办？`claim` 不只读，还把命中行的 `available_at` 推到租约之后：
+
+```python
+async def claim(self, *, limit=50, now=None, lease_seconds=60.0):
+    """领取一批待投递事件(跨账号,按登记顺序),并在同事务里占住租约。
+
+    多实例正确性:claim 不只读,还把命中行的 available_at 推到
+    now + lease_seconds。提交后其它 dispatcher 看不到这批行,不会重复投递;
+    领取后进程崩溃时,租约到期(available_at 再次到点)由下一轮自动重领。
+    """
+    moment = now or datetime.now(UTC)
+    statement = _claim_statement(moment, limit)
+    if _is_postgres(self.session):
+        statement = statement.with_for_update(skip_locked=True)
+    rows = list(await self.session.scalars(statement))
+    lease_until = moment + timedelta(seconds=lease_seconds)
+    for event in rows:
+        event.available_at = lease_until
+```
+
+两个机制叠加：
+
+- **租约**（改 `available_at`）：领取即占位，其他实例的查询条件 `available_at <= now` 天然过滤掉被领取的行；领取方崩溃后租约到期自动重领；
+- **SKIP LOCKED**（PG）：并发 claim 时直接跳过被锁行，不互相等待。
+
+和第 2 篇的 job 表领取是同一套模式——**「短事务领取 + 租约 + 事务外执行 + 幂等回写」是所有轮询型 worker 的通用骨架**，认出这个骨架，任何队列实现都能十分钟读懂。
+
+## 消费幂等：SAVEPOINT 兜住唯一约束冲突
+
+消费方拿到事件后怎么去重？建一张 `processed_events` 表，唯一约束 `(account_id, consumer, event_id)`：
+
+```python
+async def mark_processed(session, *, account_id, consumer, event_id) -> bool:
+    """消费去重:返回 True 表示首次处理,False 表示重复(调用方跳过)。
+
+    用 SAVEPOINT 兜住唯一约束冲突,不会污染外层事务——消费方可以
+    "先判重,再在同一事务里写自己的状态"。
+    """
+    try:
+        async with session.begin_nested():
+            session.add(ProcessedEvent(
+                account_id=account_id, consumer=consumer, event_id=event_id
+            ))
+            await session.flush()
+    except IntegrityError:
+        return False
+    return True
+```
+
+这里有个 SQL 细节值得讲：重复事件会让 INSERT 撞唯一约束。朴素做法是先 SELECT 判重再 INSERT，但两步之间有并发窗口（两个消费者同时处理同一事件，都看到「没处理过」）。SAVEPOINT 方案把判重和登记合成一个原子操作：撞约束说明别人处理过了，回滚到 SAVEPOINT 即可——**不污染外层事务**，消费方可以「先判重，再在同一事务里写自己的业务状态」，业务状态与去重标记要么一起提交要么一起回滚。
+
+`consumer` 字段是去重键的一部分：同一个事件，交付物入库消费者和处理消费者各判各的——幂等是**按消费者**声明的。
+
+## 事件信封：命名约定即契约
+
+```python
+@dataclass(frozen=True, slots=True)
+class EventEnvelope:
+    """id:全局唯一事件 ID(消费幂等的去重键);
+    type:形如 run.delivered.v1,含版本;
+    occurred_at:ISO 8601 时间戳(UTC);
+    payload:事件数据,与信封解耦;
+    account_id:账号标识——跨服务消费者按账号写自己的库,必须能从事件本身拿到。"""
+
+_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\.v[0-9]+$")
+```
+
+三条约定：
+
+- 事件类型 `<域>.<实体>.<动作>.v<版本>`，正则校验，不符合直接抛错；
+- **版本只增不改**：破坏性变更发布 v2，消费方按版本各自迁移——信封字段是路由与兼容层契约，payload 只是数据；
+- 事件自带 `account_id`：跨服务消费不能依赖请求上下文（事件处理发生在后台，没有请求），账号必须随事件走。
+
+## 运维面：失败可见、可重放
+
+`failed` 不是终点。仓储提供 `requeue`（回到 pending、清零退避，**保留 last_error**——「上次为什么失败」的线索不能被重放抹掉）与 `requeue_failed`（批量），配套 REST 端点：列表/计数/单条重放/批量重放，账号隔离。未启用 outbox 时返回 409 `outbox.disabled` 而不是空列表——免得把「没开」误读成「没事件」。
+
+## 你可能会问
+
+**「Outbox 和直接用 MQ 的区别？」**
+Outbox 解决的不是「怎么发消息」而是「状态与消息的一致性」——它是写入端的模式，MQ 是投递的基础设施，两者正交且通常组合使用。本仓库阶段 A 用进程内总线替代 MQ（事件量级小），总线契约（publish/subscribe）固定，阶段 B 换 Redis Streams 时 outbox 代码不变。
+
+**「为什么不用 CDC（Debezium）监听 binlog？」**
+CDC 把「业务行变更」翻译成事件，省掉写 outbox 表，但事件语义丢失（binlog 里只有行变更，没有「这是 run.delivered 事件」的业务含义），且引入了一套独立运维面。行数小、语义重要时，显式 outbox 表更可控。
+
+**「至少一次 + 幂等消费，还有遗漏吗？」**
+有：去重表本身会无限增长。方案是按时间归档 processed_events（事件都有 occurred_at，重投窗口有限），或给去重行设 TTL。另一个遗漏是**投递顺序**——at-least-once + 并发投递不保证顺序，消费方的事件处理必须是顺序无关的（或自己按 occurred_at/seq 排序）。
+
+## 要点清单
+
+- [ ] 状态与事件同事务落库，双写问题在写入端消灭；
+- [ ] 三段式投递：短事务领取 → 事务外投递 → 短事务标记；
+- [ ] 领取即占租约 + SKIP LOCKED，多副本不空转；
+- [ ] 退避用档位数组，超限落 failed 留痕可重放；
+- [ ] 消费幂等按 (账号, 消费者, 事件 id) 三元组，SAVEPOINT 原子判重；
+- [ ] 事件类型带版本，破坏性变更发 v2 不改 v1。
+
+## 系列导航
+
+上一篇：[事件溯源与 SSE](/posts/agent-event-sourcing-sse)　|　下一篇：[多租户数据访问](/posts/multi-tenant-repository)

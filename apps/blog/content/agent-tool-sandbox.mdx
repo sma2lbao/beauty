@@ -1,0 +1,176 @@
+---
+title: '工具执行与风险分级：让 Agent 安全地干活'
+description: 'Agent 的「手」怎么造：ToolDescriptor 契约真源、风险三档与审批策略表、执行主流程、沙箱 helper 机制（模型数据只走 stdin）、审计幂等键、读前置闸与补丁剥离。'
+date: '2026-11-22'
+tags: ['Agent', '工具调用', '沙箱', '安全']
+series: 'Agent 平台实现'
+seriesOrder: 13
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/tool-service`、`services/workspace-service`（沙箱）与 `packages/common/common/tools.py`。
+
+## Agent 的「手」：工具系统的三层
+
+模型决定「做什么」（function calling 输出工具名与参数），工具系统负责「怎么做」和「做得对不对」。这套实现分三层：
+
+```text
+目录(catalog)   有哪些工具可用、参数 schema、风险等级 → /v1/tools
+执行(runner)    参数校验 → 风险闸 → 按 executor 分派(SANDBOX/HTTP/CONNECTOR/NONE)
+审计(audit)     每次调用一行 tool_calls,可回放、幂等、可取消
+```
+
+目录的真源是一份共享契约 `packages/common/common/tools.py` 的 `ToolDescriptor`——tool-service 的 catalog、编排器的远程工具客户端、桌面端共用同一份定义。契约设计有个值得学的选择：用 `dataclass(frozen=True, slots=True)` + `to_payload()/from_payload()` 普通 dict 传输，**不引入 pydantic 版本耦合**——跨服务线协议要的是零依赖、可序列化。
+
+```python
+@dataclass(frozen=True, slots=True)
+class ToolDescriptor:
+    name: str
+    description: str
+    input_schema: dict
+    risk: ToolRisk            # READ / WRITE / DESTRUCTIVE
+    kind: ToolKind            # FUNCTION / INTERACTION
+    executor: ExecutorKind    # SANDBOX / HTTP / CONNECTOR / NONE
+    timeout_seconds: float
+    ...
+```
+
+## 风险分级：三档 + 策略表
+
+**风险三档**是整个安全体系的骨架：
+
+| 档位 | 语义 | 执行策略 |
+| --- | --- | --- |
+| READ | 只读（read/grep/search_knowledge…） | 直接执行 |
+| WRITE | 受控写（workspace 文件、沙箱内执行、已信任集成） | 权限边界内自动执行 |
+| DESTRUCTIVE | 对外不可逆（建 issue、发评论）、未信任工具 | **绝不直接执行**，人工确认 |
+
+分级的判定尽量机器可算：工具自述 `annotations.destructiveHint=true` → DANGER；`readOnlyHint=true` 或命中内置预设的只读前缀 → READ；其余看信任开关。文档里有一句清醒的注解：「annotations 由 server 自述、不可全信」——**自报的风险等级只对受信任的来源生效**，第三方工具一律从严。
+
+风险之上还有一层**审批策略表**（`approval_policies`），按账号覆盖默认行为：规则形如 `{"tool": "*|工具名", "action": "auto|confirm|deny"}`，求值顺序是「精确工具 > 通配 > 风险等级默认值」。这条设计的原则写在架构文档里：「操作策略是配置，不是硬编码」——同一个工具，A 账号全自动、B 账号逐次确认，改的是数据不是代码。
+
+`deny` 命中时不执行并把**原因回喂模型**——模型知道自己为什么被拒，下一轮会调整行为。工具失败同理：错误文本回喂让模型自我修正，「工具执行失败不炸图」。
+
+## 执行主流程：一道闸、一层校验、四条路径
+
+`ToolRunner.execute()` 的顺序值得背下来：
+
+```text
+目录查找 → 能力开关检查 → 风险闸 → 参数校验 → 按 executor 分派
+```
+
+- **能力开关**（exec/run_code/fetch/web_search 默认关）：关闭时目录不暴露、执行 404——**可用性检查前移到执行入口**，「能力即权限边界」；
+- **风险闸**：WRITE/DESTRUCTIVE 且请求没带 `approved=true` → 403 `tool.confirmation_required`。编排器的确认闸（第 3 篇）放行后才会带上这个标记——**tool-service 自己不信调用方的道德，只认 approved 标记**；
+- **参数校验**：自实现 JSON Schema 子集校验（type/enum/长度/正则/嵌套深度上限 8），不做类型强转、不填默认值——给模型的参数必须按 schema 来；
+- **超时口径**：目录声明、全局配置、请求覆盖**三者取小**——调用方不能通过传参放宽超时。
+
+## 沙箱执行：helper 机制与 stdin
+
+所有文件工具都在沙箱里执行（tool-service 不碰本机用户文件），沙箱经 workspace-service 创建。执行有一个精巧的 helper 机制：
+
+```python
+# helper_argv() = [python3, "-c", helper_source()]
+# —— 纯 stdlib 脚本的源码作为 argv 传入;
+# 模型数据(文件内容/pattern)只走 stdin,不出现在进程命令行
+result = await sandbox.exec(account_id, sandbox_id, helper_argv(),
+                            stdin=build_request(tool_name, arguments), ...)
+```
+
+为什么模型数据不能进命令行？命令行参数在进程列表（ps）里可见、会被 shell 展开、有长度上限——把一段可能包含任意字符的 grep pattern 放进 argv 是注入温床。**argv 只放固定代码，动态数据走 stdin**，是工具执行器的一条铁律。
+
+沙箱按 `scope_key` 复用：显式指定 > `conversation:<id>` > `run:<id>` > `account:<id>`——对话级复用让同一会话的多次工具调用共享文件系统（写文件 → 读文件 → 改文件的链路成立），执行后 `touch()` 滑动续 TTL。复用不是无限期的：过期回收、失败重建（幂等 ensure：并发撞唯一约束回滚重查，旧实例条件 UPDATE 抢占重建）。
+
+结果信封的成功/失败形状（`ToolExecuteResponse.envelope()`）：
+
+```python
+# 成功: {"ok": true, ...结果顶层平铺..., "truncated", "duration_ms",
+#        "tool_call_id", "idempotent_replay"}
+# 失败: {"ok": false, "error": {"code", "message", "hint", "retryable"}}
+# —— 工具执行错误是模型可见的数据,而不是 API 失败
+```
+
+结果超 `MAX_TOOL_CHARS`（25000）截断标 `truncated`——**模型上下文是稀缺资源**，一个 cat 了 100MB 文件的工具调用能直接把后续轮次的上下文挤爆。
+
+## 审计与幂等：tool_calls 表
+
+审计表比想象的厚，每一列都回答一个运维问题：
+
+```text
+tool_call_id        本次调用 id(重放识别)
+idempotency_key     稳定幂等键:run+节点+工具+规范化参数 的哈希
+arguments(截2000) + arguments_sha256
+risk / decision     风险档位 / auto 还是人工放行
+status              running / succeeded / failed / cancelled
+result_json         成功信封快照(重放回真实内容)
+paths / sha256_before/after   写了哪些文件、内容指纹
+patch / lines_added/removed   unified diff(只落审计库)
+duration_ms / bytes_written  耗时与写配额累计
+```
+
+两个机制值得展开：
+
+**幂等键**。崩溃恢复后 tool_call_id 会变（新的调用实例），但「同一次副作用」必须被认出来——所以有 idempotency_key：`run + 节点 + 工具 + 规范化参数` 的哈希。重放请求先查幂等键：终态命中且参数一致 → **原样重放历史结果**（`idempotent_replay=true`），参数不一致 → 409 `tool.idempotency_conflict`。这和第 2 篇「已发生的写由稳定幂等键保证重放不重跑」对上了——那是承诺，这里是实现。
+
+**预留机制**。同一次调用的并发重复（网络重试、双击）怎么防？执行前先插一行 `status=running` 的预留记录（带租约）——同幂等键的第二个请求**立刻 409 `tool.call_in_progress`**，而不是执行完再撞唯一约束（后者浪费了一次真实的副作用）。执行方崩溃留下的 running 行，租约过期后可被 CAS 抢占接管。取消经 `cancel_requested` 置位、执行方轮询探到就结算成 `tool.cancelled`（HTTP 200 模型可见，不是 409）——**取消也是审计的一部分**。
+
+## 读前置闸与补丁剥离：两个不起眼但关键的设计
+
+**读前置闸**：write/edit 目标路径必须在本 scope 内先 read 过——执行器注入「期望的 sha256」，沙箱侧校验写的是模型看过的文件，防「盲写」。新建文件的写放行，但由执行器的存在性检查兜底。规则简单，含义深：**模型不许改它没看过的东西**，这让 diff 审计有了锚点（改动的基线是明确的）。
+
+**补丁剥离**：`edit` 工具的响应里有 unified diff（可能上万字符），编排器会把工具结果原样喂回模型——所以执行器先 `_split_patch()` 把补丁剥下来：
+
+```python
+# "编排器会把 tool result 原样喂回模型,补丁可能上万字符,
+#  必须只留在 tool-service 的审计表里。"
+patch, response = _split_patch(response)   # 补丁只留审计,不进模型上下文
+```
+
+**审计要全、上下文要省**——两个目标冲突时，靠「同一事实两个投影」解决：模型看摘要，审计存全文。
+
+## ask_question：交互工具的分工
+
+`ask_question` 是唯一 `kind=INTERACTION` 的工具，executor=NONE——tool-service **只校验参数并归一化**（1-4 个结构化问题、每题 2-4 个选项、label/description 长度限制），返回 `{"ok": true, "kind": "interaction", ...}`。
+
+「不做任何副作用；建中断由 orchestrator 负责」。中断（run 转 `awaiting_input`）、答案回填、恢复执行全部在编排器的图里（第 3 篇的 ask_gate）。这个分工划清了边界：**tool-service 是无状态的能力面，编排器才是流程与中断的归属**。chat 路径与只读 MCP 面干脆不暴露这个工具——能力按上下文裁剪。
+
+## 沙箱 provider：抽象与五个实现
+
+workspace-service 的 `SandboxProvider` 协议七个动作（create/exec/read_file/write_file/list_dir/destroy/open_shell）+ 一个可选（attach_shell，不支持必须显式抛 `provider_unsupported`）。工厂按配置装配五种实现：
+
+- **microsandbox**：microVM，默认，每沙箱私有 `/workspace`；
+- **sandboxd**：外置 gVisor + Docker（生产）；
+- **e2b**：E2B 云沙箱（轻量机无 /dev/kvm 的备选）；
+- **local**：宿主目录 + 宿主子进程——**没有隔离**，启动即打 warning，仅限本地开发；
+- **unavailable**：未配置时的显式占位。
+
+沙箱网络默认 `deny`——「能出网」是显式授权，不是默认。供应商抽象换实现零成本，但隔离强度由部署者选择并承担——**抽象统一接口，不统一安全承诺**。
+
+## 闭环：沙箱成品的回收
+
+一个体验细节结束本篇：用户说「写个贪吃蛇游戏」，模型在沙箱 `/workspace` 写了 `snake.html`——如果交付阶段不回收它，用户拿到的只是一段 Markdown，游戏永远留在沙箱里。
+
+解法是交付阶段按**工具审计记录的 paths**回读沙箱文件，登记为独立交付物：
+
+- 只认**成功调用**记录的路径（失败调用的路径不可信）；
+- 扩展名白名单只收可直接预览的类型（html/svg/png/pdf…）——散装 `.py` 不回收；
+- 路径归一后校验：`..` 与 `/` 开头一律拒绝（防越狱出沙箱）；
+- 单件 5MB 上限；同一路径按 source_url 去重（重放不重复落件）；
+- 读不到/超限只记进交付事件的 errors，**不拖垮交付**。
+
+「写进沙箱的成品要能到用户手里」——工具系统的设计始终要回答这最后一个问题。
+
+## 要点清单
+
+- [ ] 目录/执行/审计三层分离，契约真源只有一份；
+- [ ] 风险三档机器可判定，策略表让审批成为配置；
+- [ ] 能力即权限：开关关掉的工具目录不暴露、执行 404；
+- [ ] 模型数据只走 stdin，命令行只放固定代码；
+- [ ] 幂等键 = run+节点+工具+规范化参数，重放回真实结果；
+- [ ] 预留 + 租约防并发重复副作用；取消也落审计；
+- [ ] 写前必须读过（读前置闸）；补丁只留审计不进模型上下文；
+- [ ] tool-service 无状态，中断与流程归编排器；
+- [ ] 沙箱网络默认 deny，成品要有回收闭环。
+
+## 系列导航
+
+上一篇：[上下文工程管线](/posts/agent-context-engineering)　|　回到开头：[Agent 平台架构总览](/posts/agent-platform-overview)

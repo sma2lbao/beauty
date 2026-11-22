@@ -1,0 +1,147 @@
+---
+title: '上下文工程：把压缩、offload、渐进加载收敛成一条管线'
+description: '上下文窗口是稀缺资源：ContextPolicy 策略快照、SectionProvider 有序管线、大工具结果落沙箱 + 引用信封、SKILL.md 渐进加载、AGENTS.md 发现注入，全部可观测可回放。'
+date: '2026-11-22'
+tags: ['Agent', '上下文工程', 'Prompt', 'LangGraph']
+series: 'Agent 平台实现'
+seriesOrder: 12
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/agent-orchestrator/agent_orchestrator/context/`，设计文档 `docs/design/context-engineering.md`。
+
+## 上下文是稀缺资源，别用四个散落开关管它
+
+一个 run 的系统提示里挤着四类东西：工作区规则（AGENTS.md）、技能说明、长期记忆、再加上对话历史和工具结果。每类都需要「按预算塞进去」的策略：压缩、截断、按需加载。最常见的实现形态是四个互相独立的开关散落在代码里——各自有阈值、各自有截断逻辑、没人知道总共占了多少 token。
+
+这套实现的做法是收敛成**一条管线**：
+
+```text
+settings ──▶ ContextPolicy(策略快照) ──▶ run.context.assembled.v1 事件
+                  │
+      ContextPipeline.build(request)
+                  │  按 policy.section_order 依次调用
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+  AgentsMdProvider SkillCardProvider MemoryProvider
+      └───────────┴───────────┘
+                  ▼
+          ContextPlan ──render()──▶ state["context_block"] ──▶ 图节点
+```
+
+管线的价值不在代码量，在三个性质：**顺序/预算集中在一个策略对象**、**每段可独立降级**（一段失败不阻断 run）、**装配结果有事件快照**（回放能复现「当时模型看到了什么」）。
+
+## 策略快照：一次装配，全程可复现
+
+```python
+@dataclass(frozen=True, slots=True)
+class ContextPolicy:
+    enabled: bool = True
+    section_order: tuple[str, ...] = ("agents_md", "skills", "memory")
+    # 压缩
+    compact_threshold_tokens: int = 6000
+    keep_recent_messages: int = 8
+    # AGENTS.md
+    agents_md_max_chars: int = 4000       # 所有文件合计预算
+    agents_md_file_max_chars: int = 2000  # 单文件上限
+    agents_md_max_depth: int = 2
+    # 工具结果 offload
+    offload_threshold_chars: int = 8000
+    offload_preview_chars: int = 1200
+    # SKILL.md 渐进加载
+    skill_card_max_chars: int = 400
+    skill_body_page_chars: int = 4000
+```
+
+纯值对象 + `fingerprint()`（canonical JSON 的 sha256 前 16 位）。起图前 policy 连同每段的字符数一起落进 `run.context.assembled.v1` 事件——之后排查「模型当时为什么没看到某条规则」，答案就在事件流的 snapshot 里：`skipped` 数组明确记录每个没进上下文的来源及原因（`not_registered`/`empty`/`policy_disabled`/`error:类型`）。**「谁在什么时候看到了什么上下文」必须可审计**，这是上下文工程区别于「拼字符串」的核心。
+
+## 管线：SectionProvider 协议与降级语义
+
+```python
+class SectionProvider(Protocol):
+    section_id: str
+    async def build(self, request: ContextRequest) -> ContextSection | None: ...
+```
+
+`build()` 按 `policy.normalized_order()` 遍历注册的 provider，语义规则：
+
+- provider 抛异常 → 该段记 `error:<type>` 跳过，**不阻断 run**——上下文增强是锦上添花，与记忆召回（上一篇）同一条降级纪律；
+- 返回 None → 记 `empty`；
+- 重复注册同 id → 覆盖（运行期可插拔）。
+
+产出 `ContextPlan`（sections + skipped + token 估算），渲染成一段系统提示块写进图状态 `state["context_block"]`。**节点只读渲染好的块，不碰 IO**——延续第 3 篇「节点纯函数」的纪律：AGENTS.md 的读取、offload 的写入都在 context/ 与 services 层，且依赖方向严格单向（`graph` 不 import `services`，offload 端口以 Protocol 定义在 `graph/ports.py`）。
+
+## 大工具结果 offload：截断的反面是「完整落盘 + 按需回读」
+
+工具结果超长时，多数实现选择截断——但截断丢的信息可能正是模型需要的。这套实现的方案是 **offload**：完整结果落进沙箱工作区，消息流里只放「引用信封 + 预览」：
+
+```python
+# 输出 > offload_threshold_chars(8000) 时:
+# 写 /workspace/.agent/offload/<run_id>/<tool>-<sha8>.txt
+# 回填进 tool 消息的是引用信封:
+{
+  "ok": true,
+  "offloaded": true,
+  "tool": "read",
+  "path": "/workspace/.agent/offload/<run>/read-ab12cd34.txt",
+  "chars": 21344,
+  "sha256": "...",
+  "truncated": true,
+  "preview": "<前 1200 字符>",
+  "note": "结果已完整落盘;需要细节时调用 read_offloaded(path=...) 分段读取。"
+}
+```
+
+配套一个 `read_offloaded` 工具（READ 级，参数 path/offset/limit），模型按需分段回读。三个细节：
+
+1. **只允许读 offload 目录内的路径**，越界返回 JSON 错误——回读能力不能变成任意文件读；
+2. **消息流从「最大 25K」降到「信封 + 1200 预览」**，多轮工具调用的上下文开销数量级下降；模型需要细节时自己花一轮调用去拿——把「省上下文」的决策交给模型，比全局截断聪明；
+3. **chat 路径不挂这个工具**（没有 run 正文、也不会 offload）——工具面按上下文裁剪，不给模型用不上的工具。
+
+## SKILL.md 渐进加载：卡片进提示，正文按需翻页
+
+技能正文以前是全文常驻系统提示（plan/execute/verify/deliver 四个节点都注入）——用一个技能就烧几千 token，不用也烧。渐进加载改成两段：
+
+```text
+系统提示里只放卡片(~100 token):
+  标题 / 技能 id / 正文体量 / "需要时调用 load_skill 加载正文(分页)"
+
+load_skill 工具按 offset/limit 分页返回正文(默认 4000 字符/页),
+每次调用落 run.skill.loaded.v1 事件(skill_id/offset/chars/truncated)
+```
+
+这就是 SKILL.md frontmatter 设计的本意：**描述常驻、正文按需**。事件让加载行为可审计——「模型读了技能的哪几页」是分析技能有效性的原始数据。
+
+## AGENTS.md：从沙箱工作区发现注入
+
+仓库约定文件（AGENTS.md）是程序性记忆的经典载体，但多账号服务没有可写的宿主文件真源。这套实现的折中：**读沙箱工作区里的 AGENTS.md**——orchestrator 与 tool-service 共用同一沙箱作用域规则（`conversation:<id>` > `run:<id>` > `account:<id>`），所以「模型看到的规则」和「工具操作的工作区」必然是同一份。
+
+发现规则收敛在策略里：文件名可配（默认 AGENTS.md）、范围 `/workspace` 根 + 相对深度 ≤2、排序浅→深、最多 8 个文件、单文件截 2000、合计预算 4000——超预算先截断再标 `truncated`，**不静默丢弃**。
+
+## 每类上下文的预算表
+
+把整套预算收敛成一张表，这是上下文工程最实用的输出形态：
+
+| 来源 | 策略 | 预算 |
+| --- | --- | --- |
+| 对话历史 | 超阈值压缩为摘要，保留最近 8 条原文 | 摘要 ≤2000 字符 |
+| AGENTS.md | 沙箱发现，浅→深 | 合计 4000 / 单文件 2000 |
+| 技能正文 | 卡片常驻，正文分页加载 | 卡片 400 / 每页 4000 |
+| 长期记忆 | BM25+向量召回（上一篇） | 核心块 1200 / 约定块 2000 / 召回 5 条·2000 |
+| 工具结果 | 8K 以上 offload 落盘 | 信封 + 预览 1200 |
+| 单次工具结果 | 硬上限 | 25K（tool-service 报错） |
+
+## 要点清单
+
+- [ ] 上下文来源收敛为一条管线，顺序/预算集中在一个策略对象；
+- [ ] 策略快照落事件——「模型看到了什么」必须可回放可审计；
+- [ ] 每段独立降级，一段失败不阻断 run；
+- [ ] 大结果别截断：完整落盘 + 引用信封 + 按需回读；
+- [ ] 技能正文渐进加载，描述常驻正文分页，加载行为落事件；
+- [ ] 规则文件从工作区发现（真源在沙箱内），不读宿主；
+- [ ] 节点不碰 IO，依赖单向：graph 不 import services；
+- [ ] 回读类工具严格限定目录，越界拒绝。
+
+## 系列导航
+
+上一篇：[Agent 记忆系统](/posts/agent-memory-system)　|　下一篇：[工具执行与风险分级](/posts/agent-tool-sandbox)

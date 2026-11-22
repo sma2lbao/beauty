@@ -1,0 +1,152 @@
+---
+title: 'Agent 实时过程怎么给前端看：事件溯源 + SSE 断线续传'
+description: '任务跑三分钟，前端怎么看到进度：run_events append-only、per-run seq 取号、正文增量攒批落库、Last-Event-ID 续传、步骤投影为什么不上事件流。'
+date: '2026-11-22'
+tags: ['Agent', '事件溯源', 'SSE', '前端']
+series: 'Agent 平台实现'
+seriesOrder: 4
+lang: mixed
+---
+
+> 本文代码来自 beauty-moon 仓库的 agent-orchestrator 与 api-gateway。
+
+## 问题：长任务的进度条怎么做
+
+一个 run 跑三分钟，用户在这三分钟里应该看到：规划中的正文、每一步工具调用、正在验收的结论。这些信息有两个矛盾的要求：
+
+- **实时**：边产出边显示，不是跑完一次性吐出；
+- **可回放**：用户刷新页面、断网重连后，过程不能丢，也不能重复。
+
+这两个要求指向同一个架构：**事件溯源**——过程即事件，事件 append-only 落库，前端订阅事件流；重连后从上次读到的位置继续读。
+
+## run_events：append-only 的过程流水
+
+事件表结构简单到夸张：run_id、seq、type、payload（JSON）、时间戳。配套两条硬规则：
+
+- **append-only**：事件只增不改——它同时是审计流水，改写历史等于伪造审计；
+- **seq 每 run 单调递增**：前端用它做游标。
+
+seq 的取号实现非常朴素（`repositories/event.py`）：
+
+```python
+async def next_seq(self, run_id: str) -> int:
+    """该 run 的下一个 seq(每 run 单调递增)。"""
+    current = await self.session.scalar(
+        select(func.max(RunEvent.seq)).where(RunEvent.run_id == run_id)
+    )
+    return int(current or 0) + 1
+```
+
+为什么不用数据库序列或雪花 ID？因为游标的作用域是**单个 run**，每 run 独立编号才能让 `Last-Event-ID` 语义简单：前端记「我读到这个 run 的第 37 条」，重连时带 `after=37` 续传：
+
+```python
+async def list_for_run(self, account_id, run_id, *, after: int = 0):
+    """事件回放:按 seq 升序;after 为 SSE 续传游标。"""
+    return await self.list_scoped(
+        account_id, RunEvent.run_id == run_id, RunEvent.seq > after,
+        order_by=[RunEvent.seq],
+    )
+```
+
+同一个仓储里还有个 `count_of_type(run_id, type_)`，用途是「只发增量」：恢复执行后先数某类事件已有几条，接着计数往下写，避免崩溃恢复后把已落库的事件重复记一遍。
+
+## 事件分类学：哪些事件给用户看，哪些只做内部投影
+
+不是所有事件都进用户事件流。真实体系里有两类：
+
+**用户可见事件**（进 `GET /runs/{id}/events` 与 SSE 回放）：
+
+| 事件 | 内容 |
+| --- | --- |
+| `run.created.v1` | run 创建（子代理事件带 parent_run_id） |
+| `run.planned.v1` | 计划产出（带 auto_approved 标记） |
+| `run.approved.v1` / `run.rejected.v1` | 审批结论 |
+| `run.confirmation.required.v1` / `received.v1` | 危险操作确认的挂起与结论 |
+| `run.question.required.v1` / `answered.v1` | 模型提问与回答 |
+| `run.tool.called.v1` | 每次工具调用（name/arguments/ok/detail） |
+| `run.item.v1` | 过程项：计划/工具/文件变更/MCP 调用/待办的统一分类 |
+| `token.delta.v1` | 正文增量（边产出边推） |
+| `run.delivered.v1` | 交付（artifact_ids 及逐件元数据） |
+| `run.usage.v1` | token 用量（按模型聚合） |
+| `run.cancelled.v1` / `run.failed.v1` | 终态 |
+| `run.instruction.queued.v1` / `consumed.v1` | 追加指令 |
+
+**内部投影事件**：`run.step.v1`（节点步骤）。它记录每个图节点的执行时长、轮次、状态，给前端「执行步骤」时间线用——但它**不进**事件流与 SSE：
+
+> 设计注释原文：「该事件不进 GET /events 与 SSE(避免淹没用户事件流,所以可见事件 seq 有空洞,只能当单调游标)」;专用只读端点 `GET /runs/{id}/steps` 按 seq 升序返回投影。
+
+这个取舍很有意思：如果步骤事件也进事件流，用户看到的流会被高频内部事件淹没；隔离之后，**可见事件的 seq 不再连续**，只能当排序游标而不能当「第 N 条」的计数——游标语义是这类设计里最容易忽略的细节。
+
+`run.item.v1` 则展示了另一条思路：把原子过程项统一成 `kind`(plan/tool/file_change/mcp_call/search/todo) × `phase`(started/delta/completed/failed) 的分类学，`item_id = {run_id}:{attempt}:{kind}:{n}` 是可寻址身份，前端按 item_id 合并相位渲染。
+
+## 正文增量：攒批落库
+
+「边产出边显示」的正文流，实现是把模型流式输出的 token 攒批落成 `token.delta.v1` 事件：
+
+```text
+plan / execute / verify / deliver 四个正文节点的模型流式输出
+→ 攒批(RUN_DELTA_FLUSH_CHARS=240 或 RUN_DELTA_FLUSH_SECONDS=0.25 先到者触发)
+→ 落一条 {text, phase} 增量事件(按 seq 拼接即全文)
+→ 阶段切换一定切批
+```
+
+三个工程决策：
+
+1. **攒批而不是每 token 一条**：一条事件一行库，每 token 一条会让事件表膨胀三个数量级；240 字符或 250ms 的粒度在流畅度与存储间平衡；
+2. **增量事件不进 outbox**：outbox 是跨服务事实的投递通道，「正文增量」只是实时展示，不是任何消费者需要的事实——把它塞进 outbox 会让所有事件都背上投递负担。判断标准一句话：**丢了会影响一致性的才是事实，只影响显示的走实时通道**；
+3. **节点仍是纯函数**：节点只把文本推给 contextvar 绑定的 sink，落库发生在 services 层的图调用边界——和第 3 篇的节点纪律一致。
+
+开关 `RUN_DELTA_STREAMING=false` 可关回「每阶段只在终态落一条全文」。
+
+## SSE 端点：重放 + 实时 + 收线
+
+`GET /runs/{id}/events/stream` 的行为：
+
+1. 按账号校验 run 归属（stream token 里的 account_id claim + run 归属检查，越权 404）；
+2. 先**重放**历史事件（`Last-Event-ID` 之后的），再无缝切换到实时推送；
+3. run 到终态（completed/failed/cancelled）发 `stream.end` 收线——前端据此断开，不留僵尸连接。
+
+断线重连的完整链路：前端断网 → 记住最后一条事件的 seq → 重连时带 `Last-Event-ID` → 服务端从 Postgres 重放缺失部分 → 继续实时流。事件在库里，服务重启也不丢。
+
+## 网关层：长流直连与超时处理
+
+SSE 走网关代理时有两个经典的坑，api-gateway 的处理值得背下来：
+
+**坑一：读超时掐断长连接。** httpx 默认 30s 读超时，Agent 侧的 keep-alive 攒批约 30s 一帧，正好压线——长期静默的流会被网关中途掐断，前端不断重连。解法是 SSE 请求级超时**关闭读超时**：
+
+```python
+#: SSE 流的请求级超时:关闭读超时,避免上游空闲被网关默认 30s 读超时切断。
+_STREAM_TIMEOUT: dict[str, float | None] = httpx.Timeout(
+    connect=5.0, read=None, write=30.0, pool=5.0
+).as_dict()
+```
+
+**坑二：流式判定只看 Accept。** 手写 fetch 的 SSE 客户端 Accept 可能只是 application/json，只按 Accept 判断会把长连接缓冲到读超时。判定用「Accept 含 text/event-stream **或** 路径以 /stream 结尾」双条件。
+
+配套三件套：响应头 `Cache-Control: no-cache`、`X-Accel-Buffering: no`（防 Nginx 缓冲）、`BackgroundTask` 里 aclose 上游连接（保证连接回收）。
+
+**长任务为什么直连？** 网关发一个短时 stream token（浏览器拿 Cookie 换），浏览器拿 token 直连 orchestrator 的 SSE 端点——绕开网关链路的超时与缓冲。token 校验走和其他服务同一个 JwtVerifier，「单 run」语义由服务端校验 run 归属实现，越权照样 404。
+
+## 你可能会问
+
+**「为什么不用 WebSocket？」**
+事件流是单向推送，SSE 够用且便宜：HTTP 原生、自动重连（浏览器 EventSource 内建）、代理友好、文本协议调试容易。WebSocket 的价值在双向高频交互，Agent 场景的用户输入走普通 API 提交，不需要长连接双向通道。
+
+**「事件溯源和日志的区别？」**
+事件溯源是**事实来源**——系统状态由事件推导（重放可重建）；日志是**副产物**——状态先行、日志事后记录。这里 run 的事件流同时承担三职：前端展示数据源、审计流水、（配合 checkpoint）恢复依据。判断你的「事件」是不是溯源级：删掉所有其他表只留事件流，系统能不能重建出发生了什么。
+
+**「seq 取号用 max+1 不会并发撞号吗？」**
+会——但落库有 `(run_id, seq)` 唯一约束兜底，撞号的事务整体回滚重试；且同一 run 同时只被一个 worker 执行（job 租约），实际竞争窗口极小。教训：并发正确性优先靠约束兜底，而不是为小概率竞争上重武器。
+
+## 要点清单
+
+- [ ] 过程即事件：append-only、seq 单调、既做展示又做审计；
+- [ ] 用户可见事件与内部投影分离，游标语义想清楚；
+- [ ] 正文增量攒批落库，「事实 vs 显示」决定进不进 outbox；
+- [ ] SSE = 重放 + 实时 + 终态收线，断线续传靠 Last-Event-ID；
+- [ ] 网关代理 SSE：关读超时、双条件判流式、禁缓冲、回收连接；
+- [ ] 长流直连绕开网关，鉴权走标准 JWT + 归属校验。
+
+## 系列导航
+
+上一篇：[LangGraph 执行图](/posts/agent-langgraph-graph)　|　下一篇：[事务性 Outbox](/posts/transactional-outbox)

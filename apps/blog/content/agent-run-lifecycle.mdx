@@ -1,0 +1,186 @@
+---
+title: 'Run 的一生：Agent 长任务的队列、租约与崩溃恢复'
+description: '一条「帮我整理周报」从分流到完成的完整链路：消息分流、PG job 表 + SKIP LOCKED 领取、lease 心跳续租、崩溃从 checkpoint 续跑、协作式取消为什么在安全边界生效。'
+date: '2026-11-22'
+tags: ['Agent', 'PostgreSQL', '任务队列', '分布式']
+series: 'Agent 平台实现'
+seriesOrder: 2
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库的 `services/agent-orchestrator`，文件路径均可直接对照源码。
+
+## 为什么 Agent 任务不能放进 HTTP 请求里跑
+
+LLM 一次调用 3 秒，一个 Agent 任务（规划 → 工具循环 → 验收 → 交付）动辄 3 分钟。把它放在 HTTP 请求里跑会遇到三连问：
+
+1. **超时**：网关、Nginx、浏览器任何一层的超时都会掐断连接，任务却还在跑——结果丢了；
+2. **崩溃**：进程重启，任务状态全在内存里，恢复无从谈起；
+3. **重复**：用户看到超时再点一次，同一任务跑两份。
+
+解法是把「接收任务」和「执行任务」拆开：HTTP 只负责落库 + 入队，执行交给后台 worker。这就是 job 队列模式，而队列的底座选了 Postgres 表——不引入 Celery/Temporal，理由是任务量级小、事务性和业务库天然一致、少一个运维组件。
+
+## 第一步：消息分流
+
+不是每条消息都值得建 run。用户说「你好」，直接让模型答一句就行；说「整理这个月的会议记录成周报」，才走完整的任务流程。分流逻辑在 `services/triage.py`：
+
+```python
+# 判别顺序（模块 docstring 摘要）：
+# 1. 显式指定（mode=chat|task）优先——用户永远能覆盖自动判断
+# 2. 带图片的消息不走任务：任务路径本期不注入图片，
+#    判成任务等于把图丢掉，所以 auto 直接走对话直答
+# 3. 有模型时让模型判别，只认 JSON {"mode": "chat"|"task"}
+# 4. 判别失败或无模型时退回 task（任务路径有 failed 兜底）
+```
+
+用模型判别时加 json_schema 约束输出，但解析仍保留容错——网关不支持 response_format 时按文本解析：
+
+```python
+TRIAGE_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "triage",
+        "schema": {
+            "type": "object",
+            "properties": {"mode": {"enum": [CHAT, TASK]}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    },
+}
+```
+
+两个值得注意的兜底方向：
+
+- **判别失败 → 退回 task**，不是退回 chat。任务路径失败会落 `run.failed.v1` 留痕，比「悄悄当成闲聊答一句」更诚实；
+- **显式 chat 但无模型 → 409**。这个校验是纯函数，流式端点据此在**开流之前**拒绝——避免「200 已经发了、只能塞一帧错误」的尴尬。
+
+## 第二步：run 状态机
+
+任务路径建 run，状态机如下：
+
+```text
+message → triage → (chat | run)
+run: pending → planning → awaiting_approval(按需:无危险工具时自动放行) → running
+     → awaiting_confirmation → completed / failed / blocked
+     → awaiting_input(模型提问) ── answer/超时 ──> running → …
+     任一非终态 ──cancel──> cancelled
+```
+
+三个挂起态对应三种人工介入：审批计划（awaiting_approval）、确认危险写操作（awaiting_confirmation）、回答模型提问（awaiting_input）。`planning` 和 `running` 不单落事件——它们在进入规划节点/放行执行时赋值，属于状态注记而非状态迁移事件。
+
+非法迁移一律 409 `run.invalid_state`，终态（completed/failed/cancelled/blocked）不可再变更。
+
+## 第三步：Postgres job 表
+
+job 表的核心字段：`kind`（plan/approve/confirm/answer/resume/retry/rewind/recover/subagent…）、`payload`（JSON）、`status`、`attempts`、`locked_by`、`lease_until`。领取逻辑在 `JobRepository.claim_next`：
+
+```python
+# 多实例正确性：多个 worker 并发抢任务，普通 SELECT FOR UPDATE 会让
+# 后到者排队等锁；SKIP LOCKED 让它们直接跳过被占住的行，各领各的
+statement = statement.with_for_update(skip_locked=True)
+...
+job.locked_by = worker_id
+job.lease_until = now + timedelta(seconds=lease_seconds)
+```
+
+`FOR UPDATE SKIP LOCKED` 是 Postgres 任务队列的标配三件套之一（另外两个是「领取即写租约」和「幂等收尾」）。它的语义是：**锁冲突时不等待、直接跳过**——N 个 worker 并发领取时互不阻塞，每个任务只会被一个 worker 拿走。
+
+## 第四步：lease 心跳续租
+
+领取时写的 `lease_until` 是租约：worker 崩溃后租约到期，任务可被其他 worker 重领。但 Agent 任务一跑几分钟，固定租约必然先于任务结束到期——长跑任务会被别的 worker 当成「租约过期」重领，同一个 run 跑两份。
+
+解法是执行期间**周期续租**（`services/jobs_worker.py`）：
+
+```python
+async def _heartbeat_loop(container, job_id, stop):
+    """执行期间周期续租，避免长 run 被别的 worker 当成租约过期重领。
+    间隔取 lease 的 1/3（夹在 1s~30s）；续租失败（租约已丢）只告警并退出，
+    不打断当前执行——最终收尾由 mark_succeeded 的持锁校验兜底。"""
+    interval = max(1.0, min(settings.jobs_lease_seconds / 3.0, 30.0))
+    while True:
+        ...
+        renewed = await JobRepository(session).renew_lease(
+            job_id, WORKER_ID, lease_seconds=settings.jobs_lease_seconds
+        )
+        if not renewed:
+            logger.warning("job lease lost; stop renewing", job_id=job_id)
+            return
+```
+
+三个细节：
+
+- 间隔取租约的 1/3：续租失败还有两次补救机会才到期；
+- 续租失败**不打断执行**：说明租约已被别人接手，此时继续跑完但收尾时 `mark_succeeded` 会因持锁校验失败而跳过——「不要覆盖别人的结果」；
+- 收尾校验让「续租失败但跑完」和「被接手后新 worker 跑完」两个场景都收敛到只有一个 worker 写终态。
+
+## 第五步：崩溃恢复——从 checkpoint 续跑
+
+worker 领到任务后如果进程崩了，任务会带着 `attempts > 1` 重现。这时有个微妙的问题：崩溃时增量提交已经把 run 状态写坏到了 planning/running，而这条 job 的动作（比如 approve）前置状态校验是「必须在 awaiting_approval」——重放只会 409。
+
+所以重领不是简单重放，而是**改道续跑**：
+
+```python
+# 这些 job 的前置状态会被崩溃时的增量提交写坏(planning/running),
+# 此时重放只会在状态守卫上 409;改道去从 checkpoint 续跑
+_SUPERSEDABLE_KINDS = frozenset({"plan", "approve", "confirm", "resume", "subagent"})
+
+if kind in _SUPERSEDABLE_KINDS and job.attempts > 1:
+    run = await RunRepository(session).get_for_account(job.account_id, job.run_id)
+    if run is not None and run.status in RECOVERABLE_STATUSES:
+        if await JobRepository(session).has_live_for_run(...):
+            return  # 另一条 job 正持有该 run 的租约,别和它抢同一条图线程
+        await runs_service.recover_run(...)  # 从最近的 LangGraph checkpoint 接着跑
+```
+
+注意两个分支：首次领取（attempts == 1）不能改道——API 侧本来就会先把状态推到 running 再入队，那是正常的待执行现场；改道前还要检查有没有活的 job 持有该 run 的租约，避免两条线程同时跑一个图。
+
+「从 checkpoint 续跑」能成立，靠的是 LangGraph 的 checkpointer：图执行每跨过一个节点，状态快照就落库（生产用 `AsyncPostgresSaver`），恢复时从最近快照接着执行——这是第 3 篇的主题。
+
+## 第六步：协作式取消
+
+用户点「取消」时任务正在跑，怎么停？答案是**协作式取消**：取消请求只立刻做三件事——置 `cancelled` 终态、撤掉排队 job、落 `run.cancelled.v1` 事件。**正在执行的图不会立刻死**，而是在每个安全边界检查取消标记：
+
+- 每个图节点入口；
+- 每轮模型调用前；
+- 每次工具调用前。
+
+发现 `cancelled` 即抛 `RunCancelled`，由收尾逻辑 settle——不写 failed、不覆盖取消原因。为什么不在执行中途硬杀？因为工具调用可能已经产生外部副作用（GitHub 上建了 issue），半途杀死既无法回滚，也无法保证状态一致。「取消在下一个安全边界生效」+「已发生的写由稳定幂等键保证重放不重跑」是工程上站得住的折中。
+
+worker 侧还有个配套细节：`RunCancelled` 不算 job 失败——按成功结账，避免失败重试再派生一次执行。
+
+## 挂起态的超时兜底
+
+三个挂起态都可能永远没人管：审批没人批、提问没人答。sweeper（`services/interrupts.py`）周期扫描超时项，**不直接改状态**，而是复用 reject/confirm/answer 的正常语义走状态机（保留 resume 语义），并落 `run.interrupt.timeout.v1` 留痕：
+
+- 审批超时 → 自动拒绝计划，转 blocked；
+- 确认超时 → 自动拒绝危险写并继续验收；
+- 提问超时 → 按 decline 自动回答并继续执行。
+
+## 你可能会问
+
+**「FOR UPDATE SKIP LOCKED 和普通 FOR UPDATE 的区别？」**
+普通行锁在并发领取时会串行化——worker B 等 worker A 提交才能看到任务行，吞吐上不去还可能死锁。SKIP LOCKED 跳过被锁行，各领各的。代价是「跳过」意味着这一轮没领到的任务要等下一轮轮询，所以轮询间隔不能太长。
+
+**「为什么不用 Redis 队列 / Celery？」**
+队列可靠性和数据库事务绑定：任务入队与业务状态变更同事务（outbox 模式的前提），Redis 队列做不到原子。且任务量级小（每账号每天几十个 run），Postgres 完全够。任务量上来后的演进路径是保留 job 表、把轮询换 NOTIFY/LISTEN 或换 Redis Streams，worker 语义不变。
+
+**「至少一次领取，任务怎么保证不重复执行？」**
+两层：领取层的租约 + 收尾持锁校验保证同一 job 只有一个 worker 收尾；执行层靠 run 状态机的状态守卫（非法迁移 409）和工具调用的幂等键（`idempotency_key` = run+节点+工具+规范化参数 的哈希，见第 13 篇）。
+
+**「取消为什么不能立即生效？」**
+立即生效等于把正在飞的工具调用劈成两半——请求发出去了、结果没回来，重试会重复副作用。协作式取消把「停」的时机交给安全边界，代价是最多多跑一段；换来的是外部副作用永远完整。
+
+## 要点清单
+
+- [ ] 任务执行与 HTTP 接收分离：落库 + 入队即返回；
+- [ ] 领取用 `FOR UPDATE SKIP LOCKED`，领取即写租约；
+- [ ] 长任务必须心跳续租，间隔取租约 1/3；
+- [ ] 收尾带持锁校验：租约已丢就不写结果；
+- [ ] 崩溃恢复走 checkpoint 续跑，不是无脑重放；
+- [ ] 取消是协作式的，在安全边界生效；
+- [ ] 挂起态必须有超时 sweeper 兜底，且复用正常状态机语义。
+
+## 系列导航
+
+上一篇：[Agent 平台架构总览](/posts/agent-platform-overview)　|　下一篇：[LangGraph 执行图](/posts/agent-langgraph-graph)

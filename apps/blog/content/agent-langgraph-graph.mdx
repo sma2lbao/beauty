@@ -1,0 +1,182 @@
+---
+title: '用 LangGraph 搭可审批、可取消、可重跑的 Agent 执行图'
+description: 'plan → 审批闸 → execute → verify → deliver 的图怎么搭：节点纯函数 + 增量 reducer、interrupt 人工闸、checkpointer 断点恢复、返工循环与取消探针的实现细节。'
+date: '2026-11-22'
+tags: ['Agent', 'LangGraph', '工作流', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 3
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/agent-orchestrator/agent_orchestrator/graph/`。
+
+## 为什么用图，而不是一个大 while 循环
+
+Agent 执行最容易写成「主循环 + if-else」：调模型、有工具调用就执行、没有就输出。这种写法在需求简单时最快，但很快会撞上三个问题：
+
+1. **人工介入点没地方放**：审批、确认、提问都是「跑一半停下来等人」，主循环里的状态机很难写对；
+2. **崩溃恢复无从谈起**：循环状态在内存里，进程重启后不知道跑到哪一步；
+3. **返工路径画不清楚**：验收不过要回到执行阶段，执行又可能再次触发确认——控制流一复杂就变成面条。
+
+LangGraph 把这三个问题都变成图的原生能力：节点是函数、边是控制流、interrupt 是人工介入、checkpointer 是断点恢复。
+
+## 图的全貌
+
+真实仓库的执行图（`graph/builder.py`）：
+
+```text
+START → plan → approval_gate ─┬→ execute ─┬→ ask_gate → execute (答案写回)
+                              │           ├→ confirm_gate ─┬→ tool_exec → execute
+                              │           │                └→ (verify / 等)
+                              │           ├→ subagent_wait → execute
+                              │           └→ verify ─┬→ deliver → END
+                              └→ END (blocked)       ├→ execute (返工≤3轮)
+                                                     └→ fail → END
+```
+
+用代码表达（节选自 `build_run_graph`）：
+
+```python
+builder = StateGraph(RunGraphState)
+builder.add_node("plan", instrument_node("plan", "plan", make_plan_node(llm)))
+builder.add_node("approval_gate", make_approval_gate_node(...))
+builder.add_node("execute", instrument_node("execute", "execute",
+                                            make_execute_node(...)))
+builder.add_node("ask_gate", make_ask_gate_node())
+builder.add_node("subagent_wait", make_subagent_wait_node())
+builder.add_node("confirm_gate", confirm_gate_node)
+builder.add_node("tool_exec", ...)
+builder.add_node("verify", ...)
+builder.add_node("deliver", ...)
+builder.add_node("fail", fail_node)
+
+builder.add_edge(START, "plan")
+builder.add_edge("plan", "approval_gate")
+builder.add_conditional_edges("approval_gate", route_after_gate, {...})
+builder.add_conditional_edges("execute", route_after_execute, {...})
+...
+return builder.compile(checkpointer=checkpointer)
+```
+
+注意每个业务节点都包了一层 `instrument_node`——它负责在节点执行完落一条 `run.step.v1` 步骤事件（第 4 篇讲）。**图的业务逻辑和过程的可观测性是两个正交关注点**，用装饰器分开。
+
+## 路由函数：把控制流写成纯函数
+
+条件边由路由函数决定。最关键的一条是 execute 之后的分流（`route_after_execute`）：
+
+```python
+def route_after_execute(state: RunGraphState) -> str:
+    """排序:待答问题 → 待确认写 → 待等子代理 → 验收。
+
+    提问优先于写操作确认:本回合既没执行任何工具,也没收集待确认写操作
+    (execute 命中 interaction 调用时其余调用一律不执行)。
+
+    写操作确认优先于子代理等待:待确认的写操作还没拿到 tool 消息,
+    如果先去等子代理,恢复后模型补全时会看到"assistant 消息里有未应答的
+    tool_calls"——OpenAI 协议下直接 400。
+    """
+    if state.get("pending_question"):
+        return "ask_gate"
+    if state.get("pending_writes"):
+        return "confirm_gate"
+    if state.get("pending_subagents"):
+        return "subagent_wait"
+    return "verify"
+```
+
+这段代码的注释里藏着真实踩过的坑：**提问优先于确认、确认优先于子代理等待都不是随意排序**。写操作如果先去等子代理，恢复后模型的消息历史里会出现「assistant 有未应答的 tool_calls」，OpenAI 协议直接 400。控制流的优先级是协议约束倒推出来的，不是随手排的。
+
+## 状态设计：节点纯函数 + 增量 reducer
+
+图状态用 TypedDict 定义，两个字段值得单独说：
+
+```python
+class RunGraphState(TypedDict, total=False):
+    ...
+    results: Annotated[list[str], add]      # 追加式 reducer
+    rounds: Annotated[int, add]             # 每次返工 +1
+    tool_calls: Annotated[list[dict[str, Any]], add]
+    confirm_cycles: Annotated[int, add]     # 确认轮次上限用
+    ...
+    pending_writes: list[dict[str, Any]]    # 待人工确认的写操作
+    pending_question: dict[str, Any]        # 待答问题
+    writes_approved: bool                   # 确认闸的判定结果
+```
+
+`Annotated[list[str], add]` 是 LangGraph 的增量 reducer 语法：节点返回 `{"results": ["..."]}` 时不是覆盖而是追加。为什么这很重要？因为**返工循环会多次经过同一个节点**，覆盖式状态会把上一轮结果冲掉，追加式让每轮结果都保留——验收小结才能引用历史。
+
+另一个设计纪律是**节点纯函数**：节点不查库、不发请求头之外的外部调用，所有依赖（LLM 客户端、工具注册表、审批策略快照、hooks 快照）都在 services 层起图时装进 state。好处是节点可以被单测直接调用、恢复执行时不需要重新装配环境（快照随 checkpoint 持久化）。
+
+## 三道人工闸：interrupt 的正确用法
+
+图里有三个 interrupt 点，对应三种人工介入：
+
+**审批闸（approval_gate）**：plan 之后检查装配的工具面——**没有 DANGER 级工具时自动放行**（`run.planned.v1` 事件带 `auto_approved=true`），有才 interrupt 等人工。开关 `PLAN_AUTO_APPROVE` 控制。这是「审批是例外而非默认」的产品决策：全跑必审会让用户流失，全不审又危险，按风险分级是平衡点。
+
+**确认闸（confirm_gate）**：执行期收集到的 DANGER 写操作（对外不可逆、未信任 MCP）绝不直接执行，interrupt 转 `awaiting_confirmation`，人工放行后由 `tool_exec` 执行：
+
+```python
+def route_after_confirm(state: RunGraphState) -> str:
+    """放行 → 执行写操作;拒绝 → 验收,但已入队的子代理仍要等待。"""
+    if state.get("writes_approved"):
+        return "tool_exec"
+    return "subagent_wait" if state.get("pending_subagents") else "verify"
+```
+
+确认有轮次上限（`MAX_CONFIRM_CYCLES`）——模型反复收集待确认写操作会造成死循环，上限兜底。
+
+**提问闸（ask_gate）**：`ask_question` 是唯一 `kind=interaction` 的工具。execute 命中它时本回合**只处理提问**——同轮其余工具调用回 `tool_error` 不执行，保证「中断前零副作用」；回答以 tool-role 消息写回 `tool_history`，恢复后模型自然看到答案。
+
+## checkpointer：断点恢复的底座
+
+```python
+# checkpointer 按 DATABASE_URL 自动选择:
+# 生产 Postgres → AsyncPostgresSaver(图线程跨进程可恢复)
+# SQLite 覆盖/测试 → InMemorySaver(进程内,测试即隔离)
+```
+
+checkpointer 在每次超步（节点到节点）后保存状态快照。三个用途：
+
+1. **崩溃恢复**：worker 崩溃后从最近快照续跑（第 2 篇的 `recover_run`）;
+2. **人工介入的暂停/恢复**：interrupt 时状态已持久化，审批通过后用 `Command(resume=...)` 恢复;
+3. **回退重跑（rewind）**：从历史某个 checkpoint 起一条新线程，不重头跑。
+
+「失败即终态、重试另起一跑」是配套决策：失败点的检查点不可信（可能是模型输出坏了），且旧 run 的事件流是审计凭据不能被改写——所以 `POST /runs/{id}/retry` 派生**新 run**继承目标/验收标准/已批准计划，而不是原地重放。计划节点检测到已有计划会短路，所以重试只重走审批闸、不重复调模型。
+
+## 取消探针
+
+取消是协作式的（第 2 篇），图侧的实现是三个探针位置：节点入口、每轮模型调用前、每次工具调用前，查库发现 `cancelled` 即抛 `RunCancelled`：
+
+```python
+# graph/cancellation.py + services/run_cancellation.py
+# 发现 cancelled 即抛 RunCancelled 停下,由 settle_cancelled 收尾
+# (不写 failed、不覆盖取消原因);已发生的写由稳定幂等键保证重放不重跑。
+# 为保证取消方写得进库,节点边界会先提交(BoundaryPort/SessionBoundary)。
+```
+
+有个容易被忽略的细节：取消方要写终态，执行方的事务还开着——节点边界先提交事务，否则两边撞锁，取消方写不进去。分布式系统里「谁来收尾」的锁问题经常藏在这样的地方。
+
+## 你可能会问
+
+**「LangGraph 的 interrupt 和普通的 raise exception 有什么区别？」**
+interrupt 是「持久化的暂停」：状态已随 checkpointer 落库，恢复语义由框架保证（`Command(resume=...)` 把值注入到 interrupt 的返回）；exception 是「丢弃」，恢复要自己重建全部上下文。凡是「跑一半等人」的场景都应该用 interrupt 而不是 try/except 包人工介入。
+
+**「节点纯函数的代价是什么？」**
+快照膨胀：审批策略、hooks、上下文注入块都要进 state。缓解方式是快照只存配置与输入，不存派生数据；以及旧 checkpoint 兼容——所有可选字段统一 `.get()` 读取，新代码对旧快照不炸。
+
+**「返工循环为什么上限 3 轮？」**
+无限返工意味着验收标准本身有问题（模糊、不可测）。耗尽后走 `fail_node` 诚实终结 failed，不伪装 completed——「宁可 failed 也不要假的 completed」是 Agent 产品里非常重要的信任设计。
+
+## 要点清单
+
+- [ ] 控制流写成路由纯函数，优先级由协议约束倒推；
+- [ ] 节点纯函数，依赖在起图时装载、快照随 checkpoint 持久化；
+- [ ] 多轮重入的状态用增量 reducer，不要覆盖；
+- [ ] 人工介入一律 interrupt，不用异常；
+- [ ] 审批按工具风险分级，自动放行是默认、拦截是例外；
+- [ ] 失败即终态，重试派生新 run 不改写历史；
+- [ ] 取消是协作式的，节点边界先提交事务保证取消方能落库。
+
+## 系列导航
+
+上一篇：[Run 的一生](/posts/agent-run-lifecycle)　|　下一篇：[事件溯源与 SSE](/posts/agent-event-sourcing-sse)

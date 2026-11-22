@@ -1,0 +1,175 @@
+---
+title: '多租户隔离不能靠自觉：把账号过滤沉到 Repository 基类'
+description: '每条查询都要带 account_id，漏一处就是数据泄漏。用 AccountRepository 基类把隔离变成默认：跨账号一律 404、仓储不提交、事务边界收敛到 session_scope。'
+date: '2026-11-22'
+tags: ['多租户', 'SQLAlchemy', '安全', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 6
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `packages/database` 与 `packages/common`——所有服务共用的数据访问地基。
+
+## 多租户隔离的三种方案与选择
+
+SaaS 多租户的经典三选一：
+
+| 方案 | 隔离强度 | 运维成本 | 适合 |
+| --- | --- | --- | --- |
+| 独立数据库 | 最强 | 最高（迁移 × N） | 客户要求物理隔离 |
+| 独立 schema | 强 | 高 | 租户数量少 |
+| 共享表 + tenant_id 列 | 靠查询纪律 | 最低 | 绝大多数 SaaS |
+
+beauty-moon 选第三种：所有账号私有表带 `account_id` 列（`AccountMixin`）。共享表方案的全部风险集中在一点——**某条查询忘了拼 account 过滤，就是跨租户数据泄漏**。所以核心问题变成：怎么让「忘拼过滤」在代码层面不可能发生？
+
+答案是把它沉到基类里，让正确的写法成为唯一的写法。
+
+## AccountRepository：账号过滤是基类的行为
+
+```python
+class AccountRepository(Repository[EntityT]):
+    """账号隔离仓储:所有读取自动带 `account_id` 过滤。
+
+    绑定 `model` 的类必须混入 `AccountMixin`(类定义时即校验,防止漏隔离)。
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        model = getattr(cls, "model", None)
+        if model is not None and not issubclass(model, AccountMixin):
+            raise TypeError(
+                f"{cls.__name__}.model={model.__name__} 缺少 AccountMixin:"
+                "账号仓储只能绑定带 account_id 的表"
+            )
+
+    def scoped(self, account_id: str, *criteria) -> Select:
+        return select(self.model).where(self.model.account_id == account_id, *criteria)
+
+    async def get_for_account(self, account_id: str, entity_id: str):
+        return await self.session.scalar(
+            self.scoped(account_id, self.model.id == entity_id)
+        )
+```
+
+三层防御：
+
+1. **查询构造层**：所有取数方法（`list_scoped`/`get_for_account`/`require_for_account`/`delete_for_account`）的第一参数都是 `account_id`，过滤条件由基类拼——业务代码根本没有「拼一条不带账号的查询」的 API 可用；
+2. **类定义校验**：`__init_subclass__` 钩子保证绑定到 `AccountRepository` 的模型必须混入 `AccountMixin`——忘了加 `account_id` 列，服务启动时（import 时）就炸，而不是在某个查询里静默返回全表；
+3. **约定兜底**：模块 docstring 写明「`select()` 是留给复杂 SQL 的逃生口，但任何业务实体查询都必须带账号过滤」——逃生口存在但被显式标注为危险区。
+
+这套设计的理念可以一句话概括：**安全的下限由基类保证，而不是靠每处代码自觉**。
+
+## 为什么跨账号是 404 而不是 403
+
+```python
+async def require_for_account(self, account_id, entity_id, *, details=None):
+    """按账号取实体;不存在(或不属于该账号)一律 404——不泄漏存在性。
+
+    注意用 404 而非 403:跨账号探测不应该能区分"存在但无权"与"不存在"。
+    """
+    entity = await self.get_for_account(account_id, entity_id)
+    if entity is None:
+        raise self._not_found(entity_id, details)
+    return entity
+```
+
+如果返回 403，攻击者用一个不存在的 id 和一个别人的 id 去探测，能从状态码区分出「这个 id 存在，只是不是你的」——资源 id（往往是可枚举的）泄漏了存在性。404 把两种情况合并：不存在和不存在于你的账号里，响应完全一样。这是 OWASP 里 「IDOR 防护」的标准动作，但值得强调的是它在**基类里实现**——八个子服务自动继承，没有哪个端点需要记得这件事。
+
+### id_detail_key：404 也要保持各服务原有的错误契约
+
+404 的响应体带 details，不同服务的主键名不同（`run_id`/`workspace_id`/`event_id`…）。基类用声明字段保持各服务既有契约零变更：
+
+```python
+class Repository(Generic[EntityT]):
+    id_detail_key: str = "id"  # 各服务子类声明自己的键名
+
+    def _not_found(self, entity_id, details=None):
+        return NotFoundError(
+            self.not_found_code,
+            self.not_found_message,
+            details={self.id_detail_key: entity_id, **(details or {})},
+        )
+```
+
+错误码/文案也由子类声明（`not_found_code`/`not_found_message`），于是八个服务的 404 天然是同一种形状。
+
+## 事务边界：仓储不提交
+
+另一个容易埋雷的设计点是「谁提交」。如果每个仓储方法自己 commit，会出现：跨两个仓储的写不在一个事务里、外层想包事务包不进去。本仓库的规则是——**仓储只 flush 不提交，事务边界只由两处负责**：
+
+```python
+# session.py:HTTP 请求的边界(一请求一事务)
+@asynccontextmanager
+async def session_scope(factory) -> AsyncIterator[AsyncSession]:
+    """事务边界:成功提交,异常回滚,总是关闭。"""
+    session = factory()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+```
+
+```python
+# uow.py:脚本/worker/测试的显式边界
+async with UnitOfWork(factory, repositories=(UserRepository,)) as uow:
+    await uow.repo(UserRepository).add(User(...))
+    # 正常退出即提交;抛异常自动回滚
+    # 仓储实例按类型缓存,同一事务内共享 session——跨仓储一致性由此保证
+```
+
+配合使用后，「一个事务里跨多个仓储」成为默认能力，而 outbox 的事件与业务状态同事务落库（第 5 篇）正是建立在这个能力上。
+
+例外永远存在：安全动作必须先于异常抛出落盘（比如刷新令牌重放时吊销全部令牌，第 8 篇），这类点会显式 commit 并注释「本层唯一的提交例外」。规则的价值不在于零例外，而在于**例外必须显眼**。
+
+## 统一错误模型：错误契约也是地基的一部分
+
+```python
+class AppError(Exception):
+    """业务错误基类。对外 API 由统一异常处理器渲染为 {code, message, details}。"""
+
+    status: int = 400
+
+    def __init__(self, code, message, *, details=None):
+        self.code = code          # 对外契约的一部分,一经发布不再变更
+        self.message = message
+        self.details = details or {}
+```
+
+子类把「语义」变成默认状态码：`NotFoundError` 404、`ConflictError` 409、`UpstreamError` 502（外部依赖挂了，可重试）、`QuotaExceededError` 429。所有服务共用一个异常处理器，于是：
+
+- 前端只需要理解一种错误结构；
+- `code` 形如 `run.not_found`、`connector.invalid_state`，是 API 契约的一部分，改它就是 breaking change；
+- 区分 401（调用方凭证问题）和 502（IdP/上游不可达）由类型系统承担——比如 JWT 验签时 JWKS 拉不到抛 `UpstreamError` 而不是 `UnauthorizedError`，重试语义完全不同。
+
+## 账号从哪来：claim 是唯一真源
+
+隔离的最后一环是「account_id 参数本身可信吗」。规则：**账号只来自签名 JWT 的 claim**（`JwtVerifier` 校验签名/iss/aud/exp 后从 claim 取），服务间调用经 TokenBroker 换「以目标账号为 claim」的标准 token——与用户面走同一个验签器，不设后门。显式关闭鉴权的部署才允许 `X-Account-Id` 临时头。
+
+这杜绝了一类经典漏洞：某个端点偷懒信任请求头里的账号 id，伪造即获得任意账号数据。
+
+## 面向开发者的实践建议
+
+如果你在自己的项目里复刻这套方案：
+
+1. **先建基类再写业务**：账号隔离是「从第一张表就要对」的事，事后补漏的成本是数据泄漏事故；
+2. **用类定义校验而不是文档**：`__init_subclass__` 这种「import 时爆炸」的防御，比 code review 可靠一个数量级；
+3. **404/403 的选择写进注释**：后来者很容易「好心」把 404 改成更「精确」的 403，注释要能拦住他；
+4. **仓储不提交，例外要显眼**：任何仓储内的 commit 都该有注释解释为什么它是例外；
+5. **错误码当契约管理**：code 一旦对外发布就不要改语义，新错误新 code。
+
+## 要点清单
+
+- [ ] 共享表 + tenant_id 的隔离风险收敛到基类，让正确写法成为唯一写法；
+- [ ] 类定义时校验模型混入，配置错误启动即炸；
+- [ ] 跨账号一律 404，不泄漏资源存在性；
+- [ ] 仓储不提交，事务边界只在 session_scope / UnitOfWork；
+- [ ] 错误契约（code/message/details）统一形状、code 不可变；
+- [ ] 账号只来自签名 claim，请求头不是身份真源。
+
+## 系列导航
+
+上一篇：[事务性 Outbox](/posts/transactional-outbox)　|　下一篇：[连接器平台与 OAuth](/posts/oauth-connector-lifecycle)

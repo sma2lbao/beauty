@@ -1,0 +1,133 @@
+---
+title: 'LLM 网关：全平台唯一模型出口的设计与实现'
+description: '为什么所有服务不直连模型提供商：litellm 集成、模型白名单与解析顺序、可切换错误与降级链、流式为什么只能在开流前重试、BYOK 按账号注入与 502 错误契约。'
+date: '2026-11-22'
+tags: ['LLM', '网关', 'Agent', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 9
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/llm-gateway`（FastAPI + litellm，:8003）。
+
+## 为什么模型调用要走统一出口
+
+多服务 Agent 平台里，编排器要生成计划、知识库要算嵌入、工具服务可能要总结结果——每个服务都会碰模型。如果各自直连提供商：
+
+- **密钥散落**：每个服务一份 API key，轮换要改 N 处；
+- **无法统一限额**：预算、用量统计没有汇聚点；
+- **模型切换 = 全仓库改代码**：从 OpenAI 换 DeepSeek 要动每个服务；
+- **BYOK 做不了**：用户自带 key 需要按账号注入，每个服务都得实现一遍。
+
+解法是唯一出口：所有模型调用经 llm-gateway(:8003) 转发。路由、白名单、降级、计量、BYOK 注入收敛一处，业务服务只说「我要用这个模型完成这组消息」。这个决策在代码里的体现是约定式的：knowledge-service 的嵌入客户端 docstring 写明「经 llm-gateway 取嵌入:平台内不直连模型提供商」——**出口收敛是架构约束，不是实现细节**。
+
+## 请求组装：litellm 集成的三个细节
+
+网关底座用 litellm（一个入口兼容各家 provider），调用形态：
+
+```python
+response = await litellm.acompletion(
+    model=model, messages=[...],
+    temperature=..., timeout=settings.request_timeout_seconds,
+    **_provider_kwargs(settings, api_key),
+    **_extra(data),                    # tools/response_format 原样透传
+    **({"stream": True} if stream else {}),
+)
+```
+
+值得注意的三个处理：
+
+1. **凭据显式入参，不依赖环境变量**——`api_key`/`api_base` 直接传给 litellm，避免环境变量这个隐式全局状态带来的串号；
+2. **账号只带密钥，不接管路由终点**——`api_base` 永远用平台配置。BYOK 用户可以带自己的 key，但改不了请求发往哪，「密钥归用户、流量归平台」是安全边界；
+3. **响应对象鸭子取值**——litellm 对象式响应与部分提供商 dict 式响应并存，取值统一走 `_get(obj, key)` 兼容层。
+
+## 模型路由：白名单与解析顺序
+
+```python
+def resolve_model(settings, requested, extra_models):
+    # 请求显式 model > DEFAULT_MODEL(默认 deepseek/deepseek-chat,litellm 的
+    # provider/model 格式);AVAILABLE_MODELS 非空时是白名单,白名单外 400
+```
+
+关键规则：**默认模型同样要过白名单**——不允许隐式越权。白名单来自配置，外加每个账号 BYOK 自定义模型目录（与平台列表并集放行）。orchestrator 侧配合做「run 创建时把模型固化成快照（`runs.model`）」：之后 plan/审批/恢复都用同一快照，防止执行中途模型目录变化导致一次 run 前后用不同模型。
+
+## 降级链：可切换错误与不可切换错误
+
+主模型限流了要不要自动切备用模型？真实实现先回答「什么错误才值得切」：
+
+```python
+#: 可切换候选的 HTTP 状态码:限流/超时/上游 5xx(网关语义,不是调用方问题)
+_FALLBACK_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+_SWITCHABLE_ERRORS = (
+    litellm.RateLimitError, litellm.Timeout, litellm.APIConnectionError,
+    litellm.InternalServerError, litellm.ServiceUnavailableError,
+)
+```
+
+分界线是「谁的锅」：**上游故障（限流/超时/5xx）切备用**，重试有意义；**参数/鉴权类 4xx 不切**——换一个模型重发同样的坏请求，只会再收一次 400，还把故障伪装成降级。候选链 = 主模型 + FALLBACK_MODELS（去重保序），全失败返回 502，details 里带 `attempts` 与 `fallbacks` 尝试记录。
+
+另一个细节：**带图请求只保留视觉候选**。降级链切到文本模型等于把图片扔掉，模型会「看不到图还装作回答」——宁可如实报 502。
+
+## 流式：只能在开流前切换
+
+流式请求的降级规则和非流式不同：
+
+- **开流前**（没发出任何正文帧）：正常走候选链，切换无感知；
+- **开流后**：失败只发 error 帧，**绝不重试**——HTTP 头已按 200 发出，重试会让调用方收到重复正文。
+
+这是一个硬约束的推导：SSE 协议下「重试」意味着重新开始一次完整响应，但调用方已经把前面的帧渲染给用户了。已经流出去的字节收不回来，所以开流后的失败只能如实报错，让上层（编排器把错误文本回喂模型，见第 3 篇「工具执行失败不炸图」）决定下一步。
+
+成功收尾的 done 帧带三样东西：`fallbacks`（本次是否发生过降级）、完整正文与 usage、按 index 装配好的 tool_calls——中途失败时不吐半截 JSON，避免下游解析到残缺工具调用。
+
+## 一个真实踩坑：视觉能力表
+
+litellm 的静态能力表漏标某些模型的 `supports_vision` 时，适配层会把 `image_url` 片段**折叠成纯文本静默丢弃**——图片没了，模型不报错，只是「看不见」。这类静默失败极难排查（表现为「模型说看不到图」）。
+
+修复是启动时补写能力表（`register_vision_models()`），并让入口校验**早于开流**：带图请求落到不支持的模型直接 400 `llm.model_no_vision`。同一原则覆盖所有入口校验（文本长度、图片数量、data URL 大小）——**非法参数要在第一字节发出前拒绝**，否则只能塞一帧错误。
+
+## BYOK：按账号注入密钥
+
+BYOK（Bring Your Own Key）让用户自带 provider 密钥。网关的解析流程：
+
+```text
+请求带账号头 → ByokResolver 查账号级密钥
+  → 命中:用账号 key 调用(usage 记 billing_source=byok)
+  → 未命中/关闭/上游失败:回退平台 key,不拖垮模型调用
+```
+
+工程上的护城河是**缓存策略**：
+
+- 正缓存 300s（密钥轮换延迟上限）、负缓存 30s、失败不缓存；
+- 单把 asyncio.Lock 串行化——并发首查只穿透一次，防击穿；
+- LRU 1024 条封顶内存。
+
+回退语义同样重要：BYOK 关闭、无账号头、账号密钥 404、account-service 超时/5xx——一律**回退平台 key 继续**，只有内部鉴权失败才 401。模型调用是全平台的关键路径，「 BYOK 解析失败」不该成为它的单点。密钥本体经信封加密存储在 account-service（KMS 可切 local/Vault Transit），网关侧的 `ResolvedKey.api_key` 用 `field(repr=False)` 防止误打日志。
+
+## 502 错误契约：上游故障的标准形状
+
+网关的统一错误继承自共享库（第 6 篇的 AppError）：`UpstreamError` 固定 502——「外部依赖失败（模型/邮件/三方 API），幂等可重试」。渲染为 `{code, message, details}`。
+
+为什么上游故障必须是 502 而不是把上游状态码透传？因为**调用方需要的是稳定的重试语义**：看到 502 就知道「网关后的东西挂了，稍后重试或走降级」，不用理解每家 provider 的错误码方言。knowledge-service 的嵌入不可达、tool-service 的沙箱不可达、llm-gateway 的模型不可达，全部是同一个形状——错误契约一旦发布，code 不变。
+
+## 观测：唯一出口的红利
+
+出口收敛后，观测只做一遍就覆盖全平台：
+
+- **结构化日志**：`llm_request`（provider/model/是否流式/prompt 字数/工具数/图片数）与 `llm_response`（resolved model/finish_reason/tokens/耗时/fallback 数）；**正文默认不落日志**（开关 + 2KB 截断，图片只留占位符）——模型交互内容可能包含用户敏感数据；
+- **指标**：按 provider（模型串前缀）计数的失败、token 总量、请求时长、降级次数、BYOK 查询状态分布；
+- **追踪**：每次逻辑调用包一层 Langfuse generation span（含降级重试），与 OTel 链路对齐。
+
+## 要点清单
+
+- [ ] 模型出口收敛一处：密钥、限额、切换、计量、BYOK 全部单点化；
+- [ ] 凭据显式入参不进环境变量；账号只带密钥不接管 api_base；
+- [ ] 白名单连默认模型一起管；run 级模型固化成快照防中途漂移；
+- [ ] 降级只切「上游的锅」：限流/超时/5xx 切，参数/鉴权 4xx 不切；
+- [ ] 流式降级只在开流前；开流后失败只报错不重试；
+- [ ] 入口校验（含视觉能力）先于第一字节；
+- [ ] BYOK 正负缓存 + 锁防击穿，解析失败回退平台 key；
+- [ ] 上游故障统一 502 契约，调用方只见稳定的重试语义。
+
+## 系列导航
+
+上一篇：[自建认证与 JWKS](/posts/self-hosted-auth-jwks)　|　下一篇：[知识库服务](/posts/rag-knowledge-service)

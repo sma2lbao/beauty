@@ -1,0 +1,165 @@
+---
+title: '自建认证体系：旋转刷新令牌、JWKS 与服务间信任'
+description: '自建 IdP 全链路：argon2id 防时序枚举、刷新令牌旋转与重放检测、签名密钥持久化与 kid 派生、全平台共享 JwtVerifier、httpOnly 加密 Cookie 与 CSRF。'
+date: '2026-11-22'
+tags: ['认证', 'JWT', '安全', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 8
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/account-service` 与 `services/api-gateway`。
+
+## 自建还是托管
+
+认证是「看起来该买、实际值得建」的典型。托管 IdP（Auth0/Clerk）省掉的是协议实现，代价是：账号数据出域、月费随 MAU 线性涨、深度定制（配额、用量、内部签发）全要走它的扩展点。而 OIDC/JWKS 是稳定协议，核心工作量集中在三块：密码存储、令牌生命周期、密钥管理——每一块都是值得开发者亲手做一遍的学习素材。
+
+## 密码认证：argon2id + 防时序枚举
+
+```python
+_hasher = PasswordHasher()  # argon2id,默认参数(OWASP 推荐档位)
+# 登录失败路径的"假哈希":用户不存在时也跑一次校验,消掉时序差
+_DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(16))
+```
+
+两件事各有一个容易忽略的细节：
+
+**算法与参数**：argon2id 是当前 OWASP 推荐的密码哈希（抗 GPU/ASIC），bcrypt 是可接受的备选。参数用库默认档位即可——自己调参数调出来的配置往往不如库作者的默认值。
+
+**防用户枚举**：登录失败统一返回 401 `auth.invalid_credentials`，不区分「没这人」和「密码错」还不够——**响应时间也能区分**：用户存在时要跑一次昂贵的 argon2 校验，不存在时直接返回，时序差会暴露「这个邮箱注册过」。解法是对不存在的用户也跑一次假哈希校验，把两条路径的耗时拉平。同理，哈希格式异常也按校验失败处理，不让异常类型泄漏信息。
+
+## 旋转式刷新令牌：重放检测怎么做
+
+刷新令牌（refresh token）是长期凭证，泄漏危害大。rotation（旋转）是标准缓解：**每次刷新都换新令牌，旧令牌作废**。这样泄漏的旧令牌一旦被攻击者使用，系统立刻知道出事了。
+
+真实实现的表结构刻意简单：
+
+```text
+refresh_tokens:
+  token_hash  String(64) unique   ← 只存 sha256,本体不落库
+  user_id / account_id            ← 归属
+  expires_at                      ← 签发 + 30 天
+  revoked_at                      ← 旋转/登出/泄露吊销时间戳
+```
+
+没有显式的「令牌族（family）」字段——族语义由「同账号 + `revoked_at` 非空即重放信号」实现。核心流程：
+
+```python
+async def refresh_tokens(self, session, raw_token):
+    record = await repo.find_by_hash(sha256(raw_token))
+    if record is None:
+        raise UnauthorizedError("auth.refresh_invalid", ...)
+
+    # 重放检测:已旋转过的旧令牌再次出现 = 视为泄露
+    if record.revoked_at is not None:
+        await repo.revoke_all_active_for_account(record.account_id)
+        await session.commit()  # 安全动作必须先落盘,再抛 401
+        raise UnauthorizedError("auth.refresh_reused", ...)
+    ...
+```
+
+三个值得咀嚼的决策：
+
+1. **重放 → 吊销该账号全部刷新令牌**，而不是只吊销这一族。粒度粗（用户会被迫重新登录），但实现简单、判定可靠——安全机制宁可粗糙可靠，不要精细脆弱。测试里验证了链式效果：重用旧令牌后，旋转链上新签的令牌也失效；
+2. **吊销动作显式 commit 先于抛 401**。session 的事务语义是「异常即回滚」——如果先抛异常，吊销会随回滚消失，攻击者可以无限次重放。这是全模块唯一一次业务层显式提交，注释写明原因。**安全写操作在异常路径上的持久化**是这类代码最容易翻车的地方；
+3. **库里只存哈希**。刷新令牌是 384 位熵的随机串，本体落库等于把「泄露后的攻击成本」降为零——数据库拖走即全线沦陷。哈希存储后，拖库者拿到的哈希无法反推本体。
+
+access token 则相反：**不设黑名单**，1 小时 TTL 自然过期。撤销的及时性由 refresh 层承担（吊销刷新令牌 = 最多再活一个 access TTL），access 保持无状态短命——两层的职责切分。
+
+## 签名密钥：kid 派生与持久化
+
+自建 IdP 要自己管 RS256 签名密钥。两个细节决定 JWKS 是否好用：
+
+**kid 从公钥指纹派生**，而不是随机生成：
+
+```python
+kid = f"acct-{sha256(public_key_spki_der).hexdigest()[:12]}"
+```
+
+kid 的作用是 JWKS 里的密钥选择器。随机 kid 在密钥持久化后依然稳定（密钥没变，kid 也没变）；但指纹派生有额外性质——**kid 由密钥内容唯一决定**，从公钥就能验证 kid 的正确性，不依赖额外元数据。
+
+**密钥持久化**：`SIGNING_KEY_PATH` 指向 PEM 文件——存在则加载，不存在则生成并写盘（`chmod 0600`）。留空 = 每次进程内新生成，仅限 dev/test。生产必须持久化，否则每次重启所有未过期的 access token 全部验签失败——用户被全体登出。密钥轮换的完整方案（多密钥并存、旧密钥只验签不签发）可以后续叠加，JWKS 本身的多 key 结构已为此留好位置。
+
+**OIDC 发现**把这一切标准化：`/.well-known/openid-configuration` 返回 issuer 与 `jwks_uri`，消费方（所有微服务）只需配一个 issuer 地址，其余自动发现——换 IdP 时各服务只改一个配置项，这就是「自建但标准」的回报。
+
+## 共享 JwtVerifier：一次校验逻辑，八个服务复用
+
+验签不该每个服务自己写一遍。共享基座的完整语义值得细看：
+
+```python
+async def verify(self, token: str) -> Principal:
+    header = jwt.get_unverified_header(token)     # 解析 kid
+    key = await self._key_for(header.get("kid"))  # JWKS 取键(带 TTL 缓存)
+    claims = jwt.decode(token, key=key,
+                        algorithms=self._algorithms,
+                        audience=self._audience,
+                        issuer=self._issuer,
+                        leeway=self._leeway,
+                        options={"require": ["exp", "iss"]})
+    account = claims.get(self._account_claim)
+    if not isinstance(account, str) or not account:
+        raise UnauthorizedError("auth.account_missing",
+                                f"token 缺少 {self._account_claim} claim")
+    return Principal(subject=..., account_id=account, scopes=..., raw_claims=claims)
+```
+
+几个细节：
+
+- **未知 kid 强制刷新一次 JWKS**（TTL 缓存 300s）——支持密钥轮换：新密钥上线后，验签方的缓存过期前也能立即识别新 kid；
+- **单密钥 IdP 的 token 可以不带 kid**——自建 IdP 初期只有一个密钥，token header 里没有 kid 是合法的；
+- **claim 缺失直接 401，绝不回退请求头**——账号身份只来自签名 claim，这是多租户隔离的最后防线（第 6 篇）；
+- **JWKS 拉不到是 502 而不是 401**——IdP 不可达是上游故障（可重试），token 有问题才是调用方的 401。状态码的语义直接影响调用方的重试决策。
+
+## 内部签发：服务间调用的信任链
+
+微服务之间互调（orchestrator → knowledge-service）也要带身份。方案：调用方用共享内部密钥（`X-Internal-Secret`，常量时间比较）调 account 的 `POST /v1/auth/issue`，换一枚**以目标账号为 claim** 的标准 JWT，然后像用户请求一样走验签——**服务间调用与用户面走同一个 JwtVerifier，不设后门**。orchestrator 的 TokenBroker 按账号缓存换来的 token 到过期前 60 秒。
+
+两个防御点：内部密钥未配置时端点整体关闭（恒 401，不是「没配就放行」）；账号不存在或停用一律 401，不泄漏存在性。
+
+## 会话与 Cookie：网关怎么托管双令牌
+
+浏览器侧不直接持有 refresh token。API 网关登录后把双令牌装进 **httpOnly Cookie**：
+
+```python
+def set_session_cookies(response, settings, codec, state):
+    response.set_cookie(settings.cookie_name, codec.encode(state),
+        max_age=settings.cookie_ttl_seconds, httponly=True,
+        secure=settings.cookie_secure, samesite="lax", path="/")
+    response.set_cookie(settings.csrf_cookie_name, new_csrf_token(),
+        max_age=settings.cookie_ttl_seconds, httponly=False,
+        secure=settings.cookie_secure, samesite="lax", path="/")
+```
+
+三个设计点：
+
+1. **Cookie 值是加密的而不只是签名**：SessionCodec 基于 Fernet 加密整个 `{access_token, refresh_token, user}` JSON——万一 cookie 被读取（XSS 边缘场景、日志误录），拿到的也是密文。SPA 响应体里永远只有用户信息，**双令牌不出网关响应体**；
+2. **SameSite=Lax + CSRF double-submit**：非 HttpOnly 的 `bm_csrf` cookie 配请求头 `X-CSRF-Token`，`hmac.compare_digest` 常量时间比较。所有非安全方法的代理请求都要过这一关。Lax 已挡住大部分跨站 POST，double-submit 兜住剩余场景（子域注入等）；
+3. **401 自动续期重试一次**：代理请求收到上游 401 时，网关先用 Cookie 里的 refresh token 静默续期、重设 Cookie、重放一次——SPA 不需要自己管 token 生命周期。刷新失败先清 Cookie 再报错，不让用户卡在「看起来登录了实际已失效」的状态。
+
+配套机制 stream token（网关签发短时 token、浏览器直连 runtime SSE）已在第 4 篇展开。
+
+## API Key：为机器调用准备的通道
+
+服务端到服务端的调用（开放平台）不走用户会话，走 API Key：
+
+- 格式 `bm_live_` + 64 位 urlsafe 随机串——前缀让日志里的 key 一眼可辨、也方便前缀检索；
+- **只存 SHA-256**（同刷新令牌的道理）；列表展示用 `prefix…hint`（前 16 + 后 4 位），**明文只在创建/轮换响应出现一次**；
+- scopes 白名单（`mcp:tools:read` 等）在签发时校验，鉴权走内部 verify 端点换短时授权；
+- 轮换 = 吊销旧 + 建新（同 name 同 scopes），已吊销的 key 再轮换 409。
+
+配额与用量则挂在账号上：`users.quota` JSON（`{"monthly_tokens": N, "max_concurrent_runs": M}`，空 = 不限 fail-open），`usage_events` 表按 `(account_id, event_id)` 唯一约束做投递幂等——「重复投递命中已有行，不重复计费」。成本列 `cost_usd` 允许 NULL：**未计价与 0 元是两种事实**，聚合时单独统计 unpriced 条数。
+
+## 要点清单
+
+- [ ] 密码哈希用 argon2id，登录失败路径跑假哈希消时序差；
+- [ ] 刷新令牌只存哈希；重放即吊销账号全部令牌，安全动作先落盘再抛错；
+- [ ] access 短命无黑名单，撤销及时性由 refresh 层承担；
+- [ ] kid 从公钥指纹派生；签名密钥持久化 0600，重启不轮换；
+- [ ] JWKS 未知 kid 强制刷新一次；IdP 不可达是 502，token 坏才是 401；
+- [ ] 账号只来自签名 claim；服务间调用换标准 token，不设裸头后门；
+- [ ] Cookie 加密而非仅签名；CSRF double-submit；401 静默续期重试一次；
+- [ ] API Key 只存哈希，明文只出现一次。
+
+## 系列导航
+
+上一篇：[连接器平台与 OAuth](/posts/oauth-connector-lifecycle)　|　下一篇：[LLM 网关](/posts/llm-gateway-design)

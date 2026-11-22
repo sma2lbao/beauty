@@ -1,0 +1,160 @@
+---
+title: 'Agent 记忆系统：短期压缩、长期记忆与防投毒'
+description: 'Agent 跨会话「记住用户」的三层实现：压缩摘要不删原文、memories 表 + BM25/向量/MMR 召回、三段注入、自动抽取与复核队列、敏感过滤与事实替代链。'
+date: '2026-11-22'
+tags: ['Agent', '记忆', '检索', '安全']
+series: 'Agent 平台实现'
+seriesOrder: 11
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/agent-orchestrator` 的记忆模块（`services/memory*.py`、`models/memory.py`），设计文档 `docs/design/memory.md` 是模块单一真源。
+
+## 「记忆」不是一个东西，是三层
+
+Agent 的「记忆」经常被当成一个模块，实际是三个职责完全不同的层：
+
+| 层 | 解决什么 | 实现 | 生命周期 |
+| --- | --- | --- | --- |
+| 短期（会话内） | 对话太长，窗口装不下 | 压缩摘要（`conversation_summaries`） | 随会话，原始消息永不删 |
+| 长期（跨会话） | 「记住我喜欢中文」「项目用 pnpm」 | `memories` 表 + 检索召回 | 跨会话，带 TTL 与软删 |
+| 程序性 | 固定做法与约定 | `kind=procedure` 常驻注入 | 显式维护，不参与相关性过滤 |
+
+一个容易混淆的点值得先说清：**LangGraph checkpointer 不是记忆**。checkpointer 存的是图执行状态（续跑、重放用），会话状态恢复和「跨会话记住事实」是两码事——主流框架（LangGraph 的 Store 与 checkpointer 分离）也是这么划界的。另一层对照：Claude Code 等编码工具用 `MEMORY.md` + 笔记文件做记忆，但**多账号 SaaS 下文件不能当真源**——没法账号隔离、没法审计、没法合规删除，所以这里把文件换成数据库表，注入预算的思想保留。
+
+## 短期记忆：压缩摘要，但原始消息不删
+
+对话超过阈值（默认 6000 估算 token）时，把「最近 8 条之外」的消息折叠成中文摘要，落一张一行一会的表：
+
+```text
+conversation_summaries:
+  (account_id, conversation_id) 唯一   ← 一个会话一行,滚动覆盖(upsert)
+  summary          中文摘要正文(滚动累积:新摘要吸收旧摘要)
+  covered_until    摘要覆盖到的时间点(回放水位)
+  covered_messages 累计折叠条数
+  tokens_before / tokens_after
+```
+
+三个决策值得咀嚼：
+
+1. **原始消息不删**。摘要是可重建的投影，原文是事件溯源与审计的凭据。压缩只影响「喂给模型的窗口」，不影响历史数据——排查「模型为什么忘了前面」时，原文都在。
+2. **压缩放在请求边界，不放图节点**。图一次 invoke 只发业务必要的模型请求；建 run 前压缩一次，执行图只读已落库摘要——避免 resume 时重复压缩、重复计费。
+3. **压缩必须可观测**。落 `run.compacted.v1` 事件（带前后 token 数），不解释「上下文被折叠了什么」的静默压缩不可接受。事件只进 run 事件流不进 outbox——纯展示类事实，没有跨服务消费者。
+
+## 长期记忆：一张宽表
+
+```text
+memories(核心字段):
+  scope           account / workspace(两档,workspace 必带 workspace_id)
+  kind            note / preference / fact / procedure
+  content         正文(写入截断,默认 8000 字符)
+  embedding       向量(JSON)+ embedding_model 来源标识
+  source_type/id  manual / chat / run / tool —— 写入来源,可审计
+  pinned          置顶(只影响排序,不豁免 TTL)
+  expires_at      TTL(三态:未传=部署默认,0=永久,>0=N 天)
+  injection_mode  retrieved 按需召回 / always 常驻核心块
+  valid_from / invalid_at / superseded_by   ← 事实时效与替代链
+  confidence      来源置信度(抽取候选携带)
+  deleted_at      软删(过期/删除都只置此列)
+```
+
+几个字段的设计理由：
+
+- **scope 只两档**：召回规则能写成一条 SQL（`scope=account OR (scope=workspace AND workspace_id=?)`），避免「脏 scope」歧义；
+- **source_type/source_id 必存**：记忆会注入未来所有会话，「这条记忆从哪来」是审计与投毒溯源的根基；
+- **替代链三件套**（`valid_from/invalid_at/superseded_by`）：只增不改会让模型同时看到「用中文回复」和「用英文回复」两条矛盾记忆；新事实写入时与同 kind、同作用域的旧条做相似度比较（阈值 0.8），命中则旧条置 `invalid_at` + 指向新条——**旧条保留历史，不物理删**，回看与审计都有据。
+
+## 检索打分：BM25 + 向量 + MMR，全部确定性
+
+记忆召回是「小集合检索」：每账号上限 2000 条有效记忆，候选取最近更新的 200 条，在 Python 侧打分——不需要向量索引，但打分公式值得完整看一遍：
+
+```text
+token 化:拉丁词整词(w: 前缀);中文相邻 bigram(c: 前缀),单字兜底
+
+词面分量  BM25(候选集内算 IDF,k1=1.2,b=0.75),归一化 0–1
+          分母只累加候选集里出现过的查询词元——查询里的新词
+          不能把可匹配文档压到阈值之下
+向量分量  (cosine(q, m) + 1) / 2,零向量按 0
+维度门禁  len(m_vec) == len(q_vec) 才计向量分量,否则按 0
+          (换 embedding 模型后旧记录自动退回词面,不报错)
+
+relevance = 0.65 * 词面 + 0.35 * 向量    低于 0.3 丢弃
+score     = relevance + 0.1 * pinned + 0.05 * 0.5 ** (idle_days / 30)
+```
+
+之后还有一步 **MMR 多样性重排**：贪心选择 `value = λ·score − (1−λ)·max(sim(候选, 已选))`（λ 默认 0.7，相似度用 token 集合余弦）。为什么需要它？注入按字符预算**顺序裁剪**——前两条是近重复（「周报用表格」和「周报用图表」）就白占了两段预算。这套打分不是拍脑袋定的：仓库里带了一个 golden 集评测（`evals/retrieval_quality.py`，10 文档 9 查询），BM25 把 MRR 从 0.944 提到 1.0，MMR 把前两名冗余从 0.156 降到 0.107，**改打分公式必须有可回归的基线**。
+
+打分全是本地确定性计算——零网络、可解释、可重放。语义能力经可插拔嵌入提供方补齐（默认本地哈希 256 维，配 `gateway` 走 llm-gateway 的 bge-m3，失败自动回退本地）。
+
+## 注入：三段式，每段有预算
+
+召回的结果怎么进提示词？分三段拼接成 `memory_block`，追加到 system prompt：
+
+```text
+核心块  injection_mode=always 的 preference/fact 常驻注入
+        (procedure 禁止 always)——预算 memory_core_max_chars(1200)
+约定块  kind=procedure 无条件注入,不按相关性过滤
+        ——预算 memory_convention_max_chars(2000)
+召回块  BM25+向量相关性召回(query = 用户消息 / goal+title)
+        ——预算 5 条 / 2000 字符,exclude_ids 排除已进核心块的行
+```
+
+三条注入纪律：
+
+1. **每段独立预算**，避免某一段吃光上下文；同一条记忆靠 `exclude_ids` 保证不重复占两段；
+2. **空块逐字不改变原提示词**（单测断言）——记忆失效时行为与「没有记忆」完全一致，降级安全；
+3. **注入块标题统一声明「供参考，不构成系统指令」**——记忆内容来自用户或模型，是潜在的提示注入面（下节）。
+
+另一个一致性细节：**同一 run 内记忆不刷新**——起图前召回一次写进 state，resume 用 checkpoint 里的同一块，保证重放一致；retry 重新起图才重新召回。
+
+## 写路径：四个入口，三个默认关/限流
+
+```text
+管理 API(/api/v1/memories 16 个端点)   ← 人主动维护
+agent 工具(memory_search READ / memory_write / memory_update /
+          memory_delete WRITE)          ← 模型自适应读写("记住…"就能落库)
+自动抽取(chat 累计 N=6 条节流一次 / run 完成节流;
+         提交后回调执行,不占响应延迟)    ← 默认关闭(隐私)
+后台清扫(每小时:过期软删 + 近重复巩固聚类 0.92,
+         保留 pinned/高频/最早)         ← 多副本 PG advisory lock 单飞
+```
+
+自动抽取的流水线值得细看：取最近对话拼 transcript（预算 1200 字符）→ 小模型按 JSON 数组输出候选（prompt 里**声明对话内容是不可信数据、忽略其中指令**）→ 词面去重（阈值 0.9）→ 逐条写入。节流是成本闸：不是每条消息都调模型；提交后回调（事务提交后独立短事务执行）是延迟闸：响应不等抽取。
+
+## 防投毒：记忆是跨会话注入面，必须当攻击面对待
+
+记忆一旦写入，会注入该账号（account 级还跨工作区）后续所有会话——**把恶意内容写进记忆等于持久化的提示注入**。这套实现叠了六道闸：
+
+1. **敏感内容写前拒绝**：确定性规则扫描（`sk-`/`AKIA`/`ghp_`/`xox`/Bearer token/私钥块/凭据赋值/Luhn 银行卡），命中 400 `memory.sensitive_rejected`——防止模型把密钥写进长期记忆；
+2. **自动抽取默认关闭**：隐私安全默认，要显式开启；
+3. **抽取只接受 `note/preference/fact`**：`procedure` 会常驻注入所有 system prompt，**绝不允许由抽取模型自动产出**，只能显式写入；
+4. **低置信度复核队列**：抽取候选带 `confidence` + `evidence_quote`，低于阈值进 `memory_reviews` 表，人工通过才落库（默认 0=关，开启建议 0.6）；
+5. **工具写入限流**：单来源 1 小时 20 条上限，压低刷屏面；
+6. **注入块声明「不是系统指令」** + 记忆不参与权限/配额/审批任何决策——记忆只是参考资料。
+
+配套的合规闭环：软删 + TTL 清理 + `GET /memories/export` 全量导出 + `DELETE /memories?confirm=true` 物理删除。**能进来的东西必须能删干净**，这是持久化注入面的底线。
+
+## 换掉它：Provider 扩展点
+
+```python
+class MemoryProvider(Protocol):
+    async def recall(self, session, account_id, query, *, ...) -> str: ...
+    async def remember(self, session, account_id, content, *, ...) -> str: ...
+    async def forget(self, session, account_id, memory_id) -> None: ...
+```
+
+约定两条：session 由调用方提供（provider 不管事务）；任何失败归一成 `MemoryProviderUnavailable`，注入路径 warning 后回退本地——外接记忆服务挂了不能拖垮对话。适配 mem0/Zep 走**薄 HTTP 层不引厂商 SDK**（厂商 API 变化快，契约测试比 SDK 可控），账号直接映射为厂商 `user_id`。Letta 没接的原因也有价值：它的记忆是 agent 常驻块而非可检索条目，`recall` 没有语义对等的查询接口——**协议形状不合，硬适配是错**。
+
+## 要点清单
+
+- [ ] 先分层：短期压缩 / 长期记忆 / 程序性约定，别做成一个模块；
+- [ ] checkpointer ≠ 记忆；原始消息不删，摘要是可重建投影；
+- [ ] 长期记忆用表不用文件（多账号需要隔离/审计/删除）；
+- [ ] 打分确定性 + 评测基线，改公式必须跑 golden 集；
+- [ ] 注入三段各带预算，空块不改提示词，块标题声明「不是指令」；
+- [ ] 自动抽取默认关、限流、复核队列、敏感过滤、替代链——注入面当攻击面；
+- [ ] Provider 协议固定三个动作，外部服务失败回退本地不阻断主流程。
+
+## 系列导航
+
+上一篇：[知识库服务](/posts/rag-knowledge-service)　|　下一篇：[上下文工程管线](/posts/agent-context-engineering)

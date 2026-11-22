@@ -1,0 +1,203 @@
+---
+title: '连接器平台：Agent 访问第三方系统的凭证与生命周期'
+description: 'Agent 要操作 GitHub/Notion，凭证怎么管：PKCE 授权会话、state 只存 nonce、Fernet 信封加密、刷新单飞防并发轮换、失败分层与 24h 巡检、provider 抽象。'
+date: '2026-11-22'
+tags: ['OAuth', '安全', '集成', 'Python']
+series: 'Agent 平台实现'
+seriesOrder: 7
+lang: python
+---
+
+> 本文代码来自 beauty-moon 仓库 `services/connector-service`，设计文档见仓库 `docs/design/connector.md`。
+
+## Agent 平台为什么要单独一个连接器服务
+
+让 Agent「帮我在 GitHub 上建个 issue」，意味着平台要持有用户的 GitHub 凭证。这件事的责任远比「存个 token」重：
+
+- **授权**：引导用户走 OAuth、回调接 code、换 token——协议细节错一步就是凭证泄漏；
+- **托管**：凭证落库必须加密，API 响应、事件 payload、日志里一个字段都不能漏；
+- **续命**：access token 会过期，refresh token 可能是一次性的，并发刷新会互相踩死；
+- **兜底**：上游 401、限流、网络超时——哪些错误该断开连接让用户重授权，哪些只是抖动。
+
+这些逻辑和「建 issue」的工具实现无关，和任何 provider 都相关——值得独立成一个服务（connector-service），把「凭证与连接」的全部复杂度收拢在一处。
+
+## 授权会话：state 只存随机 nonce
+
+OAuth 回调端的经典漏洞是 state 校验形同虚设——比如把用户身份编码进 state。真实实现反着来：**state 只落一个随机 nonce，身份靠服务端行查回**（RFC 9700 建议）：
+
+```python
+# connector/models/oauth.py 模块 docstring:
+# """授权会话 ORM:state 只落随机 nonce,身份靠服务端行查回(RFC 9700)。
+# 一次性:回调成功即置 completed,重复 nonce 一律拒绝;过期 TTL 由服务配置。"""
+```
+
+`oauth_sessions` 表的关键字段：`state_nonce`（唯一索引）、`account_id`、`provider`、`code_verifier`、`redirect_uri`、`status`（pending/completed/failed/expired）、`expires_at`（600 秒 TTL）。发起授权时生成 PKCE S256 对：
+
+```python
+def _pkce() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(48)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+```
+
+`code_verifier` 服务端保管、不进 URL——公开客户端的授权码可能被拦截（自定义 URL scheme、重定向链上的应用），PKCE 让「有 code 没 verifier」换不到 token。
+
+## 回调端点：无鉴权端点的安全设计
+
+`GET /v1/oauth/{provider}/callback` 是**无鉴权**的（第三方重定向回来时浏览器没有会话），安全性全部押在 nonce 的一次性上。判定顺序每一步失败都会把会话行置成对应终态：
+
+```text
+1. nonce 查不到 / provider 不匹配  → connector.invalid_state
+2. status != pending(已被消费)     → connector.state_used(重放拒绝)
+3. 过期                            → 置 expired + connector.state_expired
+4. 上游带 error 或缺 code          → 置 failed + connector.oauth_denied
+5. exchange_code 换 token → fetch_identity 拉身份 → 建连接
+                                   → 成功后才置 completed
+```
+
+第 5 步的顺序有讲究：**先建连接、再置 completed**——避免「会话显示完成但连接没建」的中间态。
+
+回调最终只 302 回前端，URL 只带 `provider/status/code/connection_id` 查询参数，**不接收任何 token**。凭证永远不出服务端。
+
+## 凭证托管：信封加密 + 读端白名单
+
+凭证列的存储格式是一个版本化信封：
+
+```python
+def encrypt_credentials(secret: str, credentials: dict[str, Any]) -> dict[str, str]:
+    return {
+        "v": "1",
+        "ciphertext": _ENC_PREFIX + _box(secret).encrypt_json(credentials),
+    }
+```
+
+`v` 字段是给未来换加密算法留的（信封 v2 可以并存解密）；`ciphertext` 是 Fernet 对称加密（密钥经 SHA-256 派生）。加密只覆盖一半风险——**另一半在读端**：
+
+- Schema 层：`ConnectionRead` 的字段白名单里根本没有 credentials 字段；
+- 仓储层：注释明确「仓储层面同样不做任何『顺手返回凭证明文』的便捷方法」；
+- 事件层：事件 payload「不放凭证，也不放任何可能含密钥的 metadata」。
+
+全链路明文只出现在三处：落库前加密、读端解密后在内存传给 provider、账号级应用密钥的 payload 解析。**明文出现的位置越少，泄漏面越小**——这是凭证托管的第一设计原则。
+
+连接状态机是 `active / revoked / expired` 三态：撤销不物理删除（审计留痕，行上记 `revoked_at/revoked_by`），expired 表示需要重新授权。
+
+## 刷新单飞：行锁 + 锁内二次检查
+
+这是连接生命周期里最容易踩的坑。部分 provider（GitHub App token 是典型）的 **refresh_token 是一次性的**：用掉即失效、返回新的。两个并发请求同时发现 token 快过期、各自去刷新，后到者拿着已作废的 refresh token 必然失败——用户的连接莫名其妙断了。
+
+解法不是内存锁（多实例部署下没用），而是**数据库行锁 + 锁内二次检查**：
+
+```python
+async def refresh_if_expiring(session, settings, account_id, connection, transport):
+    """执行前惰性刷新:锁内二次检查,避免并发重复刷新(单飞)。"""
+    if not is_expiring(connection.expires_at, settings.refresh_margin_seconds):
+        return connection
+    repo = ConnectionRepository(session)
+    conn = await repo.require_for_update(account_id, connection.id)   # 行锁
+    if not is_expiring(conn.expires_at, settings.refresh_margin_seconds):
+        return conn  # 等锁期间已被别的请求刷新
+    if conn.status != ConnectionStatus.ACTIVE.value:
+        return conn
+    await _refresh_locked(session, settings, conn, transport)
+    return conn
+```
+
+注意这个模式和缓存击穿的 singleflight 完全同构：先无锁快判（绝大多数请求 token 没过期，直接返回，不加锁）→ 需要时拿行锁 → **拿到锁后再判一次**（可能等锁期间别人已经刷完）→ 还需要才真正刷新。锁必须覆盖「检查 → 换 token → 写回」全程——只锁换 token 不够，写回竞态同样致命。
+
+三条刷新路径（执行前惰性刷新、手动刷新、巡检）共用同一个 `_refresh_locked`，保证锁语义只有一份实现。
+
+## 失败分层：哪些错误该断开连接
+
+刷新失败不是一律断开。错误分两层：
+
+- **需要重新授权**（`REAUTH_ERROR_CODES`：`auth_expired` / `oauth_failed` / `scope_missing`）→ 连接置 `expired` + 发事件，前端展示「重新连接」；
+- **瞬时故障**（限流 / 超时 / 上游 5xx）→ **保持 active**，只写 `last_error_code` 留痕，下次再试。
+
+```python
+# providers/errors.py:需要用户重新授权的错误码:连接置 expired,
+# 前端展示重新连接;限流/超时/5xx 是瞬时故障,保持 active 不逼用户重连。
+```
+
+区分标准一句话：**凭证失效是用户侧问题（要人解决），服务抖动是基础设施问题（重试解决）**。把抖动当成失效会不断骚扰用户重授权——这是连接器产品最常见的过度反应。
+
+## 24h 巡检：两阶段扫描 + 失败留痕提交
+
+除了执行前的惰性刷新，还有一条后台巡检兜底：asyncio 定时任务每小时扫一遍「超过 24h 没刷新过」的 active 连接，主动换新 token，把过期的连接在用户使用**之前**就标出来。
+
+两个实现细节值得借鉴：
+
+**两阶段执行**——先在一个事务里快照候选 `(account_id, connection_id)`，再逐条在**独立事务**里刷新。不在一个大事务里做（外部调用 + 长事务持锁的老问题），也不在扫描事务里逐条处理（扫描行的锁会一直持有）。
+
+**失败留痕要显式提交**：
+
+```python
+for account_id, connection_id in targets:
+    try:
+        async with session_scope(session_factory) as session:
+            try:
+                await refresh_connection(session, settings, account_id, ...)
+            except ProviderError as exc:
+                await session.commit()  # 失败留痕要落库
+                _log.warning("patrol_refresh_failed", ...)
+    except Exception as exc:
+        _log.warning("patrol_connection_failed", ...)  # 单条异常不能杀死整轮
+```
+
+为什么失败还要 commit？`session_scope` 的语义是「异常即回滚」——如果置 `expired` + `last_error_code` 之后抛异常，这些痕迹会随事务回滚一起消失，连接看起来好好的、下次执行又失败一遍。**「留痕」本身是一个必须落库的写操作**，它要在异常路径上显式提交。
+
+## 生命周期事件：与状态变更同事务
+
+连接的三个关键变更都发事件：`connection.created.v1`（新建行时，重新授权复用行不发）、`connection.expired.v1`（每次因授权类错误失效都发）、`connection.revoked.v1`。事件通过 outbox（第 5 篇）与连接行**同一事务**写入——「状态改了事件一定发、事务回滚事件一定不发」。消费者（比如通知服务）用事件 id 幂等去重。
+
+payload 固定五个字段：`connection_id, provider, account, status, owner_subject`——刻意不含凭证、不含可能带密的 metadata。
+
+## Provider 抽象：新增一个 provider 要写多少代码
+
+```python
+class BaseProvider(ABC):
+    # ClassVar 清单:name / prefix / auth_kind / token_connectable / tools ...
+    # 5 个抽象方法:
+    def authorize_url(...): ...      # 拼授权页 URL
+    def exchange_code(...): ...      # 授权码换 token
+    def refresh(...): ...            # 刷新 token
+    def fetch_identity(...): ...     # 拉取用户身份
+    def call(...): ...               # 执行工具调用
+```
+
+设计原则写在基类 docstring 里：「provider 是**代码 manifest + 网络行为**——provider 只碰网络与 provider 语义；凭证加密、落库、账号隔离全部留在 service 层」。由此带来一个干净的扩展模型：
+
+1. 继承 `BaseProvider`，实现 5 个抽象方法 + 工具清单（声明 input_schema 与风险等级）；
+2. 在注册表加一行；
+3. **无需新增路由、无需新增表**——授权会话、刷新、目录、执行、连接管理全部由平台层复用 `oauth_sessions`/`connections`（唯一约束 `(account_id, provider, account)` 幂等复用行）。
+
+provider 抛错统一用 `ProviderError(code, message, hint, retryable)`——「错误码是错误契约的一部分」，provider 层的错误语义和上层的失败分层（上一节）通过错误码解耦。
+
+内置 GitHub provider 是参考实现：GitHub App user-to-server 模式（用户以自己身份授权，token 代表用户），8 个读工具（list_repositories / get_file_contents / search_code / list_issues…）+ 3 个写工具（create_issue / create_issue_comment / create_pull_request），写工具的 description 里显式声明「写操作不幂等，同参数重放会重复生效」。
+
+## 执行面：工具调用怎么走到上游
+
+tool-service 代理执行请求到 connector-service 时（`POST /v1/connectors/{provider}/execute`，内部密钥鉴权）：
+
+```text
+按账号解析 provider → 工具校验(未知 400)
+→ 取 active+enabled 连接(没有 404 connection_missing)
+→ refresh_if_expiring 惰性单飞刷新   ← 上文的锁在这里生效
+→ 解密凭证 → provider.call → 成功清 last_error_code
+```
+
+契约上有一个关键设计：**工具级失败不是 HTTP 错误**——返回 HTTP 200 + `{"ok": false, "error": {code, message, hint, retryable}}`。因为执行链路的调用方是编排器，「GitHub 说这个 issue 标题太长」是模型需要看到的数据（模型可以改标题重试），不是基础设施故障；API 级错误（连接不存在、上游挂了）才用 4xx/5xx。**「错误是数据还是故障」的边界，决定它们走哪条通道**。
+
+## 要点清单
+
+- [ ] state 只存随机 nonce，身份服务端查回；PKCE 全程开启；
+- [ ] 回调按固定顺序判定，每步失败置对应终态；先建连接再置 completed；
+- [ ] 凭证信封加密 + 读端字段白名单，明文出现位置最少化；
+- [ ] 刷新单飞：行锁 + 锁内二次检查，锁覆盖检查→换 token→写回全程；
+- [ ] 失败分层：授权类错误才置 expired，瞬时故障留痕不逼用户重连；
+- [ ] 巡检两阶段执行，失败留痕要显式 commit；
+- [ ] 工具级失败走 200 + ok:false 信封——错误是模型可见的数据。
+
+## 系列导航
+
+上一篇：[多租户数据访问](/posts/multi-tenant-repository)　|　下一篇：[自建认证与 JWKS](/posts/self-hosted-auth-jwks)
