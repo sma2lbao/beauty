@@ -1,4 +1,4 @@
-"""BYOK 在 API 层的注入:completions/stream/embeddings 覆盖或回退平台 key。
+"""BYOK 在 API 层的注入:completions/stream/embeddings/rerank 覆盖或回退平台 key。
 
 litellm 全打桩、account-service 走 httpx.MockTransport:零网络。
 """
@@ -166,7 +166,9 @@ def test_api_embeddings_uses_byok_key(monkeypatch) -> None:
 
     assert resp.status_code == 200
     assert captured["api_key"] == f"{KEY}-t1"
-    assert captured["provider"] == "openai"  # 显式 provider 供 litellm 路由
+    # provider 由 model 的 "provider/model" 前缀交给 litellm 路由;不能另传
+    # provider= 参数——litellm 会把它原样写进请求体,上游会当成非法字段
+    assert "provider" not in captured
     assert stub.requests[0].url.path == "/v1/byok/openai/secret"
 
 
@@ -183,5 +185,59 @@ def test_api_embeddings_without_provider_prefix_uses_platform(monkeypatch) -> No
         resp = client.post("/v1/embeddings", json={"input": ["hi"]}, headers=HEADERS)
 
     assert resp.status_code == 200
-    assert "api_key" not in captured  # 默认嵌入模型无前缀:不查 BYOK、不传平台 key
+    # 无前缀:不查 BYOK,回退平台 key(与 completions 同源语义)
+    assert captured["api_key"] == "sk-platform"
     assert stub.requests == []
+
+
+def test_api_rerank_uses_byok_key(monkeypatch) -> None:
+    stub = AccountStub()
+    captured: dict = {}
+
+    async def fake_arerank(**kwargs):
+        captured.update(kwargs)
+        return {
+            "id": "req-1",
+            "model": "qwen3-rerank",
+            "results": [{"index": 0, "relevance_score": 0.8}],
+            "meta": {"billed_units": {"total_tokens": 12}},
+        }
+
+    monkeypatch.setattr(litellm, "arerank", fake_arerank)
+    with _client_with_stub(stub) as client:
+        resp = client.post(
+            "/v1/rerank",
+            json={
+                "model": "dashscope/qwen3-rerank",
+                "query": "合同违约",
+                "documents": ["甲"],
+            },
+            headers=HEADERS,
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["results"][0]["relevance_score"] == 0.8
+    assert captured["api_key"] == f"{KEY}-t1"  # BYOK 覆盖平台 key
+    # 账号级百炼 key 走 account-service 取,provider 取自模型前缀
+    assert stub.requests[0].url.path == "/v1/byok/dashscope/secret"
+
+
+def test_api_rerank_without_provider_prefix_uses_platform(monkeypatch) -> None:
+    stub = AccountStub()
+    captured: dict = {}
+
+    async def fake_arerank(**kwargs):
+        captured.update(kwargs)
+        return {"results": [{"index": 0, "relevance_score": 0.8}], "model": "m"}
+
+    monkeypatch.setattr(litellm, "arerank", fake_arerank)
+    with _client_with_stub(stub) as client:
+        resp = client.post(
+            "/v1/rerank",
+            json={"model": "qwen3-rerank", "query": "q", "documents": ["a"]},
+            headers=HEADERS,
+        )
+
+    assert resp.status_code == 200
+    assert captured["api_key"] == "sk-platform"
+    assert stub.requests == []  # 无前缀不猜 provider

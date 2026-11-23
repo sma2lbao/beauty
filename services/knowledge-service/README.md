@@ -6,7 +6,8 @@
   返回 chunk 数;`GET /v1/knowledge/documents` 列表、`GET …/{id}` 详情、
   `DELETE …/{id}` 删除(连带 chunk);
 - `POST /v1/knowledge/search`:混合检索(`mode=hybrid|vector|keyword`),
-  返回带分数的命中块(文档标题/序号/正文)与 `mode`/`elapsed_ms`;
+  返回带分数的命中块(文档标题/序号/正文)与 `mode`/`elapsed_ms`;开了重排时
+  额外回 `rerank`(`applied`/`skipped`)与 `rerank_model`,此时 `score` 是重排相关性分数;
 - `/healthz` `/readyz`:存活/就绪探针。
 
 嵌入提供方(架构 §5 唯一出口,配置 `EMBEDDING_PROVIDER`):
@@ -16,7 +17,22 @@
   它不是语义嵌入(近义词不会靠近),用途是让骨架在没有模型/密钥时也能跑通
   ingest→search 全链路;生产请用 `gateway`;
 - `gateway`:经 `llm-gateway` 的 `/v1/embeddings`(litellm 路由,如 bge-m3),
-  失败统一 502 `llm.embedding_error`。
+  失败统一 502 `llm.embedding_error`。服务**一次提交全部块**,网关按提供商行数
+  上限切批(默认 10 行/批,百炼 text-embedding-v3/v4 的上限)。接百炼时把
+  `EMBEDDING_MODEL` 设为 `dashscope/text-embedding-v4`(默认 1024 维,与向量列
+  一致),`gateway` 侧用 `LLM_GATEWAY__EMBEDDING_API_KEY/API_BASE` 配百炼密钥与
+  `https://dashscope.aliyuncs.com/compatible-mode/v1`(对话与嵌入不同家时必须分开配)。
+
+重排提供方(可选,配置 `RERANK_PROVIDER`,默认关闭):
+
+- `none`(默认):不重排,直接用 RRF 粗排顺序,响应里 `rerank=null`;
+- `gateway`:混合检索先取 `max(limit, RERANK_CANDIDATES,默认 20)` 条候选,
+  经 `llm-gateway` 的 `/v1/rerank`(litellm 路由,默认
+  `dashscope/qwen3-rerank`,百炼单请求 500 篇 / 4k token 每篇)按查询重打分,
+  再按新分数截到 `limit`;此时 `score` 是 0~1 的重排相关性分数。
+  **降级是设计的一部分**:网关不可达/超时/返回条数不符时记 warn、退回原顺序并
+  回 `rerank="skipped"`(HTTP 仍 200);候选只有 1 条时也标 `skipped`(不值得多打一次)。
+  凭据与嵌入同源:网关侧 `RERANK_API_KEY/API_BASE` 留空会回退嵌入专用配置。
 
 `gateway` 模式下,服务调用网关时会带 `X-Account-Id`(当前账号)与
 `X-Internal-Secret`(`KNOWLEDGE__INTERNAL_SECRET`),网关据此解析该账号的

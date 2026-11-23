@@ -12,7 +12,7 @@ import {
   Input,
 } from '@beauty/design';
 
-import type { SearchMode } from '@/lib/knowledge-api';
+import type { RerankStatus, SearchMode } from '@/lib/knowledge-api';
 
 import type { KnowledgeModel } from './use-knowledge-model';
 
@@ -20,6 +20,11 @@ const MODE_LABELS: Record<SearchMode, string> = {
   vector: '向量',
   keyword: '关键词',
   hybrid: '混合',
+};
+
+const RERANK_LABELS: Record<RerankStatus, string> = {
+  applied: '重排',
+  skipped: '重排降级(原顺序)',
 };
 
 export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
@@ -30,8 +35,8 @@ export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
       <CardHeader>
         <CardTitle>检索预览</CardTitle>
         <CardDescription>
-          混合检索(向量 + 关键词)看看资料能不能被找到。分数是融合分,
-          只用于同一次查询内排序,不能跨查询比较。
+          混合检索(向量 + 关键词)看看资料能不能被找到,开启重排时再按相关性排序。
+          分数只用于同一次查询内排序,不能跨查询比较。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -57,6 +62,11 @@ export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
             <p className="text-xs text-muted-foreground">
               提供方 {result.provider} / 模型 {result.model}
               {result.mode ? ` · ${MODE_LABELS[result.mode]}检索` : ''}
+              {result.rerank
+                ? ` · ${RERANK_LABELS[result.rerank]}${
+                    result.rerank_model ? `(${result.rerank_model})` : ''
+                  }`
+                : ''}
               {typeof result.elapsed_ms === 'number'
                 ? ` · ${Math.round(result.elapsed_ms)} ms`
                 : ''}

@@ -136,16 +136,16 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 
 ## 5. 配置矩阵（关键项）
 
-| 服务               | 关键配置                                                                                                                          |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| api-gateway        | `APP_ORIGIN=https://app.beautymoon.cn`、`RUNTIME_PUBLIC_URL`、`COOKIE_SECURE=true`、`INTERNAL_SECRET`、上游 URL 用 compose 服务名 |
-| account-service    | `AUTH_ISSUER`、`SIGNING_KEY_PATH`、`INTERNAL_SECRET`、`OAUTH21_WEB_ORIGIN`                                                        |
-| agent-orchestrator | `AUTH_ISSUER`、`INTERNAL_AUTH_SECRET`、`LLM_GATEWAY_URL`、`TOOL/KNOWLEDGE/WORKSPACE_ENABLED=true`、`OUTBOX_ENABLED=true`          |
-| workspace-service  | `ARTIFACT_STORE=cos`、`ARTIFACT_COS_BUCKET/REGION/SECRET_ID/SECRET_KEY`、`SANDBOX_PROVIDER`、`SANDBOX_REAPER_ENABLED`             |
-| connector-service  | `CREDENTIAL_SECRET`、`INTERNAL_SECRET`、`OAUTH_REDIRECT_BASE`                                                                     |
-| tool-service       | `WORKSPACE_SERVICE_URL`、`CONNECTOR_BASE_URL`、`CONNECTOR_INTERNAL_SECRET`、`AUTH_ISSUER`                                         |
-| knowledge-service  | `EMBEDDING_PROVIDER=local`、`LLM_GATEWAY_URL`、`INTERNAL_SECRET`                                                                  |
-| llm-gateway        | `API_KEY`、`API_BASE`、`DEFAULT_MODEL`、`ACCOUNT_BASE_URL`、`INTERNAL_SECRET`                                                     |
+| 服务               | 关键配置                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| api-gateway        | `APP_ORIGIN=https://app.beautymoon.cn`、`RUNTIME_PUBLIC_URL`、`COOKIE_SECURE=true`、`INTERNAL_SECRET`、上游 URL 用 compose 服务名                              |
+| account-service    | `AUTH_ISSUER`、`SIGNING_KEY_PATH`、`INTERNAL_SECRET`、`OAUTH21_WEB_ORIGIN`                                                                                     |
+| agent-orchestrator | `AUTH_ISSUER`、`INTERNAL_AUTH_SECRET`、`LLM_GATEWAY_URL`、`TOOL/KNOWLEDGE/WORKSPACE_ENABLED=true`、`OUTBOX_ENABLED=true`                                       |
+| workspace-service  | `ARTIFACT_STORE=cos`、`ARTIFACT_COS_BUCKET/REGION/SECRET_ID/SECRET_KEY`、`SANDBOX_PROVIDER`、`SANDBOX_REAPER_ENABLED`                                          |
+| connector-service  | `CREDENTIAL_SECRET`、`INTERNAL_SECRET`、`OAUTH_REDIRECT_BASE`                                                                                                  |
+| tool-service       | `WORKSPACE_SERVICE_URL`、`CONNECTOR_BASE_URL`、`CONNECTOR_INTERNAL_SECRET`、`AUTH_ISSUER`                                                                      |
+| knowledge-service  | `EMBEDDING_PROVIDER=gateway`、`EMBEDDING_MODEL`、`RERANK_PROVIDER`、`RERANK_MODEL`、`LLM_GATEWAY_URL`、`INTERNAL_SECRET`                                       |
+| llm-gateway        | `API_KEY`、`API_BASE`、`DEFAULT_MODEL`、`DEFAULT_EMBEDDING_MODEL`、`EMBEDDING_API_KEY/API_BASE`、`DEFAULT_RERANK_MODEL`、`ACCOUNT_BASE_URL`、`INTERNAL_SECRET` |
 
 完整样例见 `deploy/tencent/.env.example`。
 

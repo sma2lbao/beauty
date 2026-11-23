@@ -24,6 +24,15 @@ class Settings(ServiceSettings):
     embedding_model: str = "bge-m3"
     llm_gateway_url: str = "http://127.0.0.1:8003"
     embedding_timeout_seconds: float = 60.0
+    # 重排(架构 §5 唯一出口):none = 关闭(默认,加了功能也与原来逐字一致);
+    # gateway = 经 llm-gateway POST /v1/rerank。重排只是增益:失败自动退回
+    # RRF 顺序,不会把检索变成 5xx(见 services/rerank.py)。
+    rerank_provider: str = "none"
+    rerank_model: str = "dashscope/qwen3-rerank"
+    rerank_timeout_seconds: float = 20.0
+    # 送进重排的候选数:先粗排这么多,再按重排分数截到请求的 limit。
+    # 太小丢召回(粗排第 21 条的好块进不来),太大拖慢且多花 token。
+    rerank_candidates: int = Field(default=20, ge=1)
     # 服务间内部密钥:须与 account-service / llm-gateway 的 INTERNAL_SECRET 一致;
     # 留空则 llm-gateway 拒绝 BYOK 解析(gateway 提供方在生产必须配置)
     internal_secret: str = ""

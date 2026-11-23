@@ -36,11 +36,31 @@ class Settings(BaseAppSettings):
     # 提供商凭据:显式传给 litellm(不依赖 os.environ 注入)
     api_key: str = ""
     api_base: str = ""
+    # 嵌入专用凭据:留空 = 复用上面的平台 API_KEY/API_BASE。对话与嵌入用不同
+    # 提供商时(如对话 DeepSeek、嵌入百炼)必须分开配——否则平台对话密钥会被
+    # 发到嵌入端点(401),而显式传 key 也意味着 litellm 不会再读 DASHSCOPE_API_KEY
+    # 之类的原生环境变量。
+    embedding_api_key: str = ""
+    embedding_api_base: str = ""
     # 联调开关:开启后把 messages 与响应正文(各截断 2000 字)按 debug 落
     # `llm_content`。默认关——prompt 可能含用户数据与工具结果,只应本地临时开。
     log_content: bool = False
     # 嵌入路由(§9):知识库等服务经此向量化,不直连模型提供商
     default_embedding_model: str = "bge-m3"
+    # 嵌入单请求行数上限(§5):提供商差异很大——百炼 text-embedding-v4/v3
+    # 只收 10 行(超了 400),OpenAI 是 2048。知识库一次提交整篇文档的所有块,
+    # 网关按此值切开逐批调用再拼接;换成行数上限更大的 provider 时上调,
+    # 能减少往返次数(批越小越慢,单批条数在网关侧校验,不依赖上游报错)。
+    embedding_batch_size: int = 10
+    # 重排路由(§9):知识库检索的重排统一走这里,客户端不直连提供商。
+    # 百炼 qwen3-rerank 的 OpenAI 兼容端点在 compatible-api/v1/reranks(不是
+    # compatible-mode);litellm 对 dashscope 有默认端点,所以 api_base 通常留空。
+    default_rerank_model: str = "dashscope/qwen3-rerank"
+    # 重排专用凭据:留空 = 先复用嵌入专用凭据,再回退平台 API_KEY/API_BASE。
+    # 起因与嵌入相同:对话在 DeepSeek、嵌入与重排在百炼时,平台对话密钥不能
+    # 被发到百炼端点(401),而显式传 key 后 litellm 也不再读 DASHSCOPE_API_KEY。
+    rerank_api_key: str = ""
+    rerank_api_base: str = ""
     # BYOK(按账号解析提供商密钥,见 README「BYOK」):
     # account-service 内部地址,网关向 GET /v1/byok/{provider}/secret 换密钥
     account_base_url: str = "http://127.0.0.1:8001"

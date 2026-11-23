@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from knowledge.api.deps import (
     get_account_id,
     get_embedder,
+    get_reranker,
     get_session,
     get_settings,
 )
@@ -25,12 +26,14 @@ from knowledge.schemas.knowledge import (
 )
 from knowledge.services import knowledge as knowledge_service
 from knowledge.services.embeddings import EmbeddingProvider
+from knowledge.services.rerank import Reranker
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 DBSession = Annotated[AsyncSession, Depends(get_session)]
 AccountId = Annotated[str, Depends(get_account_id)]
 Embedder = Annotated[EmbeddingProvider, Depends(get_embedder)]
+RerankerDep = Annotated[Reranker | None, Depends(get_reranker)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
@@ -109,22 +112,26 @@ async def search(
     session: DBSession,
     account_id: AccountId,
     embedder: Embedder,
+    reranker: RerankerDep,
     settings: SettingsDep,
 ) -> SearchResponse:
-    """检索:vector / keyword / hybrid 三选一(默认按配置,hybrid)。
+    """检索:vector / keyword / hybrid 三选一(默认按配置,hybrid) → 可选重排。
 
-    返回的 `mode` 与 `score` 必须一起看:三种模式下 score 的口径不同
-    (余弦相似度 / 词法覆盖率 / RRF 融合分),见 `schemas.knowledge`。
+    返回的 `mode`、`rerank` 与 `score` 必须一起看:三种模式下 score 的口径不同
+    (余弦相似度 / 词法覆盖率 / RRF 融合分),重排生效时改为重排相关性分数,
+    见 `schemas.knowledge`。
     """
     limit = body.limit or settings.search_default_limit
     limit = max(1, min(limit, settings.search_max_limit))
     started = time.perf_counter()
-    hits, mode = await knowledge_service.search(
+    hits, mode, rerank_status = await knowledge_service.search(
         session,
         account_id,
         body.query,
         limit,
         embedder,
+        reranker=reranker,
+        rerank_candidates=settings.rerank_candidates,
         mode=body.mode,
         default_mode=settings.search_default_mode,
         rrf_k=settings.rrf_k,
@@ -142,6 +149,8 @@ async def search(
         model=embedder.model,
         mode=mode,
         elapsed_ms=elapsed_ms,
+        rerank=rerank_status,
+        rerank_model=reranker.model if rerank_status is not None else None,
         hits=[
             SearchHit(
                 chunk_id=hit.chunk.id,

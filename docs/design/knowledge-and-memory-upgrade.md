@@ -135,8 +135,10 @@
 
 #### K4 可选重排
 
-- **落点**：`services/llm-gateway` 新增 `POST /v1/rerank`（litellm `arerank`，默认走 litellm 已支持的 rerank provider，模型名由 `RERANK_MODEL` 配置；失败按 `llm.rerank_error` 502）；`knowledge/services/rerank.py` 客户端 + 超时 + 降级；`KNOWLEDGE__RERANK_ENABLED`（默认 false，P0 只打通链路）。
-- **验收**：开启后 golden recall@5 再提升（记录数字），关闭时行为逐字不变；网关不可用 → 直接返回 RRF 顺序且 `response.rerank="skipped"`。
+- **落点**（已落地）：`services/llm-gateway` 新增 `POST /v1/rerank`（litellm `arerank`，模型名由 `LLM_GATEWAY__DEFAULT_RERANK_MODEL` 配置，默认 `dashscope/qwen3-rerank`；失败按 `llm.rerank_error` 502）；`knowledge/services/rerank.py` 客户端 + 超时 + 降级。
+- **配置名与本文初稿的差异**：实现用 `KNOWLEDGE__RERANK_PROVIDER=none|gateway`（**不是** `RERANK_ENABLED`）——与嵌入提供方同一套「提供方枚举」语义，换重排实现（本地/别的网关）不必再加开关；候选池 `KNOWLEDGE__RERANK_CANDIDATES`（默认 20，先粗排 `max(limit, N)` 再精排截回 `limit`）、超时 `KNOWLEDGE__RERANK_TIMEOUT_SECONDS`（默认 20s）。网关侧重排凭据 `RERANK_API_KEY/API_BASE` 留空按「嵌入专用 → 平台」回退（百炼嵌入与重排同源）。
+- **降级语义**：网关不可达/超时/条数不符 → 记 warn、退回 RRF 顺序、`response.rerank="skipped"`（HTTP 仍 200）；候选仅 1 条也标 `skipped`；关闭（`none`）时 `rerank=null`、行为与 K4 之前逐字一致。
+- **验收**：开启后 golden recall@5 再提升（**数字待 K8 评测落地后补**），关闭时行为逐字不变；网关不可用 → 直接返回 RRF 顺序且 `response.rerank="skipped"`（已由 `services/knowledge-service/tests/test_rerank.py` 覆盖）。
 
 ### 5.2 知识库 P1
 
@@ -188,7 +190,7 @@
 
 | 项                        | 落点                                                                                           | 说明                                                                                           |
 | ------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `/v1/rerank` 网关端点     | `services/llm-gateway/llm_gateway/api/v1/`、`services/embeddings.py` 旁同级                    | 知识库 K4 与记忆 M6 共用；需同套内部密钥与 502 契约                                            |
+| `/v1/rerank` 网关端点     | `services/llm-gateway/llm_gateway/api/v1/rerank.py`、`services/rerank.py` 与 embeddings 同级   | 知识库 K4 与记忆 M6 共用；需同套内部密钥与 502 契约（K4 已落地）                               |
 | `search_knowledge` 参数面 | `services/tool-service/tool_service/services/catalog/remote_tools.py`、`executors/http.py:203` | 增 `mode/filters/rerank`，保持 `READ` 风险级与 20s 超时                                        |
 | chat 自动检索（可选）     | `services/agent-orchestrator/.../chat*.py`                                                     | 现只有工具调用才检索；可在「知识库非空」时做一次廉价预检索注入（类似记忆召回块），需预算与开关 |
 | 前端                      | `apps/web/src/features/knowledge/*`、`features/memory/*`                                       | 知识库：上传文件、分块预览、标签/集合、引用跳转；记忆：图视图/时间线（P2）                     |

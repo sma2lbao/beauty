@@ -18,6 +18,7 @@ from knowledge.models import (
 )
 from knowledge.services import search as search_service
 from knowledge.services.embeddings import EmbeddingProvider, build_embedder
+from knowledge.services.rerank import Reranker, build_reranker
 
 
 async def _startup(app: FastAPI) -> None:
@@ -33,13 +34,21 @@ async def _startup(app: FastAPI) -> None:
         timeout_seconds=settings.embedding_timeout_seconds,
         internal_secret=settings.internal_secret,
     )
+    app.state.reranker = app.state.reranker or build_reranker(
+        settings.rerank_provider,
+        model=settings.rerank_model,
+        gateway_url=settings.llm_gateway_url,
+        timeout_seconds=settings.rerank_timeout_seconds,
+        internal_secret=settings.internal_secret,
+    )
 
 
 async def _shutdown(app: FastAPI) -> None:
-    """嵌入提供方可能持有 httpx client:先于 engine 释放关闭。"""
-    closer = getattr(app.state.embedder, "aclose", None)
-    if closer is not None:
-        await closer()
+    """嵌入/重排提供方可能持有 httpx client:先于 engine 释放关闭。"""
+    for name in ("embedder", "reranker"):
+        closer = getattr(getattr(app.state, name, None), "aclose", None)
+        if closer is not None:
+            await closer()
 
 
 _lifespan = build_lifespan(startup=_startup, shutdown=_shutdown)
@@ -48,15 +57,20 @@ _lifespan = build_lifespan(startup=_startup, shutdown=_shutdown)
 def create_app(
     settings: Settings | None = None,
     embedder: EmbeddingProvider | None = None,
+    reranker: Reranker | None = None,
     token_verifier: JwtVerifier | None = None,
 ) -> FastAPI:
-    """测试注入:embedder(假嵌入/本地提供方)、token_verifier(假 JWKS)。"""
+    """测试注入:embedder(假嵌入/本地提供方)、reranker、token_verifier(假 JWKS)。"""
     return create_service_app(
         name="knowledge-service",
         settings=settings or Settings(),
         lifespan=_lifespan,
         routers=[(health_router, ""), (api_router, "/v1")],
-        state={"embedder": embedder, "token_verifier": token_verifier},
+        state={
+            "embedder": embedder,
+            "reranker": reranker,
+            "token_verifier": token_verifier,
+        },
     )
 
 

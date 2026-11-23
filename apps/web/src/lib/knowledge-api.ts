@@ -35,6 +35,12 @@ export type SearchHit = {
 
 export type SearchMode = 'vector' | 'keyword' | 'hybrid';
 
+/**
+ * 重排状态:applied = 顺序与分数都来自重排模型;skipped = 网关不可用已降级,
+ * 仍是粗排顺序;null / 缺省 = 该部署没开重排。三种情况分数口径不同。
+ */
+export type RerankStatus = 'applied' | 'skipped';
+
 export type SearchResult = {
   query: string;
   provider: string;
@@ -43,6 +49,10 @@ export type SearchResult = {
   mode?: SearchMode;
   /** 服务端检索耗时(毫秒)。 */
   elapsed_ms?: number;
+  /** 重排状态;生效时 `score` 改为重排相关性分数(0~1)。 */
+  rerank?: RerankStatus | null;
+  /** 生效/降级时使用的重排模型(哪套模型参与了排序)。 */
+  rerank_model?: string | null;
   hits: SearchHit[];
 };
 

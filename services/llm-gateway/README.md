@@ -22,8 +22,16 @@
   失败帧 `{"error": {"code", "message"}}`——HTTP 头已按 200 发出,错误只能换载体
   (与 complete 的 502 同 code);对话据此"边输出边显示";
 - `POST /v1/embeddings`:文本批量向量化(litellm `aembedding`,默认
-  `EMBEDDING_MODEL`);条数与输入不一致按 502 `llm.embedding_error` 处理——
+  `DEFAULT_EMBEDDING_MODEL`);调用方可以一次提交整篇文档的全部块,网关按
+  `EMBEDDING_BATCH_SIZE`(默认 **10**,百炼 text-embedding-v3/v4 的单请求行数上限;
+  OpenAI 等可上调)切批,逐批调用后**按原顺序拼接向量**、usage 累加;任一批条数与
+  输入不一致或上游失败 → 502 `llm.embedding_error`(details 带 `batch`/`batch_size`)。
   knowledge-service 等经此向量化,不直连模型提供商(§5);
+- `POST /v1/rerank`:检索结果重排(litellm `arerank`,默认
+  `DEFAULT_RERANK_MODEL`);入参 `{model?, query, documents[], top_n?}`,
+  出参 `results[{index, relevance_score}]` **按分数降序**(上游已降序也再排一次,
+  响应顺序是契约);下标越界 / 空结果 / 上游失败 → 502 `llm.rerank_error`。
+  知识库把混合检索的粗排候选送进来,拿回分数自己截断;
 - `/healthz` `/readyz`:存活/就绪探针(默认模型已配置即就绪,提供商连通性在调用时校验);
 - 观测:每次调用打 `llm_request`(provider/model/stream/消息数/角色/提示字数/tool 数/
   图片数/温度)与 `llm_response`(解析后的 model/finish_reason/token 用量/字符数/耗时/
@@ -32,7 +40,10 @@
   `LLM_GATEWAY__LOG_CONTENT=true`(messages 与响应各截断 2KB,含用户数据,别在生产开);
 - 平台凭据显式入参给 litellm(`LLM_GATEWAY__API_KEY`/`API_BASE`),不依赖进程
   环境变量;账号自带密钥(BYOK)按下文向 account-service 解析,命中时代替平台 key;
-  网关不落盘密钥(密钥库方案见架构 §10)。
+  嵌入另有 `EMBEDDING_API_KEY`/`EMBEDDING_API_BASE`(留空复用平台值):对话与
+  嵌入不同家时(DeepSeek 对话 + 百炼嵌入)必须分开配,否则平台对话密钥会打到
+  嵌入端点;重排的 `RERANK_API_KEY`/`RERANK_API_BASE` 留空时按「嵌入专用 → 平台」
+  回退(百炼嵌入与重排同源,通常复用);网关不落盘密钥(密钥库方案见架构 §10)。
 
 ## BYOK(按账号注入密钥)
 
@@ -40,8 +51,8 @@
 account-service 换该账号配置的提供商密钥(共享内部密钥保护),拿不到就回退平台 key
 (`LLM_GATEWAY__API_KEY`)。BYOK 是**增强**而不是前置条件——它坏了平台照常出模型。
 
-- **内部鉴权**:三个模型出口(`POST /v1/completions`、`POST /v1/completions/stream`、
-  `POST /v1/embeddings`)在配置了 `INTERNAL_SECRET` 后必须带 `X-Internal-Secret`
+- **内部鉴权**:四个模型出口(`POST /v1/completions`、`POST /v1/completions/stream`、
+  `POST /v1/embeddings`、`POST /v1/rerank`)在配置了 `INTERNAL_SECRET` 后必须带 `X-Internal-Secret`
   (常量时间比较),否则 401 `auth.internal_forbidden`;留空 = 本地 dev 放行。
   `GET /v1/models` 与探针免鉴权(只读元数据,不烧 token)。**生产必须配**
   `INTERNAL_SECRET`,否则内网任意进程都能调模型(尤其注意:配了它 BYOK 才会启用)。
@@ -49,8 +60,9 @@ account-service 换该账号配置的提供商密钥(共享内部密钥保护),�
   服务从自己的 JWT claim 解出后透传;网关不自行验证账号归属,只把它原样转给 account。
 - **解析**:`GET {ACCOUNT_BASE_URL}/v1/byok/{provider}/secret`(带内部密钥与账号头),
   取 `api_key`/`key_hint`/`key_id`;`provider` 取 litellm 模型串前缀
-  (`deepseek/deepseek-chat` → `deepseek`),没有前缀时不猜(直接回退平台 key);
-  embedding 命中 BYOK 时额外把 provider 显式传给 litellm。
+  (`deepseek/deepseek-chat` → `deepseek`),没有前缀时不猜(直接回退平台 key),
+  命中的密钥作为 `api_key` 入参给 litellm。provider 始终由模型串前缀路由——
+  **不要**再额外传 provider 参数,litellm 会把它原样写进请求体,上游按非法字段拒绝。
 - **缓存**:正缓存 `BYOK_CACHE_TTL_SECONDS`(默认 300s,也是密钥轮换生效延迟上限);
   404(账号没配该 provider)走更短的负缓存 `BYOK_NEGATIVE_CACHE_TTL_SECONDS`
   (默认 30s);非 200/超时/网络错误**不缓存**,下一请求立即重试;条目上限

@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from knowledge.services.rerank import RerankStatus
+
 SearchMode = Literal["vector", "keyword", "hybrid"]
 
 
@@ -69,11 +71,20 @@ class SearchHit(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    """检索结果:附提供方与模式,让调用方知道排序依据(§5 唯一出口)。"""
+    """检索结果:附提供方与模式,让调用方知道排序依据(§5 唯一出口)。
+
+    `rerank` 是本次检索的重排状态:
+
+    - `applied`:排序与 score 都来自重排模型(0~1 相关性,仍不可跨查询比较);
+    - `skipped`:服务端启用了重排,但网关失败/候选不足,已退回 `mode` 的原始顺序;
+    - `null`:服务端未启用重排(默认),响应与加功能前完全一致。
+    """
 
     query: str
     provider: str
     model: str
     mode: SearchMode
     elapsed_ms: float
+    rerank: RerankStatus | None = None
+    rerank_model: str | None = None
     hits: list[SearchHit]

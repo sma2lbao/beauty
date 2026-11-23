@@ -82,12 +82,12 @@ knowledge-service :8006 ──┤──> llm-gateway :8003 ──> provider（De
 
 **信任边界**：
 
-| 区域                                                     | 谁可信                     | 说明                                                                                                   |
-| -------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
-| 用户端点 `/v1/byok*`（GET/PUT/DELETE）                   | 已登录账号                 | JWT 账号 claim 决定读写哪一行；响应只有掩码                                                            |
-| 内部端点 `/v1/byok/{provider}/secret`、`/v1/byok/rotate` | 持有内部共享密钥的内网服务 | **留空即关闭**（`common.security.internal_secret` 未配置时一律 401）；账号由调用方 `X-Account-Id` 指定 |
-| 网关模型端点 `/v1/completions*`、`/v1/embeddings`        | 同上（内部密钥）           | 账号头**可选**：缺失即不做 BYOK 查询，用平台 key                                                       |
-| 平台管理员 / 日志系统                                    | 不可见明文                 | 日志只有 `key_hint`；但平台管理员能读数据库 + KMS 配置，仍可解出明文（见 §9）                          |
+| 区域                                                            | 谁可信                     | 说明                                                                                                   |
+| --------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 用户端点 `/v1/byok*`（GET/PUT/DELETE）                          | 已登录账号                 | JWT 账号 claim 决定读写哪一行；响应只有掩码                                                            |
+| 内部端点 `/v1/byok/{provider}/secret`、`/v1/byok/rotate`        | 持有内部共享密钥的内网服务 | **留空即关闭**（`common.security.internal_secret` 未配置时一律 401）；账号由调用方 `X-Account-Id` 指定 |
+| 网关模型端点 `/v1/completions*`、`/v1/embeddings`、`/v1/rerank` | 同上（内部密钥）           | 账号头**可选**：缺失即不做 BYOK 查询，用平台 key                                                       |
+| 平台管理员 / 日志系统                                           | 不可见明文                 | 日志只有 `key_hint`；但平台管理员能读数据库 + KMS 配置，仍可解出明文（见 §9）                          |
 
 ## 3. 端到端时序
 
@@ -171,7 +171,7 @@ orchestrator GET /api/v1/models → llm-gateway GET /v1/models（X-Account-Id + 
 | 白名单        | `AVAILABLE_MODELS` 非空时，允许集合 = 平台列表 ∪ 该账号自定义模型；无账号/查询失败则只按平台列表                                  | D11                                                  |
 | 失败语义      | 返回 `None` → 调用方用 `settings.api_key`，**不是 5xx**                                                                           | D4                                                   |
 
-受内部密钥保护的端点：`POST /v1/completions`、`POST /v1/completions/stream`、`POST /v1/embeddings`；`GET /v1/models` 仍公开（只读元数据）；带合法内部头 + `X-Account-Id` 时额外合并该账号自定义模型（见 §3.3），不带则只回平台列表。
+受内部密钥保护的端点：`POST /v1/completions`、`POST /v1/completions/stream`、`POST /v1/embeddings`、`POST /v1/rerank`；`GET /v1/models` 仍公开（只读元数据）；带合法内部头 + `X-Account-Id` 时额外合并该账号自定义模型（见 §3.3），不带则只回平台列表。
 
 ### 4.3 回退矩阵（网关视角）
 

@@ -199,6 +199,22 @@ services:
       LLM_GATEWAY__API_KEY: ${LLM_GATEWAY_API_KEY:-}
       LLM_GATEWAY__API_BASE: ${LLM_GATEWAY_API_BASE:-}
       LLM_GATEWAY__DEFAULT_MODEL: ${LLM_GATEWAY_DEFAULT_MODEL:-deepseek/deepseek-chat}
+      # 嵌入路由(§5):知识库等经 /v1/embeddings 向量化;不传 model 时用这个。
+      # 百炼示例:dashscope/text-embedding-v4。单请求行数上限由
+      # LLM_GATEWAY__EMBEDDING_BATCH_SIZE 控制(百炼 v4 只收 10 行)。
+      LLM_GATEWAY__DEFAULT_EMBEDDING_MODEL: ${LLM_GATEWAY_DEFAULT_EMBEDDING_MODEL:-bge-m3}
+      LLM_GATEWAY__EMBEDDING_BATCH_SIZE: ${LLM_GATEWAY_EMBEDDING_BATCH_SIZE:-10}
+      # 嵌入专用凭据:留空 = 复用平台 API_KEY/API_BASE。对话与嵌入不同家时
+      # (如对话 DeepSeek + 嵌入百炼)必须分开配,否则对话密钥会被发到嵌入端点。
+      # 百炼示例:API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+      # (或业务空间域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1)
+      LLM_GATEWAY__EMBEDDING_API_KEY: ${LLM_GATEWAY_EMBEDDING_API_KEY:-}
+      LLM_GATEWAY__EMBEDDING_API_BASE: ${LLM_GATEWAY_EMBEDDING_API_BASE:-}
+      # 重排(§5 /v1/rerank):知识库精排候选。百炼 qwen3-rerank 走
+      # compatible-api/v1/reranks,凭据留空回退上面的嵌入专用配置(同源)。
+      LLM_GATEWAY__DEFAULT_RERANK_MODEL: ${LLM_GATEWAY_DEFAULT_RERANK_MODEL:-dashscope/qwen3-rerank}
+      LLM_GATEWAY__RERANK_API_KEY: ${LLM_GATEWAY_RERANK_API_KEY:-}
+      LLM_GATEWAY__RERANK_API_BASE: ${LLM_GATEWAY_RERANK_API_BASE:-}
       # BYOK:按 X-Account-Id + X-Internal-Secret 解析账号密钥(与 account 同源)
       LLM_GATEWAY__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
       # 容器内必须走服务名:默认 127.0.0.1:8001 会指向网关自身,BYOK 解析全失败
@@ -246,8 +262,17 @@ services:
       KNOWLEDGE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_knowledge
       KNOWLEDGE__AUTO_CREATE_TABLES: 'false'
       KNOWLEDGE__AUTH_ENABLED: 'false'
-      # 演示用本地词法嵌入(零网络);接真嵌入模型时改为网关提供方。
-      KNOWLEDGE__EMBEDDING_PROVIDER: local
+      # 默认本地词法嵌入(零网络,演示/离线可跑通);接真嵌入模型时在 .env 里
+      # 设 KNOWLEDGE_EMBEDDING_PROVIDER=gateway + KNOWLEDGE_EMBEDDING_MODEL=…
+      # (百炼示例:dashscope/text-embedding-v4,1024 维,与向量列一致)。
+      # 分块与批量都由网关兜住,本服务一次提交全部块即可。
+      KNOWLEDGE__EMBEDDING_PROVIDER: ${KNOWLEDGE_EMBEDDING_PROVIDER:-local}
+      KNOWLEDGE__EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-bge-m3}
+      # 重排默认关闭:置 KNOWLEDGE_RERANK_PROVIDER=gateway 后检索多一轮精排
+      # (网关不可达时自动降级回粗排,响应 rerank="skipped")。
+      KNOWLEDGE__RERANK_PROVIDER: ${KNOWLEDGE_RERANK_PROVIDER:-none}
+      KNOWLEDGE__RERANK_MODEL: ${KNOWLEDGE_RERANK_MODEL:-dashscope/qwen3-rerank}
+      KNOWLEDGE__RERANK_CANDIDATES: ${KNOWLEDGE_RERANK_CANDIDATES:-20}
       KNOWLEDGE__LLM_GATEWAY_URL: http://llm-gateway:8003
       # 与 account/gateway 的 INTERNAL_SECRET 同源:网关按账号解析 BYOK 密钥
       KNOWLEDGE__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}

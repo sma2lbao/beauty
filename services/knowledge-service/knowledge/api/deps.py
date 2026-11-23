@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowledge.core.config import Settings
 from knowledge.services.embeddings import EmbeddingProvider
+from knowledge.services.rerank import Reranker
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -28,6 +29,11 @@ def get_settings(request: Request) -> Settings:
 
 def get_embedder(request: Request) -> EmbeddingProvider:
     return request.app.state.embedder
+
+
+def get_reranker(request: Request) -> Reranker | None:
+    """重排提供方;未启用时为 None(检索走 RRF 顺序)。"""
+    return request.app.state.reranker
 
 
 async def get_account_id(
