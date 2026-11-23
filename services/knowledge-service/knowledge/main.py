@@ -16,6 +16,7 @@ from knowledge.core.config import Settings
 from knowledge.models import (
     knowledge as knowledge_models,  # noqa: F401  注册 ORM 元数据
 )
+from knowledge.services import search as search_service
 from knowledge.services.embeddings import EmbeddingProvider, build_embedder
 
 
@@ -23,6 +24,8 @@ async def _startup(app: FastAPI) -> None:
     """先建 DB,再装配嵌入提供方(测试注入优先;配置错误在此快速失败)。"""
     await install_database(app)
     settings: Settings = app.state.settings
+    # 检索模式写错在启动时就失败,而不是等第一个检索请求报 500
+    search_service.resolve_mode(None, settings.search_default_mode)
     app.state.embedder = app.state.embedder or build_embedder(
         settings.embedding_provider,
         model=settings.embedding_model,

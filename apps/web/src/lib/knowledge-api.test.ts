@@ -5,10 +5,7 @@ import { ApiError } from '@/lib/runs-api';
 import { knowledgeApi } from './knowledge-api';
 import { setStoredToken } from './auth';
 
-function mockFetch(
-  status: number,
-  body?: unknown,
-): ReturnType<typeof vi.fn> {
+function mockFetch(status: number, body?: unknown): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async () => ({
     ok: status < 400,
     status,
@@ -46,13 +43,17 @@ describe('knowledgeApi', () => {
       source: 'manual',
       size_bytes: 10,
       chunk_count: 1,
-      embedding_model: 'hashing-256',
+      embedding_model: 'hashing-1024',
       created_at: '2026-10-13T00:00:00+00:00',
     };
     const fetchMock = mockFetch(201, document);
 
     await expect(
-      knowledgeApi.ingest({ title: '合同备忘', content: '正文', source: 'manual' }),
+      knowledgeApi.ingest({
+        title: '合同备忘',
+        content: '正文',
+        source: 'manual',
+      }),
     ).resolves.toEqual(document);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -69,7 +70,7 @@ describe('knowledgeApi', () => {
     const fetchMock = mockFetch(200, {
       query: '合同',
       provider: 'local',
-      model: 'hashing-256',
+      model: 'hashing-1024',
       hits: [],
     });
 
@@ -77,7 +78,10 @@ describe('knowledgeApi', () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/knowledge-api/v1/knowledge/search');
-    expect(JSON.parse(init.body as string)).toEqual({ query: '合同', limit: 3 });
+    expect(JSON.parse(init.body as string)).toEqual({
+      query: '合同',
+      limit: 3,
+    });
   });
 
   it('删除 204 无正文也解析为 undefined', async () => {
@@ -92,7 +96,9 @@ describe('knowledgeApi', () => {
       message: '文档不存在',
     });
 
-    const error = await knowledgeApi.remove('nope').catch((err: unknown) => err);
+    const error = await knowledgeApi
+      .remove('nope')
+      .catch((err: unknown) => err);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(404);
     expect((error as ApiError).code).toBe('knowledge.document_not_found');

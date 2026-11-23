@@ -391,7 +391,9 @@ jobs:
     # 每个 matrix job 各自一个容器，因此 6 个服务共用一个库名不会互相污染。
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector 官方镜像 = postgres:16 + vector/pg_trgm;
+        # knowledge-service 迁移要 CREATE EXTENSION vector,原生 alpine 镜像没有该扩展。
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: beauty
           POSTGRES_PASSWORD: beauty

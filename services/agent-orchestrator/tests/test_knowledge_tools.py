@@ -31,7 +31,7 @@ async def test_search_knowledge_tool_formats_hits() -> None:
         await registry.execute("search_knowledge", '{"query": "合同", "limit": 3}')
     )
     assert payload["provider"] == "local"
-    assert payload["model"] == "hashing-256"
+    assert payload["model"] == "hashing-1024"
     assert payload["hits"][0]["title"] == "客户 A 合同"
     assert payload["hits"][0]["score"] == 0.93
     assert knowledge.queries == [("t-1", "合同", 3)]

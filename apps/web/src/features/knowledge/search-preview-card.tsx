@@ -12,7 +12,15 @@ import {
   Input,
 } from '@beauty/design';
 
+import type { SearchMode } from '@/lib/knowledge-api';
+
 import type { KnowledgeModel } from './use-knowledge-model';
+
+const MODE_LABELS: Record<SearchMode, string> = {
+  vector: '向量',
+  keyword: '关键词',
+  hybrid: '混合',
+};
 
 export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
   const { query, setQuery, result, canSearch, searchMutation } = model;
@@ -22,7 +30,8 @@ export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
       <CardHeader>
         <CardTitle>检索预览</CardTitle>
         <CardDescription>
-          用向量检索看看资料能不能被找到(排在最前的分数最高)。
+          混合检索(向量 + 关键词)看看资料能不能被找到。分数是融合分,
+          只用于同一次查询内排序,不能跨查询比较。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -46,8 +55,12 @@ export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
         {result ? (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              提供方 {result.provider} / 模型 {result.model},命中{' '}
-              {result.hits.length} 条
+              提供方 {result.provider} / 模型 {result.model}
+              {result.mode ? ` · ${MODE_LABELS[result.mode]}检索` : ''}
+              {typeof result.elapsed_ms === 'number'
+                ? ` · ${Math.round(result.elapsed_ms)} ms`
+                : ''}
+              ,命中 {result.hits.length} 条
             </p>
             {result.hits.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -64,7 +77,7 @@ export function SearchPreviewCard({ model }: { model: KnowledgeModel }) {
                       <span>
                         《{hit.title}》#{hit.ordinal}
                       </span>
-                      <span>相似度 {hit.score.toFixed(3)}</span>
+                      <span>相关度 {hit.score.toFixed(4)}</span>
                     </div>
                     <p className="mt-2 text-sm leading-relaxed">
                       {hit.content}

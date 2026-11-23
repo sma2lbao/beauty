@@ -6,6 +6,7 @@ from common.errors import UpstreamError
 from common.logging import bind_request_context, clear_request_context
 from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
+from knowledge.core.vectors import EMBEDDING_DIM
 from knowledge.services.embeddings import (
     GatewayEmbeddingProvider,
     LocalHashingEmbeddingProvider,
@@ -18,7 +19,7 @@ async def test_local_provider_is_deterministic_and_normalized() -> None:
     provider = LocalHashingEmbeddingProvider()
     first, second = await provider.embed(["客户 A 合同评审", "客户 A 合同评审"])
     assert first == second
-    assert len(first) == 256
+    assert len(first) == EMBEDDING_DIM
     norm = sum(value * value for value in first) ** 0.5
     assert norm == pytest.approx(1.0)
 

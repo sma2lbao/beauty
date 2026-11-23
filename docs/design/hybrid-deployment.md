@@ -5,16 +5,16 @@
 
 ## 1. 结论与范围
 
-| 层         | 选型                                           | 说明                                                                           |
-| ---------- | ---------------------------------------------- | ------------------------------------------------------------------------------ |
-| Web / 官网 | Vercel                                         | 现状不动；`/api/:path*` rewrite 到公网 API 网关                                |
-| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose     | 应用机：8 个 Python 服务 + Caddy；升配 4C8G                                    |
-| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`   | 只反代 api-gateway:8007，其余服务仅内网                                        |
-| 数据库     | 基础设施机自建 PostgreSQL 15，6 个库           | 一服务一库 + 每服务独立 alembic 版本表；同 VPC 内网 RTT < 1ms（当前经公网 IP） |
-| 缓存/限流  | 基础设施机 Redis（requirepass）                | account 动态注册限流、gateway 固定窗口限流；未配置时回退进程内                 |
-| 沙箱       | 基础设施机 sandboxd（gVisor + Docker，已落地） | 应用机无 `/dev/kvm`；`SANDBOX_PROVIDER=sandboxd`；e2b 托管 microVM 为备选      |
-| 交付物     | 腾讯云 COS（已落地，官方 SDK）                 | `ARTIFACT_STORE=cos` + bucket/region/ak/sk；filesystem 仅本地/测试             |
-| 密钥       | 主机 `.env`（600）+ 卷内 PEM                   | 后续可换 Secret Manager / KMS                                                  |
+| 层         | 选型                                                | 说明                                                                                                                           |
+| ---------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Web / 官网 | Vercel                                              | 现状不动；`/api/:path*` rewrite 到公网 API 网关                                                                                |
+| 计算       | 腾讯云轻量（首尔）2C4G 30M，Docker Compose          | 应用机：8 个 Python 服务 + Caddy；升配 4C8G                                                                                    |
+| 入口       | Caddy 自动 HTTPS，仅暴露 `api.beautymoon.cn`        | 只反代 api-gateway:8007，其余服务仅内网                                                                                        |
+| 数据库     | 基础设施机自建 PostgreSQL 15（含 pgvector），6 个库 | 一服务一库 + 每服务独立 alembic 版本表；knowledge-service 需要 `vector`/`pg_trgm` 扩展；同 VPC 内网 RTT < 1ms（当前经公网 IP） |
+| 缓存/限流  | 基础设施机 Redis（requirepass）                     | account 动态注册限流、gateway 固定窗口限流；未配置时回退进程内                                                                 |
+| 沙箱       | 基础设施机 sandboxd（gVisor + Docker，已落地）      | 应用机无 `/dev/kvm`；`SANDBOX_PROVIDER=sandboxd`；e2b 托管 microVM 为备选                                                      |
+| 交付物     | 腾讯云 COS（已落地，官方 SDK）                      | `ARTIFACT_STORE=cos` + bucket/region/ak/sk；filesystem 仅本地/测试                                                             |
+| 密钥       | 主机 `.env`（600）+ 卷内 PEM                        | 后续可换 Secret Manager / KMS                                                                                                  |
 
 **为什么不是「尽量都放 Vercel」**：api-gateway 要代理 SSE 长流（Vercel 函数时长 Hobby 300s / Pro 800s），agent-orchestrator 跑分钟级 run 与 5 个常驻循环，workspace/connector 也各带常驻循环，这些都不是函数模型能承载的；把 8 个服务放同一台机器还顺带消灭了跨云鉴权与内网延迟问题。详见 serverless-deployment.md §3.2/§3.3。
 
@@ -82,6 +82,7 @@ https://api.beautymoon.cn             （DNS A → 轻量公网 IP）
 ### 3.5 数据库与 Redis（基础设施机）
 
 - PostgreSQL 15 与 Redis 部署在另一台基础设施机；目标形态是同 VPC 内网、不暴露公网（安全组只放行应用机内网 IP）。
+- **扩展前置**：knowledge-service 的迁移会 `CREATE EXTENSION IF NOT EXISTS vector`（≥0.5.0，HNSW 从 0.5.0 起）与 `pg_trgm`。生产库由 DBA 预装扩展（或允许库级 CREATE EXTENSION）;本地/自建 compose 已切 `pgvector/pgvector:pg16` 镜像，原生 `postgres:16-alpine` 没有这些扩展、迁移会失败。
 - **当前生产实际**：基础设施机在另一网络，应用机经公网 IP（`101.33.78.123`）连 5432/6379/8088，安全组仅放行应用机公网出口；PG/Redis 未启用 TLS，属先上线的临时形态，建议尽快切内网或启用 TLS。
 - 6 个库一服务一库（`beauty_account`…`beauty_tool`），每库用独立 `*__ALEMBIC_VERSION_TABLE`（6 条 alembic 链共用默认版本表会互相覆盖）；迁移按 account → agent → connector → knowledge → workspace → tool 串行。
 - 内网连接不需要 `?ssl=require`；生产 `*__AUTO_CREATE_TABLES=false`，表结构只由 `migrate` 作业推进。

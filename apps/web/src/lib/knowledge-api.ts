@@ -33,10 +33,16 @@ export type SearchHit = {
   score: number;
 };
 
+export type SearchMode = 'vector' | 'keyword' | 'hybrid';
+
 export type SearchResult = {
   query: string;
   provider: string;
   model: string;
+  /** 实际检索模式,服务端回传(旧版本可能没有)。 */
+  mode?: SearchMode;
+  /** 服务端检索耗时(毫秒)。 */
+  elapsed_ms?: number;
   hits: SearchHit[];
 };
 

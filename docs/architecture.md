@@ -80,7 +80,7 @@ Browser
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
 ├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(内置 GitHub)（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 对象存储（生产 COS）  :8005
-├── knowledge-service       摄取/检索/重排（JSON 向量，无需 pgvector）                :8006
+├── knowledge-service       摄取/分块/混合检索（pgvector + HNSW）                     :8006
 └── account-service         账号/会话/配额/usage/API Key（自建 IdP）                 :8001
 
 云托管 / 自建基础设施（URL 型依赖）
@@ -118,7 +118,7 @@ Browser
 | tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                                                      | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                                                                        |
 | llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                                                             | BYOK（按账号注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                                   |
 | connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按账号连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**内置 GitHub provider**（GitHub App user-to-server，8 读 + 3 写） | 2026-10 邮箱/日历能力下线；2026-11-19 新增内置 GitHub provider；内置 Notion provider 于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
-| knowledge-service    | 容器 :8006            | 摄取、检索、重排、引用                                                                                                                                                                                | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                                          |
+| knowledge-service    | 容器 :8006            | 摄取、分块、混合检索（向量 + 关键词）、引用                                                                                                                                                           | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                                          |
 | workspace-service    | 容器 :8005            | 工作区、产物、附件元数据、沙箱生命周期                                                                                                                                                                | 生产交付物/对象走腾讯云 COS（官方 cos-python-sdk-v5）；filesystem/database 仅本地与测试；历史 filesystem 对象不迁移                                                                           |
 | account-service      | 容器 :8001            | 账号/配额/usage/API Key/自建认证                                                                                                                                                                      | 注册/邮箱密码登录/旋转刷新令牌/内部签发 + JWKS；社交 OAuth 待补                                                                                                                               |
 | packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                                                      | Python 共享库                                                                                                                                                                                 |
@@ -231,7 +231,7 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 | runs / run_events / conversations / chat_messages / instructions | 基础设施机 PG                      | 本机 PG            | 事件 append-only；seq 单调；SSE 断线回放从 Postgres 读 |
 | connections / credentials                                        | 基础设施机 PG                      | 本机 PG            | 凭证加密暂用应用层密钥；KMS 后置                       |
 | workspaces / artifacts / sandboxes                               | 基础设施机 PG + 内容存 DB/文件系统 | 本机 PG + 本地目录 | 对象存储后置；单实例 filesystem 可用                   |
-| knowledge_documents / chunks                                     | 基础设施机 PG（JSON 向量）         | 本机 PG            | 现有实现不依赖 pgvector，可直接跑                      |
+| knowledge_documents / chunks                                     | 基础设施机 PG（pgvector 扩展）     | 本机 PG            | 需允许 `CREATE EXTENSION vector` / `pg_trgm`           |
 | orgs / members / quotas / usage_ledger / api_keys                | 基础设施机 PG                      | 本机 PG            | usage ledger 新增；Stripe 后置                         |
 | session / rate limit / locks                                     | 基础设施机 Redis（已接）           | 本地 Redis（可选） | 未配置时降级为进程内实现                               |
 | jobs                                                             | 基础设施机 PG（job 表）            | 本机 PG job 表     | 队列与重试；worker 轮询                                |

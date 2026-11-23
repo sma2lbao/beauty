@@ -1,14 +1,20 @@
-"""知识库 ORM:文档与分块(账号隔离,向量先存 JSON 列)。
+"""知识库 ORM:文档与分块(账号隔离,向量存 pgvector 列)。
 
-阶段 A:向量以 JSON list 存 `document_chunks.embedding`,检索在 Python 侧算余弦;
-阶段 B 换 pgvector/专用向量库时,本表只留引用,读端契约不变。
+向量列是 `vector(1024)`(见 `knowledge.core.vectors`):Postgres 上可建 HNSW 索引,
+近似近邻检索不再把整表搬回进程内算余弦。SQLite(测试/离线)把同一类型按 text 存取,
+bind/result 处理器仍然读写 `list[float]`,不需要第二套模型。
+
+分块向量允许为 NULL:换嵌入维度/模型后旧向量无法复用,迁移会把它们置空并留待
+`/knowledge/reembed` 重建;检索侧跳过 NULL,正文端点不受影响。
 """
 
 from __future__ import annotations
 
 from database.base import AccountMixin, Base, TimestampMixin, UUIDMixin
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+
+from knowledge.core.vectors import embedding_vector_type
 
 
 class KnowledgeDocument(UUIDMixin, AccountMixin, TimestampMixin, Base):
@@ -35,4 +41,6 @@ class DocumentChunk(UUIDMixin, AccountMixin, TimestampMixin, Base):
     )
     ordinal: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list[float]] = mapped_column(JSON, default=list)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        embedding_vector_type(), nullable=True
+    )

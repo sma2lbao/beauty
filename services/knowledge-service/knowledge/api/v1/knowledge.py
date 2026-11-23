@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -110,25 +111,46 @@ async def search(
     embedder: Embedder,
     settings: SettingsDep,
 ) -> SearchResponse:
-    """向量检索:返回带分数的命中块(§9);分数依据随 provider/model 一并返回。"""
+    """检索:vector / keyword / hybrid 三选一(默认按配置,hybrid)。
+
+    返回的 `mode` 与 `score` 必须一起看:三种模式下 score 的口径不同
+    (余弦相似度 / 词法覆盖率 / RRF 融合分),见 `schemas.knowledge`。
+    """
     limit = body.limit or settings.search_default_limit
     limit = max(1, min(limit, settings.search_max_limit))
-    hits = await knowledge_service.search(
-        session, account_id, body.query, limit, embedder
+    started = time.perf_counter()
+    hits, mode = await knowledge_service.search(
+        session,
+        account_id,
+        body.query,
+        limit,
+        embedder,
+        mode=body.mode,
+        default_mode=settings.search_default_mode,
+        rrf_k=settings.rrf_k,
+        candidate_limit=settings.search_candidate_limit,
+        vector_weight=(
+            body.vector_weight
+            if body.vector_weight is not None
+            else settings.search_vector_weight
+        ),
     )
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
     return SearchResponse(
         query=body.query,
         provider=embedder.name,
         model=embedder.model,
+        mode=mode,
+        elapsed_ms=elapsed_ms,
         hits=[
             SearchHit(
-                chunk_id=chunk.id,
-                document_id=chunk.document_id,
-                title=title,
-                ordinal=chunk.ordinal,
-                content=chunk.content,
-                score=round(score, 6),
+                chunk_id=hit.chunk.id,
+                document_id=hit.chunk.document_id,
+                title=hit.title,
+                ordinal=hit.chunk.ordinal,
+                content=hit.chunk.content,
+                score=round(hit.score, 6),
             )
-            for chunk, title, score in hits
+            for hit in hits
         ],
     )

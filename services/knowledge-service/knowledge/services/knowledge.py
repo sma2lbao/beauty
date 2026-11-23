@@ -1,8 +1,8 @@
-"""知识库业务逻辑:ingest(分块 + 向量化)、列表/详情/删除、向量检索。
+"""知识库业务逻辑:ingest(分块 + 向量化)、列表/详情/删除、检索入口。
 
 数据访问经 `knowledge.repositories`(账号过滤与 404 语义在仓储声明);
-阶段 A 检索在 Python 侧算余弦(取账号全部块),语料变大后换 pgvector,
-本模块的读端契约不变。
+检索的具体编排(向量 / 关键词 / RRF 融合)在 `knowledge.services.search`,
+本模块只负责 ingest 与文档级操作。
 """
 
 from __future__ import annotations
@@ -15,8 +15,9 @@ from knowledge.repositories import (
     KnowledgeDocumentRepository,
 )
 from knowledge.schemas.knowledge import DocumentCreate
+from knowledge.services import search as search_service
 from knowledge.services.chunking import chunk_text
-from knowledge.services.embeddings import EmbeddingProvider, cosine_similarity
+from knowledge.services.embeddings import EmbeddingProvider
 
 
 async def ingest_document(
@@ -123,14 +124,27 @@ async def search(
     query: str,
     limit: int,
     embedder: EmbeddingProvider,
-) -> list[tuple[DocumentChunk, str, float]]:
-    """向量检索:返回 (分块, 文档标题, 分数),分数降序、同分按 ordinal 稳定。"""
-    query_vectors = await embedder.embed([query])
-    query_vector = query_vectors[0] if query_vectors else []
-    rows = await DocumentChunkRepository(session).searchable_rows(account_id)
-    scored = [
-        (chunk, title, cosine_similarity(query_vector, list(chunk.embedding or [])))
-        for chunk, title in rows
-    ]
-    scored.sort(key=lambda item: (-item[2], item[0].ordinal, item[0].id))
-    return scored[:limit]
+    *,
+    mode: str | None = None,
+    default_mode: str = search_service.HYBRID_MODE,
+    rrf_k: int = 60,
+    candidate_limit: int = 50,
+    vector_weight: float = 0.5,
+) -> tuple[list[search_service.Hit], str]:
+    """检索入口:向量 / 关键词 / 混合(RRF),返回 (命中, 实际模式)。
+
+    score 的含义随模式变化(余弦相似度 / 词法覆盖率 / RRF 融合分),
+    所以模式必须随结果一起返回,调用方才知道该怎么解释分数。
+    """
+    return await search_service.search(
+        session,
+        account_id,
+        query,
+        limit,
+        embedder,
+        mode=mode,
+        default_mode=default_mode,
+        rrf_k=rrf_k,
+        candidate_limit=candidate_limit,
+        vector_weight=vector_weight,
+    )

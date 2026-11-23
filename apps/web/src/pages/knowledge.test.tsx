@@ -8,10 +8,9 @@ import { knowledgeApi } from '@/lib/knowledge-api';
 import { KnowledgePage } from './knowledge';
 
 vi.mock('@/lib/knowledge-api', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/knowledge-api')>(
-      '@/lib/knowledge-api',
-    );
+  const actual = await vi.importActual<typeof import('@/lib/knowledge-api')>(
+    '@/lib/knowledge-api',
+  );
   return {
     ...actual,
     knowledgeApi: {
@@ -37,7 +36,7 @@ function makeDocument(
     source: 'manual',
     size_bytes: 48,
     chunk_count: 1,
-    embedding_model: 'hashing-256',
+    embedding_model: 'hashing-1024',
     created_at: '2026-10-13T09:00:00+00:00',
     ...overrides,
   };
@@ -66,7 +65,7 @@ describe('KnowledgePage', () => {
 
     expect(await screen.findByText('客户 A 合同备忘')).toBeTruthy();
     expect(
-      screen.getByText(/1 个片段 · 48 B · hashing-256 · manual/),
+      screen.getByText(/1 个片段 · 48 B · hashing-1024 · manual/),
     ).toBeTruthy();
   });
 
@@ -114,7 +113,9 @@ describe('KnowledgePage', () => {
     vi.mocked(knowledgeApi.search).mockResolvedValue({
       query: '合同评审',
       provider: 'local',
-      model: 'hashing-256',
+      model: 'hashing-1024',
+      mode: 'hybrid',
+      elapsed_ms: 12,
       hits: [
         {
           chunk_id: 'c1',
@@ -134,10 +135,14 @@ describe('KnowledgePage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: '检索' }));
 
-    expect(await screen.findByText('合同评审安排在周四下午两点。')).toBeTruthy();
+    expect(
+      await screen.findByText('合同评审安排在周四下午两点。'),
+    ).toBeTruthy();
     expect(screen.getByText('《客户 A 合同备忘》#0')).toBeTruthy();
-    expect(screen.getByText('相似度 0.511')).toBeTruthy();
-    expect(screen.getByText(/提供方 local \/ 模型 hashing-256/)).toBeTruthy();
+    expect(screen.getByText('相关度 0.5111')).toBeTruthy();
+    expect(
+      screen.getByText(/提供方 local \/ 模型 hashing-1024 · 混合检索 · 12 ms/),
+    ).toBeTruthy();
   });
 
   it('检索无命中时给出提示', async () => {
@@ -145,7 +150,9 @@ describe('KnowledgePage', () => {
     vi.mocked(knowledgeApi.search).mockResolvedValue({
       query: '不存在',
       provider: 'local',
-      model: 'hashing-256',
+      model: 'hashing-1024',
+      mode: 'hybrid',
+      elapsed_ms: 3,
       hits: [],
     });
 

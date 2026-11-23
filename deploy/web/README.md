@@ -154,7 +154,7 @@ services:
 | 项             | 裸机（[docs/local-dev.md](../../docs/local-dev.md)） | 容器                                                    |
 | -------------- | ---------------------------------------------------- | ------------------------------------------------------- |
 | 启动           | `npm run dev`（`scripts/dev.sh`）                    | `docker compose ... up -d --build`                      |
-| 数据库         | 本机 compose Postgres（6 个库）                      | postgres:16，6 个库                                     |
+| 数据库         | 本机 compose Postgres（6 个库）                      | pgvector/pgvector:pg16，6 个库                          |
 | 迁移           | `scripts/dev.sh` 启动前自动 alembic upgrade head     | `migrate` 一次性作业                                    |
 | Nginx upstream | `127.0.0.1:8007`                                     | `api-gateway:8007`（[nginx.conf](./nginx.conf) 默认值） |
 | 端口           | 8001–8008 + 5173                                     | 仅 `8080`（+ 5432/6379 给本机调试）                     |

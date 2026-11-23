@@ -223,7 +223,7 @@ class FakeKnowledge:
         return {
             "query": query,
             "provider": "local",
-            "model": "hashing-256",
+            "model": "hashing-1024",
             "hits": [hit][:limit],
         }
 

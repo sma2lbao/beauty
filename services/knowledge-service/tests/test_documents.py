@@ -15,7 +15,7 @@ def test_ingest_chunks_and_lists(client: TestClient) -> None:
     assert document["title"] == "客户 A 合同"
     assert document["chunk_count"] >= 1
     assert document["size_bytes"] == len(CONTRACT.encode())
-    assert document["embedding_model"] == "hashing-256"  # 本地提供方模型名
+    assert document["embedding_model"] == "hashing-1024"  # 本地提供方模型名
 
     listed = client.get("/v1/knowledge/documents", headers=ACCOUNT).json()
     assert [item["id"] for item in listed] == [document["id"]]
@@ -71,7 +71,7 @@ def test_search_ranks_by_similarity(client: TestClient) -> None:
         "/v1/knowledge/search", json={"query": "合同评审报价"}, headers=ACCOUNT
     ).json()
     assert body["provider"] == "local"
-    assert body["model"] == "hashing-256"
+    assert body["model"] == "hashing-1024"
     assert body["hits"], "应有命中"
     assert body["hits"][0]["title"] == "客户 A 合同"
     assert body["hits"][0]["score"] > 0

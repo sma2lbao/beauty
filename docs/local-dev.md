@@ -9,7 +9,7 @@
 - Node.js >= 22.22.2（jsdom 30 要求；本机 24.x）
 - Python 3.12
 - uv >= 0.5
-- Docker（可选；本地数据库默认用 compose 的 `postgres:16`，不用时可改回 SQLite）:
+- Docker（可选；本地数据库默认用 compose 的 `postgres:16`（pgvector 镜像，含 `vector`/`pg_trgm` 扩展），不用时可改回 SQLite）:
 
 ```sh
 docker compose -f deploy/docker-compose.yml up -d postgres

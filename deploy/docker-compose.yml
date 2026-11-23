@@ -46,7 +46,10 @@ x-langfuse-depends: &langfuse-depends
 services:
   # ── 基础设施 ─────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    # pgvector 官方镜像 = postgres:16 + vector/pg_trgm 扩展;
+    # knowledge-service 的迁移会 CREATE EXTENSION vector,原生 postgres 镜像会直接失败。
+    # 扩展版本 ≥0.5.0(HNSW 索引与 vector_cosine_ops 从 0.5.0 起提供)。
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: beauty
       POSTGRES_PASSWORD: beauty

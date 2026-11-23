@@ -34,7 +34,7 @@ async def _seed(
         source="manual",
         size_bytes=1,
         chunk_count=len(parts or []),
-        embedding_model="hashing-256",
+        embedding_model="hashing-1024",
     )
     await KnowledgeDocumentRepository(session).add(document)
     chunks = DocumentChunkRepository(session)
@@ -45,7 +45,7 @@ async def _seed(
                 document_id=document.id,
                 ordinal=ordinal,
                 content=content,
-                embedding=[],
+                embedding=None,
             )
         )
     await session.flush()

@@ -5,12 +5,14 @@
 - `POST /v1/knowledge/documents`:登记文档(标题 + 正文),服务端分块并向量化,
   返回 chunk 数;`GET /v1/knowledge/documents` 列表、`GET …/{id}` 详情、
   `DELETE …/{id}` 删除(连带 chunk);
-- `POST /v1/knowledge/search`:向量检索,返回带分数的命中块(文档标题/序号/正文);
+- `POST /v1/knowledge/search`:混合检索(`mode=hybrid|vector|keyword`),
+  返回带分数的命中块(文档标题/序号/正文)与 `mode`/`elapsed_ms`;
 - `/healthz` `/readyz`:存活/就绪探针。
 
 嵌入提供方(架构 §5 唯一出口,配置 `EMBEDDING_PROVIDER`):
 
-- `local`(默认):无依赖的**确定性词法近似**向量(分词哈希 + L2 归一化)。
+- `local`(默认):无依赖的**确定性词法近似**向量(分词哈希 + L2 归一化,
+  1024 维,与默认网关模型 bge-m3 同维,见 `knowledge/core/vectors.py`)。
   它不是语义嵌入(近义词不会靠近),用途是让骨架在没有模型/密钥时也能跑通
   ingest→search 全链路;生产请用 `gateway`;
 - `gateway`:经 `llm-gateway` 的 `/v1/embeddings`(litellm 路由,如 bge-m3),
@@ -21,9 +23,18 @@
 BYOK 密钥;该值须与 account-service / llm-gateway 的 `INTERNAL_SECRET` 一致,
 留空则只按平台默认密钥解析(`gateway` 提供方在生产必须配置)。
 
-阶段 A 的边界:向量以 JSON 存在 `document_chunks.embedding` 列,检索时在
-Python 侧算余弦相似度(小语料够用);换 pgvector/专用向量库是阶段 B,
-读端契约不变。
+存储与检索:
+
+- `document_chunks.embedding` 是 `Vector(1024)`(pgvector),配 HNSW 索引
+  (`m=16, ef_construction=64, vector_cosine_ops`);关键词路走 `pg_trgm` GIN
+  索引 + `ILIKE` 粗筛 + 进程内词法打分(中文二元组,不依赖 zhparser),
+  两路候选经 RRF(`k=60`) 融合,默认 `hybrid`。迁移
+  `b7d4c2a19f30_pgvector_embedding` 会 `CREATE EXTENSION vector`/`pg_trgm`,
+  目标库需允许建扩展(生产可由 DBA 预装,或依赖 pgvector 的 trusted 标记)。
+- 维度是代码常量而非常量配置:换 embedding 模型需新增迁移 + 重嵌入,旧向量
+  在迁移中置 NULL(不参与检索),不会产生错误分数。
+- SQLite 覆盖库没有 pgvector:同一列类型按文本存取,检索退回 Python 侧余弦
+  (只用于测试/离线,规模上限与阶段 A 相同)。
 
 命令(仓库根):`npx nx run knowledge-service:serve`(:8006)/ `npx nx test knowledge-service`
 迁移:`cd services/knowledge-service && uv run alembic upgrade head`

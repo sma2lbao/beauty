@@ -36,7 +36,7 @@ class FakeKnowledge:
         return {
             "query": query,
             "provider": self.provider,
-            "model": "hashing-256",
+            "model": "hashing-1024",
             "hits": self.hits[:limit],
         }
 

@@ -19,9 +19,13 @@ from common.logging import current_context
 from common.middleware import inject_request_headers
 from common.security import ACCOUNT_HEADER, SECRET_HEADER
 
+from knowledge.core.vectors import EMBEDDING_DIM
+
 LOCAL_PROVIDER = "local"
 GATEWAY_PROVIDER = "gateway"
-LOCAL_DIMENSION = 256
+#: 本地哈希向量的维度与数据库列同为 `EMBEDDING_DIM`——两者不一致时向量列写不进去,
+#: 也不能共用 HNSW 索引。
+LOCAL_DIMENSION = EMBEDDING_DIM
 
 _WORD = re.compile(r"[a-z0-9]+")
 _CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -47,7 +51,11 @@ class LocalHashingEmbeddingProvider:
 
     name = LOCAL_PROVIDER
 
-    def __init__(self, model: str = "hashing-256", dimension: int = LOCAL_DIMENSION):
+    def __init__(
+        self,
+        model: str = f"hashing-{LOCAL_DIMENSION}",
+        dimension: int = LOCAL_DIMENSION,
+    ):
         self.model = model
         self.dimension = dimension
 
@@ -155,7 +163,7 @@ def build_embedder(
 ) -> EmbeddingProvider:
     """按配置装配嵌入提供方;未知配置在启动时就报错(不带病上线)。"""
     if provider == LOCAL_PROVIDER:
-        return LocalHashingEmbeddingProvider()
+        return LocalHashingEmbeddingProvider(model=f"hashing-{LOCAL_DIMENSION}")
     if provider == GATEWAY_PROVIDER:
         return GatewayEmbeddingProvider(
             gateway_url,

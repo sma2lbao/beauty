@@ -392,7 +392,7 @@ workspace-service 同理：`workspace/core/config.py` 加 `role`，reaper 只在
 
 ### 5.4 数据库、连接池与迁移 Job
 
-**现状**：compose 用 `postgres:16` + 一次性 `migrate` 作业（`deploy/docker-compose.yml:72-96`）按顺序对 6 个库 `alembic upgrade head`。
+**现状**：compose 用 `pgvector/pgvector:pg16`（知识库迁移需要 `vector` 扩展）+ 一次性 `migrate` 作业（`deploy/docker-compose.yml:72-96`）按顺序对 6 个库 `alembic upgrade head`。
 
 **改法**：
 
