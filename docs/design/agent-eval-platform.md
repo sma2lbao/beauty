@@ -435,8 +435,28 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
 - `.md`：PR 评论/归档友好的汇总与失败明细。
 - `.html`：自包含单文件（内联 CSS），无外部依赖，可直接作为构建产物打开。
 
-控制台同时打印套件表（用例数、通过率、得分、tokens、耗时）。当前没有常驻 Web 看板；
-HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2。
+控制台同时打印套件表（用例数、通过率、得分、tokens、耗时）。HTML 报告 + JUnit 是
+一次运行的归档形态；常驻工作台见 §9.1，趋势对比与门禁治理留给 §11 的 P1/P2。
+
+### 9.1 质量工作台（M0 静态快照）
+
+M0 不做评测报告 iframe，而是把运行快照变成可下钻的质量工作台：
+
+| 路由                 | 内容                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `/evals`             | KPI（通过率/失败/漂移/套件/tokens/耗时）、套件健康度、最近运行、需要关注的失败用例                |
+| `/evals/runs/:runId` | 运行元数据、套件页签、状态筛选、用例表；`?case=&tab=` 打开右侧抽屉（结果/轨迹/输入输出/原始数据） |
+
+- 数据发布：`scripts/eval/publish-web.mjs` 从 `reports/eval/*.json` 取最近 N 次，
+  生成 `apps/web/public/eval/index.json` 与 `runs/<id>.json`；超长 prompt/reply
+  默认裁到 2000 字符、事件裁到 50 条，原始报告不动。
+- 只读数据层：`apps/web/src/lib/eval-api.ts` 封装两条 URL；M1 接 eval-service 时
+  页面、URL 过滤协议与组件不变，只替换这里。
+- URL 是真源：`?suite=`、`?status=passed|failed`、`?case=`、`?tab=result|trajectory|io|raw`。
+- 导航入口放在「管理」组、用量之前，第一版 `adminOnly=true`；页面本身不替代
+  CI 门禁，失败/漂移仍以 `platform.sh` 退出码为准。
+- M0 限制：`drift_count` 暂为 0（基线比较在 CLI 完成，不进 report v1）；
+  数据集与门禁治理、跨运行对比、服务端分页在 M1/M2。
 
 ## 10. 当前阶段实施（已完成）
 
@@ -457,6 +477,11 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 | `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                         |
 | `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                                                             |
 | `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                |
+| `scripts/eval/publish-web.mjs`                                             | 把 JSON 报告发布成 `public/eval` 索引与运行快照（裁剪大字段）                                                            |
+| `apps/web/public/eval/`                                                    | M0 演示快照：`index.json` + `runs/<id>.json` + README                                                                    |
+| `apps/web/src/pages/evals.tsx`、`eval-run.tsx`                             | 质量工作台总览与运行详情                                                                                                 |
+| `apps/web/src/features/evals/`                                             | KPI、套件健康度、运行历史、需要关注、用例表、用例抽屉、评分器、工具轨迹                                                  |
+| `apps/web/src/lib/eval-api.ts`                                             | 只读数据层；M1 换成 eval-service 时只改两条 URL                                                                          |
 
 ### 10.2 门禁接入
 
@@ -490,6 +515,9 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
   计划闸 checkpoint 续跑交回人工审批（next=["approval_gate"]）；
   终态图直接收尾、不新增模型调用（status 保持 completed）。
 - 版本门禁：20 处版本字段（JS 7 + 根 pyproject + Python 12）。
+- Web 质量工作台 M0：`@beauty/web` 830 条测试、114 个测试文件全部通过；`typecheck`、
+  `lint`、`--run --coverage` 与生产构建通过。页面测试覆盖总览 KPI/套件/失败入口、
+  运行详情 URL 过滤、用例抽屉评分器与工具轨迹、深链打开与 ESC 关闭。
 
 ### 10.4 验收命令
 
@@ -497,6 +525,11 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 bash scripts/eval/platform.sh validate          # 6 个套件、29 条用例
 bash scripts/eval/platform.sh list --cases      # 列出用例
 bash scripts/eval/platform.sh run              # 全通过 + 无漂移，退出 0
+node scripts/eval/publish-web.mjs --limit 2     # 发布静态快照到 public/eval
+npx nx typecheck @beauty/web
+npx nx test @beauty/web -- --run
+npx nx test @beauty/web -- --run --coverage
+npx nx build @beauty/web
 npx nx lint evalkit
 npx nx test evalkit
 bash scripts/check-versions.sh
@@ -519,6 +552,8 @@ bash scripts/check-docs.sh
 4. **成本与时延**：按 `llm-gateway` 价目表把 tokens 换算成金额；报告增加 P50/P95；
    设置套件级预算门禁。
 5. **趋势报告**：保留最近 N 次 JSON，生成 Markdown 趋势；PR 评论只贴摘要与失败用例。
+6. **质量工作台**：M0 静态快照已完成（`/evals` + `/evals/runs/:runId` + 用例抽屉，
+   见 §9.1）；M1 增加 eval-service + Postgres + CI 上报，M2 做数据集/门禁治理与跨运行对比。
 
 ### P2（中期）：矩阵与生产反馈
 

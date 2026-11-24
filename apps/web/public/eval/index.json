@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-24T15:59:36.398Z",
+  "runs": [
+    {
+      "id": "20261124T154646Z",
+      "created_at": "2026-11-24T15:46:46+00:00",
+      "trigger": "local",
+      "git_sha": "3f42641",
+      "branch": "main",
+      "pr": null,
+      "model": "scripted",
+      "environment": "local",
+      "report_version": 1,
+      "totals": {
+        "cases": 29,
+        "passed": 29,
+        "failed": 0,
+        "pass_rate": 1,
+        "score": 1,
+        "tokens": 4868,
+        "duration_ms": 4121.8
+      },
+      "drift_count": 0,
+      "suites": [
+        {
+          "name": "agent-core",
+          "dataset": "agent-core",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 3,
+            "passed": 3,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 1046,
+            "duration_ms": 829.05
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "retrieval-quality",
+          "dataset": "retrieval-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 9,
+            "passed": 9,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 0,
+            "duration_ms": 1.82
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "conversation-quality",
+          "dataset": "conversation-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 3,
+            "passed": 3,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 368,
+            "duration_ms": 648.88
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "tool-arguments",
+          "dataset": "tool-arguments",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 2,
+            "passed": 2,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 1071,
+            "duration_ms": 515.75
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "memory-quality",
+          "dataset": "memory-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 6,
+            "passed": 6,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 0,
+            "duration_ms": 515.18
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "run-resilience",
+          "dataset": "run-resilience",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 6,
+            "passed": 6,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 2383,
+            "duration_ms": 1611.12
+          },
+          "drift_count": 0
+        }
+      ],
+      "failed_cases": [],
+      "dataset_versions": {
+        "agent-core": 1,
+        "retrieval-quality": 1,
+        "conversation-quality": 1,
+        "tool-arguments": 1,
+        "memory-quality": 1,
+        "run-resilience": 1
+      }
+    },
+    {
+      "id": "20261124T154200Z",
+      "created_at": "2026-11-24T15:42:00+00:00",
+      "trigger": "local",
+      "git_sha": "3f42641",
+      "branch": "main",
+      "pr": null,
+      "model": "scripted",
+      "environment": "local",
+      "report_version": 1,
+      "totals": {
+        "cases": 29,
+        "passed": 29,
+        "failed": 0,
+        "pass_rate": 1,
+        "score": 1,
+        "tokens": 4868,
+        "duration_ms": 4122.34
+      },
+      "drift_count": 0,
+      "suites": [
+        {
+          "name": "agent-core",
+          "dataset": "agent-core",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 3,
+            "passed": 3,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 1046,
+            "duration_ms": 844.79
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "retrieval-quality",
+          "dataset": "retrieval-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 9,
+            "passed": 9,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 0,
+            "duration_ms": 2.1
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "conversation-quality",
+          "dataset": "conversation-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 3,
+            "passed": 3,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 368,
+            "duration_ms": 619.11
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "tool-arguments",
+          "dataset": "tool-arguments",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 2,
+            "passed": 2,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 1071,
+            "duration_ms": 508.48
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "memory-quality",
+          "dataset": "memory-quality",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 6,
+            "passed": 6,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 0,
+            "duration_ms": 518.52
+          },
+          "drift_count": 0
+        },
+        {
+          "name": "run-resilience",
+          "dataset": "run-resilience",
+          "dataset_version": 1,
+          "totals": {
+            "cases": 6,
+            "passed": 6,
+            "failed": 0,
+            "pass_rate": 1,
+            "score": 1,
+            "tokens": 2383,
+            "duration_ms": 1629.35
+          },
+          "drift_count": 0
+        }
+      ],
+      "failed_cases": [],
+      "dataset_versions": {
+        "agent-core": 1,
+        "retrieval-quality": 1,
+        "conversation-quality": 1,
+        "tool-arguments": 1,
+        "memory-quality": 1,
+        "run-resilience": 1
+      }
+    }
+  ]
+}

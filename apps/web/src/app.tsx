@@ -26,6 +26,14 @@ const RunsPage = lazy(() =>
 const ChangesPage = lazy(() =>
   import('@/pages/changes').then((module) => ({ default: module.ChangesPage })),
 );
+const EvalsPage = lazy(() =>
+  import('@/pages/evals').then((module) => ({ default: module.EvalsPage })),
+);
+const EvalRunPage = lazy(() =>
+  import('@/pages/eval-run').then((module) => ({
+    default: module.EvalRunPage,
+  })),
+);
 const McpPage = lazy(() =>
   import('@/pages/mcp').then((module) => ({ default: module.McpPage })),
 );
@@ -101,6 +109,8 @@ export function App() {
               <Route index element={<ChatPage />} />
               <Route path="runs" element={<RunsPage />} />
               <Route path="changes" element={<ChangesPage />} />
+              <Route path="evals" element={<EvalsPage />} />
+              <Route path="evals/runs/:runId" element={<EvalRunPage />} />
               {/* MCP 入口已并入「连接器」页;这条路由保留给旧书签与 OAuth 兜底回跳 */}
               <Route path="mcp" element={<McpPage />} />
               <Route path="connectors" element={<ConnectorsPage />} />

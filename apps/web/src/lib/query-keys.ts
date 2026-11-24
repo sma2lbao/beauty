@@ -197,4 +197,8 @@ export const queryKeys = {
       ? (['outbox-events'] as const)
       : (['outbox-events', status] as const),
   outboxStats: ['outbox-stats'] as const,
+
+  /** 评测域:['evals'] 运行索引 / ['eval-run', id] 运行详情。 */
+  evals: ['evals'] as const,
+  evalRun: (runId: string | null | undefined) => ['eval-run', runId] as const,
 } as const;
