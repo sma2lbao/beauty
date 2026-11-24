@@ -11,6 +11,7 @@ dependencies = [
     "common",
     "database",
     "events",
+    "evalkit",
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
     "langgraph>=1.2.14",
@@ -28,6 +29,7 @@ dependencies = [
 common = { workspace = true }
 database = { workspace = true }
 events = { workspace = true }
+evalkit = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

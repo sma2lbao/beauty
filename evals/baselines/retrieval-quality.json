@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "retrieval-quality",
+      "dataset": "retrieval-quality",
+      "dataset_version": 1,
+      "cases": {
+        "retrieval/q01-weekly-table": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.0668
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q02-weekly-chart-table": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.5
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q03-weekly-plan": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.0668
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q04-answer-style": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q05-project-codename": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q06-deploy-env": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.1066
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q07-typescript": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q08-user-deploy": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.1066
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "retrieval/q09-user-password": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "mrr": 1.0,
+            "redundancy": 0.1195
+          },
+          "events": [],
+          "tool_calls": []
+        }
+      }
+    }
+  ]
+}

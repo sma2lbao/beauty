@@ -1,7 +1,8 @@
 # 评测与成本看板契约（P1-K）
 
 状态：**已落地（2026-11-10）**，落地位置与偏离见 §7；实现分三块：eval harness（agent-orchestrator 侧）、
-平台成本汇总 API（account-service）、管理台成本页签（Web）。上游背景见
+平台成本汇总 API（account-service）、管理台成本页签（Web）。跨仓库统一评测平台见
+[agent-eval-platform.md](./agent-eval-platform.md)；本文只保留 AO 单服务 harness 与成本看板契约。上游背景见
 [../gap-2026-11/00-refresh-2026-11-09.md](../gap-2026-11/00-refresh-2026-11-09.md) §5.2 P1-K。
 
 ## 1. 目标与非目标

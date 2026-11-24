@@ -14,6 +14,7 @@
 | `packages/common`             | `common`                | Python 库         | 服务基础设施:统一错误模型、配置基类、结构化日志、JWT 鉴权基座(JWKS)、交付物存储抽象;hatchling + pytest + ruff                                                                                                                                      |
 | `packages/database`           | `database`              | Python 库         | 数据库基座:命名约定、Base/mixin、session_scope、Repository(账号隔离+统一 404)、AccountMixin(账号私有表)、UnitOfWork、Postgres 集成夹具;hatchling + pytest + ruff                                                                                   |
 | `packages/events`             | `events`                | Python 库         | 事件信封(含账号)、进程内总线、事务性 outbox(仓储/dispatcher)、消费幂等;hatchling + pytest + ruff                                                                                                                                                   |
+| `packages/evalkit`            | `evalkit`               | Python 库         | 统一评测平台:数据集 schema、adapter/grader 分层、基线漂移门禁、JSON/JUnit/Markdown/HTML 报告;仅标准库 + pytest/ruff                                                                                                                                |
 | `services/agent-orchestrator` | `agent-orchestrator`    | Python 服务       | FastAPI + uvicorn(:8002):run 编排/事件溯源/LangGraph 执行图(阶段 A);对话内写操作确认(pending 落库 + confirm/cancel 端点);MCP 预设(Notion 一键授权,入口并入 `/connectors`,侧栏不再单列、`/mcp` 仅兼容直链)与工具 annotations 风险分级(读/写/DANGER) |
 | `services/llm-gateway`        | `llm-gateway`           | Python 服务       | FastAPI + litellm(:8003):全平台唯一模型出口,统一路由与 502 错误契约                                                                                                                                                                                |
 | `services/connector-service`  | `connector-service`     | Python 服务       | FastAPI + uvicorn(:8004):连接器平台(OAuth 授权会话/凭证托管/连接生命周期:刷新单飞+24h 巡检+outbox 生命周期事件;支持 OAuth 与静态令牌两种连接方式;**内置 GitHub provider**(GitHub App user-to-server,8 读 + 3 写);执行面供 tool-service 代理)       |
@@ -77,7 +78,7 @@ bash scripts/check-docs.sh                  # docs prettier + 相对链接/锚�
 node scripts/check-doc-drift.cjs            # 单独跑文档漂移门禁(被 check-docs.sh 调用)
 bash scripts/check-workspace.sh             # 未跟踪产物/归档注记/索引覆盖/labs 围栏四查
 bash scripts/check-labs.sh                  # labs 案例围栏独立校验（忽略/无跟踪/Nx/锁文件/workspaces）
-bash scripts/check-versions.sh              # 19 处版本字段 + CHANGELOG + release 配置一致性
+bash scripts/check-versions.sh              # 20 处版本字段 + CHANGELOG + release 配置一致性
 bash scripts/golden-run/golden-run.sh       # 黄金 run 冒烟(进程内 ASGI,零网络,9 阶段)
 node scripts/check-audit-allowlist.cjs      # 安全豁免到期校验(allowlist 必须带 owner+expires)
 npm run docs:check                          # = bash scripts/check-docs.sh
@@ -85,11 +86,11 @@ docker compose -f deploy/docker-compose.yml config -q   # 部署编排静态校�
 npx nx release --dry-run                    # 发布流程预演(不落改动;实际发版由维护者执行)
 ```
 
-覆盖率阈值:Python 11 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / tool-service 82 / api-gateway 81);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
+覆盖率阈值:Python 12 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / evalkit 85 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / tool-service 82 / api-gateway 81);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
 
-CI(`.github/workflows/ci.yml`)共 10 job:setup / docs-check / security-audit / affected-js / python-lint×11 / python-test×11 / lock-check / alembic-check×6(真 Postgres)/ docker-build / e2e(golden-run R-33 端到端冒烟 + eval 行为回归)。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
+CI(`.github/workflows/ci.yml`)共 10 job:setup / docs-check / security-audit / affected-js / python-lint×12 / python-test×12 / lock-check / alembic-check×6(真 Postgres)/ docker-build / e2e(golden-run R-33 端到端冒烟 + eval 行为回归 + 平台评测)。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
 
-### Python(common / database / events / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / tool-service / api-gateway)
+### Python(common / database / events / evalkit / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / tool-service / api-gateway)
 
 ```sh
 npx nx run common:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -105,9 +106,11 @@ npx nx run account-service:serve     # uvicorn :8001(账号/会话)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 npx nx run tool-service:serve        # uvicorn :8008(内置工具服务:工具目录/执行/审计)
 npx nx run api-gateway:serve         # uvicorn :8007(FastAPI 网关,同源 /api)
+npx nx run evalkit:eval              # 统一评测平台:跑全部套件并与基线比对
+npx nx run evalkit:eval-baseline     # 人工更新 evals/baselines/*.json
 ```
 
-`common`/`database`/`events` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service`/`api-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB(含对话内写操作确认链路);`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试全 MockTransport、零网络(授权/刷新/执行/巡检/outbox/账号应用凭证);`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录;`tool-service` 测试对 workspace-service 沙箱与知识服务全打桩(FakeSandboxClient/FakeToolClient),零网络;MCP 预设与工具 annotations 风险分级由 `agent-orchestrator` 测试覆盖(HTTP 全打桩)。
+`common`/`database`/`events`/`evalkit` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service`/`api-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB(含对话内写操作确认链路);`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试全 MockTransport、零网络(授权/刷新/执行/巡检/outbox/账号应用凭证);`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录;`tool-service` 测试对 workspace-service 沙箱与知识服务全打桩(FakeSandboxClient/FakeToolClient),零网络;MCP 预设与工具 annotations 风险分级由 `agent-orchestrator` 测试覆盖(HTTP 全打桩)。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
@@ -141,7 +144,7 @@ npx nx run common:sync                              # 变更后同步 .venv
   品牌变量 `--logo-moon` 定义在 `apps/web/src/index.css`(亮色取品牌暖玫瑰,暗色取官方月光米),
   字标月相与标识共用该色,形成呼应。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service`、`tool-service`、`api-gateway` line-length 88(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`evalkit`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service`、`tool-service`、`api-gateway` line-length 88(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
@@ -178,7 +181,7 @@ npx nx run common:sync                              # 变更后同步 .venv
 ## 修改后的验证清单
 
 - **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
-- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service` 另跑 `npx nx test <项目>`。
+- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`evalkit`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service` 另跑 `npx nx test <项目>`。
 - **模型/迁移(易踩坑)**:改 ORM 表结构必须配 alembic 迁移——服务默认 `AUTO_CREATE_TABLES=false`,
   而测试走 `create_all` 会自动建表,**缺迁移在测试里看不出来、真实库上直接 500**;
   本地默认库是 compose Postgres(每服务独立库),`scripts/migrate-local.sh` 在 dev 启动前自动升级;

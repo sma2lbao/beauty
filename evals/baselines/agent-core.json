@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "agent-core",
+      "dataset": "agent-core",
+      "dataset_version": 1,
+      "cases": {
+        "chat-direct/direct-answer": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 66,
+          "metrics": {},
+          "events": [],
+          "tool_calls": []
+        },
+        "task-approval/approve-then-complete": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 489,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.confirmation.received.v1",
+            "run.confirmation.required.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.tool.called.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": ["external_publish"]
+        },
+        "tool-policy/auto-policy-skips-confirmation": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 491,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.tool.called.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": ["external_publish"]
+        }
+      }
+    }
+  ]
+}

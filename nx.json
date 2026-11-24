@@ -54,6 +54,7 @@
       "!common",
       "!database",
       "!events",
+      "!evalkit",
       "!agent-orchestrator",
       "!llm-gateway",
       "!connector-service",

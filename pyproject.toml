@@ -6,6 +6,7 @@ dependencies = [
     "common",
     "database",
     "events",
+    "evalkit",
     "agent-orchestrator",
     "llm-gateway",
     "connector-service",
@@ -23,6 +24,7 @@ members = [
     "packages/common",
     "packages/database",
     "packages/events",
+    "packages/evalkit",
     "services/agent-orchestrator",
     "services/llm-gateway",
     "services/connector-service",
@@ -40,6 +42,9 @@ workspace = true
 workspace = true
 
 [tool.uv.sources.events]
+workspace = true
+
+[tool.uv.sources.evalkit]
 workspace = true
 
 [tool.uv.sources.agent-orchestrator]

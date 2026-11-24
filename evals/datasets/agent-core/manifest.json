@@ -1,0 +1,8 @@
+{
+  "name": "agent-core",
+  "version": 1,
+  "description": "Agent 核心链路:直答、任务审批、工具策略自动放行",
+  "owner": "agent-platform",
+  "adapter": "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter",
+  "tags": ["agent", "offline", "blocker"]
+}

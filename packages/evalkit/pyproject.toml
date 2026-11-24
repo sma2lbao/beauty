@@ -1,0 +1,52 @@
+[project]
+name = "evalkit"
+version = "0.1.0"
+description = "离线 Agent/LLM 评测平台:数据集、adapter、确定性 grader、基线与报告"
+readme = "README.md"
+requires-python = ">=3.11,<4"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["evalkit"]
+
+[tool.coverage.run]
+branch = true
+source = ["evalkit"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:'../../coverage/packages/evalkit/html'
+ --cov-report xml:'../../coverage/packages/evalkit/coverage.xml'
+ --html='../../reports/packages/evalkit/unittests/html/index.html'
+ --junitxml='../../reports/packages/evalkit/unittests/junit.xml'
+ --cov-fail-under=85
+ --disable-socket --allow-unix-socket
+"""
+asyncio_mode = "auto"
+
+[tool.ruff]
+exclude = [".ruff_cache", ".svn", ".tox", ".venv", "dist"]
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=1.4.0",
+    "pytest-socket>=0.8.1",
+]

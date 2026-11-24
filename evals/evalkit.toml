@@ -1,0 +1,19 @@
+[platform]
+root = ".."
+report_dir = "reports/eval"
+baseline_dir = "evals/baselines"
+
+[[suite]]
+name = "agent-core"
+dataset = "evals/datasets/agent-core"
+adapter = "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter"
+baseline = "evals/baselines/agent-core.json"
+fail_under = 1.0
+
+[[suite]]
+name = "retrieval-quality"
+dataset = "evals/datasets/retrieval-quality"
+adapter = "agent_orchestrator.evals.platform_adapter:RetrievalQualityAdapter"
+baseline = "evals/baselines/retrieval-quality.json"
+fail_under = 1.0
+options = { variant = "bm25_mmr" }
