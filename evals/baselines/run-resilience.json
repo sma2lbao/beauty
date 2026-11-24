@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "run-resilience",
+      "dataset": "run-resilience",
+      "dataset_version": 1,
+      "cases": {
+        "run-resilience/cancel-pending": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {},
+          "events": [
+            "run.cancelled.v1",
+            "run.created.v1"
+          ],
+          "tool_calls": []
+        },
+        "run-resilience/tool-error-recovery": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 740,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.confirmation.received.v1",
+            "run.confirmation.required.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.tool.called.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": [
+            "external_publish",
+            "missing_tool"
+          ]
+        },
+        "run-resilience/fork-completes-independently": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 731,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": []
+        }
+      }
+    }
+  ]
+}

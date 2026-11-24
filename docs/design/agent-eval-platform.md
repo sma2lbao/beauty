@@ -71,15 +71,15 @@
 
 评测维度与当前覆盖：
 
-| 维度     | 关键问题                                 | 当前手段                               | 后续                             |
-| -------- | ---------------------------------------- | -------------------------------------- | -------------------------------- |
-| 对话     | 该直答的是否直答、该建 run 的是否建 run  | agent-core chat + conversation-quality | 工具型多轮、长上下文、角色一致性 |
-| 任务编排 | 计划、审批、确认、完成、交付物           | agent-core task 用例                   | 失败恢复、取消、fork             |
-| 工具调用 | 调了什么、参数对不对、该不该确认         | tool-arguments + 策略用例              | MCP 工具、更多参数 schema        |
-| 检索     | 相关条目是否召回、排序是否合理、是否冗余 | recall@k / MRR / redundancy            | 嵌入检索、混合检索、分块         |
-| 记忆     | 该记的记住、不该记的不记、重复率         | memory-quality（已接入 evalkit）       | 抽取口径扩充、上下文压缩保留率   |
-| 效率     | token、时延、事件数                      | tokens / duration / min/max events     | 成本、缓存命中                   |
-| 安全     | 危险操作是否被拦、是否泄漏               | 策略用例 + 事件排除                    | red-team 数据集                  |
+| 维度     | 关键问题                                  | 当前手段                               | 后续                             |
+| -------- | ----------------------------------------- | -------------------------------------- | -------------------------------- |
+| 对话     | 该直答的是否直答、该建 run 的是否建 run   | agent-core chat + conversation-quality | 工具型多轮、长上下文、角色一致性 |
+| 任务编排 | 计划、审批、确认、完成、交付物、取消/fork | agent-core task + run-resilience       | 崩溃续跑、checkpoint 分叉        |
+| 工具调用 | 调了什么、参数对不对、该不该确认          | tool-arguments + 策略用例              | MCP 工具、更多参数 schema        |
+| 检索     | 相关条目是否召回、排序是否合理、是否冗余  | recall@k / MRR / redundancy            | 嵌入检索、混合检索、分块         |
+| 记忆     | 该记的记住、不该记的不记、重复率          | memory-quality（已接入 evalkit）       | 抽取口径扩充、上下文压缩保留率   |
+| 效率     | token、时延、事件数                       | tokens / duration / min/max events     | 成本、缓存命中                   |
+| 安全     | 危险操作是否被拦、是否泄漏                | 策略用例 + 事件排除                    | red-team 数据集                  |
 
 原则：**能在 L1/L2 用确定性手段覆盖的，不轻易上 L3**；L3 负责发现「假环境掩盖的真实问题」，
 但必须可重复、有预算上限，不能成为不稳定的 PR 门禁。
@@ -227,6 +227,13 @@ evals/datasets/agent-core/
 逐轮取对应正文；条数必须与 `send_chat` 数一致，缺省时每轮沿用 `goal`。
 这让多轮/澄清用例可以复用同一条步骤协议，而不引入新的步骤名。
 
+韧性用例在既有步骤协议上追加两个动作：
+
+- `cancel_run`：取消当前 run；之后 `wait_terminal` 应看到 `cancelled`，并断言
+  `run.cancelled.v1` 存在、`run.completed.v1`/`run.failed.v1` 与工具调用不存在。
+- `fork_run`：从当前 run 分叉出 pending 子 run，并把后续步骤切到子 run；
+  父 run 保持不变。子 run 继承计划时，其 `approve_plan` 不再消耗脚本化模型回复。
+
 ### 5.3 数据治理
 
 - **确定性**：L1/L2 用例不得依赖当前时间、随机数、网络、真实模型；时间相关逻辑由 adapter 注入固定时钟。
@@ -271,6 +278,17 @@ Observation(
 `decision` 区分 `auto`（策略/只读自动放行）、`approved`（人工确认）、
 `hook_denied`（hook 拒绝）等；参数是事件里的 JSON 文本，解析失败时保留原字符串，
 避免采集层把脏数据吞成“看起来正确”。
+
+fork 用例还暴露血缘快照，便于断言“子 run 成功且父 run 不被改写”：
+
+- `fields.run_detail`：最终 run 的只读快照（`id`/`title`/`status`/`goal`/
+  `parent_run_id`/`parent_kind`/`priority`/`timeout_seconds`）。
+- `fields.parent_run_detail`：fork 前父 run 的快照；非 fork 用例为空对象。
+- `fields.parent_run_id`、`fields.parent_status`、`fields.parent_kind`、
+  `fields.run_title`：上述两个快照的常用平铺视图，直接用于 `equals`/`contains`。
+
+注意：事件、工具调用与交付物只采集**当前（fork 后为子）run**；父 run 的状态
+通过 `parent_status` 断言，避免把两条 run 的事件混在一起。
 
 ### 6.2 grader 类型
 
@@ -418,20 +436,21 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 
 ### 10.1 代码与配置
 
-| 位置                                                                       | 内容                                                                                                   |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `packages/evalkit/evalkit/`                                                | schema / graders / adapters / config / runner / baseline / report / cli                                |
-| `packages/evalkit/tests/`                                                  | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI                             |
-| `evals/evalkit.toml`                                                       | `agent-core`、`retrieval-quality`、`conversation-quality`、`tool-arguments`、`memory-quality` 五个套件 |
-| `evals/datasets/agent-core/`                                               | 3 条用例：对话直答、任务审批、工具策略                                                                 |
-| `evals/datasets/retrieval-quality/`                                        | 9 条查询，覆盖短词、中英混合、近重复、长词                                                             |
-| `evals/datasets/conversation-quality/`                                     | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                                           |
-| `evals/datasets/tool-arguments/`                                           | 2 条工具参数：人工确认链路的参数/风险/决策、自动策略下的双工具顺序与参数                               |
-| `evals/datasets/memory-quality/`                                           | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                                   |
-| `evals/baselines/`                                                         | 五个套件的基线                                                                                         |
-| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                       |
-| `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                                           |
-| `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                                              |
+| 位置                                                                       | 内容                                                                                                                     |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `packages/evalkit/evalkit/`                                                | schema / graders / adapters / config / runner / baseline / report / cli                                                  |
+| `packages/evalkit/tests/`                                                  | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI                                               |
+| `evals/evalkit.toml`                                                       | `agent-core`、`retrieval-quality`、`conversation-quality`、`tool-arguments`、`memory-quality`、`run-resilience` 六个套件 |
+| `evals/datasets/agent-core/`                                               | 3 条用例：对话直答、任务审批、工具策略                                                                                   |
+| `evals/datasets/retrieval-quality/`                                        | 9 条查询，覆盖短词、中英混合、近重复、长词                                                                               |
+| `evals/datasets/conversation-quality/`                                     | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                                                             |
+| `evals/datasets/tool-arguments/`                                           | 2 条工具参数：人工确认链路的参数/风险/决策、自动策略下的双工具顺序与参数                                                 |
+| `evals/datasets/memory-quality/`                                           | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                                                     |
+| `evals/datasets/run-resilience/`                                           | 3 条韧性：取消 pending、工具失败后恢复、fork 子 run 独立完成                                                             |
+| `evals/baselines/`                                                         | 六个套件的基线                                                                                                           |
+| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                         |
+| `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                                                             |
+| `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                |
 
 ### 10.2 门禁接入
 
@@ -444,11 +463,12 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
-- AO 全量：1392 passed，覆盖率 88.29%（阈值 82%），含 12 条平台 adapter 测试
+- AO 全量：1395 passed，覆盖率 88.43%（阈值 82%），含 15 条平台 adapter 测试
   与 3 条工具调用采集测试。
-- 平台运行：5 个套件、23 条用例全部通过；agent-core 3 条 / 1046 tokens，
+- 平台运行：6 个套件、26 条用例全部通过；agent-core 3 条 / 1046 tokens，
   retrieval-quality 9 条，conversation-quality 3 条 / 368 tokens，tool-arguments
-  2 条 / 1071 tokens，memory-quality 6 条；整体约 2.5s，与基线零漂移。
+  2 条 / 1071 tokens，memory-quality 6 条，run-resilience 3 条 / 1471 tokens；
+  整体约 3~4s，与基线零漂移。
 - conversation-quality 固定了三类对话契约：第二轮 prompt 必须带上一轮用户与助手内容
   （历史注入）、澄清追问后能承接补充信息、拒答只留对话不建 run（events/tool_calls 为空）。
 - tool-arguments 固定了参数级契约：审批链路下 `decision=approved`、自动策略下
@@ -457,12 +477,15 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 - memory-quality 固定了当前行为：高置信偏好/事实落库、重复候选解析期折叠、
   低置信进复核、敏感凭据拒绝且同批正常事实保留；闲聊 note 目前仍会写入，
   用 `known-gap` 标签记录现状，待 P2 收紧为不进入系统。
+- run-resilience 固定了三条韧性契约：pending 取消后只留 `run.cancelled.v1` 且零工具；
+  未知工具返回 `error_code=tool.error` 后 run 不终止，下一轮可改用正确工具完成；
+  fork 出的子 run 继承计划、独立完成，父 run 保持 `completed` 且 `parent_kind=fork`。
 - 版本门禁：20 处版本字段（JS 7 + 根 pyproject + Python 12）。
 
 ### 10.4 验收命令
 
 ```sh
-bash scripts/eval/platform.sh validate          # 5 个套件、23 条用例
+bash scripts/eval/platform.sh validate          # 6 个套件、26 条用例
 bash scripts/eval/platform.sh list --cases      # 列出用例
 bash scripts/eval/platform.sh run              # 全通过 + 无漂移，退出 0
 npx nx lint evalkit
@@ -477,8 +500,9 @@ bash scripts/check-docs.sh
 ### P1（近期，1–2 个迭代）：把「平台」变成「体系」
 
 1. **数据集扩充**：记忆质量 6 条 golden（P1.1，已完成）；对话多轮/澄清/拒答
-   3 条（P1.2，已完成）；工具参数级正确性 2 条（P1.3，已完成）；继续补
-   任务失败恢复/取消/fork、上下文压缩保留率、连接器 OAuth 生命周期。
+   3 条（P1.2，已完成）；工具参数级正确性 2 条（P1.3，已完成）；任务取消、
+   工具失败恢复、fork 3 条（P1.4，已完成）；继续补崩溃续跑、checkpoint
+   分叉、上下文压缩保留率、连接器 OAuth 生命周期。
 2. **live adapter + 录制回放**：新增真实模型 adapter，但默认用录制 cassette 回放；
    live 模式单独开关、预算上限、nightly 运行，不阻塞 PR。
 3. **LLM-as-judge（可选 grader）**：pinned 模型、rubric、温度 0、结果缓存、人工校准集；
@@ -512,7 +536,7 @@ bash scripts/check-docs.sh
 | ---------------- | -------------------- | ----------------------------------------------------------------- |
 | 假环境偏离生产   | Fake 通过但线上失败  | 契约测试 + 定期 live/nightly + 录制回放                           |
 | 基线腐化         | 长期不更新或随意更新 | PR 必须说明；基线年龄纳入覆盖度报告；语义变更递增 dataset version |
-| 过拟合用例       | 只优化固定 23 条     | 留出集、按维度扩充、生产采样候选                                  |
+| 过拟合用例       | 只优化固定 26 条     | 留出集、按维度扩充、生产采样候选                                  |
 | grader 太严/太松 | 频繁误报或漏报       | 失败信息可读；review grader；关键指标用范围而非精确值             |
 | LLM judge 偏差   | 偏爱长答案/特定风格  | pinned 模型、rubric、人工校准、与确定性 grader 分离               |
 | CI 变慢/变贵     | 套件膨胀             | Nx affected、tags 分层、nightly 跑重套件、预算上限                |

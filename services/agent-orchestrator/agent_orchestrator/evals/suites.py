@@ -24,6 +24,9 @@ STEP_CREATE_RUN = "create_run"
 STEP_APPROVE_PLAN = "approve_plan"
 STEP_CONFIRM_ALL = "confirm_all"
 STEP_WAIT_TERMINAL = "wait_terminal"
+#: 任务韧性(P1.4):取消当前 run / 分叉出新 run 后继续驱动子 run。
+STEP_CANCEL_RUN = "cancel_run"
+STEP_FORK_RUN = "fork_run"
 STEPS = (
     STEP_CREATE_CONVERSATION,
     STEP_SEND_CHAT,
@@ -31,6 +34,8 @@ STEPS = (
     STEP_APPROVE_PLAN,
     STEP_CONFIRM_ALL,
     STEP_WAIT_TERMINAL,
+    STEP_CANCEL_RUN,
+    STEP_FORK_RUN,
 )
 
 #: 未显式写 steps 时按 kind 推导(§2.2)。

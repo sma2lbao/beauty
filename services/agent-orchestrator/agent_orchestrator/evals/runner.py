@@ -33,9 +33,11 @@ from .fakes import (
 )
 from .suites import (
     STEP_APPROVE_PLAN,
+    STEP_CANCEL_RUN,
     STEP_CONFIRM_ALL,
     STEP_CREATE_CONVERSATION,
     STEP_CREATE_RUN,
+    STEP_FORK_RUN,
     STEP_SEND_CHAT,
     STEP_WAIT_TERMINAL,
     Case,
@@ -72,6 +74,10 @@ class CaseResult:
     replies: list[str] = field(default_factory=list)
     #: 每次模型调用的消息序列(JSON 文本),用于验证多轮上下文确实注入。
     prompts: list[str] = field(default_factory=list)
+    #: 最后一个 run 的只读快照(含 parent_run_id/parent_kind/title)。
+    run_detail: dict[str, Any] = field(default_factory=dict)
+    #: fork 前的父 run 快照;非 fork 用例为空。
+    parent_run_detail: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +88,8 @@ class CaseResult:
             "events": list(self.events),
             "tool_calls": list(self.tool_calls),
             "tool_call_details": [dict(detail) for detail in self.tool_call_details],
+            "run_detail": dict(self.run_detail),
+            "parent_run_detail": dict(self.parent_run_detail),
             "tokens": self.tokens,
             "deliverables": self.deliverables,
             "failures": list(self.failures),
@@ -183,6 +191,33 @@ def _approve_plan(client: TestClient, run_id: str) -> None:
         _json(client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT))
 
 
+def _cancel_run(client: TestClient, run_id: str) -> None:
+    """取消当前 run;只允许非终态,终态会被服务端拒绝。"""
+    _json(
+        client.post(
+            f"/api/v1/runs/{run_id}/cancel",
+            json={"reason": "评测取消"},
+            headers=ACCOUNT,
+        )
+    )
+
+
+def _fork_run(client: TestClient, run_id: str) -> str:
+    """从当前 run 分叉出 pending 子 run,返回子 run id。"""
+    payload = _json(
+        client.post(
+            f"/api/v1/runs/{run_id}/fork",
+            json={},
+            headers=ACCOUNT,
+        ),
+        expect=201,
+    )
+    child_id = payload.get("id")
+    if not child_id:
+        raise RuntimeError("fork 响应缺少子 run id")
+    return str(child_id)
+
+
 def _confirm_all(client: TestClient, run_id: str) -> None:
     """循环确认:计划审批(防御性)与危险操作确认直到没有待确认闸。"""
     for _ in range(MAX_CONFIRM_LOOPS):
@@ -235,13 +270,42 @@ def _tool_call_detail(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_snapshot(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """RunRead 里与评测断言有关的只读子集;不把 datetime 等不可序列化字段带出。"""
+    status = payload.get("status")
+    return {
+        "id": str(payload.get("id") or ""),
+        "title": str(payload.get("title") or ""),
+        "status": str(status) if status is not None else None,
+        "goal": str(payload.get("goal") or ""),
+        "parent_run_id": payload.get("parent_run_id"),
+        "parent_kind": payload.get("parent_kind"),
+        "priority": payload.get("priority"),
+        "timeout_seconds": payload.get("timeout_seconds"),
+    }
+
+
 def _collect(
-    client: TestClient, case: Case, run_id: str | None, llm: ScriptedLLM
-) -> tuple[str | None, list[str], list[str], list[dict[str, Any]], int]:
-    """采集状态/事件/工具调用/交付物数量(chat 用例没有 run)。"""
+    client: TestClient,
+    case: Case,
+    run_id: str | None,
+    llm: ScriptedLLM,
+    *,
+    parent_run_id: str | None = None,
+) -> tuple[
+    str | None,
+    list[str],
+    list[str],
+    list[dict[str, Any]],
+    int,
+    dict[str, Any],
+    dict[str, Any],
+]:
+    """采集状态/事件/工具调用/交付物数量与 run 快照(chat 用例没有 run)。"""
     if run_id is None:
-        return None, [], [], [], 0
-    status = str(_run(client, run_id).get("status") or "") or None
+        return None, [], [], [], 0, {}, {}
+    run_payload = _run(client, run_id)
+    status = str(run_payload.get("status") or "") or None
     rows = _json(client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT))
     events = [str(row.get("type") or "") for row in rows]
     tool_rows = [row for row in rows if row.get("type") == "run.tool.called.v1"]
@@ -252,8 +316,17 @@ def _collect(
         _tool_call_detail(row.get("payload") or {}) for row in tool_rows
     ]
     artifacts = _json(client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT))
+    parent_detail = _run_snapshot(_run(client, parent_run_id)) if parent_run_id else {}
     del case, llm
-    return status, events, tool_calls, tool_call_details, len(artifacts)
+    return (
+        status,
+        events,
+        tool_calls,
+        tool_call_details,
+        len(artifacts),
+        _run_snapshot(run_payload),
+        parent_detail,
+    )
 
 
 def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> None:
@@ -261,6 +334,7 @@ def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> N
     _apply_policies(client, case)
     conversation_id: str | None = None
     run_id: str | None = None
+    forked_from: str | None = None
     chat_turn = 0
     for step in case.resolved_steps():
         if step == STEP_CREATE_CONVERSATION:
@@ -288,9 +362,19 @@ def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> N
             if run_id is None:
                 raise RuntimeError("wait_terminal 之前需要 create_run")
             _wait_terminal(client, run_id)
+        elif step == STEP_CANCEL_RUN:
+            if run_id is None:
+                raise RuntimeError("cancel_run 之前需要 create_run")
+            _cancel_run(client, run_id)
+        elif step == STEP_FORK_RUN:
+            if run_id is None:
+                raise RuntimeError("fork_run 之前需要 create_run")
+            forked_from = run_id
+            run_id = _fork_run(client, run_id)
         else:  # pragma: no cover - 用例 schema 已校验过步骤名
             raise RuntimeError(f"未知步骤:{step}")
     metrics["run_id"] = run_id
+    metrics["forked_from"] = forked_from
     metrics["conversation_id"] = conversation_id
 
 
@@ -317,8 +401,20 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
             )
             with NetworkGuard() as guard, TestClient(app) as client:
                 _execute_steps(client, case, metrics)
-                status, events, tool_calls, tool_call_details, deliverables = _collect(
-                    client, case, metrics.get("run_id"), llm
+                (
+                    status,
+                    events,
+                    tool_calls,
+                    tool_call_details,
+                    deliverables,
+                    run_detail,
+                    parent_detail,
+                ) = _collect(
+                    client,
+                    case,
+                    metrics.get("run_id"),
+                    llm,
+                    parent_run_id=metrics.get("forked_from"),
                 )
             if guard.violations:  # pragma: no cover - 正常链路不会触发
                 failures.append(f"检测到网络连接:{guard.violations}")
@@ -327,6 +423,8 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
             result.tool_calls = tool_calls
             result.tool_call_details = tool_call_details
             result.deliverables = deliverables
+            result.run_detail = run_detail
+            result.parent_run_detail = parent_detail
     except Exception as exc:  # noqa: BLE001 - 用例异常必须落成失败原因
         failures.append(f"执行异常:{type(exc).__name__}: {exc}")
     finally:

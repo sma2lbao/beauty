@@ -255,3 +255,99 @@ def test_retrieval_rejects_bad_input() -> None:
         adapter.run(
             platform_case("retrieval/d", query="周报", relevant=[])
         )
+
+
+def test_cancel_case_reports_cancelled_without_tools() -> None:
+    adapter = AgentOrchestratorAdapter()
+    observation = adapter.run(
+        platform_case(
+            "eval/cancel",
+            kind="task",
+            goal="整理本周日程并发布周报文档",
+            llm_script=[],
+            steps=["create_run", "cancel_run", "wait_terminal"],
+        )
+    )
+    fields = observation.fields
+    assert observation.error is None
+    assert fields["run_status"] == "cancelled"
+    assert "run.cancelled.v1" in observation.events
+    assert "run.completed.v1" not in observation.events
+    assert fields["tool_call_count"] == 0
+    assert fields["deliverables"] == 0
+    adapter.close()
+
+
+def test_fork_case_exposes_parent_lineage() -> None:
+    adapter = AgentOrchestratorAdapter()
+    observation = adapter.run(
+        platform_case(
+            "eval/fork",
+            kind="task",
+            goal="整理本周日程并发布周报文档",
+            llm_script=[
+                "# 执行计划\n- [ ] 发布说明\n- [ ] 输出交付物",
+                {
+                    "tool_calls": [
+                        {
+                            "name": "external_publish",
+                            "arguments": {"title": "周报"},
+                        }
+                    ]
+                },
+                "已发布周报。",
+                "# 交付物\n\n周报已发布。",
+                {
+                    "tool_calls": [
+                        {
+                            "name": "external_publish",
+                            "arguments": {"title": "周报（分叉）"},
+                        }
+                    ]
+                },
+                "子 run 已独立完成。",
+                "# 交付物\n\n子 run 交付物。",
+            ],
+            steps=[
+                "create_run",
+                "approve_plan",
+                "confirm_all",
+                "wait_terminal",
+                "fork_run",
+                "approve_plan",
+                "confirm_all",
+                "wait_terminal",
+            ],
+        )
+    )
+    fields = observation.fields
+    assert observation.error is None
+    assert fields["run_status"] == "completed"
+    assert fields["parent_status"] == "completed"
+    assert fields["parent_kind"] == "fork"
+    assert fields["parent_run_id"]
+    assert "（分叉）" in fields["run_title"]
+    assert fields["deliverables"] == 1
+    adapter.close()
+
+
+def test_resilience_steps_require_create_run() -> None:
+    adapter = AgentOrchestratorAdapter()
+    cancel = adapter.run(
+        platform_case(
+            "eval/no-run-cancel",
+            kind="task",
+            goal="x",
+            steps=["cancel_run"],
+        )
+    )
+    assert cancel.error is not None and "cancel_run 之前需要 create_run" in cancel.error
+    fork = adapter.run(
+        platform_case(
+            "eval/no-run-fork",
+            kind="task",
+            goal="x",
+            steps=["fork_run"],
+        )
+    )
+    assert fork.error is not None and "fork_run 之前需要 create_run" in fork.error

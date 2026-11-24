@@ -66,6 +66,12 @@ class AgentOrchestratorAdapter:
             "tool_call_count": len(result.tool_call_details),
             "replies": list(result.replies),
             "turn_count": len(result.replies),
+            "run_detail": dict(result.run_detail),
+            "parent_run_detail": dict(result.parent_run_detail),
+            "parent_run_id": result.run_detail.get("parent_run_id"),
+            "parent_status": result.parent_run_detail.get("status"),
+            "parent_kind": result.run_detail.get("parent_kind"),
+            "run_title": result.run_detail.get("title"),
         }
         # 多轮用例按轮暴露回复与模型入参:grader 可直接验证"上一轮确实注入"。
         for index, reply in enumerate(result.replies):

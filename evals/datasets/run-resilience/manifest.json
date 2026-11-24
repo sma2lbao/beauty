@@ -1,0 +1,13 @@
+{
+  "name": "run-resilience",
+  "version": 1,
+  "description": "任务韧性:取消、工具失败恢复、fork",
+  "owner": "agent-platform",
+  "adapter": "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter",
+  "tags": [
+    "agent",
+    "resilience",
+    "offline",
+    "blocker"
+  ]
+}
