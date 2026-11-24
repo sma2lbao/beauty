@@ -72,6 +72,13 @@ class AgentOrchestratorAdapter:
             "parent_status": result.parent_run_detail.get("status"),
             "parent_kind": result.run_detail.get("parent_kind"),
             "run_title": result.run_detail.get("title"),
+            "run_attempts": result.run_detail.get("attempts"),
+            "recovered": dict(result.recovered_detail),
+            "recovered_from_status": result.recovered_detail.get("from_status"),
+            "recovered_next": list(result.recovered_detail.get("next") or []),
+            "recovered_fallback": result.recovered_detail.get("fallback"),
+            "recovered_resumed": result.recovered_detail.get("resumed"),
+            "recovered_checkpoint_id": result.recovered_detail.get("checkpoint_id"),
         }
         # 多轮用例按轮暴露回复与模型入参:grader 可直接验证"上一轮确实注入"。
         for index, reply in enumerate(result.replies):
@@ -160,9 +167,7 @@ class RetrievalQualityAdapter:
         config = dict(options or {})
         self.variant = str(config.get("variant", "bm25_mmr"))
         if self.variant not in RANKERS:
-            raise ValueError(
-                f"未知检索口径 {self.variant!r},支持 {sorted(RANKERS)}"
-            )
+            raise ValueError(f"未知检索口径 {self.variant!r},支持 {sorted(RANKERS)}")
 
     def run(self, case: PlatformCase) -> Observation:
         query = case.input.get("query")

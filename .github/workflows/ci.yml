@@ -503,7 +503,7 @@ jobs:
   # Job 10/10：e2e——黄金 run 端到端冒烟（R-33）+ eval 行为回归 + 统一评测平台
   # 本地等价：bash scripts/golden-run/golden-run.sh / bash scripts/eval/eval.sh /
   # bash scripts/eval/platform.sh。第一步断言 REST/SSE 契约、run 状态机、交付物字节与
-  # sqlite 落库；第二步跑 3 个评测套件并与 evals/baseline.json 比对；第三步跑 evalkit
+  # sqlite 落库；第二步跑 AO 内置 3 个评测套件并与 evals/baseline.json 比对；第三步跑 evalkit
   # 的 agent-core/retrieval-quality/conversation-quality/tool-arguments/memory-quality/
   # run-resilience 数据集并与 evals/baselines/*.json 比对。三步都是进程内 ASGI + 脚本化 FakeLLM +
   # 零网络，无需模型/Docker/Postgres/Redis。
@@ -542,6 +542,6 @@ jobs:
         run: bash scripts/eval/eval.sh
 
       - name: Platform eval (datasets + graders + baseline)
-        # 统一评测平台：agent-core 3 + retrieval-quality 9 + conversation-quality 3 + tool-arguments 2 + memory-quality 6 + run-resilience 3 条；报告写 reports/eval/。
+        # 统一评测平台：agent-core 3 + retrieval-quality 9 + conversation-quality 3 + tool-arguments 2 + memory-quality 6 + run-resilience 6 条（共 29）；报告写 reports/eval/。
         # 退出码同上；基线更新只允许人工执行 platform.sh run --update-baseline。
         run: bash scripts/eval/platform.sh run

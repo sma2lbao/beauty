@@ -27,6 +27,12 @@ STEP_WAIT_TERMINAL = "wait_terminal"
 #: 任务韧性(P1.4):取消当前 run / 分叉出新 run 后继续驱动子 run。
 STEP_CANCEL_RUN = "cancel_run"
 STEP_FORK_RUN = "fork_run"
+#: 崩溃续跑(P1.5):plan_run 只规划不审批;crash_run 伪造进程崩溃;
+#: recover_run 直接调服务层从 checkpoint 续跑(不再走 HTTP,崩溃现场只能
+#: 由持有数据库会话的 runner 制造)。
+STEP_PLAN_RUN = "plan_run"
+STEP_CRASH_RUN = "crash_run"
+STEP_RECOVER_RUN = "recover_run"
 STEPS = (
     STEP_CREATE_CONVERSATION,
     STEP_SEND_CHAT,
@@ -36,6 +42,9 @@ STEPS = (
     STEP_WAIT_TERMINAL,
     STEP_CANCEL_RUN,
     STEP_FORK_RUN,
+    STEP_PLAN_RUN,
+    STEP_CRASH_RUN,
+    STEP_RECOVER_RUN,
 )
 
 #: 未显式写 steps 时按 kind 推导(§2.2)。

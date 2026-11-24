@@ -183,13 +183,9 @@ def test_memory_rejects_bad_input() -> None:
     with pytest.raises(ValueError, match="raw_model_output"):
         adapter.run(platform_case("memory/a", expected=[]))
     with pytest.raises(ValueError, match="expected"):
-        adapter.run(
-            platform_case("memory/b", raw_model_output="[]", expected="x")
-        )
+        adapter.run(platform_case("memory/b", raw_model_output="[]", expected="x"))
     with pytest.raises(ValueError, match="expected"):
-        adapter.run(
-            platform_case("memory/c", raw_model_output="[]", expected=[""])
-        )
+        adapter.run(platform_case("memory/c", raw_model_output="[]", expected=[""]))
 
 
 def test_retrieval_metrics_for_single_query() -> None:
@@ -246,15 +242,11 @@ def test_retrieval_rejects_bad_input() -> None:
     with pytest.raises(ValueError, match="query"):
         adapter.run(platform_case("retrieval/a", relevant=["d1"]))
     with pytest.raises(ValueError, match="query"):
-        adapter.run(
-            platform_case("retrieval/b", query="  ", relevant=["d1"])
-        )
+        adapter.run(platform_case("retrieval/b", query="  ", relevant=["d1"]))
     with pytest.raises(ValueError, match="relevant"):
         adapter.run(platform_case("retrieval/c", query="周报"))
     with pytest.raises(ValueError, match="relevant"):
-        adapter.run(
-            platform_case("retrieval/d", query="周报", relevant=[])
-        )
+        adapter.run(platform_case("retrieval/d", query="周报", relevant=[]))
 
 
 def test_cancel_case_reports_cancelled_without_tools() -> None:
@@ -329,6 +321,120 @@ def test_fork_case_exposes_parent_lineage() -> None:
     assert "（分叉）" in fields["run_title"]
     assert fields["deliverables"] == 1
     adapter.close()
+
+
+def _recovery_script() -> list[str]:
+    return [
+        "# 计划",
+        "执行",
+        '{"summary": "ok", "verdicts": {"日程已整理": true}}',
+        "# 交付物",
+    ]
+
+
+def test_recovery_without_checkpoint_falls_back_to_plan() -> None:
+    adapter = AgentOrchestratorAdapter()
+    observation = adapter.run(
+        platform_case(
+            "eval/recover-fallback",
+            kind="task",
+            goal="整理本周日程",
+            llm_script=_recovery_script(),
+            steps=[
+                "create_run",
+                "crash_run",
+                "recover_run",
+                "confirm_all",
+                "wait_terminal",
+            ],
+        )
+    )
+    fields = observation.fields
+    assert observation.error is None
+    assert fields["run_status"] == "completed"
+    assert fields["run_attempts"] == 2
+    assert fields["recovered_from_status"] == "running"
+    assert fields["recovered_fallback"] == "plan"
+    assert fields["recovered_next"] == []
+    assert "run.recovered.v1" in observation.events
+    assert "run.completed.v1" in observation.events
+    adapter.close()
+
+
+def test_recovery_resumes_plan_checkpoint_without_replanning() -> None:
+    adapter = AgentOrchestratorAdapter()
+    observation = adapter.run(
+        platform_case(
+            "eval/recover-plan",
+            kind="task",
+            goal="整理本周日程",
+            llm_script=_recovery_script(),
+            steps=[
+                "create_run",
+                "plan_run",
+                "crash_run",
+                "recover_run",
+                "confirm_all",
+                "wait_terminal",
+            ],
+        )
+    )
+    fields = observation.fields
+    assert observation.error is None
+    assert fields["run_status"] == "completed"
+    assert fields["run_attempts"] == 1
+    assert fields["recovered_next"] == ["approval_gate"]
+    assert fields["recovered_fallback"] is None
+    assert fields["recovered_resumed"] is False
+    assert fields["recovered_checkpoint_id"]
+    assert "run.recovered.v1" in observation.events
+    assert "run.completed.v1" in observation.events
+    adapter.close()
+
+
+def test_recovery_settles_finished_graph_without_new_calls() -> None:
+    adapter = AgentOrchestratorAdapter()
+    observation = adapter.run(
+        platform_case(
+            "eval/recover-finished",
+            kind="task",
+            goal="整理本周日程",
+            llm_script=_recovery_script(),
+            steps=[
+                "create_run",
+                "approve_plan",
+                "confirm_all",
+                "wait_terminal",
+                "crash_run",
+                "recover_run",
+            ],
+        )
+    )
+    fields = observation.fields
+    assert observation.error is None
+    assert fields["run_status"] == "completed"
+    assert fields["run_attempts"] == 1
+    assert fields["recovered_next"] == []
+    assert fields["recovered_fallback"] is None
+    assert fields["recovered_resumed"] is False
+    assert fields["tokens"] <= 1000
+    assert "run.recovered.v1" in observation.events
+    adapter.close()
+
+
+def test_recovery_steps_require_create_run() -> None:
+    adapter = AgentOrchestratorAdapter()
+    for step in ("plan_run", "crash_run", "recover_run"):
+        observation = adapter.run(
+            platform_case(
+                f"eval/no-run-{step}",
+                kind="task",
+                goal="x",
+                steps=[step],
+            )
+        )
+        assert observation.error is not None
+        assert f"{step} 之前需要 create_run" in observation.error
 
 
 def test_resilience_steps_require_create_run() -> None:

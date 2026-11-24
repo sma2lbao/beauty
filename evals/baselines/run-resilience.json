@@ -54,6 +54,57 @@
             "run.usage.v1"
           ],
           "tool_calls": []
+        },
+        "run-resilience/recover-fallback": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 303,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.recovered.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": []
+        },
+        "run-resilience/recover-plan-checkpoint": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 305,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.recovered.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": []
+        },
+        "run-resilience/recover-finished-graph": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 304,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.recovered.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": []
         }
       }
     }

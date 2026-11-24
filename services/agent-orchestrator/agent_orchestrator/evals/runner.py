@@ -8,6 +8,7 @@ run 事件、交付物、SSE 与脚本化模型的调用计数里取——不 mo
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
@@ -16,12 +17,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from database.session import create_session_factory, session_scope
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.main import create_app
+from agent_orchestrator.services import runs as runs_service
 
 from .fakes import (
     ACCOUNT,
+    ACCOUNT_ID,
     FakeDangerTool,
     FakeKnowledge,
     NetworkGuard,
@@ -35,9 +39,12 @@ from .suites import (
     STEP_APPROVE_PLAN,
     STEP_CANCEL_RUN,
     STEP_CONFIRM_ALL,
+    STEP_CRASH_RUN,
     STEP_CREATE_CONVERSATION,
     STEP_CREATE_RUN,
     STEP_FORK_RUN,
+    STEP_PLAN_RUN,
+    STEP_RECOVER_RUN,
     STEP_SEND_CHAT,
     STEP_WAIT_TERMINAL,
     Case,
@@ -78,6 +85,8 @@ class CaseResult:
     run_detail: dict[str, Any] = field(default_factory=dict)
     #: fork 前的父 run 快照;非 fork 用例为空。
     parent_run_detail: dict[str, Any] = field(default_factory=dict)
+    #: 崩溃续跑事件 run.recovered.v1 的 payload;非续跑用例为空。
+    recovered_detail: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +99,7 @@ class CaseResult:
             "tool_call_details": [dict(detail) for detail in self.tool_call_details],
             "run_detail": dict(self.run_detail),
             "parent_run_detail": dict(self.parent_run_detail),
+            "recovered_detail": dict(self.recovered_detail),
             "tokens": self.tokens,
             "deliverables": self.deliverables,
             "failures": list(self.failures),
@@ -191,6 +201,50 @@ def _approve_plan(client: TestClient, run_id: str) -> None:
         _json(client.post(f"/api/v1/runs/{run_id}/approve", headers=ACCOUNT))
 
 
+def _plan_run(client: TestClient, run_id: str) -> None:
+    """只规划不审批,把 run 停在计划闸(P1-C checkpoint 续跑的现场)。"""
+    _json(client.post(f"/api/v1/runs/{run_id}/plan", headers=ACCOUNT))
+
+
+async def _mark_crashed(settings: Any, run_id: str) -> None:
+    """把 run 状态改成 running,模拟持有它的进程已经退出。"""
+    factory = create_session_factory(settings.database_url)
+    try:
+        async with session_scope(factory) as session:
+            run = await runs_service.require_run(session, ACCOUNT_ID, run_id)
+            run.status = "running"
+    finally:
+        await factory.engine.dispose()
+
+
+def _crash_run(app: Any, run_id: str) -> None:
+    """评测内的崩溃现场:只改状态,不删 job;随后由 recover_run 显式拉起。"""
+    asyncio.run(_mark_crashed(app.state.container.settings, run_id))
+
+
+async def _recover(settings: Any, graph: Any, run_id: str) -> dict[str, Any]:
+    factory = create_session_factory(settings.database_url)
+    try:
+        async with session_scope(factory) as session:
+            run = await runs_service.recover_run(
+                session,
+                graph,
+                ACCOUNT_ID,
+                run_id,
+                from_job=True,
+                settings=settings,
+            )
+            return {"status": run.status, "attempts": run.attempts}
+    finally:
+        await factory.engine.dispose()
+
+
+def _recover_run(app: Any, run_id: str) -> dict[str, Any]:
+    """直接调服务层续跑(崩溃后没有 HTTP 入口,等价于 worker 重放 recover)。"""
+    container = app.state.container
+    return asyncio.run(_recover(container.settings, container.run_graph, run_id))
+
+
 def _cancel_run(client: TestClient, run_id: str) -> None:
     """取消当前 run;只允许非终态,终态会被服务端拒绝。"""
     _json(
@@ -282,6 +336,7 @@ def _run_snapshot(payload: Mapping[str, Any]) -> dict[str, Any]:
         "parent_kind": payload.get("parent_kind"),
         "priority": payload.get("priority"),
         "timeout_seconds": payload.get("timeout_seconds"),
+        "attempts": payload.get("attempts"),
     }
 
 
@@ -300,10 +355,11 @@ def _collect(
     int,
     dict[str, Any],
     dict[str, Any],
+    dict[str, Any],
 ]:
-    """采集状态/事件/工具调用/交付物数量与 run 快照(chat 用例没有 run)。"""
+    """采集状态/事件/工具调用/交付物数量、run 快照与续跑事件。"""
     if run_id is None:
-        return None, [], [], [], 0, {}, {}
+        return None, [], [], [], 0, {}, {}, {}
     run_payload = _run(client, run_id)
     status = str(run_payload.get("status") or "") or None
     rows = _json(client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT))
@@ -317,6 +373,14 @@ def _collect(
     ]
     artifacts = _json(client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT))
     parent_detail = _run_snapshot(_run(client, parent_run_id)) if parent_run_id else {}
+    recovered = next(
+        (
+            dict(row.get("payload") or {})
+            for row in reversed(rows)
+            if row.get("type") == "run.recovered.v1"
+        ),
+        {},
+    )
     del case, llm
     return (
         status,
@@ -326,10 +390,13 @@ def _collect(
         len(artifacts),
         _run_snapshot(run_payload),
         parent_detail,
+        recovered,
     )
 
 
-def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> None:
+def _execute_steps(
+    client: TestClient, app: Any, case: Case, metrics: dict[str, Any]
+) -> None:
     """按 steps 顺序驱动;未声明步骤的用例走 kind 默认步骤。"""
     _apply_policies(client, case)
     conversation_id: str | None = None
@@ -354,6 +421,18 @@ def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> N
             if run_id is None:
                 raise RuntimeError("approve_plan 之前需要 create_run")
             _approve_plan(client, run_id)
+        elif step == STEP_PLAN_RUN:
+            if run_id is None:
+                raise RuntimeError("plan_run 之前需要 create_run")
+            _plan_run(client, run_id)
+        elif step == STEP_CRASH_RUN:
+            if run_id is None:
+                raise RuntimeError("crash_run 之前需要 create_run")
+            _crash_run(app, run_id)
+        elif step == STEP_RECOVER_RUN:
+            if run_id is None:
+                raise RuntimeError("recover_run 之前需要 create_run")
+            metrics["recovered"] = _recover_run(app, run_id)
         elif step == STEP_CONFIRM_ALL:
             if run_id is None:
                 raise RuntimeError("confirm_all 之前需要 create_run")
@@ -400,7 +479,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
                 token_verifier=token_verifier(),
             )
             with NetworkGuard() as guard, TestClient(app) as client:
-                _execute_steps(client, case, metrics)
+                _execute_steps(client, app, case, metrics)
                 (
                     status,
                     events,
@@ -409,6 +488,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
                     deliverables,
                     run_detail,
                     parent_detail,
+                    recovered_detail,
                 ) = _collect(
                     client,
                     case,
@@ -425,6 +505,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
             result.deliverables = deliverables
             result.run_detail = run_detail
             result.parent_run_detail = parent_detail
+            result.recovered_detail = recovered_detail
     except Exception as exc:  # noqa: BLE001 - 用例异常必须落成失败原因
         failures.append(f"执行异常:{type(exc).__name__}: {exc}")
     finally:
