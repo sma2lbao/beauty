@@ -1,0 +1,8 @@
+{
+  "name": "conversation-quality",
+  "version": 1,
+  "description": "对话质量:多轮上下文、澄清追问、拒答边界(不建 run)",
+  "owner": "agent-platform",
+  "adapter": "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter",
+  "tags": ["conversation", "offline", "blocker"]
+}

@@ -42,6 +42,7 @@ class AgentOrchestratorAdapter:
             "id": case.id,
             "kind": case.input.get("kind", "task"),
             "goal": case.input.get("goal"),
+            "messages": case.input.get("messages", []),
             "llm_script": case.input.get("llm_script", []),
             "steps": case.input.get("steps", []),
             "policies": case.input.get("policies", []),
@@ -57,7 +58,14 @@ class AgentOrchestratorAdapter:
             "duration_ms": round(result.duration_ms, 2),
             "events": list(result.events),
             "tool_calls": list(result.tool_calls),
+            "replies": list(result.replies),
+            "turn_count": len(result.replies),
         }
+        # 多轮用例按轮暴露回复与模型入参:grader 可直接验证"上一轮确实注入"。
+        for index, reply in enumerate(result.replies):
+            fields[f"reply_{index}"] = reply
+        for index, prompt in enumerate(result.prompts):
+            fields[f"prompt_{index}"] = prompt
         error = "; ".join(result.failures) if result.failures else None
         return Observation(
             output=result.reply,

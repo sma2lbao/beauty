@@ -67,6 +67,8 @@ class Case:
     id: str
     kind: str
     goal: str
+    #: 多轮对话逐轮正文;为空时 send_chat 每轮都发 goal(兼容单轮用例)。
+    messages: tuple[str, ...] = ()
     llm_script: tuple[Any, ...] = ()
     steps: tuple[str, ...] = ()
     expect: Mapping[str, Any] = field(default_factory=dict)
@@ -82,6 +84,16 @@ class Case:
     def resolved_title(self) -> str:
         return self.title or self.id
 
+    def message_for_turn(self, index: int) -> str:
+        """第 index 次 send_chat 的正文:多轮用例逐轮取,单轮用例沿用 goal。"""
+        if not self.messages:
+            return self.goal
+        if index < 0 or index >= len(self.messages):
+            raise ValueError(
+                f"用例 {self.id}:第 {index + 1} 轮 send_chat 没有对应 messages"
+            )
+        return self.messages[index]
+
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any], *, where: str = "用例") -> Case:
         case_id = payload.get("id")
@@ -96,6 +108,14 @@ class Case:
         script = payload.get("llm_script") or []
         if not isinstance(script, Sequence) or isinstance(script, (str, bytes)):
             raise ValueError(f"{where} {case_id}:llm_script 必须是列表")
+        raw_messages = payload.get("messages") or []
+        if not isinstance(raw_messages, Sequence) or isinstance(
+            raw_messages, (str, bytes)
+        ):
+            raise ValueError(f"{where} {case_id}:messages 必须是列表")
+        messages = tuple(str(item) for item in raw_messages)
+        if any(not item.strip() for item in messages):
+            raise ValueError(f"{where} {case_id}:messages 每轮都必须是非空字符串")
         raw_steps = payload.get("steps") or []
         if not isinstance(raw_steps, Sequence) or isinstance(raw_steps, (str, bytes)):
             raise ValueError(f"{where} {case_id}:steps 必须是列表")
@@ -104,6 +124,13 @@ class Case:
         if unknown_steps:
             raise ValueError(
                 f"{where} {case_id}:未知步骤 {unknown_steps},支持 {list(STEPS)}"
+            )
+        resolved_steps = steps or DEFAULT_STEPS[kind]
+        chat_turns = sum(1 for step in resolved_steps if step == STEP_SEND_CHAT)
+        if messages and len(messages) != chat_turns:
+            raise ValueError(
+                f"{where} {case_id}:messages 有 {len(messages)} 条,"
+                f"但 send_chat 步骤有 {chat_turns} 个"
             )
         expect = payload.get("assert") or {}
         if not isinstance(expect, Mapping):
@@ -124,6 +151,7 @@ class Case:
             id=case_id.strip(),
             kind=str(kind),
             goal=goal,
+            messages=messages,
             llm_script=tuple(script),
             steps=steps,
             expect=dict(expect),
@@ -138,6 +166,7 @@ class Case:
             "kind": self.kind,
             "goal": self.goal,
             "title": self.title,
+            "messages": list(self.messages),
             "llm_script": list(self.llm_script),
             "steps": list(self.steps),
             "assert": dict(self.expect),

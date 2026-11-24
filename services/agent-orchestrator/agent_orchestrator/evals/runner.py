@@ -66,6 +66,10 @@ class CaseResult:
     deliverables: int = 0
     failures: list[str] = field(default_factory=list)
     reply: str = ""
+    #: 多轮对话逐轮回复;单轮用例长度为 1。
+    replies: list[str] = field(default_factory=list)
+    #: 每次模型调用的消息序列(JSON 文本),用于验证多轮上下文确实注入。
+    prompts: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -232,13 +236,19 @@ def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> N
     _apply_policies(client, case)
     conversation_id: str | None = None
     run_id: str | None = None
+    chat_turn = 0
     for step in case.resolved_steps():
         if step == STEP_CREATE_CONVERSATION:
             conversation_id = _create_conversation(client)
         elif step == STEP_SEND_CHAT:
             if conversation_id is None:
                 raise RuntimeError("send_chat 之前需要 create_conversation")
-            metrics["reply"] = _send_chat(client, conversation_id, case.goal)
+            reply = _send_chat(
+                client, conversation_id, case.message_for_turn(chat_turn)
+            )
+            metrics["reply"] = reply
+            metrics["replies"].append(reply)
+            chat_turn += 1
         elif step == STEP_CREATE_RUN:
             run_id = _create_run(client, case)
         elif step == STEP_APPROVE_PLAN:
@@ -266,7 +276,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
     llm = ScriptedLLM(case.llm_script)
     knowledge = FakeKnowledge()
     danger = FakeDangerTool()
-    metrics: dict[str, Any] = {"reply": ""}
+    metrics: dict[str, Any] = {"reply": "", "replies": []}
     failures: list[str] = []
     reset_process_state()
     try:
@@ -296,6 +306,10 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
     finally:
         reset_process_state()
     result.reply = str(metrics.get("reply") or "")
+    result.replies = [str(item) for item in metrics.get("replies") or []]
+    result.prompts = [
+        json.dumps(messages, ensure_ascii=False, default=str) for messages in llm.calls
+    ]
     result.tokens = llm.tokens
     cache = token_cache(case, result)
     result.failures = [*failures, *cache]

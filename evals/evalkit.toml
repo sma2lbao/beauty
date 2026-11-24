@@ -19,6 +19,13 @@ fail_under = 1.0
 options = { variant = "bm25_mmr" }
 
 [[suite]]
+name = "conversation-quality"
+dataset = "evals/datasets/conversation-quality"
+adapter = "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter"
+baseline = "evals/baselines/conversation-quality.json"
+fail_under = 1.0
+
+[[suite]]
 name = "memory-quality"
 dataset = "evals/datasets/memory-quality"
 adapter = "agent_orchestrator.evals.platform_adapter:MemoryQualityAdapter"

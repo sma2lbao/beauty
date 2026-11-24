@@ -219,6 +219,32 @@ def test_case_parses_and_derives_default_steps() -> None:
     )
 
 
+def test_case_parses_multi_turn_messages() -> None:
+    payload = {
+        **_case_payload(),
+        "messages": ["我叫小林", "我刚才说我叫什么?"],
+        "steps": ["create_conversation", "send_chat", "send_chat"],
+    }
+    case = Case.from_dict(payload)
+    assert case.messages == ("我叫小林", "我刚才说我叫什么?")
+    assert case.message_for_turn(0) == "我叫小林"
+    assert case.message_for_turn(1) == "我刚才说我叫什么?"
+    assert case.to_dict()["messages"] == ["我叫小林", "我刚才说我叫什么?"]
+    # 单轮用例没有 messages 时沿用 goal
+    assert Case.from_dict(_case_payload()).message_for_turn(0) == "你好"
+    with pytest.raises(ValueError, match="messages 有 2 条"):
+        Case.from_dict({**payload, "steps": ["create_conversation", "send_chat"]})
+    with pytest.raises(ValueError, match="非空字符串"):
+        Case.from_dict({**payload, "messages": ["我叫小林", "  "]})
+    with pytest.raises(ValueError, match="没有对应 messages"):
+        Case(
+            id="overflow",
+            kind=KIND_CHAT,
+            goal="兜底",
+            messages=("只有一轮",),
+        ).message_for_turn(1)
+
+
 def test_case_rejects_invalid_payloads() -> None:
     with pytest.raises(ValueError):
         Case.from_dict({**_case_payload(), "id": ""})
@@ -270,6 +296,28 @@ def test_builtin_suites_pass_end_to_end() -> None:
     ]
     assert sum(result.tokens for result in results) > 0
     assert all(result.duration_ms >= 0 for result in results)
+
+
+def test_multi_turn_chat_injects_previous_turns() -> None:
+    case = Case(
+        id="follow-up-context",
+        kind=KIND_CHAT,
+        goal="我叫小林",
+        messages=("我叫小林,请记住", "我刚才说我叫什么?"),
+        llm_script=("你好,小林。", "你叫小林。"),
+        steps=(
+            "create_conversation",
+            "send_chat",
+            "send_chat",
+        ),
+    )
+    result = run_case("conversation-quality", case)
+    assert result.ok, result.failures
+    assert result.replies == ["你好,小林。", "你叫小林。"]
+    assert len(result.prompts) == 2
+    # 第二轮模型入参必须带上一轮的用户消息与助手回复
+    assert "我叫小林" in result.prompts[1]
+    assert "你好,小林" in result.prompts[1]
 
 
 def test_run_case_reports_script_exhaustion() -> None:

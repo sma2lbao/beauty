@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "conversation-quality",
+      "dataset": "conversation-quality",
+      "dataset_version": 1,
+      "cases": {
+        "conversation/multiturn-context": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 147,
+          "metrics": {},
+          "events": [],
+          "tool_calls": []
+        },
+        "conversation/clarification-followup": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 153,
+          "metrics": {},
+          "events": [],
+          "tool_calls": []
+        },
+        "conversation/refusal-no-run": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 68,
+          "metrics": {},
+          "events": [],
+          "tool_calls": []
+        }
+      }
+    }
+  ]
+}
