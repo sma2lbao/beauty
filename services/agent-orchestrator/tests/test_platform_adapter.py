@@ -67,6 +67,15 @@ def test_task_case_exposes_status_tools_and_deliverables() -> None:
     fields = observation.fields
     assert fields["run_status"] == "completed"
     assert "external_publish" in observation.tool_calls
+    assert fields["tool_call_names"] == ["external_publish"]
+    assert fields["tool_call_arguments"] == [{"title": "周报"}]
+    assert fields["tool_call_count"] == 1
+    detail = fields["tool_call_details"][0]
+    assert detail["name"] == "external_publish"
+    assert detail["arguments"] == {"title": "周报"}
+    assert detail["ok"] is True
+    assert detail["risk"] == "danger"
+    assert detail["decision"] == "approved"
     assert "run.completed.v1" in observation.events
     assert fields["deliverables"] == 1
     assert fields["duration_ms"] >= 0

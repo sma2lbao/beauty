@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,8 @@ class CaseResult:
     run_status: str | None = None
     events: list[str] = field(default_factory=list)
     tool_calls: list[str] = field(default_factory=list)
+    #: 每次工具调用的结构化记录(名称、参数、结果元数据);tool_calls 保留名称列表。
+    tool_call_details: list[dict[str, Any]] = field(default_factory=list)
     tokens: int = 0
     deliverables: int = 0
     failures: list[str] = field(default_factory=list)
@@ -79,6 +81,7 @@ class CaseResult:
             "run_status": self.run_status,
             "events": list(self.events),
             "tool_calls": list(self.tool_calls),
+            "tool_call_details": [dict(detail) for detail in self.tool_call_details],
             "tokens": self.tokens,
             "deliverables": self.deliverables,
             "failures": list(self.failures),
@@ -212,23 +215,45 @@ def _wait_terminal(client: TestClient, run_id: str) -> None:
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+def _tool_call_detail(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """把工具事件 payload 压成可断言的结构化记录,参数尽量还原成对象。"""
+    arguments = payload.get("arguments")
+    parsed: Any = arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed = arguments
+    return {
+        "name": str(payload.get("name") or ""),
+        "arguments": parsed,
+        "ok": bool(payload.get("ok")),
+        "risk": str(payload.get("risk") or ""),
+        "decision": str(payload.get("decision") or ""),
+        "error_code": payload.get("error_code"),
+        "duration_ms": int(payload.get("duration_ms") or 0),
+    }
+
+
 def _collect(
     client: TestClient, case: Case, run_id: str | None, llm: ScriptedLLM
-) -> tuple[str | None, list[str], list[str], int]:
-    """采集 run_status/事件/工具名/交付物数量(chat 用例没有 run)。"""
+) -> tuple[str | None, list[str], list[str], list[dict[str, Any]], int]:
+    """采集状态/事件/工具调用/交付物数量(chat 用例没有 run)。"""
     if run_id is None:
-        return None, [], [], 0
+        return None, [], [], [], 0
     status = str(_run(client, run_id).get("status") or "") or None
     rows = _json(client.get(f"/api/v1/runs/{run_id}/events", headers=ACCOUNT))
     events = [str(row.get("type") or "") for row in rows]
+    tool_rows = [row for row in rows if row.get("type") == "run.tool.called.v1"]
     tool_calls = [
-        str((row.get("payload") or {}).get("name") or "")
-        for row in rows
-        if row.get("type") == "run.tool.called.v1"
+        str((row.get("payload") or {}).get("name") or "") for row in tool_rows
+    ]
+    tool_call_details = [
+        _tool_call_detail(row.get("payload") or {}) for row in tool_rows
     ]
     artifacts = _json(client.get(f"/api/v1/runs/{run_id}/artifacts", headers=ACCOUNT))
     del case, llm
-    return status, events, tool_calls, len(artifacts)
+    return status, events, tool_calls, tool_call_details, len(artifacts)
 
 
 def _execute_steps(client: TestClient, case: Case, metrics: dict[str, Any]) -> None:
@@ -292,7 +317,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
             )
             with NetworkGuard() as guard, TestClient(app) as client:
                 _execute_steps(client, case, metrics)
-                status, events, tool_calls, deliverables = _collect(
+                status, events, tool_calls, tool_call_details, deliverables = _collect(
                     client, case, metrics.get("run_id"), llm
                 )
             if guard.violations:  # pragma: no cover - 正常链路不会触发
@@ -300,6 +325,7 @@ def run_case(suite_name: str, case: Case) -> CaseResult:
             result.run_status = status
             result.events = events
             result.tool_calls = tool_calls
+            result.tool_call_details = tool_call_details
             result.deliverables = deliverables
     except Exception as exc:  # noqa: BLE001 - 用例异常必须落成失败原因
         failures.append(f"执行异常:{type(exc).__name__}: {exc}")

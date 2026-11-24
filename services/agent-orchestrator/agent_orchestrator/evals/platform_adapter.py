@@ -58,6 +58,12 @@ class AgentOrchestratorAdapter:
             "duration_ms": round(result.duration_ms, 2),
             "events": list(result.events),
             "tool_calls": list(result.tool_calls),
+            "tool_call_names": list(result.tool_calls),
+            "tool_call_details": [dict(detail) for detail in result.tool_call_details],
+            "tool_call_arguments": [
+                detail.get("arguments") for detail in result.tool_call_details
+            ],
+            "tool_call_count": len(result.tool_call_details),
             "replies": list(result.replies),
             "turn_count": len(result.replies),
         }

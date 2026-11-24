@@ -26,6 +26,13 @@ baseline = "evals/baselines/conversation-quality.json"
 fail_under = 1.0
 
 [[suite]]
+name = "tool-arguments"
+dataset = "evals/datasets/tool-arguments"
+adapter = "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter"
+baseline = "evals/baselines/tool-arguments.json"
+fail_under = 1.0
+
+[[suite]]
 name = "memory-quality"
 dataset = "evals/datasets/memory-quality"
 adapter = "agent_orchestrator.evals.platform_adapter:MemoryQualityAdapter"

@@ -75,7 +75,7 @@
 | -------- | ---------------------------------------- | -------------------------------------- | -------------------------------- |
 | 对话     | 该直答的是否直答、该建 run 的是否建 run  | agent-core chat + conversation-quality | 工具型多轮、长上下文、角色一致性 |
 | 任务编排 | 计划、审批、确认、完成、交付物           | agent-core task 用例                   | 失败恢复、取消、fork             |
-| 工具调用 | 调了什么、参数对不对、该不该确认         | tool_calls + 策略用例                  | 参数级 grader、MCP 工具          |
+| 工具调用 | 调了什么、参数对不对、该不该确认         | tool-arguments + 策略用例              | MCP 工具、更多参数 schema        |
 | 检索     | 相关条目是否召回、排序是否合理、是否冗余 | recall@k / MRR / redundancy            | 嵌入检索、混合检索、分块         |
 | 记忆     | 该记的记住、不该记的不记、重复率         | memory-quality（已接入 evalkit）       | 抽取口径扩充、上下文压缩保留率   |
 | 效率     | token、时延、事件数                      | tokens / duration / min/max events     | 成本、缓存命中                   |
@@ -260,6 +260,18 @@ Observation(
 对话 adapter 还暴露 `fields.replies`（逐轮回复）、`fields.turn_count`、`fields.reply_<n>`
 与 `fields.prompt_<n>`（第 n 次模型调用的入参 JSON），用于验证历史是否真的注入。
 
+编排 adapter 把每次工具调用压成结构化记录，按调用顺序暴露：
+
+- `fields.tool_call_names`：名称列表（保序），用 `equals` 精确断言调用顺序。
+- `fields.tool_call_arguments`：参数列表（保序），用 `equals` 精确断言参数对象。
+- `fields.tool_call_details`：`name`、`arguments`、`ok`、`risk`、`decision`、
+  `error_code`、`duration_ms`；用 `json_subset` 断言其中关心的键。
+- `fields.tool_call_count`：调用次数，用 `number equals` 断言。
+
+`decision` 区分 `auto`（策略/只读自动放行）、`approved`（人工确认）、
+`hook_denied`（hook 拒绝）等；参数是事件里的 JSON 文本，解析失败时保留原字符串，
+避免采集层把脏数据吞成“看起来正确”。
+
 ### 6.2 grader 类型
 
 | 类型                        | 语义                                          | 关键参数         |
@@ -321,10 +333,10 @@ class Adapter(Protocol):
 
 ### 7.2 现有 adapter
 
-| adapter                    | 驱动方式                                                                 | 暴露字段                                                              |
-| -------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `AgentOrchestratorAdapter` | 复用 AO 的 `run_case`：临时 sqlite、TestClient、脚本化 LLM、NetworkGuard | run_status、tokens、deliverables、duration_ms、events、tool_calls     |
-| `RetrievalQualityAdapter`  | 复用 `run_variant`：固定 10 条语料、单查询、指定排序口径                 | ranked、metrics.recall_at_k、metrics.mrr、metrics.redundancy、variant |
+| adapter                    | 驱动方式                                                                 | 暴露字段                                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentOrchestratorAdapter` | 复用 AO 的 `run_case`：临时 sqlite、TestClient、脚本化 LLM、NetworkGuard | run_status、tokens、deliverables、duration_ms、events、tool_calls、tool_call_names/arguments/details/count、replies、turn_count |
+| `RetrievalQualityAdapter`  | 复用 `run_variant`：固定 10 条语料、单查询、指定排序口径                 | ranked、metrics.recall_at_k、metrics.mrr、metrics.redundancy、variant                                                           |
 
 两者都在服务包内，核心包不依赖服务。新增服务时按同样方式写一个 adapter 即可。
 
@@ -406,19 +418,20 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 
 ### 10.1 代码与配置
 
-| 位置                                                                       | 内容                                                                                 |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `packages/evalkit/evalkit/`                                                | schema / graders / adapters / config / runner / baseline / report / cli              |
-| `packages/evalkit/tests/`                                                  | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI           |
-| `evals/evalkit.toml`                                                       | `agent-core`、`retrieval-quality`、`conversation-quality`、`memory-quality` 四个套件 |
-| `evals/datasets/agent-core/`                                               | 3 条用例：对话直答、任务审批、工具策略                                               |
-| `evals/datasets/retrieval-quality/`                                        | 9 条查询，覆盖短词、中英混合、近重复、长词                                           |
-| `evals/datasets/conversation-quality/`                                     | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                         |
-| `evals/datasets/memory-quality/`                                           | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                 |
-| `evals/baselines/`                                                         | 四个套件的基线                                                                       |
-| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                     |
-| `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                         |
-| `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                            |
+| 位置                                                                       | 内容                                                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `packages/evalkit/evalkit/`                                                | schema / graders / adapters / config / runner / baseline / report / cli                                |
+| `packages/evalkit/tests/`                                                  | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI                             |
+| `evals/evalkit.toml`                                                       | `agent-core`、`retrieval-quality`、`conversation-quality`、`tool-arguments`、`memory-quality` 五个套件 |
+| `evals/datasets/agent-core/`                                               | 3 条用例：对话直答、任务审批、工具策略                                                                 |
+| `evals/datasets/retrieval-quality/`                                        | 9 条查询，覆盖短词、中英混合、近重复、长词                                                             |
+| `evals/datasets/conversation-quality/`                                     | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                                           |
+| `evals/datasets/tool-arguments/`                                           | 2 条工具参数：人工确认链路的参数/风险/决策、自动策略下的双工具顺序与参数                               |
+| `evals/datasets/memory-quality/`                                           | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                                   |
+| `evals/baselines/`                                                         | 五个套件的基线                                                                                         |
+| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                       |
+| `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                                           |
+| `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                                              |
 
 ### 10.2 门禁接入
 
@@ -431,12 +444,16 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
-- AO 全量：1389 passed，覆盖率 88.18%（阈值 82%），含 12 条平台 adapter 测试。
-- 平台运行：4 个套件、21 条用例全部通过；agent-core 1046 tokens / 669ms，
-  retrieval-quality 9 条 / 2ms，conversation-quality 368 tokens / 490ms，
-  memory-quality 6 条 / 338ms；与基线零漂移。
+- AO 全量：1392 passed，覆盖率 88.29%（阈值 82%），含 12 条平台 adapter 测试
+  与 3 条工具调用采集测试。
+- 平台运行：5 个套件、23 条用例全部通过；agent-core 3 条 / 1046 tokens，
+  retrieval-quality 9 条，conversation-quality 3 条 / 368 tokens，tool-arguments
+  2 条 / 1071 tokens，memory-quality 6 条；整体约 2.5s，与基线零漂移。
 - conversation-quality 固定了三类对话契约：第二轮 prompt 必须带上一轮用户与助手内容
   （历史注入）、澄清追问后能承接补充信息、拒答只留对话不建 run（events/tool_calls 为空）。
+- tool-arguments 固定了参数级契约：审批链路下 `decision=approved`、自动策略下
+  `decision=auto`；双工具用例按 `search_knowledge → external_publish` 顺序执行，
+  参数对象与风险级别（read/danger）逐一断言，参数被改写或丢失会直接失败。
 - memory-quality 固定了当前行为：高置信偏好/事实落库、重复候选解析期折叠、
   低置信进复核、敏感凭据拒绝且同批正常事实保留；闲聊 note 目前仍会写入，
   用 `known-gap` 标签记录现状，待 P2 收紧为不进入系统。
@@ -445,7 +462,7 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 ### 10.4 验收命令
 
 ```sh
-bash scripts/eval/platform.sh validate          # 4 个套件、21 条用例
+bash scripts/eval/platform.sh validate          # 5 个套件、23 条用例
 bash scripts/eval/platform.sh list --cases      # 列出用例
 bash scripts/eval/platform.sh run              # 全通过 + 无漂移，退出 0
 npx nx lint evalkit
@@ -460,8 +477,8 @@ bash scripts/check-docs.sh
 ### P1（近期，1–2 个迭代）：把「平台」变成「体系」
 
 1. **数据集扩充**：记忆质量 6 条 golden（P1.1，已完成）；对话多轮/澄清/拒答
-   3 条（P1.2，已完成）；继续补任务失败恢复/取消/fork、工具参数级正确性、
-   上下文压缩保留率、连接器 OAuth 生命周期。
+   3 条（P1.2，已完成）；工具参数级正确性 2 条（P1.3，已完成）；继续补
+   任务失败恢复/取消/fork、上下文压缩保留率、连接器 OAuth 生命周期。
 2. **live adapter + 录制回放**：新增真实模型 adapter，但默认用录制 cassette 回放；
    live 模式单独开关、预算上限、nightly 运行，不阻塞 PR。
 3. **LLM-as-judge（可选 grader）**：pinned 模型、rubric、温度 0、结果缓存、人工校准集；
@@ -495,7 +512,7 @@ bash scripts/check-docs.sh
 | ---------------- | -------------------- | ----------------------------------------------------------------- |
 | 假环境偏离生产   | Fake 通过但线上失败  | 契约测试 + 定期 live/nightly + 录制回放                           |
 | 基线腐化         | 长期不更新或随意更新 | PR 必须说明；基线年龄纳入覆盖度报告；语义变更递增 dataset version |
-| 过拟合用例       | 只优化固定 21 条     | 留出集、按维度扩充、生产采样候选                                  |
+| 过拟合用例       | 只优化固定 23 条     | 留出集、按维度扩充、生产采样候选                                  |
 | grader 太严/太松 | 频繁误报或漏报       | 失败信息可读；review grader；关键指标用范围而非精确值             |
 | LLM judge 偏差   | 偏爱长答案/特定风格  | pinned 模型、rubric、人工校准、与确定性 grader 分离               |
 | CI 变慢/变贵     | 套件膨胀             | Nx affected、tags 分层、nightly 跑重套件、预算上限                |

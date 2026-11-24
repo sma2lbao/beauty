@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "tool-arguments",
+      "dataset": "tool-arguments",
+      "dataset_version": 1,
+      "cases": {
+        "tool-arguments/publish-title": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 487,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.confirmation.received.v1",
+            "run.confirmation.required.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.tool.called.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": [
+            "external_publish"
+          ]
+        },
+        "tool-arguments/multi-tool-arguments": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 584,
+          "metrics": {},
+          "events": [
+            "run.approved.v1",
+            "run.completed.v1",
+            "run.created.v1",
+            "run.delivered.v1",
+            "run.item.v1",
+            "run.planned.v1",
+            "run.tool.called.v1",
+            "run.usage.v1"
+          ],
+          "tool_calls": [
+            "external_publish",
+            "search_knowledge"
+          ]
+        }
+      }
+    }
+  ]
+}

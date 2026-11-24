@@ -1,0 +1,8 @@
+{
+  "name": "tool-arguments",
+  "version": 1,
+  "description": "工具参数正确性:人工确认链路与自动策略下的参数、风险与决策",
+  "owner": "agent-platform",
+  "adapter": "agent_orchestrator.evals.platform_adapter:AgentOrchestratorAdapter",
+  "tags": ["agent", "tool", "offline", "blocker"]
+}
