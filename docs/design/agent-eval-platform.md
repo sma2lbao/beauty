@@ -404,11 +404,12 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `packages/evalkit/evalkit/`                                                | schema / graders / adapters / config / runner / baseline / report / cli    |
 | `packages/evalkit/tests/`                                                  | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI |
-| `evals/evalkit.toml`                                                       | `agent-core` 与 `retrieval-quality` 两个套件                               |
+| `evals/evalkit.toml`                                                       | `agent-core`、`retrieval-quality`、`memory-quality` 三个套件               |
 | `evals/datasets/agent-core/`                                               | 3 条用例：对话直答、任务审批、工具策略                                     |
 | `evals/datasets/retrieval-quality/`                                        | 9 条查询，覆盖短词、中英混合、近重复、长词                                 |
-| `evals/baselines/`                                                         | 两个套件的基线                                                             |
-| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 两个服务侧 adapter                                                         |
+| `evals/datasets/memory-quality/`                                           | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                       |
+| `evals/baselines/`                                                         | 三个套件的基线                                                             |
+| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆）                                     |
 | `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                               |
 | `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                  |
 
@@ -423,15 +424,18 @@ HTML 报告 + JUnit 是 MVP 的看板形态，趋势对比留给 §11 的 P1/P2�
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
-- AO 全量：1382 passed，覆盖率 88.30%（阈值 82%），含 7 条平台 adapter 测试。
-- 平台运行：2 个套件、12 条用例全部通过；agent-core 1046 tokens / 686ms，
-  retrieval-quality 9 条 / 2ms；与基线零漂移。
+- AO 全量：1385 passed，覆盖率 88.26%（阈值 82%），含 10 条平台 adapter 测试。
+- 平台运行：3 个套件、18 条用例全部通过；agent-core 1046 tokens / 654ms，
+  retrieval-quality 9 条 / 2ms，memory-quality 6 条 / 359ms；与基线零漂移。
+- memory-quality 固定了当前行为：高置信偏好/事实落库、重复候选解析期折叠、
+  低置信进复核、敏感凭据拒绝且同批正常事实保留；闲聊 note 目前仍会写入，
+  用 `known-gap` 标签记录现状，待 P2 收紧为不进入系统。
 - 版本门禁：20 处版本字段（JS 7 + 根 pyproject + Python 12）。
 
 ### 10.4 验收命令
 
 ```sh
-bash scripts/eval/platform.sh validate          # 2 个套件、12 条用例
+bash scripts/eval/platform.sh validate          # 3 个套件、18 条用例
 bash scripts/eval/platform.sh list --cases      # 列出用例
 bash scripts/eval/platform.sh run              # 全通过 + 无漂移，退出 0
 npx nx lint evalkit
@@ -445,8 +449,8 @@ bash scripts/check-docs.sh
 
 ### P1（近期，1–2 个迭代）：把「平台」变成「体系」
 
-1. **数据集扩充**：对话多轮/澄清/拒答、任务失败恢复/取消/fork、工具参数级正确性、
-   记忆质量（接入现有 6 条 golden）、上下文压缩保留率、连接器 OAuth 生命周期。
+1. **数据集扩充**：记忆质量已接入 6 条 golden（P1.1，已完成）；继续补对话多轮/澄清/拒答、
+   任务失败恢复/取消/fork、工具参数级正确性、上下文压缩保留率、连接器 OAuth 生命周期。
 2. **live adapter + 录制回放**：新增真实模型 adapter，但默认用录制 cassette 回放；
    live 模式单独开关、预算上限、nightly 运行，不阻塞 PR。
 3. **LLM-as-judge（可选 grader）**：pinned 模型、rubric、温度 0、结果缓存、人工校准集；
@@ -480,7 +484,7 @@ bash scripts/check-docs.sh
 | ---------------- | -------------------- | ----------------------------------------------------------------- |
 | 假环境偏离生产   | Fake 通过但线上失败  | 契约测试 + 定期 live/nightly + 录制回放                           |
 | 基线腐化         | 长期不更新或随意更新 | PR 必须说明；基线年龄纳入覆盖度报告；语义变更递增 dataset version |
-| 过拟合用例       | 只优化固定 12 条     | 留出集、按维度扩充、生产采样候选                                  |
+| 过拟合用例       | 只优化固定 18 条     | 留出集、按维度扩充、生产采样候选                                  |
 | grader 太严/太松 | 频繁误报或漏报       | 失败信息可读；review grader；关键指标用范围而非精确值             |
 | LLM judge 偏差   | 偏爱长答案/特定风格  | pinned 模型、rubric、人工校准、与确定性 grader 分离               |
 | CI 变慢/变贵     | 套件膨胀             | Nx affected、tags 分层、nightly 跑重套件、预算上限                |

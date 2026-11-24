@@ -1,17 +1,24 @@
-"""把 agent-orchestrator 与检索排序接入统一评测平台。
+"""把 agent-orchestrator、检索与记忆抽取接入统一评测平台。
 
 adapter 放在服务包内而不是 evalkit:平台核心不反向依赖具体服务,服务自己
-负责把内部链路包装成 Observation。两条 adapter 都是进程内、零网络。
+负责把内部链路包装成 Observation。三条 adapter 都是进程内、零网络。
 """
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+from database.base import Base
+from database.session import create_session_factory
 from evalkit.graders import Observation
 from evalkit.schema import Case as PlatformCase
 
+from .memory_quality import CaseMetrics, GoldenCase, aggregate
+from .memory_quality import run_case as run_memory_case
 from .retrieval_quality import (
     GOLDEN_DOCS,
     RANKERS,
@@ -59,6 +66,66 @@ class AgentOrchestratorAdapter:
             tool_calls=tuple(result.tool_calls),
             error=error,
         )
+
+    def close(self) -> None:
+        return None
+
+
+class MemoryQualityAdapter:
+    """跑单条 golden 记忆用例,暴露抽取/过滤/复核指标。
+
+    每条用例独立临时 sqlite 与独立事件循环:async engine 不能跨循环复用,
+    而 evalkit 的 adapter 协议是同步的。输出只含计数,不回显记忆正文。
+    """
+
+    name = "memory-quality"
+
+    def __init__(self, options: Mapping[str, Any] | None = None) -> None:
+        self.options = dict(options or {})
+
+    def run(self, case: PlatformCase) -> Observation:
+        raw = case.input.get("raw_model_output")
+        expected = case.input.get("expected", [])
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(f"{case.id}:input.raw_model_output 必须是非空字符串")
+        if not isinstance(expected, list) or not all(
+            isinstance(item, str) and item for item in expected
+        ):
+            raise ValueError(f"{case.id}:input.expected 必须是字符串列表")
+        golden = GoldenCase(
+            case_id=case.id,
+            raw_model_output=raw,
+            expected=tuple(expected),
+        )
+        metrics = asyncio.run(self._run_golden(golden))
+        totals = aggregate([metrics])
+        fields = {
+            "metrics": totals,
+            "produced": metrics.produced,
+            "entered": len(metrics.written) + len(metrics.queued),
+            "written": list(metrics.written),
+            "queued": list(metrics.queued),
+            "expected_items": list(metrics.expected),
+            "matched_items": list(metrics.matched_expected),
+            "written_count": len(metrics.written),
+            "queued_count": len(metrics.queued),
+        }
+        output = (
+            f"produced={fields['produced']} entered={fields['entered']} "
+            f"written={fields['written_count']} queued={fields['queued_count']}"
+        )
+        return Observation(output=output, fields=fields)
+
+    async def _run_golden(self, case: GoldenCase) -> CaseMetrics:
+        with tempfile.TemporaryDirectory(prefix="eval-memory-") as tmp:
+            url = f"sqlite+aiosqlite:///{Path(tmp) / 'eval.db'}"
+            factory = create_session_factory(url)
+            try:
+                async with factory.engine.begin() as connection:
+                    await connection.run_sync(Base.metadata.create_all)
+                return await run_memory_case(factory, case)
+            finally:
+                await factory.engine.dispose()
 
     def close(self) -> None:
         return None

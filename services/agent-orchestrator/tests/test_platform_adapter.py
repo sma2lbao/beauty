@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 from evalkit.schema import Case as PlatformCase
 
+from agent_orchestrator.evals.memory_quality import GOLDEN_CASES
 from agent_orchestrator.evals.platform_adapter import (
     AgentOrchestratorAdapter,
+    MemoryQualityAdapter,
     RetrievalQualityAdapter,
 )
 from agent_orchestrator.evals.retrieval_quality import GOLDEN_QUERIES
@@ -81,6 +83,58 @@ def test_task_case_propagates_schema_errors() -> None:
                 goal="x",
                 steps=["not-a-step"],
             )
+        )
+
+
+def golden_input(case_id: str) -> dict[str, object]:
+    golden = next(item for item in GOLDEN_CASES if item.case_id == case_id)
+    return {
+        "raw_model_output": golden.raw_model_output,
+        "expected": list(golden.expected),
+    }
+
+
+def test_memory_low_confidence_is_queued() -> None:
+    adapter = MemoryQualityAdapter()
+    observation = adapter.run(
+        platform_case("memory/low-confidence", **golden_input("low-confidence"))
+    )
+    metrics = observation.fields["metrics"]
+    assert observation.error is None
+    assert metrics["queue_rate"] == 1.0
+    assert metrics["acceptance_rate"] == 0.0
+    assert observation.fields["written_count"] == 0
+    assert observation.fields["queued_count"] == 1
+    assert "queued=1" in observation.output
+    adapter.close()
+
+
+def test_memory_sensitive_candidate_is_filtered() -> None:
+    adapter = MemoryQualityAdapter()
+    observation = adapter.run(
+        platform_case(
+            "memory/sensitive-rejected",
+            **golden_input("sensitive-rejected"),
+        )
+    )
+    metrics = observation.fields["metrics"]
+    assert metrics["filtered_rate"] == 0.5
+    assert metrics["recall"] == 1.0
+    assert observation.fields["written"] == ["部署环境是首尔"]
+    assert "sk-abcdefghijklmnop" not in observation.output
+
+
+def test_memory_rejects_bad_input() -> None:
+    adapter = MemoryQualityAdapter()
+    with pytest.raises(ValueError, match="raw_model_output"):
+        adapter.run(platform_case("memory/a", expected=[]))
+    with pytest.raises(ValueError, match="expected"):
+        adapter.run(
+            platform_case("memory/b", raw_model_output="[]", expected="x")
+        )
+    with pytest.raises(ValueError, match="expected"):
+        adapter.run(
+            platform_case("memory/c", raw_model_output="[]", expected=[""])
         )
 
 

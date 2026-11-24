@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "suites": [
+    {
+      "name": "memory-quality",
+      "dataset": "memory-quality",
+      "dataset_version": 1,
+      "cases": {
+        "memory/preference-table": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 1.0,
+            "entered": 1.0,
+            "written": 1.0,
+            "queued": 0.0,
+            "expected": 1.0,
+            "matched": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "filtered_rate": 0.0,
+            "acceptance_rate": 1.0,
+            "queue_rate": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "memory/fact-project-code": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 1.0,
+            "entered": 1.0,
+            "written": 1.0,
+            "queued": 0.0,
+            "expected": 1.0,
+            "matched": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "filtered_rate": 0.0,
+            "acceptance_rate": 1.0,
+            "queue_rate": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "memory/duplicate-candidate": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 1.0,
+            "entered": 1.0,
+            "written": 1.0,
+            "queued": 0.0,
+            "expected": 1.0,
+            "matched": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "filtered_rate": 0.0,
+            "acceptance_rate": 1.0,
+            "queue_rate": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "memory/low-confidence": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 1.0,
+            "entered": 1.0,
+            "written": 0.0,
+            "queued": 1.0,
+            "expected": 1.0,
+            "matched": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "filtered_rate": 0.0,
+            "acceptance_rate": 0.0,
+            "queue_rate": 1.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "memory/sensitive-rejected": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 2.0,
+            "entered": 1.0,
+            "written": 1.0,
+            "queued": 0.0,
+            "expected": 1.0,
+            "matched": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "filtered_rate": 0.5,
+            "acceptance_rate": 1.0,
+            "queue_rate": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        },
+        "memory/chatter-noise": {
+          "ok": true,
+          "score": 1.0,
+          "tokens": 0,
+          "metrics": {
+            "cases": 1.0,
+            "produced": 1.0,
+            "entered": 1.0,
+            "written": 1.0,
+            "queued": 0.0,
+            "expected": 0.0,
+            "matched": 0.0,
+            "precision": 0.0,
+            "recall": 1.0,
+            "filtered_rate": 0.0,
+            "acceptance_rate": 1.0,
+            "queue_rate": 0.0
+          },
+          "events": [],
+          "tool_calls": []
+        }
+      }
+    }
+  ]
+}
