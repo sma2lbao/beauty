@@ -483,7 +483,7 @@ jobs:
 
       - name: Build python-service image (SERVICE=api-gateway)
         # 单镜像 ARG SERVICE 覆盖 9 服务，这里只验一条代表路径 + 构建缓存。
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/docker/python-service.Dockerfile
@@ -494,7 +494,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=py
 
       - name: Build web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/docker/web.Dockerfile
