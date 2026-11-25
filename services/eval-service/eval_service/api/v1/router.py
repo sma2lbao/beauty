@@ -1,10 +1,11 @@
-"""API v1 聚合路由:运行上报/索引/详情/用例分页 + 基线。"""
+"""API v1 聚合路由:运行上报/索引/详情/用例分页 + 对比 + 基线与数据集。"""
 
 from fastapi import APIRouter
 
-from eval_service.api.v1 import baselines, compare, runs
+from eval_service.api.v1 import baselines, compare, datasets, runs
 
 api_router = APIRouter()
 api_router.include_router(runs.router)
 api_router.include_router(compare.router)
 api_router.include_router(baselines.router)
+api_router.include_router(datasets.router)

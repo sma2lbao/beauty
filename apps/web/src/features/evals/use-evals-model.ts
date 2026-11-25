@@ -11,6 +11,8 @@ import { evalApi, findCase, flattenCases } from '@/lib/eval-api';
 import type { EvalCaseWithSuite, EvalCompareStatus } from '@/lib/eval-api';
 import { queryKeys } from '@/lib/query-keys';
 
+import { buildGateRows } from './gates';
+
 export type EvalCaseStatus = 'all' | 'passed' | 'failed';
 export type EvalCaseTab = 'result' | 'trajectory' | 'io' | 'raw';
 export type EvalCompareFilter = 'all' | EvalCompareStatus;
@@ -133,6 +135,73 @@ export function useEvalRunModel(runId: string) {
     selectCase,
     closeCase,
     selectTab,
+  };
+}
+
+/** 数据集只读目录:URL ?dataset= 是选中项唯一真源。 */
+export function useEvalDatasetsModel() {
+  const list = useQuery({
+    queryKey: queryKeys.evalDatasets,
+    queryFn: evalApi.datasets,
+    staleTime: 60_000,
+  });
+  const [params, setParams] = useSearchParams();
+
+  const items = list.data?.items ?? [];
+  const requested = params.get('dataset');
+  const known = items.some((item) => item.name === requested);
+  const selectedName = (known ? requested : items[0]?.name) ?? '';
+
+  const detail = useQuery({
+    queryKey: queryKeys.evalDataset(selectedName),
+    queryFn: () => evalApi.dataset(selectedName),
+    enabled: Boolean(selectedName),
+    staleTime: 60_000,
+  });
+
+  function selectDataset(name: string) {
+    const next = new URLSearchParams(params);
+    next.set('dataset', name);
+    setParams(next, { replace: true });
+  }
+
+  return {
+    list,
+    items,
+    selectedName,
+    detail,
+    selectDataset,
+    isLoading: list.isLoading,
+    error: list.error as Error | null,
+  };
+}
+
+/** 门禁治理:已批准基线 × 最新运行的数据集版本与用例数。 */
+export function useEvalGatesModel() {
+  const baselines = useQuery({
+    queryKey: queryKeys.evalBaselines,
+    queryFn: evalApi.baselines,
+    staleTime: 60_000,
+  });
+  const index = useQuery({
+    queryKey: queryKeys.evals,
+    queryFn: evalApi.index,
+    staleTime: 60_000,
+  });
+
+  const latest = index.data?.runs[0];
+  const rows = buildGateRows(baselines.data?.items ?? [], latest);
+
+  return {
+    baselines,
+    index,
+    latest,
+    rows,
+    isLoading: baselines.isLoading || index.isLoading,
+    error:
+      (baselines.error as Error | null) ??
+      (index.error as Error | null) ??
+      null,
   };
 }
 

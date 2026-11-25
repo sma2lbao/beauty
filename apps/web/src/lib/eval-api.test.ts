@@ -43,6 +43,25 @@ describe('evalApi', () => {
     );
   });
 
+  it('数据集与基线走 eval-service,数据集名按路径编码', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await evalApi.datasets();
+    await evalApi.dataset('agent core');
+    await evalApi.baselines();
+
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      '/api/eval/datasets',
+    );
+    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe(
+      '/api/eval/datasets/agent%20core',
+    );
+    expect((fetchMock.mock.calls[2] as unknown as [string])[0]).toBe(
+      '/api/eval/baselines',
+    );
+  });
+
   it('服务不可用时回退静态快照', async () => {
     const fetchMock = vi
       .fn()

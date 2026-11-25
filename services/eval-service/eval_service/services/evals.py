@@ -680,7 +680,7 @@ async def approve_baseline(
 
 async def list_baselines(session: AsyncSession) -> list[EvalBaselineRead]:
     records = await EvalBaselineRepository(session).list_all()
-    return [_baseline_to_read(record) for record in records]
+    return [baseline_to_read(record) for record in records]
 
 
 async def get_baseline_payload(session: AsyncSession, suite: str) -> dict[str, Any]:
@@ -698,7 +698,10 @@ async def get_baseline_payload(session: AsyncSession, suite: str) -> dict[str, A
     return payload if isinstance(payload, dict) else {}
 
 
-def _baseline_to_read(record: EvalBaseline) -> EvalBaselineRead:
+def baseline_to_read(record: EvalBaseline) -> EvalBaselineRead:
+    """基线元数据 + 用例统计；统计从 payload 现算，避免多一份会漂移的列。"""
+
+    case_count, passed = _baseline_counts(record.payload_json)
     return EvalBaselineRead(
         suite=record.suite,
         dataset_version=record.dataset_version,
@@ -706,4 +709,26 @@ def _baseline_to_read(record: EvalBaseline) -> EvalBaselineRead:
         git_sha=record.git_sha,
         approved_by=record.approved_by,
         approved_at=record.approved_at,
+        case_count=case_count,
+        passed=passed,
     )
+
+
+def _baseline_counts(payload_json: str) -> tuple[int, int]:
+    try:
+        payload = json.loads(payload_json)
+    except ValueError:  # pragma: no cover - 只有写坏的行才会触发
+        return 0, 0
+    suites = payload.get("suites") if isinstance(payload, dict) else None
+    if not isinstance(suites, list):
+        return 0, 0
+    cases: list[dict[str, Any]] = []
+    for suite in suites:
+        if not isinstance(suite, dict):
+            continue
+        raw = suite.get("cases")
+        if isinstance(raw, dict):
+            cases.extend(item for item in raw.values() if isinstance(item, dict))
+        elif isinstance(raw, list):
+            cases.extend(item for item in raw if isinstance(item, dict))
+    return len(cases), sum(1 for case in cases if bool(case.get("ok")))

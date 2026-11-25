@@ -18,3 +18,5 @@ class Settings(ServiceSettings):
     database_url: str = "postgresql+asyncpg://beauty:beauty@localhost:5432/beauty_eval"
     # CI 上报密钥;为空时 POST /v1/runs 直接 503（fail closed），不会静默开放写入口。
     internal_secret: str = ""
+    # 数据集目录;为空时从 cwd 向上查找 evals/datasets（本地/容器同一布局）。
+    datasets_root: str = ""

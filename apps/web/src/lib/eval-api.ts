@@ -98,6 +98,53 @@ export type EvalIndex = {
   runs: EvalRunMeta[];
 };
 
+export type EvalDatasetCase = {
+  id: string;
+  group: string;
+  tags: string[];
+  input: Record<string, unknown>;
+  graders: Record<string, unknown>[];
+  notes: string;
+};
+
+/** 数据集清单项;坏数据集也保留在清单里,valid=false + error 说明原因。 */
+export type EvalDatasetSummary = {
+  name: string;
+  version: number;
+  description: string;
+  owner: string;
+  adapter: string;
+  tags: string[];
+  case_count: number;
+  groups: string[];
+  valid: boolean;
+  error: string | null;
+};
+
+export type EvalDataset = EvalDatasetSummary & {
+  cases: EvalDatasetCase[];
+};
+
+export type EvalDatasetList = {
+  items: EvalDatasetSummary[];
+};
+
+/** 已批准基线;case_count/passed 由服务端按 payload 现算。 */
+export type EvalBaseline = {
+  suite: string;
+  dataset_version: number | null;
+  evaluator_version: string;
+  git_sha: string;
+  approved_by: string;
+  approved_at: string;
+  case_count: number;
+  passed: number;
+};
+
+export type EvalBaselineList = {
+  items: EvalBaseline[];
+};
+
 export type EvalCompareStatus =
   'regressed' | 'fixed' | 'added' | 'removed' | 'unchanged';
 
@@ -175,6 +222,17 @@ export const evalApi = {
   compare: async (base: string, candidate: string): Promise<EvalCompare> => {
     const params = new URLSearchParams({ base, candidate });
     return http.request<EvalCompare>('/api/eval/compare?' + params.toString());
+  },
+  datasets: async (): Promise<EvalDatasetList> => {
+    return http.request<EvalDatasetList>('/api/eval/datasets');
+  },
+  dataset: async (name: string): Promise<EvalDataset> => {
+    return http.request<EvalDataset>(
+      '/api/eval/datasets/' + encodeURIComponent(name),
+    );
+  },
+  baselines: async (): Promise<EvalBaselineList> => {
+    return http.request<EvalBaselineList>('/api/eval/baselines');
   },
 };
 

@@ -204,4 +204,9 @@ export const queryKeys = {
   /** 两次运行的用例级对比;键随 base/candidate 变化自然重查。 */
   evalCompare: (base: string, candidate: string) =>
     ['eval-compare', base, candidate] as const,
+  /** 数据集只读目录:["eval-datasets"] 清单 / ["eval-dataset", name] 详情。 */
+  evalDatasets: ['eval-datasets'] as const,
+  evalDataset: (name: string) => ['eval-dataset', name] as const,
+  /** 已批准基线清单(门禁页)。 */
+  evalBaselines: ['eval-baselines'] as const,
 } as const;

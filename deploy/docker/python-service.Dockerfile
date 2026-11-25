@@ -31,6 +31,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 COPY packages ./packages
 COPY services ./services
+# 评测数据集随镜像发布:eval-service 直接扫描 evals/datasets/*,不落数据库。
+COPY evals ./evals
 
 # 防御性清理:本地工作树里的服务 .env(可能含真实密钥)与 SQLite/产物目录
 # 不应进镜像。仓库根暂无 .dockerignore,CI 干净 checkout 没有这些文件;

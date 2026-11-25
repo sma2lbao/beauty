@@ -11,6 +11,8 @@
 - `GET /v1/runs/{id}/suites/{suite}/cases`：用例服务端分页（`status` 过滤）。
 - `GET /v1/compare?base=&candidate=`：两次运行的用例级对比，标记
   regressed/fixed/added/removed/unchanged 并给出通过率、tokens、耗时差值。
+- `GET /v1/datasets`、`GET /v1/datasets/{name}`：从 `evals/datasets/` 只读扫描数据集，
+  用 evalkit schema 校验；坏数据集保留在清单中并标 `valid=false`。
 - `GET /v1/baselines`、`POST /v1/baselines/{suite}`：已批准基线的读取与替换。
 
 ## 本地运行

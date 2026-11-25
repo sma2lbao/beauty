@@ -107,6 +107,40 @@ class EvalCasePageRead(BaseModel):
     offset: int
 
 
+class EvalDatasetCaseRead(BaseModel):
+    """数据集用例只读视图；input/graders 原样返回，供页面解释评分口径。"""
+
+    id: str
+    group: str = "default"
+    tags: list[str] = Field(default_factory=list)
+    input: dict[str, Any] = Field(default_factory=dict)
+    graders: list[dict[str, Any]] = Field(default_factory=list)
+    notes: str = ""
+
+
+class EvalDatasetSummaryRead(BaseModel):
+    """数据集清单项；坏数据集也保留在清单里，valid=false + error 说明原因。"""
+
+    name: str
+    version: int = 0
+    description: str = ""
+    owner: str = ""
+    adapter: str = ""
+    tags: list[str] = Field(default_factory=list)
+    case_count: int = 0
+    groups: list[str] = Field(default_factory=list)
+    valid: bool = True
+    error: str | None = None
+
+
+class EvalDatasetRead(EvalDatasetSummaryRead):
+    cases: list[EvalDatasetCaseRead] = Field(default_factory=list)
+
+
+class EvalDatasetListRead(BaseModel):
+    items: list[EvalDatasetSummaryRead] = Field(default_factory=list)
+
+
 class EvalCompareTotalsRead(BaseModel):
     """两次运行的用例级差异汇总;通过率/tokens 差值均按 candidate - base。"""
 
@@ -167,6 +201,8 @@ class EvalBaselineRead(BaseModel):
     git_sha: str = ""
     approved_by: str = ""
     approved_at: datetime
+    case_count: int = 0
+    passed: int = 0
 
 
 class EvalBaselineListRead(BaseModel):

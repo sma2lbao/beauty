@@ -34,6 +34,18 @@ export function EvalsPage() {
         actions={
           <div className="flex items-center gap-2">
             <Link
+              to="/evals/datasets"
+              className="rounded-md border border-ha-border px-2.5 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text"
+            >
+              数据集
+            </Link>
+            <Link
+              to="/evals/gates"
+              className="rounded-md border border-ha-border px-2.5 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text"
+            >
+              门禁
+            </Link>
+            <Link
               to="/evals/compare"
               className="rounded-md border border-ha-border px-2.5 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text"
             >

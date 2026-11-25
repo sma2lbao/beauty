@@ -241,9 +241,12 @@ def test_approved_baseline_is_used_and_listed(client: TestClient) -> None:
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["approved_by"] == "t-1"
+    assert approved.json()["case_count"] == 1
+    assert approved.json()["passed"] == 1
 
     listed = client.get("/v1/baselines", headers=AUTH).json()["items"]
     assert listed[0]["suite"] == "agent-core"
+    assert listed[0]["case_count"] == 1
     assert client.get("/v1/baselines/agent-core", headers=AUTH).json() == payload
 
     # 上报不带 baselines 时回落到已批准基线,失败用例仍能算出漂移。
@@ -419,6 +422,7 @@ def test_reads_allow_anonymous_when_auth_disabled(anon_client: TestClient) -> No
     assert index.json()["runs"][0]["id"] == run["id"]
     assert anon_client.get(f"/v1/runs/{run['id']}").status_code == 200
     assert anon_client.get("/v1/baselines").status_code == 200
+    assert anon_client.get("/v1/datasets").status_code == 200
 
     # 写入口(基线批准)仍要求账号,不能借"匿名只读"绕过。
     denied = anon_client.post(
@@ -426,3 +430,26 @@ def test_reads_allow_anonymous_when_auth_disabled(anon_client: TestClient) -> No
         json={"payload": {"version": 1}},
     )
     assert denied.status_code == 401
+
+
+def test_dataset_catalog_and_detail(client: TestClient) -> None:
+    """数据集来自仓库 evals/datasets;清单与详情都应可直接读。"""
+
+    items = client.get("/v1/datasets", headers=AUTH).json()["items"]
+    names = {item["name"] for item in items}
+    assert {"agent-core", "retrieval-quality"} <= names
+    agent_core = next(item for item in items if item["name"] == "agent-core")
+    assert agent_core["valid"] is True
+    assert agent_core["case_count"] >= 1
+    assert "chat-direct" in agent_core["groups"]
+
+    detail = client.get("/v1/datasets/agent-core", headers=AUTH)
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["case_count"] == len(body["cases"])
+    assert body["cases"][0]["graders"]
+    assert isinstance(body["cases"][0]["input"], dict)
+
+    missing = client.get("/v1/datasets/does-not-exist", headers=AUTH)
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "eval.dataset_not_found"

@@ -15,6 +15,7 @@ from eval_service.schemas.evals import (
 )
 from eval_service.services import (
     approve_baseline,
+    baseline_to_read,
     get_baseline_payload,
     list_baselines,
 )
@@ -62,11 +63,4 @@ async def approve_baseline_endpoint(
         approved_by=account_id,
     )
     await session.commit()
-    return EvalBaselineRead(
-        suite=record.suite,
-        dataset_version=record.dataset_version,
-        evaluator_version=record.evaluator_version,
-        git_sha=record.git_sha,
-        approved_by=record.approved_by,
-        approved_at=record.approved_at,
-    )
+    return baseline_to_read(record)
