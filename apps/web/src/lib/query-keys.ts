@@ -201,4 +201,7 @@ export const queryKeys = {
   /** 评测域:['evals'] 运行索引 / ['eval-run', id] 运行详情。 */
   evals: ['evals'] as const,
   evalRun: (runId: string | null | undefined) => ['eval-run', runId] as const,
+  /** 两次运行的用例级对比;键随 base/candidate 变化自然重查。 */
+  evalCompare: (base: string, candidate: string) =>
+    ['eval-compare', base, candidate] as const,
 } as const;

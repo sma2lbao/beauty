@@ -32,6 +32,17 @@ describe('evalApi', () => {
     );
   });
 
+  it('对比请求编码 base 与 candidate', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await evalApi.compare('base-1', 'cand/2');
+
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      '/api/eval/compare?base=base-1&candidate=cand%2F2',
+    );
+  });
+
   it('服务不可用时回退静态快照', async () => {
     const fetchMock = vi
       .fn()

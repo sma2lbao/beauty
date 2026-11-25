@@ -9,6 +9,8 @@
 - `GET /v1/runs/{id}`：完整报告；服务会把基线漂移回填到 `drifts`/
   `suite.drift_count`/`case.baseline_diff`。
 - `GET /v1/runs/{id}/suites/{suite}/cases`：用例服务端分页（`status` 过滤）。
+- `GET /v1/compare?base=&candidate=`：两次运行的用例级对比，标记
+  regressed/fixed/added/removed/unchanged 并给出通过率、tokens、耗时差值。
 - `GET /v1/baselines`、`POST /v1/baselines/{suite}`：已批准基线的读取与替换。
 
 ## 本地运行

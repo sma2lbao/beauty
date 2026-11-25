@@ -34,6 +34,11 @@ const EvalRunPage = lazy(() =>
     default: module.EvalRunPage,
   })),
 );
+const EvalComparePage = lazy(() =>
+  import('@/pages/eval-compare').then((module) => ({
+    default: module.EvalComparePage,
+  })),
+);
 const McpPage = lazy(() =>
   import('@/pages/mcp').then((module) => ({ default: module.McpPage })),
 );
@@ -110,6 +115,7 @@ export function App() {
               <Route path="runs" element={<RunsPage />} />
               <Route path="changes" element={<ChangesPage />} />
               <Route path="evals" element={<EvalsPage />} />
+              <Route path="evals/compare" element={<EvalComparePage />} />
               <Route path="evals/runs/:runId" element={<EvalRunPage />} />
               {/* MCP 入口已并入「连接器」页;这条路由保留给旧书签与 OAuth 兜底回跳 */}
               <Route path="mcp" element={<McpPage />} />

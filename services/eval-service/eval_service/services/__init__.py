@@ -2,6 +2,7 @@
 
 from eval_service.services.evals import (
     approve_baseline,
+    compare_runs,
     get_baseline_payload,
     ingest_run,
     list_baselines,
@@ -13,6 +14,7 @@ from eval_service.services.evals import (
 
 __all__ = [
     "approve_baseline",
+    "compare_runs",
     "get_baseline_payload",
     "ingest_run",
     "list_baselines",

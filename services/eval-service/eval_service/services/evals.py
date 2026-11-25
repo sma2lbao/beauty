@@ -29,6 +29,10 @@ from eval_service.schemas.evals import (
     EvalBaselineRead,
     EvalCasePageRead,
     EvalCaseRead,
+    EvalCompareCaseRead,
+    EvalCompareRead,
+    EvalCompareSuiteRead,
+    EvalCompareTotalsRead,
     EvalIndexRead,
     EvalRunRead,
     EvalRunUpload,
@@ -344,6 +348,225 @@ def run_to_read(run: EvalRun) -> EvalRunRead:
         suites=suites,
         failed_cases=json_list(run.failed_cases_json),
         dataset_versions=json_object(run.dataset_versions_json),
+    )
+
+
+def _report_of(run: EvalRun) -> dict[str, Any]:
+    try:
+        report = json.loads(run.report_json)
+    except ValueError:  # pragma: no cover - 只有写坏的行才会触发
+        return {}
+    return report if isinstance(report, dict) else {}
+
+
+def _suite_map(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = report.get("suites")
+    if not isinstance(raw, list):
+        return {}
+    return {
+        str(item.get("name")): item
+        for item in raw
+        if isinstance(item, dict) and item.get("name")
+    }
+
+
+def _case_map(suite: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if suite is None:
+        return {}
+    raw = suite.get("cases")
+    if not isinstance(raw, list):
+        return {}
+    return {
+        str(item.get("id")): item
+        for item in raw
+        if isinstance(item, dict) and item.get("id")
+    }
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _case_failures(case: dict[str, Any] | None) -> list[str]:
+    if case is None:
+        return []
+    failures = _string_list(case.get("failures"))
+    if failures:
+        return failures
+    error = case.get("error")
+    return [f"执行错误:{error}"] if error else []
+
+
+def _case_status(base: dict[str, Any] | None, candidate: dict[str, Any] | None) -> str:
+    if base is None:
+        return "added"
+    if candidate is None:
+        return "removed"
+    base_ok = bool(base.get("ok"))
+    candidate_ok = bool(candidate.get("ok"))
+    if base_ok and not candidate_ok:
+        return "regressed"
+    if not base_ok and candidate_ok:
+        return "fixed"
+    return "unchanged"
+
+
+async def compare_runs(
+    session: AsyncSession, base_id: str, candidate_id: str
+) -> EvalCompareRead:
+    """按用例对比两次运行:回归/修复/新增/移除 + 通过率与成本差值。
+
+    差异在读取时从报告快照计算，不落表；同一对运行重复对比结果稳定。
+    用例以 candidate 的顺序为主，仅存在于 base 的用例追加在套件末尾。
+    """
+
+    runs = EvalRunRepository(session)
+    base_run = await runs.require(base_id)
+    candidate_run = await runs.require(candidate_id)
+    base_report = _report_of(base_run)
+    candidate_report = _report_of(candidate_run)
+    base_suites = _suite_map(base_report)
+    candidate_suites = _suite_map(candidate_report)
+
+    suite_order = list(candidate_suites)
+    suite_order.extend(name for name in base_suites if name not in candidate_suites)
+
+    counts = {
+        "regressed": 0,
+        "fixed": 0,
+        "added": 0,
+        "removed": 0,
+        "unchanged": 0,
+    }
+    suite_rows: list[EvalCompareSuiteRead] = []
+    case_rows: list[EvalCompareCaseRead] = []
+
+    for name in suite_order:
+        base_suite = base_suites.get(name)
+        candidate_suite = candidate_suites.get(name)
+        base_cases = _case_map(base_suite)
+        candidate_cases = _case_map(candidate_suite)
+        case_order = list(candidate_cases)
+        case_order.extend(
+            case_id for case_id in base_cases if case_id not in candidate_cases
+        )
+
+        suite_counts = dict.fromkeys(counts, 0)
+        for case_id in case_order:
+            base_case = base_cases.get(case_id)
+            candidate_case = candidate_cases.get(case_id)
+            status = _case_status(base_case, candidate_case)
+            counts[status] += 1
+            suite_counts[status] += 1
+
+            base_score = (
+                _number(base_case.get("score")) if base_case is not None else None
+            )
+            candidate_score = (
+                _number(candidate_case.get("score"))
+                if candidate_case is not None
+                else None
+            )
+            score_delta = (
+                round(candidate_score - base_score, 4)
+                if base_score is not None and candidate_score is not None
+                else 0.0
+            )
+            tokens_delta = (
+                _integer(candidate_case.get("tokens"))
+                - _integer(base_case.get("tokens"))
+                if base_case is not None and candidate_case is not None
+                else 0
+            )
+            duration_delta = (
+                round(
+                    _number(candidate_case.get("duration_ms"))
+                    - _number(base_case.get("duration_ms")),
+                    2,
+                )
+                if base_case is not None and candidate_case is not None
+                else 0.0
+            )
+            current = candidate_case if candidate_case is not None else base_case
+            case_rows.append(
+                EvalCompareCaseRead(
+                    suite=name,
+                    case_id=case_id,
+                    status=status,
+                    base_ok=bool(base_case.get("ok")) if base_case else None,
+                    candidate_ok=(
+                        bool(candidate_case.get("ok")) if candidate_case else None
+                    ),
+                    base_score=base_score,
+                    candidate_score=candidate_score,
+                    score_delta=score_delta,
+                    tokens_delta=tokens_delta,
+                    duration_delta_ms=duration_delta,
+                    base_error=(
+                        _text(base_case.get("error")) or None
+                        if base_case is not None
+                        else None
+                    ),
+                    candidate_error=(
+                        _text(candidate_case.get("error")) or None
+                        if candidate_case is not None
+                        else None
+                    ),
+                    failures=_case_failures(current),
+                    tags=_string_list((current or {}).get("tags")),
+                )
+            )
+
+        suite_rows.append(
+            EvalCompareSuiteRead(
+                name=name,
+                base_totals=(
+                    EvalTotalsRead.model_validate(_totals(list(base_cases.values())))
+                    if base_suite is not None
+                    else None
+                ),
+                candidate_totals=(
+                    EvalTotalsRead.model_validate(
+                        _totals(list(candidate_cases.values()))
+                    )
+                    if candidate_suite is not None
+                    else None
+                ),
+                regressed=suite_counts["regressed"],
+                fixed=suite_counts["fixed"],
+                added=suite_counts["added"],
+                removed=suite_counts["removed"],
+                unchanged=suite_counts["unchanged"],
+            )
+        )
+
+    base_totals = EvalTotalsRead.model_validate(json_object(base_run.totals_json))
+    candidate_totals = EvalTotalsRead.model_validate(
+        json_object(candidate_run.totals_json)
+    )
+    return EvalCompareRead(
+        base=run_to_read(base_run),
+        candidate=run_to_read(candidate_run),
+        totals=EvalCompareTotalsRead(
+            regressed=counts["regressed"],
+            fixed=counts["fixed"],
+            added=counts["added"],
+            removed=counts["removed"],
+            unchanged=counts["unchanged"],
+            base_pass_rate=base_totals.pass_rate,
+            candidate_pass_rate=candidate_totals.pass_rate,
+            pass_rate_delta=round(
+                candidate_totals.pass_rate - base_totals.pass_rate, 4
+            ),
+            tokens_delta=candidate_totals.tokens - base_totals.tokens,
+            duration_delta_ms=round(
+                candidate_totals.duration_ms - base_totals.duration_ms, 2
+            ),
+        ),
+        suites=suite_rows,
+        cases=case_rows,
     )
 
 

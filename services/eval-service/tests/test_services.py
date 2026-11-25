@@ -12,6 +12,7 @@ from database.session import create_session_factory
 from eval_service.schemas.evals import EvalRunUpload
 from eval_service.services.evals import (
     approve_baseline,
+    compare_runs,
     get_baseline_payload,
     ingest_run,
     list_baselines,
@@ -148,6 +149,63 @@ async def test_load_index_and_case_page(session: Any) -> None:
         await load_case_page(session, str(first.id), "missing")
     with pytest.raises(AppError):
         await load_report(session, "missing-run")
+
+
+async def test_compare_runs_directly_and_against_itself(session: Any) -> None:
+    base = await ingest_run(
+        session,
+        EvalRunUpload(
+            external_id="cmp-direct-base",
+            report=report(
+                suite(
+                    "agent-core",
+                    [
+                        case("chat/a", tags=["offline"]),
+                        case("chat/b", ok=False, error="旧错误"),
+                    ],
+                ),
+                suite("retrieval", [case("q01")]),
+            ),
+        ),
+    )
+    candidate = await ingest_run(
+        session,
+        EvalRunUpload(
+            external_id="cmp-direct-candidate",
+            report=report(
+                suite(
+                    "agent-core",
+                    [
+                        case(
+                            "chat/a",
+                            ok=False,
+                            score=0.0,
+                            error="新错误",
+                            failures=["缺少关键词"],
+                        ),
+                        case("chat/c", tokens=99),
+                    ],
+                )
+            ),
+        ),
+    )
+    await session.commit()
+
+    result = await compare_runs(session, str(base.id), str(candidate.id))
+    assert result.totals.regressed == 1
+    assert result.totals.added == 1
+    assert result.totals.removed == 2
+    regressed = next(item for item in result.cases if item.case_id == "chat/a")
+    assert regressed.status == "regressed"
+    assert regressed.failures == ["缺少关键词"]
+    assert regressed.candidate_error == "新错误"
+
+    same = await compare_runs(session, str(base.id), str(base.id))
+    assert same.totals.unchanged == same.base.totals.cases
+    assert {item.status for item in same.cases} == {"unchanged"}
+
+    with pytest.raises(AppError):
+        await compare_runs(session, "missing", str(base.id))
 
 
 async def test_baseline_approval_roundtrip(session: Any) -> None:

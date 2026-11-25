@@ -8,11 +8,12 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 
 import { evalApi, findCase, flattenCases } from '@/lib/eval-api';
-import type { EvalCaseWithSuite } from '@/lib/eval-api';
+import type { EvalCaseWithSuite, EvalCompareStatus } from '@/lib/eval-api';
 import { queryKeys } from '@/lib/query-keys';
 
 export type EvalCaseStatus = 'all' | 'passed' | 'failed';
 export type EvalCaseTab = 'result' | 'trajectory' | 'io' | 'raw';
+export type EvalCompareFilter = 'all' | EvalCompareStatus;
 
 export function useEvalsModel() {
   const index = useQuery({
@@ -132,5 +133,77 @@ export function useEvalRunModel(runId: string) {
     selectCase,
     closeCase,
     selectTab,
+  };
+}
+
+function parseCompareStatus(value: string | null): EvalCompareFilter {
+  if (
+    value === 'regressed' ||
+    value === 'fixed' ||
+    value === 'added' ||
+    value === 'removed' ||
+    value === 'unchanged'
+  ) {
+    return value;
+  }
+  return 'all';
+}
+
+/**
+ * 跨运行对比模型:默认 candidate=最新、base=次新;单次运行时两边相同。
+ * URL 是真源(?base=&candidate=&status=),深链与前进/后退都可复现。
+ */
+export function useEvalCompareModel() {
+  const index = useQuery({
+    queryKey: queryKeys.evals,
+    queryFn: evalApi.index,
+    staleTime: 60_000,
+  });
+  const [params, setParams] = useSearchParams();
+
+  const runs = index.data?.runs ?? [];
+  const latest = runs[0];
+  const previous = runs[1];
+  const candidateId = params.get('candidate') ?? latest?.id ?? '';
+  const baseId = params.get('base') ?? previous?.id ?? latest?.id ?? '';
+  const status = parseCompareStatus(params.get('status'));
+
+  const compare = useQuery({
+    queryKey: queryKeys.evalCompare(baseId, candidateId),
+    queryFn: () => evalApi.compare(baseId, candidateId),
+    enabled: Boolean(baseId && candidateId),
+    staleTime: 60_000,
+  });
+
+  const cases = (compare.data?.cases ?? []).filter(
+    (item) => status === 'all' || item.status === status,
+  );
+
+  function updateParams(patch: Record<string, string | null>) {
+    const next = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === '') {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+    }
+    setParams(next, { replace: true });
+  }
+
+  return {
+    index,
+    runs,
+    latest,
+    previous,
+    baseId,
+    candidateId,
+    status,
+    compare,
+    cases,
+    selectBase: (id: string) => updateParams({ base: id }),
+    selectCandidate: (id: string) => updateParams({ candidate: id }),
+    selectStatus: (nextStatus: EvalCompareFilter) =>
+      updateParams({ status: nextStatus === 'all' ? null : nextStatus }),
   };
 }

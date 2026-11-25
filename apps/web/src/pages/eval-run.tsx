@@ -49,13 +49,21 @@ export function EvalRunPage() {
           title="运行详情"
           subtitle={runId || '未知运行'}
           actions={
-            <Link
-              to="/evals"
-              className="inline-flex items-center gap-1 text-[12px] text-ha-muted transition-colors hover:text-ha-text"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              返回评测
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link
+                to="/evals/compare"
+                className="rounded-md border border-ha-border px-2.5 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text"
+              >
+                对比运行
+              </Link>
+              <Link
+                to="/evals"
+                className="inline-flex items-center gap-1 text-[12px] text-ha-muted transition-colors hover:text-ha-text"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                返回评测
+              </Link>
+            </div>
           }
         />
 

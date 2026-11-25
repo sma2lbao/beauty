@@ -98,6 +98,59 @@ export type EvalIndex = {
   runs: EvalRunMeta[];
 };
 
+export type EvalCompareStatus =
+  'regressed' | 'fixed' | 'added' | 'removed' | 'unchanged';
+
+/** 两次运行的用例级差异汇总;差值均为 candidate - base。 */
+export type EvalCompareTotals = {
+  regressed: number;
+  fixed: number;
+  added: number;
+  removed: number;
+  unchanged: number;
+  base_pass_rate: number;
+  candidate_pass_rate: number;
+  pass_rate_delta: number;
+  tokens_delta: number;
+  duration_delta_ms: number;
+};
+
+export type EvalCompareSuite = {
+  name: string;
+  base_totals: EvalTotals | null;
+  candidate_totals: EvalTotals | null;
+  regressed: number;
+  fixed: number;
+  added: number;
+  removed: number;
+  unchanged: number;
+};
+
+export type EvalCompareCase = {
+  suite: string;
+  case_id: string;
+  status: EvalCompareStatus;
+  base_ok: boolean | null;
+  candidate_ok: boolean | null;
+  base_score: number | null;
+  candidate_score: number | null;
+  score_delta: number;
+  tokens_delta: number;
+  duration_delta_ms: number;
+  base_error: string | null;
+  candidate_error: string | null;
+  failures: string[];
+  tags: string[];
+};
+
+export type EvalCompare = {
+  base: EvalRunMeta;
+  candidate: EvalRunMeta;
+  totals: EvalCompareTotals;
+  suites: EvalCompareSuite[];
+  cases: EvalCompareCase[];
+};
+
 const http = createHttpClient('');
 
 export const evalApi = {
@@ -118,6 +171,10 @@ export const evalApi = {
         '/eval/runs/' + encodeURIComponent(runId) + '.json',
       );
     }
+  },
+  compare: async (base: string, candidate: string): Promise<EvalCompare> => {
+    const params = new URLSearchParams({ base, candidate });
+    return http.request<EvalCompare>('/api/eval/compare?' + params.toString());
   },
 };
 

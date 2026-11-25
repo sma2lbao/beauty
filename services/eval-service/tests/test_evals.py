@@ -331,6 +331,78 @@ def test_run_filters_and_not_found(client: TestClient) -> None:
     assert missing.json()["code"] == "eval.run_not_found"
 
 
+def test_compare_runs_marks_regressions_and_fixes(client: TestClient) -> None:
+    base = upload(
+        client,
+        {
+            "external_id": "cmp-base",
+            "report": report(
+                suite(
+                    "agent-core",
+                    [case("chat/a"), case("chat/b", ok=False), case("chat/c")],
+                ),
+                suite("retrieval", [case("q01")]),
+            ),
+        },
+    ).json()
+    candidate = upload(
+        client,
+        {
+            "external_id": "cmp-candidate",
+            "report": report(
+                suite(
+                    "agent-core",
+                    [
+                        case("chat/a", ok=False, score=0.0),
+                        case("chat/b", tokens=30),
+                        case("chat/d"),
+                    ],
+                )
+            ),
+        },
+    ).json()
+
+    response = client.get(
+        "/v1/compare",
+        params={"base": base["id"], "candidate": candidate["id"]},
+        headers=AUTH,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["base"]["id"] == base["id"]
+    assert body["candidate"]["id"] == candidate["id"]
+    assert body["totals"] == {
+        "regressed": 1,
+        "fixed": 1,
+        "added": 1,
+        "removed": 2,
+        "unchanged": 0,
+        "base_pass_rate": 0.75,
+        "candidate_pass_rate": 0.6667,
+        "pass_rate_delta": -0.0833,
+        "tokens_delta": 10,
+        "duration_delta_ms": -5.0,
+    }
+    assert [item["name"] for item in body["suites"]] == ["agent-core", "retrieval"]
+    assert body["suites"][1]["candidate_totals"] is None
+    statuses = {
+        (item["suite"], item["case_id"]): item["status"] for item in body["cases"]
+    }
+    assert statuses[("agent-core", "chat/a")] == "regressed"
+    assert statuses[("agent-core", "chat/b")] == "fixed"
+    assert statuses[("agent-core", "chat/c")] == "removed"
+    assert statuses[("agent-core", "chat/d")] == "added"
+    assert statuses[("retrieval", "q01")] == "removed"
+
+    missing = client.get(
+        "/v1/compare",
+        params={"base": "nope", "candidate": candidate["id"]},
+        headers=AUTH,
+    )
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "eval.run_not_found"
+
+
 def test_reads_allow_anonymous_when_auth_disabled(anon_client: TestClient) -> None:
     """AUTH_ENABLED=false 时只读端点不要求账号头(否则页面只能回退静态快照)。"""
 

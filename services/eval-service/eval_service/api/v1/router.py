@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter
 
-from eval_service.api.v1 import baselines, runs
+from eval_service.api.v1 import baselines, compare, runs
 
 api_router = APIRouter()
 api_router.include_router(runs.router)
+api_router.include_router(compare.router)
 api_router.include_router(baselines.router)

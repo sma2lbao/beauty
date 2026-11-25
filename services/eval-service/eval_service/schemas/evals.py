@@ -107,6 +107,59 @@ class EvalCasePageRead(BaseModel):
     offset: int
 
 
+class EvalCompareTotalsRead(BaseModel):
+    """两次运行的用例级差异汇总;通过率/tokens 差值均按 candidate - base。"""
+
+    regressed: int = 0
+    fixed: int = 0
+    added: int = 0
+    removed: int = 0
+    unchanged: int = 0
+    base_pass_rate: float = 0.0
+    candidate_pass_rate: float = 0.0
+    pass_rate_delta: float = 0.0
+    tokens_delta: int = 0
+    duration_delta_ms: float = 0.0
+
+
+class EvalCompareSuiteRead(BaseModel):
+    name: str
+    base_totals: EvalTotalsRead | None = None
+    candidate_totals: EvalTotalsRead | None = None
+    regressed: int = 0
+    fixed: int = 0
+    added: int = 0
+    removed: int = 0
+    unchanged: int = 0
+
+
+class EvalCompareCaseRead(BaseModel):
+    """单条用例差异;status=regressed/fixed/added/removed/unchanged。"""
+
+    suite: str
+    case_id: str
+    status: str
+    base_ok: bool | None = None
+    candidate_ok: bool | None = None
+    base_score: float | None = None
+    candidate_score: float | None = None
+    score_delta: float = 0.0
+    tokens_delta: int = 0
+    duration_delta_ms: float = 0.0
+    base_error: str | None = None
+    candidate_error: str | None = None
+    failures: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class EvalCompareRead(BaseModel):
+    base: EvalRunRead
+    candidate: EvalRunRead
+    totals: EvalCompareTotalsRead
+    suites: list[EvalCompareSuiteRead] = Field(default_factory=list)
+    cases: list[EvalCompareCaseRead] = Field(default_factory=list)
+
+
 class EvalBaselineRead(BaseModel):
     suite: str
     dataset_version: int | None = None
