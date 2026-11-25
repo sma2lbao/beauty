@@ -325,6 +325,8 @@ npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm r
 默认库是本机 compose Postgres(每服务一个独立库:`beauty_account`/`beauty_agent`/`beauty_connector`/`beauty_knowledge`/`beauty_workspace`/`beauty_tool`/`beauty_eval`,见 `deploy/postgres/initdb/01-create-databases.sql`):
 
 - 连接不上:先起库 `docker compose -f deploy/docker-compose.yml up -d postgres`,再重试;
+- 库不存在(如旧数据卷没有 `beauty_eval`):自动用维护库 `postgres` 建库。
+  initdb 脚本只在空数据卷首次初始化时执行,已有卷不会补建新库;
 - 空库/落后 revision:alembic upgrade head 补齐,已最新则无操作。
 
 把 `.env` 里 `<PREFIX>__DATABASE_URL` 显式改成 `sqlite+aiosqlite:///./<name>.db` 时(离线/无 Docker)走 SQLite 路径:

@@ -9,7 +9,8 @@
 deploy/postgres/initdb/01-create-databases.sql);也支持显式用 SQLite 覆盖
 (测试/离线场景),按库类型走不同策略:
 
-- Postgres(默认)→ 检查连接后 alembic upgrade head;连不上时提示先起 compose;
+- Postgres(默认)→ 检查连接,目标库不存在时自动创建(initdb 只跑首次),
+  再 alembic upgrade head;连不上时提示先起 compose;
 - SQLite 空库/库不存在 → alembic upgrade head(直接建到 head);
 - SQLite 已登记 alembic_version → alembic upgrade head(落后补齐,已最新则跳过);
 - SQLite 未登记(create_all 建的库)或 revision 无法识别 → 先在临时副本上
@@ -25,6 +26,7 @@ Postgres URL;SQLite 相对路径按服务目录解析(与服务运行时 cwd 一
 
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 import sqlite3
@@ -33,7 +35,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -136,8 +138,56 @@ def postgres_up(host: str, port: int) -> bool:
         return False
 
 
+def postgres_database(url: str) -> str | None:
+    """取 Postgres URL 里的目标库名;解析失败返回 None。"""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    name = parts.path.lstrip("/")
+    return name or None
+
+
+def asyncpg_dsn(url: str) -> str:
+    """把 SQLAlchemy 的 postgresql+asyncpg URL 换成 asyncpg 可直连的 DSN。"""
+    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+
+async def _create_postgres_database(url: str, dbname: str) -> bool:
+    """目标库不存在时用维护库 postgres 建库;返回是否真的新建。"""
+    try:
+        import asyncpg
+        from asyncpg.exceptions import InvalidCatalogNameError
+    except ImportError as exc:  # pragma: no cover - 共享 venv 必有 asyncpg
+        raise RuntimeError("共享 venv 缺少 asyncpg,无法检查/创建 Postgres 库") from exc
+
+    dsn = asyncpg_dsn(url)
+    try:
+        conn = await asyncpg.connect(dsn)
+    except InvalidCatalogNameError:
+        parts = urlsplit(dsn)
+        maintenance = urlunsplit((parts.scheme, parts.netloc, "/postgres", "", ""))
+        conn = await asyncpg.connect(maintenance)
+        try:
+            quoted = '"' + dbname.replace('"', '""') + '"'
+            await conn.execute(f"CREATE DATABASE {quoted}")
+        finally:
+            await conn.close()
+        return True
+    await conn.close()
+    return False
+
+
+def ensure_postgres_database(url: str) -> bool:
+    """Postgres 库存在则无操作,不存在则创建(initdb 只跑一次,旧卷没有新库)。"""
+    dbname = postgres_database(url)
+    if not dbname:
+        raise RuntimeError(f"无法从 URL 解析库名:{url}")
+    return asyncio.run(_create_postgres_database(url, dbname))
+
+
 def migrate_postgres(name: str, prefix: str, url: str, service_dir: Path) -> bool:
-    """Postgres 库:alembic upgrade head(落后补齐,已最新则无操作)。"""
+    """Postgres 库:先确保库存在,再 alembic upgrade head(落后补齐)。"""
     target = postgres_target(url)
     if target is None:
         return fail(name, f"无法解析 Postgres URL:{url}")
@@ -148,6 +198,12 @@ def migrate_postgres(name: str, prefix: str, url: str, service_dir: Path) -> boo
             f"连不上本地 Postgres({host}:{port});先起库:"
             "docker compose -f deploy/docker-compose.yml up -d postgres",
         )
+    try:
+        created = ensure_postgres_database(url)
+    except Exception as exc:  # noqa: BLE001 - 连接/权限错误统一转成可行动提示
+        return fail(name, f"检查/创建 Postgres 库失败:{exc}")
+    if created:
+        log(f"  🆕 {name}:已创建 Postgres 库 {postgres_database(url)}")
     head = head_revision(service_dir, prefix)
     proc = upgrade_head(service_dir, prefix)
     if proc.returncode != 0:
