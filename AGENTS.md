@@ -22,6 +22,7 @@
 | `services/account-service`    | `account-service`       | Python 服务       | FastAPI + uvicorn(:8001):账号/配额/usage/API Key + 会话/设备(自建认证:注册/邮箱密码登录/旋转式刷新令牌/内部签发 + OIDC 发现/JWKS,签名密钥可经 `SIGNING_KEY_PATH` 持久化,见其 README)                                                               |
 | `services/workspace-service`  | `workspace-service`     | Python 服务       | FastAPI + uvicorn(:8005):工作区/交付物元数据/对象存储(沙箱生命周期阶段 B)                                                                                                                                                                          |
 | `services/tool-service`       | `tool-service`          | Python 服务       | FastAPI + uvicorn(:8008):内置工具服务(catalog/执行/审计/ask_question;沙箱经 workspace-service 创建);设计见 `docs/design/tool-service.md`                                                                                                           |
+| `services/eval-service`       | `eval-service`          | Python 服务       | FastAPI + uvicorn(:8009):评测运行索引/用例分页/基线批准;报告大字段先落 TEXT,CI 用内部密钥上报,读取在鉴权开启时校验账号 JWT、关闭时匿名只读                                                                                                                                    |
 | `services/api-gateway`        | `api-gateway`           | Python 服务       | FastAPI + uvicorn(:8007):同源 `/api` 门面;M0-05/06 承载 Cookie 会话、代理、限流、下载、stream token                                                                                                                                                |
 | `tools/eslint-config`         | `@beauty/eslint-config` | 共享工具包        | ESLint 10 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                                                                                                                                                                                 |
 
@@ -39,11 +40,11 @@ npx nx run-many -t lint     # 全仓库 lint(JS/TS 用 ESLint,Python 用 ruff)
 npx nx run-many -t build    # 构建所有可构建项目
 npx nx graph                # 打开项目依赖关系图
 
-npm run dev                 # 本地一键启动(七服务 + API 网关 + web;详见 docs/local-dev.md)
+npm run dev                 # 本地一键启动(八个业务服务 + API 网关 + web;详见 docs/local-dev.md)
 npm run dev:status          # 本地健康检查
 npm run dev:migrate         # 本地数据库(默认 compose Postgres)迁移到 alembic head(dev 启动前自动执行)
 npm run dev:seed            # 写入演示数据
-npm run dev:reset           # 重置本地 Postgres 库(6 个)与 SQLite/产物
+npm run dev:reset           # 重置本地 Postgres 库(7 个)与 SQLite/产物
 ```
 
 ### TypeScript / React
@@ -78,7 +79,7 @@ bash scripts/check-docs.sh                  # docs prettier + 相对链接/锚�
 node scripts/check-doc-drift.cjs            # 单独跑文档漂移门禁(被 check-docs.sh 调用)
 bash scripts/check-workspace.sh             # 未跟踪产物/归档注记/索引覆盖/labs 围栏四查
 bash scripts/check-labs.sh                  # labs 案例围栏独立校验（忽略/无跟踪/Nx/锁文件/workspaces）
-bash scripts/check-versions.sh              # 20 处版本字段 + CHANGELOG + release 配置一致性
+bash scripts/check-versions.sh              # 21 处版本字段 + CHANGELOG + release 配置一致性
 bash scripts/golden-run/golden-run.sh       # 黄金 run 冒烟(进程内 ASGI,零网络,9 阶段)
 node scripts/check-audit-allowlist.cjs      # 安全豁免到期校验(allowlist 必须带 owner+expires)
 npm run docs:check                          # = bash scripts/check-docs.sh
@@ -86,11 +87,11 @@ docker compose -f deploy/docker-compose.yml config -q   # 部署编排静态校�
 npx nx release --dry-run                    # 发布流程预演(不落改动;实际发版由维护者执行)
 ```
 
-覆盖率阈值:Python 12 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / evalkit 85 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / tool-service 82 / api-gateway 81);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
+覆盖率阈值:Python 13 个项目在各自 `pyproject.toml` 的 addopts 里带 `--cov-fail-under`(common 84 / database 88 / events 96 / evalkit 85 / agent-orchestrator 82 / llm-gateway 95 / connector 91 / knowledge 90 / account 77 / workspace 81 / tool-service 82 / api-gateway 81 / eval-service 80);TS 5 个包的 v8 thresholds 单源在根 `vitest.config.mts` 的 `export const thresholds`。改门禁数字时两处一起改。
 
-CI(`.github/workflows/ci.yml`)共 10 job:setup / docs-check / security-audit / affected-js / python-lint×12 / python-test×12 / lock-check / alembic-check×6(真 Postgres)/ docker-build / e2e(golden-run R-33 端到端冒烟 + eval 行为回归 + 平台评测)。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
+CI(`.github/workflows/ci.yml`)共 10 job:setup / docs-check / security-audit / affected-js / python-lint×13 / python-test×13 / lock-check / alembic-check×7(真 Postgres)/ docker-build / e2e(golden-run R-33 端到端冒烟 + eval 行为回归 + 平台评测 + 评测上报)。改完 workflow 必须 `js-yaml` 解析 + 校验 `${{` 与 `}}` 成对。
 
-### Python(common / database / events / evalkit / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / tool-service / api-gateway)
+### Python(common / database / events / evalkit / agent-orchestrator / llm-gateway / connector-service / knowledge-service / account-service / workspace-service / tool-service / eval-service / api-gateway)
 
 ```sh
 npx nx run common:sync  # uv sync:同步仓库根共享 .venv(依赖变更后必跑)
@@ -105,16 +106,17 @@ npx nx run knowledge-service:serve   # uvicorn :8006(知识库)
 npx nx run account-service:serve     # uvicorn :8001(账号/会话)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 npx nx run tool-service:serve        # uvicorn :8008(内置工具服务:工具目录/执行/审计)
+npx nx run eval-service:serve        # uvicorn :8009(评测服务:运行索引/用例分页/基线批准)
 npx nx run api-gateway:serve         # uvicorn :8007(FastAPI 网关,同源 /api)
 npx nx run evalkit:eval              # 统一评测平台:跑全部套件并与基线比对
 npx nx run evalkit:eval-baseline     # 人工更新 evals/baselines/*.json
 ```
 
-`common`/`database`/`events`/`evalkit` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service`/`api-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB(含对话内写操作确认链路);`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试全 MockTransport、零网络(授权/刷新/执行/巡检/outbox/账号应用凭证);`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录;`tool-service` 测试对 workspace-service 沙箱与知识服务全打桩(FakeSandboxClient/FakeToolClient),零网络;MCP 预设与工具 annotations 风险分级由 `agent-orchestrator` 测试覆盖(HTTP 全打桩)。
+`common`/`database`/`events`/`evalkit` 是共享库,含 lint/format/test/build/sync/add/remove;`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service`/`eval-service`/`api-gateway` 是应用(无 build target):`agent-orchestrator` 测试走 aiosqlite 文件库,不依赖外部 DB(含对话内写操作确认链路);`llm-gateway` 测试对 litellm 全打桩,不发真实请求;`connector-service` 测试全 MockTransport、零网络(授权/刷新/执行/巡检/outbox/账号应用凭证);`knowledge-service` 默认用本地词法嵌入提供方,网关提供方用 httpx.MockTransport 打桩,零网络;`account-service`/`workspace-service` 测试走 aiosqlite 文件库 + 临时对象目录;`tool-service` 测试对 workspace-service 沙箱与知识服务全打桩(FakeSandboxClient/FakeToolClient),零网络;`eval-service` 测试走 aiosqlite 文件库 + 直接调用服务层(pytest-asyncio),零网络;MCP 预设与工具 annotations 风险分级由 `agent-orchestrator` 测试覆盖(HTTP 全打桩)。
 
 **注意**:`npx nx sync <项目>` 会被 Nx 内置的 sync-generators 命令抢占而不执行 uv sync,必须用 `npx nx run <项目>:sync` 显式形式。
 
-**Vercel 部署注意**:当前部署主线是 hybrid(见 `docs/design/hybrid-deployment.md`):Vercel 只承载 `apps/web` / `apps/site` 静态层与 `/api` rewrite,8 个 Python 服务在腾讯云轻量(首尔)上用 Docker Compose 部署;PostgreSQL 15 / Redis / sandboxd(gVisor+Docker)在同 VPC 的另一台基础设施机上,通过内网访问(当前生产暂经公网 IP 连接,PG/Redis 尚未启用 TLS,建议尽快切内网或加固)。仓库根有 `nx.json`,Vercel 会把仓库识别为 Nx monorepo 并改写 install/build 命令,新建 Vercel 项目时需显式覆盖(JS 项目由各自的 `vercel.json` 处理)。`apps/web/vercel.json`(`/api/:path*` → `https://api.beautymoon.cn/api/:path*`)与 `packages/design/vercel.json`(文档站)保留;`services/*` 已不再有 `vercel.json` / `.python-version` / `[tool.vercel]`,`scripts/check-vercel-config.py` 已于 2026-11-12 删除,`scripts/check-workspace.sh` 收敛为四查（含 labs 围栏）。
+**Vercel 部署注意**:当前部署主线是 hybrid(见 `docs/design/hybrid-deployment.md`):Vercel 只承载 `apps/web` / `apps/site` 静态层与 `/api` rewrite,9 个 Python 服务在腾讯云轻量(首尔)上用 Docker Compose 部署;PostgreSQL 15 / Redis / sandboxd(gVisor+Docker)在同 VPC 的另一台基础设施机上,通过内网访问(当前生产暂经公网 IP 连接,PG/Redis 尚未启用 TLS,建议尽快切内网或加固)。仓库根有 `nx.json`,Vercel 会把仓库识别为 Nx monorepo 并改写 install/build 命令,新建 Vercel 项目时需显式覆盖(JS 项目由各自的 `vercel.json` 处理)。`apps/web/vercel.json`(`/api/:path*` → `https://api.beautymoon.cn/api/:path*`)与 `packages/design/vercel.json`(文档站)保留;`services/*` 已不再有 `vercel.json` / `.python-version` / `[tool.vercel]`,`scripts/check-vercel-config.py` 已于 2026-11-12 删除,`scripts/check-workspace.sh` 收敛为四查（含 labs 围栏）。
 
 ### 依赖管理
 
@@ -144,7 +146,7 @@ npx nx run common:sync                              # 变更后同步 .venv
   品牌变量 `--logo-moon` 定义在 `apps/web/src/index.css`(亮色取品牌暖玫瑰,暗色取官方月光米),
   字标月相与标识共用该色,形成呼应。
 - **`packages/design`**:组件样式是普通 CSS + `bd-` 前缀 BEM 语义类名(如 `.bd-button--primary`),颜色/圆角/字体只读 `--bd-*` 令牌;组件源码里**不使用** Tailwind 工具类。
-- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`evalkit`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service`、`tool-service`、`api-gateway` line-length 88(各自 `pyproject.toml`)。
+- **Python**:ruff 统一 lint + format;`common`、`database`、`events`、`evalkit`、`agent-orchestrator`、`llm-gateway`、`connector-service`、`knowledge-service`、`account-service`、`workspace-service`、`tool-service`、`eval-service`、`api-gateway` line-length 88(各自 `pyproject.toml`)。
 
 ## 关键机制(改代码前必读)
 
@@ -181,7 +183,7 @@ npx nx run common:sync                              # 变更后同步 .venv
 ## 修改后的验证清单
 
 - **TS/React 代码**:`npx nx typecheck <项目>` + `npx nx test <项目> -- --run` + `npx nx lint <项目>`;改动包公共 API 时再 `npx nx build <项目>`。
-- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`evalkit`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service` 另跑 `npx nx test <项目>`。
+- **Python 代码**:`npx nx lint <项目>` + `npx nx format <项目>`;`common`/`database`/`events`/`evalkit`/`agent-orchestrator`/`llm-gateway`/`connector-service`/`knowledge-service`/`account-service`/`workspace-service`/`tool-service`/`eval-service` 另跑 `npx nx test <项目>`。
 - **模型/迁移(易踩坑)**:改 ORM 表结构必须配 alembic 迁移——服务默认 `AUTO_CREATE_TABLES=false`,
   而测试走 `create_all` 会自动建表,**缺迁移在测试里看不出来、真实库上直接 500**;
   本地默认库是 compose Postgres(每服务独立库),`scripts/migrate-local.sh` 在 dev 启动前自动升级;

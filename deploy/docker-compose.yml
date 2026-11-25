@@ -7,15 +7,15 @@
 #   docker compose -f deploy/docker-compose.yml up -d postgres redis
 # 停止/重置数据:
 #   docker compose -f deploy/docker-compose.yml down        # 保留数据卷
-#   docker compose -f deploy/docker-compose.yml down -v     # 连数据卷一起删(重建 6 个库)
+#   docker compose -f deploy/docker-compose.yml down -v     # 连数据卷一起删(重建 7 个库)
 #
 # 设计要点:
-# - 8 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
-# - 6 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
+# - 9 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
+# - 7 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
 #   原因见 deploy/postgres/initdb/01-create-databases.sql(alembic_version 表名冲突);
 # - web 容器(nginx)同源托管 SPA 并反代 /api → api-gateway:8007;浏览器只访问 :8080 一个入口;
 # - 健康探针一律打 /healthz(进程存活,不依赖数据库);/readyz 是给编排层的就绪建议;
-#   8 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
+#   9 个 Python 服务的探针由镜像 HEALTHCHECK 提供(deploy/docker/python-service.Dockerfile:71,
 #   端口按 SERVICE 映射),compose 仅在 pg/redis 上显式声明 healthcheck;
 # - 所有演示用密钥可用宿主机环境变量覆盖(见 deploy/web/README.md「生产差异」),
 #   默认值只用于本机演示,禁止直接用于生产。
@@ -59,7 +59,7 @@ services:
       - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 仅首次初始化数据卷时执行:建 6 个服务库(beauty_account 等)。
+      # 仅首次初始化数据卷时执行:建 7 个服务库(beauty_account 等)。
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U beauty']
@@ -101,7 +101,8 @@ services:
         cd ../knowledge-service && alembic upgrade head
         cd ../workspace-service && alembic upgrade head
         cd ../tool-service && alembic upgrade head
-        echo "migrations: all 6 databases at head"
+        cd ../eval-service && alembic upgrade head
+        echo "migrations: all 7 databases at head"
     environment:
       ACCOUNT__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_account
       AGENT_ORCHESTRATOR__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_agent
@@ -109,6 +110,7 @@ services:
       KNOWLEDGE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_knowledge
       WORKSPACE__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_workspace
       TOOL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_tool
+      EVAL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_eval
     depends_on:
       postgres:
         condition: service_healthy
@@ -323,6 +325,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  eval-service:
+    build:
+      <<: *python-build
+      args:
+        SERVICE: eval-service
+    image: beauty-moon/eval-service:local
+    environment:
+      EVAL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_eval
+      EVAL__AUTO_CREATE_TABLES: 'false'
+      # 演示环境关闭读取鉴权(与其它服务一致);CI 上报仍校验 X-Internal-Secret。
+      EVAL__AUTH_ENABLED: 'false'
+      EVAL__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
+    depends_on: *db-depends
+    restart: unless-stopped
+
   api-gateway:
     build:
       <<: *python-build
@@ -337,6 +354,7 @@ services:
       API_GATEWAY__KNOWLEDGE_BASE_URL: http://knowledge-service:8006
       API_GATEWAY__CONNECTOR_BASE_URL: http://connector-service:8004
       API_GATEWAY__LLM_GATEWAY_BASE_URL: http://llm-gateway:8003
+      API_GATEWAY__EVAL_BASE_URL: http://eval-service:8009
       API_GATEWAY__RUNTIME_PUBLIC_URL: http://localhost:8080
       # 不能用 API 网关内置的 dev 默认值:否则 /readyz 会 503(见 services/api-gateway/api_gateway/api/health.py)。
       API_GATEWAY__SESSION_SECRET: ${API_GATEWAY_SESSION_SECRET:-compose-demo-session-secret-change-me}
@@ -364,6 +382,8 @@ services:
       knowledge-service:
         condition: service_healthy
       workspace-service:
+        condition: service_healthy
+      eval-service:
         condition: service_healthy
     restart: unless-stopped
 

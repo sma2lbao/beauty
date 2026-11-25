@@ -1,9 +1,10 @@
 /**
- * 评测平台只读数据层(M0 静态快照版)。
+ * 评测平台只读数据层。
  *
- * 数据来自 `public/eval/index.json` 与 `public/eval/runs/<id>.json`,
- * 由 `node scripts/eval/publish-web.mjs` 从 evalkit 的 JSON 报告发布。
- * 后续 eval-service 上线后只需替换这里的两条 URL,页面与类型不变。
+ * 优先读 eval-service(同源 `/api/eval` → 网关 → :8009);服务未启动或
+ * 未部署时回退到 `public/eval` 静态快照,由
+ * `node scripts/eval/publish-web.mjs` 从 evalkit 的 JSON 报告发布。
+ * 两条路径返回同一份报告结构,页面与类型不变。
  */
 import { createHttpClient } from '@/lib/http';
 
@@ -100,11 +101,24 @@ export type EvalIndex = {
 const http = createHttpClient('');
 
 export const evalApi = {
-  index: () => http.request<EvalIndex>('/eval/index.json'),
-  run: (runId: string) =>
-    http.request<EvalReport>(
-      '/eval/runs/' + encodeURIComponent(runId) + '.json',
-    ),
+  index: async (): Promise<EvalIndex> => {
+    try {
+      return await http.request<EvalIndex>('/api/eval/runs?limit=5');
+    } catch {
+      return http.request<EvalIndex>('/eval/index.json');
+    }
+  },
+  run: async (runId: string): Promise<EvalReport> => {
+    try {
+      return await http.request<EvalReport>(
+        '/api/eval/runs/' + encodeURIComponent(runId),
+      );
+    } catch {
+      return http.request<EvalReport>(
+        '/eval/runs/' + encodeURIComponent(runId) + '.json',
+      );
+    }
+  },
 };
 
 /** 运行详情里的用例:带 suite 便于跨套件定位。 */

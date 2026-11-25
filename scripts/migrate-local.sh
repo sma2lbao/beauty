@@ -17,7 +17,8 @@ for svc in \
   connector-service \
   knowledge-service \
   workspace-service \
-  tool-service; do
+  tool-service \
+  eval-service; do
   if [ ! -f "services/$svc/.env" ] && [ -f "services/$svc/.env.example" ]; then
     cp "services/$svc/.env.example" "services/$svc/.env"
     echo "  已创建 services/$svc/.env"

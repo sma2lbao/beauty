@@ -57,8 +57,8 @@ const servicePorts = new Map();
 for (const m of devSh.matchAll(/"([a-z][a-z0-9-]*)\|(\d{4})\|([^"]+)"/g)) {
   servicePorts.set(m[1], { port: m[2], health: m[3] });
 }
-if (servicePorts.size !== 8) {
-  fail('scripts/dev.sh 解析出 ' + servicePorts.size + ' 个服务，期望 8 个（解析规则可能失效）');
+if (servicePorts.size !== 9) {
+  fail('scripts/dev.sh 解析出 ' + servicePorts.size + ' 个服务，期望 9 个（解析规则可能失效）');
 }
 
 const agentsMd = read('AGENTS.md');
@@ -119,7 +119,7 @@ if (!covLine) {
     const cfg = read(path.join(dir, 'pyproject.toml'));
     const m = /--cov-fail-under=(\d+)/.exec(cfg);
     if (!m) {
-      fail(dir + '/pyproject.toml 没有 --cov-fail-under（AGENTS.md 声称 11 个项目都有）');
+      fail(dir + '/pyproject.toml 没有 --cov-fail-under（AGENTS.md 声称每个项目都有）');
       continue;
     }
     if (!documented.has(name)) {

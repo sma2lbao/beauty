@@ -62,6 +62,7 @@
       "!account-service",
       "!workspace-service",
       "!tool-service",
+      "!eval-service",
       "!api-gateway"
     ],
     "conventionalCommits": true,

@@ -17,6 +17,7 @@ BASES = {
     "knowledge_base_url": "http://knowledge",
     "connector_base_url": "http://connector",
     "llm_gateway_base_url": "http://llm",
+    "eval_base_url": "http://eval",
 }
 
 
@@ -49,6 +50,8 @@ BASES = {
             "knowledge",
             "http://knowledge/v1/knowledge/search",
         ),
+        ("eval/runs", "eval", "http://eval/v1/runs"),
+        ("eval/v1/runs/r1", "eval", "http://eval/v1/runs/r1"),
     ],
 )
 def test_resolve_upstream(path: str, service: str, url: str) -> None:

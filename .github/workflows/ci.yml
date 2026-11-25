@@ -173,17 +173,17 @@ jobs:
       - name: Lint / typecheck / build (affected)
         # 与本地等价：npx nx affected -t lint,typecheck,build --base=origin/main
         # nx 只对存在该 target 的项目执行（无对应 target 的项目自动跳过）。
-        # 但 11 个 Python 项目有 lint target（`uv run ruff check`），本 job 不装 uv
+        # 但 12 个 Python 项目有 lint target（`uv run ruff check`），本 job 不装 uv
         # → PR 场景（affected 非空）会以 "UV is not installed" 失败；push 场景
         # base=HEAD 时 affected 为空，所以这个洞长期没暴露（PR #20 才第一次触发）。
         # Python lint 由 python-lint job 逐个 npx nx lint 覆盖，这里显式排除。
         run: |
           npx nx affected -t lint,typecheck,build --base=origin/main \
-            --exclude=common,database,events,agent-orchestrator,llm-gateway,connector-service,knowledge-service,account-service,workspace-service,tool-service,api-gateway
+            --exclude=common,database,events,agent-orchestrator,llm-gateway,connector-service,knowledge-service,account-service,workspace-service,tool-service,eval-service,api-gateway
 
       # 覆盖率门禁（R-31b）：阈值唯一数字来源是根 vitest.config.mts 的 `thresholds`，
       # 各项目 vitest 配置 import 后挂到自身 coverage.thresholds；这里必须带 --coverage。
-      # 不用 `nx affected -t test`：该 target 集合包含 11 个 Python 项目，`--` 后的
+      # 不用 `nx affected -t test`：该 target 集合包含 12 个 Python 项目，`--` 后的
       # --run/--coverage 会被透传给 pytest（unrecognized arguments）而挂掉；
       # 因此 TS 测试仍逐项目显式执行，与本地门禁逐条等价。
       - name: Test + coverage @beauty/web
@@ -207,7 +207,7 @@ jobs:
         run: npx vitest run --config vitest.node.config.mts --coverage
 
   # ------------------------------------------------------------------
-  # Job 5/10：python-lint——12 个 Python 项目逐个 npx nx lint
+  # Job 5/10：python-lint——13 个 Python 项目逐个 npx nx lint
   # ------------------------------------------------------------------
   python-lint:
     name: python-lint (${{ matrix.project }})
@@ -229,6 +229,7 @@ jobs:
             account-service,
             workspace-service,
             tool-service,
+            eval-service,
             api-gateway,
           ]
     steps:
@@ -264,7 +265,7 @@ jobs:
         run: npx nx lint ${{ matrix.project }}
 
   # ------------------------------------------------------------------
-  # Job 6/10：python-test——12 个 Python 项目逐个 npx nx test（覆盖率阈值见各项目 pyproject addopts）
+  # Job 6/10：python-test——13 个 Python 项目逐个 npx nx test（覆盖率阈值见各项目 pyproject addopts）
   # ------------------------------------------------------------------
   python-test:
     name: python-test (${{ matrix.project }})
@@ -286,6 +287,7 @@ jobs:
             account-service,
             workspace-service,
             tool-service,
+            eval-service,
             api-gateway,
           ]
     steps:
@@ -366,7 +368,7 @@ jobs:
 
   # ------------------------------------------------------------------
   # ------------------------------------------------------------------
-  # Job 8/10：alembic-check——6 个有迁移的服务模型与迁移一致
+  # Job 8/10：alembic-check——7 个有迁移的服务模型与迁移一致
   # ------------------------------------------------------------------
   alembic-check:
     name: alembic-check (${{ matrix.service }})
@@ -388,9 +390,11 @@ jobs:
             db_env: WORKSPACE__DATABASE_URL
           - service: tool-service
             db_env: TOOL__DATABASE_URL
+          - service: eval-service
+            db_env: EVAL__DATABASE_URL
     # 用真 Postgres 而不是 sqlite：AO/account 的迁移含 PG 专有 DDL（ALTER ... USING 等），
     # 在 sqlite 上 upgrade 直接 SyntaxError（W2 实测）；生产也跑 PG，这里才是最权威的门。
-    # 每个 matrix job 各自一个容器，因此 6 个服务共用一个库名不会互相污染。
+    # 每个 matrix job 各自一个容器，因此 7 个服务共用一个库名不会互相污染。
     services:
       postgres:
         # pgvector 官方镜像 = postgres:16 + vector/pg_trgm;
@@ -465,20 +469,20 @@ jobs:
         # 纯语法/变量解析校验（不需要 daemon），本地等价命令见上。
         run: docker compose -f deploy/docker-compose.yml config -q
 
-      - name: Assert deploy artifacts (healthcheck / probes / 6 databases)
-        # 部署面静态断言（W4 复核 M4）：Python 镜像必须自带 HEALTHCHECK（8 服务共用），
-        # nginx 必须暴露 /healthz 与 /readyz，initdb 必须建 6 个独立库。
+      - name: Assert deploy artifacts (healthcheck / probes / 7 databases)
+        # 部署面静态断言（W4 复核 M4）：Python 镜像必须自带 HEALTHCHECK（9 服务共用），
+        # nginx 必须暴露 /healthz 与 /readyz，initdb 必须建 7 个独立库。
         # compose 里显式 healthcheck 只有 pg/redis；应用服务探针来自镜像层，此处一并断言。
         run: |
           grep -q 'HEALTHCHECK' deploy/docker/python-service.Dockerfile
           grep -q '= /healthz' deploy/web/nginx.conf
           grep -q '= /readyz' deploy/web/nginx.conf
-          test "$(grep -c 'CREATE DATABASE' deploy/postgres/initdb/01-create-databases.sql)" -eq 6
+          test "$(grep -c 'CREATE DATABASE' deploy/postgres/initdb/01-create-databases.sql)" -eq 7
 
       - uses: docker/setup-buildx-action@v4
 
       - name: Build python-service image (SERVICE=api-gateway)
-        # 单镜像 ARG SERVICE 覆盖 8 服务，这里只验一条代表路径 + 构建缓存。
+        # 单镜像 ARG SERVICE 覆盖 9 服务，这里只验一条代表路径 + 构建缓存。
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -502,14 +506,14 @@ jobs:
   # ------------------------------------------------------------------
   # Job 10/10：e2e——黄金 run 端到端冒烟（R-33）+ eval 行为回归 + 统一评测平台
   # 本地等价：bash scripts/golden-run/golden-run.sh / bash scripts/eval/eval.sh /
-  # bash scripts/eval/platform.sh。第一步断言 REST/SSE 契约、run 状态机、交付物字节与
+  # bash scripts/eval/platform.sh / node scripts/eval/upload.mjs。第一步断言 REST/SSE 契约、run 状态机、交付物字节与
   # sqlite 落库；第二步跑 AO 内置 3 个评测套件并与 evals/baseline.json 比对；第三步跑 evalkit
   # 的 agent-core/retrieval-quality/conversation-quality/tool-arguments/memory-quality/
-  # run-resilience 数据集并与 evals/baselines/*.json 比对。三步都是进程内 ASGI + 脚本化 FakeLLM +
-  # 零网络，无需模型/Docker/Postgres/Redis。
+  # run-resilience 数据集并与 evals/baselines/*.json 比对。前三步都是进程内 ASGI + 脚本化 FakeLLM +
+  # 零网络，无需模型/Docker/Postgres/Redis；第四步把报告上报到 sqlite 版 eval-service。
   # ------------------------------------------------------------------
   e2e:
-    name: e2e (golden-run + eval + platform)
+    name: e2e (golden-run + eval + platform + upload)
     runs-on: ubuntu-latest
     needs: setup
     steps:
@@ -545,3 +549,21 @@ jobs:
         # 统一评测平台：agent-core 3 + retrieval-quality 9 + conversation-quality 3 + tool-arguments 2 + memory-quality 6 + run-resilience 6 条（共 29）；报告写 reports/eval/。
         # 退出码同上；基线更新只允许人工执行 platform.sh run --update-baseline。
         run: bash scripts/eval/platform.sh run
+
+      - name: Upload eval run to eval-service
+        # 用 sqlite + 自动建表起一个一次性 eval-service，验证上报契约（不依赖 Postgres）。
+        # 读取接口的账号鉴权由 python-test 的 test_evals 覆盖，这里只验 CI 上报链路。
+        run: |
+          export EVAL__DATABASE_URL="sqlite+aiosqlite:////tmp/eval-upload.db"
+          export EVAL__AUTO_CREATE_TABLES=true
+          export EVAL__AUTH_ENABLED=false
+          export EVAL__INTERNAL_SECRET=ci-eval-secret
+          export EVAL_INTERNAL_SECRET=ci-eval-secret
+          uv run uvicorn eval_service.main:app --port 8009 --no-access-log &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8009/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          node scripts/eval/upload.mjs

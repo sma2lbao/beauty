@@ -77,6 +77,7 @@ Browser
 容器平台（Fly.io / Cloud Run / 自有云主机；容器化已落地，见 deploy/，R-36 关闭）
 ├── agent-runtime（agent-orchestrator）  编排 + Skill + MCP + run worker                  :8002
 ├── tool-service            内置工具服务：catalog/执行/审计/ask_question（沙箱经 workspace） :8008
+├── eval-service            评测运行索引/用例分页/基线批准（质量工作台数据源）            :8009
 ├── llm-gateway             模型路由/白名单/降级/预算/usage 采集（API 上游）              :8003
 ├── connector-service       连接器平台:OAuth/静态令牌两种连接方式、凭证加密/连接生命周期(内置 GitHub)（design/connector.md） :8004
 ├── workspace-service       工作区/产物元数据 + 沙箱生命周期 + 对象存储（生产 COS）  :8005
@@ -105,7 +106,7 @@ Browser
 
 ---
 
-## 3. 服务与职责（八个 Python 服务 + 三个共享库 + 前端四应用）
+## 3. 服务与职责（九个 Python 服务 + 四个共享库 + 前端四应用）
 
 | 服务 / 应用          | 部署 / 端口           | 职责                                                                                                                                                                                                  | 备注                                                                                                                                                                                          |
 | -------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,6 +117,7 @@ Browser
 | services/api-gateway | 容器 :8007            | API 网关：认证、代理、下载、限流                                                                                                                                                                      | FastAPI 同源 `/api`；限流走基础设施机 Redis（未配置时回退进程内）                                                                                                                             |
 | agent-orchestrator   | 容器 :8002            | 会话/run/skill/MCP/worker/对话内写操作确认(confirm/cancel);MCP 预设(Notion 一键授权)与工具 annotations 风险分级                                                                                       | 队列为 PG job 表；事件溯源 + SSE 断线续传                                                                                                                                                     |
 | tool-service         | 容器 :8008            | 内置工具服务：工具目录/执行/审计/ask_question（沙箱在 workspace-service 中执行）                                                                                                                      | catalog 真源 `common/tools.py` 的 `ToolDescriptor`；设计见 [tool-service.md](./design/tool-service.md)                                                                                        |
+| eval-service         | 容器 :8009            | 评测平台：运行索引、用例分页、基线批准；接收 CI 上报的评测报告                                                                                                                                        | 报告大字段先落 TEXT；CI 用内部密钥写入，鉴权开启时页面读走账号 JWT、关闭时匿名只读；设计见 [agent-eval-platform.md](./design/agent-eval-platform.md)                                          |
 | llm-gateway          | 容器 :8003            | 模型唯一出口、白名单、路由、降级（fallback）、预算、usage                                                                                                                                             | BYOK（按账号注入）、计量、预算；`response_format`/多模态/`FallbackHop` 校验见 §11.5（P1-G）                                                                                                   |
 | connector-service    | 容器 :8004            | 连接器平台：OAuth 授权会话、凭证加密、按账号连接、刷新单飞 + 24h 巡检、outbox 生命周期事件；支持 OAuth 授权与静态令牌两种连接方式；**内置 GitHub provider**（GitHub App user-to-server，8 读 + 3 写） | 2026-10 邮箱/日历能力下线；2026-11-19 新增内置 GitHub provider；内置 Notion provider 于 2026-11-04 二次规划移除（Notion 改走官方 MCP，见 §8.2）；设计见 [connector.md](./design/connector.md) |
 | knowledge-service    | 容器 :8006            | 摄取、分块、混合检索（向量 + 关键词）、引用                                                                                                                                                           | 嵌入提供方可插拔（本地词法/网关）；记忆能力在 agent-orchestrator，见 [memory.md](./design/memory.md)                                                                                          |
@@ -124,9 +126,10 @@ Browser
 | packages/common      | 库                    | 错误模型/配置/日志/JWT/存储/观测                                                                                                                                                                      | Python 共享库                                                                                                                                                                                 |
 | packages/database    | 库                    | Base/mixin/session_scope/Repository/UoW                                                                                                                                                               | 仓储层账号隔离 + 统一 404                                                                                                                                                                     |
 | packages/events      | 库                    | 事件信封/总线/outbox/dispatcher                                                                                                                                                                       | 事务性 outbox + 消费幂等                                                                                                                                                                      |
+| packages/evalkit     | 库                    | 统一评测平台：数据集/adapter/grader/基线/报告                                                                                                                                                         | 仅标准库；服务侧 adapter 留在被测服务                                                                                                                                                         |
 | packages/design      | 库                    | React 组件库（bd- BEM + --bd-\* 令牌）                                                                                                                                                                | web/site/desktop 共用                                                                                                                                                                         |
 
-> 拆分节奏：M0 保持七业务服务 + FastAPI 网关（tool-service 已按 [tool-service.md](./design/tool-service.md) 拆出，承接 orchestrator 的 tool registry；沙箱生命周期仍归 workspace-service）；M3 再拆 platform-api（先复用 runtime 路由）。
+> 拆分节奏：M0 保持八业务服务 + FastAPI 网关（tool-service 已按 [tool-service.md](./design/tool-service.md) 拆出，承接 orchestrator 的 tool registry；沙箱生命周期仍归 workspace-service；eval-service 承载评测工作台数据面）；M3 再拆 platform-api（先复用 runtime 路由）。
 
 ---
 
@@ -146,11 +149,13 @@ beauty-moon/
 │   ├── workspace-service/    #   :8005
 │   ├── knowledge-service/    #   :8006
 │   ├── tool-service/         #   :8008 内置工具服务（catalog/执行/审计）
+│   ├── eval-service/         #   :8009 评测运行索引/用例分页/基线批准
 │   └── api-gateway/          #   :8007 同源 /api 门面
 ├── packages/                 # ★ 共享库：实名命名（不用 py- 前缀）
 │   ├── common/               #   错误模型/配置/日志/JWT/存储/观测（Python）
 │   ├── database/             #   Base/命名约定/Repository/UoW/testcontainers（Python）
 │   ├── events/               #   事件信封 + 总线 + outbox（Python）
+│   ├── evalkit/              #   统一评测平台（Python，仅标准库）
 │   └── design/               #   React 组件库（JS，bd- BEM + --bd-* 令牌）
 ├── tools/
 │   └── eslint-config/        # ESLint 10 flat config 工厂
@@ -161,7 +166,7 @@ beauty-moon/
 
 **放置判据**：
 
-- `services/`：独立部署单元——有 Dockerfile（8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
+- `services/`：独立部署单元——有 Dockerfile（9 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`）、被 compose/k8s 编排的长驻进程（暴露 API 或消费队列，纯 worker 也算）；
 - `apps/`：人直接使用的终端 UI；
 - `packages/`：被 import 的库（不部署）。
 
@@ -324,11 +329,11 @@ packages/design      组件库（bd- 前缀 BEM + --bd-* 令牌）
 | 环境    | Web                                    | Runtime                                   | 数据                                                |
 | ------- | -------------------------------------- | ----------------------------------------- | --------------------------------------------------- |
 | dev     | 本地 Vite + 本地 API 网关              | 本地进程（dev.sh）                        | 本机 compose Postgres + 本地 Redis(可选) + 本地目录 |
-| staging | Vercel preview（SPA + `/api` rewrite） | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 6 库 + 本地卷 artifact                |
-| prod    | Vercel（SPA + `/api` rewrite）         | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 6 库 + 本地卷 artifact（COS 后置）    |
+| staging | Vercel preview（SPA + `/api` rewrite） | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 7 库 + 本地卷 artifact                |
+| prod    | Vercel（SPA + `/api` rewrite）         | 应用机：腾讯云轻量（首尔）Compose + Caddy | 基础设施机 PG 7 库 + 本地卷 artifact（COS 后置）    |
 
 - CI：lint/typecheck/test/build → **对 Postgres 跑迁移与集成测试（testcontainers）** → 部署 preview → smoke/e2e；
-- 服务镜像：8 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
+- 服务镜像：9 个 Python 服务复用 `deploy/docker/python-service.Dockerfile`（`SERVICE` 选入口）+ `deploy/docker/web.Dockerfile`；compose 含 migrate job 与健康检查；CI 的 `docker-build` job 验证构建；
 - 回滚：镜像 tag + Vercel 即时回滚 + DB 迁移前进/后退检查；
 - 成本护栏：两台固定成本（应用机 + 基础设施机）、Free 配额、预算告警。
 

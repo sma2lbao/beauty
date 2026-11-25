@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 本地开发一键启动(默认连本机 compose Postgres,无需云依赖):
-#   - 七个业务服务 + API 网关 + Vite SPA
+#   - 八个业务服务 + API 网关 + Vite SPA
 #   - 缺 .env 时自动从 .env.example 复制
 #   - 启动前把本地数据库(默认 Postgres)迁移到 alembic head(create_all 不给已有表加列)
 #   - 统一日志与 Ctrl+C 清理
@@ -27,6 +27,7 @@ SERVICES=(
   "workspace-service|8005|/healthz"
   "knowledge-service|8006|/healthz"
   "tool-service|8008|/healthz"
+  "eval-service|8009|/healthz"
   "api-gateway|8007|/api/health"
 )
 
@@ -187,7 +188,7 @@ cleanup() {
     done
     # 兜底:按命令行特征清掉本脚本拉起的 uvicorn/vite 孤儿(仅限我们的端口)。
     sleep 1
-    for port in 8001 8002 8003 8004 8005 8006 8007 8008 5173 3000; do
+    for port in 8001 8002 8003 8004 8005 8006 8007 8008 8009 5173 3000; do
       local orphan
       orphan="$(port_pid "$port")"
       # 空 = 未占用;含「lsof 不可用」= 探测回退模式拿不到 pid,跳过。
@@ -238,7 +239,7 @@ fi
 # 上次异常退出(终端被杀、或手动 nohup 起的服务)会留下占端口却不由本脚本
 # 管理的孤儿;之后每次启动都只能「跳过」,页面/日志看着正常,实际跑的是旧代码。
 if [ "$FORCE" = "1" ]; then
-  for port in 8001 8002 8003 8004 8005 8006 8007 8008 5173; do
+  for port in 8001 8002 8003 8004 8005 8006 8007 8008 8009 5173; do
     reclaim_port "$port" || true
   done
   if [ "$WITH_SITE" = "1" ]; then reclaim_port 3000 || true; fi

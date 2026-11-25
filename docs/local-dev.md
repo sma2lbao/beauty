@@ -39,7 +39,7 @@ npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic
 - 启动顺序并行;已有端口被占用则跳过并提示(不会杀已有进程);
 - 脚本只记得**本次运行**拉起的进程:上次异常退出(终端被杀、手动 `nohup` 起的服务)会留下占端口的孤儿,之后每次启动都只能「跳过」,页面看着正常、跑的却是旧代码;`--force` 会按 `lsof` 的 cwd/可执行文件路径确认归属,只回收 cwd 在本仓库内的 `uvicorn`/`vite`,别的项目或 IDE 起的进程一律不动;
 - 缺 .env 自动创建;
-- 启动前把 6 个带 alembic 迁移的服务的库(默认 compose Postgres)推到 head(见 §7.1),失败则中止启动;
+- 启动前把 7 个带 alembic 迁移的服务的库(默认 compose Postgres)推到 head(见 §7.1),失败则中止启动;
 - 服务日志在 .cache/dev/\*.log;
 - Ctrl+C 停止由脚本启动的全部进程;
 - 任一子进程退出时整体退出,方便发现崩溃。
@@ -56,6 +56,7 @@ npm run dev:migrate    # 只把本地数据库(默认 Postgres)迁移到 alembic
 | knowledge-service  | 8006 | /healthz    |
 | api-gateway        | 8007 | /api/health |
 | tool-service       | 8008 | /healthz    |
+| eval-service       | 8009 | /healthz    |
 | web                | 5173 | /           |
 | site(可选)         | 3000 | /           |
 
@@ -64,7 +65,7 @@ connector-service(:8004)是通用连接器平台(OAuth 授权会话/凭证托管
 打开 http://localhost:5173。
 
 **API 网关(:8007)是必需的**:Vite 的 /api 已统一代理到 API 网关,API 网关再转发
-orchestrator/account/workspace/knowledge。忘记启动 API 网关时前端会表现为 401/502。
+orchestrator/account/workspace/knowledge/eval。忘记启动 API 网关时前端会表现为 401/502。
 
 ## 4. 鉴权模式
 
@@ -285,7 +286,7 @@ npm run dev:reset -- --yes # 不确认
 
 会重置:
 
-- Postgres 的 6 个服务库(本机 compose,drop 后重建,不动实例本身)
+- Postgres 的 7 个服务库(本机 compose,drop 后重建,不动实例本身)
 - services/_/_.db(SQLite 覆盖库)
 - services/\*/.artifacts(本地产物)
 - .cache/dev(日志)
@@ -319,9 +320,9 @@ Postgres 未启动/未装 asyncpg 时跳过库重置,只清文件。
 
 ### 7.1 本地数据库迁移(自动)
 
-npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm run dev:migrate),把 6 个带 alembic 迁移的服务的库推到 head,失败则中止启动。
+npm run dev 启动前会调用 scripts/migrate-local.sh(也可单独执行 npm run dev:migrate),把 7 个带 alembic 迁移的服务的库推到 head,失败则中止启动。
 
-默认库是本机 compose Postgres(每服务一个独立库:`beauty_account`/`beauty_agent`/`beauty_connector`/`beauty_knowledge`/`beauty_workspace`/`beauty_tool`,见 `deploy/postgres/initdb/01-create-databases.sql`):
+默认库是本机 compose Postgres(每服务一个独立库:`beauty_account`/`beauty_agent`/`beauty_connector`/`beauty_knowledge`/`beauty_workspace`/`beauty_tool`/`beauty_eval`,见 `deploy/postgres/initdb/01-create-databases.sql`):
 
 - 连接不上:先起库 `docker compose -f deploy/docker-compose.yml up -d postgres`,再重试;
 - 空库/落后 revision:alembic upgrade head 补齐,已最新则无操作。

@@ -38,7 +38,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 
 # 本地 compose Postgres 的连接串(与 deploy/docker-compose.yml 的 creds 一致);
-# 每个服务一个独立库,避免 6 条 alembic 链共用 alembic_version 表互相踩。
+# 每个服务一个独立库,避免 7 条 alembic 链共用 alembic_version 表互相踩。
 POSTGRES_HOST = "localhost"
 POSTGRES_PORT = 5432
 POSTGRES_USER = "beauty"
@@ -53,6 +53,7 @@ SERVICES: tuple[tuple[str, str, str], ...] = (
     ("knowledge-service", "KNOWLEDGE", "beauty_knowledge"),
     ("workspace-service", "WORKSPACE", "beauty_workspace"),
     ("tool-service", "TOOL", "beauty_tool"),
+    ("eval-service", "EVAL", "beauty_eval"),
 )
 
 

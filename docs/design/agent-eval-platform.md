@@ -438,25 +438,36 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
 控制台同时打印套件表（用例数、通过率、得分、tokens、耗时）。HTML 报告 + JUnit 是
 一次运行的归档形态；常驻工作台见 §9.1，趋势对比与门禁治理留给 §11 的 P1/P2。
 
-### 9.1 质量工作台（M0 静态快照）
+### 9.1 质量工作台（M1：eval-service）
 
-M0 不做评测报告 iframe，而是把运行快照变成可下钻的质量工作台：
+不做评测报告 iframe，而是把运行快照变成可下钻的质量工作台：
 
 | 路由                 | 内容                                                                                              |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
 | `/evals`             | KPI（通过率/失败/漂移/套件/tokens/耗时）、套件健康度、最近运行、需要关注的失败用例                |
 | `/evals/runs/:runId` | 运行元数据、套件页签、状态筛选、用例表；`?case=&tab=` 打开右侧抽屉（结果/轨迹/输入输出/原始数据） |
 
-- 数据发布：`scripts/eval/publish-web.mjs` 从 `reports/eval/*.json` 取最近 N 次，
-  生成 `apps/web/public/eval/index.json` 与 `runs/<id>.json`；超长 prompt/reply
-  默认裁到 2000 字符、事件裁到 50 条，原始报告不动。
-- 只读数据层：`apps/web/src/lib/eval-api.ts` 封装两条 URL；M1 接 eval-service 时
-  页面、URL 过滤协议与组件不变，只替换这里。
+- 数据层：`apps/web/src/lib/eval-api.ts` 优先读同源 `/api/eval/runs`
+  （网关 → eval-service `:8009`），失败回退 M0 静态快照
+  `apps/web/public/eval/index.json` 与 `runs/<id>.json`；页面、URL 过滤协议与组件不变。
+- 写入：CI 用 `scripts/eval/upload.mjs` 读取 `reports/eval/` 最新 JSON，
+  以 `X-Internal-Secret` 调 `POST /v1/runs`；同 `external_id` 幂等。
+  服务端用上报携带的基线或已批准基线计算漂移，把 `drifts` / `drift_count` /
+  `baseline_diff` 回填进报告快照，因此 `/evals` 的漂移数字不再是 0。
+- 读取：鉴权开启时页面走账号 JWT（`get_viewer_account` 严格校验 Bearer）；
+  本地/演示按仓库惯例 `AUTH_ENABLED=false` 时只读端点匿名可用（网关仍做会话鉴权），
+  此前该组合下页面会因 401 静默回退静态快照，现由匿名只读修复。写入口只认内部密钥，
+  基线批准仍要求账号。运行索引支持套件/结果/分支过滤，用例分页端点
+  （`/v1/runs/{id}/suites/{suite}/cases`，默认 50、上限 500）已就绪，
+  运行详情仍取完整报告，500+ 用例接入服务端分页留到 M2。
+- 存储：`eval_runs`（报告快照 + totals/失败/数据集版本）、`eval_suite_runs`、
+  `eval_case_runs`（逐用例结果/轨迹/评分器/基线差异）、`eval_baselines`；
+  大字段先落 TEXT，对象存储与保留期策略后置。
 - URL 是真源：`?suite=`、`?status=passed|failed`、`?case=`、`?tab=result|trajectory|io|raw`。
 - 导航入口放在「管理」组、用量之前，第一版 `adminOnly=true`；页面本身不替代
   CI 门禁，失败/漂移仍以 `platform.sh` 退出码为准。
-- M0 限制：`drift_count` 暂为 0（基线比较在 CLI 完成，不进 report v1）；
-  数据集与门禁治理、跨运行对比、服务端分页在 M1/M2。
+- M1 限制：没有跨运行对比 API/UI、数据集只读清单、门禁治理与对象存储；
+  这些属于 M2。
 
 ## 10. 当前阶段实施（已完成）
 
@@ -476,26 +487,33 @@ M0 不做评测报告 iframe，而是把运行快照变成可下钻的质量工�
 | `evals/baselines/`                                                         | 六个套件的基线                                                                                                           |
 | `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py` | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                         |
 | `scripts/eval/platform.sh`                                                 | 仓库根入口，复用本地 uv 缓存                                                                                             |
+| `services/eval-service/`                                                   | 评测服务（:8009）：四张表、上报/索引/详情/用例分页/基线批准端点、alembic 迁移                                            |
+| `scripts/eval/upload.mjs`                                                  | 把最新报告与基线以内部密钥上报 eval-service；同 `external_id` 幂等                                                       |
 | `packages/evalkit/project.json`                                            | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                |
 | `scripts/eval/publish-web.mjs`                                             | 把 JSON 报告发布成 `public/eval` 索引与运行快照（裁剪大字段）                                                            |
-| `apps/web/public/eval/`                                                    | M0 演示快照：`index.json` + `runs/<id>.json` + README                                                                    |
+| `apps/web/public/eval/`                                                    | M0 演示快照与回退：`index.json` + `runs/<id>.json` + README；eval-service 不可用时页面仍可看                             |
 | `apps/web/src/pages/evals.tsx`、`eval-run.tsx`                             | 质量工作台总览与运行详情                                                                                                 |
 | `apps/web/src/features/evals/`                                             | KPI、套件健康度、运行历史、需要关注、用例表、用例抽屉、评分器、工具轨迹                                                  |
-| `apps/web/src/lib/eval-api.ts`                                             | 只读数据层；M1 换成 eval-service 时只改两条 URL                                                                          |
+| `apps/web/src/lib/eval-api.ts`                                             | 数据层：优先 eval-service，失败回退静态快照                                                                              |
 
 ### 10.2 门禁接入
 
 - `npx nx run evalkit:eval` 跑全量套件并与基线比对。
 - `npx nx run evalkit:eval-baseline` 人工更新基线。
-- CI `e2e` job 在 golden-run、AO eval 之后追加 `bash scripts/eval/platform.sh run`。
-- `evalkit` 进入 uv workspace、Nx 项目、release 排除列表、版本门禁与 Python lint/test 矩阵（12 个项目）。
-- 覆盖率阈值 85（实测 96.03%）。
+- CI `e2e` job 在 golden-run、AO eval 之后追加 `bash scripts/eval/platform.sh run`，
+  再用 sqlite 启动 eval-service 并调 `node scripts/eval/upload.mjs` 验证上报链路。
+- `evalkit` 与 `eval-service` 进入 uv workspace、Nx 项目、release 排除列表、版本门禁
+  与 Python lint/test 矩阵（13 个项目）；`eval-service` 另有 alembic 迁移检查 job。
+- 覆盖率阈值：evalkit 85（实测 96.03%）、eval-service 80（实测 94.06%）。
 
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
 - AO 全量：1399 passed，覆盖率 88.32%（阈值 82%），含 19 条平台 adapter 测试
   与 3 条工具调用采集测试。
+- eval-service：21 passed，覆盖率 94.06%（阈值 80%）；四张表、上报幂等、漂移回填、
+  基线批准、索引/分页过滤、鉴权关闭时匿名只读均有测试。api-gateway 因新增 eval 前缀
+  56 passed、87.50%。
 - 平台运行：6 个套件、29 条用例全部通过；agent-core 3 条 / 1046 tokens，
   retrieval-quality 9 条，conversation-quality 3 条 / 368 tokens，tool-arguments
   2 条 / 1071 tokens，memory-quality 6 条，run-resilience 6 条 / 2383 tokens；
@@ -514,10 +532,11 @@ M0 不做评测报告 iframe，而是把运行快照变成可下钻的质量工�
   崩溃后无 checkpoint 回落到新 attempt（attempts=2、fallback=plan）；
   计划闸 checkpoint 续跑交回人工审批（next=["approval_gate"]）；
   终态图直接收尾、不新增模型调用（status 保持 completed）。
-- 版本门禁：20 处版本字段（JS 7 + 根 pyproject + Python 12）。
-- Web 质量工作台 M0：`@beauty/web` 830 条测试、114 个测试文件全部通过；`typecheck`、
+- 版本门禁：21 处版本字段（JS 7 + 根 pyproject + Python 13）。
+- Web 质量工作台：`@beauty/web` 832 条测试、115 个测试文件全部通过；`typecheck`、
   `lint`、`--run --coverage` 与生产构建通过。页面测试覆盖总览 KPI/套件/失败入口、
   运行详情 URL 过滤、用例抽屉评分器与工具轨迹、深链打开与 ESC 关闭。
+  M1 数据面切到 eval-service（失败回退静态快照），页面协议与组件未变。
 
 ### 10.4 验收命令
 
@@ -532,6 +551,9 @@ npx nx test @beauty/web -- --run --coverage
 npx nx build @beauty/web
 npx nx lint evalkit
 npx nx test evalkit
+npx nx lint eval-service
+npx nx test eval-service
+node scripts/eval/upload.mjs --optional  # 服务可用则上报，不可用则跳过
 bash scripts/check-versions.sh
 bash scripts/check-workspace.sh
 bash scripts/check-docs.sh
@@ -552,8 +574,9 @@ bash scripts/check-docs.sh
 4. **成本与时延**：按 `llm-gateway` 价目表把 tokens 换算成金额；报告增加 P50/P95；
    设置套件级预算门禁。
 5. **趋势报告**：保留最近 N 次 JSON，生成 Markdown 趋势；PR 评论只贴摘要与失败用例。
-6. **质量工作台**：M0 静态快照已完成（`/evals` + `/evals/runs/:runId` + 用例抽屉，
-   见 §9.1）；M1 增加 eval-service + Postgres + CI 上报，M2 做数据集/门禁治理与跨运行对比。
+6. **质量工作台**：M0 静态快照与页面已完成（`/evals` + `/evals/runs/:runId` + 用例抽屉）；
+   M1 eval-service + Postgres + CI 上报已完成（见 §9.1）；M2 做跨运行对比、数据集/门禁
+   治理、服务端分页接入、对象存储与保留期。
 
 ### P2（中期）：矩阵与生产反馈
 

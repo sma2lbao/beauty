@@ -22,6 +22,7 @@ class Settings(BaseAppSettings):
     knowledge_base_url: str = "http://127.0.0.1:8006"
     connector_base_url: str = "http://127.0.0.1:8004"
     llm_gateway_base_url: str = "http://127.0.0.1:8003"
+    eval_base_url: str = "http://127.0.0.1:8009"
     # 浏览器直连 SSE 的公开 runtime 地址(M0-06 stream token)
     runtime_public_url: str = "http://127.0.0.1:8002"
     # M0-05 Cookie 会话:值必须用环境变量覆盖;默认仅供本地

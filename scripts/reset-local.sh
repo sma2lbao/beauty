@@ -17,6 +17,7 @@ PG_DATABASES=(
   beauty_knowledge
   beauty_workspace
   beauty_tool
+  beauty_eval
 )
 
 YES=0
@@ -35,7 +36,7 @@ done
 
 # 服务运行时删库可能导致状态错乱;lsof 不可用时用 TCP 探测回退。
 running=0
-for port in 8001 8002 8003 8004 8005 8006 8007 8008; do
+for port in 8001 8002 8003 8004 8005 8006 8007 8008 8009; do
   if command -v lsof >/dev/null 2>&1; then
     lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1 && running=1
   else
@@ -43,7 +44,7 @@ for port in 8001 8002 8003 8004 8005 8006 8007 8008; do
   fi
 done
 if [ "$running" = "1" ] && [ "$FORCE" = "0" ]; then
-  echo "检测到服务仍在运行(端口 8001–8008)。" >&2
+  echo "检测到服务仍在运行(端口 8001–8009)。" >&2
   echo "请先 Ctrl+C 停止 scripts/dev.sh,或加 --force 强制删除。" >&2
   exit 1
 fi
@@ -88,6 +89,7 @@ DATABASES = (
     "beauty_knowledge",
     "beauty_workspace",
     "beauty_tool",
+    "beauty_eval",
 )
 ADMIN_URL = "postgresql://beauty:beauty@localhost:5432/beauty"
 

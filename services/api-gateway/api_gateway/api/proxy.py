@@ -87,6 +87,7 @@ _SERVICE_BASES: dict[str, tuple[str, str]] = {
     "account": ("account", "account_base_url"),
     "workspace": ("workspace", "workspace_base_url"),
     "knowledge": ("knowledge", "knowledge_base_url"),
+    "eval": ("eval", "eval_base_url"),
 }
 
 
