@@ -1,6 +1,6 @@
 """评测运行/套件/用例/基线表。
 
-报告大字段先落 TEXT（单次报告约 100KB 级），对象存储留到数据量真正变大再拆；
+报告超过阈值时把原始 JSON 转存对象存储，DB 只留摘要与对象键；
 suite/case 的冗余列只服务列表与分页，不替代 report_json 这份原始记录。
 """
 
@@ -46,7 +46,12 @@ class EvalRun(UUIDMixin, TimestampMixin, Base):
     )
     report_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # 原始报告（含所有用例的 fields/events/tool_calls）。
+    # 大报告转存对象存储后，report_json 只保留不含用例明细的摘要。
     report_json: Mapped[str] = mapped_column(Text, nullable=False)
+    report_key: Mapped[str | None] = mapped_column(
+        String(256), nullable=True, default=None
+    )
+    report_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     totals_json: Mapped[str] = mapped_column(Text, nullable=False)
     suites_json: Mapped[str] = mapped_column(Text, nullable=False)
     failed_cases_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

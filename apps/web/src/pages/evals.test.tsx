@@ -4,8 +4,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { evalApi } from '@/lib/eval-api';
-import type { EvalIndex, EvalReport } from '@/lib/eval-api';
+import { evalApi, findCase, flattenCases } from '@/lib/eval-api';
+import type { EvalIndex, EvalReport, EvalRunSummary } from '@/lib/eval-api';
 
 import { EvalRunPage } from './eval-run';
 import { EvalsPage } from './evals';
@@ -17,6 +17,9 @@ vi.mock('@/lib/eval-api', async (importOriginal) => {
     evalApi: {
       index: vi.fn(),
       run: vi.fn(),
+      summary: vi.fn(),
+      cases: vi.fn(),
+      case: vi.fn(),
     },
   };
 });
@@ -174,6 +177,38 @@ const REPORT: EvalReport = {
   ],
 };
 
+const SUMMARY: EvalRunSummary = {
+  id: 'run-new',
+  generated_at: '2026-11-24T15:46:46Z',
+  totals: TOTALS,
+  suites: INDEX.runs[0].suites,
+};
+
+function mockRun() {
+  vi.mocked(evalApi.summary).mockResolvedValue(SUMMARY);
+  vi.mocked(evalApi.cases).mockImplementation(async (_runId, suite, options = {}) => {
+    const all = flattenCases(REPORT).filter((item) => item.suite === suite);
+    const filtered = all.filter((item) => {
+      if (options.status === 'passed') return item.ok;
+      if (options.status === 'failed') return !item.ok;
+      return true;
+    });
+    const offset = options.offset ?? 0;
+    const limit = options.limit ?? 50;
+    return {
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+    };
+  });
+  vi.mocked(evalApi.case).mockImplementation(async (_runId, _suite, caseId) => {
+    const found = findCase(REPORT, caseId);
+    if (!found) throw new Error('missing case');
+    return found;
+  });
+}
+
 function client() {
   return new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -225,7 +260,7 @@ describe('EvalsPage', () => {
 describe('EvalRunPage', () => {
   it('按 URL 过滤失败用例并在抽屉里展示评分器与工具轨迹', async () => {
     vi.mocked(evalApi.index).mockResolvedValue(INDEX);
-    vi.mocked(evalApi.run).mockResolvedValue(REPORT);
+    mockRun();
     renderAt(
       '/evals/runs/run-new?suite=agent-core&status=failed',
       <EvalRunPage />,
@@ -251,9 +286,44 @@ describe('EvalRunPage', () => {
     expect(screen.queryByLabelText('评测用例详情')).not.toBeInTheDocument();
   });
 
+  it('用例超过一页时走服务端分页', async () => {
+    vi.mocked(evalApi.index).mockResolvedValue(INDEX);
+    vi.mocked(evalApi.summary).mockResolvedValue(SUMMARY);
+    const base = REPORT.suites[0].cases[0];
+    const all = Array.from({ length: 120 }, (_, index) => ({
+      ...base,
+      id: `chat/case-${index}`,
+      suite: 'agent-core',
+    }));
+    vi.mocked(evalApi.cases).mockImplementation(
+      async (_runId, _suite, options = {}) => {
+        const offset = options.offset ?? 0;
+        const limit = options.limit ?? 50;
+        return {
+          items: all.slice(offset, offset + limit),
+          total: all.length,
+          limit,
+          offset,
+        };
+      },
+    );
+    vi.mocked(evalApi.case).mockResolvedValue(all[0]);
+    renderAt('/evals/runs/run-new?suite=agent-core', <EvalRunPage />);
+
+    expect(
+      await screen.findByText('第 1 / 3 页 · 每页 50 条'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+
+    expect(
+      await screen.findByText('第 2 / 3 页 · 每页 50 条'),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('chat/case-50')).toBeInTheDocument();
+  });
+
   it('从 URL 深链打开用例,并切到输入输出页签', async () => {
     vi.mocked(evalApi.index).mockResolvedValue(INDEX);
-    vi.mocked(evalApi.run).mockResolvedValue(REPORT);
+    mockRun();
     renderAt(
       '/evals/runs/run-new?suite=agent-core&case=chat%2Fpass&tab=io',
       <EvalRunPage />,

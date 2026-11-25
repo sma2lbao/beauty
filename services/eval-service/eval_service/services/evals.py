@@ -11,11 +11,20 @@ import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
+from common.artifacts import ArtifactStore, build_artifact_key
 from common.errors import AppError
 from evalkit.baseline import compare
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from eval_service.core.errors import (
+    CaseNotFoundError,
+    ReportCorruptError,
+    ReportMissingError,
+    ReportStoreError,
+    ReportStoreUnavailableError,
+)
 from eval_service.models import EvalBaseline, EvalCaseRun, EvalRun, EvalSuiteRun
 from eval_service.repositories import (
     EvalBaselineRepository,
@@ -183,8 +192,30 @@ def _drifts_for(
         ) from exc
 
 
-async def ingest_run(session: AsyncSession, body: EvalRunUpload) -> EvalRun:
-    """入库一次运行；相同 external_id 幂等返回已有记录。"""
+def _summarized_report(report: dict[str, Any]) -> dict[str, Any]:
+    """去掉用例明细的报告摘要；完整内容在对象存储里。"""
+
+    suites: list[dict[str, Any]] = []
+    for suite in _suites(report):
+        cases = _cases(suite)
+        summarized = {key: value for key, value in suite.items() if key != "cases"}
+        summarized["case_count"] = len(cases)
+        suites.append(summarized)
+    return {**report, "suites": suites}
+
+
+async def ingest_run(
+    session: AsyncSession,
+    body: EvalRunUpload,
+    *,
+    store: ArtifactStore | None = None,
+    inline_limit: int = 64 * 1024,
+) -> EvalRun:
+    """入库一次运行；相同 external_id 幂等返回已有记录。
+
+    报告序列化后超过 ``inline_limit`` 且有存储时，原始报告转存对象存储，
+    DB 只留不含用例明细的摘要；小报告仍内联，读路径对两者都透明。
+    """
 
     runs = EvalRunRepository(session)
     if body.external_id:
@@ -299,7 +330,22 @@ async def ingest_run(session: AsyncSession, body: EvalRunUpload) -> EvalRun:
         "duration_ms": round(total_duration, 2),
     }
 
+    run_id = uuid4().hex
+    report_json = _dump(report)
+    report_size = len(report_json.encode("utf-8"))
+    report_key: str | None = None
+    if store is not None and report_size > inline_limit:
+        report_key = build_artifact_key("eval-runs", run_id, suffix=".json")
+        await store.put(
+            report_key,
+            report_json.encode("utf-8"),
+            content_type="application/json",
+        )
+        # DB 留摘要：列表/详情头部仍可直接读，用例明细按需查表。
+        report_json = _dump(_summarized_report(report))
+
     run = EvalRun(
+        id=run_id,
         external_id=body.external_id,
         trigger=body.trigger,
         git_sha=body.git_sha,
@@ -308,7 +354,9 @@ async def ingest_run(session: AsyncSession, body: EvalRunUpload) -> EvalRun:
         model=body.model,
         environment=body.environment,
         report_version=_integer(report.get("version"), 1),
-        report_json=_dump(report),
+        report_json=report_json,
+        report_key=report_key,
+        report_size=report_size,
         totals_json=_dump(report["totals"]),
         suites_json=_dump(suite_summaries),
         failed_cases_json=_dump(failed_cases),
@@ -356,6 +404,38 @@ def _report_of(run: EvalRun) -> dict[str, Any]:
         report = json.loads(run.report_json)
     except ValueError:  # pragma: no cover - 只有写坏的行才会触发
         return {}
+    return report if isinstance(report, dict) else {}
+
+
+async def _report_payload(run: EvalRun, store: ArtifactStore | None) -> dict[str, Any]:
+    """读完整报告:优先对象存储，旧行仍回落到内联 report_json。"""
+
+    if not run.report_key:
+        return _report_of(run)
+    if store is None:
+        raise ReportStoreUnavailableError(
+            "eval.report_store_unavailable",
+            "运行报告存放在对象存储，但当前实例未装配存储",
+        )
+    try:
+        data = await store.get(run.report_key)
+    except Exception as exc:  # noqa: BLE001 - 存储异常统一转成可读的上游错误
+        raise ReportStoreError(
+            "eval.report_store_error",
+            f"读取运行报告失败:{exc}",
+        ) from exc
+    if data is None:
+        raise ReportMissingError(
+            "eval.report_missing",
+            "运行报告对象已丢失或超过保留期",
+        )
+    try:
+        report = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ReportCorruptError(
+            "eval.report_invalid",
+            "对象存储中的运行报告已损坏",
+        ) from exc
     return report if isinstance(report, dict) else {}
 
 
@@ -414,7 +494,11 @@ def _case_status(base: dict[str, Any] | None, candidate: dict[str, Any] | None) 
 
 
 async def compare_runs(
-    session: AsyncSession, base_id: str, candidate_id: str
+    session: AsyncSession,
+    base_id: str,
+    candidate_id: str,
+    *,
+    store: ArtifactStore | None = None,
 ) -> EvalCompareRead:
     """按用例对比两次运行:回归/修复/新增/移除 + 通过率与成本差值。
 
@@ -425,8 +509,8 @@ async def compare_runs(
     runs = EvalRunRepository(session)
     base_run = await runs.require(base_id)
     candidate_run = await runs.require(candidate_id)
-    base_report = _report_of(base_run)
-    candidate_report = _report_of(candidate_run)
+    base_report = await _report_payload(base_run, store)
+    candidate_report = await _report_payload(candidate_run, store)
     base_suites = _suite_map(base_report)
     candidate_suites = _suite_map(candidate_report)
 
@@ -594,13 +678,17 @@ async def load_index(
     )
 
 
-async def load_report(session: AsyncSession, run_id: str) -> dict[str, Any]:
+async def load_report(
+    session: AsyncSession, run_id: str, *, store: ArtifactStore | None = None
+) -> dict[str, Any]:
     run = await EvalRunRepository(session).require(run_id)
-    try:
-        report = json.loads(run.report_json)
-    except ValueError as exc:  # pragma: no cover - 只有写坏的行才会触发
-        raise _bad("报告内容损坏") from exc
-    return report if isinstance(report, dict) else {}
+    return await _report_payload(run, store)
+
+
+async def load_run_summary(session: AsyncSession, run_id: str) -> EvalRunRead:
+    """运行摘要:元数据 + 套件汇总，不含用例明细。"""
+
+    return run_to_read(await EvalRunRepository(session).require(run_id))
 
 
 async def load_case_page(
@@ -627,6 +715,25 @@ async def load_case_page(
         limit=limit,
         offset=offset,
     )
+
+
+async def load_case_detail(
+    session: AsyncSession, run_id: str, suite: str, case_id: str
+) -> EvalCaseRead:
+    """单个用例详情；case_id 含 ``/``，因此走查询参数而不是路径参数。"""
+
+    await EvalRunRepository(session).require(run_id)
+    await EvalSuiteRunRepository(session).get_for_run(run_id, suite) or _missing_suite(
+        suite
+    )
+    row = await EvalCaseRunRepository(session).get_for_run(run_id, suite, case_id)
+    if row is None:
+        raise CaseNotFoundError(
+            "eval.case_not_found",
+            f"用例 {case_id} 不存在",
+            details={"suite": suite, "case_id": case_id},
+        )
+    return _case_to_read(row)
 
 
 def _missing_suite(suite: str) -> None:

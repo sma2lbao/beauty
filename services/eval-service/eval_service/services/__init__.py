@@ -12,9 +12,11 @@ from eval_service.services.evals import (
     get_baseline_payload,
     ingest_run,
     list_baselines,
+    load_case_detail,
     load_case_page,
     load_index,
     load_report,
+    load_run_summary,
     run_to_read,
 )
 
@@ -26,10 +28,12 @@ __all__ = [
     "get_baseline_payload",
     "ingest_run",
     "list_baselines",
+    "load_case_detail",
     "load_case_page",
     "load_catalog_dataset",
     "load_index",
     "load_report",
+    "load_run_summary",
     "resolve_datasets_root",
     "run_to_read",
 ]

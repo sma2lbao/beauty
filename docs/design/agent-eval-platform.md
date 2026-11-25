@@ -442,13 +442,13 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
 
 不做评测报告 iframe，而是把运行快照变成可下钻的质量工作台：
 
-| 路由                 | 内容                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `/evals`             | KPI（通过率/失败/漂移/套件/tokens/耗时）、套件健康度、最近运行、需要关注的失败用例                |
-| `/evals/runs/:runId` | 运行元数据、套件页签、状态筛选、用例表；`?case=&tab=` 打开右侧抽屉（结果/轨迹/输入输出/原始数据） |
-| `/evals/compare`     | 基线与候选两次运行的用例级对比；`?base=&candidate=&status=` 深链与过滤（回归/修复/新增/移除）     |
-| `/evals/datasets`    | 数据集只读清单与详情；`?dataset=` 选中，展示 manifest、用例、input/graders、校验状态              |
-| `/evals/gates`       | 基线门禁健康度：绑定版本、用例数、批准人与年龄，标记缺失/未绑定/版本或用例不一致/过期/就绪        |
+| 路由                 | 内容                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `/evals`             | KPI（通过率/失败/漂移/套件/tokens/耗时）、套件健康度、最近运行、需要关注的失败用例                                      |
+| `/evals/runs/:runId` | 运行元数据、套件页签、状态筛选、服务端分页用例表（`?page=`）；`?case=&tab=` 打开右侧抽屉（结果/轨迹/输入输出/原始数据） |
+| `/evals/compare`     | 基线与候选两次运行的用例级对比；`?base=&candidate=&status=` 深链与过滤（回归/修复/新增/移除）                           |
+| `/evals/datasets`    | 数据集只读清单与详情；`?dataset=` 选中，展示 manifest、用例、input/graders、校验状态                                    |
+| `/evals/gates`       | 基线门禁健康度：绑定版本、用例数、批准人与年龄，标记缺失/未绑定/版本或用例不一致/过期/就绪                              |
 
 - 数据层：`apps/web/src/lib/eval-api.ts` 优先读同源 `/api/eval/runs`
   （网关 → eval-service `:8009`），失败回退 M0 静态快照
@@ -462,9 +462,12 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
 - 读取：鉴权开启时页面走账号 JWT（`get_viewer_account` 严格校验 Bearer）；
   本地/演示按仓库惯例 `AUTH_ENABLED=false` 时只读端点匿名可用（网关仍做会话鉴权），
   此前该组合下页面会因 401 静默回退静态快照，现由匿名只读修复。写入口只认内部密钥，
-  基线批准仍要求账号。运行索引支持套件/结果/分支过滤，用例分页端点
-  （`/v1/runs/{id}/suites/{suite}/cases`，默认 50、上限 500）已就绪，
-  运行详情仍取完整报告，500+ 用例接入服务端分页留到 M2 后续。
+  基线批准仍要求账号。运行索引支持套件/结果/分支过滤；运行详情首屏读
+  `GET /v1/runs/{id}/summary`（元数据 + 套件汇总），用例表按
+  `GET /v1/runs/{id}/suites/{suite}/cases` 分页（默认 50、上限 500），
+  单用例抽屉按 `GET /v1/runs/{id}/case?suite=&case_id=` 取详情，500+ 用例
+  不再把整份报告推给浏览器。URL `?page=` 与 `?suite=&status=&case=&tab=` 一样是真源。
+  静态快照回退时，页面按同一份 JSON 本地切片，分页协议不变。
   对比端点 `GET /v1/compare?base=&candidate=` 以候选顺序合并两侧用例，
   标记回归/修复/新增/移除/未变并给出通过率、tokens、耗时差值；
   前端 `/evals/compare` 用两个运行选择器 + 差异表消费它。
@@ -475,14 +478,22 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
   优先级 missing > unbound > no-run > version-mismatch > case-mismatch > stale(>30 天) > ready；
   第一版只读，批准仍走 `POST /v1/baselines/{suite}`（要求账号），CI 门禁以
   `platform.sh` 退出码为准。
-- 存储：`eval_runs`（报告快照 + totals/失败/数据集版本）、`eval_suite_runs`、
-  `eval_case_runs`（逐用例结果/轨迹/评分器/基线差异）、`eval_baselines`；
-  大字段先落 TEXT，对象存储与保留期策略后置。
+- 存储：`eval_runs`（报告键/大小 + 摘要快照 + totals/失败/数据集版本）、
+  `eval_suite_runs`、`eval_case_runs`（逐用例结果/轨迹/评分器/基线差异）、
+  `eval_baselines`。报告序列化后超过 `EVAL__REPORT_INLINE_MAX_BYTES`
+  （默认 64KB）且有对象存储时，完整 JSON 写入 `eval-runs/<runId>.json`，
+  DB 只留 `report_key` + 去掉逐用例明细的摘要；旧行仍可直接读 `report_json`。
+  `artifact_store=database`（默认）表示不拆分；部署用 `filesystem` 挂卷，
+  也可切 `cos`（复用 `common.artifacts` 的装配）。读取对象缺失返回 410
+  `eval.report_missing`，未装配存储返回 503。保留期由
+  `python -m eval_service.maintenance purge --days N` 按批清理过期运行、
+  子表与报告对象（`EVAL__RETENTION_DAYS`，默认 90，0 表示不清理）。
 - URL 是真源：`?suite=`、`?status=passed|failed`、`?case=`、`?tab=result|trajectory|io|raw`。
 - 导航入口放在「管理」组、用量之前，第一版 `adminOnly=true`；页面本身不替代
   CI 门禁，失败/漂移仍以 `platform.sh` 退出码为准。
-- M2 已完成跨运行对比、数据集只读清单与基线门禁；仍保留的两项限制是
-  运行详情取完整报告（500+ 用例尚未接入服务端分页）与报告大字段的对象存储/保留期。
+- M2 已完成跨运行对比、数据集只读清单与基线门禁；运行详情已改为摘要 +
+  服务端分页 + 单用例详情，报告大字段可转对象存储并有保留期清理。
+  剩余治理项是保留期定时任务接入部署、对象存储生命周期策略与报告下载审计。
 
 ## 10. 当前阶段实施（已完成）
 
@@ -502,7 +513,7 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
 | `evals/baselines/`                                                                                        | 六个套件的基线                                                                                                           |
 | `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py`                                | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                         |
 | `scripts/eval/platform.sh`                                                                                | 仓库根入口，复用本地 uv 缓存                                                                                             |
-| `services/eval-service/`                                                                                  | 评测服务（:8009）：四张表、上报/索引/详情/用例分页/对比/数据集只读/基线批准端点、alembic 迁移                            |
+| `services/eval-service/`                                                                                  | 评测服务（:8009）：四张表、上报/索引/摘要/分页/单用例/对比/数据集/基线端点、报告转存与保留期、alembic 迁移               |
 | `scripts/eval/upload.mjs`                                                                                 | 把最新报告与基线以内部密钥上报 eval-service；同 `external_id` 幂等                                                       |
 | `packages/evalkit/project.json`                                                                           | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                |
 | `scripts/eval/publish-web.mjs`                                                                            | 把 JSON 报告发布成 `public/eval` 索引与运行快照（裁剪大字段）                                                            |
@@ -519,16 +530,18 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
   再用 sqlite 启动 eval-service 并调 `node scripts/eval/upload.mjs` 验证上报链路。
 - `evalkit` 与 `eval-service` 进入 uv workspace、Nx 项目、release 排除列表、版本门禁
   与 Python lint/test 矩阵（13 个项目）；`eval-service` 另有 alembic 迁移检查 job。
-- 覆盖率阈值：evalkit 85（实测 96.03%）、eval-service 80（实测 94.02%）。
+- 覆盖率阈值：evalkit 85（实测 96.03%）、eval-service 80（实测 92.55%）。
 
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
 - AO 全量：1399 passed，覆盖率 88.32%（阈值 82%），含 19 条平台 adapter 测试
   与 3 条工具调用采集测试。
-- eval-service：30 passed，覆盖率 94.02%（阈值 80%）；四张表、上报幂等、漂移回填、
+- eval-service：37 passed，覆盖率 92.55%（阈值 80%）；四张表、上报幂等、漂移回填、
   基线批准、索引/分页过滤、鉴权关闭时匿名只读、数据集目录/详情/坏数据/缺 manifest
   均有测试；跨运行对比覆盖回归/修复/新增/移除/未变、缺失运行 404 与自比全未变。
+  大报告转存/读回、存储缺失 503、对象丢失 410、compare 读转存报告、摘要/单用例
+  端点、保留期 dry-run/实际删除/对象清理均有测试。
   api-gateway 因新增 eval 前缀 56 passed、87.50%。
 - 平台运行：6 个套件、29 条用例全部通过；agent-core 3 条 / 1046 tokens，
   retrieval-quality 9 条，conversation-quality 3 条 / 368 tokens，tool-arguments
@@ -549,11 +562,12 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
   计划闸 checkpoint 续跑交回人工审批（next=["approval_gate"]）；
   终态图直接收尾、不新增模型调用（status 保持 completed）。
 - 版本门禁：21 处版本字段（JS 7 + 根 pyproject + Python 13）。
-- Web 质量工作台：`@beauty/web` 全量测试、`typecheck`、
+- Web 质量工作台：`@beauty/web` 118 个测试文件 / 846 条测试、`typecheck`、
   `lint`、`--run --coverage` 与生产构建通过。页面测试覆盖总览 KPI/套件/失败入口、
   运行详情 URL 过滤、用例抽屉评分器与工具轨迹、深链打开与 ESC 关闭；
   对比页覆盖默认基线与候选、状态过滤、行深链目标（回归指向候选、移除指向基线）。
-  M1 数据面切到 eval-service（失败回退静态快照），对比只走服务端。
+  M1 数据面切到 eval-service（失败回退静态快照），对比只走服务端；运行详情
+  覆盖服务端分页（120 条用例、第 2 页）与摘要/用例详情查询。
 - M2 数据集与门禁：`/evals/datasets` 消费 `/v1/datasets`，未通过 schema 校验的
   数据集在清单中标黄、详情给出错误；`/evals/gates` 合并已批准基线与最新运行，
   用 30 天年龄、dataset_version 与用例数判定七种状态。前端测试覆盖门禁优先级、
@@ -568,6 +582,9 @@ bash scripts/eval/platform.sh run              # 全通过 + 无漂移，退出 
 curl 'http://127.0.0.1:8009/v1/compare?base=<id>&candidate=<id>'  # 跨运行对比
 curl 'http://127.0.0.1:8009/v1/datasets'                        # 数据集清单
 curl 'http://127.0.0.1:8009/v1/baselines'                       # 已批准基线
+curl 'http://127.0.0.1:8009/v1/runs/<id>/summary'                # 运行摘要
+curl 'http://127.0.0.1:8009/v1/runs/<id>/case?suite=agent-core&case_id=chat%2Fdirect-answer'
+npx nx run eval-service:retention -- --days 90 --dry-run         # 保留期预演
 node scripts/eval/publish-web.mjs --limit 2     # 发布静态快照到 public/eval
 npx nx typecheck @beauty/web
 npx nx test @beauty/web -- --run
@@ -600,8 +617,8 @@ bash scripts/check-docs.sh
 5. **趋势报告**：保留最近 N 次 JSON，生成 Markdown 趋势；PR 评论只贴摘要与失败用例。
 6. **质量工作台**：M0 静态快照与页面已完成（`/evals` + `/evals/runs/:runId` + 用例抽屉）；
    M1 eval-service + Postgres + CI 上报已完成；M2 跨运行对比（API + `/evals/compare`）、
-   数据集只读清单（`/evals/datasets`）与基线门禁治理（`/evals/gates`）已完成，
-   剩余运行详情服务端分页与报告对象存储/保留期。
+   数据集只读清单（`/evals/datasets`）与基线门禁治理（`/evals/gates`）已完成；
+   运行详情服务端分页、报告对象存储与保留期清理也已完成，M2 收口。
 
 ### P2（中期）：矩阵与生产反馈
 

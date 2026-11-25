@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from common.artifacts import ArtifactStore
 from common.auth import JwtVerifier
 from common.errors import UnauthorizedError
 from common.logging import bind_request_context
@@ -72,3 +73,9 @@ async def get_viewer_account(
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_artifact_store(request: Request) -> ArtifactStore | None:
+    """报告对象存储;database 模式为 None，报告保持内联。"""
+
+    return request.app.state.artifact_store

@@ -337,6 +337,11 @@ services:
       # 演示环境关闭读取鉴权(与其它服务一致);CI 上报仍校验 X-Internal-Secret。
       EVAL__AUTH_ENABLED: 'false'
       EVAL__INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret}
+      # 大报告转存文件系统卷;database 表示全部内联(本地/测试)。
+      EVAL__ARTIFACT_STORE: filesystem
+      EVAL__ARTIFACT_ROOT: /data/eval-artifacts
+    volumes:
+      - eval-artifacts:/data/eval-artifacts
     depends_on: *db-depends
     restart: unless-stopped
 
@@ -589,6 +594,7 @@ volumes:
   pgdata:
   account-keys:
   workspace-artifacts:
+  eval-artifacts:
   # Langfuse(observability profile)
   langfuse-pgdata:
   langfuse-clickhouse-data:

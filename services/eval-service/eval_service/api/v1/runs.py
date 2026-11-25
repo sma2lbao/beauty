@@ -5,12 +5,14 @@ from __future__ import annotations
 import secrets
 from typing import Annotated
 
+from common.artifacts import ArtifactStore
 from common.errors import AppError, PermissionDeniedError
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eval_service.api.deps import (
     get_account_id,
+    get_artifact_store,
     get_session,
     get_settings,
     get_viewer_account,
@@ -18,15 +20,18 @@ from eval_service.api.deps import (
 from eval_service.core.config import Settings
 from eval_service.schemas.evals import (
     EvalCasePageRead,
+    EvalCaseRead,
     EvalIndexRead,
     EvalRunRead,
     EvalRunUpload,
 )
 from eval_service.services import (
     ingest_run,
+    load_case_detail,
     load_case_page,
     load_index,
     load_report,
+    load_run_summary,
     run_to_read,
 )
 
@@ -36,6 +41,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 AccountDep = Annotated[str, Depends(get_account_id)]
 ViewerDep = Annotated[str | None, Depends(get_viewer_account)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+StoreDep = Annotated[ArtifactStore | None, Depends(get_artifact_store)]
 
 
 class ServiceUnavailableError(AppError):
@@ -65,11 +71,18 @@ def require_internal_secret(
 async def create_run(
     body: EvalRunUpload,
     session: SessionDep,
+    settings: SettingsDep,
+    store: StoreDep,
     _: Annotated[None, Depends(require_internal_secret)],
 ) -> EvalRunRead:
     """上报一次评测运行（同 external_id 幂等）。"""
 
-    run = await ingest_run(session, body)
+    run = await ingest_run(
+        session,
+        body,
+        store=store,
+        inline_limit=settings.report_inline_max_bytes,
+    )
     await session.commit()
     return run_to_read(run)
 
@@ -96,15 +109,40 @@ async def list_runs(
     )
 
 
+@router.get("/{run_id}/summary", response_model=EvalRunRead)
+async def get_run_summary(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+) -> EvalRunRead:
+    """运行摘要:元数据 + 套件汇总，不含用例明细。"""
+
+    return await load_run_summary(session, run_id)
+
+
+@router.get("/{run_id}/case", response_model=EvalCaseRead)
+async def get_case(
+    run_id: str,
+    session: SessionDep,
+    _: ViewerDep,
+    suite: Annotated[str, Query(min_length=1)],
+    case_id: Annotated[str, Query(min_length=1)],
+) -> EvalCaseRead:
+    """单个用例详情;case_id 含 ``/``，因此用查询参数传递。"""
+
+    return await load_case_detail(session, run_id, suite, case_id)
+
+
 @router.get("/{run_id}")
 async def get_run(
     run_id: str,
     session: SessionDep,
     _: ViewerDep,
+    store: StoreDep,
 ) -> dict:
     """完整报告快照(漂移已回填到 suites/cases)。"""
 
-    return await load_report(session, run_id)
+    return await load_report(session, run_id, store=store)
 
 
 @router.get("/{run_id}/suites/{suite}/cases", response_model=EvalCasePageRead)

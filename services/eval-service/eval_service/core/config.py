@@ -1,6 +1,7 @@
 """eval-service 配置。"""
 
 from common.service_kit import ServiceSettings
+from pydantic import SecretStr
 from pydantic_settings import SettingsConfigDict
 
 
@@ -20,3 +21,21 @@ class Settings(ServiceSettings):
     internal_secret: str = ""
     # 数据集目录;为空时从 cwd 向上查找 evals/datasets（本地/容器同一布局）。
     datasets_root: str = ""
+    # 报告对象存储：report_json 超过 report_inline_max_bytes 时转存对象存储，
+    # DB 只留摘要与 report_key；database 表示不拆分（本地/测试默认）。
+    artifact_store: str = "database"
+    artifact_root: str = "./.artifacts"
+    report_inline_max_bytes: int = 64 * 1024
+    # 保留期：维护命令删除超过 retention_days 的运行及其对象；0 表示不清理。
+    retention_days: int = 90
+    # COS 后端（artifact_store=cos），字段与 workspace-service 保持一致。
+    artifact_cos_bucket: str = ""
+    artifact_cos_region: str = ""
+    artifact_cos_secret_id: SecretStr | None = None
+    artifact_cos_secret_key: SecretStr | None = None
+    artifact_cos_token: SecretStr | None = None
+    artifact_cos_scheme: str = "https"
+    artifact_cos_endpoint: str = ""
+    artifact_cos_timeout_seconds: float = 30.0
+    artifact_cos_retry_times: int = 3
+    artifact_cos_pool_max_size: int = 10

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from database.repository import Repository
@@ -55,6 +56,22 @@ class EvalRunRepository(Repository[EvalRun]):
             *self._filters(suite=suite, status=status, branch=branch)
         )
 
+    async def list_expired(
+        self, before: datetime, *, limit: int = 100
+    ) -> list[EvalRun]:
+        """按创建时间取过期运行；保留期清理按批处理，避免一次锁太久。"""
+
+        statement = (
+            select(EvalRun)
+            .where(EvalRun.created_at < before)
+            .order_by(EvalRun.created_at)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
+
+    async def count_expired(self, before: datetime) -> int:
+        return await self.count(EvalRun.created_at < before)
+
     def _filters(
         self,
         *,
@@ -106,6 +123,17 @@ class EvalCaseRunRepository(Repository[EvalCaseRun]):
     """用例结果:服务端分页与状态过滤。"""
 
     model = EvalCaseRun
+
+    async def get_for_run(
+        self, run_id: str, suite: str, case_id: str
+    ) -> EvalCaseRun | None:
+        return await self.session.scalar(
+            select(EvalCaseRun).where(
+                EvalCaseRun.run_id == run_id,
+                EvalCaseRun.suite == suite,
+                EvalCaseRun.case_id == case_id,
+            )
+        )
 
     async def list_page(
         self,

@@ -7,7 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 
-import { evalApi, findCase, flattenCases } from '@/lib/eval-api';
+import { evalApi } from '@/lib/eval-api';
 import type { EvalCaseWithSuite, EvalCompareStatus } from '@/lib/eval-api';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -63,31 +63,60 @@ function parseTab(value: string | null): EvalCaseTab {
   return 'result';
 }
 
+function parsePage(value: string | null): number {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+const PAGE_SIZE = 50;
+
 export function useEvalRunModel(runId: string) {
-  const run = useQuery({
-    queryKey: queryKeys.evalRun(runId),
-    queryFn: () => evalApi.run(runId),
+  const [params, setParams] = useSearchParams();
+  const requestedSuite = params.get('suite');
+  const status = parseStatus(params.get('status'));
+  const tab = parseTab(params.get('tab'));
+  const page = parsePage(params.get('page'));
+  const caseId = params.get('case');
+
+  const summary = useQuery({
+    queryKey: queryKeys.evalRunSummary(runId),
+    queryFn: () => evalApi.summary(runId),
     enabled: Boolean(runId),
     staleTime: 60_000,
   });
-  const [params, setParams] = useSearchParams();
 
-  const selectedCase = findCase(run.data, params.get('case'));
-  const requestedSuite = params.get('suite');
+  const suites = summary.data?.suites ?? [];
   const activeSuite =
-    requestedSuite ?? selectedCase?.suite ?? run.data?.suites[0]?.name ?? '';
-  const status = parseStatus(params.get('status'));
-  const tab = parseTab(params.get('tab'));
+    requestedSuite ?? suites[0]?.name ?? '';
 
-  const suites = run.data?.suites ?? [];
-  const suiteCases = flattenCases(run.data).filter(
-    (testCase) => testCase.suite === activeSuite,
-  );
-  const cases = suiteCases.filter((testCase) => {
-    if (status === 'passed') return testCase.ok;
-    if (status === 'failed') return !testCase.ok;
-    return true;
+  const casesQuery = useQuery({
+    queryKey: queryKeys.evalRunCases(
+      runId,
+      activeSuite,
+      status,
+      page,
+    ),
+    queryFn: () =>
+      evalApi.cases(runId, activeSuite, {
+        status: status === 'all' ? undefined : status,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+      }),
+    enabled: Boolean(runId && activeSuite),
+    staleTime: 60_000,
   });
+
+  const caseQuery = useQuery({
+    queryKey: queryKeys.evalRunCase(runId, activeSuite, caseId ?? ''),
+    queryFn: () => evalApi.case(runId, activeSuite, caseId ?? ''),
+    enabled: Boolean(runId && activeSuite && caseId),
+    staleTime: 60_000,
+  });
+
+  const cases = casesQuery.data?.items ?? [];
+  const selectedCase =
+    caseQuery.data ?? cases.find((testCase) => testCase.id === caseId);
+  const total = casesQuery.data?.total ?? 0;
 
   function updateParams(patch: Record<string, string | null>) {
     const next = new URLSearchParams(params);
@@ -102,11 +131,24 @@ export function useEvalRunModel(runId: string) {
   }
 
   function selectSuite(suite: string) {
-    updateParams({ suite, case: null, tab: null });
+    updateParams({ suite, case: null, tab: null, page: null });
   }
 
   function selectStatus(nextStatus: EvalCaseStatus) {
-    updateParams({ status: nextStatus === 'all' ? null : nextStatus });
+    updateParams({
+      status: nextStatus === 'all' ? null : nextStatus,
+      case: null,
+      tab: null,
+      page: null,
+    });
+  }
+
+  function selectPage(nextPage: number) {
+    updateParams({
+      page: nextPage > 1 ? String(nextPage) : null,
+      case: null,
+      tab: null,
+    });
   }
 
   function selectCase(testCase: EvalCaseWithSuite) {
@@ -122,17 +164,23 @@ export function useEvalRunModel(runId: string) {
   }
 
   return {
-    run,
+    run: summary,
+    summary,
     suite: activeSuite,
     suites,
     cases,
-    suiteCases,
+    casesQuery,
+    caseQuery,
     selectedCase,
+    total,
+    page,
+    pageSize: PAGE_SIZE,
     status,
     tab,
     selectSuite,
     selectStatus,
     selectCase,
+    selectPage,
     closeCase,
     selectTab,
   };

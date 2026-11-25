@@ -67,6 +67,16 @@
         },
         "cwd": "{projectRoot}"
       }
+    },
+    "retention": {
+      "executor": "@nxlv/python:run-commands",
+      "options": {
+        "command": "export UV_CACHE_DIR=\"${UV_CACHE_DIR:-${_UV_ROOT}/.uv-cache}\" UV_PYTHON_INSTALL_DIR=\"${UV_PYTHON_INSTALL_DIR:-${_UV_ROOT}/.uv-python}\" && uv run python -m eval_service.maintenance purge",
+        "env": {
+          "_UV_ROOT": "{projectRoot}/../.."
+        },
+        "cwd": "{projectRoot}"
+      }
     }
   },
   "implicitDependencies": ["common", "database", "evalkit"],

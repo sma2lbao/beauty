@@ -7,8 +7,11 @@
 - `GET /v1/runs`：运行索引，支持 `suite/status/branch` 过滤；鉴权开启时校验
   账号 JWT，`EVAL__AUTH_ENABLED=false` 时匿名只读。
 - `GET /v1/runs/{id}`：完整报告；服务会把基线漂移回填到 `drifts`/
-  `suite.drift_count`/`case.baseline_diff`。
+  `suite.drift_count`/`case.baseline_diff`。报告超过 64KB 时完整 JSON 转存
+  对象存储，DB 只留 `report_key` 与摘要；对象丢失返回 410，存储未装配返回 503。
+- `GET /v1/runs/{id}/summary`：运行摘要（元数据 + 套件汇总，不含逐用例）。
 - `GET /v1/runs/{id}/suites/{suite}/cases`：用例服务端分页（`status` 过滤）。
+- `GET /v1/runs/{id}/case?suite=&case_id=`：单用例详情（`case_id` 含 `/`，走 query）。
 - `GET /v1/compare?base=&candidate=`：两次运行的用例级对比，标记
   regressed/fixed/added/removed/unchanged 并给出通过率、tokens、耗时差值。
 - `GET /v1/datasets`、`GET /v1/datasets/{name}`：从 `evals/datasets/` 只读扫描数据集，
@@ -31,6 +34,21 @@ node scripts/eval/upload.mjs
 认证：`EVAL__AUTH_ENABLED=true` 时读接口校验账号 JWT；关闭时只读接口匿名
 可用（本地/演示，网关仍做会话鉴权），基线批准仍要求账号。写接口只认
 `EVAL__INTERNAL_SECRET`，未配置时返回 503（fail closed）。
+
+## 存储与保留期
+
+`EVAL__ARTIFACT_STORE` 取 `database`（默认，不拆分）、`filesystem`
+（`EVAL__ARTIFACT_ROOT`，compose 挂 `eval-artifacts` 卷）或 `cos`。
+`EVAL__REPORT_INLINE_MAX_BYTES` 控制转存阈值（默认 65536）。
+
+按保留期清理过期运行、用例/套件行与报告对象：
+
+```sh
+npx nx run eval-service:retention -- --days 90 --dry-run
+npx nx run eval-service:retention -- --days 90
+```
+
+`EVAL__RETENTION_DAYS` 默认 90，设为 0 时 maintenance 命令直接跳过。
 
 ## 迁移
 

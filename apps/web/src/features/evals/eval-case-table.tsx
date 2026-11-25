@@ -20,11 +20,22 @@ export function EvalCaseTable({
   cases,
   selectedCaseId,
   onSelect,
+  page = 1,
+  pageSize = 50,
+  total,
+  onPageChange,
 }: {
   cases: EvalCaseWithSuite[];
   selectedCaseId?: string;
   onSelect: (testCase: EvalCaseWithSuite) => void;
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  onPageChange?: (page: number) => void;
 }) {
+  const count = total ?? cases.length;
+  const pages = Math.max(1, Math.ceil(count / pageSize));
+
   return (
     <ConsolePanel className="overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-ha-border px-4 py-3">
@@ -35,7 +46,7 @@ export function EvalCaseTable({
           </p>
         </div>
         <span className="font-mono text-[11px] text-ha-faint">
-          {cases.length} 条
+          {count} 条
         </span>
       </div>
 
@@ -118,6 +129,32 @@ export function EvalCaseTable({
           </Table>
         </div>
       )}
+
+      {onPageChange && count > pageSize ? (
+        <div className="flex items-center justify-between gap-3 border-t border-ha-border px-4 py-2.5">
+          <span className="font-mono text-[11px] text-ha-faint">
+            第 {page} / {pages} 页 · 每页 {pageSize} 条
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => onPageChange(page - 1)}
+              className="rounded-md border border-ha-border px-2 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              disabled={page >= pages}
+              onClick={() => onPageChange(page + 1)}
+              className="rounded-md border border-ha-border px-2 py-1 text-[11px] text-ha-muted transition-colors hover:border-ha-accent hover:text-ha-text disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      ) : null}
     </ConsolePanel>
   );
 }

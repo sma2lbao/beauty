@@ -1,8 +1,9 @@
 /**
  * 运行详情页:一次评测运行的逐套件、逐用例下钻。
  *
- * URL 是真源:?suite= 套件、?status= 过滤、?case= 抽屉、?tab= 抽屉页签。
- * M0 读 public/eval/runs/<id>.json;后面的 eval-service 不改这套协议。
+ * URL 是真源:?suite= 套件、?status= 过滤、?page= 分页、?case= 抽屉、?tab= 页签。
+ * 首屏读 summary、用例表走服务端分页、抽屉按需取单用例;eval-service
+ * 不可用时回退 public/eval/runs/<id>.json 并本地切片。
  */
 import { ChevronLeft } from 'lucide-react';
 import { Link, useParams } from 'react-router';
@@ -151,7 +152,7 @@ export function EvalRunPage() {
                   </button>
                 ))}
                 <span className="ml-2 font-mono text-[11px] text-ha-faint">
-                  {model.cases.length} 条
+                  {model.total} 条
                 </span>
               </div>
             </div>
@@ -161,6 +162,10 @@ export function EvalRunPage() {
                 cases={model.cases}
                 selectedCaseId={model.selectedCase?.id}
                 onSelect={model.selectCase}
+                page={model.page}
+                pageSize={model.pageSize}
+                total={model.total}
+                onPageChange={model.selectPage}
               />
             </div>
           </>
