@@ -10,7 +10,13 @@ from database.repository import Repository
 from sqlalchemy import select
 from sqlalchemy.sql.elements import ColumnElement
 
-from eval_service.models import EvalBaseline, EvalCaseRun, EvalRun, EvalSuiteRun
+from eval_service.models import (
+    EvalBaseline,
+    EvalCaseRun,
+    EvalReportDownload,
+    EvalRun,
+    EvalSuiteRun,
+)
 
 
 class EvalRunRepository(Repository[EvalRun]):
@@ -214,6 +220,33 @@ class EvalBaselineRepository(Repository[EvalBaseline]):
         record.approved_by = approved_by
         await self.session.flush()
         return record
+
+
+class EvalDownloadRepository(Repository[EvalReportDownload]):
+    """下载审计:按时间倒序分页，可按运行过滤。"""
+
+    model = EvalReportDownload
+
+    async def list_page(
+        self, *, run_id: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[EvalReportDownload]:
+        criteria = self._filters(run_id)
+        statement = (
+            select(EvalReportDownload)
+            .where(*criteria)
+            .order_by(
+                EvalReportDownload.created_at.desc(), EvalReportDownload.id.desc()
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(await self.session.scalars(statement))
+
+    async def count_page(self, *, run_id: str | None = None) -> int:
+        return await self.count(*self._filters(run_id))
+
+    def _filters(self, run_id: str | None) -> tuple[ColumnElement[bool], ...]:
+        return (EvalReportDownload.run_id == run_id,) if run_id else ()
 
 
 def json_list(value: Any) -> list[Any]:

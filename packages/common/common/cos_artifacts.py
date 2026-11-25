@@ -58,7 +58,7 @@ class CosArtifactStore:
     ) -> None:
         _validate_config(config)
         self._bucket = config.bucket.strip()
-        self._client = client or _build_client(config)
+        self._client = client or build_cos_client(config)
 
     async def put(
         self, key: str, data: bytes, *, content_type: str = DEFAULT_CONTENT_TYPE
@@ -110,6 +110,12 @@ class CosArtifactStore:
 
     def _delete_sync(self, key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=key)
+
+
+def build_cos_client(config: CosArtifactConfig) -> CosS3Client:
+    """按配置构造 COS 客户端；服务层做生命周期等桶级操作时复用同一套参数。"""
+
+    return _build_client(config)
 
 
 def _build_client(config: CosArtifactConfig) -> CosS3Client:

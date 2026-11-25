@@ -119,6 +119,36 @@ class EvalCaseRun(UUIDMixin, TimestampMixin, Base):
     baseline_diff_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
 
+class EvalReportDownload(UUIDMixin, Base):
+    """报告下载审计:append-only，记录成功与失败尝试，不随保留期删除。"""
+
+    __tablename__ = "eval_report_downloads"
+    __table_args__ = (
+        Index("ix_eval_report_downloads_created_at", "created_at"),
+        Index("ix_eval_report_downloads_run", "run_id"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    actor_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="anonymous"
+    )
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    report_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    report_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="json")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="success")
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class EvalBaseline(UUIDMixin, TimestampMixin, Base):
     """已批准基线:同一时刻每个套件只有一条（按 suite 唯一）。"""
 

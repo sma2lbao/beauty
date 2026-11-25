@@ -7,7 +7,7 @@ from typing import Annotated
 
 from common.artifacts import ArtifactStore
 from common.errors import AppError, PermissionDeniedError
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eval_service.api.deps import (
@@ -31,9 +31,13 @@ from eval_service.services import (
     load_case_page,
     load_index,
     load_report,
+    load_report_download,
     load_run_summary,
+    record_download,
+    report_bytes,
     run_to_read,
 )
+from eval_service.services.audits import context_from_request, record_failed_download
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -131,6 +135,47 @@ async def get_case(
     """单个用例详情;case_id 含 ``/``，因此用查询参数传递。"""
 
     return await load_case_detail(session, run_id, suite, case_id)
+
+
+@router.get("/{run_id}/download")
+async def download_run(
+    run_id: str,
+    request: Request,
+    session: SessionDep,
+    viewer: ViewerDep,
+    store: StoreDep,
+) -> Response:
+    """下载完整报告 JSON，并把每次成功/失败尝试写入下载审计。"""
+
+    try:
+        report, run = await load_report_download(session, run_id, store=store)
+    except AppError as exc:
+        await record_failed_download(
+            request.app.state.session_factory,
+            run_id=run_id,
+            actor=viewer,
+            request=request,
+            error_code=exc.code,
+        )
+        raise
+    payload = report_bytes(report)
+    await record_download(
+        session,
+        context_from_request(request, viewer),
+        run_id=run.id,
+        report_key=run.report_key,
+        report_size=len(payload),
+    )
+    await session.commit()
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="eval-{run.id}.json"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/{run_id}")

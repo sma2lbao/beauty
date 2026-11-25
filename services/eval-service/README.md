@@ -12,6 +12,9 @@
 - `GET /v1/runs/{id}/summary`：运行摘要（元数据 + 套件汇总，不含逐用例）。
 - `GET /v1/runs/{id}/suites/{suite}/cases`：用例服务端分页（`status` 过滤）。
 - `GET /v1/runs/{id}/case?suite=&case_id=`：单用例详情（`case_id` 含 `/`，走 query）。
+- `GET /v1/runs/{id}/download`：下载完整报告附件；成功/失败都写
+  `eval_report_downloads`（actor、IP、UA、request_id、report_key、状态与错误码）。
+- `GET /v1/downloads`：下载审计清单（仅内部密钥），支持 `run_id` 过滤与分页。
 - `GET /v1/compare?base=&candidate=`：两次运行的用例级对比，标记
   regressed/fixed/added/removed/unchanged 并给出通过率、tokens、耗时差值。
 - `GET /v1/datasets`、`GET /v1/datasets/{name}`：从 `evals/datasets/` 只读扫描数据集，
@@ -46,9 +49,24 @@ node scripts/eval/upload.mjs
 ```sh
 npx nx run eval-service:retention -- --days 90 --dry-run
 npx nx run eval-service:retention -- --days 90
+npx nx run eval-service:maintenance -- loop --once     # 常驻前的单轮
+npx nx run eval-service:maintenance -- loop            # 常驻，默认每 86400s
 ```
 
-`EVAL__RETENTION_DAYS` 默认 90，设为 0 时 maintenance 命令直接跳过。
+`EVAL__RETENTION_DAYS` 默认 90，设为 0 时 maintenance 命令直接跳过；
+`EVAL__RETENTION_INTERVAL_SECONDS` 控制常驻间隔。compose 的 `eval-retention`
+用同一镜像跑 `loop`，无 HTTP 端口。
+
+COS 生命周期（默认 dry-run，确认后加 `--apply`，要求
+`EVAL__ARTIFACT_STORE=cos`）：
+
+```sh
+npx nx run eval-service:maintenance -- lifecycle --days 180
+npx nx run eval-service:maintenance -- lifecycle --days 180 --apply
+```
+
+默认前缀 `eval-runs/`（`EVAL__ARTIFACT_LIFECYCLE_PREFIX`），180 天过期并清理
+未完成分片；filesystem 后端由保留期清理负责。
 
 ## 迁移
 

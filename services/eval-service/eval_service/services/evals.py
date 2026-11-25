@@ -681,8 +681,23 @@ async def load_index(
 async def load_report(
     session: AsyncSession, run_id: str, *, store: ArtifactStore | None = None
 ) -> dict[str, Any]:
+    report, _ = await load_report_download(session, run_id, store=store)
+    return report
+
+
+async def load_report_download(
+    session: AsyncSession, run_id: str, *, store: ArtifactStore | None = None
+) -> tuple[dict[str, Any], EvalRun]:
+    """下载用:报告快照 + 运行行(取 report_key/report_size 供审计)。"""
+
     run = await EvalRunRepository(session).require(run_id)
-    return await _report_payload(run, store)
+    return await _report_payload(run, store), run
+
+
+def report_bytes(report: dict[str, Any]) -> bytes:
+    """报告下载的稳定字节序列；与入库序列化保持一致。"""
+
+    return _dump(report).encode("utf-8")
 
 
 async def load_run_summary(session: AsyncSession, run_id: str) -> EvalRunRead:

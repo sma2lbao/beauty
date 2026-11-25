@@ -194,6 +194,31 @@ class EvalCompareRead(BaseModel):
     cases: list[EvalCompareCaseRead] = Field(default_factory=list)
 
 
+class EvalDownloadRead(BaseModel):
+    """报告下载审计项；成功与失败尝试都保留，失败带 error_code。"""
+
+    id: str
+    run_id: str
+    actor: str | None = None
+    actor_kind: str = "anonymous"
+    ip: str | None = None
+    user_agent: str | None = None
+    request_id: str | None = None
+    report_key: str | None = None
+    report_size: int = 0
+    format: str = "json"
+    status: str = "success"
+    error_code: str | None = None
+    created_at: datetime
+
+
+class EvalDownloadPageRead(BaseModel):
+    items: list[EvalDownloadRead] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
 class EvalBaselineRead(BaseModel):
     suite: str
     dataset_version: int | None = None

@@ -22,7 +22,7 @@
 | `services/account-service`    | `account-service`       | Python 服务       | FastAPI + uvicorn(:8001):账号/配额/usage/API Key + 会话/设备(自建认证:注册/邮箱密码登录/旋转式刷新令牌/内部签发 + OIDC 发现/JWKS,签名密钥可经 `SIGNING_KEY_PATH` 持久化,见其 README)                                                               |
 | `services/workspace-service`  | `workspace-service`     | Python 服务       | FastAPI + uvicorn(:8005):工作区/交付物元数据/对象存储(沙箱生命周期阶段 B)                                                                                                                                                                          |
 | `services/tool-service`       | `tool-service`          | Python 服务       | FastAPI + uvicorn(:8008):内置工具服务(catalog/执行/审计/ask_question;沙箱经 workspace-service 创建);设计见 `docs/design/tool-service.md`                                                                                                           |
-| `services/eval-service`       | `eval-service`          | Python 服务       | FastAPI + uvicorn(:8009):评测运行索引/摘要/用例分页/单用例/基线批准;报告超 64KB 转对象存储并可配保留期清理,CI 用内部密钥上报,读取在鉴权开启时校验账号 JWT、关闭时匿名只读                                                                                                                                    |
+| `services/eval-service`       | `eval-service`          | Python 服务       | FastAPI + uvicorn(:8009):评测运行索引/摘要/用例分页/单用例/基线批准;报告超 64KB 转对象存储并可配保留期常驻清理,下载报告写审计,可下发 COS 生命周期规则,CI 用内部密钥上报,读取在鉴权开启时校验账号 JWT、关闭时匿名只读                               |
 | `services/api-gateway`        | `api-gateway`           | Python 服务       | FastAPI + uvicorn(:8007):同源 `/api` 门面;M0-05/06 承载 Cookie 会话、代理、限流、下载、stream token                                                                                                                                                |
 | `tools/eslint-config`         | `@beauty/eslint-config` | 共享工具包        | ESLint 10 flat config(`base`/`react` 工厂);eslint 插件依赖收敛于此                                                                                                                                                                                 |
 
@@ -107,6 +107,7 @@ npx nx run account-service:serve     # uvicorn :8001(账号/会话)
 npx nx run workspace-service:serve   # uvicorn :8005(工作区/交付物)
 npx nx run tool-service:serve        # uvicorn :8008(内置工具服务:工具目录/执行/审计)
 npx nx run eval-service:serve        # uvicorn :8009(评测服务:运行索引/摘要/用例分页/基线批准)
+npx nx run eval-service:maintenance  # 保留期 purge/loop 与 COS 生命周期 lifecycle
 npx nx run api-gateway:serve         # uvicorn :8007(FastAPI 网关,同源 /api)
 npx nx run evalkit:eval              # 统一评测平台:跑全部套件并与基线比对
 npx nx run evalkit:eval-baseline     # 人工更新 evals/baselines/*.json

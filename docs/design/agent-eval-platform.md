@@ -480,47 +480,58 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
   `platform.sh` 退出码为准。
 - 存储：`eval_runs`（报告键/大小 + 摘要快照 + totals/失败/数据集版本）、
   `eval_suite_runs`、`eval_case_runs`（逐用例结果/轨迹/评分器/基线差异）、
-  `eval_baselines`。报告序列化后超过 `EVAL__REPORT_INLINE_MAX_BYTES`
-  （默认 64KB）且有对象存储时，完整 JSON 写入 `eval-runs/<runId>.json`，
-  DB 只留 `report_key` + 去掉逐用例明细的摘要；旧行仍可直接读 `report_json`。
-  `artifact_store=database`（默认）表示不拆分；部署用 `filesystem` 挂卷，
-  也可切 `cos`（复用 `common.artifacts` 的装配）。读取对象缺失返回 410
-  `eval.report_missing`，未装配存储返回 503。保留期由
-  `python -m eval_service.maintenance purge --days N` 按批清理过期运行、
-  子表与报告对象（`EVAL__RETENTION_DAYS`，默认 90，0 表示不清理）。
+  `eval_baselines`、`eval_report_downloads`（下载审计：run_id/actor/actor_kind/ip/
+  user_agent/request_id/report_key/report_size/format/status/error_code）。
+  报告序列化后超过 `EVAL__REPORT_INLINE_MAX_BYTES`（默认 64KB）且有对象存储时，
+  完整 JSON 写入 `eval-runs/<runId>.json`，DB 只留 `report_key` + 去掉逐用例明细的
+  摘要；旧行仍可直接读 `report_json`。`artifact_store=database`（默认）表示不拆分；
+  部署用 `filesystem` 挂卷，也可切 `cos`（复用 `common.artifacts` 的装配）。读取对象
+  缺失返回 410 `eval.report_missing`，未装配存储返回 503。
+- 保留期：`python -m eval_service.maintenance purge --days N` 按批清理过期运行、
+  子表与报告对象（`EVAL__RETENTION_DAYS`，默认 90，0 表示不清理）；
+  `maintenance loop` 常驻并按 `EVAL__RETENTION_INTERVAL_SECONDS`（默认 86400）
+  循环，compose 的 `eval-retention` 服务即此命令；也可由外部 cron 调 `loop --once`。
+- 下载审计：`GET /v1/runs/{id}/download` 返回附件 JSON，成功与失败都写
+  `eval_report_downloads`（失败用独立短事务，记录 `error_code`）；审计清单
+  `GET /v1/downloads` 只对内部密钥开放。下载响应带 `Cache-Control: no-store`
+  与 `X-Content-Type-Options: nosniff`。
+- 对象存储生命周期：`python -m eval_service.maintenance lifecycle --days 180`
+  打印 COS 生命周期规则（默认 dry-run；前缀 `eval-runs/`、180 天过期、1 天清理
+  未完成分片）；确认后加 `--apply` 写入 bucket，要求 `EVAL__ARTIFACT_STORE=cos`。
+  filesystem 后端由保留期清理负责，不依赖生命周期规则。
 - URL 是真源：`?suite=`、`?status=passed|failed`、`?case=`、`?tab=result|trajectory|io|raw`。
 - 导航入口放在「管理」组、用量之前，第一版 `adminOnly=true`；页面本身不替代
   CI 门禁，失败/漂移仍以 `platform.sh` 退出码为准。
 - M2 已完成跨运行对比、数据集只读清单与基线门禁；运行详情已改为摘要 +
   服务端分页 + 单用例详情，报告大字段可转对象存储并有保留期清理。
-  剩余治理项是保留期定时任务接入部署、对象存储生命周期策略与报告下载审计。
+  三项治理（保留期常驻/外部调度、COS 生命周期策略、报告下载审计）也已完成。
 
 ## 10. 当前阶段实施（已完成）
 
 ### 10.1 代码与配置
 
-| 位置                                                                                                      | 内容                                                                                                                     |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `packages/evalkit/evalkit/`                                                                               | schema / graders / adapters / config / runner / baseline / report / cli                                                  |
-| `packages/evalkit/tests/`                                                                                 | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI                                               |
-| `evals/evalkit.toml`                                                                                      | `agent-core`、`retrieval-quality`、`conversation-quality`、`tool-arguments`、`memory-quality`、`run-resilience` 六个套件 |
-| `evals/datasets/agent-core/`                                                                              | 3 条用例：对话直答、任务审批、工具策略                                                                                   |
-| `evals/datasets/retrieval-quality/`                                                                       | 9 条查询，覆盖短词、中英混合、近重复、长词                                                                               |
-| `evals/datasets/conversation-quality/`                                                                    | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                                                             |
-| `evals/datasets/tool-arguments/`                                                                          | 2 条工具参数：人工确认链路的参数/风险/决策、自动策略下的双工具顺序与参数                                                 |
-| `evals/datasets/memory-quality/`                                                                          | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                                                     |
-| `evals/datasets/run-resilience/`                                                                          | 6 条韧性：取消 pending、工具失败后恢复、fork 独立完成、崩溃续跑三入口（回落/计划闸/终态）                                |
-| `evals/baselines/`                                                                                        | 六个套件的基线                                                                                                           |
-| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py`                                | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                         |
-| `scripts/eval/platform.sh`                                                                                | 仓库根入口，复用本地 uv 缓存                                                                                             |
-| `services/eval-service/`                                                                                  | 评测服务（:8009）：四张表、上报/索引/摘要/分页/单用例/对比/数据集/基线端点、报告转存与保留期、alembic 迁移               |
-| `scripts/eval/upload.mjs`                                                                                 | 把最新报告与基线以内部密钥上报 eval-service；同 `external_id` 幂等                                                       |
-| `packages/evalkit/project.json`                                                                           | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                |
-| `scripts/eval/publish-web.mjs`                                                                            | 把 JSON 报告发布成 `public/eval` 索引与运行快照（裁剪大字段）                                                            |
-| `apps/web/public/eval/`                                                                                   | M0 演示快照与回退：`index.json` + `runs/<id>.json` + README；eval-service 不可用时页面仍可看                             |
-| `apps/web/src/pages/evals.tsx`、`eval-run.tsx`、`eval-compare.tsx`、`eval-datasets.tsx`、`eval-gates.tsx` | 质量工作台总览、运行详情、跨运行对比、数据集清单、基线门禁                                                               |
-| `apps/web/src/features/evals/`                                                                            | KPI、套件健康度、运行历史、需要关注、用例表、用例抽屉、评分器、工具轨迹；对比视图、数据集目录、门禁状态计算              |
-| `apps/web/src/lib/eval-api.ts`                                                                            | 数据层：优先 eval-service，失败回退静态快照                                                                              |
+| 位置                                                                                                      | 内容                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/evalkit/evalkit/`                                                                               | schema / graders / adapters / config / runner / baseline / report / cli                                                                    |
+| `packages/evalkit/tests/`                                                                                 | 130 条单元测试，覆盖 schema、grader、adapter 加载、runner、基线、报告、CLI                                                                 |
+| `evals/evalkit.toml`                                                                                      | `agent-core`、`retrieval-quality`、`conversation-quality`、`tool-arguments`、`memory-quality`、`run-resilience` 六个套件                   |
+| `evals/datasets/agent-core/`                                                                              | 3 条用例：对话直答、任务审批、工具策略                                                                                                     |
+| `evals/datasets/retrieval-quality/`                                                                       | 9 条查询，覆盖短词、中英混合、近重复、长词                                                                                                 |
+| `evals/datasets/conversation-quality/`                                                                    | 3 条对话：多轮上下文、澄清追问、拒答不建 run                                                                                               |
+| `evals/datasets/tool-arguments/`                                                                          | 2 条工具参数：人工确认链路的参数/风险/决策、自动策略下的双工具顺序与参数                                                                   |
+| `evals/datasets/memory-quality/`                                                                          | 6 条记忆 golden：偏好/事实、重复、低置信、敏感、闲聊                                                                                       |
+| `evals/datasets/run-resilience/`                                                                          | 6 条韧性：取消 pending、工具失败后恢复、fork 独立完成、崩溃续跑三入口（回落/计划闸/终态）                                                  |
+| `evals/baselines/`                                                                                        | 六个套件的基线                                                                                                                             |
+| `services/agent-orchestrator/agent_orchestrator/evals/platform_adapter.py`                                | 三个服务侧 adapter（编排、检索、记忆；对话套件复用编排 adapter）                                                                           |
+| `scripts/eval/platform.sh`                                                                                | 仓库根入口，复用本地 uv 缓存                                                                                                               |
+| `services/eval-service/`                                                                                  | 评测服务（:8009）：五张表、上报/索引/摘要/分页/单用例/对比/数据集/基线端点、报告转存与下载审计、保留期常驻清理、COS 生命周期、alembic 迁移 |
+| `scripts/eval/upload.mjs`                                                                                 | 把最新报告与基线以内部密钥上报 eval-service；同 `external_id` 幂等                                                                         |
+| `packages/evalkit/project.json`                                                                           | Nx target：lint/format/test/build/sync/eval/eval-baseline                                                                                  |
+| `scripts/eval/publish-web.mjs`                                                                            | 把 JSON 报告发布成 `public/eval` 索引与运行快照（裁剪大字段）                                                                              |
+| `apps/web/public/eval/`                                                                                   | M0 演示快照与回退：`index.json` + `runs/<id>.json` + README；eval-service 不可用时页面仍可看                                               |
+| `apps/web/src/pages/evals.tsx`、`eval-run.tsx`、`eval-compare.tsx`、`eval-datasets.tsx`、`eval-gates.tsx` | 质量工作台总览、运行详情、跨运行对比、数据集清单、基线门禁                                                                                 |
+| `apps/web/src/features/evals/`                                                                            | KPI、套件健康度、运行历史、需要关注、用例表、用例抽屉、评分器、工具轨迹；对比视图、数据集目录、门禁状态计算                                |
+| `apps/web/src/lib/eval-api.ts`                                                                            | 数据层：优先 eval-service，失败回退静态快照                                                                                                |
 
 ### 10.2 门禁接入
 
@@ -530,18 +541,20 @@ events/tool_calls 排序去重，避免顺序噪声；metrics 只记录数值。
   再用 sqlite 启动 eval-service 并调 `node scripts/eval/upload.mjs` 验证上报链路。
 - `evalkit` 与 `eval-service` 进入 uv workspace、Nx 项目、release 排除列表、版本门禁
   与 Python lint/test 矩阵（13 个项目）；`eval-service` 另有 alembic 迁移检查 job。
-- 覆盖率阈值：evalkit 85（实测 96.03%）、eval-service 80（实测 92.55%）。
+- 覆盖率阈值：evalkit 85（实测 96.03%）、eval-service 80（实测 90.63%）。
 
 ### 10.3 实测结果
 
 - `evalkit`：130 passed，覆盖率 96.03%，ruff 全通过。
 - AO 全量：1399 passed，覆盖率 88.32%（阈值 82%），含 19 条平台 adapter 测试
   与 3 条工具调用采集测试。
-- eval-service：37 passed，覆盖率 92.55%（阈值 80%）；四张表、上报幂等、漂移回填、
+- eval-service：47 passed，覆盖率 90.63%（阈值 80%）；五张表、上报幂等、漂移回填、
   基线批准、索引/分页过滤、鉴权关闭时匿名只读、数据集目录/详情/坏数据/缺 manifest
   均有测试；跨运行对比覆盖回归/修复/新增/移除/未变、缺失运行 404 与自比全未变。
   大报告转存/读回、存储缺失 503、对象丢失 410、compare 读转存报告、摘要/单用例
-  端点、保留期 dry-run/实际删除/对象清理均有测试。
+  端点、保留期 dry-run/实际删除/对象清理均有测试。下载审计覆盖成功/失败/匿名/内部
+  密钥四种入口；清理循环覆盖单轮成功/异常；生命周期策略覆盖形状、dry-run 与
+  `--apply` 调用参数。
   api-gateway 因新增 eval 前缀 56 passed、87.50%。
 - 平台运行：6 个套件、29 条用例全部通过；agent-core 3 条 / 1046 tokens，
   retrieval-quality 9 条，conversation-quality 3 条 / 368 tokens，tool-arguments
@@ -584,7 +597,12 @@ curl 'http://127.0.0.1:8009/v1/datasets'                        # 数据集清�
 curl 'http://127.0.0.1:8009/v1/baselines'                       # 已批准基线
 curl 'http://127.0.0.1:8009/v1/runs/<id>/summary'                # 运行摘要
 curl 'http://127.0.0.1:8009/v1/runs/<id>/case?suite=agent-core&case_id=chat%2Fdirect-answer'
+curl -OJ 'http://127.0.0.1:8009/v1/runs/<id>/download'           # 下载报告并写审计
+curl -H "X-Internal-Secret: $EVAL_INTERNAL_SECRET" \
+  'http://127.0.0.1:8009/v1/downloads?limit=20'                    # 下载审计清单
 npx nx run eval-service:retention -- --days 90 --dry-run         # 保留期预演
+npx nx run eval-service:maintenance -- loop --once               # 保留期单轮
+npx nx run eval-service:maintenance -- lifecycle --days 180      # COS 生命周期 dry-run
 node scripts/eval/publish-web.mjs --limit 2     # 发布静态快照到 public/eval
 npx nx typecheck @beauty/web
 npx nx test @beauty/web -- --run
@@ -618,7 +636,8 @@ bash scripts/check-docs.sh
 6. **质量工作台**：M0 静态快照与页面已完成（`/evals` + `/evals/runs/:runId` + 用例抽屉）；
    M1 eval-service + Postgres + CI 上报已完成；M2 跨运行对比（API + `/evals/compare`）、
    数据集只读清单（`/evals/datasets`）与基线门禁治理（`/evals/gates`）已完成；
-   运行详情服务端分页、报告对象存储与保留期清理也已完成，M2 收口。
+   运行详情服务端分页、报告对象存储与保留期清理也已完成；保留期常驻清理、COS
+   生命周期策略与报告下载审计三项治理完成后，M2 收口。
 
 ### P2（中期）：矩阵与生产反馈
 
@@ -641,16 +660,17 @@ bash scripts/check-docs.sh
 
 ## 12. 风险与对策
 
-| 风险             | 表现                 | 对策                                                              |
-| ---------------- | -------------------- | ----------------------------------------------------------------- |
-| 假环境偏离生产   | Fake 通过但线上失败  | 契约测试 + 定期 live/nightly + 录制回放                           |
-| 基线腐化         | 长期不更新或随意更新 | PR 必须说明；基线年龄纳入覆盖度报告；语义变更递增 dataset version |
-| 过拟合用例       | 只优化固定 29 条     | 留出集、按维度扩充、生产采样候选                                  |
-| grader 太严/太松 | 频繁误报或漏报       | 失败信息可读；review grader；关键指标用范围而非精确值             |
-| LLM judge 偏差   | 偏爱长答案/特定风格  | pinned 模型、rubric、人工校准、与确定性 grader 分离               |
-| CI 变慢/变贵     | 套件膨胀             | Nx affected、tags 分层、nightly 跑重套件、预算上限                |
-| 数据泄漏         | 密钥/隐私进仓库      | 合成数据、提交前扫描、manifest owner 审核                         |
-| 单文件膨胀       | 维护困难             | 仓库 500 行上限；核心模块按职责拆分；adapter 放服务侧             |
+| 风险             | 表现                   | 对策                                                              |
+| ---------------- | ---------------------- | ----------------------------------------------------------------- |
+| 假环境偏离生产   | Fake 通过但线上失败    | 契约测试 + 定期 live/nightly + 录制回放                           |
+| 基线腐化         | 长期不更新或随意更新   | PR 必须说明；基线年龄纳入覆盖度报告；语义变更递增 dataset version |
+| 过拟合用例       | 只优化固定 29 条       | 留出集、按维度扩充、生产采样候选                                  |
+| grader 太严/太松 | 频繁误报或漏报         | 失败信息可读；review grader；关键指标用范围而非精确值             |
+| LLM judge 偏差   | 偏爱长答案/特定风格    | pinned 模型、rubric、人工校准、与确定性 grader 分离               |
+| CI 变慢/变贵     | 套件膨胀               | Nx affected、tags 分层、nightly 跑重套件、预算上限                |
+| 数据泄漏         | 密钥/隐私进仓库        | 合成数据、提交前扫描、manifest owner 审核                         |
+| 报告堆积/外泄    | 对象无限增长、下载无痕 | 保留期清理 + COS 生命周期 + 下载审计，下载响应禁缓存              |
+| 单文件膨胀       | 维护困难               | 仓库 500 行上限；核心模块按职责拆分；adapter 放服务侧             |
 
 ## 13. 设计取舍记录（ADR 摘要）
 

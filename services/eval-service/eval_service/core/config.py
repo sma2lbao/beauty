@@ -28,6 +28,11 @@ class Settings(ServiceSettings):
     report_inline_max_bytes: int = 64 * 1024
     # 保留期：维护命令删除超过 retention_days 的运行及其对象；0 表示不清理。
     retention_days: int = 90
+    # 常驻清理循环间隔（秒）；maintenance loop 默认读取，--once 供 cron 使用。
+    retention_interval_seconds: int = 86_400
+    # COS 桶生命周期兜底：对象存储里的报告在 retention 之外再按桶规则过期。
+    artifact_lifecycle_days: int = 180
+    artifact_lifecycle_prefix: str = "eval-runs/"
     # COS 后端（artifact_store=cos），字段与 workspace-service 保持一致。
     artifact_cos_bucket: str = ""
     artifact_cos_region: str = ""

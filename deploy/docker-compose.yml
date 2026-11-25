@@ -11,6 +11,7 @@
 #
 # 设计要点:
 # - 9 个 Python 服务复用同一个镜像(deploy/docker/python-service.Dockerfile,靠 SERVICE 选入口);
+#   另有 eval-retention 用同一镜像跑常驻保留期清理（无 HTTP 端口，不参与 9 端口统计）;
 # - 7 个有 alembic 迁移的服务各自一个库,由 initdb 脚本建库 + migrate 一次性作业升级;
 #   原因见 deploy/postgres/initdb/01-create-databases.sql(alembic_version 表名冲突);
 # - web 容器(nginx)同源托管 SPA 并反代 /api → api-gateway:8007;浏览器只访问 :8080 一个入口;
@@ -343,6 +344,29 @@ services:
     volumes:
       - eval-artifacts:/data/eval-artifacts
     depends_on: *db-depends
+    restart: unless-stopped
+
+  # 保留期常驻清理:与 eval-service 同镜像/同存储卷，不暴露 HTTP，
+  # 因此禁用镜像自带的 /healthz 探针（该进程没有 web 端口）。
+  eval-retention:
+    build:
+      <<: *python-build
+      args:
+        SERVICE: eval-service
+    image: beauty-moon/eval-service:local
+    command: ['python', '-m', 'eval_service.maintenance', 'loop']
+    environment:
+      EVAL__DATABASE_URL: postgresql+asyncpg://beauty:beauty@postgres:5432/beauty_eval
+      EVAL__AUTO_CREATE_TABLES: 'false'
+      EVAL__ARTIFACT_STORE: filesystem
+      EVAL__ARTIFACT_ROOT: /data/eval-artifacts
+      EVAL__RETENTION_DAYS: '90'
+      EVAL__RETENTION_INTERVAL_SECONDS: '86400'
+    volumes:
+      - eval-artifacts:/data/eval-artifacts
+    depends_on: *db-depends
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   api-gateway:

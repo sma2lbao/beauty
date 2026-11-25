@@ -3,8 +3,15 @@
 from eval_service.models.eval_run import (
     EvalBaseline,
     EvalCaseRun,
+    EvalReportDownload,
     EvalRun,
     EvalSuiteRun,
 )
 
-__all__ = ["EvalBaseline", "EvalCaseRun", "EvalRun", "EvalSuiteRun"]
+__all__ = [
+    "EvalBaseline",
+    "EvalCaseRun",
+    "EvalReportDownload",
+    "EvalRun",
+    "EvalSuiteRun",
+]
